@@ -188,13 +188,23 @@ jobs:
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
 
+      # Wails generates bindings by compiling and RUNNING the application, and
+      # it does so before building the frontend. K8Sense refuses to start
+      # without an embedded bundle, so on a clean checkout that first run exits
+      # 1 and fails the build. Building the frontend here breaks the cycle; the
+      # `-s` below then stops Wails repeating the work.
+      - name: Build Frontend
+        run: |
+          npm --prefix web ci
+          npm --prefix web run build
+
       - name: Build Application
         if: runner.os != 'Linux'
-        run: wails build -clean -trimpath
+        run: wails build -clean -trimpath -s
 
       - name: Build Application (Linux)
         if: runner.os == 'Linux'
-        run: wails build -clean -trimpath -tags ${{ env.LINUX_TAGS }}
+        run: wails build -clean -trimpath -s -tags ${{ env.LINUX_TAGS }}
 
       # Compress before upload so the macOS .app keeps its bundle structure and
       # its executable bit; actions/upload-artifact would otherwise flatten it
