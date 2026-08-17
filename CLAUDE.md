@@ -46,6 +46,18 @@ That directory's contents are git-ignored except a tracked `.gitkeep`, because
 clone. `emptyOutDir` deletes the placeholder on every build, so a small Vite
 plugin (`k8sense:keep-embed-directory`) rewrites it — do not remove it.
 
+**The frontend must be built before any Wails command.** Wails generates its
+bindings by compiling *and running* the application, and it does that before it
+builds the frontend. `assets.FS()` refuses to start without an embedded bundle,
+so on a clean checkout that first run exits 1 and takes `wails build`,
+`wails dev` and `wails generate module` down with it. This is why `dev`, `build`
+and `bindings` all depend on `web-build` in the Makefile, and why CI builds the
+frontend before invoking Wails. `-s` then stops Wails repeating the work.
+
+Do not "fix" this by softening the check in `app/adapters/assets/assets.go` —
+it is what turns "compiled without a frontend" into a startup error instead of
+a blank window nobody can diagnose.
+
 ## Commands
 
 ```sh

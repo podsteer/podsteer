@@ -84,15 +84,21 @@ help:
 
 # --- Development ------------------------------------------------------------
 
-dev:
+# Every Wails command below depends on web-build for the same reason: Wails
+# generates bindings by COMPILING AND RUNNING the application, and it does that
+# BEFORE it builds the frontend. K8Sense refuses to start without an embedded
+# bundle (app/adapters/assets), so on a clean checkout — where the embed
+# directory holds only its .gitkeep — that first run exits 1 and takes the whole
+# command with it. Building the frontend first breaks the cycle.
+#
+# `-s` then tells Wails to skip its own frontend step rather than repeat ours.
+
+dev: web-build
 	$(WAILS) dev $(BUILD_TAGS)
 
-build:
-	$(WAILS) build -clean -trimpath $(BUILD_TAGS)
+build: web-build
+	$(WAILS) build -clean -trimpath -s $(BUILD_TAGS)
 
-# Bindings generation compiles AND RUNS the app, which refuses to start without
-# an embedded frontend — so the bundle has to exist first. Without this
-# dependency the target fails on a clean checkout.
 bindings: web-build
 	$(WAILS) generate module $(BUILD_TAGS)
 
