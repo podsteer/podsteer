@@ -1,0 +1,52 @@
+name: Update Version Badges
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-badges:
+    runs-on: ubuntu-latest
+    strategy:
+      # Both long-lived branches carry the badges, so a reader lands on current
+      # version information whichever one GitHub shows them.
+      matrix:
+        branch: [main, develop]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Tags are what the script reads; a shallow clone would not have them.
+          fetch-depth: 0
+
+      - name: Run badge generation script
+        run: |
+          chmod +x ./build/generate-badges.sh
+          ./build/generate-badges.sh
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet README.md; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit and push changes
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add README.md
+          # [skip ci] matters: without it this push re-triggers the pipeline on
+          # a commit that changed nothing but a badge URL.
+          git commit -m "Update version badges [skip ci]"
+          git push origin ${{ matrix.branch }}

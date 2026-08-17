@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "k8sense",
+  "outputfilename": "k8sense",
+  "frontend:dir": "web",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "wailsjsdir": "./web/src/lib",
+  "author": {
+    "name": "K8Sense"
+  },
+  "info": {
+    "companyName": "K8Sense",
+    "productName": "K8Sense",
+    "productVersion": "0.1.0",
+    "comments": "A fast, native Kubernetes client."
+  }
+}

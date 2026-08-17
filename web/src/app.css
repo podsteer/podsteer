@@ -1,0 +1,296 @@
+@import 'tailwindcss';
+
+/*
+ * K8Sense design system — Material Design 3 expressed as Tailwind v4 theme
+ * tokens.
+ *
+ * Everything below maps an MD3 *system token* onto a Tailwind namespace, so
+ * components are written against role names (`bg-surface-container`,
+ * `text-on-surface-variant`) rather than raw colours. That indirection is the
+ * whole point of MD3: swapping in a different scheme later means editing this
+ * block and nothing else.
+ *
+ * The app is dark-only by design. The Go side paints the window background
+ * with the same surface colour and pins the macOS appearance to dark, so a
+ * light scheme here would only produce a mismatched title bar. Adding one
+ * later means defining the light values and relaxing both.
+ */
+@theme {
+  /* ---- MD3 colour roles: baseline dark scheme ------------------------ */
+
+  --color-primary: #d0bcff;
+  --color-on-primary: #381e72;
+  --color-primary-container: #4f378b;
+  --color-on-primary-container: #eaddff;
+
+  --color-secondary: #ccc2dc;
+  --color-on-secondary: #332d41;
+  --color-secondary-container: #4a4458;
+  --color-on-secondary-container: #e8def8;
+
+  --color-tertiary: #efb8c8;
+  --color-on-tertiary: #492532;
+  --color-tertiary-container: #633b48;
+  --color-on-tertiary-container: #ffd8e4;
+
+  --color-error: #f2b8b5;
+  --color-on-error: #601410;
+  --color-error-container: #8c1d18;
+  --color-on-error-container: #f9dedc;
+
+  /*
+   * Success and warning are not MD3 roles — the spec stops at error. Cluster
+   * health is inherently three-valued though, so they are added here as
+   * first-class roles, tuned to the same tonal relationships as the built-in
+   * ones so they do not read as foreign.
+   */
+  --color-success: #8bd5a0;
+  --color-on-success: #00391c;
+  --color-success-container: #205230;
+  --color-on-success-container: #a6f0bb;
+
+  --color-warning: #f5c267;
+  --color-on-warning: #422c00;
+  --color-warning-container: #5e4100;
+  --color-on-warning-container: #ffdea6;
+
+  /* Surfaces. The container ladder replaces MD3's old elevation overlays:
+     depth is expressed by picking a higher container tone, not by stacking
+     translucent white. */
+  --color-surface: #141218;
+  --color-on-surface: #e6e0e9;
+  --color-surface-variant: #49454f;
+  --color-on-surface-variant: #cac4d0;
+
+  --color-surface-container-lowest: #0f0d13;
+  --color-surface-container-low: #1d1b20;
+  --color-surface-container: #211f26;
+  --color-surface-container-high: #2b2930;
+  --color-surface-container-highest: #36343b;
+
+  --color-outline: #938f99;
+  --color-outline-variant: #49454f;
+
+  --color-inverse-surface: #e6e0e9;
+  --color-inverse-on-surface: #322f35;
+  --color-inverse-primary: #6750a4;
+
+  --color-scrim: #000000;
+
+  /* ---- MD3 shape scale ------------------------------------------------ */
+  /* These deliberately override Tailwind's defaults so that `rounded-lg` and
+     friends mean the MD3 shape tokens everywhere in the app. */
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 28px;
+
+  /* ---- MD3 type scale ------------------------------------------------- */
+  /* Roboto is the MD3 typeface, but a desktop client must render offline and
+     must not ship a webfont it does not need — so the platform UI font is
+     used, which is what a native app should look like anyway. */
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+
+  --text-display-small: 36px;
+  --text-display-small--line-height: 44px;
+  --text-display-small--letter-spacing: 0px;
+  --text-display-small--font-weight: 400;
+
+  --text-headline-small: 24px;
+  --text-headline-small--line-height: 32px;
+  --text-headline-small--letter-spacing: 0px;
+  --text-headline-small--font-weight: 400;
+
+  --text-title-large: 22px;
+  --text-title-large--line-height: 28px;
+  --text-title-large--letter-spacing: 0px;
+  --text-title-large--font-weight: 400;
+
+  --text-title-medium: 16px;
+  --text-title-medium--line-height: 24px;
+  --text-title-medium--letter-spacing: 0.15px;
+  --text-title-medium--font-weight: 500;
+
+  --text-title-small: 14px;
+  --text-title-small--line-height: 20px;
+  --text-title-small--letter-spacing: 0.1px;
+  --text-title-small--font-weight: 500;
+
+  --text-body-large: 16px;
+  --text-body-large--line-height: 24px;
+  --text-body-large--letter-spacing: 0.5px;
+  --text-body-large--font-weight: 400;
+
+  --text-body-medium: 14px;
+  --text-body-medium--line-height: 20px;
+  --text-body-medium--letter-spacing: 0.25px;
+  --text-body-medium--font-weight: 400;
+
+  --text-body-small: 12px;
+  --text-body-small--line-height: 16px;
+  --text-body-small--letter-spacing: 0.4px;
+  --text-body-small--font-weight: 400;
+
+  --text-label-large: 14px;
+  --text-label-large--line-height: 20px;
+  --text-label-large--letter-spacing: 0.1px;
+  --text-label-large--font-weight: 500;
+
+  --text-label-medium: 12px;
+  --text-label-medium--line-height: 16px;
+  --text-label-medium--letter-spacing: 0.5px;
+  --text-label-medium--font-weight: 500;
+
+  --text-label-small: 11px;
+  --text-label-small--line-height: 16px;
+  --text-label-small--letter-spacing: 0.5px;
+  --text-label-small--font-weight: 500;
+
+  /* ---- MD3 elevation -------------------------------------------------- */
+
+  --shadow-level-1: 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 1px 3px 1px rgb(0 0 0 / 0.15);
+  --shadow-level-2: 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 2px 6px 2px rgb(0 0 0 / 0.15);
+  --shadow-level-3: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 4px 8px 3px rgb(0 0 0 / 0.15);
+
+  /* ---- MD3 motion ----------------------------------------------------- */
+
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+}
+
+/*
+ * MD3 state layers.
+ *
+ * Interactive surfaces express hover/focus/press by compositing a translucent
+ * layer of the *content* colour over the container, rather than by swapping
+ * background colours. `state-layer` paints that overlay through a pseudo
+ * element so it works on any background, including images and gradients.
+ */
+@utility state-layer {
+  position: relative;
+  isolation: isolate;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background-color: currentColor;
+    opacity: 0;
+    transition: opacity 150ms var(--ease-standard);
+    pointer-events: none;
+  }
+
+  &:hover:not(:disabled)::after {
+    opacity: 0.08;
+  }
+
+  &:focus-visible:not(:disabled)::after {
+    opacity: 0.1;
+  }
+
+  &:active:not(:disabled)::after {
+    opacity: 0.12;
+  }
+}
+
+/*
+ * Marks a region the operator can drag the window by. Wails reads this custom
+ * property from the element under the cursor; the value is configurable in Go
+ * via options.App.CSSDragProperty and defaults to what is used here.
+ */
+@utility drag-region {
+  --wails-draggable: drag;
+}
+
+/* Opts an element out of an ancestor drag region — needed for every control
+   placed inside the title bar, which would otherwise move the window instead
+   of receiving the click. */
+@utility no-drag {
+  --wails-draggable: no-drag;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    /* MD3 motion durations, kept as plain custom properties because Tailwind
+       has no duration theme namespace — used as duration-[var(--…)]. */
+    --duration-short: 150ms;
+    --duration-medium: 300ms;
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-on-surface);
+    font-family: var(--font-sans);
+    font-size: var(--text-body-medium);
+    line-height: var(--text-body-medium--line-height);
+    -webkit-font-smoothing: antialiased;
+
+    /* Desktop chrome, not a web page: no rubber-band scroll past the edges,
+       and no accidental text selection when dragging across the UI. Selection
+       is re-enabled on the elements whose content is worth copying. */
+    overscroll-behavior: none;
+    user-select: none;
+    cursor: default;
+  }
+
+  /* Values an operator will genuinely want to copy — pod names, IPs, image
+     references — opt back in. */
+  code,
+  kbd,
+  samp,
+  pre,
+  [data-selectable] {
+    user-select: text;
+    cursor: text;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  /* A scrollbar that belongs to the dark scheme instead of the platform's
+     default light one, which is jarring against these surfaces. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-outline-variant);
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-outline);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
