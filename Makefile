@@ -136,6 +136,12 @@ endif
 
 bindings: web-build
 	$(WAILS) generate module $(BUILD_TAGS)
+	@# Wails writes the go/ bindings 755 but copies the runtime/ files straight
+	@# out of Go's read-only module cache, so their permission bits vary by
+	@# platform and by Wails version. None of them are executable. Left alone,
+	@# regeneration produces a mode-only diff and the CI drift check fails on a
+	@# change that has no content behind it at all.
+	@find web/src/lib/wailsjs -type f -exec chmod 644 {} +
 
 web-build:
 	$(NPM) --prefix web run build

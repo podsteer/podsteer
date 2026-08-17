@@ -123,22 +123,24 @@ jobs:
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
 
-      # Bindings generation compiles AND RUNS the application, which refuses to
-      # start without an embedded frontend. On a clean checkout the embed
-      # directory holds only its .gitkeep, so the bundle has to exist first.
-      - name: Build Frontend
-        run: |
-          npm --prefix web ci
-          npm --prefix web run build
+      - name: Install Frontend Dependencies
+        run: npm --prefix web ci
 
+      # Deliberately `make bindings` rather than calling Wails directly: the
+      # target also builds the frontend first (generation compiles AND RUNS the
+      # app, which will not start without an embedded bundle) and normalises the
+      # generated files' permission bits. Duplicating that here would let the
+      # two drift apart, and this job exists precisely to catch drift.
       - name: Regenerate Bindings
-        run: wails generate module -tags ${{ env.LINUX_TAGS }}
+        run: make bindings
 
       - name: Fail If Bindings Drifted
         run: |
-          if ! git diff --quiet -- web/src/lib/wailsjs; then
+          # core.fileMode=false so a permission-bit difference between runner
+          # and developer machine cannot fail a check about generated content.
+          if ! git -c core.fileMode=false diff --quiet -- web/src/lib/wailsjs; then
             echo "::error::Generated bindings are out of date. Run 'make bindings' and commit the result."
-            git diff --stat -- web/src/lib/wailsjs
+            git -c core.fileMode=false diff --stat -- web/src/lib/wailsjs
             exit 1
           fi
           echo "Bindings match the bound Go types."
