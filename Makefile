@@ -27,6 +27,17 @@ else
 	BUILD_TAGS :=
 endif
 
+# Where `wails build` leaves the executable. On macOS it is buried inside the
+# .app bundle; elsewhere it sits directly in build/bin.
+ifeq ($(shell uname -s),Darwin)
+	APP_BIN := build/bin/k8sense.app/Contents/MacOS/k8sense
+	APP_BUNDLE := build/bin/k8sense.app
+else ifeq ($(OS),Windows_NT)
+	APP_BIN := build/bin/k8sense.exe
+else
+	APP_BIN := build/bin/k8sense
+endif
+
 # Colors
 GREEN  := \033[0;32m
 YELLOW := \033[0;33m
@@ -35,7 +46,7 @@ BLUE   := \033[0;34m
 CYAN   := \033[0;36m
 NC     := \033[0m
 
-.PHONY: help dev build bindings test check web-build deps clean \
+.PHONY: help dev build run open bindings test check web-build deps clean \
         tag tag-show-inner tag-patch-inner tag-minor-inner tag-major-inner \
         tag-rc-inner tag-main-inner bump-inner ensure-branch ensure-clean fetch
 
@@ -62,7 +73,9 @@ endef
 help:
 	$(BANNER)
 	@echo "Development:"
-	@echo "  make dev                 - Run with a hot-reloading frontend"
+	@echo "  make dev                 - Run with a hot-reloading frontend (fastest loop)"
+	@echo "  make run                 - Build, then launch it with logs in this terminal"
+	@echo "  make open                - Build, then open the .app like Finder would (macOS)"
 	@echo "  make build               - Package the application into build/bin"
 	@echo "  make web-build           - Build the frontend bundle only"
 	@echo "  make bindings            - Regenerate the TypeScript bindings"
@@ -98,6 +111,28 @@ dev: web-build
 
 build: web-build
 	$(WAILS) build -clean -trimpath -s $(BUILD_TAGS)
+
+# Builds a release binary and launches it in the foreground, so application
+# logs land in this terminal rather than in the system log. Ctrl-C stops it.
+#
+# Use `make dev` while iterating — it hot-reloads the frontend instead of
+# rebuilding from scratch. `make run` is for checking the real, packaged
+# artefact behaves the way the development window did.
+run: build
+	@echo ""
+	@echo -e "${BLUE}Launching $(APPLICATION_NAME)... (Ctrl-C to stop)${NC}"
+	@echo -e "${CYAN}Tip: K8SENSE_LOG_LEVEL=debug make run${NC} for verbose logging"
+	@echo ""
+	@K8SENSE_LOG_LEVEL=$${K8SENSE_LOG_LEVEL:-info} ./$(APP_BIN)
+
+ifdef APP_BUNDLE
+# Launches the packaged .app the way Finder would — detached, with its own Dock
+# icon. Logs go to Console.app rather than this terminal; use `make run` when
+# you want to read them.
+open: build
+	@echo -e "${BLUE}Opening $(APP_BUNDLE)${NC}"
+	@open $(APP_BUNDLE)
+endif
 
 bindings: web-build
 	$(WAILS) generate module $(BUILD_TAGS)

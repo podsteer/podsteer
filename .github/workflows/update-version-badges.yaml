@@ -19,7 +19,7 @@ jobs:
         branch: [main, develop]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ matrix.branch }}
           token: ${{ secrets.GITHUB_TOKEN }}

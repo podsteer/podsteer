@@ -14,7 +14,6 @@
     "strict": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
     "paths": {
       "$lib/*": ["./src/lib/*"],
       "$stores/*": ["./src/stores/*"],

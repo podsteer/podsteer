@@ -25,8 +25,8 @@ on:
 
 env:
   GO_VERSION_FILE: go.mod
-  NODE_VERSION: '22'
-  WAILS_VERSION: v2.14.0
+  NODE_VERSION: '24'
+  WAILS_VERSION: v2.15.0
   # Ubuntu 24.04 ships webkit2gtk 4.1 only; Wails still defaults to 4.0, so the
   # Linux build has to opt in explicitly or cgo fails to find the package.
   LINUX_TAGS: webkit2_41
@@ -44,16 +44,16 @@ jobs:
     # This is a release GATE, not a report.
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
           cache-dependency-path: go.sum
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -85,9 +85,9 @@ jobs:
         run: go test -race -count=1 ./...
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12
+          version: v2.12.2
 
   bindings:
     name: Bindings Up To Date
@@ -100,16 +100,16 @@ jobs:
     # and nothing notices until runtime.
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
           cache-dependency-path: go.sum
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -164,16 +164,16 @@ jobs:
             artifact: k8sense-linux-amd64
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
           cache-dependency-path: go.sum
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -220,7 +220,7 @@ jobs:
           fi
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.zip
@@ -236,10 +236,10 @@ jobs:
       contents: write
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true

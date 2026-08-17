@@ -4,7 +4,7 @@
 [![Production](https://img.shields.io/badge/Production-Not%20Released-lightgrey)](https://github.com/k8sense/k8sense/tags)
 [![Staging](https://img.shields.io/badge/Staging-No%20Candidate-lightgrey)](https://github.com/k8sense/k8sense/tags)
 [![Development](https://img.shields.io/badge/Development-No%20Dev%20Release-lightgrey)](https://github.com/k8sense/k8sense/tags)
-[![License](https://img.shields.io/badge/License-Proprietary-red.svg)](https://github.com/k8sense/k8sense/blob/main/LICENSE.md)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/k8sense/k8sense/blob/main/LICENSE.md)
 
 A fast, native desktop client for Kubernetes.
 
@@ -32,9 +32,22 @@ rather than merely running.
 
 ```sh
 make deps     # frontend dependencies + go mod tidy
-make dev      # hot-reloading development window
-make build    # packaged application in build/bin
+make run      # build it, then launch it with logs in your terminal
 ```
+
+`make run` produces the real packaged artefact and starts it in the foreground,
+so application logs land in the terminal and Ctrl-C stops it. Add
+`K8SENSE_LOG_LEVEL=debug` for the full picture of what it is asking your
+cluster.
+
+While iterating, `make dev` is the faster loop — it hot-reloads the frontend on
+save and rebuilds the Go side on change, rather than repackaging each time. On
+macOS, `make open` launches the built `.app` the way Finder would, with its own
+Dock icon.
+
+A locally built app is self-signed by Wails, so macOS runs it without
+complaint. Downloaded release artefacts are a different matter — see
+[docs/RELEASING.md](docs/RELEASING.md#code-signing).
 
 ## Architecture
 
