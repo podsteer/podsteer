@@ -98,6 +98,36 @@ type Container struct {
 	// most useful field when diagnosing a pod that will not start, so it is
 	// carried all the way to the UI.
 	Reason string
+	// Requests is what the container reserves on its node.
+	Requests Resources
+	// Limits is the ceiling the kubelet enforces.
+	Limits Resources
+}
+
+// Resources is a container's declared CPU and memory, in the same units as
+// Metrics so the two can be compared directly.
+//
+// Requests and limits are what the *scheduler* works with, and they are a
+// different question from what a pod actually uses: a cluster can be full —
+// nothing more will schedule — while sitting at 8% real utilisation, because
+// scheduling is decided by requests alone. Carrying both is what lets K8Sense
+// say that out loud instead of showing a reassuring usage bar.
+type Resources struct {
+	// CPUMilli is CPU in millicores. 1000 = one core.
+	CPUMilli int64
+	// MemoryBytes is memory in bytes.
+	MemoryBytes int64
+}
+
+// IsZero reports whether nothing was declared.
+func (r Resources) IsZero() bool { return r == Resources{} }
+
+// Add returns the sum of two declarations.
+func (r Resources) Add(other Resources) Resources {
+	return Resources{
+		CPUMilli:    r.CPUMilli + other.CPUMilli,
+		MemoryBytes: r.MemoryBytes + other.MemoryBytes,
+	}
 }
 
 // PodSpec carries the data needed to build a Pod. See ClusterSpec for why the
@@ -133,6 +163,15 @@ type PodSpec struct {
 	// Usage is the pod's measured resource consumption, unmeasured on a
 	// cluster without metrics-server.
 	Usage Metrics
+	// Reason is the pod-level reason the API server reports, e.g. "Evicted"
+	// or "NodeAffinity". It sits beside the container reasons rather than
+	// replacing them: an evicted pod has no container state left to explain
+	// itself with.
+	Reason string
+	// Message is the pod-level explanation, most usefully the scheduler's
+	// account of why a pod will not fit — "0/6 nodes are available: 6
+	// Insufficient cpu". Nothing else in the API says why a pod is Pending.
+	Message string
 	// CreatedAt is the object creation timestamp.
 	CreatedAt time.Time
 }
@@ -155,6 +194,8 @@ type Pod struct {
 	owners     []OwnerReference
 	qosClass   QoSClass
 	usage      Metrics
+	reason     string
+	message    string
 	createdAt  time.Time
 }
 
@@ -202,6 +243,8 @@ func NewPod(spec PodSpec) (Pod, error) {
 		owners:     slices.Clone(spec.Owners),
 		qosClass:   spec.QoSClass,
 		usage:      spec.Usage,
+		reason:     strings.TrimSpace(spec.Reason),
+		message:    strings.TrimSpace(spec.Message),
 		createdAt:  spec.CreatedAt.UTC(),
 	}, nil
 }
@@ -247,6 +290,55 @@ func (p Pod) QoSClass() QoSClass { return p.qosClass }
 
 // Usage returns the pod's measured resource consumption.
 func (p Pod) Usage() Metrics { return p.usage }
+
+// WithUsage returns a copy of the pod carrying the given measurement.
+//
+// Usage arrives from a different API than the pod does, so it cannot be part
+// of the object the adapter builds. This exists so the join does not mean
+// re-listing every field at the call site: doing that by hand silently drops
+// whatever field was added since it was written, which is a bug that compiles.
+func (p Pod) WithUsage(usage Metrics) Pod {
+	p.usage = usage
+	return p
+}
+
+// Reason returns the pod-level reason, empty when the API server gives none.
+func (p Pod) Reason() string { return p.reason }
+
+// Message returns the pod-level explanation, empty when there is none.
+func (p Pod) Message() string { return p.message }
+
+// Requests returns the sum of every container's requests — what this pod
+// reserves on its node, and therefore what it costs the scheduler.
+func (p Pod) Requests() Resources {
+	var total Resources
+	for _, container := range p.containers {
+		total = total.Add(container.Requests)
+	}
+	return total
+}
+
+// Limits returns the sum of every container's limits.
+func (p Pod) Limits() Resources {
+	var total Resources
+	for _, container := range p.containers {
+		total = total.Add(container.Limits)
+	}
+	return total
+}
+
+// IsScheduled reports whether the pod has been placed on a node.
+func (p Pod) IsScheduled() bool { return p.nodeName != "" }
+
+// OccupiesNode reports whether the pod is holding node capacity.
+//
+// Terminal pods are excluded: a Succeeded or Failed pod still exists as an
+// object, but its containers are gone and its requests no longer count
+// against anything. Summing them is the classic way to compute a cluster
+// utilisation figure that is quietly wrong on any cluster running Jobs.
+func (p Pod) OccupiesNode() bool {
+	return p.IsScheduled() && !p.phase.IsTerminal()
+}
 
 // CreatedAt returns the creation timestamp in UTC.
 func (p Pod) CreatedAt() time.Time { return p.createdAt }

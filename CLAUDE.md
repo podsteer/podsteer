@@ -48,10 +48,40 @@ are deliberately two paths:
   `kubectl get`). Columns come from the server, so a freshly installed
   operator's CRDs are browsable with no code written for them.
 
+The **cluster overview is neither tier**: it is an assessment, not a list, so
+it is deliberately absent from `domain/catalog.go` and the frontend pins it
+above the categories under the id `k8sense/overview`. Putting it in the catalog
+would offer it to every consumer that expects to be able to GET what it names.
+
 `domain/catalog.go` is the single source of truth for the navigator. Adding a
 section to the UI is an entry there, not a frontend change. Custom resources
 are appended per cluster by `DiscoverCustomKinds` — never globally, because two
 clusters run different operators.
+
+## The overview is analysis, and it lives in the domain
+
+`app/domain/overview.go` turns a cluster snapshot into a verdict: grouped
+findings, capacity, inventory. It is a pure function — no I/O, no clock, no
+ordering dependence — which is why its rules are argued over in
+`overview_test.go` rather than observed in production. `OverviewService` only
+gathers the snapshot, concurrently, letting each source fail on its own.
+
+Three things there are easy to get wrong and are already handled:
+
+- **Requests, not usage, decide what schedules.** A cluster can refuse pods
+  while every usage gauge looks calm. `ResourceUsage` carries allocatable,
+  requests, limits and usage separately for exactly this reason.
+- **`Usage` is measured across nodes; `PodUsage` across pods.** Efficiency uses
+  the latter — dividing node usage (which includes the kubelet, the runtime and
+  the OS) by pod requests reports clusters as over 100% efficient.
+- **A pod's controller is the ReplicaSet, not the Deployment.** `ownerIndex`
+  resolves the one hop, which is why the overview lists ReplicaSets and Jobs it
+  never displays. Without them, findings are labelled with generated hashes and
+  cannot be matched to the workload they belong to.
+
+Terminal pods are excluded from every capacity total (`Pod.OccupiesNode`), and
+cordoned nodes contribute no pod slots. Both are the standard way to produce a
+utilisation figure that is quietly wrong.
 
 Metrics are optional by design: `ports.ErrMetricsUnavailable` is an ordinary
 condition, not a fault, and every list must render without metrics-server.
@@ -136,6 +166,10 @@ the webview (see the CSP in `web/index.html`).
 
 ## Domain quirks worth knowing
 
+- **A Job is judged by whether it failed, not by whether it finished.**
+  `Workload.IsHealthy` special-cases Jobs, because "0 of 1 completions"
+  describes a job that started ten seconds ago exactly as it describes one that
+  will never finish. `IsRunning` and `HasFailed` tell those apart.
 - **`domain.Event` is a *Kubernetes* Event.** The application's own internal
   notifications are `domain.DomainEvent`. Getting this backwards is easy and
   the compiler will not always catch it.

@@ -38,8 +38,46 @@ func mapPod(clusterID domain.ClusterID, pod *corev1.Pod) (domain.Pod, error) {
 		Labels:     pod.Labels,
 		Owners:     mapOwnerReferences(pod.OwnerReferences),
 		QoSClass:   domain.NewQoSClass(string(pod.Status.QOSClass)),
+		Reason:     podReason(pod),
+		Message:    podMessage(pod),
 		CreatedAt:  pod.CreationTimestamp.Time,
 	})
+}
+
+// podReason returns the pod-level reason.
+//
+// status.Reason carries "Evicted" and "NodeAffinity", but it is empty for the
+// commonest pending case: an unschedulable pod records its reason on the
+// PodScheduled condition instead, and reading only status.Reason is why a
+// dashboard shows a pod as merely "Pending" when the scheduler has already
+// said it will never fit.
+func podReason(pod *corev1.Pod) string {
+	if pod.Status.Reason != "" {
+		return pod.Status.Reason
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse {
+			return condition.Reason
+		}
+	}
+	return ""
+}
+
+// podMessage returns the most useful explanation the pod carries.
+//
+// The PodScheduled condition is preferred over status.message because for the
+// one case where a pod cannot explain itself any other way — it will not
+// schedule — that condition holds the scheduler's own account ("0/6 nodes are
+// available: 6 Insufficient cpu"). Nothing else in the API says why.
+func podMessage(pod *corev1.Pod) string {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse {
+			if condition.Message != "" {
+				return condition.Message
+			}
+		}
+	}
+	return pod.Status.Message
 }
 
 // mapPodPhase derives the phase K8Sense shows from the pod's reported phase.
@@ -61,18 +99,38 @@ func mapPodPhase(pod *corev1.Pod) domain.PodPhase {
 // the status half is absent until the kubelet reports, which is exactly the
 // window in which an operator is staring at the screen wondering why nothing
 // has started. Containers with no status yet are still returned, in Waiting.
+//
+// Restartable init containers — native sidecars, the ones with a restart
+// policy of Always — are included with the regular containers, which is what
+// kubectl counts too. They run for the pod's whole life and hold their
+// requests for all of it, so omitting them would understate what every pod
+// with an injected proxy reserves. Ordinary init containers are left out: they
+// have exited by the time anyone is looking at a running pod.
 func mapContainers(pod *corev1.Pod) []domain.Container {
 	statuses := make(map[string]corev1.ContainerStatus, len(pod.Status.ContainerStatuses))
 	for _, status := range pod.Status.ContainerStatuses {
 		statuses[status.Name] = status
 	}
+	for _, status := range pod.Status.InitContainerStatuses {
+		statuses[status.Name] = status
+	}
 
-	containers := make([]domain.Container, 0, len(pod.Spec.Containers))
-	for _, spec := range pod.Spec.Containers {
+	specs := make([]corev1.Container, 0, len(pod.Spec.Containers)+1)
+	for _, spec := range pod.Spec.InitContainers {
+		if spec.RestartPolicy != nil && *spec.RestartPolicy == corev1.ContainerRestartPolicyAlways {
+			specs = append(specs, spec)
+		}
+	}
+	specs = append(specs, pod.Spec.Containers...)
+
+	containers := make([]domain.Container, 0, len(specs))
+	for _, spec := range specs {
 		container := domain.Container{
-			Name:  spec.Name,
-			Image: spec.Image,
-			State: domain.ContainerStateWaiting,
+			Name:     spec.Name,
+			Image:    spec.Image,
+			State:    domain.ContainerStateWaiting,
+			Requests: mapResources(spec.Resources.Requests),
+			Limits:   mapResources(spec.Resources.Limits),
 		}
 
 		if status, ok := statuses[spec.Name]; ok {
@@ -92,6 +150,22 @@ func mapContainers(pod *corev1.Pod) []domain.Container {
 	}
 
 	return containers
+}
+
+// mapResources converts a container's resource list into the domain units.
+//
+// MilliValue() and Value() are used rather than parsing the quantity strings:
+// Kubernetes accepts "0.5", "500m", "1Gi" and "1073741824" for the same
+// amounts, and the quantity type is the only thing that reconciles them.
+func mapResources(list corev1.ResourceList) domain.Resources {
+	var resources domain.Resources
+	if cpu, ok := list[corev1.ResourceCPU]; ok {
+		resources.CPUMilli = cpu.MilliValue()
+	}
+	if memory, ok := list[corev1.ResourceMemory]; ok {
+		resources.MemoryBytes = memory.Value()
+	}
+	return resources
 }
 
 // mapContainerState translates a container state union into a state and its
@@ -274,6 +348,7 @@ func mapJob(clusterID domain.ClusterID, item *batchv1.Job) (domain.Workload, err
 		Current:   item.Status.Active + item.Status.Succeeded + item.Status.Failed,
 		Updated:   item.Status.Succeeded,
 		Available: item.Status.Active,
+		Failed:    item.Status.Failed,
 	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector))
 	if err != nil {
 		return domain.Workload{}, err
@@ -313,6 +388,8 @@ func mapCronJob(clusterID domain.ClusterID, item *batchv1.CronJob) (domain.Workl
 // under a different set of field names.
 type workloadCounts struct {
 	Desired, Ready, Current, Updated, Available int32
+	// Failed is set only for Jobs; every other kind leaves it zero.
+	Failed int32
 }
 
 // newWorkload assembles the shared parts of a controller translation.
@@ -339,6 +416,7 @@ func newWorkload(
 		Current:   counts.Current,
 		Updated:   counts.Updated,
 		Available: counts.Available,
+		Failed:    counts.Failed,
 		Images:    images,
 		Selector:  selector,
 		Labels:    meta.Labels,
@@ -349,30 +427,7 @@ func newWorkload(
 
 // rebuildWithSuspension returns a copy of the workload marked as suspended.
 func rebuildWithSuspension(workload domain.Workload, suspended bool) domain.Workload {
-	if !suspended {
-		return workload
-	}
-	rebuilt, err := domain.NewWorkload(domain.WorkloadSpec{
-		Kind:      workload.Kind(),
-		Name:      workload.Name(),
-		Namespace: workload.Namespace(),
-		ClusterID: workload.ClusterID(),
-		Desired:   workload.Desired(),
-		Ready:     workload.Ready(),
-		Current:   workload.Current(),
-		Updated:   workload.Updated(),
-		Available: workload.Available(),
-		Images:    workload.Images(),
-		Selector:  workload.Selector(),
-		Labels:    workload.Labels(),
-		Owner:     workload.Owner(),
-		Suspended: true,
-		CreatedAt: workload.CreatedAt(),
-	})
-	if err != nil {
-		return workload
-	}
-	return rebuilt
+	return workload.WithSuspension(suspended)
 }
 
 // podTemplateImages lists the images a pod template runs, init containers

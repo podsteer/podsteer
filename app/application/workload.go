@@ -127,32 +127,10 @@ func (s *WorkloadService) withPodMetrics(ctx context.Context, id domain.ClusterI
 
 	enriched := make([]domain.Pod, 0, len(pods))
 	for _, pod := range pods {
-		measured, ok := usage[pod.Namespace().String()+"/"+pod.Name()]
-		if !ok {
-			enriched = append(enriched, pod)
-			continue
+		if measured, ok := usage[pod.Namespace().String()+"/"+pod.Name()]; ok {
+			pod = pod.WithUsage(measured)
 		}
-
-		rebuilt, err := domain.NewPod(domain.PodSpec{
-			UID:        pod.UID(),
-			Name:       pod.Name(),
-			Namespace:  pod.Namespace(),
-			ClusterID:  pod.ClusterID(),
-			Phase:      pod.Phase(),
-			NodeName:   pod.NodeName(),
-			PodIP:      pod.PodIP(),
-			Containers: pod.Containers(),
-			Labels:     pod.Labels(),
-			Owners:     pod.Owners(),
-			QoSClass:   pod.QoSClass(),
-			Usage:      measured,
-			CreatedAt:  pod.CreatedAt(),
-		})
-		if err != nil {
-			enriched = append(enriched, pod)
-			continue
-		}
-		enriched = append(enriched, rebuilt)
+		enriched = append(enriched, pod)
 	}
 
 	return enriched

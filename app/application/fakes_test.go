@@ -67,6 +67,7 @@ type fakeKubernetes struct {
 	mu               sync.Mutex
 	requestedCluster domain.ClusterID
 	requestedNS      domain.NamespaceName
+	requestedKind    map[domain.WorkloadKind]bool
 }
 
 var (
@@ -111,6 +112,7 @@ func (f *fakeKubernetes) DiscoverCustomKinds(_ context.Context, id domain.Cluste
 
 func (f *fakeKubernetes) ListWorkloads(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
 	f.record(id, namespace)
+	f.recordKind(kind)
 	if f.workloadsErr != nil {
 		return nil, f.workloadsErr
 	}
@@ -149,6 +151,27 @@ func (f *fakeKubernetes) record(id domain.ClusterID, namespace domain.NamespaceN
 	defer f.mu.Unlock()
 	f.requestedCluster = id
 	f.requestedNS = namespace
+}
+
+// recordKind notes that a workload kind was asked for.
+func (f *fakeKubernetes) recordKind(kind domain.WorkloadKind) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.requestedKind == nil {
+		f.requestedKind = make(map[domain.WorkloadKind]bool, 6)
+	}
+	f.requestedKind[kind] = true
+}
+
+// requestedKinds returns the workload kinds asked for so far.
+func (f *fakeKubernetes) requestedKinds() map[domain.WorkloadKind]bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	kinds := make(map[domain.WorkloadKind]bool, len(f.requestedKind))
+	for kind, seen := range f.requestedKind {
+		kinds[kind] = seen
+	}
+	return kinds
 }
 
 // lastRequest reports the cluster and namespace of the most recent call.
@@ -225,4 +248,30 @@ func mustNamespace(t *testing.T, name string) domain.Namespace {
 		t.Fatalf("building namespace %q: %v", name, err)
 	}
 	return namespace
+}
+
+// fakeEvents is a stand-in for the cluster's event stream.
+//
+// Separate from fakeKubernetes so a test can make events fail on their own,
+// which is the case the overview has to survive: plenty of credentials can
+// list pods but not events.
+type fakeEvents struct {
+	events []domain.Event
+	err    error
+}
+
+var _ ports.EventPort = (*fakeEvents)(nil)
+
+func (f *fakeEvents) ListEvents(context.Context, domain.ClusterID, domain.NamespaceName) ([]domain.Event, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return append([]domain.Event(nil), f.events...), nil
+}
+
+func (f *fakeEvents) ListEventsForResource(context.Context, domain.ClusterID, domain.NamespaceName, string, string) ([]domain.Event, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return append([]domain.Event(nil), f.events...), nil
 }

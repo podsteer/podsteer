@@ -38,6 +38,7 @@ import {
   StreamLogs as bindStreamLogs,
   StopLogStream as bindStopLogStream,
 } from '$lib/wailsjs/go/wails/ManagementAPI'
+import { GetOverview as bindGetOverview } from '$lib/wailsjs/go/wails/OverviewAPI'
 import { Info as bindInfo, OpenURL as bindOpenURL } from '$lib/wailsjs/go/wails/SystemAPI'
 import { EventsOn } from '$lib/wailsjs/runtime/runtime'
 import type { wails } from '$lib/wailsjs/go/models'
@@ -67,6 +68,20 @@ export type TableColumn = wails.TableColumn
 export type TableRow = wails.TableRow
 /** The running application's identity. */
 export type AppInfo = wails.AppInfo
+/** An assessed cluster: what is wrong, what is left, what is running. */
+export type Overview = wails.Overview
+/** One problem, aggregated across the objects it affects. */
+export type Finding = wails.Finding
+/** One object a finding is about. */
+export type Subject = wails.Subject
+/** One dimension of cluster capacity. */
+export type ResourceUsage = wails.ResourceUsage
+/** One namespace's share of the cluster. */
+export type NamespaceLoad = wails.NamespaceLoad
+/** A pod worth looking at because it keeps restarting. */
+export type RestartHotspot = wails.RestartHotspot
+/** Counts for one controller kind. */
+export type WorkloadKindSummary = wails.WorkloadKindSummary
 
 /** Selects every namespace. Matches the backend's empty-string convention. */
 export const ALL_NAMESPACES = ''
@@ -136,6 +151,22 @@ export function listNamespaces(clusterId: string): Promise<Namespace[]> {
 /** Lists the nodes of a connected cluster, with usage where available. */
 export function listNodes(clusterId: string): Promise<Node[]> {
   return call(() => bindListNodes(clusterId))
+}
+
+// --- Overview ---------------------------------------------------------------
+
+/**
+ * Assesses a connected cluster.
+ *
+ * One call rather than a dozen, because the assessment has to be of a cluster
+ * seen at one moment — and because the analysis belongs in Go, where it is
+ * tested, rather than in the browser.
+ *
+ * A rejection means no assessment could be made at all. Individual sources
+ * that could not be read are named in `overview.unavailable` instead.
+ */
+export function getOverview(clusterId: string): Promise<Overview> {
+  return call(() => bindGetOverview(clusterId))
 }
 
 // --- Navigation -------------------------------------------------------------

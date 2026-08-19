@@ -51,8 +51,12 @@ type WorkloadSpec struct {
 	Current int32
 	// Updated is how many run the current template.
 	Updated int32
-	// Available is how many have been ready long enough to count.
+	// Available is how many have been ready long enough to count. For a Job
+	// this is how many pods are still running.
 	Available int32
+	// Failed is how many pods have terminated unsuccessfully. Only a Job
+	// reports it; it is zero for every other kind.
+	Failed int32
 	// Images are the container images of the pod template.
 	Images []string
 	// Selector is the label selector, for finding the pods it manages.
@@ -82,6 +86,7 @@ type Workload struct {
 	current       int32
 	updated       int32
 	available     int32
+	failed        int32
 	images        []string
 	selector      map[string]string
 	labels        map[string]string
@@ -119,6 +124,7 @@ func NewWorkload(spec WorkloadSpec) (Workload, error) {
 		current:       spec.Current,
 		updated:       spec.Updated,
 		available:     spec.Available,
+		failed:        spec.Failed,
 		images:        slices.Clone(spec.Images),
 		selector:      maps.Clone(spec.Selector),
 		labels:        maps.Clone(spec.Labels),
@@ -156,6 +162,20 @@ func (w Workload) Updated() int32 { return w.updated }
 
 // Available returns how many replicas have been ready long enough to count.
 func (w Workload) Available() int32 { return w.available }
+
+// WithSuspension returns a copy of the workload marked suspended.
+//
+// Suspension is read from the spec while everything else comes from the
+// status, so it is applied after construction. A copy method rather than a
+// rebuild at the call site: re-listing every field by hand silently drops
+// whichever one was added since it was written.
+func (w Workload) WithSuspension(suspended bool) Workload {
+	w.suspended = suspended
+	return w
+}
+
+// Failed returns how many of a Job's pods terminated unsuccessfully.
+func (w Workload) Failed() int32 { return w.failed }
 
 // Images returns a copy of the pod template's container images.
 func (w Workload) Images() []string { return slices.Clone(w.images) }
@@ -205,6 +225,10 @@ func (w Workload) IsRolling() bool {
 // disabled CronJob and every deployment scaled down for the weekend.
 //
 // A suspended Job or CronJob is likewise healthy — suspension is deliberate.
+// A Job is judged by whether it failed, not by whether it has finished:
+// "0 of 1 completions" describes a job that started ten seconds ago exactly as
+// it describes one that will never finish, and treating the first as unhealthy
+// flags every batch run on the cluster.
 func (w Workload) IsHealthy() bool {
 	if w.suspended {
 		return true
@@ -213,7 +237,23 @@ func (w Workload) IsHealthy() bool {
 		// A CronJob has no replicas of its own; it is healthy unless suspended.
 		return true
 	}
+	if w.kind == WorkloadJob {
+		return w.failed == 0
+	}
 	return w.ready >= w.desired
+}
+
+// IsRunning reports whether a Job still has pods working.
+//
+// It is the Job equivalent of IsRolling: a state to watch rather than to act
+// on, and one that must be told apart from a Job that has stopped short.
+func (w Workload) IsRunning() bool {
+	return w.kind == WorkloadJob && w.available > 0
+}
+
+// HasFailed reports whether a Job gave up with no pod still trying.
+func (w Workload) HasFailed() bool {
+	return w.kind == WorkloadJob && w.failed > 0 && w.available == 0
 }
 
 // Status is the single word a workload list should show.
@@ -223,6 +263,19 @@ func (w Workload) Status() string {
 		return "Suspended"
 	case w.kind == WorkloadCronJob:
 		return "Active"
+	case w.kind == WorkloadJob:
+		// A Job's lifecycle is not a replica count, and reporting it as one
+		// labels a job that is running normally "Unavailable".
+		switch {
+		case w.failed > 0 && w.available == 0:
+			return "Failed"
+		case w.available > 0:
+			return "Running"
+		case w.ready >= w.desired:
+			return "Complete"
+		default:
+			return "Pending"
+		}
 	case w.desired == 0:
 		return "Scaled to zero"
 	case w.ready == 0:

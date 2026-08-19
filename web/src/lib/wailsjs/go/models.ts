@@ -18,6 +18,90 @@ export namespace wails {
 	        this.website = source["website"];
 	    }
 	}
+	export class PodCapacity {
+	    scheduled: number;
+	    capacity: number;
+	    unschedulable: number;
+	    usedPercent: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PodCapacity(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.scheduled = source["scheduled"];
+	        this.capacity = source["capacity"];
+	        this.unschedulable = source["unschedulable"];
+	        this.usedPercent = source["usedPercent"];
+	    }
+	}
+	export class ResourceUsage {
+	    allocatable: string;
+	    requests: string;
+	    limits: string;
+	    usage: string;
+	    schedulable: string;
+	    podUsage: string;
+	    requestPercent: number;
+	    limitPercent: number;
+	    usagePercent: number;
+	    efficiency: number;
+	    measured: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ResourceUsage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.allocatable = source["allocatable"];
+	        this.requests = source["requests"];
+	        this.limits = source["limits"];
+	        this.usage = source["usage"];
+	        this.schedulable = source["schedulable"];
+	        this.podUsage = source["podUsage"];
+	        this.requestPercent = source["requestPercent"];
+	        this.limitPercent = source["limitPercent"];
+	        this.usagePercent = source["usagePercent"];
+	        this.efficiency = source["efficiency"];
+	        this.measured = source["measured"];
+	    }
+	}
+	export class CapacitySummary {
+	    cpu: ResourceUsage;
+	    memory: ResourceUsage;
+	    pods: PodCapacity;
+	
+	    static createFrom(source: any = {}) {
+	        return new CapacitySummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cpu = this.convertValues(source["cpu"], ResourceUsage);
+	        this.memory = this.convertValues(source["memory"], ResourceUsage);
+	        this.pods = this.convertValues(source["pods"], PodCapacity);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Cluster {
 	    id: string;
 	    server: string;
@@ -106,6 +190,74 @@ export namespace wails {
 	        this.ageSeconds = source["ageSeconds"];
 	    }
 	}
+	export class Subject {
+	    kind: string;
+	    namespace: string;
+	    name: string;
+	    detail: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Subject(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.detail = source["detail"];
+	    }
+	}
+	export class Finding {
+	    id: string;
+	    severity: string;
+	    category: string;
+	    title: string;
+	    summary: string;
+	    advice: string;
+	    subjects: Subject[];
+	    count: number;
+	    kindId: string;
+	    truncated: boolean;
+	    oldestSeconds: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Finding(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.severity = source["severity"];
+	        this.category = source["category"];
+	        this.title = source["title"];
+	        this.summary = source["summary"];
+	        this.advice = source["advice"];
+	        this.subjects = this.convertValues(source["subjects"], Subject);
+	        this.count = source["count"];
+	        this.kindId = source["kindId"];
+	        this.truncated = source["truncated"];
+	        this.oldestSeconds = source["oldestSeconds"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Namespace {
 	    name: string;
 	    phase: string;
@@ -124,6 +276,36 @@ export namespace wails {
 	        this.isActive = source["isActive"];
 	        this.createdAt = source["createdAt"];
 	        this.ageSeconds = source["ageSeconds"];
+	    }
+	}
+	export class NamespaceLoad {
+	    name: string;
+	    pods: number;
+	    notReady: number;
+	    cpuRequests: string;
+	    memoryRequests: string;
+	    cpuUsage: string;
+	    memoryUsage: string;
+	    cpuShare: number;
+	    memoryShare: number;
+	    measured: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new NamespaceLoad(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.pods = source["pods"];
+	        this.notReady = source["notReady"];
+	        this.cpuRequests = source["cpuRequests"];
+	        this.memoryRequests = source["memoryRequests"];
+	        this.cpuUsage = source["cpuUsage"];
+	        this.memoryUsage = source["memoryUsage"];
+	        this.cpuShare = source["cpuShare"];
+	        this.memoryShare = source["memoryShare"];
+	        this.measured = source["measured"];
 	    }
 	}
 	export class Node {
@@ -177,6 +359,200 @@ export namespace wails {
 	        this.createdAt = source["createdAt"];
 	        this.ageSeconds = source["ageSeconds"];
 	    }
+	}
+	export class VersionCount {
+	    version: string;
+	    nodes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new VersionCount(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.nodes = source["nodes"];
+	    }
+	}
+	export class NodeSummary {
+	    total: number;
+	    ready: number;
+	    notReady: number;
+	    cordoned: number;
+	    underPressure: number;
+	    controlPlane: number;
+	    kubeletVersions: VersionCount[];
+	    oldestSeconds: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new NodeSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.total = source["total"];
+	        this.ready = source["ready"];
+	        this.notReady = source["notReady"];
+	        this.cordoned = source["cordoned"];
+	        this.underPressure = source["underPressure"];
+	        this.controlPlane = source["controlPlane"];
+	        this.kubeletVersions = this.convertValues(source["kubeletVersions"], VersionCount);
+	        this.oldestSeconds = source["oldestSeconds"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RestartHotspot {
+	    namespace: string;
+	    name: string;
+	    restarts: number;
+	    reason: string;
+	    ageSeconds: number;
+	    healthy: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RestartHotspot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.restarts = source["restarts"];
+	        this.reason = source["reason"];
+	        this.ageSeconds = source["ageSeconds"];
+	        this.healthy = source["healthy"];
+	    }
+	}
+	export class WorkloadKindSummary {
+	    kind: string;
+	    kindId: string;
+	    title: string;
+	    total: number;
+	    healthy: number;
+	    rolling: number;
+	    degraded: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkloadKindSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.kindId = source["kindId"];
+	        this.title = source["title"];
+	        this.total = source["total"];
+	        this.healthy = source["healthy"];
+	        this.rolling = source["rolling"];
+	        this.degraded = source["degraded"];
+	    }
+	}
+	export class PodSummary {
+	    total: number;
+	    running: number;
+	    pending: number;
+	    succeeded: number;
+	    failed: number;
+	    terminating: number;
+	    unknown: number;
+	    notReady: number;
+	    restarts: number;
+	    bestEffort: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PodSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.total = source["total"];
+	        this.running = source["running"];
+	        this.pending = source["pending"];
+	        this.succeeded = source["succeeded"];
+	        this.failed = source["failed"];
+	        this.terminating = source["terminating"];
+	        this.unknown = source["unknown"];
+	        this.notReady = source["notReady"];
+	        this.restarts = source["restarts"];
+	        this.bestEffort = source["bestEffort"];
+	    }
+	}
+	export class Overview {
+	    clusterId: string;
+	    version: string;
+	    platform: string;
+	    health: string;
+	    generatedAt: string;
+	    findings: Finding[];
+	    capacity: CapacitySummary;
+	    nodes: NodeSummary;
+	    pods: PodSummary;
+	    workloads: WorkloadKindSummary[];
+	    namespaces: NamespaceLoad[];
+	    restarts: RestartHotspot[];
+	    unavailable: string[];
+	    criticalCount: number;
+	    warningCount: number;
+	    infoCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Overview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.clusterId = source["clusterId"];
+	        this.version = source["version"];
+	        this.platform = source["platform"];
+	        this.health = source["health"];
+	        this.generatedAt = source["generatedAt"];
+	        this.findings = this.convertValues(source["findings"], Finding);
+	        this.capacity = this.convertValues(source["capacity"], CapacitySummary);
+	        this.nodes = this.convertValues(source["nodes"], NodeSummary);
+	        this.pods = this.convertValues(source["pods"], PodSummary);
+	        this.workloads = this.convertValues(source["workloads"], WorkloadKindSummary);
+	        this.namespaces = this.convertValues(source["namespaces"], NamespaceLoad);
+	        this.restarts = this.convertValues(source["restarts"], RestartHotspot);
+	        this.unavailable = source["unavailable"];
+	        this.criticalCount = source["criticalCount"];
+	        this.warningCount = source["warningCount"];
+	        this.infoCount = source["infoCount"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class Pod {
 	    uid: string;
@@ -250,6 +626,8 @@ export namespace wails {
 		    return a;
 		}
 	}
+	
+	
 	export class ResourceKind {
 	    id: string;
 	    group: string;
@@ -350,6 +728,10 @@ export namespace wails {
 		    return a;
 		}
 	}
+	
+	
+	
+	
 	
 	
 	export class Workload {

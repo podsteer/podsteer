@@ -11,6 +11,7 @@
 import {
   ALL_NAMESPACES,
   getManifest,
+  getOverview,
   listEvents,
   listKinds,
   listNamespaces,
@@ -24,6 +25,7 @@ import {
   type K8sEvent,
   type Namespace,
   type Node,
+  type Overview,
   type Pod,
   type ResourceKind,
   type ResourceTable,
@@ -47,8 +49,25 @@ export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 /** How often the current view re-fetches while auto-refresh is on. */
 export const DEFAULT_REFRESH_INTERVAL_MS = 10_000
 
-/** The kind the navigator selects by default — the one operators open first. */
-export const DEFAULT_KIND_ID = 'core/v1/pods'
+/**
+ * The cluster dashboard's navigation id.
+ *
+ * Not a Kubernetes kind and deliberately not in the backend catalog: the
+ * overview is a computed assessment, not a list of objects, and adding it to
+ * the catalog would put it in front of every consumer that expects to be able
+ * to GET what it names. The `k8sense` prefix cannot collide with a real API
+ * group, which always contains a dot.
+ */
+export const OVERVIEW_KIND_ID = 'k8sense/overview'
+
+/**
+ * The view the navigator selects by default.
+ *
+ * The dashboard rather than the pod list: an operator opening a cluster is
+ * asking "is anything wrong", and a pod list makes them work that out for
+ * themselves by reading it.
+ */
+export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
 
 /** Kind ids K8Sense renders with purpose-built columns rather than generically. */
 export const RICH_KIND_IDS = {
@@ -69,7 +88,7 @@ const WORKLOAD_KIND_BY_ID: Record<string, string> = {
 }
 
 /** What the content pane should render for the selected kind. */
-export type ViewMode = 'pods' | 'nodes' | 'events' | 'workloads' | 'table'
+export type ViewMode = 'overview' | 'pods' | 'nodes' | 'events' | 'workloads' | 'table'
 
 /*
  * Sort accessors per view, keyed by the column ids the views declare. Values
@@ -159,6 +178,7 @@ export class ClusterSession {
   workloads = $state<Workload[]>([])
   events = $state<K8sEvent[]>([])
   table = $state<ResourceTable | null>(null)
+  overview = $state<Overview | null>(null)
 
   status = $state<LoadStatus>('idle')
   error = $state<ApiError | null>(null)
@@ -199,6 +219,7 @@ export class ClusterSession {
   /** What the content pane should render. */
   readonly viewMode = $derived.by<ViewMode>(() => {
     const id = this.selectedKindId
+    if (id === OVERVIEW_KIND_ID) return 'overview'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
     if (id === RICH_KIND_IDS.events) return 'events'
@@ -207,7 +228,17 @@ export class ClusterSession {
   })
 
   /** Whether the selected kind carries namespaces. */
-  readonly isNamespaced = $derived(this.selectedKind?.namespaced ?? true)
+  readonly isNamespaced = $derived(
+    this.viewMode === 'overview' ? false : (this.selectedKind?.namespaced ?? true),
+  )
+
+  /**
+   * Whether the current view is a list.
+   *
+   * The overview is an assessment of the whole cluster, so the search box,
+   * the pagination and the row count in the toolbar have nothing to act on.
+   */
+  readonly isList = $derived(this.viewMode !== 'overview')
 
   /** Rows after the search filter, for whichever view is active. */
   readonly visiblePods = $derived(
@@ -238,6 +269,8 @@ export class ClusterSession {
   /** Total rows after filtering, before pagination. */
   readonly visibleCount = $derived.by(() => {
     switch (this.viewMode) {
+      case 'overview':
+        return 0
       case 'pods':
         return this.visiblePods.length
       case 'nodes':
@@ -313,6 +346,19 @@ export class ClusterSession {
   readonly pagedWorkloads = $derived(this.#slice(this.sortedWorkloads))
   readonly pagedEvents = $derived(this.#slice(this.sortedEvents))
   readonly pagedTableRows = $derived(this.#slice(this.sortedTableRows))
+
+  /**
+   * How many findings need attention, from the last assessment.
+   *
+   * Info findings are excluded: they are worth reading but do not mean
+   * anything is wrong, and a badge that is permanently lit stops being read.
+   */
+  readonly issueCount = $derived(
+    (this.overview?.criticalCount ?? 0) + (this.overview?.warningCount ?? 0),
+  )
+
+  /** Whether any finding is critical, which decides the badge's colour. */
+  readonly hasCriticalIssues = $derived((this.overview?.criticalCount ?? 0) > 0)
 
   /** Counts for the header summary, meaningful only for pod views. */
   readonly podSummary = $derived({
@@ -440,6 +486,8 @@ export class ClusterSession {
     const namespace = this.isNamespaced ? this.namespace : ALL_NAMESPACES
 
     switch (this.viewMode) {
+      case 'overview':
+        return getOverview(id)
       case 'pods':
         return listPods(id, namespace)
       case 'nodes':
@@ -462,8 +510,15 @@ export class ClusterSession {
     this.workloads = []
     this.events = []
     this.table = null
+    // The overview is deliberately NOT cleared here. It is a cached assessment
+    // rather than one of the mutually exclusive row buffers, and the navigator
+    // badge reads from it: clearing it would blank the "3 issues" badge the
+    // moment an operator clicked through to look at those three issues.
 
     switch (this.viewMode) {
+      case 'overview':
+        this.overview = rows as Overview
+        break
       case 'pods':
         this.pods = rows as Pod[]
         break

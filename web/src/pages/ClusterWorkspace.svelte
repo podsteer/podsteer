@@ -14,9 +14,11 @@
   import Pagination from '$lib/components/Pagination.svelte'
   import SearchField from '$lib/components/SearchField.svelte'
   import { preferences } from '$stores/preferences.svelte'
+  import { formatClockTime } from '$lib/format'
   import type { ClusterSession } from '$stores/session.svelte'
   import EventsView from './EventsView.svelte'
   import GenericTableView from './GenericTableView.svelte'
+  import OverviewView from './OverviewView.svelte'
   import NodesView from './NodesView.svelte'
   import PodsView from './PodsView.svelte'
   import WorkloadsView from './WorkloadsView.svelte'
@@ -91,12 +93,18 @@
       <div class="min-w-0 flex-1">
         <div class="flex items-baseline gap-2">
           <h2 class="truncate text-title-medium font-semibold text-on-surface">
-            {session.selectedKind?.title ?? 'Resources'}
+            {session.isList ? (session.selectedKind?.title ?? 'Resources') : session.cluster.id}
           </h2>
-          <span class="rounded-full bg-surface-container-high px-2 py-0.5 text-label-small
-                       tabular-nums text-on-surface-variant">
-            {session.visibleCount}
-          </span>
+          {#if session.isList}
+            <span class="rounded-full bg-surface-container-high px-2 py-0.5 text-label-small
+                         tabular-nums text-on-surface-variant">
+              {session.visibleCount}
+            </span>
+          {:else if session.lastRefreshedAt}
+            <span class="text-body-small text-on-surface-variant/60">
+              assessed {formatClockTime(session.lastRefreshedAt)}
+            </span>
+          {/if}
           {#if session.viewMode === 'pods' && session.podSummary.unhealthy > 0}
             <span class="flex items-center gap-1 rounded-full bg-warning-container px-2 py-0.5
                          text-label-small text-on-warning-container">
@@ -107,26 +115,28 @@
         </div>
       </div>
 
-      <!-- Search -->
-      <SearchField
-        bind:this={searchField}
-        value={session.search}
-        placeholder="Search {session.selectedKind?.title.toLowerCase() ?? 'resources'}…"
-        onchange={session.setSearch}
-        class="w-72"
-      />
+      {#if session.isList}
+        <!-- Search -->
+        <SearchField
+          bind:this={searchField}
+          value={session.search}
+          placeholder="Search {session.selectedKind?.title.toLowerCase() ?? 'resources'}…"
+          onchange={session.setSearch}
+          class="w-72"
+        />
 
-      <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+        <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
 
-      <!-- Pagination: consolidated here rather than under the table, so
-           every per-view control lives in one row. -->
-      <Pagination
-        totalCount={session.visibleCount}
-        pageStart={session.pageStart}
-        currentPage={session.currentPage}
-        pageCount={session.pageCount}
-        onpage={session.goToPage}
-      />
+        <!-- Pagination: consolidated here rather than under the table, so
+             every per-view control lives in one row. -->
+        <Pagination
+          totalCount={session.visibleCount}
+          pageStart={session.pageStart}
+          currentPage={session.currentPage}
+          pageCount={session.pageCount}
+          onpage={session.goToPage}
+        />
+      {/if}
     </div>
 
     {#if session.error}
@@ -140,7 +150,9 @@
     {/if}
 
     <!-- The view for the selected kind -->
-    {#if session.viewMode === 'pods'}
+    {#if session.viewMode === 'overview'}
+      <OverviewView {session} />
+    {:else if session.viewMode === 'pods'}
       <PodsView {session} />
     {:else if session.viewMode === 'nodes'}
       <NodesView {session} />

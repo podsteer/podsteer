@@ -257,35 +257,11 @@ func (s *ClusterService) withNodeMetrics(ctx context.Context, id domain.ClusterI
 
 	enriched := make([]domain.Node, 0, len(nodes))
 	for _, node := range nodes {
-		measured, ok := usage[node.Name()]
-		if !ok {
-			enriched = append(enriched, node)
-			continue
+		// Copy rather than mutate: domain entities are immutable values.
+		if measured, ok := usage[node.Name()]; ok {
+			node = node.WithUsage(measured)
 		}
-
-		// Rebuild rather than mutate: domain entities are immutable values.
-		rebuilt, err := domain.NewNode(domain.NodeSpec{
-			Name:             node.Name(),
-			ClusterID:        node.ClusterID(),
-			Roles:            node.Roles(),
-			Ready:            node.Ready(),
-			ActiveConditions: node.ActiveConditions(),
-			Unschedulable:    node.Unschedulable(),
-			Taints:           node.Taints(),
-			KubeletVersion:   node.KubeletVersion(),
-			OSImage:          node.OSImage(),
-			Architecture:     node.Architecture(),
-			InternalIP:       node.InternalIP(),
-			Capacity:         node.Capacity(),
-			Allocatable:      node.Allocatable(),
-			Usage:            measured,
-			CreatedAt:        node.CreatedAt(),
-		})
-		if err != nil {
-			enriched = append(enriched, node)
-			continue
-		}
-		enriched = append(enriched, rebuilt)
+		enriched = append(enriched, node)
 	}
 
 	return enriched

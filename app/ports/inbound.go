@@ -69,6 +69,22 @@ type EventService interface {
 	ListEventsForResource(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind, name string) ([]domain.Event, error)
 }
 
+// OverviewService is the use-case surface for the cluster dashboard.
+//
+// It is a use case of its own rather than a method on ClusterService because
+// it composes almost every other read — nodes, pods, controllers, events and
+// metrics — into a single assessment, and because it must succeed when several
+// of those reads fail.
+type OverviewService interface {
+	// Overview assesses a connected cluster: what is wrong, what capacity is
+	// left, and what the cluster is made of.
+	//
+	// Sources that could not be read are named in the result rather than
+	// returned as an error. An error means the whole assessment failed, which
+	// in practice means the cluster is not connected.
+	Overview(ctx context.Context, id domain.ClusterID) (domain.Overview, error)
+}
+
 // ResourceService is the use-case surface for the generic browsing path.
 type ResourceService interface {
 	// ListTable returns objects of the given kind as a table. The kind is

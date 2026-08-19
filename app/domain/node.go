@@ -167,6 +167,14 @@ func (n Node) Allocatable() Capacity { return n.allocatable }
 // Usage returns the node's current consumption.
 func (n Node) Usage() Metrics { return n.usage }
 
+// WithUsage returns a copy of the node carrying the given measurement. See
+// Pod.WithUsage for why this is a method rather than a rebuild at each call
+// site.
+func (n Node) WithUsage(usage Metrics) Node {
+	n.usage = usage
+	return n
+}
+
 // CreatedAt returns when the node joined, in UTC.
 func (n Node) CreatedAt() time.Time { return n.createdAt }
 

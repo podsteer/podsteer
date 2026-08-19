@@ -18,11 +18,11 @@
 -->
 <script lang="ts">
   import { ALL_NAMESPACES, type ResourceKind } from '$lib/api/client'
-  import type { ClusterSession } from '$stores/session.svelte'
+  import { OVERVIEW_KIND_ID, type ClusterSession } from '$stores/session.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import { categoryMeta, iconForKind } from '$lib/kindIcons'
   import Select from './Select.svelte'
-  import { ChevronDown } from '@lucide/svelte'
+  import { ChevronDown, LayoutDashboard, AlertTriangle } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -38,6 +38,8 @@
       hint: namespace.isActive ? undefined : namespace.phase.toLowerCase(),
     })),
   ])
+
+  const onOverview = $derived(session.selectedKindId === OVERVIEW_KIND_ID)
 
   /** Kinds grouped by category, preserving the backend's ordering. */
   const sections = $derived.by(() => {
@@ -96,6 +98,42 @@
 
   <!-- Resource tree -->
   <div class="min-h-0 flex-1 overflow-y-auto py-1.5">
+    <!-- The dashboard is pinned above the categories rather than filed inside
+         one: it is not a kind, and it is where an operator starts. The badge
+         carries the assessment's own verdict, so the sidebar answers "is
+         anything wrong" from any view. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(OVERVIEW_KIND_ID)}
+        aria-current={onOverview ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-md px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onOverview
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <LayoutDashboard
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onOverview ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">Overview</span>
+        {#if session.issueCount > 0}
+          <span
+            class="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-label-small tabular-nums
+                   {session.hasCriticalIssues
+                     ? 'bg-error-container text-on-error-container'
+                     : 'bg-warning-container text-on-warning-container'}"
+            title="{session.issueCount} findings need attention"
+          >
+            <AlertTriangle class="size-3" strokeWidth={2.2} />
+            {session.issueCount}
+          </span>
+        {/if}
+      </button>
+    </div>
+
     {#if session.kinds.length === 0}
       <div class="flex flex-col items-center gap-2 px-4 py-8">
         <div class="size-8 animate-pulse rounded-full bg-surface-container-high"></div>

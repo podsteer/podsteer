@@ -135,6 +135,18 @@ func run() error {
 		return fmt.Errorf("wiring browse service: %w", err)
 	}
 
+	overviewService, err := application.NewOverviewService(application.OverviewServiceDeps{
+		Cluster:   kubernetes,
+		Workloads: kubernetes,
+		Events:    kubernetes,
+		Metrics:   kubernetes,
+		Registry:  registry,
+		Logger:    logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring overview service: %w", err)
+	}
+
 	managementService, err := application.NewManagementService(application.ManagementServiceDeps{
 		Management: kubernetes,
 		Logger:     logger,
@@ -162,6 +174,11 @@ func run() error {
 		browseService, browseService, browseService, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring browse API: %w", err)
+	}
+
+	overviewAPI, err := wailsadapter.NewOverviewAPI(overviewService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring overview API: %w", err)
 	}
 
 	managementAPI, err := wailsadapter.NewManagementAPI(managementService, desktop, logger)
@@ -214,6 +231,7 @@ func run() error {
 			clusterAPI,
 			workloadAPI,
 			browseAPI,
+			overviewAPI,
 			managementAPI,
 			terminalAPI,
 			systemAPI,
