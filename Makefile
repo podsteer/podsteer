@@ -46,7 +46,7 @@ BLUE   := \033[0;34m
 CYAN   := \033[0;36m
 NC     := \033[0m
 
-.PHONY: help dev build run open bindings test check web-build deps clean \
+.PHONY: help dev build run open bindings test check web-build embed-stub deps clean \
         tag tag-show-inner tag-patch-inner tag-minor-inner tag-major-inner \
         tag-rc-inner tag-main-inner bump-inner ensure-branch ensure-clean fetch
 
@@ -134,7 +134,12 @@ open: build
 	@open $(APP_BUNDLE)
 endif
 
-bindings: web-build
+# Bindings are generated from the Go types alone, so this deliberately does NOT
+# build the frontend. Building it first would deadlock the natural workflow:
+# adding a new bound API means the frontend imports bindings that do not exist
+# yet, so the build fails, so the bindings never get generated. A stub is all
+# the embed needs to compile.
+bindings: embed-stub
 	$(WAILS) generate module $(BUILD_TAGS)
 	@# Wails writes the go/ bindings 755 but copies the runtime/ files straight
 	@# out of Go's read-only module cache, so their permission bits vary by
@@ -145,6 +150,14 @@ bindings: web-build
 
 web-build:
 	$(NPM) --prefix web run build
+
+# Ensures the embed directory holds *something*, so `go build` and the bindings
+# run on a clean checkout. Never overwrites a real bundle.
+embed-stub:
+	@mkdir -p app/adapters/assets/dist
+	@test -f app/adapters/assets/dist/index.html || \
+		printf '<!doctype html><title>K8Sense</title><p>Run `make web-build`.\n' \
+			> app/adapters/assets/dist/index.html
 
 deps:
 	$(NPM) --prefix web install

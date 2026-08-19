@@ -15,14 +15,15 @@ import (
 func newWorkloadService(t *testing.T, kubernetes *fakeKubernetes, connect bool) *application.WorkloadService {
 	t.Helper()
 
-	session := application.NewSession()
+	registry := application.NewRegistry()
 	if connect {
-		session.Activate(mustCluster(t, "dev", true))
+		registry.Open(mustCluster(t, "dev", true))
 	}
 
 	service, err := application.NewWorkloadService(application.WorkloadServiceDeps{
-		Kubernetes: kubernetes,
-		Session:    session,
+		Workloads: kubernetes,
+		Metrics:   kubernetes,
+		Registry:  registry,
 	})
 	if err != nil {
 		t.Fatalf("NewWorkloadService() error = %v", err)
@@ -33,26 +34,30 @@ func newWorkloadService(t *testing.T, kubernetes *fakeKubernetes, connect bool) 
 func TestNewWorkloadServiceRejectsMissingDependencies(t *testing.T) {
 	t.Parallel()
 
+	shared := &fakeKubernetes{}
+
 	if _, err := application.NewWorkloadService(application.WorkloadServiceDeps{
-		Session: application.NewSession(),
+		Metrics:  shared,
+		Registry: application.NewRegistry(),
 	}); err == nil {
-		t.Error("NewWorkloadService() succeeded without a KubernetesPort, want an error")
+		t.Error("NewWorkloadService() succeeded without a WorkloadPort, want an error")
 	}
 
 	if _, err := application.NewWorkloadService(application.WorkloadServiceDeps{
-		Kubernetes: &fakeKubernetes{},
+		Workloads: shared,
+		Metrics:   shared,
 	}); err == nil {
-		t.Error("NewWorkloadService() succeeded without a Session, want an error")
+		t.Error("NewWorkloadService() succeeded without a Registry, want an error")
 	}
 }
 
-func TestListPodsRequiresAnActiveCluster(t *testing.T) {
+func TestListPodsRequiresAConnectedCluster(t *testing.T) {
 	t.Parallel()
 
 	service := newWorkloadService(t, &fakeKubernetes{}, false)
 
-	if _, err := service.ListPods(context.Background(), domain.NamespaceAll); !errors.Is(err, domain.ErrNoActiveCluster) {
-		t.Errorf("ListPods() error = %v, want %v", err, domain.ErrNoActiveCluster)
+	if _, err := service.ListPods(context.Background(), "dev", domain.NamespaceAll); !errors.Is(err, domain.ErrClusterNotConnected) {
+		t.Errorf("ListPods() error = %v, want %v", err, domain.ErrClusterNotConnected)
 	}
 }
 
@@ -69,7 +74,7 @@ func TestListPodsSortsByNamespaceThenName(t *testing.T) {
 	}}
 	service := newWorkloadService(t, kubernetes, true)
 
-	pods, err := service.ListPods(context.Background(), domain.NamespaceAll)
+	pods, err := service.ListPods(context.Background(), "dev", domain.NamespaceAll)
 	if err != nil {
 		t.Fatalf("ListPods() error = %v", err)
 	}
@@ -92,7 +97,7 @@ func TestListPodsPassesNamespaceThrough(t *testing.T) {
 	kubernetes := &fakeKubernetes{}
 	service := newWorkloadService(t, kubernetes, true)
 
-	if _, err := service.ListPods(context.Background(), "platform"); err != nil {
+	if _, err := service.ListPods(context.Background(), "dev", "platform"); err != nil {
 		t.Fatalf("ListPods() error = %v", err)
 	}
 
@@ -112,35 +117,46 @@ func TestListPodsPreservesPortErrorClassification(t *testing.T) {
 
 	service := newWorkloadService(t, &fakeKubernetes{podsErr: ports.ErrForbidden}, true)
 
-	_, err := service.ListPods(context.Background(), domain.NamespaceAll)
+	_, err := service.ListPods(context.Background(), "dev", domain.NamespaceAll)
 	if !errors.Is(err, ports.ErrForbidden) {
 		t.Errorf("ListPods() error = %v, want it to wrap %v", err, ports.ErrForbidden)
 	}
 }
 
-func TestSessionLifecycle(t *testing.T) {
+func TestRegistryLifecycle(t *testing.T) {
 	t.Parallel()
 
-	session := application.NewSession()
+	registry := application.NewRegistry()
 
-	if session.HasActive() {
-		t.Error("a fresh session must not report an active cluster")
+	if registry.Len() != 0 {
+		t.Error("a fresh registry must hold no connections")
 	}
-	if _, err := session.Active(); !errors.Is(err, domain.ErrNoActiveCluster) {
-		t.Errorf("Active() error = %v, want %v", err, domain.ErrNoActiveCluster)
-	}
-
-	session.Activate(mustCluster(t, "dev", true))
-	active, err := session.Active()
-	if err != nil {
-		t.Fatalf("Active() error = %v", err)
-	}
-	if active.ID() != "dev" {
-		t.Errorf("Active().ID() = %q, want %q", active.ID(), "dev")
+	if _, err := registry.Get("dev"); !errors.Is(err, domain.ErrClusterNotConnected) {
+		t.Errorf("Get() error = %v, want %v", err, domain.ErrClusterNotConnected)
 	}
 
-	session.Clear()
-	if session.HasActive() {
-		t.Error("Clear() left an active cluster behind")
+	registry.Open(mustCluster(t, "dev", true))
+	registry.Open(mustCluster(t, "prod", false))
+
+	// Connection order is what the tab bar renders, so it must be preserved.
+	all := registry.All()
+	if len(all) != 2 || all[0].ID() != "dev" || all[1].ID() != "prod" {
+		t.Fatalf("All() = %v, want [dev prod] in connection order", all)
+	}
+
+	// Reconnecting must refresh in place rather than move the tab.
+	registry.Open(mustCluster(t, "dev", true))
+	if all := registry.All(); len(all) != 2 || all[0].ID() != "dev" {
+		t.Errorf("reopening moved the tab: All() = %v", all)
+	}
+
+	if !registry.Close("dev") {
+		t.Error("Close() reported an open cluster as absent")
+	}
+	if registry.Close("dev") {
+		t.Error("Close() reported an already closed cluster as open")
+	}
+	if all := registry.All(); len(all) != 1 || all[0].ID() != "prod" {
+		t.Errorf("All() after close = %v, want [prod]", all)
 	}
 }

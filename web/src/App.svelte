@@ -1,59 +1,69 @@
 <!--
-  Application shell.
+  Application shell: the cluster tab bar, then whichever tab is in front.
 
-  Routing is a single conditional rather than a router: K8Sense has exactly two
-  states at this stage — no cluster connected, or one connected — and a router
-  would be scaffolding around a boolean. It earns its place once there are
-  sibling resource views to navigate between.
+  Routing is still a conditional rather than a router — the app has exactly two
+  states, picker or workspace, and the tab bar carries the navigation a router
+  would otherwise provide. It earns its place once views become linkable.
 -->
 <script lang="ts">
-  import Button from '$lib/components/Button.svelte'
-  import LinearProgress from '$lib/components/LinearProgress.svelte'
-  import TopAppBar from '$lib/components/TopAppBar.svelte'
-  import StatusIndicator from '$lib/components/StatusIndicator.svelte'
+  import ClusterTabs from '$lib/components/ClusterTabs.svelte'
+  import Splash from '$lib/components/Splash.svelte'
+  import StatusBar from '$lib/components/StatusBar.svelte'
   import ClusterView from '$pages/ClusterView.svelte'
-  import PodList from '$pages/PodList.svelte'
-  import { k8s } from '$stores/k8s.svelte'
+  import ClusterWorkspace from '$pages/ClusterWorkspace.svelte'
+  import { workspace } from '$stores/workspace.svelte'
+  import { loadAppInfo } from '$stores/system.svelte'
 
-  // Kick off discovery once, when the shell mounts, and release the store's
-  // timer and event subscriptions when it goes away.
+  /**
+   * The shortest time the splash stays up. Initialisation is faster than this
+   * on most machines, and appearing for a single frame reads as a fault, not
+   * as branding.
+   */
+  const MIN_SPLASH_MS = 900
+
+  /** False until the workspace has initialised and the splash has been seen. */
+  let booted = $state(false)
+
+  // Discover clusters once when the shell mounts, and release every tab's
+  // timer and the event subscription when it goes away.
   $effect(() => {
-    void k8s.initialise()
-    return () => k8s.dispose()
+    void loadAppInfo()
+    const minimum = new Promise((resolve) => setTimeout(resolve, MIN_SPLASH_MS))
+    void Promise.all([workspace.initialise(), minimum]).then(() => {
+      booted = true
+    })
+    return () => workspace.dispose()
   })
-
-  const subtitle = $derived.by(() => {
-    const cluster = k8s.activeCluster
-    if (!cluster) return 'Not connected'
-
-    const version = cluster.version ? ` · ${cluster.version}` : ''
-    return `${cluster.host}${version}`
-  })
-
-  const busy = $derived(k8s.podsStatus === 'loading' || k8s.clustersStatus === 'loading')
 </script>
 
 <div class="flex h-screen flex-col overflow-hidden bg-surface">
-  <TopAppBar title={k8s.activeCluster?.id ?? 'K8Sense'} {subtitle}>
-    {#snippet actions()}
-      {#if k8s.isConnected}
-        <StatusIndicator tone="success" label="Connected" compact />
-        <Button variant="text" onclick={k8s.disconnect}>Switch cluster</Button>
-      {/if}
-    {/snippet}
-  </TopAppBar>
-
-  <!-- Progress sits directly under the bar so a background refresh is visible
-       without the content it is refreshing being replaced by a spinner. -->
-  <LinearProgress active={busy} />
+  <ClusterTabs />
 
   <main class="flex min-h-0 flex-1 flex-col overflow-hidden">
-    {#if k8s.isConnected}
-      <PodList />
+    {#if workspace.active}
+      <!--
+        Keyed on the cluster id so switching tabs remounts the workspace. That
+        is what moves the auto-refresh timer with the tab and guarantees no
+        state — a search term, a scroll position, an open drawer — leaks from
+        one cluster's view into another's.
+      -->
+      {#key workspace.active.cluster.id}
+        <ClusterWorkspace session={workspace.active} />
+      {/key}
     {:else}
       <div class="min-h-0 flex-1 overflow-auto">
         <ClusterView />
       </div>
     {/if}
   </main>
+
+  <StatusBar />
+
+  <!--
+    Rendered last so it covers the chrome while booting; it fades itself out
+    (transition:fade) once booted flips and Svelte unmounts it.
+  -->
+  {#if !booted}
+    <Splash />
+  {/if}
 </div>

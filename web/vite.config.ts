@@ -63,6 +63,11 @@ export default defineConfig({
     sourcemap: false,
 
     reportCompressedSize: false,
+
+    // Desktop app loads from embedded assets (not network), so the bundle size
+    // warning threshold is higher than for web apps. CodeMirror + xterm.js
+    // are large but essential for the YAML editor and terminal.
+    chunkSizeWarningLimit: 1200,
   },
 
   server: {

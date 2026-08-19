@@ -6,30 +6,75 @@ import (
 	"k8sense/app/domain"
 )
 
-// ClusterService is the use-case surface for choosing and connecting to a
-// cluster, plus the cluster-scoped navigation the UI needs to build.
+// ClusterService is the use-case surface for choosing, connecting to and
+// describing clusters.
+//
+// Connections are plural on purpose: the UI shows one tab per connected
+// cluster, and closing a tab must not disturb the others.
 type ClusterService interface {
 	// ListClusters returns every cluster K8Sense knows about, in a stable
 	// order suitable for direct display.
 	ListClusters(ctx context.Context) ([]domain.Cluster, error)
 
-	// Connect verifies that the given cluster answers, then makes it the
-	// active cluster for subsequent resource queries. It returns the cluster
-	// enriched with the version its API server reported.
+	// Connect verifies that the given cluster answers, opens a connection to
+	// it and discovers its custom resource kinds. Connecting an already
+	// connected cluster is not an error — it refreshes it.
 	Connect(ctx context.Context, id domain.ClusterID) (domain.Cluster, error)
 
-	// ActiveCluster returns the currently connected cluster, or an error
-	// wrapping domain.ErrNoActiveCluster when Connect has not succeeded yet.
-	ActiveCluster(ctx context.Context) (domain.Cluster, error)
+	// Disconnect closes a connection and releases everything cached for it.
+	Disconnect(ctx context.Context, id domain.ClusterID) error
 
-	// ListNamespaces returns the namespaces of the active cluster.
-	ListNamespaces(ctx context.Context) ([]domain.Namespace, error)
+	// Connections returns the currently connected clusters, in the order they
+	// were connected, so the tab bar does not reorder itself on refresh.
+	Connections(ctx context.Context) ([]domain.Cluster, error)
+
+	// ListNamespaces returns the namespaces of a connected cluster.
+	ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error)
+
+	// ListNodes returns the nodes of a connected cluster.
+	ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error)
 }
 
-// WorkloadService is the use-case surface for reading workloads from the
-// active cluster.
+// NavigationService describes what a connected cluster can show.
+//
+// The navigator tree is built from this rather than hard-coded in the
+// frontend, so a cluster's own CRDs appear in it without a frontend change,
+// and a kind the credentials cannot read can be hidden centrally.
+type NavigationService interface {
+	// Kinds returns every browsable kind in the cluster, built-in first and
+	// then whatever discovery found.
+	Kinds(ctx context.Context, id domain.ClusterID) ([]domain.ResourceKind, error)
+}
+
+// WorkloadService is the use-case surface for reading workloads.
 type WorkloadService interface {
-	// ListPods returns the pods in the given namespace of the active cluster,
-	// or across every namespace when it is domain.NamespaceAll.
-	ListPods(ctx context.Context, namespace domain.NamespaceName) ([]domain.Pod, error)
+	// ListPods returns pods in the given namespace of a connected cluster,
+	// enriched with metrics where the cluster provides them.
+	ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error)
+
+	// ListWorkloads returns controllers of the given kind.
+	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error)
+
+	// ListPodsForWorkload returns all pods owned by a specific workload.
+	ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error)
+}
+
+// EventService is the use-case surface for reading Kubernetes Events.
+type EventService interface {
+	// ListEvents returns events most-recent first, since an event list is
+	// almost always read from the top.
+	ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Event, error)
+
+	// ListEventsForResource returns events for a specific resource.
+	ListEventsForResource(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind, name string) ([]domain.Event, error)
+}
+
+// ResourceService is the use-case surface for the generic browsing path.
+type ResourceService interface {
+	// ListTable returns objects of the given kind as a table. The kind is
+	// named by its ResourceKind.ID, which is what the navigator hands back.
+	ListTable(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName) (domain.ResourceTable, error)
+
+	// GetManifest returns one object as YAML.
+	GetManifest(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, name string) (string, error)
 }

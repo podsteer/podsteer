@@ -36,25 +36,80 @@ func NewWorkloadAPI(workloads ports.WorkloadService, app *App, logger *slog.Logg
 	}, nil
 }
 
-// ListPods returns the pods of the active cluster in the given namespace.
+// ListPods returns pods in the given namespace of a connected cluster.
 //
-// An empty namespace lists across every namespace the credentials can see,
-// mirroring `kubectl get pods --all-namespaces`.
-func (w *WorkloadAPI) ListPods(namespace string) ([]Pod, error) {
+// An empty namespace lists across all of them, mirroring
+// `kubectl get pods --all-namespaces`.
+func (w *WorkloadAPI) ListPods(clusterID, namespace string) ([]Pod, error) {
 	ctx, cancel := w.app.requestContext()
 	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(w.logger, "ListPods", err)
+	}
 
 	name, err := domain.NewNamespaceName(namespace)
 	if err != nil {
 		return nil, apiError(w.logger, "ListPods", err)
 	}
 
-	pods, err := w.workloads.ListPods(ctx, name)
+	pods, err := w.workloads.ListPods(ctx, id, name)
 	if err != nil {
 		return nil, apiError(w.logger, "ListPods", err)
 	}
 
 	// A single reference time for the whole list, so ages stay consistent
 	// across rows instead of drifting by the microseconds the loop takes.
+	return toPods(pods, time.Now()), nil
+}
+
+// ListWorkloads returns controllers of the given kind.
+//
+// The kind arrives as its display name — "Deployment", "StatefulSet" — which
+// is what the navigator already holds, so the frontend needs no second
+// vocabulary for the same six things.
+func (w *WorkloadAPI) ListWorkloads(clusterID, kind, namespace string) ([]Workload, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(w.logger, "ListWorkloads", err)
+	}
+
+	name, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return nil, apiError(w.logger, "ListWorkloads", err)
+	}
+
+	workloads, err := w.workloads.ListWorkloads(ctx, id, domain.WorkloadKind(kind), name)
+	if err != nil {
+		return nil, apiError(w.logger, "ListWorkloads", err)
+	}
+
+	return toWorkloads(workloads, time.Now()), nil
+}
+
+// ListPodsForWorkload returns all pods owned by a specific workload.
+func (w *WorkloadAPI) ListPodsForWorkload(clusterID, namespace, kind, name string) ([]Pod, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(w.logger, "ListPodsForWorkload", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return nil, apiError(w.logger, "ListPodsForWorkload", err)
+	}
+
+	pods, err := w.workloads.ListPodsForWorkload(ctx, id, ns, domain.WorkloadKind(kind), name)
+	if err != nil {
+		return nil, apiError(w.logger, "ListPodsForWorkload", err)
+	}
+
 	return toPods(pods, time.Now()), nil
 }

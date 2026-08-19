@@ -1,0 +1,220 @@
+package k8s
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/yaml"
+
+	"k8sense/app/domain"
+)
+
+// tableMediaType asks the API server to render objects as a table.
+//
+// This is the same mechanism kubectl uses for its output: the server decides
+// the columns and formats the cells. K8Sense leans on it for every kind it has
+// no purpose-built model for, which is what makes a freshly installed
+// operator's CRDs browsable without anyone writing code for them — and what
+// keeps the columns right when a CRD changes its printer columns.
+const tableMediaType = "application/json;as=Table;v=v1;g=meta.k8s.io"
+
+// tableListLimit caps a single generic list. Some CRDs hold enormous
+// collections, and a browser that fetches all of them stalls the window.
+const tableListLimit = 1000
+
+// ListTable returns objects of the given kind rendered as a table.
+func (a *Adapter) ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName) (domain.ResourceTable, error) {
+	op := fmt.Sprintf("listing %s in %q of %q", kind.Resource, namespace, id)
+
+	set, err := a.factory.clientsFor(id)
+	if err != nil {
+		return domain.ResourceTable{}, err
+	}
+
+	restClient := set.discovery.RESTClient()
+	if restClient == nil {
+		return domain.ResourceTable{}, fmt.Errorf("%s: no REST client available", op)
+	}
+
+	// includeObject=Metadata makes the server attach each row's object
+	// metadata. Without it a row is only rendered cells, and K8Sense would
+	// have to guess which column holds the name in order to link the row —
+	// a guess that breaks on any CRD whose printer puts the name elsewhere.
+	body, err := restClient.Get().
+		AbsPath(resourcePath(kind, namespace, "")).
+		SetHeader("Accept", tableMediaType).
+		Param("includeObject", "Metadata").
+		Param("limit", fmt.Sprint(tableListLimit)).
+		DoRaw(ctx)
+	if err != nil {
+		return domain.ResourceTable{}, classify(op, err)
+	}
+
+	var table metav1.Table
+	if err := json.Unmarshal(body, &table); err != nil {
+		return domain.ResourceTable{}, fmt.Errorf("%s: decoding table: %w", op, err)
+	}
+
+	return mapTable(kind, &table)
+}
+
+// GetManifest returns one object serialised as YAML.
+func (a *Adapter) GetManifest(ctx context.Context, ref domain.ResourceRef) (string, error) {
+	op := fmt.Sprintf("reading manifest of %s in %q", ref, ref.ClusterID)
+
+	set, err := a.factory.clientsFor(ref.ClusterID)
+	if err != nil {
+		return "", err
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    ref.Kind.Group,
+		Version:  ref.Kind.Version,
+		Resource: ref.Kind.Resource,
+	}
+
+	var client = set.dynamic.Resource(gvr)
+	object, err := func() (any, error) {
+		if ref.Kind.Namespaced {
+			return client.Namespace(ref.Namespace.String()).Get(ctx, ref.Name, metav1.GetOptions{})
+		}
+		return client.Get(ctx, ref.Name, metav1.GetOptions{})
+	}()
+	if err != nil {
+		return "", classify(op, err)
+	}
+
+	// Marshal through JSON: unstructured objects are map[string]any, and
+	// sigs.k8s.io/yaml round-trips them through encoding/json so that the
+	// field ordering and types match what the API server returned.
+	encoded, err := json.Marshal(object)
+	if err != nil {
+		return "", fmt.Errorf("%s: encoding object: %w", op, err)
+	}
+
+	manifest, err := yaml.JSONToYAML(encoded)
+	if err != nil {
+		return "", fmt.Errorf("%s: converting to YAML: %w", op, err)
+	}
+
+	return string(manifest), nil
+}
+
+// resourcePath builds the API path for a kind, optionally naming one object.
+//
+// The core group lives under /api and everything else under /apis — a
+// distinction Kubernetes has carried since v1 and the single most common
+// source of hand-built path bugs.
+func resourcePath(kind domain.ResourceKind, namespace domain.NamespaceName, name string) string {
+	var builder strings.Builder
+
+	if kind.Group == "" {
+		builder.WriteString("/api/")
+		builder.WriteString(kind.Version)
+	} else {
+		builder.WriteString("/apis/")
+		builder.WriteString(kind.Group)
+		builder.WriteString("/")
+		builder.WriteString(kind.Version)
+	}
+
+	if kind.Namespaced && !namespace.IsAll() {
+		builder.WriteString("/namespaces/")
+		builder.WriteString(namespace.String())
+	}
+
+	builder.WriteString("/")
+	builder.WriteString(kind.Resource)
+
+	if name != "" {
+		builder.WriteString("/")
+		builder.WriteString(name)
+	}
+
+	return builder.String()
+}
+
+// mapTable translates a server-printed table into the domain projection.
+func mapTable(kind domain.ResourceKind, table *metav1.Table) (domain.ResourceTable, error) {
+	columns := make([]domain.TableColumn, 0, len(table.ColumnDefinitions))
+	for _, definition := range table.ColumnDefinitions {
+		columns = append(columns, domain.TableColumn{
+			Name:        definition.Name,
+			Type:        definition.Type,
+			Priority:    definition.Priority,
+			Description: definition.Description,
+		})
+	}
+
+	rows := make([]domain.TableRow, 0, len(table.Rows))
+	for i := range table.Rows {
+		row := &table.Rows[i]
+
+		cells := make([]string, 0, len(row.Cells))
+		for _, cell := range row.Cells {
+			cells = append(cells, renderCell(cell))
+		}
+
+		name, namespace := rowIdentity(row)
+		rows = append(rows, domain.TableRow{
+			Name:      name,
+			Namespace: namespace,
+			Cells:     cells,
+		})
+	}
+
+	return domain.NewResourceTable(kind, columns, rows), nil
+}
+
+// rowIdentity extracts a row's name and namespace from its attached metadata.
+//
+// Falls back to the empty string rather than failing: a row whose object could
+// not be decoded is still worth displaying, it just cannot be clicked through
+// to a detail view.
+func rowIdentity(row *metav1.TableRow) (string, domain.NamespaceName) {
+	if len(row.Object.Raw) == 0 {
+		return "", domain.NamespaceAll
+	}
+
+	var partial metav1.PartialObjectMetadata
+	if err := json.Unmarshal(row.Object.Raw, &partial); err != nil {
+		return "", domain.NamespaceAll
+	}
+
+	namespace, err := domain.NewNamespaceName(partial.Namespace)
+	if err != nil {
+		namespace = domain.NamespaceAll
+	}
+
+	return partial.Name, namespace
+}
+
+// renderCell converts a table cell to its display string.
+//
+// Cells arrive as arbitrary JSON values because a printer column can be any
+// type. A nil cell renders as an em dash rather than "<nil>", which is what
+// fmt would otherwise produce and what would then appear in the UI.
+func renderCell(cell any) string {
+	switch value := cell.(type) {
+	case nil:
+		return "—"
+	case string:
+		return value
+	case float64:
+		// JSON numbers decode as float64. Integers are the overwhelmingly
+		// common case in printer columns (replica counts, ports), and
+		// rendering them as "3" rather than "3.000000" matters.
+		if value == float64(int64(value)) {
+			return fmt.Sprintf("%d", int64(value))
+		}
+		return fmt.Sprintf("%g", value)
+	case bool:
+		return fmt.Sprintf("%t", value)
+	default:
+		return fmt.Sprint(value)
+	}
+}

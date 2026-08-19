@@ -7,6 +7,8 @@
   anything reimplemented here.
 -->
 <script lang="ts">
+  import { ChevronDown } from '@lucide/svelte'
+
   interface Option {
     value: string
     label: string
@@ -32,9 +34,11 @@
   }
 </script>
 
-<label class="relative block {className}">
+<label class="group relative block {className}">
   <span
-    class="absolute -top-2 left-3 z-10 bg-surface px-1 text-body-small text-on-surface-variant"
+    class="absolute -top-2 left-2.5 z-10 rounded bg-surface-container-low px-1 text-[10px]
+           font-medium uppercase tracking-wide text-on-surface-variant/70
+           transition-colors duration-100 group-focus-within:text-primary"
   >
     {label}
   </span>
@@ -43,10 +47,10 @@
     {value}
     {disabled}
     onchange={handleChange}
-    class="no-drag h-14 w-full appearance-none rounded-xs border border-outline bg-transparent
-           py-2 pr-10 pl-4 text-body-large text-on-surface
-           transition-colors duration-150 ease-standard
-           hover:border-on-surface focus:border-primary focus:outline-none
+    class="no-drag h-10 w-full appearance-none rounded-lg border border-outline-variant/60 bg-transparent
+           py-1.5 pr-8 pl-3 text-body-medium text-on-surface
+           transition-all duration-150 ease-standard
+           hover:border-outline focus:border-primary focus:shadow-sm focus:outline-none
            disabled:pointer-events-none disabled:opacity-38"
   >
     {#each options as option (option.value)}
@@ -56,18 +60,9 @@
     {/each}
   </select>
 
-  <!-- Trailing chevron. Inline SVG keeps the app free of an icon font, which
-       would be another asset to embed for a handful of glyphs. -->
-  <svg
-    class="pointer-events-none absolute top-1/2 right-3 size-5 -translate-y-1/2 text-on-surface-variant"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    aria-hidden="true"
-  >
-    <path d="m6 9 6 6 6-6" />
-  </svg>
+  <ChevronDown
+    class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2
+           text-on-surface-variant/60 transition-colors duration-100 group-focus-within:text-primary"
+    strokeWidth={2}
+  />
 </label>

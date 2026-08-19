@@ -145,6 +145,18 @@ type Pod struct {
 	Restarts int32 `json:"restarts"`
 	// IsHealthy reports whether the pod is doing what it should.
 	IsHealthy bool `json:"isHealthy"`
+	// ControlledBy names the controlling owner as "Kind/name". Empty for a
+	// bare pod, which is itself worth knowing: nothing will recreate it.
+	ControlledBy string `json:"controlledBy"`
+	// QoSClass is Guaranteed, Burstable or BestEffort — the eviction order
+	// under node pressure.
+	QoSClass string `json:"qosClass"`
+	// CPU is measured usage in cores, or an em dash when unmeasured.
+	CPU string `json:"cpu"`
+	// Memory is measured working-set memory, or an em dash.
+	Memory string `json:"memory"`
+	// HasMetrics distinguishes a measured zero from no metrics-server.
+	HasMetrics bool `json:"hasMetrics"`
 	// Containers are the pod's containers.
 	Containers []Container `json:"containers"`
 	// Labels are the pod's labels.
@@ -189,6 +201,11 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 		TotalContainers: pod.TotalContainers(),
 		Restarts:        pod.RestartCount(),
 		IsHealthy:       pod.IsHealthy(),
+		ControlledBy:    ownerLabel(pod.Controller()),
+		QoSClass:        string(pod.QoSClass()),
+		CPU:             formatCores(pod.Usage()),
+		Memory:          formatMemory(pod.Usage()),
+		HasMetrics:      !pod.Usage().IsZero(),
 		Containers:      containers,
 		Labels:          labels,
 		CreatedAt:       formatTime(pod.CreatedAt()),
@@ -221,6 +238,20 @@ type ClusterUnreachableEvent struct {
 	Reason string `json:"reason"`
 	// At is when the attempt failed, in RFC 3339.
 	At string `json:"at"`
+}
+
+// LogLineEvent is the payload of the "log:line" event.
+type LogLineEvent struct {
+	// StreamID identifies the log stream (returned by StreamLogs).
+	StreamID string `json:"streamId"`
+	// Line is the log line text (may include timestamp prefix).
+	Line string `json:"line"`
+}
+
+// LogEndEvent is the payload of the "log:end" event.
+type LogEndEvent struct {
+	// StreamID identifies the log stream that ended.
+	StreamID string `json:"streamId"`
 }
 
 // formatTime renders t as RFC 3339 in UTC, or "" when it is unset.

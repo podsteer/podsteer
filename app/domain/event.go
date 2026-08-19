@@ -1,71 +1,161 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
-// EventName is the stable, transport-agnostic name of a domain event.
-//
-// These strings cross the process boundary: the Svelte frontend subscribes to
-// them by name through the Wails event bus. Treat them as public API and
-// version them rather than renaming in place.
-type EventName string
+// EventType classifies a Kubernetes Event.
+type EventType string
 
 const (
-	// EventClusterConnected is raised when a cluster's API server has been
-	// reached and identified.
-	EventClusterConnected EventName = "cluster:connected"
-
-	// EventClusterUnreachable is raised when a cluster that K8Sense tried to
-	// reach did not answer.
-	EventClusterUnreachable EventName = "cluster:unreachable"
+	// EventNormal reports something expected.
+	EventNormal EventType = "Normal"
+	// EventWarning reports something that went wrong. These are the ones worth
+	// surfacing: a cluster emits thousands of Normal events an hour and none of
+	// them need anybody's attention.
+	EventWarning EventType = "Warning"
 )
 
-// Event is something noteworthy that happened in the domain.
-//
-// Events let the application layer tell the UI about state changes it did not
-// ask for, which is what a desktop client needs: connection state moves on its
-// own, whereas a pod list only ever changes because somebody requested it.
-type Event interface {
-	// Name identifies the kind of event.
-	Name() EventName
-	// OccurredAt is when the event happened, in UTC.
-	OccurredAt() time.Time
+// NewEventType maps a raw API type onto the known set, defaulting to Normal.
+func NewEventType(raw string) EventType {
+	if strings.EqualFold(strings.TrimSpace(raw), string(EventWarning)) {
+		return EventWarning
+	}
+	return EventNormal
 }
 
-// ClusterConnected records that a cluster was successfully reached.
-type ClusterConnected struct {
-	// Cluster is the cluster as it stood when contact succeeded, carrying the
-	// version its API server reported.
-	Cluster Cluster
-	// At is when contact succeeded.
-	At time.Time
-}
-
-// Name implements Event.
-func (e ClusterConnected) Name() EventName { return EventClusterConnected }
-
-// OccurredAt implements Event.
-func (e ClusterConnected) OccurredAt() time.Time { return e.At.UTC() }
-
-// ClusterUnreachable records a failed attempt to reach a cluster.
-type ClusterUnreachable struct {
-	// ClusterID is the cluster that did not answer.
+// EventSpec carries the data needed to build an Event.
+type EventSpec struct {
+	// Name is the event object's own name. Required.
+	Name string
+	// Namespace is the event's namespace. Required.
+	Namespace NamespaceName
+	// ClusterID is the cluster it was read from. Required.
 	ClusterID ClusterID
-	// Reason is a human-readable explanation, safe to show to the operator.
+	// Type classifies the event.
+	Type EventType
+	// Reason is the short machine-readable cause, e.g. "BackOff".
 	Reason string
-	// At is when the attempt failed.
-	At time.Time
+	// Message is the human-readable description.
+	Message string
+	// InvolvedKind is the kind of object the event is about.
+	InvolvedKind string
+	// InvolvedName is the name of the object the event is about.
+	InvolvedName string
+	// Source is the component that emitted it, e.g. "kubelet".
+	Source string
+	// Count is how many times the event has repeated.
+	Count int32
+	// FirstSeen is when the event first occurred.
+	FirstSeen time.Time
+	// LastSeen is when it most recently occurred. This, not FirstSeen, is what
+	// an event list sorts by — a warning that fired once an hour ago matters
+	// less than one still firing now.
+	LastSeen time.Time
 }
 
-// Name implements Event.
-func (e ClusterUnreachable) Name() EventName { return EventClusterUnreachable }
+// Event is a Kubernetes Event as observed at a point in time.
+//
+// Note the name: within K8Sense, domain.Event means a Kubernetes Event.
+// The application's own internal notifications are DomainEvent.
+type Event struct {
+	name         string
+	namespace    NamespaceName
+	clusterID    ClusterID
+	eventType    EventType
+	reason       string
+	message      string
+	involvedKind string
+	involvedName string
+	source       string
+	count        int32
+	firstSeen    time.Time
+	lastSeen     time.Time
+}
 
-// OccurredAt implements Event.
-func (e ClusterUnreachable) OccurredAt() time.Time { return e.At.UTC() }
+// NewEvent validates spec and returns the corresponding Event.
+func NewEvent(spec EventSpec) (Event, error) {
+	name := strings.TrimSpace(spec.Name)
+	if name == "" {
+		return Event{}, ErrEmptyResourceName
+	}
+	if spec.ClusterID.IsZero() {
+		return Event{}, ErrEmptyClusterID
+	}
 
-// Compile-time proof that both events satisfy Event. Cheap insurance: the
-// interface is only ever consumed through an outbound port, so a missing
-// method would otherwise surface as a confusing failure at the wiring site.
-var (
-	_ Event = ClusterConnected{}
-	_ Event = ClusterUnreachable{}
-)
+	eventType := spec.Type
+	if eventType == "" {
+		eventType = EventNormal
+	}
+
+	return Event{
+		name:         name,
+		namespace:    spec.Namespace,
+		clusterID:    spec.ClusterID,
+		eventType:    eventType,
+		reason:       spec.Reason,
+		message:      strings.TrimSpace(spec.Message),
+		involvedKind: spec.InvolvedKind,
+		involvedName: spec.InvolvedName,
+		source:       spec.Source,
+		count:        spec.Count,
+		firstSeen:    spec.FirstSeen.UTC(),
+		lastSeen:     spec.LastSeen.UTC(),
+	}, nil
+}
+
+// Name returns the event object's name.
+func (e Event) Name() string { return e.name }
+
+// Namespace returns the event's namespace.
+func (e Event) Namespace() NamespaceName { return e.namespace }
+
+// ClusterID returns the cluster it was read from.
+func (e Event) ClusterID() ClusterID { return e.clusterID }
+
+// Type classifies the event.
+func (e Event) Type() EventType { return e.eventType }
+
+// Reason returns the short machine-readable cause.
+func (e Event) Reason() string { return e.reason }
+
+// Message returns the human-readable description.
+func (e Event) Message() string { return e.message }
+
+// InvolvedKind returns the kind of object the event is about.
+func (e Event) InvolvedKind() string { return e.involvedKind }
+
+// InvolvedName returns the name of the object the event is about.
+func (e Event) InvolvedName() string { return e.involvedName }
+
+// Source returns the component that emitted the event.
+func (e Event) Source() string { return e.source }
+
+// Count returns how many times the event has repeated.
+func (e Event) Count() int32 { return e.count }
+
+// FirstSeen returns when the event first occurred, in UTC.
+func (e Event) FirstSeen() time.Time { return e.firstSeen }
+
+// LastSeen returns when the event most recently occurred, in UTC.
+func (e Event) LastSeen() time.Time { return e.lastSeen }
+
+// IsWarning reports whether the event describes something going wrong.
+func (e Event) IsWarning() bool { return e.eventType == EventWarning }
+
+// Age returns how long ago the event was last seen.
+func (e Event) Age(now time.Time) time.Duration {
+	if e.lastSeen.IsZero() {
+		return 0
+	}
+	return now.Sub(e.lastSeen)
+}
+
+// InvolvedObject renders the subject as "Kind/name" for display.
+func (e Event) InvolvedObject() string {
+	if e.involvedKind == "" {
+		return e.involvedName
+	}
+	return e.involvedKind + "/" + e.involvedName
+}

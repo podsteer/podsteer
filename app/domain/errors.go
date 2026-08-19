@@ -34,4 +34,16 @@ var (
 	// ErrEmptyContainerName is returned when a container is constructed
 	// without a name.
 	ErrEmptyContainerName = errors.New("container name must not be empty")
+
+	// ErrInvalidResourceKind is returned when a resource kind identifier is
+	// malformed or names a kind the cluster does not serve.
+	ErrInvalidResourceKind = errors.New("invalid resource kind")
+
+	// ErrEmptyResourceName is returned when a resource is constructed without
+	// a name.
+	ErrEmptyResourceName = errors.New("resource name must not be empty")
+
+	// ErrClusterNotConnected reports that an operation was attempted against a
+	// cluster K8Sense has not connected to.
+	ErrClusterNotConnected = errors.New("cluster not connected")
 )

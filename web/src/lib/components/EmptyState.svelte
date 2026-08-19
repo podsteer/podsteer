@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
+  import { Inbox } from '@lucide/svelte'
 
   interface Props {
     title: string
@@ -22,24 +23,14 @@
 <div
   class="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center {className}"
 >
-  <svg
-    class="size-10 text-on-surface-variant opacity-60"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="1.5"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    aria-hidden="true"
-  >
-    <path d="M21 8 12 3 3 8v8l9 5 9-5V8Z" />
-    <path d="m3 8 9 5 9-5M12 13v8" />
-  </svg>
+  <div class="grid size-14 place-items-center rounded-2xl bg-surface-container">
+    <Inbox class="size-7 text-on-surface-variant/50" strokeWidth={1.3} />
+  </div>
 
-  <h2 class="text-title-medium text-on-surface">{title}</h2>
+  <h2 class="text-title-medium font-semibold text-on-surface">{title}</h2>
 
   {#if description}
-    <p class="max-w-md text-body-medium text-on-surface-variant">{description}</p>
+    <p class="max-w-md text-body-medium text-on-surface-variant/70">{description}</p>
   {/if}
 
   {#if action}

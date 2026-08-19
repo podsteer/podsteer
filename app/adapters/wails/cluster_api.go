@@ -14,6 +14,9 @@ import (
 // Wails binds this struct's exported methods as `ClusterAPI.ListClusters()`
 // and so on, generating matching TypeScript. Method names and signatures are
 // therefore public API.
+//
+// Every method that touches a cluster takes its id: the UI holds one tab per
+// connected cluster and the backend keeps no notion of which one is in front.
 type ClusterAPI struct {
 	clusters ports.ClusterService
 	app      *App
@@ -43,7 +46,8 @@ func NewClusterAPI(clusters ports.ClusterService, app *App, logger *slog.Logger)
 // ListClusters returns every cluster in the local kubeconfig.
 //
 // This is the one call that works before anything is connected, so it is what
-// the frontend uses to populate the cluster picker at launch.
+// the frontend uses to populate the cluster picker at launch. Clusters already
+// open are returned carrying their version, so the picker can mark them.
 func (c *ClusterAPI) ListClusters() ([]Cluster, error) {
 	ctx, cancel := c.app.requestContext()
 	defer cancel()
@@ -56,11 +60,10 @@ func (c *ClusterAPI) ListClusters() ([]Cluster, error) {
 	return toClusters(clusters), nil
 }
 
-// Connect verifies that the given cluster answers and makes it active.
+// Connect opens a cluster and returns it enriched with its server version.
 //
-// It returns the cluster enriched with the version its API server reported,
-// which is what lets the UI show a version badge immediately rather than
-// issuing a second call for it.
+// Connecting an already open cluster refreshes it rather than failing, so the
+// frontend can call this to reconnect a tab whose credentials expired.
 func (c *ClusterAPI) Connect(clusterID string) (Cluster, error) {
 	ctx, cancel := c.app.requestContext()
 	defer cancel()
@@ -78,36 +81,77 @@ func (c *ClusterAPI) Connect(clusterID string) (Cluster, error) {
 	return toCluster(cluster), nil
 }
 
-// ActiveCluster returns the currently connected cluster, or null when none is.
-//
-// "Nothing connected yet" is the normal state at launch, not a failure, so it
-// is reported as a null result rather than a rejected promise — otherwise the
-// frontend would have to catch an exception on its very first render.
-func (c *ClusterAPI) ActiveCluster() (*Cluster, error) {
+// Disconnect closes a cluster, for when the operator closes its tab.
+func (c *ClusterAPI) Disconnect(clusterID string) error {
 	ctx, cancel := c.app.requestContext()
 	defer cancel()
 
-	cluster, err := c.clusters.ActiveCluster(ctx)
+	id, err := domain.NewClusterID(clusterID)
 	if err != nil {
-		if errors.Is(err, domain.ErrNoActiveCluster) {
-			return nil, nil
-		}
-		return nil, apiError(c.logger, "ActiveCluster", err)
+		return apiError(c.logger, "Disconnect", err)
 	}
 
-	dto := toCluster(cluster)
-	return &dto, nil
+	if err := c.clusters.Disconnect(ctx, id); err != nil {
+		// Closing a tab for a cluster that is already gone is a race the UI
+		// should not have to handle, not an error worth showing.
+		if errors.Is(err, domain.ErrClusterNotConnected) {
+			return nil
+		}
+		return apiError(c.logger, "Disconnect", err)
+	}
+
+	return nil
 }
 
-// ListNamespaces returns the namespaces of the active cluster.
-func (c *ClusterAPI) ListNamespaces() ([]Namespace, error) {
+// Connections returns the open clusters, in the order they were opened.
+//
+// The frontend rebuilds its tab bar from this, which is why the order must be
+// stable: tabs that reshuffle are how somebody acts on the wrong cluster.
+func (c *ClusterAPI) Connections() ([]Cluster, error) {
 	ctx, cancel := c.app.requestContext()
 	defer cancel()
 
-	namespaces, err := c.clusters.ListNamespaces(ctx)
+	clusters, err := c.clusters.Connections(ctx)
+	if err != nil {
+		return nil, apiError(c.logger, "Connections", err)
+	}
+
+	return toClusters(clusters), nil
+}
+
+// ListNamespaces returns the namespaces of a connected cluster.
+func (c *ClusterAPI) ListNamespaces(clusterID string) ([]Namespace, error) {
+	ctx, cancel := c.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(c.logger, "ListNamespaces", err)
+	}
+
+	namespaces, err := c.clusters.ListNamespaces(ctx, id)
 	if err != nil {
 		return nil, apiError(c.logger, "ListNamespaces", err)
 	}
 
 	return toNamespaces(namespaces, time.Now()), nil
+}
+
+// ListNodes returns the nodes of a connected cluster, with usage where the
+// cluster provides metrics.
+func (c *ClusterAPI) ListNodes(clusterID string) ([]Node, error) {
+	ctx, cancel := c.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(c.logger, "ListNodes", err)
+	}
+
+	nodes, err := c.clusters.ListNodes(ctx, id)
+	if err != nil {
+		return nil, apiError(c.logger, "ListNodes", err)
+	}
+
+	return toNodes(nodes, time.Now()), nil
 }

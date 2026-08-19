@@ -45,6 +45,10 @@ const (
 	CodeInternal ErrorCode = "internal"
 )
 
+// errInvalidURL is raised when the frontend asks the shell to open something
+// that is not a plain http(s) address.
+var errInvalidURL = errors.New("invalid URL")
+
 // apiError logs the full failure and returns the sanitised error the frontend
 // receives.
 //
@@ -96,8 +100,13 @@ func classifyError(err error) (ErrorCode, string) {
 		return CodeCancelled, "the request was cancelled or timed out"
 
 	case errors.Is(err, domain.ErrEmptyClusterID),
-		errors.Is(err, domain.ErrInvalidNamespaceName):
+		errors.Is(err, domain.ErrInvalidNamespaceName),
+		errors.Is(err, domain.ErrInvalidResourceKind),
+		errors.Is(err, errInvalidURL):
 		return CodeInvalidInput, err.Error()
+
+	case errors.Is(err, domain.ErrClusterNotConnected):
+		return CodeNoActiveCluster, "that cluster is no longer connected"
 
 	default:
 		return CodeInternal, "an unexpected error occurred"

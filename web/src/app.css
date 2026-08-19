@@ -1,80 +1,195 @@
 @import 'tailwindcss';
 
 /*
- * K8Sense design system — Material Design 3 expressed as Tailwind v4 theme
- * tokens.
+ * K8Sense design system — Material Design 3 system tokens expressed as
+ * Tailwind v4 theme tokens, in a Google Blue scheme.
  *
  * Everything below maps an MD3 *system token* onto a Tailwind namespace, so
  * components are written against role names (`bg-surface-container`,
  * `text-on-surface-variant`) rather than raw colours. That indirection is the
- * whole point of MD3: swapping in a different scheme later means editing this
- * block and nothing else.
+ * whole point of MD3: the same markup renders in dark or light with no
+ * component ever knowing which.
  *
- * The app is dark-only by design. The Go side paints the window background
- * with the same surface colour and pins the macOS appearance to dark, so a
- * light scheme here would only produce a mismatched title bar. Adding one
- * later means defining the light values and relaxing both.
+ * Two themes ship: dark (the default) and light. The colour *values* live on
+ * :root as plain custom properties, one block per theme, selected by
+ * `data-theme` on <html>; `@theme inline` then points each Tailwind token at
+ * its variable, so a utility like `bg-surface` compiles to `var(--surface)`
+ * and follows the live theme. Success and warning are not MD3 roles — the
+ * spec stops at error — but cluster health is inherently three-valued, so
+ * they exist as first-class roles in both schemes, tuned to the same tonal
+ * relationships as the built-ins.
+ *
+ * The Go side paints the window with the dark surface colour before the
+ * webview renders; the splash screen shares that dark base, so a light-theme
+ * launch never flashes white at the frame.
  */
-@theme {
-  /* ---- MD3 colour roles: baseline dark scheme ------------------------ */
 
-  --color-primary: #d0bcff;
-  --color-on-primary: #381e72;
-  --color-primary-container: #4f378b;
-  --color-on-primary-container: #eaddff;
+/* ---- Google Blue scheme, dark (the default theme) ------------------------ */
+:root {
+  color-scheme: dark;
 
-  --color-secondary: #ccc2dc;
-  --color-on-secondary: #332d41;
-  --color-secondary-container: #4a4458;
-  --color-on-secondary-container: #e8def8;
+  --primary: #8ab4f8;
+  --on-primary: #00296b;
+  --primary-container: #0b57d0;
+  --on-primary-container: #c2e7ff;
 
-  --color-tertiary: #efb8c8;
-  --color-on-tertiary: #492532;
-  --color-tertiary-container: #633b48;
-  --color-on-tertiary-container: #ffd8e4;
+  --secondary: #ccc2dc;
+  --on-secondary: #332d41;
+  --secondary-container: #4a4458;
+  --on-secondary-container: #e8def8;
 
-  --color-error: #f2b8b5;
-  --color-on-error: #601410;
-  --color-error-container: #8c1d18;
-  --color-on-error-container: #f9dedc;
+  --tertiary: #efb8c8;
+  --on-tertiary: #492532;
+  --tertiary-container: #633b48;
+  --on-tertiary-container: #ffd8e4;
 
-  /*
-   * Success and warning are not MD3 roles — the spec stops at error. Cluster
-   * health is inherently three-valued though, so they are added here as
-   * first-class roles, tuned to the same tonal relationships as the built-in
-   * ones so they do not read as foreign.
-   */
-  --color-success: #8bd5a0;
-  --color-on-success: #00391c;
-  --color-success-container: #205230;
-  --color-on-success-container: #a6f0bb;
+  --error: #f2b8b5;
+  --on-error: #601410;
+  --error-container: #8c1d18;
+  --on-error-container: #f9dedc;
 
-  --color-warning: #f5c267;
-  --color-on-warning: #422c00;
-  --color-warning-container: #5e4100;
-  --color-on-warning-container: #ffdea6;
+  --success: #8bd5a0;
+  --on-success: #00391c;
+  --success-container: #205230;
+  --on-success-container: #a6f0bb;
+
+  --warning: #f5c267;
+  --on-warning: #422c00;
+  --warning-container: #5e4100;
+  --on-warning-container: #ffdea6;
 
   /* Surfaces. The container ladder replaces MD3's old elevation overlays:
      depth is expressed by picking a higher container tone, not by stacking
      translucent white. */
-  --color-surface: #141218;
-  --color-on-surface: #e6e0e9;
-  --color-surface-variant: #49454f;
-  --color-on-surface-variant: #cac4d0;
+  --surface: #141218;
+  --on-surface: #e6e0e9;
+  --surface-variant: #49454f;
+  --on-surface-variant: #cac4d0;
 
-  --color-surface-container-lowest: #0f0d13;
-  --color-surface-container-low: #1d1b20;
-  --color-surface-container: #211f26;
-  --color-surface-container-high: #2b2930;
-  --color-surface-container-highest: #36343b;
+  --surface-container-lowest: #0f0d13;
+  --surface-container-low: #1d1b20;
+  --surface-container: #211f26;
+  --surface-container-high: #2b2930;
+  --surface-container-highest: #36343b;
 
-  --color-outline: #938f99;
-  --color-outline-variant: #49454f;
+  --outline: #938f99;
+  --outline-variant: #49454f;
 
-  --color-inverse-surface: #e6e0e9;
-  --color-inverse-on-surface: #322f35;
-  --color-inverse-primary: #6750a4;
+  --inverse-surface: #e6e0e9;
+  --inverse-on-surface: #322f35;
+  --inverse-primary: #1a73e8;
+}
 
+/* ---- Google Blue scheme, light ------------------------------------------- */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --primary: #1a73e8;
+  --on-primary: #ffffff;
+  --primary-container: #d3e3fd;
+  --on-primary-container: #041e49;
+
+  --secondary: #625b71;
+  --on-secondary: #ffffff;
+  --secondary-container: #e8def8;
+  --on-secondary-container: #1d192b;
+
+  --tertiary: #7d5260;
+  --on-tertiary: #ffffff;
+  --tertiary-container: #ffd8e4;
+  --on-tertiary-container: #31111d;
+
+  --error: #ba1a1a;
+  --on-error: #ffffff;
+  --error-container: #f9dedc;
+  --on-error-container: #410e0b;
+
+  --success: #2c6e33;
+  --on-success: #ffffff;
+  --success-container: #b0efb1;
+  --on-success-container: #002204;
+
+  --warning: #795900;
+  --on-warning: #ffffff;
+  --warning-container: #ffdf9e;
+  --on-warning-container: #261900;
+
+  --surface: #fef7ff;
+  --on-surface: #1d1b20;
+  --surface-variant: #e7e0ec;
+  --on-surface-variant: #49454f;
+
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #f7f2fa;
+  --surface-container: #f3edf7;
+  --surface-container-high: #ece6f0;
+  --surface-container-highest: #e6e0e9;
+
+  --outline: #79747e;
+  --outline-variant: #cac4d0;
+
+  --inverse-surface: #322f35;
+  --inverse-on-surface: #f5eff7;
+  --inverse-primary: #8ab4f8;
+}
+
+/*
+ * The Tailwind colour tokens themselves. `inline` makes each utility resolve
+ * to the custom property it references instead of a fixed value, which is the
+ * mechanism that lets one stylesheet serve both themes.
+ */
+@theme inline {
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+  --color-primary-container: var(--primary-container);
+  --color-on-primary-container: var(--on-primary-container);
+
+  --color-secondary: var(--secondary);
+  --color-on-secondary: var(--on-secondary);
+  --color-secondary-container: var(--secondary-container);
+  --color-on-secondary-container: var(--on-secondary-container);
+
+  --color-tertiary: var(--tertiary);
+  --color-on-tertiary: var(--on-tertiary);
+  --color-tertiary-container: var(--tertiary-container);
+  --color-on-tertiary-container: var(--on-tertiary-container);
+
+  --color-error: var(--error);
+  --color-on-error: var(--on-error);
+  --color-error-container: var(--error-container);
+  --color-on-error-container: var(--on-error-container);
+
+  --color-success: var(--success);
+  --color-on-success: var(--on-success);
+  --color-success-container: var(--success-container);
+  --color-on-success-container: var(--on-success-container);
+
+  --color-warning: var(--warning);
+  --color-on-warning: var(--on-warning);
+  --color-warning-container: var(--warning-container);
+  --color-on-warning-container: var(--on-warning-container);
+
+  --color-surface: var(--surface);
+  --color-on-surface: var(--on-surface);
+  --color-surface-variant: var(--surface-variant);
+  --color-on-surface-variant: var(--on-surface-variant);
+
+  --color-surface-container-lowest: var(--surface-container-lowest);
+  --color-surface-container-low: var(--surface-container-low);
+  --color-surface-container: var(--surface-container);
+  --color-surface-container-high: var(--surface-container-high);
+  --color-surface-container-highest: var(--surface-container-highest);
+
+  --color-outline: var(--outline);
+  --color-outline-variant: var(--outline-variant);
+
+  --color-inverse-surface: var(--inverse-surface);
+  --color-inverse-on-surface: var(--inverse-on-surface);
+  --color-inverse-primary: var(--inverse-primary);
+}
+
+@theme {
+  /* The scrim behind overlays is theme-independent. */
   --color-scrim: #000000;
 
   /* ---- MD3 shape scale ------------------------------------------------ */
@@ -218,7 +333,6 @@
 
 @layer base {
   :root {
-    color-scheme: dark;
     /* MD3 motion durations, kept as plain custom properties because Tailwind
        has no duration theme namespace — used as duration-[var(--…)]. */
     --duration-short: 150ms;
@@ -231,8 +345,8 @@
   }
 
   body {
-    background-color: var(--color-surface);
-    color: var(--color-on-surface);
+    background-color: var(--surface);
+    color: var(--on-surface);
     font-family: var(--font-sans);
     font-size: var(--text-body-medium);
     line-height: var(--text-body-medium--line-height);
@@ -258,15 +372,24 @@
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-primary);
+    outline: 2px solid var(--primary);
     outline-offset: 2px;
   }
 
-  /* A scrollbar that belongs to the dark scheme instead of the platform's
-     default light one, which is jarring against these surfaces. */
+  /* Hide WebKit's native search input clear/cancel button since we have our own. */
+  input[type="search"]::-webkit-search-cancel-button,
+  input[type="search"]::-webkit-search-decoration,
+  input[type="search"]::-webkit-search-results-button,
+  input[type="search"]::-webkit-search-results-decoration {
+    -webkit-appearance: none;
+    appearance: none;
+    display: none;
+  }
+
+  /* A minimal scrollbar that follows the theme and stays out of the way. */
   ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
   }
 
   ::-webkit-scrollbar-track {
@@ -274,14 +397,19 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background-color: var(--color-outline-variant);
-    border: 3px solid transparent;
+    background-color: var(--outline-variant);
+    border: 2px solid transparent;
     border-radius: 9999px;
     background-clip: content-box;
+    transition: background-color 0.15s;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background-color: var(--color-outline);
+    background-color: var(--outline);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
   }
 
   @media (prefers-reduced-motion: reduce) {

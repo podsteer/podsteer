@@ -18,39 +18,46 @@ func newClusterService(
 	kubeconfig *fakeKubeconfig,
 	kubernetes *fakeKubernetes,
 	events *recordingPublisher,
-) (*application.ClusterService, *application.Session) {
+) (*application.ClusterService, *application.Registry) {
 	t.Helper()
 
-	session := application.NewSession()
+	registry := application.NewRegistry()
 	service, err := application.NewClusterService(application.ClusterServiceDeps{
 		Kubeconfig: kubeconfig,
-		Kubernetes: kubernetes,
+		Cluster:    kubernetes,
+		Metrics:    kubernetes,
 		Events:     events,
-		Session:    session,
+		Registry:   registry,
+		Catalog:    domain.NewCatalog(),
 		// A fixed clock so event timestamps are assertable.
 		Now: func() time.Time { return time.Date(2026, 8, 17, 9, 0, 0, 0, time.UTC) },
 	})
 	if err != nil {
 		t.Fatalf("NewClusterService() error = %v", err)
 	}
-	return service, session
+	return service, registry
 }
 
 func TestNewClusterServiceRejectsMissingDependencies(t *testing.T) {
 	t.Parallel()
 
+	shared := &fakeKubernetes{}
 	full := application.ClusterServiceDeps{
 		Kubeconfig: &fakeKubeconfig{},
-		Kubernetes: &fakeKubernetes{},
+		Cluster:    shared,
+		Metrics:    shared,
 		Events:     &recordingPublisher{},
-		Session:    application.NewSession(),
+		Registry:   application.NewRegistry(),
+		Catalog:    domain.NewCatalog(),
 	}
 
 	tests := map[string]func(*application.ClusterServiceDeps){
 		"no kubeconfig port": func(d *application.ClusterServiceDeps) { d.Kubeconfig = nil },
-		"no kubernetes port": func(d *application.ClusterServiceDeps) { d.Kubernetes = nil },
+		"no cluster port":    func(d *application.ClusterServiceDeps) { d.Cluster = nil },
+		"no metrics port":    func(d *application.ClusterServiceDeps) { d.Metrics = nil },
 		"no event publisher": func(d *application.ClusterServiceDeps) { d.Events = nil },
-		"no session":         func(d *application.ClusterServiceDeps) { d.Session = nil },
+		"no registry":        func(d *application.ClusterServiceDeps) { d.Registry = nil },
+		"no catalog":         func(d *application.ClusterServiceDeps) { d.Catalog = nil },
 	}
 
 	for name, remove := range tests {
@@ -102,7 +109,7 @@ func TestConnectActivatesClusterAndPublishesEvent(t *testing.T) {
 	kubernetes := &fakeKubernetes{version: domain.ServerVersion{GitVersion: "v1.31.2", Platform: "linux/arm64"}}
 	events := &recordingPublisher{}
 
-	service, session := newClusterService(t, kubeconfig, kubernetes, events)
+	service, registry := newClusterService(t, kubeconfig, kubernetes, events)
 
 	connected, err := service.Connect(context.Background(), "dev")
 	if err != nil {
@@ -116,12 +123,12 @@ func TestConnectActivatesClusterAndPublishesEvent(t *testing.T) {
 		t.Error("returned cluster does not report as reachable")
 	}
 
-	active, err := session.Active()
+	active, err := registry.Get("dev")
 	if err != nil {
-		t.Fatalf("session.Active() error = %v", err)
+		t.Fatalf("registry.Get() error = %v", err)
 	}
 	if active.ID() != "dev" {
-		t.Errorf("active cluster = %q, want %q", active.ID(), "dev")
+		t.Errorf("open cluster = %q, want %q", active.ID(), "dev")
 	}
 
 	recorded := events.recorded()
@@ -152,7 +159,7 @@ func TestConnectFailureLeavesSessionUntouchedAndNotifies(t *testing.T) {
 	kubernetes := &fakeKubernetes{version: domain.ServerVersion{GitVersion: "v1.31.2"}}
 	events := &recordingPublisher{}
 
-	service, session := newClusterService(t, kubeconfig, kubernetes, events)
+	service, registry := newClusterService(t, kubeconfig, kubernetes, events)
 
 	if _, err := service.Connect(context.Background(), "dev"); err != nil {
 		t.Fatalf("Connect(dev) error = %v", err)
@@ -164,12 +171,11 @@ func TestConnectFailureLeavesSessionUntouchedAndNotifies(t *testing.T) {
 		t.Fatalf("Connect(prod) error = %v, want %v", err, ports.ErrUnreachable)
 	}
 
-	active, err := session.Active()
-	if err != nil {
-		t.Fatalf("session.Active() error = %v", err)
+	if _, err := registry.Get("prod"); err == nil {
+		t.Error("a cluster that did not answer must not be recorded as open")
 	}
-	if active.ID() != "dev" {
-		t.Errorf("active cluster = %q, want the previously connected %q", active.ID(), "dev")
+	if _, err := registry.Get("dev"); err != nil {
+		t.Errorf("the previously connected cluster was closed by an unrelated failure: %v", err)
 	}
 
 	recorded := events.recorded()
@@ -205,13 +211,13 @@ func TestConnectRejectsBlankID(t *testing.T) {
 	}
 }
 
-func TestListNamespacesRequiresAnActiveCluster(t *testing.T) {
+func TestListNamespacesRequiresAConnectedCluster(t *testing.T) {
 	t.Parallel()
 
 	service, _ := newClusterService(t, &fakeKubeconfig{}, &fakeKubernetes{}, &recordingPublisher{})
 
-	if _, err := service.ListNamespaces(context.Background()); !errors.Is(err, domain.ErrNoActiveCluster) {
-		t.Errorf("ListNamespaces() error = %v, want %v", err, domain.ErrNoActiveCluster)
+	if _, err := service.ListNamespaces(context.Background(), "dev"); !errors.Is(err, domain.ErrClusterNotConnected) {
+		t.Errorf("ListNamespaces() error = %v, want %v", err, domain.ErrClusterNotConnected)
 	}
 }
 
@@ -232,7 +238,7 @@ func TestListNamespacesSortsByNameAndTargetsActiveCluster(t *testing.T) {
 		t.Fatalf("Connect() error = %v", err)
 	}
 
-	namespaces, err := service.ListNamespaces(context.Background())
+	namespaces, err := service.ListNamespaces(context.Background(), "dev")
 	if err != nil {
 		t.Fatalf("ListNamespaces() error = %v", err)
 	}

@@ -32,4 +32,11 @@ var (
 	// ErrKubeconfigUnavailable means the local kubeconfig could not be read
 	// or parsed, so no cluster can be discovered.
 	ErrKubeconfigUnavailable = errors.New("kubeconfig unavailable")
+
+	// ErrMetricsUnavailable means the cluster serves no metrics API.
+	//
+	// This is an ordinary condition, not a fault: metrics-server is an add-on
+	// and plenty of clusters run without it. Callers are expected to carry on
+	// and render usage columns as unmeasured.
+	ErrMetricsUnavailable = errors.New("metrics API unavailable")
 )

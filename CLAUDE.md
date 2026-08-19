@@ -24,6 +24,38 @@ app/
 └── config/         environment-driven configuration
 ```
 
+## Multi-cluster is the core assumption
+
+K8Sense holds several clusters open at once — one per tab — so **no port or
+service has a notion of "the current cluster"**. Every call takes a
+`domain.ClusterID`. `application.Registry` tracks what is open (in connection
+order, which is the tab order); the frontend's `workspace.svelte.ts` mirrors it
+and `session.svelte.ts` holds one tab's state.
+
+If you find yourself wanting an "active cluster" in the backend, that is the
+signal you are about to break tabs.
+
+## Two tiers of resource support
+
+The navigator has to cover far more kinds than anyone can hand-model, so there
+are deliberately two paths:
+
+- **Rich kinds** — Pod, Node, the six workload controllers, Namespace, Event.
+  Purpose-built domain entities, derived status, chosen columns. Listed in
+  `domain/catalog.go` with `Rich: true`.
+- **Everything else** — served by `ResourcePort.ListTable`, which asks the API
+  server to print the objects as a table (the same mechanism behind
+  `kubectl get`). Columns come from the server, so a freshly installed
+  operator's CRDs are browsable with no code written for them.
+
+`domain/catalog.go` is the single source of truth for the navigator. Adding a
+section to the UI is an entry there, not a frontend change. Custom resources
+are appended per cluster by `DiscoverCustomKinds` — never globally, because two
+clusters run different operators.
+
+Metrics are optional by design: `ports.ErrMetricsUnavailable` is an ordinary
+condition, not a fault, and every list must render without metrics-server.
+
 Dependencies point inward. `app/domain` and `app/ports` import nothing outside
 the standard library; if either ever needs `client-go`, something has been
 wired backwards.
@@ -104,6 +136,9 @@ the webview (see the CSP in `web/index.html`).
 
 ## Domain quirks worth knowing
 
+- **`domain.Event` is a *Kubernetes* Event.** The application's own internal
+  notifications are `domain.DomainEvent`. Getting this backwards is easy and
+  the compiler will not always catch it.
 - **`PodPhaseTerminating` is not a Kubernetes phase.** A deleting pod keeps
   reporting `Running`; the mapper substitutes `Terminating` when
   `DeletionTimestamp` is set, as kubectl does.

@@ -114,7 +114,7 @@ func (a *App) requestContext() (context.Context, context.CancelFunc) {
 //
 // Failures are logged and dropped: an event is a notification, and no use case
 // should fail because the UI was not listening.
-func (a *App) Publish(_ context.Context, event domain.Event) {
+func (a *App) Publish(_ context.Context, event domain.DomainEvent) {
 	if event == nil {
 		return
 	}
@@ -136,12 +136,28 @@ func (a *App) Publish(_ context.Context, event domain.Event) {
 	wailsruntime.EventsEmit(runtimeCtx, string(event.Name()), payload)
 }
 
+// emit sends an event to the frontend.
+//
+// This is a low-level helper used by both Publish (for domain events) and
+// the management API (for log streaming). It handles the Wails runtime call
+// and logs any errors.
+func (a *App) emit(name string, payload any) {
+	runtimeCtx, ok := a.runtimeContext()
+	if !ok {
+		a.logger.Debug("dropping event, app context not initialized",
+			slog.String("event", name))
+		return
+	}
+
+	wailsruntime.EventsEmit(runtimeCtx, name, payload)
+}
+
 // toEventPayload converts a domain event into its wire payload.
 //
 // An unknown event type returns false rather than being emitted with a nil
 // payload, so a new domain event that nobody taught this adapter about shows
 // up as a log line instead of an undefined value in the frontend.
-func toEventPayload(event domain.Event) (any, bool) {
+func toEventPayload(event domain.DomainEvent) (any, bool) {
 	switch e := event.(type) {
 	case domain.ClusterConnected:
 		return ClusterConnectedEvent{

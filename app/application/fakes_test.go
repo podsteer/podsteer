@@ -55,12 +55,25 @@ type fakeKubernetes struct {
 	pods    []domain.Pod
 	podsErr error
 
+	nodes       []domain.Node
+	customKinds []domain.ResourceKind
+
+	workloads    []domain.Workload
+	workloadsErr error
+
+	podUsage  map[string]domain.Metrics
+	nodeUsage map[string]domain.Metrics
+
 	mu               sync.Mutex
 	requestedCluster domain.ClusterID
 	requestedNS      domain.NamespaceName
 }
 
-var _ ports.KubernetesPort = (*fakeKubernetes)(nil)
+var (
+	_ ports.ClusterPort  = (*fakeKubernetes)(nil)
+	_ ports.WorkloadPort = (*fakeKubernetes)(nil)
+	_ ports.MetricsPort  = (*fakeKubernetes)(nil)
+)
 
 func (f *fakeKubernetes) ServerVersion(_ context.Context, id domain.ClusterID) (domain.ServerVersion, error) {
 	f.record(id, "")
@@ -86,6 +99,51 @@ func (f *fakeKubernetes) ListPods(_ context.Context, id domain.ClusterID, namesp
 	return append([]domain.Pod(nil), f.pods...), nil
 }
 
+func (f *fakeKubernetes) ListNodes(_ context.Context, id domain.ClusterID) ([]domain.Node, error) {
+	f.record(id, "")
+	return append([]domain.Node(nil), f.nodes...), nil
+}
+
+func (f *fakeKubernetes) DiscoverCustomKinds(_ context.Context, id domain.ClusterID) ([]domain.ResourceKind, error) {
+	f.record(id, "")
+	return append([]domain.ResourceKind(nil), f.customKinds...), nil
+}
+
+func (f *fakeKubernetes) ListWorkloads(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
+	f.record(id, namespace)
+	if f.workloadsErr != nil {
+		return nil, f.workloadsErr
+	}
+	return append([]domain.Workload(nil), f.workloads...), nil
+}
+
+// ListPodsForWorkload returns the fake's pods unfiltered: ownership is
+// resolved by the k8s adapter from label selectors, so there is nothing for a
+// port-level fake to filter on.
+func (f *fakeKubernetes) ListPodsForWorkload(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, _ domain.WorkloadKind, _ string) ([]domain.Pod, error) {
+	f.record(id, namespace)
+	if f.podsErr != nil {
+		return nil, f.podsErr
+	}
+	return append([]domain.Pod(nil), f.pods...), nil
+}
+
+// The fake reports no metrics API, which is the configuration the services
+// have to keep working under — so every test exercises that path by default.
+func (f *fakeKubernetes) PodMetrics(_ context.Context, _ domain.ClusterID, _ domain.NamespaceName) (map[string]domain.Metrics, error) {
+	if f.podUsage == nil {
+		return nil, ports.ErrMetricsUnavailable
+	}
+	return f.podUsage, nil
+}
+
+func (f *fakeKubernetes) NodeMetrics(_ context.Context, _ domain.ClusterID) (map[string]domain.Metrics, error) {
+	if f.nodeUsage == nil {
+		return nil, ports.ErrMetricsUnavailable
+	}
+	return f.nodeUsage, nil
+}
+
 func (f *fakeKubernetes) record(id domain.ClusterID, namespace domain.NamespaceName) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -103,21 +161,21 @@ func (f *fakeKubernetes) lastRequest() (domain.ClusterID, domain.NamespaceName) 
 // recordingPublisher captures the domain events a use case raises.
 type recordingPublisher struct {
 	mu     sync.Mutex
-	events []domain.Event
+	events []domain.DomainEvent
 }
 
 var _ ports.EventPublisher = (*recordingPublisher)(nil)
 
-func (p *recordingPublisher) Publish(_ context.Context, event domain.Event) {
+func (p *recordingPublisher) Publish(_ context.Context, event domain.DomainEvent) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, event)
 }
 
-func (p *recordingPublisher) recorded() []domain.Event {
+func (p *recordingPublisher) recorded() []domain.DomainEvent {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]domain.Event(nil), p.events...)
+	return append([]domain.DomainEvent(nil), p.events...)
 }
 
 // --- fixtures -------------------------------------------------------------

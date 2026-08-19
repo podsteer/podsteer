@@ -15,6 +15,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -26,10 +27,23 @@ import (
 
 	"k8sense/app/adapters/assets"
 	"k8sense/app/adapters/k8s"
+	"k8sense/app/adapters/macwindow"
 	wailsadapter "k8sense/app/adapters/wails"
 	"k8sense/app/application"
 	"k8sense/app/config"
+	"k8sense/app/domain"
 )
+
+// trafficLightVerticalNudge shifts macOS's traffic lights so they sit
+// centred in this app's own tab bar (ClusterTabs.svelte), rather than where
+// AppKit puts them by default for a standard, shorter title bar.
+//
+// This is a live-tuned constant, not a derived one — see
+// macwindow.NudgeTrafficLights for why there is no formula that gets there
+// from the tab bar's height alone. If the tab bar's height changes, or this
+// still looks off on a given macOS version, adjust this number and rebuild;
+// there is nothing else to change.
+const trafficLightVerticalNudge = 6.0
 
 // Main starts K8Sense and terminates the process on failure.
 //
@@ -78,14 +92,22 @@ func run() error {
 	desktop := wailsadapter.NewApp(logger, cfg.Kubernetes.RequestTimeout)
 
 	// --- Application (use cases) -----------------------------------------
+	//
+	// The registry holds every open cluster — one per tab — and the catalog
+	// holds what each of them can show, built-ins plus whatever CRDs discovery
+	// found. Both are shared by the services, which is why they are built here
+	// rather than inside any one of them.
 
-	session := application.NewSession()
+	registry := application.NewRegistry()
+	catalog := domain.NewCatalog()
 
 	clusterService, err := application.NewClusterService(application.ClusterServiceDeps{
 		Kubeconfig: kubernetes,
-		Kubernetes: kubernetes,
+		Cluster:    kubernetes,
+		Metrics:    kubernetes,
 		Events:     desktop,
-		Session:    session,
+		Registry:   registry,
+		Catalog:    catalog,
 		Logger:     logger,
 	})
 	if err != nil {
@@ -93,12 +115,32 @@ func run() error {
 	}
 
 	workloadService, err := application.NewWorkloadService(application.WorkloadServiceDeps{
-		Kubernetes: kubernetes,
-		Session:    session,
-		Logger:     logger,
+		Workloads: kubernetes,
+		Metrics:   kubernetes,
+		Registry:  registry,
+		Logger:    logger,
 	})
 	if err != nil {
 		return fmt.Errorf("wiring workload service: %w", err)
+	}
+
+	browseService, err := application.NewBrowseService(application.BrowseServiceDeps{
+		Resources: kubernetes,
+		Events:    kubernetes,
+		Registry:  registry,
+		Catalog:   catalog,
+		Logger:    logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring browse service: %w", err)
+	}
+
+	managementService, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: kubernetes,
+		Logger:     logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring management service: %w", err)
 	}
 
 	// --- Driving (inbound) adapters ---------------------------------------
@@ -114,6 +156,27 @@ func run() error {
 	workloadAPI, err := wailsadapter.NewWorkloadAPI(workloadService, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring workload API: %w", err)
+	}
+
+	browseAPI, err := wailsadapter.NewBrowseAPI(
+		browseService, browseService, browseService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring browse API: %w", err)
+	}
+
+	managementAPI, err := wailsadapter.NewManagementAPI(managementService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring management API: %w", err)
+	}
+
+	terminalAPI, err := wailsadapter.NewTerminalAPI(managementService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring terminal API: %w", err)
+	}
+
+	systemAPI, err := wailsadapter.NewSystemAPI(cfg.App.Name, cfg.App.Version, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring system API: %w", err)
 	}
 
 	frontend, err := assets.FS()
@@ -132,12 +195,17 @@ func run() error {
 
 		AssetServer: &assetserver.Options{Assets: frontend},
 
-		// Matches the frontend's dark surface colour. Without it the webview
+		// Matches the frontend's dark surface colour, which the splash screen
+		// shares regardless of the operator's theme. Without it the webview
 		// paints white for the frame or two before the first render, which
 		// reads as a flash every launch.
 		BackgroundColour: &options.RGBA{R: 20, G: 18, B: 24, A: 1},
 
-		OnStartup:  desktop.OnStartup,
+		OnStartup: func(ctx context.Context) {
+			desktop.OnStartup(ctx)
+			// No-op on every platform but macOS. See trafficLightVerticalNudge.
+			macwindow.NudgeTrafficLights(trafficLightVerticalNudge)
+		},
 		OnShutdown: desktop.OnShutdown,
 
 		// Everything bound here becomes callable from TypeScript, and Wails
@@ -145,6 +213,10 @@ func run() error {
 		Bind: []any{
 			clusterAPI,
 			workloadAPI,
+			browseAPI,
+			managementAPI,
+			terminalAPI,
+			systemAPI,
 		},
 
 		// Only one K8Sense should hold the kubeconfig and its client caches;
@@ -156,8 +228,11 @@ func run() error {
 		Mac: &mac.Options{
 			// An inset title bar lets the UI's own header double as the drag
 			// region, which is the native-feeling MD3 layout on macOS.
-			TitleBar:   mac.TitleBarHiddenInset(),
-			Appearance: mac.NSAppearanceNameDarkAqua,
+			TitleBar: mac.TitleBarHiddenInset(),
+			// No appearance pin: the frontend offers a light/dark toggle and
+			// there is no runtime handle to re-pin NSAppearance with it, so
+			// the window frame follows the OS instead of contradicting one
+			// of the two themes.
 			About: &mac.AboutInfo{
 				Title:   cfg.App.Title,
 				Message: "A fast, native Kubernetes client.\nVersion " + cfg.App.Version,

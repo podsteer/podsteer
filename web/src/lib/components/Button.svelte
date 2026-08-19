@@ -1,15 +1,19 @@
 <!--
-  MD3 common button.
+  Action button.
 
   Covers the four variants K8Sense uses. Each is a full literal class string in
   the map below rather than an interpolated one, because Tailwind resolves
   classes by scanning source text — a string assembled at runtime would not be
   generated into the stylesheet.
+
+  The shape is a compact, small-radius rectangle rather than MD3's tall pill:
+  this is a desktop tool, where smaller squarer buttons read as actions rather
+  than touch targets. Icon buttons stay circular.
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
 
-  /** MD3 button emphasis levels. */
+  /** Button emphasis levels. */
   type Variant = 'filled' | 'tonal' | 'outlined' | 'text'
 
   interface Props {
@@ -54,8 +58,8 @@
   disabled={isInert}
   aria-label={label}
   aria-busy={loading}
-  class="state-layer no-drag inline-flex h-10 shrink-0 items-center justify-center gap-2
-         rounded-full px-6 text-label-large whitespace-nowrap
+  class="state-layer no-drag inline-flex h-8 shrink-0 items-center justify-center gap-2
+         rounded-xs px-4 text-label-large whitespace-nowrap
          transition-[box-shadow,opacity] duration-150 ease-standard
          disabled:pointer-events-none disabled:opacity-38
          {VARIANT_CLASSES[variant]} {className}"

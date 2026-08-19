@@ -5,9 +5,12 @@ import (
 	"sync"
 
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 
 	"k8sense/app/domain"
 	"k8sense/app/ports"
@@ -76,7 +79,30 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-// clientFactory builds and caches one Kubernetes client per cluster.
+// clients is the set of API clients K8Sense needs against one cluster.
+//
+// They are built and cached together because they all derive from the same
+// REST config and the same expensive credential resolution. Building them
+// lazily one at a time would pay that cost several times over for a single
+// cluster.
+type clients struct {
+	// typed serves the built-in kinds with compile-time-checked types.
+	typed kubernetes.Interface
+	// dynamic serves any kind, including custom resources, as unstructured
+	// objects. It is what makes the navigator's long tail work.
+	dynamic dynamic.Interface
+	// discovery enumerates what the API server actually serves, which is how
+	// a cluster's CRDs are found.
+	discovery discovery.DiscoveryInterface
+	// metrics reads the metrics.k8s.io API. Present even on clusters without
+	// metrics-server — calls simply fail, which callers expect.
+	metrics metricsclient.Interface
+	// config is retained for requests that bypass the typed clients, notably
+	// the server-side table printing used by the generic browser.
+	config *rest.Config
+}
+
+// clientFactory builds and caches one client set per cluster.
 //
 // The cache is the point. Building a client parses the kubeconfig, resolves
 // TLS material and, for cloud providers, executes a credential plugin as a
@@ -89,14 +115,14 @@ type clientFactory struct {
 	cfg Config
 
 	mu      sync.RWMutex
-	clients map[domain.ClusterID]kubernetes.Interface
+	clients map[domain.ClusterID]*clients
 }
 
 // newClientFactory returns a factory that builds clients according to cfg.
 func newClientFactory(cfg Config) *clientFactory {
 	return &clientFactory{
 		cfg:     cfg.withDefaults(),
-		clients: make(map[domain.ClusterID]kubernetes.Interface),
+		clients: make(map[domain.ClusterID]*clients),
 	}
 }
 
@@ -154,26 +180,26 @@ func (f *clientFactory) restConfig(id domain.ClusterID) (*rest.Config, error) {
 	return cfg, nil
 }
 
-// clientFor returns the cached client for id, building it on first use.
-func (f *clientFactory) clientFor(id domain.ClusterID) (kubernetes.Interface, error) {
+// clientsFor returns the cached client set for id, building it on first use.
+func (f *clientFactory) clientsFor(id domain.ClusterID) (*clients, error) {
 	if id.IsZero() {
 		return nil, domain.ErrEmptyClusterID
 	}
 
 	f.mu.RLock()
-	client, ok := f.clients[id]
+	cached, ok := f.clients[id]
 	f.mu.RUnlock()
 	if ok {
-		return client, nil
+		return cached, nil
 	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// Re-check: another goroutine may have built this client while we waited
-	// for the write lock.
-	if client, ok := f.clients[id]; ok {
-		return client, nil
+	// Re-check: another goroutine may have built this set while we waited for
+	// the write lock.
+	if cached, ok := f.clients[id]; ok {
+		return cached, nil
 	}
 
 	cfg, err := f.restConfig(id)
@@ -184,14 +210,53 @@ func (f *clientFactory) clientFor(id domain.ClusterID) (kubernetes.Interface, er
 	// Construction happens under the write lock, which serialises concurrent
 	// first-connects to *different* clusters. That is intentional: it costs a
 	// few hundred milliseconds once, and it stops a UI that opens several
-	// views at once from spawning duplicate credential plugin processes.
-	built, err := kubernetes.NewForConfig(cfg)
+	// tabs at once from spawning duplicate credential plugin processes.
+	typed, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("creating client for %q: %w", id, err)
 	}
 
+	// The dynamic client speaks JSON only — protobuf has no representation for
+	// unstructured objects — so it gets a config of its own rather than
+	// inheriting the protobuf negotiation set in restConfig.
+	dynamicConfig := rest.CopyConfig(cfg)
+	dynamicConfig.ContentType = "application/json"
+	dynamicConfig.AcceptContentTypes = "application/json"
+
+	dyn, err := dynamic.NewForConfig(dynamicConfig)
+	if err != nil {
+		return nil, fmt.Errorf("creating dynamic client for %q: %w", id, err)
+	}
+
+	disco, err := discovery.NewDiscoveryClientForConfig(dynamicConfig)
+	if err != nil {
+		return nil, fmt.Errorf("creating discovery client for %q: %w", id, err)
+	}
+
+	metrics, err := metricsclient.NewForConfig(dynamicConfig)
+	if err != nil {
+		return nil, fmt.Errorf("creating metrics client for %q: %w", id, err)
+	}
+
+	built := &clients{
+		typed:     typed,
+		dynamic:   dyn,
+		discovery: disco,
+		metrics:   metrics,
+		config:    dynamicConfig,
+	}
+
 	f.clients[id] = built
 	return built, nil
+}
+
+// clientFor returns just the typed client, which most call sites need.
+func (f *clientFactory) clientFor(id domain.ClusterID) (kubernetes.Interface, error) {
+	set, err := f.clientsFor(id)
+	if err != nil {
+		return nil, err
+	}
+	return set.typed, nil
 }
 
 // invalidate drops the cached client for id, so the next call rebuilds it.

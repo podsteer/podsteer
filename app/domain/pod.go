@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 )
@@ -122,6 +123,16 @@ type PodSpec struct {
 	Containers []Container
 	// Labels are the pod's labels.
 	Labels map[string]string
+	// Owners are the pod's owner references. The controlling one is what the
+	// "Controlled By" column shows.
+	Owners []OwnerReference
+	// QoSClass is the scheduling quality-of-service class Kubernetes assigned:
+	// Guaranteed, Burstable or BestEffort. It is derived from the pod's
+	// requests and limits, and decides what gets evicted first under pressure.
+	QoSClass QoSClass
+	// Usage is the pod's measured resource consumption, unmeasured on a
+	// cluster without metrics-server.
+	Usage Metrics
 	// CreatedAt is the object creation timestamp.
 	CreatedAt time.Time
 }
@@ -141,6 +152,9 @@ type Pod struct {
 	podIP      string
 	containers []Container
 	labels     map[string]string
+	owners     []OwnerReference
+	qosClass   QoSClass
+	usage      Metrics
 	createdAt  time.Time
 }
 
@@ -185,6 +199,9 @@ func NewPod(spec PodSpec) (Pod, error) {
 		podIP:      spec.PodIP,
 		containers: containers,
 		labels:     maps.Clone(spec.Labels),
+		owners:     slices.Clone(spec.Owners),
+		qosClass:   spec.QoSClass,
+		usage:      spec.Usage,
 		createdAt:  spec.CreatedAt.UTC(),
 	}, nil
 }
@@ -217,6 +234,19 @@ func (p Pod) Containers() []Container {
 
 // Labels returns a copy of the pod's labels, preserving immutability.
 func (p Pod) Labels() map[string]string { return maps.Clone(p.labels) }
+
+// Owners returns a copy of the pod's owner references.
+func (p Pod) Owners() []OwnerReference { return slices.Clone(p.owners) }
+
+// Controller returns the owner that controls this pod, or the zero value for
+// a bare pod nothing will recreate.
+func (p Pod) Controller() OwnerReference { return Controller(p.owners) }
+
+// QoSClass returns the scheduling quality-of-service class.
+func (p Pod) QoSClass() QoSClass { return p.qosClass }
+
+// Usage returns the pod's measured resource consumption.
+func (p Pod) Usage() Metrics { return p.usage }
 
 // CreatedAt returns the creation timestamp in UTC.
 func (p Pod) CreatedAt() time.Time { return p.createdAt }
@@ -299,4 +329,39 @@ func (p Pod) Age(now time.Time) time.Duration {
 		return 0
 	}
 	return now.Sub(p.createdAt)
+}
+
+// QoSClass is the quality-of-service class the scheduler assigned to a pod.
+//
+// It is derived by Kubernetes from the pod's resource requests and limits, and
+// it decides eviction order under node pressure — which makes it one of the
+// few pieces of static metadata worth a column in a list.
+type QoSClass string
+
+const (
+	// QoSGuaranteed pods have equal requests and limits on every container.
+	// They are evicted last.
+	QoSGuaranteed QoSClass = "Guaranteed"
+	// QoSBurstable pods request less than their limit.
+	QoSBurstable QoSClass = "Burstable"
+	// QoSBestEffort pods set neither requests nor limits. They are evicted
+	// first, which is why an unexpected BestEffort in production is worth
+	// noticing.
+	QoSBestEffort QoSClass = "BestEffort"
+	// QoSUnknown covers anything unrecognised.
+	QoSUnknown QoSClass = ""
+)
+
+// NewQoSClass maps a raw API value onto the known set.
+func NewQoSClass(raw string) QoSClass {
+	switch QoSClass(strings.TrimSpace(raw)) {
+	case QoSGuaranteed:
+		return QoSGuaranteed
+	case QoSBurstable:
+		return QoSBurstable
+	case QoSBestEffort:
+		return QoSBestEffort
+	default:
+		return QoSUnknown
+	}
 }

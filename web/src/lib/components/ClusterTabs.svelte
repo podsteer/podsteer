@@ -1,0 +1,216 @@
+<!--
+  The cluster tab bar.
+
+  Each open cluster gets a tab, and the bar doubles as the window's drag region
+  on macOS — hence `drag-region` here and `no-drag` on every control inside it.
+
+  Tabs keep the order they were opened in and never reshuffle. That is a
+  correctness property, not a cosmetic one: a tab that moves under the cursor
+  is how somebody restarts a deployment on the wrong cluster.
+
+  A Home tab always sits first, pinned ahead of the scrollable cluster tabs,
+  so returning to the picker never depends on how many tabs are open or how
+  far the strip has scrolled. The "+" tab stays at the tail end of the actual
+  clusters, because adding one is an action on that list, not a peer of it.
+
+  Refresh, the theme toggle and Settings live at the right of this same bar
+  rather than in each workspace's own toolbar: they are the controls an
+  operator reaches for no matter which tab — or the picker — is in front, so
+  they belong somewhere that does not remount when the tab does.
+
+  Tabs are square on top, not rounded — a rounded tab reads as a chip or a
+  button floating on the surface; square keeps it looking like part of the
+  same sheet as the content below it, which is what a tab actually is.
+
+  On macOS the leading padding reserves room for the traffic lights, plus a
+  second, equal-sized gap after them so the Home tab does not sit flush
+  against the window controls. In native fullscreen the traffic lights are
+  gone and so is the reason for that padding, so it collapses to the same
+  `px-3` inset the navigator uses for its own content, and "K8Sense" fills
+  the space instead of leaving it blank — sitting in the exact column the
+  sidebar's text sits in below it, rather than an arbitrary one.
+
+  The traffic lights' vertical position is native AppKit chrome fixed by
+  `mac.TitleBarHiddenInset()` — nothing in this file's CSS can move them.
+  Wails v2 has no supported API for it (see wailsapp/wails#4227, open as of
+  this writing); the only real fix is repositioning the NSWindow's standard
+  window buttons from native Go/Cgo code, which this app does not currently
+  have any of.
+-->
+<script lang="ts">
+  import { isMac } from '$lib/platform'
+  import { workspace } from '$stores/workspace.svelte'
+  import { preferences } from '$stores/preferences.svelte'
+  import { windowState } from '$stores/windowState.svelte'
+  import SettingsDialog from './SettingsDialog.svelte'
+  import { Home, Server, Plus, X, RefreshCw, Moon, Sun, Settings } from '@lucide/svelte'
+
+  let settingsOpen = $state(false)
+
+  /** Dot colour by connection health, so a dead tab is visible at a glance. */
+  function toneFor(reachable: boolean): string {
+    return reachable ? 'bg-success' : 'bg-error'
+  }
+
+  /**
+   * Leading padding for the drag region.
+   *
+   * `pl-[100px]` clears the traffic-light cluster (~80px) plus a second,
+   * matching ~20px gap so the Home tab is not flush against it — the same
+   * balance as the gap between the window's own edge and the lights. That
+   * reasoning stops applying the moment fullscreen hides the lights, at
+   * which point `pl-3` takes over — the same inset the navigator's own
+   * content uses, so "K8Sense" lines up with the sidebar text under it.
+   */
+  const leadingPadding = $derived(isMac && !windowState.isFullscreen ? 'pl-[100px]' : 'pl-3')
+</script>
+
+<div
+  class="drag-region flex h-10 shrink-0 items-stretch border-b border-outline-variant/60
+         bg-surface-container-lowest {leadingPadding} pr-2"
+>
+  {#if isMac && windowState.isFullscreen}
+    <!-- Fullscreen took the traffic lights, and the space reserved for them,
+         with it — reclaim that space rather than leave it blank. The extra
+         pl-1.5 on top of the bar's own pl-3 is this label's alone, so the
+         Home tab and everything else that relies on pl-3 to line up with
+         the sidebar is unaffected. -->
+    <div
+      class="flex shrink-0 items-center pr-3 pl-1.5 text-label-large font-bold text-on-surface"
+      aria-hidden="true"
+    >
+      K8Sense
+    </div>
+  {/if}
+
+  <!-- Home tab: always present, always in the same place. -->
+  <button
+    type="button"
+    onclick={workspace.showPicker}
+    title="Home"
+    aria-label="Home"
+    aria-current={workspace.activeClusterId === null ? 'page' : undefined}
+    class="no-drag flex h-full shrink-0 items-center justify-center px-3
+           transition-all duration-150 ease-standard
+           {workspace.activeClusterId === null
+             ? 'bg-surface-container border-b-2 border-primary text-primary shadow-sm'
+             : 'text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface'}"
+  >
+    <Home class="size-4" strokeWidth={1.8} />
+  </button>
+
+  <!-- Scrollable cluster tabs -->
+  <div class="flex min-w-0 flex-1 items-stretch gap-0.5 overflow-x-auto">
+    {#each workspace.sessions as session (session.cluster.id)}
+      {@const active = session.cluster.id === workspace.activeClusterId}
+
+      <div class="group relative flex items-center" role="presentation">
+        <button
+          type="button"
+          onclick={() => workspace.focus(session.cluster.id)}
+          title="{session.cluster.id} — {session.cluster.host}"
+          aria-current={active ? 'page' : undefined}
+          class="no-drag flex h-full max-w-52 items-center gap-2 px-3
+                 text-label-medium transition-all duration-150 ease-standard
+                 {active
+                   ? 'bg-surface-container border-b-2 border-primary text-on-surface shadow-sm'
+                   : 'text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface'}"
+        >
+          <Server
+            class="size-3.5 shrink-0 {active ? 'text-primary' : 'text-on-surface-variant/60'}"
+            strokeWidth={1.8}
+          />
+          <span
+            class="size-1.5 shrink-0 rounded-full {toneFor(session.cluster.isReachable)}"
+            aria-hidden="true"
+          ></span>
+          <span class="truncate">{session.cluster.id}</span>
+        </button>
+
+        <!-- Close button -->
+        <button
+          type="button"
+          onclick={() => workspace.close(session.cluster.id)}
+          aria-label="Close {session.cluster.id}"
+          class="state-layer no-drag absolute right-0.5 grid size-5 place-items-center rounded-full
+                 text-on-surface-variant opacity-0 transition-opacity duration-100
+                 group-hover:opacity-100 focus-visible:opacity-100
+                 hover:bg-surface-container-high hover:text-on-surface
+                 {active ? 'opacity-60' : ''}"
+        >
+          <X class="size-3" strokeWidth={2.5} />
+        </button>
+      </div>
+    {/each}
+  </div>
+
+  <!-- Add cluster button: tail end of the actual clusters. -->
+  {#if workspace.sessions.length > 0}
+    <button
+      type="button"
+      onclick={workspace.showPicker}
+      aria-label="Open a cluster"
+      title="Open a cluster"
+      class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-md
+             text-on-surface-variant transition-colors duration-100
+             hover:bg-surface-container-high hover:text-on-surface"
+    >
+      <Plus class="size-4" strokeWidth={2} />
+    </button>
+  {/if}
+
+  <div class="mx-1 h-5 w-px shrink-0 self-center bg-outline-variant/60" aria-hidden="true"></div>
+
+  <!-- Refresh: acts on whichever tab is in front. Nothing to refresh on the
+       picker, so it is disabled rather than hidden — its position stays put. -->
+  <button
+    type="button"
+    onclick={() => void workspace.active?.refresh()}
+    disabled={!workspace.active}
+    aria-label="Refresh"
+    title="Refresh  ⌘R"
+    class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-md
+           text-on-surface-variant transition-colors duration-100
+           hover:bg-surface-container-high hover:text-on-surface
+           disabled:pointer-events-none disabled:opacity-30
+           {workspace.active?.status === 'loading' ? 'animate-spin' : ''}"
+  >
+    <RefreshCw class="size-4" strokeWidth={1.8} />
+  </button>
+
+  <!-- Theme toggle -->
+  <button
+    type="button"
+    onclick={preferences.toggleTheme}
+    aria-label="Switch to {preferences.theme === 'dark' ? 'light' : 'dark'} mode"
+    title="Switch to {preferences.theme === 'dark' ? 'light' : 'dark'} mode"
+    class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-md
+           text-on-surface-variant transition-colors duration-100
+           hover:bg-surface-container-high hover:text-on-surface"
+  >
+    {#if preferences.theme === 'dark'}
+      <Moon class="size-4" strokeWidth={1.8} />
+    {:else}
+      <Sun class="size-4" strokeWidth={1.8} />
+    {/if}
+  </button>
+
+  <!-- Settings -->
+  <button
+    type="button"
+    onclick={() => (settingsOpen = true)}
+    aria-label="Settings"
+    title="Settings"
+    class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-md
+           text-on-surface-variant transition-colors duration-100
+           hover:bg-surface-container-high hover:text-on-surface"
+  >
+    <Settings class="size-4" strokeWidth={1.8} />
+  </button>
+</div>
+
+<SettingsDialog
+  open={settingsOpen}
+  onclose={() => (settingsOpen = false)}
+  onrefresh={() => void workspace.active?.refresh()}
+/>
