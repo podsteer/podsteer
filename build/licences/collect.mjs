@@ -136,6 +136,19 @@ function run(command, args, options = {}) {
 }
 
 /**
+ * The module being built, as Go itself reports it.
+ *
+ * Asked rather than assumed. This exclusion used to be the literal string
+ * `podsteer@`, which stopped matching the moment the module was renamed to its
+ * import path — and the failure mode was not a missing exclusion but a policy
+ * violation, because the project then entered its own shipped inventory with
+ * no classifiable licence. Nothing obliges you to credit yourself.
+ */
+function goMainModule(repoRoot) {
+  return run('go', ['list', '-m'], { cwd: repoRoot }).trim()
+}
+
+/**
  * Lists the modules linked into the binary for one platform.
  *
  * CGO_ENABLED=1 is explicit and required. Cross-GOOS invocations default it to
@@ -144,7 +157,7 @@ function run(command, args, options = {}) {
  * darwin and linux. `go list` never invokes a C compiler, so no cross
  * toolchain is needed to ask the question.
  */
-function goModulesFor(repoRoot, platform) {
+function goModulesFor(repoRoot, platform, mainModule) {
   const args = ['list', '-deps']
   if (platform.tags.length > 0) args.push('-tags', platform.tags.join(','))
   args.push('-f', MODULE_TEMPLATE, './...')
@@ -163,7 +176,7 @@ function goModulesFor(repoRoot, platform) {
     output
       .split('\n')
       .map((line) => line.trim())
-      .filter((line) => line && line !== '@' && !line.startsWith('podsteer@')),
+      .filter((line) => line && line !== '@' && !line.startsWith(`${mainModule}@`)),
   )
 }
 
@@ -297,10 +310,12 @@ export function collect(repoRoot) {
   // --- Go ------------------------------------------------------------------
   const modCache = run('go', ['env', 'GOMODCACHE'], { cwd: repoRoot }).trim()
 
+  const mainModule = goMainModule(repoRoot)
+
   const shippedGo = new Set()
   const perPlatform = {}
   for (const platform of PLATFORMS) {
-    const modules = goModulesFor(repoRoot, platform)
+    const modules = goModulesFor(repoRoot, platform, mainModule)
     perPlatform[`${platform.GOOS}/${platform.GOARCH}`] = modules.size
     for (const entry of modules) shippedGo.add(entry)
   }
@@ -311,7 +326,7 @@ export function collect(repoRoot) {
     run('go', ['list', '-m', '-f', '{{.Path}}@{{.Version}}', 'all'], { cwd: repoRoot })
       .split('\n')
       .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith('podsteer@')),
+      .filter((line) => line && !line.startsWith(`${mainModule}@`)),
   )
 
   // `go list -m all` reports the whole module GRAPH, which includes modules
