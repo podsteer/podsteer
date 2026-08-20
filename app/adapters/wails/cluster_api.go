@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"podsteer/app/domain"
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // ClusterAPI exposes the cluster use cases to the frontend.

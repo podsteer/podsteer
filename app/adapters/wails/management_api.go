@@ -9,8 +9,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"podsteer/app/application"
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/application"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // generateStreamID creates a unique identifier for a log stream.

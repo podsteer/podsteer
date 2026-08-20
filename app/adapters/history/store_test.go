@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"podsteer/app/adapters/history"
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/adapters/history"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 func sample(at time.Time, cpu int64) domain.Sample {

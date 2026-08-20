@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // newPodSpec returns a valid spec that individual tests mutate, so each case

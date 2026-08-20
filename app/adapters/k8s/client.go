@@ -12,8 +12,8 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 
-	"podsteer/app/domain"
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // Default client tuning. See package documentation for the reasoning.

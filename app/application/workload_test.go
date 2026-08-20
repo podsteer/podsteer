@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"podsteer/app/application"
-	"podsteer/app/domain"
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/application"
+	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // newWorkloadService wires a workload service sharing session with a connected

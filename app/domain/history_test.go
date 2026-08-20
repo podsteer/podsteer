@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 func TestRetentionClampsToSupportedRange(t *testing.T) {

@@ -1,4 +1,4 @@
-module podsteer
+module github.com/podsteer/podsteer
 
 go 1.26.0
 

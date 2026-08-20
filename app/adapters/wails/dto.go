@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // The types below are the frontend API contract. Wails generates TypeScript

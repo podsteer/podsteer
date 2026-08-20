@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // tableMediaType asks the API server to render objects as a table.

@@ -5,7 +5,7 @@ import (
 	"slices"
 	"sync"
 
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // Registry tracks which clusters PodSteer currently has open.

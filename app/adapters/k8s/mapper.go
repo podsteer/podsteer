@@ -11,7 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apiversion "k8s.io/apimachinery/pkg/version"
 
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // This file is the anti-corruption layer between Kubernetes API types and the

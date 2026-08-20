@@ -10,7 +10,7 @@
 // The real entry point, including all dependency wiring, is app/cmd/main.go.
 package main
 
-import "podsteer/app/cmd"
+import "github.com/podsteer/podsteer/app/cmd"
 
 func main() {
 	cmd.Main()

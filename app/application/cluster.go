@@ -9,8 +9,8 @@ import (
 	"slices"
 	"time"
 
-	"podsteer/app/domain"
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // ClusterServiceDeps are the collaborators ClusterService needs.

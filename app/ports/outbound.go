@@ -5,7 +5,7 @@ import (
 	"io"
 	"time"
 
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // Every port below takes the cluster id explicitly rather than being bound to

@@ -26,14 +26,14 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 
-	"podsteer/app/adapters/assets"
-	historystore "podsteer/app/adapters/history"
-	"podsteer/app/adapters/k8s"
-	"podsteer/app/adapters/macwindow"
-	wailsadapter "podsteer/app/adapters/wails"
-	"podsteer/app/application"
-	"podsteer/app/config"
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/adapters/assets"
+	historystore "github.com/podsteer/podsteer/app/adapters/history"
+	"github.com/podsteer/podsteer/app/adapters/k8s"
+	"github.com/podsteer/podsteer/app/adapters/macwindow"
+	wailsadapter "github.com/podsteer/podsteer/app/adapters/wails"
+	"github.com/podsteer/podsteer/app/application"
+	"github.com/podsteer/podsteer/app/config"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // trafficLightVerticalNudge shifts macOS's traffic lights so they sit

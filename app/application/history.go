@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"podsteer/app/domain"
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // This file records what a cluster looked like over time, so the dashboard can

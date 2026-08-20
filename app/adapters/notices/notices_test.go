@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"podsteer/app/adapters/notices"
+	"github.com/podsteer/podsteer/app/adapters/notices"
 )
 
 // These tests assert properties of the COMMITTED inventory, not of the code

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"podsteer/app/domain"
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // ErrorCode is the stable, machine-readable classification of a failed call.

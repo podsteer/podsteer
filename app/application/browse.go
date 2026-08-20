@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"slices"
 
-	"podsteer/app/domain"
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // This file holds the three smaller use cases that make the navigator work:

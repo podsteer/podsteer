@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"podsteer/app/domain"
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // OverviewServiceDeps are the collaborators the overview needs.

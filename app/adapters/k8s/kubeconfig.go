@@ -7,8 +7,8 @@ import (
 
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
-	"podsteer/app/domain"
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // Clusters returns every cluster described by the local kubeconfig.

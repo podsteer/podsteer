@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 func TestNewServerEndpoint(t *testing.T) {

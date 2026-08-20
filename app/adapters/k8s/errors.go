@@ -10,7 +10,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // classify turns a client-go failure into an application-level error.

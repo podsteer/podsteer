@@ -4,8 +4,8 @@ import (
 	"errors"
 	"log/slog"
 
-	"podsteer/app/domain"
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // OverviewAPI exposes the cluster dashboard.

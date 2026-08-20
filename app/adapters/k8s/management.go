@@ -16,8 +16,8 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 	"sigs.k8s.io/yaml"
 
-	"podsteer/app/domain"
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // StreamLogs streams pod logs to the provided channel.

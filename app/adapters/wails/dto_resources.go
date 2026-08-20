@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // Wire types for the resources the navigator browses. As with dto.go these are

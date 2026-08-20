@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"podsteer/app/domain"
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // BrowseAPI exposes navigation, events and the generic resource browser.

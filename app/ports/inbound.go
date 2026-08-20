@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // ClusterService is the use-case surface for choosing, connecting to and

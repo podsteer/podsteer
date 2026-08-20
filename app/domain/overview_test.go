@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // The overview is the one place in PodSteer that makes a judgement rather than

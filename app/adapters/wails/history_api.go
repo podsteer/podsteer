@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"podsteer/app/domain"
-	"podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // Sample is one recorded measurement of a cluster, as the chart plots it.
