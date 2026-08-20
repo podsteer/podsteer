@@ -8,9 +8,10 @@
  */
 
 import {
-  getRetention,
+  getHistorySettings,
   getSeries,
   setRetention as applyRetention,
+  setSamplingInterval as applyInterval,
   type Sample,
   type SeriesResult,
 } from '$lib/api/client'
@@ -39,6 +40,20 @@ export const RETENTION_OPTIONS = [
 ] as const
 
 /**
+ * Sampling cadences offered.
+ *
+ * Every sample costs a full cluster assessment — nodes, pods, controllers,
+ * events and metrics — so on a large cluster the choice is about load on the
+ * API server as much as about resolution. The hints say so.
+ */
+export const SAMPLING_INTERVALS = [
+  { label: 'Every 10 seconds', seconds: 10, hint: 'Finest detail, heaviest on the API server' },
+  { label: 'Every 30 seconds', seconds: 30, hint: 'The default — a good balance' },
+  { label: 'Every minute', seconds: 60, hint: 'Lighter, still enough to see a trend' },
+  { label: 'Every 5 minutes', seconds: 300, hint: 'Lightest; long sessions only' },
+] as const
+
+/**
  * How many points to request.
  *
  * The backend averages down to this rather than dropping samples, so a spike
@@ -56,6 +71,8 @@ export class ClusterHistory {
   spanSeconds = $state(0)
   /** False when the operator has turned recording off. */
   recording = $state(true)
+  /** How often a sample is taken, so the UI can say when a line will appear. */
+  intervalSeconds = $state(30)
   windowMinutes = $state<number>(60)
   status = $state<'idle' | 'loading' | 'ready' | 'error'>('idle')
   error = $state<string | null>(null)
@@ -80,6 +97,7 @@ export class ClusterHistory {
       this.samples = result.samples
       this.spanSeconds = result.spanSeconds
       this.recording = result.recording
+      this.intervalSeconds = result.intervalSeconds
       this.status = 'ready'
       this.error = null
     } catch (cause) {
@@ -96,23 +114,32 @@ export class ClusterHistory {
   }
 }
 
-/** The retention setting, shared by the whole application. */
-class RetentionStore {
+/**
+ * What K8Sense records locally, and how often.
+ *
+ * Mirrored here for display only — both settings are owned by the Go side,
+ * because they govern what reaches the disk and what load the API server
+ * carries. Failed writes roll the mirror back rather than leaving the UI
+ * claiming a setting the backend never accepted.
+ */
+class HistorySettingsStore {
   days = $state<number>(1)
+  intervalSeconds = $state<number>(30)
   loaded = $state(false)
 
   load = async (): Promise<void> => {
     try {
-      const setting = await getRetention()
-      this.days = setting.days
+      const settings = await getHistorySettings()
+      this.days = settings.retentionDays
+      this.intervalSeconds = settings.intervalSeconds
       this.loaded = true
     } catch {
-      // A retention we cannot read is not worth interrupting anyone over; the
+      // Settings we cannot read are not worth interrupting anyone over; the
       // backend still enforces whatever it has.
     }
   }
 
-  set = async (days: number): Promise<void> => {
+  setRetention = async (days: number): Promise<void> => {
     const previous = this.days
     this.days = days
     try {
@@ -121,6 +148,16 @@ class RetentionStore {
       this.days = previous
     }
   }
+
+  setInterval = async (seconds: number): Promise<void> => {
+    const previous = this.intervalSeconds
+    this.intervalSeconds = seconds
+    try {
+      await applyInterval(seconds)
+    } catch {
+      this.intervalSeconds = previous
+    }
+  }
 }
 
-export const retention = new RetentionStore()
+export const historySettings = new HistorySettingsStore()

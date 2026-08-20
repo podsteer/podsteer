@@ -43,6 +43,9 @@ type SeriesResult struct {
 	SpanSeconds int64 `json:"spanSeconds"`
 	// RetentionDays is the configured retention; 0 means nothing is recorded.
 	RetentionDays int `json:"retentionDays"`
+	// IntervalSeconds is how often a sample is taken, which tells the UI how
+	// long to wait before a second point can possibly exist.
+	IntervalSeconds int `json:"intervalSeconds"`
 	// Recording reports whether sampling is on at all.
 	Recording bool `json:"recording"`
 }
@@ -122,31 +125,59 @@ func (h *HistoryAPI) GetSeries(clusterID string, windowMinutes, maxPoints int) (
 	}
 
 	return SeriesResult{
-		Samples:       samples,
-		SpanSeconds:   int64(series.Span().Seconds()),
-		RetentionDays: retention.Days,
-		Recording:     retention.Enabled(),
+		Samples:         samples,
+		SpanSeconds:     int64(series.Span().Seconds()),
+		RetentionDays:   retention.Days,
+		IntervalSeconds: int(h.history.SamplingInterval().Seconds()),
+		Recording:       retention.Enabled(),
 	}, nil
 }
 
-// RetentionSetting is how long K8Sense keeps samples.
-type RetentionSetting struct {
-	// Days is 0 when nothing is recorded.
-	Days int `json:"days"`
+// HistorySettings is what K8Sense records, and how often.
+type HistorySettings struct {
+	// RetentionDays is 0 when nothing is recorded.
+	RetentionDays int `json:"retentionDays"`
 	// MaxDays is the ceiling the UI should offer.
 	MaxDays int `json:"maxDays"`
+	// IntervalSeconds is the sampling cadence.
+	IntervalSeconds int `json:"intervalSeconds"`
+	// The bounds the cadence is clamped to, so the UI never offers a value
+	// the backend would silently change.
+	MinIntervalSeconds int `json:"minIntervalSeconds"`
+	MaxIntervalSeconds int `json:"maxIntervalSeconds"`
 }
 
-// GetRetention reports the current retention.
-func (h *HistoryAPI) GetRetention() (RetentionSetting, error) {
+// GetSettings reports what is recorded and how often.
+func (h *HistoryAPI) GetSettings() (HistorySettings, error) {
 	ctx, cancel := h.app.requestContext()
 	defer cancel()
 
 	retention, err := h.history.Retention(ctx)
 	if err != nil {
-		return RetentionSetting{}, apiError(h.logger, "GetRetention", err)
+		return HistorySettings{}, apiError(h.logger, "GetSettings", err)
 	}
-	return RetentionSetting{Days: retention.Days, MaxDays: domain.MaxRetentionDays}, nil
+
+	return HistorySettings{
+		RetentionDays:      retention.Days,
+		MaxDays:            domain.MaxRetentionDays,
+		IntervalSeconds:    int(h.history.SamplingInterval().Seconds()),
+		MinIntervalSeconds: int(domain.MinSamplingInterval.Seconds()),
+		MaxIntervalSeconds: int(domain.MaxSamplingInterval.Seconds()),
+	}, nil
+}
+
+// SetSamplingInterval changes how often each open cluster is sampled.
+//
+// Every sample costs a full cluster assessment, so this is a real load control
+// on a large cluster and not only a chart-resolution preference. The value is
+// clamped to the supported range rather than rejected: an out-of-range cadence
+// is a UI bug, and refusing it would leave the operator with no recording at
+// all rather than a slightly different one.
+func (h *HistoryAPI) SetSamplingInterval(seconds int) error {
+	if err := h.history.SetSamplingInterval(time.Duration(seconds) * time.Second); err != nil {
+		return apiError(h.logger, "SetSamplingInterval", err)
+	}
+	return nil
 }
 
 // SetRetention changes how long samples are kept.

@@ -74,6 +74,34 @@ func NewSampleFromOverview(overview Overview) Sample {
 	}
 }
 
+// Sampling cadence bounds.
+//
+// The floor is not arbitrary: every sample costs a full cluster assessment —
+// nodes, pods, controllers, events and metrics — so a cadence faster than this
+// puts real load on the API server for a chart nobody can read at that
+// resolution. The ceiling exists because a sample every twenty minutes is not
+// a trend, it is four points a day.
+const (
+	MinSamplingInterval     = 10 * time.Second
+	MaxSamplingInterval     = 15 * time.Minute
+	DefaultSamplingInterval = 30 * time.Second
+)
+
+// NewSamplingInterval clamps a cadence into the supported range, falling back
+// to the default when nothing sensible was asked for.
+func NewSamplingInterval(interval time.Duration) time.Duration {
+	switch {
+	case interval <= 0:
+		return DefaultSamplingInterval
+	case interval < MinSamplingInterval:
+		return MinSamplingInterval
+	case interval > MaxSamplingInterval:
+		return MaxSamplingInterval
+	default:
+		return interval
+	}
+}
+
 // Retention is how long K8Sense keeps samples on disk.
 //
 // Zero means "record nothing", which is a real choice rather than a disabled

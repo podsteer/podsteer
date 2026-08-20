@@ -227,10 +227,12 @@
   })
 
   // Redraw when the data or the theme changes. Reading both here is what
-  // registers the dependency; `preferences.theme` is not otherwise used.
+  // registers the dependency; `preferences.resolvedTheme` is not otherwise
+  // used — but it is the resolved scheme rather than the choice, so the chart
+  // repaints when the OS flips at sunset and the preference has not changed.
   $effect(() => {
     void samples
-    void preferences.theme
+    void preferences.resolvedTheme
     void metric
     chart?.setOption(buildOption(), true)
   })

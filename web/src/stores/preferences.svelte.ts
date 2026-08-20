@@ -23,8 +23,35 @@ export type PageSize = (typeof PAGE_SIZES)[number]
 /** The colour schemes K8Sense can render in. */
 export const THEMES = ['dark', 'light'] as const
 
-/** A colour scheme. Dark is the default and the launch-time paint. */
+/** A resolved colour scheme — what is actually painted. */
 export type Theme = (typeof THEMES)[number]
+
+/**
+ * What the operator chose, which is not the same thing as what is painted.
+ *
+ * Ordered as a brightness ramp so that cycling through them with the header
+ * button feels like a dimmer rather than a shuffle.
+ */
+export const THEME_PREFERENCES = ['light', 'system', 'dark'] as const
+
+/** A theme choice: a specific scheme, or "whatever the OS is set to". */
+export type ThemePreference = (typeof THEME_PREFERENCES)[number]
+
+/** Display names for the theme choices. */
+export const THEME_LABELS: Record<ThemePreference, string> = {
+  light: 'Light',
+  system: 'System',
+  dark: 'Dark',
+}
+
+/** Matches the OS-level dark mode setting. */
+const DARK_QUERY = '(prefers-color-scheme: dark)'
+
+/** Reads the OS's current scheme, defaulting to dark where it cannot be read. */
+function systemTheme(): Theme {
+  if (typeof window === 'undefined' || !window.matchMedia) return 'dark'
+  return window.matchMedia(DARK_QUERY).matches ? 'dark' : 'light'
+}
 
 /** Refresh intervals offered in Settings, in milliseconds. */
 export const REFRESH_INTERVALS = [
@@ -46,7 +73,16 @@ interface ColumnPreference {
 }
 
 interface PersistedShape {
-  theme: Theme
+  /**
+   * The theme *choice*.
+   *
+   * Deliberately a different key from the `theme` earlier builds wrote. That
+   * field always held a concrete scheme — it defaulted to 'dark' and was
+   * rewritten on every save — so every existing entry says "dark" whether or
+   * not anybody chose it. Reading those as explicit choices would mean nobody
+   * ever got the new System default, so the old key is ignored.
+   */
+  themePreference: ThemePreference
   pageSize: PageSize
   refreshIntervalMs: number
   autoRefresh: boolean
@@ -62,7 +98,9 @@ interface PersistedShape {
 }
 
 const DEFAULTS: PersistedShape = {
-  theme: 'dark',
+  // System, so K8Sense matches the desktop it was launched from rather than
+  // asserting a preference nobody expressed.
+  themePreference: 'system',
   pageSize: 25,
   refreshIntervalMs: 10_000,
   autoRefresh: true,
@@ -74,7 +112,11 @@ const DEFAULTS: PersistedShape = {
 }
 
 class Preferences {
-  theme = $state<Theme>(DEFAULTS.theme)
+  /** What the operator chose: a scheme, or to follow the OS. */
+  themePreference = $state<ThemePreference>(DEFAULTS.themePreference)
+
+  /** The OS's current scheme, kept in step with it while the app runs. */
+  #systemTheme = $state<Theme>(systemTheme())
   pageSize = $state<PageSize>(DEFAULTS.pageSize)
   refreshIntervalMs = $state<number>(DEFAULTS.refreshIntervalMs)
   autoRefresh = $state<boolean>(DEFAULTS.autoRefresh)
@@ -99,22 +141,40 @@ class Preferences {
 
   constructor() {
     this.#load()
+    this.#watchSystemTheme()
     // Apply before first paint: this module is evaluated while the document
     // is still being parsed, so the theme never visibly flips after load.
     this.#applyTheme()
   }
 
+  /**
+   * The scheme actually painted.
+   *
+   * Everything that needs to know what the UI *looks* like reads this;
+   * themePreference only says what was asked for.
+   */
+  readonly resolvedTheme = $derived<Theme>(
+    this.themePreference === 'system' ? this.#systemTheme : this.themePreference,
+  )
+
   /** Effective auto-refresh interval, or 0 when refreshing is manual. */
   readonly effectiveIntervalMs = $derived(this.autoRefresh ? this.refreshIntervalMs : 0)
 
-  setTheme = (theme: Theme): void => {
-    this.theme = theme
+  setTheme = (preference: ThemePreference): void => {
+    this.themePreference = preference
     this.#applyTheme()
     this.#save()
   }
 
-  toggleTheme = (): void => {
-    this.setTheme(this.theme === 'dark' ? 'light' : 'dark')
+  /**
+   * Advances to the next theme choice: light → system → dark → light.
+   *
+   * A three-state control needs a defined order, and brightness is the only
+   * one an operator can predict without looking.
+   */
+  cycleTheme = (): void => {
+    const current = THEME_PREFERENCES.indexOf(this.themePreference)
+    this.setTheme(THEME_PREFERENCES[(current + 1) % THEME_PREFERENCES.length])
   }
 
   setPageSize = (size: PageSize): void => {
@@ -229,8 +289,11 @@ class Preferences {
       // Validate rather than trust: stored preferences outlive the code that
       // wrote them, and a page size of 5000 read from an older build would
       // render fifty thousand rows and hang the window.
-      if (stored.theme && (THEMES as readonly string[]).includes(stored.theme)) {
-        this.theme = stored.theme
+      if (
+        stored.themePreference &&
+        (THEME_PREFERENCES as readonly string[]).includes(stored.themePreference)
+      ) {
+        this.themePreference = stored.themePreference
       }
       if (stored.pageSize && (PAGE_SIZES as readonly number[]).includes(stored.pageSize)) {
         this.pageSize = stored.pageSize
@@ -263,7 +326,7 @@ class Preferences {
   #save(): void {
     try {
       const payload: PersistedShape = {
-        theme: this.theme,
+        themePreference: this.themePreference,
         pageSize: this.pageSize,
         refreshIntervalMs: this.refreshIntervalMs,
         autoRefresh: this.autoRefresh,
@@ -281,12 +344,33 @@ class Preferences {
   }
 
   /**
-   * Points <html> at the current theme. Every theme token resolves through
+   * Follows the OS while the preference is System.
+   *
+   * The listener is never removed: preferences live for the life of the
+   * document, and a desktop app that stopped following the system theme after
+   * some teardown would be harder to explain than the listener is to keep.
+   */
+  #watchSystemTheme(): void {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+
+    window.matchMedia(DARK_QUERY).addEventListener('change', (event) => {
+      this.#systemTheme = event.matches ? 'dark' : 'light'
+      this.#applyTheme()
+    })
+  }
+
+  /**
+   * Points <html> at the resolved theme. Every theme token resolves through
    * this attribute — see the comment header in app.css.
+   *
+   * The attribute always names a concrete scheme, never "system": the
+   * stylesheet should not have to know that following the OS is even an
+   * option.
    */
   #applyTheme(): void {
     if (typeof document === 'undefined') return
-    document.documentElement.dataset.theme = this.theme
+    document.documentElement.dataset.theme =
+      this.themePreference === 'system' ? this.#systemTheme : this.themePreference
   }
 }
 

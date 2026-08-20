@@ -40,10 +40,10 @@
 <script lang="ts">
   import { isMac, accelerator } from '$lib/platform'
   import { workspace } from '$stores/workspace.svelte'
-  import { preferences } from '$stores/preferences.svelte'
+  import { preferences, THEME_LABELS } from '$stores/preferences.svelte'
   import { windowState } from '$stores/windowState.svelte'
   import SettingsDialog from './SettingsDialog.svelte'
-  import { Home, Server, Plus, X, RefreshCw, Moon, Sun, Settings } from '@lucide/svelte'
+  import { Home, Server, Plus, X, RefreshCw, Moon, Sun, Monitor, Settings } from '@lucide/svelte'
 
   let settingsOpen = $state(false)
 
@@ -197,20 +197,28 @@
     <RefreshCw class="size-4" strokeWidth={1.8} />
   </button>
 
-  <!-- Theme toggle -->
+  <!-- Theme cycle: light → system → dark.
+       The icon shows the CHOICE, not the resolved scheme — on System it is a
+       monitor whatever the OS currently resolves to, because a sun icon that
+       silently became a moon at sunset would look like a bug. -->
   <button
     type="button"
-    onclick={preferences.toggleTheme}
-    aria-label="Switch to {preferences.theme === 'dark' ? 'light' : 'dark'} mode"
-    title="Switch to {preferences.theme === 'dark' ? 'light' : 'dark'} mode"
+    onclick={preferences.cycleTheme}
+    aria-label="Theme: {THEME_LABELS[preferences.themePreference]}. Click to change."
+    title="Theme: {THEME_LABELS[preferences.themePreference]}{preferences.themePreference ===
+    'system'
+      ? ` (following the system — currently ${preferences.resolvedTheme})`
+      : ''}"
     class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-md
            text-on-surface-variant transition-colors duration-100
            hover:bg-surface-container-high hover:text-on-surface"
   >
-    {#if preferences.theme === 'dark'}
+    {#if preferences.themePreference === 'light'}
+      <Sun class="size-4" strokeWidth={1.8} />
+    {:else if preferences.themePreference === 'dark'}
       <Moon class="size-4" strokeWidth={1.8} />
     {:else}
-      <Sun class="size-4" strokeWidth={1.8} />
+      <Monitor class="size-4" strokeWidth={1.8} />
     {/if}
   </button>
 

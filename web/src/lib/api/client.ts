@@ -40,9 +40,10 @@ import {
 } from '$lib/wailsjs/go/wails/ManagementAPI'
 import { GetOverview as bindGetOverview } from '$lib/wailsjs/go/wails/OverviewAPI'
 import {
-  GetRetention as bindGetRetention,
+  GetSettings as bindGetHistorySettings,
   GetSeries as bindGetSeries,
   SetRetention as bindSetRetention,
+  SetSamplingInterval as bindSetSamplingInterval,
 } from '$lib/wailsjs/go/wails/HistoryAPI'
 import {
   Credits as bindCredits,
@@ -84,8 +85,8 @@ export type Credit = wails.Credit
 export type Sample = wails.Sample
 /** A cluster's recorded history, with an account of its extent. */
 export type SeriesResult = wails.SeriesResult
-/** How long K8Sense keeps samples locally. */
-export type RetentionSetting = wails.RetentionSetting
+/** What K8Sense records locally, and how often. */
+export type HistorySettings = wails.HistorySettings
 /** An assessed cluster: what is wrong, what is left, what is running. */
 export type Overview = wails.Overview
 /** One problem, aggregated across the objects it affects. */
@@ -205,14 +206,24 @@ export function getSeries(
   return call(() => bindGetSeries(clusterId, windowMinutes, maxPoints))
 }
 
-/** Reports how long samples are kept on this machine. */
-export function getRetention(): Promise<RetentionSetting> {
-  return call(() => bindGetRetention())
+/** Reports what is recorded on this machine, and how often. */
+export function getHistorySettings(): Promise<HistorySettings> {
+  return call(() => bindGetHistorySettings())
 }
 
 /** Changes how long samples are kept. Zero stops recording and erases what exists. */
 export function setRetention(days: number): Promise<void> {
   return call(() => bindSetRetention(days))
+}
+
+/**
+ * Changes how often each open cluster is sampled.
+ *
+ * Every sample costs a full cluster assessment, so on a large cluster this is
+ * a load control as much as a chart-resolution preference.
+ */
+export function setSamplingInterval(seconds: number): Promise<void> {
+  return call(() => bindSetSamplingInterval(seconds))
 }
 
 // --- Navigation -------------------------------------------------------------

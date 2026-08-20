@@ -103,6 +103,13 @@ type HistoryService interface {
 	// discards anything already outside the new window — including
 	// everything, when retention is set to zero.
 	SetRetention(ctx context.Context, retention domain.Retention) error
+
+	// SamplingInterval reports how often each open cluster is sampled.
+	SamplingInterval() time.Duration
+
+	// SetSamplingInterval changes the cadence, taking effect at once rather
+	// than after the current interval elapses.
+	SetSamplingInterval(interval time.Duration) error
 }
 
 // ResourceService is the use-case surface for the generic browsing path.

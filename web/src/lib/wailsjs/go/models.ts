@@ -280,6 +280,26 @@ export namespace wails {
 		    return a;
 		}
 	}
+	export class HistorySettings {
+	    retentionDays: number;
+	    maxDays: number;
+	    intervalSeconds: number;
+	    minIntervalSeconds: number;
+	    maxIntervalSeconds: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new HistorySettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.retentionDays = source["retentionDays"];
+	        this.maxDays = source["maxDays"];
+	        this.intervalSeconds = source["intervalSeconds"];
+	        this.minIntervalSeconds = source["minIntervalSeconds"];
+	        this.maxIntervalSeconds = source["maxIntervalSeconds"];
+	    }
+	}
 	export class Namespace {
 	    name: string;
 	    phase: string;
@@ -752,20 +772,6 @@ export namespace wails {
 	}
 	
 	
-	export class RetentionSetting {
-	    days: number;
-	    maxDays: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new RetentionSetting(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.days = source["days"];
-	        this.maxDays = source["maxDays"];
-	    }
-	}
 	export class Sample {
 	    at: number;
 	    cpuUsage: number;
@@ -804,6 +810,7 @@ export namespace wails {
 	    samples: Sample[];
 	    spanSeconds: number;
 	    retentionDays: number;
+	    intervalSeconds: number;
 	    recording: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -815,6 +822,7 @@ export namespace wails {
 	        this.samples = this.convertValues(source["samples"], Sample);
 	        this.spanSeconds = source["spanSeconds"];
 	        this.retentionDays = source["retentionDays"];
+	        this.intervalSeconds = source["intervalSeconds"];
 	        this.recording = source["recording"];
 	    }
 	

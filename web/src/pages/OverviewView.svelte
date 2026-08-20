@@ -91,9 +91,12 @@
     const interval = preferences.effectiveIntervalMs
     if (interval <= 0) return
 
-    // Sampling happens every 30 seconds on the Go side, so polling the chart
-    // faster than that only redraws the same points.
-    const timer = setInterval(() => void current.load(), Math.max(interval, 30_000))
+    // Never poll faster than the backend samples: anything quicker just
+    // redraws the same points.
+    const timer = setInterval(
+      () => void current.load(),
+      Math.max(interval, current.intervalSeconds * 1000),
+    )
     return () => clearInterval(timer)
   })
 
@@ -277,8 +280,8 @@
           </p>
         {:else if !history.hasTrend}
           <p class="py-8 text-center text-body-small text-on-surface-variant/70">
-            Collecting. K8Sense samples every 30 seconds while it is open, so a line appears
-            about a minute after the cluster connects.
+            Collecting. K8Sense samples every {formatAge(history.intervalSeconds)} while it is
+            open, so a line appears once a second sample lands.
           </p>
         {:else}
           <TrendChart samples={history.samples} {metric} />

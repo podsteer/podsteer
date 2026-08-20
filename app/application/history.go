@@ -23,12 +23,7 @@ import (
 // before it returns — which is the standard this codebase holds goroutines to,
 // and matters more here than usual because it writes files.
 
-// Sampling cadence. Fixed rather than following the UI's refresh interval:
-// the history is a property of the cluster, not of whichever view happens to
-// be open, and a chart whose resolution changed when somebody opened Settings
-// would be unreadable.
 const (
-	sampleInterval = 30 * time.Second
 	// pruneInterval is how often expired samples are swept. Hourly is far
 	// more often than a day of retention needs, and cheap.
 	pruneInterval = time.Hour
@@ -62,6 +57,12 @@ type HistoryService struct {
 
 	mu        sync.RWMutex
 	retention domain.Retention
+	interval  time.Duration
+
+	// reconfigure carries "the cadence changed" to the sampler. Buffered and
+	// non-blocking, so changing a setting never waits on the sampler and a
+	// burst of changes collapses into one rebuild.
+	reconfigure chan struct{}
 
 	// cancel stops the sampler; done closes once it has finished.
 	cancel context.CancelFunc
@@ -100,10 +101,12 @@ func NewHistoryService(deps HistoryServiceDeps) (*HistoryService, error) {
 		// dashboard to be useful across a working day, short enough that
 		// nobody discovers K8Sense has been keeping a month of data they
 		// never asked for.
-		retention: domain.NewRetention(1),
-		done:      make(chan struct{}),
+		retention:   domain.NewRetention(1),
+		interval:    domain.DefaultSamplingInterval,
+		done:        make(chan struct{}),
+		reconfigure: make(chan struct{}, 1),
 	}
-	service.retention = service.loadRetention()
+	service.retention, service.interval = service.loadSettings()
 
 	return service, nil
 }
@@ -144,7 +147,7 @@ func (s *HistoryService) Close() {
 func (s *HistoryService) run(ctx context.Context) {
 	defer close(s.done)
 
-	samples := time.NewTicker(sampleInterval)
+	samples := time.NewTicker(s.SamplingInterval())
 	defer samples.Stop()
 	prunes := time.NewTicker(pruneInterval)
 	defer prunes.Stop()
@@ -166,6 +169,12 @@ func (s *HistoryService) run(ctx context.Context) {
 			s.sampleAll(ctx)
 		case <-prunes.C:
 			s.prune(ctx)
+		case <-s.reconfigure:
+			// Rebuild rather than Reset: the new cadence should start from
+			// now, so shortening it takes effect immediately instead of after
+			// the old, longer tick has elapsed.
+			samples.Stop()
+			samples = time.NewTicker(s.SamplingInterval())
 		}
 	}
 }
@@ -219,6 +228,38 @@ func (s *HistoryService) current() domain.Retention {
 	return s.retention
 }
 
+// SamplingInterval reports how often each open cluster is sampled.
+func (s *HistoryService) SamplingInterval() time.Duration {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.interval
+}
+
+// SetSamplingInterval changes how often each open cluster is sampled.
+//
+// Takes effect at once rather than after the current tick: an operator who
+// slows sampling down to reduce load on an API server means now, and one who
+// speeds it up is usually watching something happen.
+func (s *HistoryService) SetSamplingInterval(interval time.Duration) error {
+	interval = domain.NewSamplingInterval(interval)
+
+	s.mu.Lock()
+	s.interval = interval
+	retention := s.retention
+	s.mu.Unlock()
+
+	s.saveSettings(retention, interval)
+
+	// Non-blocking: a full buffer already means "rebuild pending".
+	select {
+	case s.reconfigure <- struct{}{}:
+	default:
+	}
+
+	s.logger.Info("sampling interval changed", slog.Duration("interval", interval))
+	return nil
+}
+
 // Series returns a cluster's samples over the given window.
 func (s *HistoryService) Series(
 	ctx context.Context,
@@ -270,9 +311,10 @@ func (s *HistoryService) SetRetention(ctx context.Context, retention domain.Rete
 
 	s.mu.Lock()
 	s.retention = retention
+	interval := s.interval
 	s.mu.Unlock()
 
-	s.saveRetention(retention)
+	s.saveSettings(retention, interval)
 
 	if err := s.history.Prune(ctx, retention.Cutoff(time.Now())); err != nil {
 		return fmt.Errorf("applying retention: %w", err)
@@ -290,12 +332,15 @@ func (s *HistoryService) SetRetention(ctx context.Context, retention domain.Rete
 // run where the window never opens.
 
 type persistedSettings struct {
-	RetentionDays int `json:"retentionDays"`
+	RetentionDays   int `json:"retentionDays"`
+	IntervalSeconds int `json:"intervalSeconds"`
 }
 
-func (s *HistoryService) loadRetention() domain.Retention {
+// loadSettings reads the persisted retention and cadence, falling back to the
+// service's defaults for anything missing or unreadable.
+func (s *HistoryService) loadSettings() (domain.Retention, time.Duration) {
 	if s.settings == "" {
-		return s.retention
+		return s.retention, s.interval
 	}
 
 	raw, err := os.ReadFile(s.settings)
@@ -304,19 +349,23 @@ func (s *HistoryService) loadRetention() domain.Retention {
 		if !errors.Is(err, os.ErrNotExist) {
 			s.logger.Warn("reading history settings failed", slog.String("error", err.Error()))
 		}
-		return s.retention
+		return s.retention, s.interval
 	}
 
 	var stored persistedSettings
 	if err := json.Unmarshal(raw, &stored); err != nil {
-		s.logger.Warn("history settings are unreadable, using the default",
+		s.logger.Warn("history settings are unreadable, using the defaults",
 			slog.String("error", err.Error()))
-		return s.retention
+		return s.retention, s.interval
 	}
-	return domain.NewRetention(stored.RetentionDays)
+
+	// A file written before the cadence was configurable has no interval;
+	// NewSamplingInterval turns that zero into the default.
+	return domain.NewRetention(stored.RetentionDays),
+		domain.NewSamplingInterval(time.Duration(stored.IntervalSeconds) * time.Second)
 }
 
-func (s *HistoryService) saveRetention(retention domain.Retention) {
+func (s *HistoryService) saveSettings(retention domain.Retention, interval time.Duration) {
 	if s.settings == "" {
 		return
 	}
@@ -326,7 +375,10 @@ func (s *HistoryService) saveRetention(retention domain.Retention) {
 		return
 	}
 
-	raw, err := json.Marshal(persistedSettings{RetentionDays: retention.Days})
+	raw, err := json.Marshal(persistedSettings{
+		RetentionDays:   retention.Days,
+		IntervalSeconds: int(interval.Seconds()),
+	})
 	if err != nil {
 		return
 	}

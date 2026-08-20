@@ -18,11 +18,15 @@
     preferences,
     REFRESH_INTERVALS,
     PAGE_SIZES,
-    THEMES,
+    THEME_PREFERENCES,
+    THEME_LABELS,
     type PageSize,
-    type Theme,
   } from '$stores/preferences.svelte'
-  import { retention, RETENTION_OPTIONS } from '$stores/history.svelte'
+  import {
+    historySettings,
+    RETENTION_OPTIONS,
+    SAMPLING_INTERVALS,
+  } from '$stores/history.svelte'
   import { accelerator } from '$lib/platform'
   import Button from './Button.svelte'
   import CreditsPane from './CreditsPane.svelte'
@@ -48,16 +52,15 @@
 
   let section = $state<SectionID>('refresh')
 
-  /** Loads the retention setting the first time Settings is opened. */
+  /** Loads the history settings the first time Settings is opened. */
   $effect(() => {
-    if (open && !retention.loaded) void retention.load()
+    if (open && !historySettings.loaded) void historySettings.load()
   })
 
   function onKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape' && open) onclose()
   }
 
-  const THEME_LABELS: Record<Theme, string> = { dark: 'Dark', light: 'Light' }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -158,21 +161,32 @@
           <section class="flex flex-col gap-6">
             <div>
               <h3 class="text-title-medium text-on-surface">Theme</h3>
+              <p class="mt-0.5 text-body-small text-on-surface-variant">
+                System follows your desktop's own light and dark setting, and changes with it.
+              </p>
+
               <div class="mt-3 flex gap-2">
-                {#each THEMES as theme (theme)}
+                {#each THEME_PREFERENCES as choice (choice)}
                   <button
                     type="button"
-                    onclick={() => preferences.setTheme(theme)}
+                    onclick={() => preferences.setTheme(choice)}
+                    aria-pressed={preferences.themePreference === choice}
                     class="state-layer h-9 min-w-24 rounded-xs border px-4 text-label-large
                            transition-colors duration-150 ease-standard
-                           {preferences.theme === theme
+                           {preferences.themePreference === choice
                              ? 'border-transparent bg-secondary-container text-on-secondary-container'
                              : 'border-outline text-on-surface-variant'}"
                   >
-                    {THEME_LABELS[theme]}
+                    {THEME_LABELS[choice]}
                   </button>
                 {/each}
               </div>
+
+              {#if preferences.themePreference === 'system'}
+                <p class="mt-2 text-body-small text-on-surface-variant/70">
+                  Currently {preferences.resolvedTheme}.
+                </p>
+              {/if}
             </div>
 
             <div class="border-t border-outline-variant pt-5">
@@ -217,20 +231,55 @@
             <h3 class="text-title-medium text-on-surface">Local history</h3>
             <p class="mt-0.5 text-body-small leading-relaxed text-on-surface-variant">
               Kubernetes reports only the present, so K8Sense samples each connected cluster
-              every 30 seconds while it is open and keeps the result on this machine. That is
-              what the dashboard charts plot — it covers the time the application has been
-              running, not the whole life of the cluster.
+              while it is open and keeps the result on this machine. That is what the dashboard
+              charts plot — it covers the time the application has been running, not the whole
+              life of the cluster.
             </p>
 
-            <div class="mt-4 flex flex-col gap-1.5">
+            <h4 class="mt-4 text-label-large uppercase tracking-wider text-on-surface-variant">
+              Keep for
+            </h4>
+            <div class="mt-2 flex flex-col gap-1.5">
               {#each RETENTION_OPTIONS as option (option.days)}
                 <label class="flex cursor-pointer items-start gap-3">
                   <input
                     type="radio"
                     name="retention"
                     value={option.days}
-                    checked={retention.days === option.days}
-                    onchange={() => void retention.set(option.days)}
+                    checked={historySettings.days === option.days}
+                    onchange={() => void historySettings.setRetention(option.days)}
+                    class="mt-1 accent-primary"
+                  />
+                  <span class="flex flex-col">
+                    <span class="text-body-medium text-on-surface">{option.label}</span>
+                    <span class="text-body-small text-on-surface-variant/70">{option.hint}</span>
+                  </span>
+                </label>
+              {/each}
+            </div>
+
+            <!-- Cadence. Disabled when nothing is recorded, because how often
+                 to take a sample is not a question when none are taken. -->
+            <h4
+              class="mt-6 text-label-large uppercase tracking-wider
+                     {historySettings.days === 0 ? 'text-on-surface-variant/40' : 'text-on-surface-variant'}"
+            >
+              Sample every
+            </h4>
+            <div class="mt-2 flex flex-col gap-1.5" class:opacity-50={historySettings.days === 0}>
+              {#each SAMPLING_INTERVALS as option (option.seconds)}
+                <label
+                  class="flex items-start gap-3 {historySettings.days === 0
+                    ? 'cursor-default'
+                    : 'cursor-pointer'}"
+                >
+                  <input
+                    type="radio"
+                    name="sampling-interval"
+                    value={option.seconds}
+                    disabled={historySettings.days === 0}
+                    checked={historySettings.intervalSeconds === option.seconds}
+                    onchange={() => void historySettings.setInterval(option.seconds)}
                     class="mt-1 accent-primary"
                   />
                   <span class="flex flex-col">
