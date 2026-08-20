@@ -15,14 +15,24 @@ Electron-based client's memory and startup time go.
 
 ## Status
 
-Foundation. PodSteer connects to any cluster in your kubeconfig and lists its
-pods, with the derived status that makes a pod list actually diagnostic — a
-crash-looping container, a pod stuck pulling an image, one that is terminating
-rather than merely running.
+Pre-release; no tagged version yet. What works today: several clusters open at
+once, one per tab; an overview that assesses a cluster rather than listing it,
+with ranked findings and capacity measured against requests rather than usage;
+purpose-built views for pods, nodes, events and the six workload controllers,
+with the derived status that makes a list actually diagnostic — a crash-looping
+container, a pod stuck pulling an image, one that is terminating rather than
+merely running. Everything else in the cluster, custom resources included, is
+browsable through the API server's own table output, so a freshly installed
+operator's CRDs need no code here. Beyond reading: log streaming, an
+interactive shell, scaling, restarting, editing manifests and deleting objects.
+
+Capacity is sampled every 30 seconds while the application is open and kept
+locally, which is the only way to have a trend at all — Kubernetes reports only
+the present — and is deliberately presented as the narrow window it is.
 
 ## Requirements
 
-- Go 1.24+
+- Go 1.26+
 - Node.js 20+
 - The [Wails CLI](https://wails.io/docs/gettingstarted/installation):
   `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
@@ -100,8 +110,8 @@ fakes with no cluster, no HTTP and no Kubernetes types in sight.
 
 Everything is optional and prefixed `PODSTEER_`:
 
-| Variable                  | Default                         | Purpose                       |
-| ------------------------- | ------------------------------- | ----------------------------- |
+| Variable                   | Default                         | Purpose                       |
+| -------------------------- | ------------------------------- | ----------------------------- |
 | `PODSTEER_KUBECONFIG`      | `$KUBECONFIG`, `~/.kube/config` | Alternative kubeconfig        |
 | `PODSTEER_QPS`             | `50`                            | Sustained request rate        |
 | `PODSTEER_BURST`           | `100`                           | Burst allowance               |
@@ -110,6 +120,11 @@ Everything is optional and prefixed `PODSTEER_`:
 | `PODSTEER_LOG_SOURCE`      | `false`                         | Include source file and line  |
 
 ## Contributing and releasing
+
+Contributions are welcome under Apache-2.0, signed off under the
+[Developer Certificate of Origin](DCO.md) — `git commit -s`. There is no CLA.
+[CONTRIBUTING.md](CONTRIBUTING.md) covers what the build expects of a change
+and the handful of CI gates worth anticipating.
 
 `develop` is the integration branch; `main` holds released code and is only
 ever reached by a PR from `develop`. Tags follow the ParliTrack standard —
@@ -127,6 +142,15 @@ make tag show # what is actually released right now
 
 ## Security
 
-PodSteer is read-only. It never writes to a cluster, never sends anything off
-the machine, and the webview is locked down by a CSP that forbids every remote
-origin — all cluster traffic goes through the Go process, never the page.
+PodSteer reads *and* writes: it can delete objects, scale and restart
+workloads, apply edited manifests, and open a shell in a container. It does so
+with the credentials your kubeconfig already grants, and it enforces no
+permissions of its own — restricting what it may do is a matter of restricting
+those credentials.
+
+What it does not do is talk to anyone else. There is no account, no telemetry
+and no update check, and the webview is locked down by a CSP that forbids every
+remote origin — all cluster traffic goes through the Go process, never the
+page.
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
