@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"io"
+	"time"
 
 	"k8sense/app/domain"
 )
@@ -88,6 +89,29 @@ type MetricsPort interface {
 
 	// NodeMetrics returns usage keyed by node name.
 	NodeMetrics(ctx context.Context, id domain.ClusterID) (map[string]domain.Metrics, error)
+}
+
+// HistoryPort stores and reads the samples K8Sense takes of a cluster.
+//
+// A port rather than a detail of the service because "keep this on disk for
+// seven days" is a policy an operator sets, and because the store has to be
+// swappable: the obvious next implementation records to something outside the
+// application entirely.
+type HistoryPort interface {
+	// Append records one sample for a cluster.
+	Append(ctx context.Context, id domain.ClusterID, sample domain.Sample) error
+
+	// Series returns a cluster's samples taken at or after cutoff, oldest
+	// first. A cluster with nothing recorded is not an error — it is the
+	// ordinary state of one that was just connected.
+	Series(ctx context.Context, id domain.ClusterID, cutoff time.Time) (domain.Series, error)
+
+	// Prune discards samples older than cutoff for every cluster, and removes
+	// everything when retention is disabled.
+	Prune(ctx context.Context, cutoff time.Time) error
+
+	// Forget discards everything recorded for one cluster.
+	Forget(ctx context.Context, id domain.ClusterID) error
 }
 
 // ResourcePort reads any kind generically, including custom resources.

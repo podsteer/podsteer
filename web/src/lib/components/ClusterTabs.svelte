@@ -38,7 +38,7 @@
   have any of.
 -->
 <script lang="ts">
-  import { isMac } from '$lib/platform'
+  import { isMac, accelerator } from '$lib/platform'
   import { workspace } from '$stores/workspace.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import { windowState } from '$stores/windowState.svelte'
@@ -46,6 +46,23 @@
   import { Home, Server, Plus, X, RefreshCw, Moon, Sun, Settings } from '@lucide/svelte'
 
   let settingsOpen = $state(false)
+
+  /**
+   * Cmd+, opens Settings, which is the macOS convention every application
+   * follows; Ctrl+, is the equivalent on Windows and Linux, where VS Code and
+   * most Electron apps have made it the expectation too.
+   *
+   * Handled here rather than in the workspace because Settings is
+   * application-wide: it must open from the cluster picker as well, where no
+   * workspace is mounted.
+   */
+  function onKeydown(event: KeyboardEvent): void {
+    if (!(event.metaKey || event.ctrlKey)) return
+    if (event.key !== ',') return
+
+    event.preventDefault()
+    settingsOpen = !settingsOpen
+  }
 
   /** Dot colour by connection health, so a dead tab is visible at a glance. */
   function toneFor(reachable: boolean): string {
@@ -64,6 +81,8 @@
    */
   const leadingPadding = $derived(isMac && !windowState.isFullscreen ? 'pl-[100px]' : 'pl-3')
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <div
   class="drag-region flex h-10 shrink-0 items-stretch border-b border-outline-variant/60
@@ -200,7 +219,7 @@
     type="button"
     onclick={() => (settingsOpen = true)}
     aria-label="Settings"
-    title="Settings"
+    title="Settings  {accelerator(',')}"
     class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-md
            text-on-surface-variant transition-colors duration-100
            hover:bg-surface-container-high hover:text-on-surface"

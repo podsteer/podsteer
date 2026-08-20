@@ -120,6 +120,43 @@ Do not "fix" this by softening the check in `app/adapters/assets/assets.go` —
 it is what turns "compiled without a frontend" into a startup error instead of
 a blank window nobody can diagnose.
 
+## History is sampled, and says so
+
+Kubernetes reports only the present: the metrics API has no notion of a series,
+so a chart of anything needs a record somebody kept. `HistoryService` samples
+each connected cluster every 30 seconds while the application runs and writes
+to `~/.config/K8Sense/history` (or the platform equivalent), 0600, never
+anywhere else.
+
+That makes the coverage the window the app was open, which is weaker than a
+monitoring stack and **must be presented as such** — `SeriesResult.spanSeconds`
+exists so the UI can say "the last 40 minutes" instead of implying more.
+
+- **The sampler is the only long-lived goroutine.** One owner, one way to stop
+  (`Close`), and it waits for the write in flight before returning. It is
+  started from `OnStartup` and stopped from `OnShutdown`.
+- **Retention lives in Go, not in the UI preferences.** It governs what reaches
+  the disk, so the process doing the writing owns it. Zero means record nothing
+  *and* erase what exists — an operator choosing it means both.
+- **A sample is derived from the overview**, not from a second read of the
+  cluster, so the chart and the numbers above it can never disagree.
+- Samples hold capacity figures only: no object names, no logs, no manifests.
+
+## Licences are an obligation the build enforces
+
+Every shipped dependency is permissive (MIT, BSD, ISC, Apache-2.0, 0BSD) and
+all of them require the licence and copyright to travel with the binary.
+`make notices` regenerates `app/adapters/notices/notices.json` from what
+actually ships — `go list -deps` and the npm runtime tree, never the build
+toolchain — and **fails outright if a copyleft licence appears**, because in a
+product meant for commercial distribution that is a decision rather than a
+detail. The Credits pane in Settings reads it.
+
+Run `make notices` after adding, removing or upgrading any dependency that
+ships. A package imported by `web/src/` is a runtime dependency however
+`package.json` classifies it: mislabelling one as `devDependencies` hides it
+from this inventory and breaks `npm ci --omit=dev`.
+
 ## Commands
 
 ```sh
@@ -128,6 +165,7 @@ make build      # packaged application into build/bin
 make test       # go test -race ./...
 make check      # gofmt + go vet + svelte-check
 make bindings   # regenerate TypeScript bindings after changing a bound method
+make notices    # regenerate the third-party licence inventory
 ```
 
 Regenerate bindings whenever a method on `ClusterAPI`/`WorkloadAPI` or a DTO in

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	wailsapp "github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -26,6 +27,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 
 	"k8sense/app/adapters/assets"
+	historystore "k8sense/app/adapters/history"
 	"k8sense/app/adapters/k8s"
 	"k8sense/app/adapters/macwindow"
 	wailsadapter "k8sense/app/adapters/wails"
@@ -147,6 +149,30 @@ func run() error {
 		return fmt.Errorf("wiring overview service: %w", err)
 	}
 
+	// Sampling records what each open cluster looks like over time, so the
+	// dashboard can show a trend rather than an instant. It writes to the
+	// operator's own config directory and nowhere else; a store that cannot
+	// be located degrades to recording nothing rather than failing startup,
+	// because a chart is not worth refusing to open the application over.
+	historyDir, err := historystore.DefaultDir()
+	if err != nil {
+		logger.Warn("history will not be recorded", slog.String("error", err.Error()))
+	}
+
+	historyService, err := application.NewHistoryService(application.HistoryServiceDeps{
+		History:      historystore.New(historyDir),
+		Overview:     overviewService,
+		Registry:     registry,
+		SettingsPath: filepath.Join(filepath.Dir(historyDir), "history.json"),
+		Logger:       logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring history service: %w", err)
+	}
+	// Stopped before the process exits, and waited for: the sampler writes
+	// files, so returning while it is mid-write would truncate one.
+	defer historyService.Close()
+
 	managementService, err := application.NewManagementService(application.ManagementServiceDeps{
 		Management: kubernetes,
 		Logger:     logger,
@@ -191,6 +217,11 @@ func run() error {
 		return fmt.Errorf("wiring terminal API: %w", err)
 	}
 
+	historyAPI, err := wailsadapter.NewHistoryAPI(historyService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring history API: %w", err)
+	}
+
 	systemAPI, err := wailsadapter.NewSystemAPI(cfg.App.Name, cfg.App.Version, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring system API: %w", err)
@@ -222,8 +253,15 @@ func run() error {
 			desktop.OnStartup(ctx)
 			// No-op on every platform but macOS. See trafficLightVerticalNudge.
 			macwindow.NudgeTrafficLights(trafficLightVerticalNudge)
+			// Sampling is bounded by the window's own lifetime: it starts when
+			// the application does and stops when it closes, which is exactly
+			// the window the recorded history claims to cover.
+			historyService.Start(ctx)
 		},
-		OnShutdown: desktop.OnShutdown,
+		OnShutdown: func(ctx context.Context) {
+			historyService.Close()
+			desktop.OnShutdown(ctx)
+		},
 
 		// Everything bound here becomes callable from TypeScript, and Wails
 		// generates the declarations for it into web/src/lib/wailsjs.
@@ -232,6 +270,7 @@ func run() error {
 			workloadAPI,
 			browseAPI,
 			overviewAPI,
+			historyAPI,
 			managementAPI,
 			terminalAPI,
 			systemAPI,

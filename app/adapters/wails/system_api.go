@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"k8sense/app/adapters/notices"
 )
 
 // AppInfo describes the running application to the UI.
@@ -60,6 +62,58 @@ func NewSystemAPI(name, version string, app *App, logger *slog.Logger) (*SystemA
 // Info returns the running application's identity.
 func (s *SystemAPI) Info() AppInfo {
 	return s.info
+}
+
+// Credit is one shipped dependency, as the Credits pane shows it.
+type Credit struct {
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Ecosystem string `json:"ecosystem"`
+	Licence   string `json:"licence"`
+	Copyright string `json:"copyright"`
+	// TextID keys into the licence texts returned by LicenceTexts. Empty when
+	// the project publishes no licence file.
+	TextID string `json:"textId"`
+}
+
+// Credits returns every dependency K8Sense ships, with its licence.
+//
+// Not decoration: MIT, BSD, ISC and Apache-2.0 all require the licence and its
+// copyright notice to be distributed with the binary, and a desktop
+// application has nowhere else to put them. The inventory is generated from
+// what actually ships and embedded at build time, so it cannot drift away from
+// the dependencies it describes.
+func (s *SystemAPI) Credits() ([]Credit, error) {
+	packages, err := notices.Packages()
+	if err != nil {
+		return nil, apiError(s.logger, "Credits", err)
+	}
+
+	credits := make([]Credit, 0, len(packages))
+	for _, entry := range packages {
+		credits = append(credits, Credit{
+			Name:      entry.Name,
+			Version:   entry.Version,
+			Ecosystem: entry.Ecosystem,
+			Licence:   entry.Licence,
+			Copyright: entry.Copyright,
+			TextID:    entry.TextID,
+		})
+	}
+	return credits, nil
+}
+
+// LicenceText returns one licence's full text.
+//
+// Fetched on demand rather than sent with the list: the texts total far more
+// than the summary does, and nobody reads more than one at a time.
+func (s *SystemAPI) LicenceText(textID string) (string, error) {
+	text, ok := notices.Text(textID)
+	if !ok {
+		return "", apiError(s.logger, "LicenceText", fmt.Errorf("%w: no licence text %q",
+			errNotFound, textID))
+	}
+	return text, nil
 }
 
 // allowedURLSchemes are the only schemes OpenURL will hand to the OS.

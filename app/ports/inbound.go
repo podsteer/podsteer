@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"k8sense/app/domain"
 )
@@ -83,6 +84,25 @@ type OverviewService interface {
 	// returned as an error. An error means the whole assessment failed, which
 	// in practice means the cluster is not connected.
 	Overview(ctx context.Context, id domain.ClusterID) (domain.Overview, error)
+}
+
+// HistoryService is the use-case surface for a cluster's recorded history.
+//
+// The history covers the window the application has been open, which is a
+// weaker promise than a monitoring stack makes and must be presented as one:
+// Series reports the span it actually holds so the UI can say so.
+type HistoryService interface {
+	// Series returns a cluster's samples over the given window, downsampled
+	// to at most maxPoints.
+	Series(ctx context.Context, id domain.ClusterID, window time.Duration, maxPoints int) (domain.Series, error)
+
+	// Retention reports how long samples are kept.
+	Retention(ctx context.Context) (domain.Retention, error)
+
+	// SetRetention changes how long samples are kept, and immediately
+	// discards anything already outside the new window — including
+	// everything, when retention is set to zero.
+	SetRetention(ctx context.Context, retention domain.Retention) error
 }
 
 // ResourceService is the use-case surface for the generic browsing path.

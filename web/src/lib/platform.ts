@@ -9,3 +9,13 @@
  */
 export const isMac: boolean =
   typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent)
+
+/**
+ * Renders a keyboard shortcut the way the host platform writes it.
+ *
+ * macOS uses the symbol, everything else spells out Ctrl. Showing "Ctrl+B" on
+ * a Mac — or "⌘B" on Linux — reads as a shortcut for a different application.
+ */
+export function accelerator(key: string): string {
+  return isMac ? `\u2318${key.toUpperCase()}` : `Ctrl+${key.toUpperCase()}`
+}

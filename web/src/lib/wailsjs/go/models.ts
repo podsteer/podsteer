@@ -152,6 +152,28 @@ export namespace wails {
 	        this.reason = source["reason"];
 	    }
 	}
+	export class Credit {
+	    name: string;
+	    version: string;
+	    ecosystem: string;
+	    licence: string;
+	    copyright: string;
+	    textId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Credit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.version = source["version"];
+	        this.ecosystem = source["ecosystem"];
+	        this.licence = source["licence"];
+	        this.copyright = source["copyright"];
+	        this.textId = source["textId"];
+	    }
+	}
 	export class Event {
 	    name: string;
 	    namespace: string;
@@ -730,6 +752,90 @@ export namespace wails {
 	}
 	
 	
+	export class RetentionSetting {
+	    days: number;
+	    maxDays: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RetentionSetting(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.days = source["days"];
+	        this.maxDays = source["maxDays"];
+	    }
+	}
+	export class Sample {
+	    at: number;
+	    cpuUsage: number;
+	    cpuRequests: number;
+	    cpuAllocatable: number;
+	    memoryUsage: number;
+	    memoryRequests: number;
+	    memoryAllocatable: number;
+	    podsScheduled: number;
+	    podsNotReady: number;
+	    nodesReady: number;
+	    nodesTotal: number;
+	    measured: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Sample(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.at = source["at"];
+	        this.cpuUsage = source["cpuUsage"];
+	        this.cpuRequests = source["cpuRequests"];
+	        this.cpuAllocatable = source["cpuAllocatable"];
+	        this.memoryUsage = source["memoryUsage"];
+	        this.memoryRequests = source["memoryRequests"];
+	        this.memoryAllocatable = source["memoryAllocatable"];
+	        this.podsScheduled = source["podsScheduled"];
+	        this.podsNotReady = source["podsNotReady"];
+	        this.nodesReady = source["nodesReady"];
+	        this.nodesTotal = source["nodesTotal"];
+	        this.measured = source["measured"];
+	    }
+	}
+	export class SeriesResult {
+	    samples: Sample[];
+	    spanSeconds: number;
+	    retentionDays: number;
+	    recording: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SeriesResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.samples = this.convertValues(source["samples"], Sample);
+	        this.spanSeconds = source["spanSeconds"];
+	        this.retentionDays = source["retentionDays"];
+	        this.recording = source["recording"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	
 	

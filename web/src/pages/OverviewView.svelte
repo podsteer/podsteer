@@ -15,7 +15,10 @@
 <script lang="ts">
   import CapacityBar from '$lib/components/CapacityBar.svelte'
   import FindingCard from '$lib/components/FindingCard.svelte'
+  import TrendChart from '$lib/components/TrendChart.svelte'
   import { formatAge } from '$lib/format'
+  import { ClusterHistory, TREND_WINDOWS } from '$stores/history.svelte'
+  import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import {
     CheckCircle2,
@@ -27,6 +30,7 @@
     RefreshCw,
     Activity,
     CircleSlash,
+    TrendingUp,
   } from '@lucide/svelte'
 
   interface Props {
@@ -61,6 +65,37 @@
 
   const health = $derived(HEALTH[(overview?.health ?? 'healthy') as keyof typeof HEALTH])
   const HealthIcon = $derived(health.icon)
+
+  /** Which quantity the trend chart plots. */
+  let metric = $state<'cpu' | 'memory' | 'pods'>('cpu')
+
+  const METRIC_TABS = [
+    { id: 'cpu', label: 'CPU' },
+    { id: 'memory', label: 'Memory' },
+    { id: 'pods', label: 'Pods' },
+  ] as const
+
+  /**
+   * This cluster's recorded history.
+   *
+   * Reloaded on the same cadence as the rest of the view rather than on its
+   * own timer: a chart that advanced while the numbers above it did not would
+   * be showing two different moments.
+   */
+  const history = $derived(new ClusterHistory(session.cluster.id))
+
+  $effect(() => {
+    const current = history
+    void current.load()
+
+    const interval = preferences.effectiveIntervalMs
+    if (interval <= 0) return
+
+    // Sampling happens every 30 seconds on the Go side, so polling the chart
+    // faster than that only redraws the same points.
+    const timer = setInterval(() => void current.load(), Math.max(interval, 30_000))
+    return () => clearInterval(timer)
+  })
 
   /** Opens a kind's list from a finding. */
   function openList(kindId: string): void {
@@ -185,6 +220,73 @@
             </p>
           {/if}
         </div>
+      </section>
+
+      <!-- Trend.
+           Kubernetes reports only the present, so this is K8Sense's own
+           record: sampled every 30 seconds while the application is open. It
+           says so rather than implying the completeness a monitoring stack
+           would have. -->
+      <section class="flex flex-col gap-3 rounded-xl border border-outline-variant/40 bg-surface-container-low p-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
+            <TrendingUp class="size-4 text-on-surface-variant" strokeWidth={1.8} />
+            Trend
+          </h3>
+
+          <div class="flex items-center gap-3">
+            <!-- Metric -->
+            <div class="flex rounded-md border border-outline-variant/60 p-0.5">
+              {#each METRIC_TABS as tab (tab.id)}
+                <button
+                  type="button"
+                  onclick={() => (metric = tab.id)}
+                  aria-pressed={metric === tab.id}
+                  class="rounded px-2.5 py-1 text-label-medium transition-colors duration-100
+                         {metric === tab.id
+                           ? 'bg-secondary-container text-on-secondary-container'
+                           : 'text-on-surface-variant hover:text-on-surface'}"
+                >
+                  {tab.label}
+                </button>
+              {/each}
+            </div>
+
+            <!-- Window -->
+            <div class="flex rounded-md border border-outline-variant/60 p-0.5">
+              {#each TREND_WINDOWS as option (option.minutes)}
+                <button
+                  type="button"
+                  onclick={() => void history.setWindow(option.minutes)}
+                  aria-pressed={history.windowMinutes === option.minutes}
+                  class="rounded px-2 py-1 text-label-medium tabular-nums transition-colors duration-100
+                         {history.windowMinutes === option.minutes
+                           ? 'bg-secondary-container text-on-secondary-container'
+                           : 'text-on-surface-variant hover:text-on-surface'}"
+                >
+                  {option.label}
+                </button>
+              {/each}
+            </div>
+          </div>
+        </div>
+
+        {#if !history.recording}
+          <p class="py-8 text-center text-body-small text-on-surface-variant/70">
+            History is not being recorded. Turn it on in Settings → Data.
+          </p>
+        {:else if !history.hasTrend}
+          <p class="py-8 text-center text-body-small text-on-surface-variant/70">
+            Collecting. K8Sense samples every 30 seconds while it is open, so a line appears
+            about a minute after the cluster connects.
+          </p>
+        {:else}
+          <TrendChart samples={history.samples} {metric} />
+          <p class="text-body-small text-on-surface-variant/60">
+            Covering the last {formatAge(history.spanSeconds)} that K8Sense has been open on this
+            cluster — not the cluster's whole history.
+          </p>
+        {/if}
       </section>
 
       <div class="grid gap-4 lg:grid-cols-2">

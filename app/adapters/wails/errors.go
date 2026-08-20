@@ -49,6 +49,10 @@ const (
 // that is not a plain http(s) address.
 var errInvalidURL = errors.New("invalid URL")
 
+// errNotFound is raised when the frontend asks for something the backend has
+// no record of — a licence text whose id does not exist, say.
+var errNotFound = errors.New("not found")
+
 // apiError logs the full failure and returns the sanitised error the frontend
 // receives.
 //
@@ -102,7 +106,8 @@ func classifyError(err error) (ErrorCode, string) {
 	case errors.Is(err, domain.ErrEmptyClusterID),
 		errors.Is(err, domain.ErrInvalidNamespaceName),
 		errors.Is(err, domain.ErrInvalidResourceKind),
-		errors.Is(err, errInvalidURL):
+		errors.Is(err, errInvalidURL),
+		errors.Is(err, errNotFound):
 		return CodeInvalidInput, err.Error()
 
 	case errors.Is(err, domain.ErrClusterNotConnected):

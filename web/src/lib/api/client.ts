@@ -39,7 +39,17 @@ import {
   StopLogStream as bindStopLogStream,
 } from '$lib/wailsjs/go/wails/ManagementAPI'
 import { GetOverview as bindGetOverview } from '$lib/wailsjs/go/wails/OverviewAPI'
-import { Info as bindInfo, OpenURL as bindOpenURL } from '$lib/wailsjs/go/wails/SystemAPI'
+import {
+  GetRetention as bindGetRetention,
+  GetSeries as bindGetSeries,
+  SetRetention as bindSetRetention,
+} from '$lib/wailsjs/go/wails/HistoryAPI'
+import {
+  Credits as bindCredits,
+  Info as bindInfo,
+  LicenceText as bindLicenceText,
+  OpenURL as bindOpenURL,
+} from '$lib/wailsjs/go/wails/SystemAPI'
 import { EventsOn } from '$lib/wailsjs/runtime/runtime'
 import type { wails } from '$lib/wailsjs/go/models'
 import { toApiError } from './errors'
@@ -68,6 +78,14 @@ export type TableColumn = wails.TableColumn
 export type TableRow = wails.TableRow
 /** The running application's identity. */
 export type AppInfo = wails.AppInfo
+/** One shipped dependency and the licence it is distributed under. */
+export type Credit = wails.Credit
+/** One recorded measurement of a cluster. */
+export type Sample = wails.Sample
+/** A cluster's recorded history, with an account of its extent. */
+export type SeriesResult = wails.SeriesResult
+/** How long K8Sense keeps samples locally. */
+export type RetentionSetting = wails.RetentionSetting
 /** An assessed cluster: what is wrong, what is left, what is running. */
 export type Overview = wails.Overview
 /** One problem, aggregated across the objects it affects. */
@@ -169,6 +187,34 @@ export function getOverview(clusterId: string): Promise<Overview> {
   return call(() => bindGetOverview(clusterId))
 }
 
+// --- History ----------------------------------------------------------------
+
+/**
+ * Returns a cluster's recorded history over the last `windowMinutes`.
+ *
+ * The history covers the window the application has been open — K8Sense
+ * samples while it runs and stores nothing anywhere else — so the result also
+ * reports the span it actually holds. The UI must say which, rather than
+ * implying the completeness a monitoring stack would have.
+ */
+export function getSeries(
+  clusterId: string,
+  windowMinutes: number,
+  maxPoints: number,
+): Promise<SeriesResult> {
+  return call(() => bindGetSeries(clusterId, windowMinutes, maxPoints))
+}
+
+/** Reports how long samples are kept on this machine. */
+export function getRetention(): Promise<RetentionSetting> {
+  return call(() => bindGetRetention())
+}
+
+/** Changes how long samples are kept. Zero stops recording and erases what exists. */
+export function setRetention(days: number): Promise<void> {
+  return call(() => bindSetRetention(days))
+}
+
 // --- Navigation -------------------------------------------------------------
 
 /**
@@ -250,6 +296,22 @@ export function getManifest(
 /** Returns the running application's name, version and platform. */
 export function appInfo(): Promise<AppInfo> {
   return call(() => bindInfo())
+}
+
+/**
+ * Lists every dependency K8Sense ships, with its licence.
+ *
+ * Not decoration: MIT, BSD, ISC and Apache-2.0 all require the licence and its
+ * copyright notice to travel with the binary, and a desktop application has
+ * nowhere to put them except its own Credits pane.
+ */
+export function listCredits(): Promise<Credit[]> {
+  return call(() => bindCredits())
+}
+
+/** Fetches one licence's full text, on demand. */
+export function licenceText(textId: string): Promise<string> {
+  return call(() => bindLicenceText(textId))
 }
 
 /**

@@ -46,7 +46,7 @@ BLUE   := \033[0;34m
 CYAN   := \033[0;36m
 NC     := \033[0m
 
-.PHONY: help dev build run open bindings test check web-build embed-stub deps clean \
+.PHONY: help dev build run open bindings notices test check web-build embed-stub deps clean \
         tag tag-show-inner tag-patch-inner tag-minor-inner tag-major-inner \
         tag-rc-inner tag-main-inner bump-inner ensure-branch ensure-clean fetch
 
@@ -150,6 +150,16 @@ bindings: embed-stub
 
 web-build:
 	$(NPM) --prefix web run build
+
+# Regenerates the third-party licence inventory the Credits pane shows.
+#
+# Committed output, so a build needs neither the Go module cache nor
+# node_modules to produce a compliant artefact. Run it after adding, removing
+# or upgrading any dependency that ships; the generator fails outright if a
+# copyleft licence appears, which in a product meant for commercial
+# distribution is a decision rather than a detail.
+notices:
+	@node build/generate-notices.mjs
 
 # Ensures the embed directory holds *something*, so `go build` and the bindings
 # run on a clean checkout. Never overwrites a real bundle.
