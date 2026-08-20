@@ -46,7 +46,7 @@ BLUE   := \033[0;34m
 CYAN   := \033[0;36m
 NC     := \033[0m
 
-.PHONY: help dev build run open bindings notices test check web-build embed-stub deps clean \
+.PHONY: help dev build run open bindings notices sbom test check web-build embed-stub deps clean \
         tag tag-show-inner tag-patch-inner tag-minor-inner tag-major-inner \
         tag-rc-inner tag-main-inner bump-inner ensure-branch ensure-clean fetch
 
@@ -85,6 +85,10 @@ help:
 	@echo "Quality:"
 	@echo "  make test                - go test -race ./..."
 	@echo "  make check               - gofmt, go vet, golangci-lint, svelte-check"
+	@echo ""
+	@echo "Compliance (see docs/LICENCE-POLICY.md):"
+	@echo "  make notices             - Regenerate the licence inventory, enforce the policy"
+	@echo "  make sbom                - Emit a CycloneDX SBOM into build/bin/sbom"
 	@echo ""
 	@echo "Release (see docs/RELEASING.md):"
 	@echo "  make tag show            - Show the latest local and remote tags"
@@ -151,15 +155,26 @@ bindings: embed-stub
 web-build:
 	$(NPM) --prefix web run build
 
-# Regenerates the third-party licence inventory the Credits pane shows.
+# Regenerates the third-party licence inventory AND enforces the licence
+# policy in build/licence-policy.json.
+#
+# Depends on embed-stub because the generator asks `go list` what the binary
+# links, and `//go:embed all:dist` will not evaluate against an empty
+# directory. It also needs web/node_modules, and says so rather than silently
+# reporting an empty npm set — an empty set would satisfy every policy check,
+# which is the dangerous direction to fail in.
 #
 # Committed output, so a build needs neither the Go module cache nor
 # node_modules to produce a compliant artefact. Run it after adding, removing
-# or upgrading any dependency that ships; the generator fails outright if a
-# copyleft licence appears, which in a product meant for commercial
-# distribution is a decision rather than a detail.
-notices:
+# or upgrading any dependency. See docs/LICENCE-POLICY.md.
+notices: embed-stub
 	@node build/generate-notices.mjs
+
+# Emits a CycloneDX SBOM into build/bin/sbom, for release artefacts and for
+# anyone's procurement process. Shares its collector with `notices`, so the
+# two describe provably the same set of packages.
+sbom: embed-stub
+	@node build/generate-sbom.mjs
 
 # Ensures the embed directory holds *something*, so `go build` and the bindings
 # run on a clean checkout. Never overwrites a real bundle.

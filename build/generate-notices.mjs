@@ -1,203 +1,90 @@
 #!/usr/bin/env node
 /**
- * Generates the third-party notices K8Sense ships.
+ * Generates the third-party notices K8Sense ships, and enforces the licence
+ * policy while it is there.
  *
- * Every dependency K8Sense distributes is under a permissive licence, and all
- * of them — MIT, BSD, ISC, Apache-2.0 — require the same thing in return: that
- * the licence and its copyright notice travel with the binary. This produces
- * that inventory so the Credits pane can show it, and so the obligation cannot
- * quietly fall out of date as dependencies change.
+ * Two jobs, deliberately in one command. The inventory and the policy check
+ * read exactly the same dependency set, so neither can drift from the other —
+ * a policy that passed against a different set of packages than the one we
+ * credit would be worth nothing.
  *
- * Scope is deliberately what SHIPS, not what is installed:
+ * Scope is what SHIPS: Go modules linked into the binary on any of the three
+ * release platforms, and npm packages in the runtime dependency tree. Build
+ * tooling is collected too, but only to be policy-checked; it is never written
+ * into the inventory, because nothing obliges you to credit a compiler you did
+ * not distribute.
  *
- *   - Go modules actually linked into the binary (`go list -deps`), not every
- *     module in go.sum, most of which are build- or test-only.
- *   - npm packages in the runtime dependency tree (`npm ls --omit=dev`), not
- *     the build toolchain. Vite, Tailwind and TypeScript never reach a user's
- *     machine, so there is nothing to notify anyone about.
+ * Run via `make notices`. The output is committed so a build needs neither the
+ * module cache nor node_modules to produce a compliant artefact, and CI fails
+ * if it is out of date.
  *
- * Licence texts are deduplicated by content: the MIT text repeats identically
- * across dozens of packages, and storing it once keeps the embedded file at a
- * size worth shipping.
- *
- * Run via `make notices`. The output is committed so that a build needs
- * neither the module cache nor node_modules to produce a compliant artifact.
+ * See docs/LICENCE-POLICY.md for what the tiers mean and why.
  */
 
-import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const webRoot = join(repoRoot, 'web')
-const outputPath = join(repoRoot, 'app', 'adapters', 'notices', 'notices.json')
+import { collect, repoRoot } from './licences/collect.mjs'
+import { evaluate, loadPolicy, report } from './licences/policy.mjs'
 
-/** Filenames a licence is conventionally kept in, in order of preference. */
-const LICENCE_FILES = [
-  'LICENSE',
-  'LICENSE.txt',
-  'LICENSE.md',
-  'LICENCE',
-  'LICENCE.txt',
-  'LICENSE.MIT',
-  'LICENSE-MIT',
-  'LICENSE-APACHE',
-  'COPYING',
-  'COPYING.txt',
-  'UNLICENSE',
-]
+const root = repoRoot()
+const outputPath = join(root, 'app', 'adapters', 'notices', 'notices.json')
 
-/** Identifies a licence from its text, for packages that declare none. */
-function classify(text) {
-  const head = text.slice(0, 2000)
-  if (/Apache License/i.test(head)) return 'Apache-2.0'
-  if (/GNU AFFERO/i.test(head)) return 'AGPL'
-  if (/GNU LESSER/i.test(head)) return 'LGPL'
-  if (/GNU GENERAL PUBLIC/i.test(head)) return 'GPL'
-  if (/Mozilla Public License/i.test(head)) return 'MPL-2.0'
-  if (/Business Source License/i.test(head)) return 'BSL'
-  if (/Server Side Public License/i.test(head)) return 'SSPL'
-  if (/Permission to use, copy, modify, and\/or distribute/i.test(head)) return 'ISC'
-  if (/Permission is hereby granted, free of charge/i.test(head)) return 'MIT'
-  if (/Redistribution and use in source and binary forms/i.test(head)) return 'BSD'
-  return 'UNKNOWN'
+let collected
+try {
+  collected = collect(root)
+} catch (cause) {
+  console.error(`Cannot determine the dependency set: ${cause.message}`)
+  process.exit(1)
 }
 
-/** Reads the first licence-shaped file in a directory. */
-function readLicence(dir) {
-  for (const name of LICENCE_FILES) {
-    const path = join(dir, name)
-    if (existsSync(path)) return readFileSync(path, 'utf8').trim()
-  }
-  // Some packages name it LICENSE-<something>; take the first such file.
-  if (existsSync(dir)) {
-    const fallback = readdirSync(dir).find((name) => /^licen[cs]e/i.test(name))
-    if (fallback) {
-      const path = join(dir, fallback)
-      try {
-        return readFileSync(path, 'utf8').trim()
-      } catch {
-        // A directory named LICENSES/, for instance. Nothing to read.
-      }
-    }
-  }
-  return ''
-}
+const policy = loadPolicy(root)
+const outcome = evaluate(policy, collected)
 
-/**
- * Extracts the copyright line, which is the part MIT and BSD specifically
- * require to be reproduced.
- */
-function copyrightOf(text) {
-  const line = text.split('\n').find((entry) => /copyright/i.test(entry) && /\d{4}|©/.test(entry))
-  return line ? line.trim() : ''
-}
+for (const line of report(collected, outcome)) console.log(line)
 
-/** Go's module cache escapes capitals as `!x`, to stay case-insensitive. */
-function escapeModulePath(modulePath) {
-  return modulePath.replace(/[A-Z]/g, (character) => `!${character.toLowerCase()}`)
-}
+// --- the shipped inventory -------------------------------------------------
+//
+// Licence texts are deduplicated by content: the MIT text repeats identically
+// across dozens of packages, and storing it once is the difference between an
+// embedded file of tens of kilobytes and one of several megabytes.
 
-function collectGoModules() {
-  const modCache = execFileSync('go', ['env', 'GOMODCACHE'], { cwd: repoRoot }).toString().trim()
-  const listed = execFileSync(
-    'go',
-    ['list', '-deps', '-f', '{{if not .Standard}}{{.Module.Path}}@{{.Module.Version}}{{end}}', './...'],
-    { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024 },
-  )
-    .toString()
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line && line !== '@' && !line.startsWith('k8sense@'))
-
-  const seen = new Set()
-  const modules = []
-
-  for (const entry of [...new Set(listed)].sort()) {
-    const at = entry.lastIndexOf('@')
-    const name = entry.slice(0, at)
-    const version = entry.slice(at + 1)
-    if (seen.has(name)) continue
-    seen.add(name)
-
-    const dir = join(modCache, `${escapeModulePath(name)}@${version}`)
-    const text = readLicence(dir)
-    modules.push({
-      name,
-      version,
-      ecosystem: 'go',
-      licence: text ? classify(text) : 'UNKNOWN',
-      copyright: copyrightOf(text),
-      text,
-    })
-  }
-  return modules
-}
-
-function collectNpmPackages() {
-  const tree = JSON.parse(
-    execFileSync('npm', ['ls', '--omit=dev', '--all', '--json', '--long'], {
-      cwd: webRoot,
-      maxBuffer: 64 * 1024 * 1024,
-    }).toString(),
-  )
-
-  const found = new Map()
-
-  const walk = (node) => {
-    for (const [name, child] of Object.entries(node.dependencies ?? {})) {
-      if (!found.has(name) && child.path) {
-        const text = readLicence(child.path)
-        found.set(name, {
-          name,
-          version: child.version ?? '',
-          ecosystem: 'npm',
-          licence: child.license ?? (text ? classify(text) : 'UNKNOWN'),
-          copyright: copyrightOf(text),
-          text,
-        })
-      }
-      walk(child)
-    }
-  }
-  walk(tree)
-
-  return [...found.values()].sort((left, right) => left.name.localeCompare(right.name))
-}
-
-const packages = [...collectGoModules(), ...collectNpmPackages()]
-
-// Deduplicate the licence texts. The MIT text is byte-identical across dozens
-// of packages; storing it once takes the embedded file from megabytes to tens
-// of kilobytes.
 const texts = {}
-const entries = packages.map((entry) => {
-  let textId = ''
-  if (entry.text) {
-    textId = createHash('sha256').update(entry.text).digest('hex').slice(0, 16)
-    texts[textId] = entry.text
-  }
-  return {
-    name: entry.name,
-    version: entry.version,
-    ecosystem: entry.ecosystem,
-    licence: entry.licence,
-    copyright: entry.copyright,
-    textId,
-  }
-})
 
-const missing = entries.filter((entry) => !entry.textId || entry.licence === 'UNKNOWN')
-const copyleft = entries.filter((entry) => /^(GPL|LGPL|AGPL|BSL|SSPL)$/.test(entry.licence))
+/** Interns a text, returning its id, or "" when there is nothing to intern. */
+function intern(text) {
+  if (!text) return ''
+  const id = createHash('sha256').update(text).digest('hex').slice(0, 16)
+  texts[id] = text
+  return id
+}
 
+const shipped = outcome.resolved
+  .filter((entry) => entry.scope === 'shipped')
+  .map((entry) => {
+    const record = {
+      name: entry.name,
+      version: entry.version,
+      ecosystem: entry.ecosystem,
+      licence: entry.identifier,
+      copyright: entry.copyright,
+      textId: intern(entry.text),
+    }
+    // Only present when there is one, so the committed file stays readable.
+    if (entry.expression) record.expression = entry.expression
+    if (entry.noticeText) record.noticeTextId = intern(entry.noticeText)
+    return record
+  })
+
+// No timestamp and no absolute paths: this file is drift-checked in CI, so
+// anything that changes between two identical runs would fail every build.
 writeFileSync(
   outputPath,
   `${JSON.stringify(
     {
       generated: 'by build/generate-notices.mjs — run `make notices` after changing dependencies',
-      packages: entries,
+      packages: shipped,
       texts,
     },
     null,
@@ -205,25 +92,84 @@ writeFileSync(
   )}\n`,
 )
 
-const byLicence = entries.reduce((counts, entry) => {
-  counts[entry.licence] = (counts[entry.licence] ?? 0) + 1
-  return counts
-}, {})
+// --- policy enforcement ----------------------------------------------------
 
-console.log(`${entries.length} shipped dependencies:`)
-for (const [licence, count] of Object.entries(byLicence).sort((a, b) => b[1] - a[1])) {
-  console.log(`  ${String(count).padStart(3)}  ${licence}`)
-}
-for (const entry of missing) {
-  console.warn(`  warning: no licence text found for ${entry.ecosystem}:${entry.name}`)
+let failed = false
+
+/** Reports a failure and marks the run as failed. */
+function fail(heading, lines) {
+  failed = true
+  console.error(`\n${heading}`)
+  for (const line of lines) console.error(`  ${line}`)
 }
 
-// A copyleft dependency in a product intended for commercial distribution is
-// a decision, not a detail. Fail rather than let one arrive unnoticed.
-if (copyleft.length > 0) {
-  console.error('\nRefusing to generate: copyleft licences found in shipped dependencies.')
-  for (const entry of copyleft) {
-    console.error(`  ${entry.licence.padEnd(6)} ${entry.ecosystem}:${entry.name}@${entry.version}`)
+if (collected.mislabelled.length > 0) {
+  fail('Packages imported by shipped source are declared as devDependencies:', [
+    ...collected.mislabelled.map((name) => name),
+    '',
+    'They are bundled into the application, so they ship — move them to',
+    '"dependencies" in web/package.json. Left as they are, they would be',
+    'absent from the notices above and `npm ci --omit=dev` would not install',
+    'them.',
+  ])
+}
+
+if (collected.unresolved.length > 0) {
+  fail('Packages imported by shipped source but not installed at all:', collected.unresolved)
+}
+
+if (outcome.violations.length > 0) {
+  fail('Licence policy violations:', [
+    ...outcome.violations.map((entry) => {
+      const where = entry.scope === 'shipped' ? 'SHIPPED' : 'build'
+      const detail = entry.conflict
+        ? ` (declares ${entry.conflict.declared}, text reads as ${entry.conflict.detected})`
+        : ''
+      return `[${where}] ${entry.ecosystem}:${entry.name}@${entry.version} — ${entry.licence} (${entry.tier})${detail}`
+    }),
+    '',
+    'Either remove the dependency, or record an exception in',
+    'build/licence-policy.json with a justification. See docs/LICENCE-POLICY.md.',
+  ])
+}
+
+if (outcome.brokenPremise.length > 0) {
+  fail('Build-only exceptions whose premise no longer holds:', [
+    ...outcome.brokenPremise.map(
+      (exception) => `${exception.ecosystem}:${exception.package} — ${exception.licence}`,
+    ),
+    '',
+    'These were excused on the grounds that they are never distributed, and',
+    'they are now in the shipped dependency tree. The exception must be',
+    're-argued for shipped scope, or the dependency removed.',
+  ])
+}
+
+if (outcome.stale.length > 0) {
+  fail('Exceptions that match no current dependency:', [
+    ...outcome.stale.map(
+      (exception) => `${exception.ecosystem}:${exception.package} — ${exception.licence}`,
+    ),
+    '',
+    'Delete them. An exception nobody needs is an exception nobody reviews.',
+  ])
+}
+
+// An expired review is a warning locally — it should not stop somebody
+// building — but it stops a release, which is the point at which "we will look
+// at that later" has run out.
+if (outcome.expired.length > 0) {
+  const lines = outcome.expired.map(
+    (exception) => `${exception.ecosystem}:${exception.package} — review due ${exception.reviewBy}`,
+  )
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    fail('Licence exceptions are past their review date:', lines)
+  } else {
+    console.warn('\nLicence exceptions are past their review date:')
+    for (const line of lines) console.warn(`  ${line}`)
   }
-  process.exit(1)
 }
+
+if (failed) process.exit(1)
+
+console.log(`\nPolicy satisfied. Wrote ${shipped.length} packages to app/adapters/notices/notices.json.`)

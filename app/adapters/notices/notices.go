@@ -41,6 +41,15 @@ type Package struct {
 	// publishes no licence file — a handful genuinely do not, and inventing
 	// one would be worse than saying so.
 	TextID string `json:"textId"`
+	// NoticeTextID keys into the same texts, for projects shipping a NOTICE.
+	//
+	// A separate duty from the licence itself: Apache-2.0 section 4(d)
+	// requires the NOTICE to be reproduced in distributions, and it names
+	// attributions the licence text does not.
+	NoticeTextID string `json:"noticeTextId,omitempty"`
+	// Expression holds the original SPDX expression when the package was
+	// dual-licensed and one arm was elected. Empty for the ordinary case.
+	Expression string `json:"expression,omitempty"`
 }
 
 // inventory is the file's shape.

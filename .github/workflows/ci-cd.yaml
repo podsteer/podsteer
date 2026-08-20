@@ -89,6 +89,36 @@ jobs:
         with:
           version: v2.12.2
 
+      # Inside the gate rather than in a job of its own, deliberately. A
+      # separate job would need `needs: quality` and could be skipped
+      # independently; here a licence violation stops the release the same way
+      # a failing test does.
+      #
+      # Ordering matters: this must follow `go build ./...` so the module cache
+      # is warm, and the frontend build so the embed directory exists — the
+      # generator asks `go list` what the binary links, across all three
+      # release platforms.
+      - name: Verify Licence Policy And Notices
+        run: |
+          node build/generate-notices.mjs
+          if ! git -c core.fileMode=false diff --quiet -- app/adapters/notices/notices.json; then
+            echo "::error::notices.json is out of date. Run 'make notices' and commit the result."
+            git -c core.fileMode=false diff --stat -- app/adapters/notices/notices.json
+            exit 1
+          fi
+          echo "Licence policy satisfied; notices.json matches the dependency set."
+
+      - name: Generate SBOM
+        run: node build/generate-sbom.mjs
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: build/bin/sbom/k8sense.cdx.json
+          retention-days: 14
+          if-no-files-found: error
+
   bindings:
     name: Bindings Up To Date
     runs-on: ubuntu-latest
@@ -236,6 +266,12 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # The SBOM is built once, in the gate, and describes the release rather
+      # than any one platform's binary — so it is named for the tag here
+      # instead of being regenerated per platform.
+      - name: Version The SBOM Filename
+        run: mv artifacts/k8sense.cdx.json "artifacts/k8sense-${{ github.ref_name }}.cdx.json"
+
       # `gh` rather than a third-party release action: it ships on the runner,
       # needs no extra token plumbing, and keeps one less unpinned dependency
       # in the path that produces a signed-off artefact.
@@ -249,7 +285,7 @@ jobs:
             PRERELEASE=""
           fi
           gh release create "${{ github.ref_name }}" \
-            artifacts/*.zip \
+            artifacts/*.zip artifacts/*.cdx.json \
             --title "${{ github.ref_name }}" \
             --generate-notes \
             $PRERELEASE

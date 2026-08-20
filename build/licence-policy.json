@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "updated": "2026-08-20",
+  "$comment": "The machine-readable half of docs/LICENCE-POLICY.md. Tiers hold BASE SPDX identifiers; the engine strips -only/-or-later before lookup. Anything absent from every tier is treated as reviewRequired, never as allowed.",
+  "tiers": {
+    "allowed": [
+      "MIT",
+      "Apache-2.0",
+      "BSD-2-Clause",
+      "BSD-3-Clause",
+      "ISC",
+      "0BSD",
+      "Zlib",
+      "BlueOak-1.0.0",
+      "Unicode-3.0",
+      "Unicode-DFS-2016",
+      "CC0-1.0",
+      "Python-2.0"
+    ],
+    "reviewRequired": [
+      "MPL-2.0",
+      "MPL-1.1",
+      "EPL-1.0",
+      "EPL-2.0",
+      "CDDL-1.0",
+      "CDDL-1.1",
+      "LGPL-2.1",
+      "LGPL-3.0",
+      "BSD-4-Clause",
+      "Unlicense",
+      "WTFPL",
+      "CC-BY-3.0",
+      "CC-BY-4.0",
+      "Artistic-2.0",
+      "OFL-1.1",
+      "UNKNOWN"
+    ],
+    "forbidden": [
+      "GPL-2.0",
+      "GPL-3.0",
+      "AGPL-3.0",
+      "SSPL-1.0",
+      "BUSL-1.1",
+      "Elastic-2.0",
+      "Commons-Clause",
+      "CC-BY-NC-4.0",
+      "JSON",
+      "EUPL-1.2"
+    ]
+  },
+  "buildOverrides": {
+    "$comment": "Tier used ONLY for build-time tooling, which is never distributed. MPL-2.0 is deliberately absent: it stays reviewRequired even in build scope, so the exceptions below are load-bearing rather than decorative.",
+    "GPL-2.0": "reviewRequired",
+    "GPL-3.0": "reviewRequired",
+    "LGPL-2.1": "reviewRequired",
+    "LGPL-3.0": "reviewRequired"
+  },
+  "exceptions": [
+    {
+      "package": "lightningcss",
+      "ecosystem": "npm",
+      "licence": "MPL-2.0",
+      "scope": "build",
+      "justification": "Tailwind v4's CSS engine, invoked at build time via @tailwindcss/vite. It transforms our CSS and contributes no MPL-covered code to the shipped bundle; MPL-2.0 obligations attach to distribution of covered code (MPL section 3), which does not occur. The shipped-scope cross-check fails the build if this package ever enters the runtime tree.",
+      "approvedBy": "sebastian.gogoasa@cloudresty.com",
+      "approvedOn": "2026-08-20",
+      "reviewBy": "2027-08-20"
+    },
+    {
+      "package": "lightningcss-*",
+      "ecosystem": "npm",
+      "licence": "MPL-2.0",
+      "scope": "build",
+      "justification": "Platform-specific native binary of lightningcss; npm resolves a different optional package per platform (lightningcss-darwin-arm64, lightningcss-linux-x64-gnu, ...), hence the trailing wildcard. Same reasoning as lightningcss.",
+      "approvedBy": "sebastian.gogoasa@cloudresty.com",
+      "approvedOn": "2026-08-20",
+      "reviewBy": "2027-08-20"
+    }
+  ]
+}

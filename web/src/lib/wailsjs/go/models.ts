@@ -159,6 +159,8 @@ export namespace wails {
 	    licence: string;
 	    copyright: string;
 	    textId: string;
+	    noticeTextId: string;
+	    expression: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Credit(source);
@@ -172,6 +174,8 @@ export namespace wails {
 	        this.licence = source["licence"];
 	        this.copyright = source["copyright"];
 	        this.textId = source["textId"];
+	        this.noticeTextId = source["noticeTextId"];
+	        this.expression = source["expression"];
 	    }
 	}
 	export class Event {

@@ -1,0 +1,186 @@
+# Dependency Licence Policy
+
+K8Sense is distributed as a compiled desktop binary, is licensed Apache-2.0,
+and is intended to support a commercial edition. Those three facts decide
+everything below.
+
+This document is the reasoning. The machine-readable half is
+[`build/licence-policy.json`](../build/licence-policy.json), enforced by
+`make notices` and by CI on every pull request. Neither is authoritative alone:
+the file cannot explain itself, and this page cannot stop a build.
+
+## The decision, in one paragraph
+
+Every dependency K8Sense **distributes** must be under a permissive licence.
+Copyleft is not accepted in the shipped binary at any tier, and no exception
+process exists for it — not because copyleft is bad, but because a desktop
+binary statically links everything it uses, so the reciprocal obligations of
+GPL or AGPL would attach to K8Sense itself. That is a decision about the
+product's licensing, not about a dependency, and it is not one to discover
+during a release.
+
+Build-time tooling is judged separately and more leniently, because it is
+never distributed and therefore triggers no obligation at all.
+
+## Why static linking is the crux
+
+Go links statically. A Go binary is a single artefact containing the machine
+code of every module it imports, with no dynamic loading and no separable
+library boundary. This removes the argument that keeps LGPL workable in other
+ecosystems — "we only link dynamically, the user can replace the library" —
+because here there is nothing to replace.
+
+The practical consequence: for Go dependencies, *shipped* and *linked into our
+binary* are the same statement. The npm side is the same in effect, since the
+frontend is bundled into one JavaScript file and embedded in that binary.
+
+## Tiers
+
+### Allowed
+
+`MIT` · `Apache-2.0` · `BSD-2-Clause` · `BSD-3-Clause` · `ISC` · `0BSD` ·
+`Zlib` · `BlueOak-1.0.0` · `Unicode-3.0` · `Unicode-DFS-2016` · `CC0-1.0` ·
+`Python-2.0`
+
+Permissive, no reciprocal obligation, no restriction on commercial use or
+field of use. All of them except `0BSD` and `CC0-1.0` still require the licence
+and its copyright notice to travel with the binary — which is not optional and
+is why the Credits pane exists.
+
+`Apache-2.0` additionally carries an explicit patent grant, which is a reason
+to *prefer* it over MIT for a commercial product, and a NOTICE duty (§4(d))
+that the generator captures separately from the licence text.
+
+### Review required
+
+`MPL-2.0` · `MPL-1.1` · `EPL-1.0` · `EPL-2.0` · `CDDL-1.0` · `CDDL-1.1` ·
+`LGPL-2.1` · `LGPL-3.0` · `BSD-4-Clause` · `Unlicense` · `WTFPL` ·
+`CC-BY-3.0` · `CC-BY-4.0` · `Artistic-2.0` · `OFL-1.1` · `UNKNOWN`
+
+These are not refused; they are refused **by default**. Each needs a recorded
+exception explaining why it is acceptable in the specific way it is used.
+
+- **Weak copyleft** (`MPL-2.0`, `EPL`, `CDDL`) is file-level: obligations
+  attach to the covered files, not to the program they are combined with. It
+  is usually acceptable *shipped*, provided we do not modify those files, and
+  is unproblematic build-only. It still needs a decision, because "we do not
+  modify it" is a commitment somebody has to keep.
+- **`LGPL`** is the case static linking ruins, as above. Shipped, treat it as
+  effectively copyleft.
+- **`BSD-4-Clause`** carries the advertising clause — every promotional
+  mention must credit the authors. That is a marketing obligation nobody would
+  remember, so it needs to be a conscious choice.
+- **`Unlicense` / `WTFPL` / `CC0-1.0`** are public-domain dedications of
+  varying legal robustness. `CC0-1.0` is allowed above because it is drafted
+  as a licence with a fallback grant; the other two are not, and some
+  jurisdictions do not recognise a bare dedication.
+- **`CC-BY` and `OFL`** are content licences, not software licences. Finding
+  one on a code dependency usually means something is mislabelled.
+- **`UNKNOWN`** is first-class here on purpose — see below.
+
+### Forbidden
+
+`GPL-2.0` · `GPL-3.0` · `AGPL-3.0` · `SSPL-1.0` · `BUSL-1.1` · `Elastic-2.0` ·
+`Commons-Clause` · `CC-BY-NC-4.0` · `JSON` · `EUPL-1.2`
+
+No exception process. Strong copyleft would extend to K8Sense through static
+linking; `SSPL`, `BUSL`, `Elastic` and `Commons-Clause` restrict commercial or
+service use directly; `CC-BY-NC` forbids commercial use outright; the `JSON`
+licence's "shall be used for Good, not Evil" clause is unenforceably vague and
+is rejected by most corporate legal reviews, which makes it a procurement
+problem regardless of its intent.
+
+Note that `GPL` and `LGPL` are downgraded to review-required **for build-time
+tooling only** (`buildOverrides`), because a compiler we run is not a library
+we ship.
+
+## `UNKNOWN` is a tier, not an error
+
+A dependency whose licence cannot be established is treated exactly like a
+weak-copyleft one: it stops the build until a person records what it actually
+is. This matters more than it sounds. The failure mode of a licence scanner is
+not misclassifying GPL as MIT — it is finding no licence file and quietly
+omitting the package. Making `UNKNOWN` a first-class, blocking classification
+is what turns that silence into a question.
+
+The same logic covers **disagreement**: when a package's declared `license`
+field and its actual licence text classify differently, the result is
+`UNKNOWN` rather than whichever is friendlier. A package declaring MIT while
+shipping GPL text is either mislabelled or relicensed, and both need a human.
+
+## Shipped versus build-only
+
+The distinction carries real weight, so it is computed rather than asserted.
+
+**Go** — the union of `go list -deps` across all three release platforms
+(`darwin/arm64`, `windows/amd64`, `linux/amd64` with `-tags webkit2_41`), with
+`CGO_ENABLED=1` forced. Running it once on the host is a trap that has already
+caught us: three modules, including `github.com/wailsapp/go-webview2`, are
+reached only under `GOOS=windows`, so a macOS-generated inventory omitted
+modules the Windows binary actually contains.
+
+**npm** — the `--omit=dev` tree, **cross-checked against what `web/src`
+actually imports**. This is the only silent way shipped scope goes wrong: a
+package imported by shipped source but declared as a `devDependency` is
+bundled into the app while being absent from every inventory built from
+`dependencies`. That has also already happened here, to CodeMirror, xterm.js
+and Svelte. The check now fails the build.
+
+Modules present in `go list -m all` but never downloaded are neither shipped
+nor executed — nothing imports them on any build path — and are reported
+separately rather than classified.
+
+## Exceptions
+
+An exception is a record in `build/licence-policy.json` with:
+
+| Field | Meaning |
+| :--- | :--- |
+| `package` | Name, with an optional single trailing `*` |
+| `ecosystem` | `go` or `npm` |
+| `licence` | The identifier being excused — an exception is licence-specific |
+| `scope` | `build` or `shipped`; a `build` exception never excuses a shipped package |
+| `justification` | Why this is acceptable **for this use**, in prose |
+| `approvedBy`, `approvedOn` | Who decided, and when |
+| `reviewBy` | When the reasoning must be re-examined |
+
+Three properties keep them honest:
+
+1. **Stale exceptions fail the build.** One that matches no current dependency
+   is deleted, because an exception nobody needs is an exception nobody
+   reviews.
+2. **A broken premise fails the build.** If a `build`-scoped exception's
+   package later appears in the shipped tree, its justification — "this is
+   never distributed" — is no longer true, and the build says so by name.
+3. **An expired `reviewBy` warns locally and fails in CI.** Building on your
+   own machine should not stop; shipping should.
+
+## Current exceptions
+
+Two, both for `lightningcss` (Tailwind v4's CSS engine) and its
+platform-specific native binary, both `MPL-2.0`, both `build`-scoped. They
+transform our CSS at build time and contribute no MPL-covered code to the
+bundle; MPL-2.0's obligations attach to distributing covered code, which does
+not occur. The cross-check above is what stops that reasoning going stale.
+
+They were kept rather than eliminated because the alternative is abandoning
+Tailwind v4, and the obligation being avoided is nil. Should they ever become
+shipped, the build fails until somebody re-argues it.
+
+## SBOM
+
+`make sbom` emits CycloneDX 1.6 to `build/bin/sbom/k8sense.cdx.json`, and CI
+attaches it to every GitHub Release. It shares its collector with the notices
+generator, so the SBOM and the Credits pane describe provably the same set of
+packages — two documents disagreeing about what ships would be worse than one.
+
+This is increasingly a procurement requirement rather than a courtesy (the EU
+Cyber Resilience Act; US Executive Order 14028), and publishing one per release
+removes a question from every future enterprise conversation.
+
+## Changing this policy
+
+Edit both halves in the same change: this document for the reasoning, the JSON
+for the enforcement. Adding an identifier to `allowed` is a decision about what
+K8Sense may become, not a formality — the tiers above are the argument, and it
+should be updated rather than merely appended to.

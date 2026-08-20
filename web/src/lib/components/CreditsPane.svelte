@@ -24,6 +24,8 @@
   /** The package whose licence text is open, keyed "ecosystem:name". */
   let openKey = $state<string | null>(null)
   let openText = $state<string | null>(null)
+  /** Its NOTICE, when the project ships one. */
+  let openNotice = $state<string | null>(null)
 
   const ECOSYSTEMS = { go: 'Go', npm: 'JavaScript' } as const
 
@@ -81,15 +83,20 @@
     if (openKey === key) {
       openKey = null
       openText = null
+      openNotice = null
       return
     }
 
     openKey = key
     openText = null
+    openNotice = null
     if (!credit.textId) return
 
     try {
       openText = await licenceText(credit.textId)
+      // Apache-2.0 section 4(d) makes reproducing a NOTICE a duty separate
+      // from reproducing the licence, so it is fetched and shown separately.
+      if (credit.noticeTextId) openNotice = await licenceText(credit.noticeTextId)
     } catch (cause) {
       openText = toApiError(cause).message
     }
@@ -166,8 +173,9 @@
                 </span>
                 <span
                   class="w-24 shrink-0 text-right text-body-small text-on-surface-variant"
+                  title={credit.expression ? `Offered as ${credit.expression}` : undefined}
                 >
-                  {credit.licence}
+                  {credit.licence}{credit.expression ? '*' : ''}
                 </span>
               </button>
 
@@ -191,6 +199,17 @@
                              bg-surface p-2 text-[11px] leading-relaxed whitespace-pre-wrap
                              text-on-surface-variant"
                       data-selectable>{openText}</pre>
+                  {/if}
+
+                  {#if openNotice}
+                    <p class="pt-3 pb-1 text-label-medium uppercase tracking-wider text-on-surface-variant">
+                      Notice
+                    </p>
+                    <pre
+                      class="max-h-48 overflow-auto rounded border border-outline-variant/40
+                             bg-surface p-2 text-[11px] leading-relaxed whitespace-pre-wrap
+                             text-on-surface-variant"
+                      data-selectable>{openNotice}</pre>
                   {/if}
                 </div>
               {/if}

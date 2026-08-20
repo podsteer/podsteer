@@ -71,9 +71,16 @@ type Credit struct {
 	Ecosystem string `json:"ecosystem"`
 	Licence   string `json:"licence"`
 	Copyright string `json:"copyright"`
-	// TextID keys into the licence texts returned by LicenceTexts. Empty when
+	// TextID keys into the licence texts returned by LicenceText. Empty when
 	// the project publishes no licence file.
 	TextID string `json:"textId"`
+	// NoticeTextID keys into the same texts, for the NOTICE that Apache-2.0
+	// section 4(d) requires to be reproduced alongside the licence.
+	NoticeTextID string `json:"noticeTextId"`
+	// Expression is the original SPDX expression when a package offers a
+	// choice and one arm was elected, so the pane never silently asserts one
+	// licence for something dual-licensed.
+	Expression string `json:"expression"`
 }
 
 // Credits returns every dependency K8Sense ships, with its licence.
@@ -92,12 +99,14 @@ func (s *SystemAPI) Credits() ([]Credit, error) {
 	credits := make([]Credit, 0, len(packages))
 	for _, entry := range packages {
 		credits = append(credits, Credit{
-			Name:      entry.Name,
-			Version:   entry.Version,
-			Ecosystem: entry.Ecosystem,
-			Licence:   entry.Licence,
-			Copyright: entry.Copyright,
-			TextID:    entry.TextID,
+			Name:         entry.Name,
+			Version:      entry.Version,
+			Ecosystem:    entry.Ecosystem,
+			Licence:      entry.Licence,
+			Copyright:    entry.Copyright,
+			TextID:       entry.TextID,
+			NoticeTextID: entry.NoticeTextID,
+			Expression:   entry.Expression,
 		})
 	}
 	return credits, nil

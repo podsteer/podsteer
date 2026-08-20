@@ -142,20 +142,39 @@ exists so the UI can say "the last 40 minutes" instead of implying more.
   cluster, so the chart and the numbers above it can never disagree.
 - Samples hold capacity figures only: no object names, no logs, no manifests.
 
-## Licences are an obligation the build enforces
+## Licences are policy, and the build enforces it
 
-Every shipped dependency is permissive (MIT, BSD, ISC, Apache-2.0, 0BSD) and
-all of them require the licence and copyright to travel with the binary.
-`make notices` regenerates `app/adapters/notices/notices.json` from what
-actually ships — `go list -deps` and the npm runtime tree, never the build
-toolchain — and **fails outright if a copyleft licence appears**, because in a
-product meant for commercial distribution that is a decision rather than a
-detail. The Credits pane in Settings reads it.
+The policy lives in two halves that must be edited together:
+`docs/LICENCE-POLICY.md` (the reasoning, the tiers, the exception process) and
+`build/licence-policy.json` (the machine-readable form). `make notices`
+regenerates the inventory AND enforces the policy in one pass, so the two can
+never describe different dependency sets. CI runs it inside the `quality` gate.
 
-Run `make notices` after adding, removing or upgrading any dependency that
-ships. A package imported by `web/src/` is a runtime dependency however
-`package.json` classifies it: mislabelling one as `devDependencies` hides it
-from this inventory and breaks `npm ci --omit=dev`.
+Three things about the scope are easy to get wrong and are handled in
+`build/licences/collect.mjs`:
+
+- **Shipped Go is the UNION across all three release platforms.** Running
+  `go list -deps` once on the host is a trap that already caught us:
+  `go-webview2` and two others are reached only under `GOOS=windows`, so a
+  macOS-generated inventory omitted modules the Windows binary contains.
+  `CGO_ENABLED=1` is forced, or cross-GOOS silently prunes cgo dependencies.
+- **A package imported by `web/src/` ships, whatever `package.json` says.**
+  The import scan cross-checks this and fails the build; mislabelling one as a
+  `devDependency` would hide it from the inventory and break
+  `npm ci --omit=dev`. This has happened here twice.
+- **Build-only tooling is judged separately** (`buildOverrides`), because
+  nothing obliges you to credit a compiler you did not distribute. A
+  build-scope exception is guarded by a cross-check that fails if its package
+  ever enters the shipped tree.
+
+`UNKNOWN` is a blocking tier, not an error — an unclassifiable licence must
+stop a build rather than be omitted from one. A package whose declared licence
+and licence text disagree resolves to `UNKNOWN` too.
+
+`make sbom` emits CycloneDX 1.6 from the same collector; CI attaches it to
+every release. `app/adapters/notices/notices_test.go` re-asserts the important
+properties from Go, so `go test ./...` catches a hand-edited inventory on a
+machine with no Node.
 
 ## Commands
 
@@ -165,7 +184,8 @@ make build      # packaged application into build/bin
 make test       # go test -race ./...
 make check      # gofmt + go vet + svelte-check
 make bindings   # regenerate TypeScript bindings after changing a bound method
-make notices    # regenerate the third-party licence inventory
+make notices    # regenerate the licence inventory and enforce the policy
+make sbom       # emit a CycloneDX SBOM into build/bin/sbom
 ```
 
 Regenerate bindings whenever a method on `ClusterAPI`/`WorkloadAPI` or a DTO in
