@@ -67,12 +67,17 @@
       </span>
     {/if}
 
-    {@render sep()}
-    <span class="flex items-center gap-1.5 tabular-nums opacity-70">
-      <KindIcon class="size-3" strokeWidth={2} />
-      {session.visibleCount}
-      {session.selectedKind?.title.toLowerCase() ?? 'items'}
-    </span>
+    <!-- Only on a list. The dashboard has no rows, and "0 items" beside a
+         screen full of findings reads as a fault rather than as a count of
+         something that was never being counted. -->
+    {#if session.isList}
+      {@render sep()}
+      <span class="flex items-center gap-1.5 tabular-nums opacity-70">
+        <KindIcon class="size-3" strokeWidth={2} />
+        {session.visibleCount}
+        {session.selectedKind?.title.toLowerCase() ?? 'items'}
+      </span>
+    {/if}
 
     {@render sep()}
     <span class="flex items-center gap-1 tabular-nums opacity-70">

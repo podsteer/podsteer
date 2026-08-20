@@ -87,14 +87,38 @@ function readLicence(dir) {
 }
 
 /**
- * Extracts the copyright line — the part MIT and BSD specifically require to
+ * Extracts the copyright notice — the part MIT and BSD specifically require to
  * be reproduced.
+ *
+ * Lines that BEGIN with the notice are preferred over lines that merely
+ * mention the word, because licence files discuss copyright in prose as well
+ * as asserting it. yaml.v3 is the case that proved this necessary: its first
+ * line matching a loose search is "...copyright staring in 2011 when the
+ * project was ported over:", which is a sentence fragment, while the actual
+ * notices sit five lines below it.
+ *
+ * Several are kept when a project asserts several — a file ported from two
+ * upstreams carries both, and reproducing one of them is not reproducing the
+ * notice.
  */
 function copyrightOf(text) {
-  const line = text
-    .split('\n')
-    .find((entry) => /copyright/i.test(entry) && /\d{4}|©/.test(entry))
-  return line ? line.trim() : ''
+  const lines = text.split('\n').map((line) => line.trim())
+  const hasYear = (line) => /\d{4}/.test(line) || line.includes('©')
+
+  // "Copyright" must be followed by the marks a NOTICE uses — (c), © or the
+  // year itself. Matching the bare word is what let a sentence beginning
+  // "copyright staring in 2011..." through.
+  const asserted = lines.filter((line) =>
+    /^(copyright\s*(\(c\)|©|\d{4})|\(c\)\s*\d{4}|©\s*\d{4})/i.test(line),
+  )
+  if (asserted.length > 0) {
+    // Deduplicated: a licence repeated per-file often repeats its notice too.
+    return [...new Set(asserted)].slice(0, 3).join(' · ')
+  }
+
+  // Nothing asserted it outright; fall back to any mention, which is still
+  // better than crediting nobody.
+  return lines.find((line) => /copyright/i.test(line) && hasYear(line)) ?? ''
 }
 
 /** Go's module cache escapes capitals as `!x`, to stay case-insensitive. */

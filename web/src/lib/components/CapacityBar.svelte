@@ -49,6 +49,17 @@
 
   /** Efficiency is -1 when nothing was measured. */
   const efficiency = $derived(usage.efficiency >= 0 ? Math.round(usage.efficiency) : null)
+
+  /**
+   * The unit to append to a formatted figure.
+   *
+   * Values already carrying their own unit — memory's "118.9GiB", CPU's
+   * sub-core "500m" — get nothing; a bare number gets the caller's unit.
+   */
+  function suffix(value: string): string {
+    if (!unit) return ''
+    return /[a-zA-Z]$/.test(value) ? '' : ` ${unit}`
+  }
 </script>
 
 <div class="flex flex-col gap-2">
@@ -96,16 +107,19 @@
       {Math.round(usage.requestPercent)}%
     </span>
 
+    <!-- Memory formats its own unit into the value; CPU does not, so the
+         unit is appended here. Without it "Used 4.47" beside
+         "Used 118.9GiB" reads as a quantity of nothing. -->
     {#if usage.measured}
       <span class="tabular-nums">
         <span class="text-on-surface-variant">Used</span>
-        {usage.usage} ({Math.round(usage.usagePercent)}%)
+        {usage.usage}{suffix(usage.usage)} ({Math.round(usage.usagePercent)}%)
       </span>
     {/if}
 
     <span class="tabular-nums">
       <span class="text-on-surface-variant">Free to schedule</span>
-      {usage.schedulable}
+      {usage.schedulable}{suffix(usage.schedulable)}
     </span>
 
     <!-- The number nobody else prints: how much of the reservation is real. -->

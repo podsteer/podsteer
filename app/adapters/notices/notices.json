@@ -263,7 +263,7 @@
    "version": "v1.0.9",
    "ecosystem": "go",
    "licence": "BSD-3-Clause",
-   "copyright": "Copyright (c) 2012 Alex Ogier. All rights reserved.",
+   "copyright": "Copyright (c) 2012 Alex Ogier. All rights reserved. · Copyright (c) 2012 The Go Authors. All rights reserved.",
    "textId": "e5591487fb9ddb83"
   },
   {
@@ -312,7 +312,7 @@
    "version": "v3.0.4",
    "ecosystem": "go",
    "licence": "Apache-2.0",
-   "copyright": "copyright staring in 2011 when the project was ported over:",
+   "copyright": "Copyright (c) 2006-2010 Kirill Simonov · Copyright (c) 2006-2011 Kirill Simonov · Copyright (c) 2011-2019 Canonical Ltd",
    "textId": "ad456c7bd0029fd0",
    "noticeTextId": "2f98f631d8368007"
   },
@@ -401,7 +401,7 @@
    "version": "v3.0.1",
    "ecosystem": "go",
    "licence": "Apache-2.0",
-   "copyright": "copyright staring in 2011 when the project was ported over:",
+   "copyright": "Copyright (c) 2006-2010 Kirill Simonov · Copyright (c) 2006-2011 Kirill Simonov · Copyright (c) 2011-2019 Canonical Ltd",
    "textId": "ad456c7bd0029fd0",
    "noticeTextId": "2f98f631d8368007"
   },
@@ -506,7 +506,7 @@
    "version": "v1.0.0",
    "ecosystem": "go",
    "licence": "Apache-2.0",
-   "copyright": "Copyright 2014 The gofuzz Authors",
+   "copyright": "Copyright 2014 The gofuzz Authors · Copyright 2025 The Kubernetes Authors",
    "textId": "25d5f62f33defbe0",
    "noticeTextId": "d51af063c4e238cc"
   },
@@ -523,7 +523,7 @@
    "version": "v1.6.0",
    "ecosystem": "go",
    "licence": "Apache-2.0",
-   "copyright": "Copyright (c) 2014 Sam Ghods",
+   "copyright": "Copyright (c) 2014 Sam Ghods · Copyright (c) 2012 The Go Authors. All rights reserved. · Copyright (c) 2006-2010 Kirill Simonov",
    "textId": "2ab6c959535d2fc6"
   },
   {
@@ -659,7 +659,7 @@
    "version": "1.32.0",
    "ecosystem": "npm",
    "licence": "ISC",
-   "copyright": "Copyright (c) 2026 Lucide Icons and Contributors",
+   "copyright": "Copyright (c) 2026 Lucide Icons and Contributors · Copyright (c) 2013-present Cole Bemis",
    "textId": "ee35498e6684b30c"
   },
   {
@@ -675,7 +675,7 @@
    "version": "1.0.13",
    "ecosystem": "npm",
    "licence": "MIT",
-   "copyright": "Copyright (c) 2022 Tyreal Hu",
+   "copyright": "Copyright (c) 2022 Tyreal Hu · Copyright (c) 2025 The Svelte Team",
    "textId": "fda6af299ef705e8"
   },
   {
@@ -683,7 +683,7 @@
    "version": "1.0.9",
    "ecosystem": "npm",
    "licence": "MIT",
-   "copyright": "",
+   "copyright": "Copyright (c) Microsoft Corporation.",
    "textId": "ff82c90f84945c60"
   },
   {
@@ -691,7 +691,7 @@
    "version": "2.0.7",
    "ecosystem": "npm",
    "licence": "MIT",
-   "copyright": "",
+   "copyright": "Copyright (c) Microsoft Corporation.",
    "textId": "ff82c90f84945c60"
   },
   {
@@ -715,7 +715,7 @@
    "version": "6.0.0",
    "ecosystem": "npm",
    "licence": "MIT",
-   "copyright": "Copyright (c) 2017-2019, The xterm.js authors (https://github.com/xtermjs/xterm.js)",
+   "copyright": "Copyright (c) 2017-2019, The xterm.js authors (https://github.com/xtermjs/xterm.js) · Copyright (c) 2014-2016, SourceLair Private Company (https://www.sourcelair.com) · Copyright (c) 2012-2013, Christopher Jeffrey (https://github.com/chjj/)",
    "textId": "3474bccef5e42b23"
   },
   {
@@ -747,7 +747,7 @@
    "version": "2.1.1",
    "ecosystem": "npm",
    "licence": "MIT",
-   "copyright": "",
+   "copyright": "Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)",
    "textId": "3d5b63706380c8c7"
   },
   {
@@ -836,7 +836,7 @@
    "version": "2.3.0",
    "ecosystem": "npm",
    "licence": "0BSD",
-   "copyright": "",
+   "copyright": "Copyright (c) Microsoft Corporation.",
    "textId": "210b19e543130388"
   },
   {

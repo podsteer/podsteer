@@ -346,17 +346,19 @@ func toNamespaceLoads(loads []domain.NamespaceLoad, capacity domain.CapacitySumm
 	out := make([]NamespaceLoad, 0, len(loads))
 	for _, load := range loads {
 		entry := NamespaceLoad{
-			Name:           string(load.Name),
-			Pods:           load.Pods,
-			NotReady:       load.NotReady,
-			CPURequests:    formatMilliValue(load.CPURequests),
+			Name:     string(load.Name),
+			Pods:     load.Pods,
+			NotReady: load.NotReady,
+			// Unlike the capacity bars, these stand alone with no unit in a
+			// header above them, so they carry their own.
+			CPURequests:    formatCPUValue(load.CPURequests),
 			MemoryRequests: formatBytesValue(load.MemoryRequests),
 			CPUUsage:       "—",
 			MemoryUsage:    "—",
 			Measured:       load.Measured,
 		}
 		if load.Measured {
-			entry.CPUUsage = formatMilliValue(load.CPUUsage)
+			entry.CPUUsage = formatCPUValue(load.CPUUsage)
 			entry.MemoryUsage = formatBytesValue(load.MemoryUsage)
 		}
 		if capacity.CPU.Allocatable > 0 {
@@ -415,6 +417,22 @@ func formatMilliValue(milli int64) string {
 		return fmt.Sprintf("%dm", milli)
 	}
 	return fmt.Sprintf("%.2f", float64(milli)/1000)
+}
+
+// formatCPUValue renders millicores WITH their unit, for figures shown on
+// their own.
+//
+// The bar charts get the unit-less form because their header already says
+// "cores"; a namespace row saying "22.66" next to another saying "118.9GiB"
+// says nothing at all about what 22.66 is.
+func formatCPUValue(milli int64) string {
+	if milli == 0 {
+		return "0"
+	}
+	if milli < 1000 {
+		return fmt.Sprintf("%dm", milli)
+	}
+	return fmt.Sprintf("%.2f cores", float64(milli)/1000)
 }
 
 // formatBytesValue renders a byte count, keeping a real zero as "0".
