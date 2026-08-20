@@ -216,6 +216,28 @@ Two deviations, both forced by Wails rather than chosen:
   with `ports/` as a sibling package rather than interfaces living beside their
   domain models.
 
+## Licensing, and why the seam matters
+
+The application is Apache-2.0 and is intended to stay that way, whole — not an
+open core with features held back. Contributions come in under the same licence
+with a DCO sign-off (`git commit -s`); there is deliberately no CLA, because a
+CLA's usual purpose is to preserve a relicensing option this project does not
+want. See `CONTRIBUTING.md` and `DCO.md`.
+
+A future paid tier is planned as **server-side**: storage, alerting and
+notifications living in services that are not in this repository, reached by a
+client adapter that will be Apache-2.0 like everything else here. Two
+consequences for code written now:
+
+- **The community build must never require an account** or contact anything
+  PodSteer operates — no telemetry, no update check, no sign-in. That is a
+  product commitment, and the CSP plus the absence of any HTTP client outside
+  `adapters/k8s` is what keeps it honest.
+- **Anything remote is an outbound port with a local implementation first.**
+  `HistoryPort` is the model and says so in its own doc comment: the store has
+  to be swappable because the obvious next implementation records outside the
+  application entirely.
+
 ## External systems
 
 The local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`) and the API servers
