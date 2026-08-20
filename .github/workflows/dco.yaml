@@ -1,0 +1,81 @@
+name: DCO
+
+on:
+  pull_request:
+    branches:
+      - 'main'
+      - 'develop'
+
+# Deliberately NOT a job inside ci-cd.yaml.
+#
+# Every job in that workflow declares `needs: quality`, and a skipped or failed
+# dependency takes its dependents with it. A missing sign-off is a licensing
+# problem with a contribution, not a defect in the code — it must be able to
+# fail a pull request without having any bearing on whether a tag publishes.
+#
+# It runs on pull requests only. Pushes to `develop` are not gated, so a
+# forgotten `-s` is caught where it can still be fixed by a rebase rather than
+# after it is part of the branch.
+
+permissions:
+  contents: read
+
+jobs:
+  signed-off:
+    name: Signed-off-by
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+        with:
+          # The check reads the commits between base and head, so the shallow
+          # default clone is not enough.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Every commit carries a matching sign-off
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          missing=0
+          while IFS= read -r sha; do
+            [ -n "$sha" ] || continue
+
+            author_email=$(git log -1 --format='%ae' "$sha" | tr '[:upper:]' '[:lower:]')
+            subject=$(git log -1 --format='%s' "$sha")
+            signoffs=$(git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" \
+              | tr '[:upper:]' '[:lower:]')
+
+            if printf '%s\n' "$signoffs" | grep -qF "<$author_email>"; then
+              echo "ok       ${sha:0:8}  $subject"
+            else
+              echo "MISSING  ${sha:0:8}  $subject"
+              echo "         author is <$author_email>, and no Signed-off-by matches it"
+              missing=$((missing + 1))
+            fi
+          done < <(git rev-list --no-merges "$BASE_SHA".."$HEAD_SHA")
+
+          if [ "$missing" -gt 0 ]; then
+            echo
+            echo "$missing commit(s) above carry no Signed-off-by matching their author."
+            echo
+            echo "PodSteer takes contributions under the Developer Certificate of"
+            echo "Origin (see DCO.md). Signing off certifies you have the right to"
+            echo "submit the work under the project's licence; there is no CLA."
+            echo
+            echo "To fix the most recent commit:"
+            echo "    git commit --amend -s --no-edit && git push --force-with-lease"
+            echo
+            echo "To fix a whole branch, rebase it onto its base with sign-off:"
+            echo "    git rebase --signoff origin/develop && git push --force-with-lease"
+            echo
+            echo "Use the same name and address you commit with -- the check compares"
+            echo "the sign-off against the commit's author."
+            exit 1
+          fi
+
+          echo
+          echo "All commits signed off."
