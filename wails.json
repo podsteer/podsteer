@@ -15,6 +15,7 @@
     "companyName": "K8Sense",
     "productName": "K8Sense",
     "productVersion": "0.1.0",
-    "comments": "A fast, native Kubernetes client."
+    "comments": "A fast, native Kubernetes client.",
+    "copyright": "Copyright \u00a9 2026 K8Sense. Apache-2.0 licensed."
   }
 }
