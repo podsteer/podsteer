@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="K8Sense">
+  <title>K8Sense</title>
+
+  <!--
+    The mark in a single colour, for coloured and dark backgrounds.
+
+    `currentColor` rather than a literal white: inlined into HTML it inherits
+    the surrounding text colour, so one file serves a dark header, a light
+    footer and a printed page. Set `color` on the parent, or override `fill`.
+  -->
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" color="#ffffff">
+    <path d="M60 20 94.6 40 94.6 80 60 100 25.4 80 25.4 40Z" stroke-width="6.5"/>
+    <path d="M38 62h10l7-17 9 30 7-13h11" stroke-width="8"/>
+  </g>
+</svg>

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="K8Sense">
+  <title>K8Sense</title>
+
+  <!--
+    The K8Sense mark: a cluster, and the signal read from it.
+
+    SIX sides, deliberately. The Kubernetes logo is a SEVEN-sided helm with
+    spokes, and it is a CNCF trademark — a mark that merely reduces its spoke
+    count would still be a derivative. A hexagon says "container, cell, cluster"
+    in its own right and owes nothing to anyone.
+
+    The pulse is the product. K8Sense does not list a cluster, it reads one:
+    the line is a vital sign, and the rise is the thing worth looking at. It is
+    also literally the trend chart on the dashboard.
+  -->
+  <defs>
+    <linearGradient id="k8sense-mark-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1976D2"/>
+      <stop offset="100%" stop-color="#1557b0"/>
+    </linearGradient>
+  </defs>
+
+  <g fill="none" stroke="url(#k8sense-mark-gradient)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M60 20 94.6 40 94.6 80 60 100 25.4 80 25.4 40Z" stroke-width="6.5"/>
+    <path d="M38 62h10l7-17 9 30 7-13h11" stroke-width="8"/>
+  </g>
+</svg>

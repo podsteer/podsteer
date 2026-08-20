@@ -12,6 +12,16 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:;"
     />
+    <!--
+      The webview never requests a favicon, but the dev server opened in a
+      browser does — and k8sense.com will serve the same files. SVG first for
+      anything modern, a 32px PNG for anything not, and the tile for an iOS
+      home-screen bookmark.
+    -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
     <title>K8Sense</title>
   </head>
   <body>

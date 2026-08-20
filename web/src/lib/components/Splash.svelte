@@ -29,16 +29,20 @@
           <stop offset="1" stop-color="#8bd5a0" />
         </linearGradient>
       </defs>
-      <!-- The Kubernetes silhouette: a heptagon, one face per letter of
-           Kubernetes, redrawn as K8Sense's mark. -->
-      <path
-        d="M48 4 82.6 17.4 92 52.9 70.4 83.9 25.6 83.9 4 52.9 13.4 17.4Z"
-        stroke="url(#splash-edge)"
-        stroke-width="3"
-        stroke-linejoin="round"
-      />
-      <path d="M48 18v14M48 44v14M48 66v14M70 26 63 37M60 57l8 9M26 26l7 11M36 57l-8 9" stroke="url(#splash-edge)" stroke-width="3" stroke-linecap="round" opacity="0.75" />
-      <circle cx="48" cy="48" r="7" fill="url(#splash-edge)" />
+      <!--
+        The K8Sense mark (see brand/k8sense-mark.svg), in the splash's own
+        gradient rather than the brand blue, because it sits on the splash's
+        dark ground.
+
+        It replaced a seven-sided helm with spokes — which is to say, a
+        Kubernetes logo derivative. The Kubernetes mark is a CNCF trademark and
+        may not be used as another product's logo, however it is redrawn. Six
+        sides owe nobody anything.
+      -->
+      <g fill="none" stroke="url(#splash-edge)" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M48 16 75.7 32 75.7 64 48 80 20.3 64 20.3 32Z" stroke-width="5.2"/>
+        <path d="M30.4 49.6h8l5.6-13.6 7.2 24 5.6-10.4h8.8" stroke-width="6.4"/>
+      </g>
     </svg>
   </div>
 

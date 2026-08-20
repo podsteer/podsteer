@@ -46,7 +46,7 @@ BLUE   := \033[0;34m
 CYAN   := \033[0;36m
 NC     := \033[0m
 
-.PHONY: help dev build run open bindings notices sbom test check web-build embed-stub deps clean \
+.PHONY: help dev build run open bindings notices sbom brand test check web-build embed-stub deps clean \
         tag tag-show-inner tag-patch-inner tag-minor-inner tag-major-inner \
         tag-rc-inner tag-main-inner bump-inner ensure-branch ensure-clean \
         ensure-notices fetch
@@ -90,6 +90,9 @@ help:
 	@echo "Compliance (see docs/LICENCE-POLICY.md):"
 	@echo "  make notices             - Regenerate the licence inventory, enforce the policy"
 	@echo "  make sbom                - Emit a CycloneDX SBOM into build/bin/sbom"
+	@echo ""
+	@echo "Brand (see brand/README.md):"
+	@echo "  make brand               - Re-render logos, the app icon and the favicons"
 	@echo ""
 	@echo "Release (see docs/RELEASING.md):"
 	@echo "  make tag show            - Show the latest local and remote tags"
@@ -186,6 +189,12 @@ notices: embed-stub
 # two describe provably the same set of packages.
 sbom: embed-stub
 	@node build/generate-sbom.mjs
+
+# Re-renders every brand PNG from its SVG source, and rewrites the two places
+# the brand is wired into the application: build/appicon.png and the frontend's
+# favicons. Run it after changing anything in brand/. See brand/README.md.
+brand:
+	@bash build/generate-brand.sh
 
 # Ensures the embed directory holds *something*, so `go build` and the bindings
 # run on a clean checkout. Never overwrites a real bundle.

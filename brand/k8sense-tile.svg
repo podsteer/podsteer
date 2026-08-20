@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="K8Sense">
+  <title>K8Sense</title>
+
+  <!--
+    The tile: avatar, app icon, anywhere the mark needs its own ground.
+
+    The rounded square and its gradient are deliberately the SynapCTX tile,
+    so the two products read as siblings rather than as strangers. Only the
+    mark inside differs.
+
+    The mark is scaled to 80% of the tile so that a platform cropping this to
+    a circle — LinkedIn, Bluesky, Slack all do — cannot clip it.
+  -->
+  <defs>
+    <linearGradient id="k8sense-tile-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1976D2"/>
+      <stop offset="100%" stop-color="#1557b0"/>
+    </linearGradient>
+  </defs>
+
+  <path d="M4 16 Q4 4 16 4 L104 4 Q116 4 116 16 L116 104 Q116 116 104 116 L16 116 Q4 116 4 104 Z"
+        fill="url(#k8sense-tile-gradient)"/>
+
+  <g transform="translate(60 60) scale(0.8) translate(-60 -60)"
+     fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M60 20 94.6 40 94.6 80 60 100 25.4 80 25.4 40Z" stroke-width="7"/>
+    <path d="M38 62h10l7-17 9 30 7-13h11" stroke-width="8.5"/>
+  </g>
+</svg>

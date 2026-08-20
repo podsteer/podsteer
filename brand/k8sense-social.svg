@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-label="K8Sense — a native Kubernetes client">
+  <title>K8Sense</title>
+
+  <!--
+    The share card: GitHub repository preview, Open Graph, Twitter/X, LinkedIn.
+
+    1280x640 is the 2:1 that GitHub and Open Graph both accept without
+    re-cropping. Everything meaningful stays inside the middle 80%, because
+    every one of those surfaces crops the edges differently.
+  -->
+  <defs>
+    <linearGradient id="social-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1976D2"/>
+      <stop offset="100%" stop-color="#0f3f80"/>
+    </linearGradient>
+    <linearGradient id="social-rule" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.65"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#social-bg)"/>
+
+  <!-- The pulse, oversized and faint: the mark used as texture rather than
+       repeated as a second logo. -->
+  <path d="M-40 470h300l90-190 110 330 90-140h770"
+        fill="none" stroke="#ffffff" stroke-opacity="0.09" stroke-width="26"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g transform="translate(150 196) scale(1.5)" fill="none" stroke="#ffffff"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M60 20 94.6 40 94.6 80 60 100 25.4 80 25.4 40Z" stroke-width="6.5"/>
+    <path d="M38 62h10l7-17 9 30 7-13h11" stroke-width="8"/>
+  </g>
+
+  <text x="352" y="316"
+        font-family="'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif"
+        font-size="104" font-weight="600" letter-spacing="-2" fill="#ffffff">K8Sense</text>
+
+  <rect x="356" y="352" width="360" height="3" rx="1.5" fill="url(#social-rule)"/>
+
+  <text x="354" y="410"
+        font-family="'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif"
+        font-size="34" font-weight="400" fill="#ffffff" fill-opacity="0.88">A native Kubernetes client</text>
+  <text x="354" y="456"
+        font-family="'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif"
+        font-size="34" font-weight="400" fill="#ffffff" fill-opacity="0.62">that tells you what is wrong</text>
+</svg>

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 268 72" width="268" height="72" role="img" aria-label="K8Sense">
+  <title>K8Sense</title>
+
+  <!--
+    The horizontal lockup: mark, then wordmark. For light backgrounds.
+
+    The wordmark is live text rather than outlines, so it stays editable and
+    searchable — at the cost of depending on the reader's font stack. Outline
+    it (Illustrator: Type > Create Outlines; or `inkscape` with export-text-to-path)
+    before sending it anywhere that must render byte-identically, such as print
+    or a partner's press kit.
+
+    Clear space: keep at least the mark's own half-width free on every side.
+  -->
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1976D2"/>
+      <stop offset="100%" stop-color="#1557b0"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(8 8) scale(0.4667)" fill="none" stroke="url(#g)"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M60 20 94.6 40 94.6 80 60 100 25.4 80 25.4 40Z" stroke-width="6.5"/>
+    <path d="M38 62h10l7-17 9 30 7-13h11" stroke-width="8"/>
+  </g>
+
+  <text x="78" y="48"
+        font-family="'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif"
+        font-size="34" font-weight="600" letter-spacing="-0.6">
+    <tspan fill="#1976D2">K8</tspan><tspan fill="#16181d">Sense</tspan>
+  </text>
+</svg>
