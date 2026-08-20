@@ -1,5 +1,5 @@
 <!--
-  The Credits pane: every dependency K8Sense ships, and its licence.
+  The Credits pane: every dependency PodSteer ships, and its licence.
 
   This is an obligation, not a courtesy. MIT, BSD, ISC and Apache-2.0 all
   require the licence and its copyright notice to be distributed with the
@@ -107,8 +107,8 @@
   <div>
     <h3 class="text-title-medium text-on-surface">Open source components</h3>
     <p class="mt-0.5 text-body-small text-on-surface-variant">
-      K8Sense is built on the work below and distributes it under the licences shown. Every one
-      is permissive; none restricts what you may use K8Sense for.
+      PodSteer is built on the work below and distributes it under the licences shown. Every one
+      is permissive; none restricts what you may use PodSteer for.
     </p>
   </div>
 

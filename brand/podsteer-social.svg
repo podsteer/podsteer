@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-label="K8Sense — a native Kubernetes client">
-  <title>K8Sense</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-label="PodSteer — a native Kubernetes client">
+  <title>PodSteer</title>
 
   <!--
     The share card: GitHub repository preview, Open Graph, Twitter/X, LinkedIn.
@@ -35,7 +35,7 @@
 
   <text x="352" y="316"
         font-family="'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif"
-        font-size="104" font-weight="600" letter-spacing="-2" fill="#ffffff">K8Sense</text>
+        font-size="104" font-weight="600" letter-spacing="-2" fill="#ffffff">PodSteer</text>
 
   <rect x="356" y="352" width="360" height="3" rx="1.5" fill="url(#social-rule)"/>
 

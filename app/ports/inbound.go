@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
 // ClusterService is the use-case surface for choosing, connecting to and
@@ -13,7 +13,7 @@ import (
 // Connections are plural on purpose: the UI shows one tab per connected
 // cluster, and closing a tab must not disturb the others.
 type ClusterService interface {
-	// ListClusters returns every cluster K8Sense knows about, in a stable
+	// ListClusters returns every cluster PodSteer knows about, in a stable
 	// order suitable for direct display.
 	ListClusters(ctx context.Context) ([]domain.Cluster, error)
 

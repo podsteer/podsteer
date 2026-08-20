@@ -9,9 +9,9 @@ import (
 	"log/slog"
 	"sync"
 
-	"k8sense/app/application"
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/application"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // terminalSizeQueue implements ports.TerminalSizeQueue for resize events.

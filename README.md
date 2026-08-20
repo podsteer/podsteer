@@ -1,21 +1,21 @@
-# K8Sense
+# PodSteer
 
-[![CI/CD Pipeline](https://github.com/k8sense/k8sense/actions/workflows/ci-cd.yaml/badge.svg)](https://github.com/k8sense/k8sense/actions/workflows/ci-cd.yaml)
-[![Production](https://img.shields.io/badge/Production-Not%20Released-lightgrey)](https://github.com/k8sense/k8sense/tags)
-[![Staging](https://img.shields.io/badge/Staging-No%20Candidate-lightgrey)](https://github.com/k8sense/k8sense/tags)
-[![Development](https://img.shields.io/badge/Development-No%20Dev%20Release-lightgrey)](https://github.com/k8sense/k8sense/tags)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/k8sense/k8sense/blob/main/LICENSE.md)
+[![CI/CD Pipeline](https://github.com/podsteer/podsteer/actions/workflows/ci-cd.yaml/badge.svg)](https://github.com/podsteer/podsteer/actions/workflows/ci-cd.yaml)
+[![Production](https://img.shields.io/badge/Production-Not%20Released-lightgrey)](https://github.com/podsteer/podsteer/tags)
+[![Staging](https://img.shields.io/badge/Staging-No%20Candidate-lightgrey)](https://github.com/podsteer/podsteer/tags)
+[![Development](https://img.shields.io/badge/Development-No%20Dev%20Release-lightgrey)](https://github.com/podsteer/podsteer/tags)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/podsteer/podsteer/blob/main/LICENSE.md)
 
 A fast, native desktop client for Kubernetes.
 
-K8Sense is built on [Wails](https://wails.io) v2: a Go backend talking to the
+PodSteer is built on [Wails](https://wails.io) v2: a Go backend talking to the
 operating system's own webview, rather than a bundled Chromium. There is no
 second browser engine in the process tree, which is where most of an
 Electron-based client's memory and startup time go.
 
 ## Status
 
-Foundation. K8Sense connects to any cluster in your kubeconfig and lists its
+Foundation. PodSteer connects to any cluster in your kubeconfig and lists its
 pods, with the derived status that makes a pod list actually diagnostic — a
 crash-looping container, a pod stuck pulling an image, one that is terminating
 rather than merely running.
@@ -37,7 +37,7 @@ make run      # build it, then launch it with logs in your terminal
 
 `make run` produces the real packaged artefact and starts it in the foreground,
 so application logs land in the terminal and Ctrl-C stops it. Add
-`K8SENSE_LOG_LEVEL=debug` for the full picture of what it is asking your
+`PODSTEER_LOG_LEVEL=debug` for the full picture of what it is asking your
 cluster.
 
 While iterating, `make dev` is the faster loop — it hot-reloads the frontend on
@@ -98,16 +98,16 @@ fakes with no cluster, no HTTP and no Kubernetes types in sight.
 
 ## Configuration
 
-Everything is optional and prefixed `K8SENSE_`:
+Everything is optional and prefixed `PODSTEER_`:
 
 | Variable                  | Default                         | Purpose                       |
 | ------------------------- | ------------------------------- | ----------------------------- |
-| `K8SENSE_KUBECONFIG`      | `$KUBECONFIG`, `~/.kube/config` | Alternative kubeconfig        |
-| `K8SENSE_QPS`             | `50`                            | Sustained request rate        |
-| `K8SENSE_BURST`           | `100`                           | Burst allowance               |
-| `K8SENSE_REQUEST_TIMEOUT` | `30s`                           | Per-call deadline             |
-| `K8SENSE_LOG_LEVEL`       | `info`                          | `debug`/`info`/`warn`/`error` |
-| `K8SENSE_LOG_SOURCE`      | `false`                         | Include source file and line  |
+| `PODSTEER_KUBECONFIG`      | `$KUBECONFIG`, `~/.kube/config` | Alternative kubeconfig        |
+| `PODSTEER_QPS`             | `50`                            | Sustained request rate        |
+| `PODSTEER_BURST`           | `100`                           | Burst allowance               |
+| `PODSTEER_REQUEST_TIMEOUT` | `30s`                           | Per-call deadline             |
+| `PODSTEER_LOG_LEVEL`       | `info`                          | `debug`/`info`/`warn`/`error` |
+| `PODSTEER_LOG_SOURCE`      | `false`                         | Include source file and line  |
 
 ## Contributing and releasing
 
@@ -127,6 +127,6 @@ make tag show # what is actually released right now
 
 ## Security
 
-K8Sense is read-only. It never writes to a cluster, never sends anything off
+PodSteer is read-only. It never writes to a cluster, never sends anything off
 the machine, and the webview is locked down by a CSP that forbids every remote
 origin — all cluster traffic goes through the Go process, never the page.

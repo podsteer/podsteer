@@ -8,13 +8,13 @@ import (
 	"log/slog"
 	"slices"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // This file holds the three smaller use cases that make the navigator work:
 // what a cluster can show, its events, and the generic table path that serves
-// every kind K8Sense has no purpose-built model for.
+// every kind PodSteer has no purpose-built model for.
 
 // BrowseServiceDeps are the collaborators the browsing services need.
 type BrowseServiceDeps struct {
@@ -79,7 +79,7 @@ func NewBrowseService(deps BrowseServiceDeps) (*BrowseService, error) {
 
 // Kinds returns every browsable kind in a connected cluster.
 //
-// Ordered by category, then by whether K8Sense models the kind richly, then
+// Ordered by category, then by whether PodSteer models the kind richly, then
 // alphabetically. Rich kinds float to the top of their section because they
 // are the ones an operator opens most — a section that led with "Endpoints"
 // because E sorts early would bury Pods.

@@ -1,4 +1,4 @@
-// Package cmd is the K8Sense composition root.
+// Package cmd is the PodSteer composition root.
 //
 // This is the one place that knows every layer: it reads configuration, builds
 // the concrete adapters, injects them into the use cases and hands the result
@@ -26,14 +26,14 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 
-	"k8sense/app/adapters/assets"
-	historystore "k8sense/app/adapters/history"
-	"k8sense/app/adapters/k8s"
-	"k8sense/app/adapters/macwindow"
-	wailsadapter "k8sense/app/adapters/wails"
-	"k8sense/app/application"
-	"k8sense/app/config"
-	"k8sense/app/domain"
+	"podsteer/app/adapters/assets"
+	historystore "podsteer/app/adapters/history"
+	"podsteer/app/adapters/k8s"
+	"podsteer/app/adapters/macwindow"
+	wailsadapter "podsteer/app/adapters/wails"
+	"podsteer/app/application"
+	"podsteer/app/config"
+	"podsteer/app/domain"
 )
 
 // trafficLightVerticalNudge shifts macOS's traffic lights so they sit
@@ -47,7 +47,7 @@ import (
 // there is nothing else to change.
 const trafficLightVerticalNudge = 6.0
 
-// Main starts K8Sense and terminates the process on failure.
+// Main starts PodSteer and terminates the process on failure.
 //
 // It is the only function in the codebase that calls os.Exit, so every other
 // layer stays testable and composable.
@@ -55,7 +55,7 @@ func Main() {
 	if err := run(); err != nil {
 		// The logger may not exist yet if configuration itself failed, so this
 		// deliberately writes to stderr directly.
-		fmt.Fprintf(os.Stderr, "k8sense: %v\n", err)
+		fmt.Fprintf(os.Stderr, "podsteer: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -72,7 +72,7 @@ func run() error {
 	// optional Logger fields on the services — inherits the same handler.
 	slog.SetDefault(logger)
 
-	logger.Info("starting k8sense",
+	logger.Info("starting podsteer",
 		slog.String("version", cfg.App.Version),
 		slog.String("kubeconfig", kubeconfigLabel(cfg.Kubernetes.KubeconfigPath)))
 
@@ -276,10 +276,10 @@ func run() error {
 			systemAPI,
 		},
 
-		// Only one K8Sense should hold the kubeconfig and its client caches;
+		// Only one PodSteer should hold the kubeconfig and its client caches;
 		// a second launch raises the existing window instead.
 		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId: "com.k8sense.desktop",
+			UniqueId: "com.podsteer.desktop",
 		},
 
 		Mac: &mac.Options{

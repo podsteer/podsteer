@@ -5,7 +5,7 @@
   barrel import pulls in every chart type ECharts has, roughly doubling what
   the browser must parse for the three we draw. Deferring it means the
   dashboard's first paint pays nothing for a chart the operator may not scroll
-  to — which matters here, since the whole premise of K8Sense is starting fast.
+  to — which matters here, since the whole premise of PodSteer is starting fast.
 
   Two honesty rules the series obey:
 

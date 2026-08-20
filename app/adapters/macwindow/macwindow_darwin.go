@@ -68,12 +68,12 @@ static void applyToAllButtons(NSWindow *window, CGFloat deltaY) {
 // `weak` needs it. `assign` is the correct MRC-mode default here regardless
 // — this observer and the window it points at both live for the app's
 // entire lifetime, so there is no dangling-pointer window to worry about.
-@interface K8SenseTrafficLightObserver : NSObject
+@interface PodSteerTrafficLightObserver : NSObject
 @property (nonatomic, assign) NSWindow *window;
 @property (nonatomic) CGFloat deltaY;
 @end
 
-@implementation K8SenseTrafficLightObserver
+@implementation PodSteerTrafficLightObserver
 - (void)reapply:(NSNotification *)notification {
     NSWindow *window = self.window;
     if (window != nil) {
@@ -82,7 +82,7 @@ static void applyToAllButtons(NSWindow *window, CGFloat deltaY) {
 }
 @end
 
-static K8SenseTrafficLightObserver *gObserver = nil;
+static PodSteerTrafficLightObserver *gObserver = nil;
 
 // nudgeTrafficLights shifts the close/miniaturize/zoom buttons of the app's
 // (single) window by deltaY points, relative to wherever AppKit originally
@@ -122,7 +122,7 @@ static void nudgeTrafficLights(CGFloat deltaY) {
         // observer keeps the nudge applied for the life of the window
         // rather than only at the moment this function was called.
         if (gObserver == nil) {
-            gObserver = [K8SenseTrafficLightObserver new];
+            gObserver = [PodSteerTrafficLightObserver new];
         }
         gObserver.window = window;
         gObserver.deltaY = deltaY;

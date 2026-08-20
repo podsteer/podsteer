@@ -1,4 +1,4 @@
-// Package domain holds the K8Sense core model: entities, value objects and
+// Package domain holds the PodSteer core model: entities, value objects and
 // domain events.
 //
 // This is the innermost layer of the hexagon. It describes what a cluster, a

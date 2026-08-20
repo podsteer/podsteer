@@ -1,7 +1,7 @@
 <!--
   Action button.
 
-  Covers the four variants K8Sense uses. Each is a full literal class string in
+  Covers the four variants PodSteer uses. Each is a full literal class string in
   the map below rather than an interpolated one, because Tailwind resolves
   classes by scanning source text — a string assembled at runtime would not be
   generated into the stylesheet.

@@ -55,10 +55,10 @@ export const DEFAULT_REFRESH_INTERVAL_MS = 10_000
  * Not a Kubernetes kind and deliberately not in the backend catalog: the
  * overview is a computed assessment, not a list of objects, and adding it to
  * the catalog would put it in front of every consumer that expects to be able
- * to GET what it names. The `k8sense` prefix cannot collide with a real API
+ * to GET what it names. The `podsteer` prefix cannot collide with a real API
  * group, which always contains a dot.
  */
-export const OVERVIEW_KIND_ID = 'k8sense/overview'
+export const OVERVIEW_KIND_ID = 'podsteer/overview'
 
 /**
  * The view the navigator selects by default.
@@ -69,7 +69,7 @@ export const OVERVIEW_KIND_ID = 'k8sense/overview'
  */
 export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
 
-/** Kind ids K8Sense renders with purpose-built columns rather than generically. */
+/** Kind ids PodSteer renders with purpose-built columns rather than generically. */
 export const RICH_KIND_IDS = {
   pods: 'core/v1/pods',
   nodes: 'core/v1/nodes',
@@ -208,7 +208,7 @@ export class ClusterSession {
     // The operator's own last choice for this cluster wins over kubeconfig's
     // context default — that default is a fallback for kubectl, not a
     // statement about which namespace matters to whoever is looking at
-    // K8Sense, and reconnecting to a cluster that was left on "billing"
+    // PodSteer, and reconnecting to a cluster that was left on "billing"
     // should not silently snap back to "default".
     this.namespace = preferences.getClusterNamespace(cluster.id) ?? (cluster.defaultNamespace || ALL_NAMESPACES)
   }

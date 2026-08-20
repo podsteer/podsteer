@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// This file models what K8Sense remembers about a cluster over time.
+// This file models what PodSteer remembers about a cluster over time.
 //
 // The metrics API reports only the present: ask it twice and you get two
 // unrelated instants, never a trend. Everything an operator actually wants to
@@ -13,7 +13,7 @@ import (
 // was the cluster this full an hour ago — needs a series, and nothing in
 // Kubernetes keeps one unless a monitoring stack was installed.
 //
-// So K8Sense keeps its own, sampled while the application is running. The
+// So PodSteer keeps its own, sampled while the application is running. The
 // honesty of that is the point: it covers the window the app was open, and the
 // UI must say so rather than implying a complete history it does not have.
 
@@ -102,11 +102,11 @@ func NewSamplingInterval(interval time.Duration) time.Duration {
 	}
 }
 
-// Retention is how long K8Sense keeps samples on disk.
+// Retention is how long PodSteer keeps samples on disk.
 //
 // Zero means "record nothing", which is a real choice rather than a disabled
 // state: a cluster's capacity profile is commercially sensitive on some sites,
-// and an operator must be able to say that K8Sense writes none of it down.
+// and an operator must be able to say that PodSteer writes none of it down.
 type Retention struct {
 	Days int
 }

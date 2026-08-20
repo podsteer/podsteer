@@ -1,6 +1,6 @@
-// Package notices embeds the third-party licence inventory K8Sense ships.
+// Package notices embeds the third-party licence inventory PodSteer ships.
 //
-// Every dependency K8Sense distributes is permissively licensed — MIT, BSD,
+// Every dependency PodSteer distributes is permissively licensed — MIT, BSD,
 // ISC or Apache-2.0 — and all of them require the same thing back: that the
 // licence and its copyright notice travel with the binary. Embedding the
 // inventory rather than generating it at runtime means the obligation is met

@@ -5,13 +5,13 @@ import (
 	"log/slog"
 	"time"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // BrowseAPI exposes navigation, events and the generic resource browser.
 //
-// It is the API that makes the navigator work for kinds K8Sense has no
+// It is the API that makes the navigator work for kinds PodSteer has no
 // purpose-built view for — including every CRD in the cluster.
 type BrowseAPI struct {
 	navigation ports.NavigationService

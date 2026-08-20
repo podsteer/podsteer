@@ -1,4 +1,4 @@
-// Command k8sense is a fast, native desktop client for Kubernetes.
+// Command podsteer is a fast, native desktop client for Kubernetes.
 //
 // This file is a shim and contains no application logic. The Wails CLI
 // compiles the package in the repository root — `wails build` invokes
@@ -10,7 +10,7 @@
 // The real entry point, including all dependency wiring, is app/cmd/main.go.
 package main
 
-import "k8sense/app/cmd"
+import "podsteer/app/cmd"
 
 func main() {
 	cmd.Main()

@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"k8sense/app/application"
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/application"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // newOverviewService wires a service around the given fakes.

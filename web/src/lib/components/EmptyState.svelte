@@ -2,7 +2,7 @@
   Placeholder for a view with nothing to show.
 
   An empty list and a failed load look identical if both render as blank space,
-  so every list in K8Sense distinguishes them explicitly — this component is
+  so every list in PodSteer distinguishes them explicitly — this component is
   the "nothing here, and that is fine" half.
 -->
 <script lang="ts">

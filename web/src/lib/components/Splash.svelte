@@ -18,7 +18,7 @@
 <div
   class="splash fixed inset-0 z-[100] flex flex-col items-center justify-center"
   role="status"
-  aria-label="Starting K8Sense"
+  aria-label="Starting PodSteer"
   transition:fade={{ duration: 280 }}
 >
   <div class="mark" aria-hidden="true">
@@ -30,7 +30,7 @@
         </linearGradient>
       </defs>
       <!--
-        The K8Sense mark (see brand/k8sense-mark.svg), in the splash's own
+        The PodSteer mark (see brand/podsteer-mark.svg), in the splash's own
         gradient rather than the brand blue, because it sits on the splash's
         dark ground.
 
@@ -46,7 +46,7 @@
     </svg>
   </div>
 
-  <h1 class="wordmark mt-8 text-[36px] leading-[44px] font-medium tracking-tight">K8Sense</h1>
+  <h1 class="wordmark mt-8 text-[36px] leading-[44px] font-medium tracking-tight">PodSteer</h1>
   <p class="mt-2 text-[13px] leading-4 text-[#cac4d0]">A fast, native Kubernetes client</p>
 
   <div class="loading mt-10 h-0.5 w-40 overflow-hidden rounded-full" aria-hidden="true">

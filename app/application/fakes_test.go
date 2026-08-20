@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // Hand-written fakes rather than a mocking framework. The ports are small

@@ -4,15 +4,15 @@ import "slices"
 
 // ResourceTable is a generic tabular projection of a set of objects.
 //
-// It exists so K8Sense can browse kinds it has no purpose-built model for —
+// It exists so PodSteer can browse kinds it has no purpose-built model for —
 // every CRD in the cluster, and the long tail of built-in kinds where a bespoke
 // entity would earn nothing. Kubernetes itself can print any resource as a
 // table (the same mechanism kubectl uses for its output), so the columns come
-// from the API server rather than from a list K8Sense would have to maintain
+// from the API server rather than from a list PodSteer would have to maintain
 // and keep in step with every new controller anyone installs.
 //
 // Kinds that DO have a purpose-built model — pods, nodes, workloads — do not
-// go through here. They get columns K8Sense chose, values it derived, and
+// go through here. They get columns PodSteer chose, values it derived, and
 // cross-links a generic projection cannot express.
 type ResourceTable struct {
 	kind    ResourceKind

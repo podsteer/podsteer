@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
 // The types below are the frontend API contract. Wails generates TypeScript
@@ -25,7 +25,7 @@ type Cluster struct {
 	AuthInfo string `json:"authInfo"`
 	// IsCurrent marks the kubeconfig's current context.
 	IsCurrent bool `json:"isCurrent"`
-	// IsReachable reports whether K8Sense has reached this cluster.
+	// IsReachable reports whether PodSteer has reached this cluster.
 	IsReachable bool `json:"isReachable"`
 	// Version is the API server's git version, empty until reached.
 	Version string `json:"version"`

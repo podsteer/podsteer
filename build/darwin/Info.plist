@@ -9,13 +9,13 @@
              Force Quit list. CFBundleName above is the menu-bar name and is
              capped at 15 characters; without CFBundleDisplayName the Dock falls
              back to the bundle's filename, which is the lowercase
-             "k8sense.app". -->
+             "podsteer.app". -->
         <key>CFBundleDisplayName</key>
         <string>{{.Info.ProductName}}</string>
         <key>CFBundleExecutable</key>
         <string>{{.OutputFilename}}</string>
         <key>CFBundleIdentifier</key>
-        <string>com.k8sense.desktop</string>
+        <string>com.podsteer.desktop</string>
         <key>CFBundleVersion</key>
         <string>{{.Info.ProductVersion}}</string>
         <key>CFBundleGetInfoString</key>

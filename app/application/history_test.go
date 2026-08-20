@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"k8sense/app/application"
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/application"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // recordingHistory captures what the sampler writes.

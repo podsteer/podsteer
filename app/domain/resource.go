@@ -9,7 +9,7 @@ import (
 //
 // The grouping is a product decision, not a Kubernetes one: the API server has
 // no notion of "Workloads". It lives in the domain because the navigator is
-// part of what K8Sense *is*, and because the same grouping drives the overview
+// part of what PodSteer *is*, and because the same grouping drives the overview
 // counts and the command palette.
 type ResourceCategory string
 
@@ -70,10 +70,10 @@ type ResourceKind struct {
 	Title string
 	// Singular is the singular display name, e.g. "Deployment".
 	Singular string
-	// Rich reports whether K8Sense has a purpose-built model and column set
+	// Rich reports whether PodSteer has a purpose-built model and column set
 	// for this kind. False means it is served by the generic table path,
 	// which works for anything — including CRDs — but shows the columns the
-	// API server prints rather than columns K8Sense chose.
+	// API server prints rather than columns PodSteer chose.
 	Rich bool
 }
 

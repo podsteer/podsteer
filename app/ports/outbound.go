@@ -5,11 +5,11 @@ import (
 	"io"
 	"time"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
 // Every port below takes the cluster id explicitly rather than being bound to
-// one connection. That is what lets K8Sense hold several clusters open at once
+// one connection. That is what lets PodSteer hold several clusters open at once
 // — one per tab — and query them concurrently. A stateful "current cluster"
 // would serialise them and make the tab bar a lie.
 
@@ -91,7 +91,7 @@ type MetricsPort interface {
 	NodeMetrics(ctx context.Context, id domain.ClusterID) (map[string]domain.Metrics, error)
 }
 
-// HistoryPort stores and reads the samples K8Sense takes of a cluster.
+// HistoryPort stores and reads the samples PodSteer takes of a cluster.
 //
 // A port rather than a detail of the service because "keep this on disk for
 // seven days" is a policy an operator sets, and because the store has to be
@@ -116,7 +116,7 @@ type HistoryPort interface {
 
 // ResourcePort reads any kind generically, including custom resources.
 //
-// It is what makes the navigator's long tail work without K8Sense modelling
+// It is what makes the navigator's long tail work without PodSteer modelling
 // every kind by hand — and what makes a freshly installed operator's CRDs
 // browsable the moment discovery notices them.
 type ResourcePort interface {

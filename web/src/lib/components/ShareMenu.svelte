@@ -1,7 +1,7 @@
 <!--
-  "Share on…" — a menu of pre-filled share links for K8Sense itself, distinct
+  "Share on…" — a menu of pre-filled share links for PodSteer itself, distinct
   from the GitHub/LinkedIn/Bluesky icons beside it in the status bar, which
-  link to K8Sense's own accounts to *follow*. This is for spreading the word:
+  link to PodSteer's own accounts to *follow*. This is for spreading the word:
   an operator who likes the app sharing it with their own audience.
 
   Opens upward (`bottom-full`), because this lives in the footer — there is
@@ -18,8 +18,8 @@
   import HackerNewsIcon from './icons/HackerNewsIcon.svelte'
 
   /** What gets shared, everywhere — one place to change the pitch. */
-  const SHARE_URL = 'https://k8sense.com'
-  const SHARE_TEXT = 'K8Sense — a fast, native Kubernetes desktop client.'
+  const SHARE_URL = 'https://podsteer.com'
+  const SHARE_TEXT = 'PodSteer — a fast, native Kubernetes desktop client.'
 
   interface ShareTarget {
     label: string
@@ -110,7 +110,7 @@
       role="menu"
     >
       <p class="px-3 py-1 text-label-small font-semibold uppercase tracking-wider text-on-surface-variant/60">
-        Share K8Sense
+        Share PodSteer
       </p>
 
       {#each targets as target (target.label)}

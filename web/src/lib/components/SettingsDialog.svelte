@@ -230,7 +230,7 @@
           <section>
             <h3 class="text-title-medium text-on-surface">Local history</h3>
             <p class="mt-0.5 text-body-small leading-relaxed text-on-surface-variant">
-              Kubernetes reports only the present, so K8Sense samples each connected cluster
+              Kubernetes reports only the present, so PodSteer samples each connected cluster
               while it is open and keeps the result on this machine. That is what the dashboard
               charts plot — it covers the time the application has been running, not the whole
               life of the cluster.

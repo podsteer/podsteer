@@ -1,5 +1,5 @@
 <!--
-  The generic table: every kind K8Sense has no purpose-built view for,
+  The generic table: every kind PodSteer has no purpose-built view for,
   including every CRD in the cluster.
 
   Columns come from the API server's own table printer — the same mechanism

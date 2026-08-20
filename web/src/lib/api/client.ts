@@ -1,5 +1,5 @@
 /**
- * The single seam between the K8Sense UI and the Go backend.
+ * The single seam between the PodSteer UI and the Go backend.
  *
  * Nothing outside this module imports from `$lib/wailsjs` — those files are
  * regenerated on every build and their shape is dictated by the Go binder, so
@@ -85,7 +85,7 @@ export type Credit = wails.Credit
 export type Sample = wails.Sample
 /** A cluster's recorded history, with an account of its extent. */
 export type SeriesResult = wails.SeriesResult
-/** What K8Sense records locally, and how often. */
+/** What PodSteer records locally, and how often. */
 export type HistorySettings = wails.HistorySettings
 /** An assessed cluster: what is wrong, what is left, what is running. */
 export type Overview = wails.Overview
@@ -193,7 +193,7 @@ export function getOverview(clusterId: string): Promise<Overview> {
 /**
  * Returns a cluster's recorded history over the last `windowMinutes`.
  *
- * The history covers the window the application has been open — K8Sense
+ * The history covers the window the application has been open — PodSteer
  * samples while it runs and stores nothing anywhere else — so the result also
  * reports the span it actually holds. The UI must say which, rather than
  * implying the completeness a monitoring stack would have.
@@ -310,7 +310,7 @@ export function appInfo(): Promise<AppInfo> {
 }
 
 /**
- * Lists every dependency K8Sense ships, with its licence.
+ * Lists every dependency PodSteer ships, with its licence.
  *
  * Not decoration: MIT, BSD, ISC and Apache-2.0 all require the licence and its
  * copyright notice to travel with the binary, and a desktop application has

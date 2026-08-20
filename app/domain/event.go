@@ -57,7 +57,7 @@ type EventSpec struct {
 
 // Event is a Kubernetes Event as observed at a point in time.
 //
-// Note the name: within K8Sense, domain.Event means a Kubernetes Event.
+// Note the name: within PodSteer, domain.Event means a Kubernetes Event.
 // The application's own internal notifications are DomainEvent.
 type Event struct {
 	name         string

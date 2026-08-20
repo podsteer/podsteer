@@ -44,7 +44,7 @@ const RETRYABLE: ReadonlySet<ApiErrorCode> = new Set<ApiErrorCode>([
   'unknown',
 ])
 
-/** An error returned by a K8Sense backend call. */
+/** An error returned by a PodSteer backend call. */
 export class ApiError extends Error {
   /** The backend's classification of the failure. */
   readonly code: ApiErrorCode

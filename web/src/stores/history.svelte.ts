@@ -30,7 +30,7 @@ export const TREND_WINDOWS = [
  *
  * Zero is a real choice rather than a disabled state: a cluster's capacity
  * profile is commercially sensitive on some sites, and an operator has to be
- * able to say that K8Sense writes none of it down.
+ * able to say that PodSteer writes none of it down.
  */
 export const RETENTION_OPTIONS = [
   { label: "Don't record", days: 0, hint: 'No history is kept, and anything already recorded is erased' },
@@ -115,7 +115,7 @@ export class ClusterHistory {
 }
 
 /**
- * What K8Sense records locally, and how often.
+ * What PodSteer records locally, and how often.
  *
  * Mirrored here for display only — both settings are owned by the Go side,
  * because they govern what reaches the disk and what load the API server

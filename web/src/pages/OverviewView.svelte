@@ -226,7 +226,7 @@
       </section>
 
       <!-- Trend.
-           Kubernetes reports only the present, so this is K8Sense's own
+           Kubernetes reports only the present, so this is PodSteer's own
            record: sampled every 30 seconds while the application is open. It
            says so rather than implying the completeness a monitoring stack
            would have. -->
@@ -280,13 +280,13 @@
           </p>
         {:else if !history.hasTrend}
           <p class="py-8 text-center text-body-small text-on-surface-variant/70">
-            Collecting. K8Sense samples every {formatAge(history.intervalSeconds)} while it is
+            Collecting. PodSteer samples every {formatAge(history.intervalSeconds)} while it is
             open, so a line appears once a second sample lands.
           </p>
         {:else}
           <TrendChart samples={history.samples} {metric} />
           <p class="text-body-small text-on-surface-variant/60">
-            Covering the last {formatAge(history.spanSeconds)} that K8Sense has been open on this
+            Covering the last {formatAge(history.spanSeconds)} that PodSteer has been open on this
             cluster — not the cluster's whole history.
           </p>
         {/if}

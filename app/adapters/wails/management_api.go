@@ -9,8 +9,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"k8sense/app/application"
-	"k8sense/app/domain"
+	"podsteer/app/application"
+	"podsteer/app/domain"
 )
 
 // generateStreamID creates a unique identifier for a log stream.

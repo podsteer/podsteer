@@ -1,6 +1,6 @@
 # Dependency Licence Policy
 
-K8Sense is distributed as a compiled desktop binary, is licensed Apache-2.0,
+PodSteer is distributed as a compiled desktop binary, is licensed Apache-2.0,
 and is intended to support a commercial edition. Those three facts decide
 everything below.
 
@@ -11,11 +11,11 @@ the file cannot explain itself, and this page cannot stop a build.
 
 ## The decision, in one paragraph
 
-Every dependency K8Sense **distributes** must be under a permissive licence.
+Every dependency PodSteer **distributes** must be under a permissive licence.
 Copyleft is not accepted in the shipped binary at any tier, and no exception
 process exists for it — not because copyleft is bad, but because a desktop
 binary statically links everything it uses, so the reciprocal obligations of
-GPL or AGPL would attach to K8Sense itself. That is a decision about the
+GPL or AGPL would attach to PodSteer itself. That is a decision about the
 product's licensing, not about a dependency, and it is not one to discover
 during a release.
 
@@ -83,7 +83,7 @@ exception explaining why it is acceptable in the specific way it is used.
 `GPL-2.0` · `GPL-3.0` · `AGPL-3.0` · `SSPL-1.0` · `BUSL-1.1` · `Elastic-2.0` ·
 `Commons-Clause` · `CC-BY-NC-4.0` · `JSON` · `EUPL-1.2`
 
-No exception process. Strong copyleft would extend to K8Sense through static
+No exception process. Strong copyleft would extend to PodSteer through static
 linking; `SSPL`, `BUSL`, `Elastic` and `Commons-Clause` restrict commercial or
 service use directly; `CC-BY-NC` forbids commercial use outright; the `JSON`
 licence's "shall be used for Good, not Evil" clause is unenforceably vague and
@@ -169,7 +169,7 @@ shipped, the build fails until somebody re-argues it.
 
 ## SBOM
 
-`make sbom` emits CycloneDX 1.6 to `build/bin/sbom/k8sense.cdx.json`, and CI
+`make sbom` emits CycloneDX 1.6 to `build/bin/sbom/podsteer.cdx.json`, and CI
 attaches it to every GitHub Release. It shares its collector with the notices
 generator, so the SBOM and the Credits pane describe provably the same set of
 packages — two documents disagreeing about what ships would be worse than one.
@@ -182,5 +182,5 @@ removes a question from every future enterprise conversation.
 
 Edit both halves in the same change: this document for the reasoning, the JSON
 for the enforcement. Adding an identifier to `allowed` is a decision about what
-K8Sense may become, not a formality — the tiers above are the argument, and it
+PodSteer may become, not a formality — the tiers above are the argument, and it
 should be updated rather than merely appended to.

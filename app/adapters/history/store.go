@@ -1,4 +1,4 @@
-// Package history stores the samples K8Sense takes of a cluster over time.
+// Package history stores the samples PodSteer takes of a cluster over time.
 //
 // Local files, in the user's own configuration directory, because that is what
 // the feature promises: a record of the window the application was open, kept
@@ -29,8 +29,8 @@ import (
 	"sync"
 	"time"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // Store is a file-backed sample store.
@@ -49,13 +49,13 @@ func New(dir string) *Store {
 	return &Store{dir: dir}
 }
 
-// DefaultDir returns the per-user directory K8Sense records into.
+// DefaultDir returns the per-user directory PodSteer records into.
 func DefaultDir() (string, error) {
 	config, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("history: locating the user config directory: %w", err)
 	}
-	return filepath.Join(config, "K8Sense", "history"), nil
+	return filepath.Join(config, "PodSteer", "history"), nil
 }
 
 // wireSample is the on-disk shape.

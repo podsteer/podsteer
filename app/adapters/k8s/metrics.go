@@ -9,8 +9,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // PodMetrics returns pod usage keyed by "namespace/name".

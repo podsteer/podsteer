@@ -1,7 +1,7 @@
 name: Update Homebrew Tap
 
-# Rewrites the cask in k8sense/homebrew-tap after a production release, so
-# `brew install --cask k8sense` serves the version that was just published.
+# Rewrites the cask in podsteer/homebrew-tap after a production release, so
+# `brew install --cask podsteer` serves the version that was just published.
 #
 # Separate from ci-cd.yaml deliberately. That workflow's release job builds and
 # publishes; this one reacts to a release having been published, which is the
@@ -46,7 +46,7 @@ jobs:
           esac
 
           version="${tag#v}"
-          asset="k8sense_${tag}_macos-universal.zip"
+          asset="podsteer_${tag}_macos-universal.zip"
           url="https://github.com/${{ github.repository }}/releases/download/${tag}/${asset}"
 
           # Downloaded rather than read from the checksums asset: the point is
@@ -67,7 +67,7 @@ jobs:
         if: steps.release.outputs.skip == 'false'
         uses: actions/checkout@v7
         with:
-          repository: k8sense/homebrew-tap
+          repository: podsteer/homebrew-tap
           # A PAT with `contents: write` on the tap. GITHUB_TOKEN is scoped to
           # THIS repository and cannot push to another one, which is the usual
           # reason a workflow like this silently does nothing.
@@ -77,7 +77,7 @@ jobs:
       - name: Rewrite The Cask
         if: steps.release.outputs.skip == 'false'
         run: |
-          cask=tap/Casks/k8sense.rb
+          cask=tap/Casks/podsteer.rb
           # Only the two lines that change per release. A regenerated file
           # would drop the caveats and the zap list, which are prose rather
           # than release metadata.
@@ -85,22 +85,22 @@ jobs:
             -e 's|^  version ".*"$|  version "${{ steps.release.outputs.version }}"|' \
             -e 's|^  sha256 ".*"$|  sha256 "${{ steps.release.outputs.sha256 }}"|' \
             "$cask"
-          git -C tap diff -- Casks/k8sense.rb
+          git -C tap diff -- Casks/podsteer.rb
 
       - name: Verify The Cask Still Parses
         if: steps.release.outputs.skip == 'false'
-        run: ruby -c tap/Casks/k8sense.rb
+        run: ruby -c tap/Casks/podsteer.rb
 
       - name: Commit
         if: steps.release.outputs.skip == 'false'
         working-directory: tap
         run: |
-          if git diff --quiet -- Casks/k8sense.rb; then
+          if git diff --quiet -- Casks/podsteer.rb; then
             echo "::notice::The cask already describes ${{ steps.release.outputs.tag }}."
             exit 0
           fi
-          git config user.name  "k8sense-bot"
-          git config user.email "bot@k8sense.com"
-          git add Casks/k8sense.rb
-          git commit -m "k8sense ${{ steps.release.outputs.version }}"
+          git config user.name  "podsteer-bot"
+          git config user.email "bot@podsteer.com"
+          git add Casks/podsteer.rb
+          git commit -m "podsteer ${{ steps.release.outputs.version }}"
           git push

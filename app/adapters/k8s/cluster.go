@@ -8,7 +8,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
 // ListNamespaces returns every namespace visible to the configured credentials.

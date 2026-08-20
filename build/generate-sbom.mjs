@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Emits a CycloneDX 1.6 software bill of materials for K8Sense.
+ * Emits a CycloneDX 1.6 software bill of materials for PodSteer.
  *
  * An SBOM is what a customer's procurement or security team asks for before a
  * desktop binary is allowed onto their estate, and it is becoming a
@@ -31,7 +31,7 @@ import { evaluate, loadPolicy } from './licences/policy.mjs'
 
 const root = repoRoot()
 const outputDir = join(root, 'build', 'bin', 'sbom')
-const outputPath = join(outputDir, 'k8sense.cdx.json')
+const outputPath = join(outputDir, 'podsteer.cdx.json')
 
 /** The version being described: the release tag in CI, else the git state. */
 function version() {
@@ -107,16 +107,16 @@ const bom = {
       components: [
         {
           type: 'application',
-          name: 'k8sense-sbom-generator',
+          name: 'podsteer-sbom-generator',
           version: '1',
-          description: 'build/generate-sbom.mjs, part of the K8Sense repository',
+          description: 'build/generate-sbom.mjs, part of the PodSteer repository',
         },
       ],
     },
     component: {
       type: 'application',
-      'bom-ref': 'pkg:generic/k8sense',
-      name: 'K8Sense',
+      'bom-ref': 'pkg:generic/podsteer',
+      name: 'PodSteer',
       version: version(),
       description: 'A native desktop Kubernetes client.',
       licenses: [{ license: { id: 'Apache-2.0' } }],
@@ -131,6 +131,6 @@ mkdirSync(outputDir, { recursive: true })
 writeFileSync(outputPath, `${JSON.stringify(bom, null, 2)}\n`)
 
 console.log(
-  `Wrote ${bom.components.length} components to build/bin/sbom/k8sense.cdx.json ` +
-    `(CycloneDX ${bom.specVersion}, K8Sense ${bom.metadata.component.version}).`,
+  `Wrote ${bom.components.length} components to build/bin/sbom/podsteer.cdx.json ` +
+    `(CycloneDX ${bom.specVersion}, PodSteer ${bom.metadata.component.version}).`,
 )

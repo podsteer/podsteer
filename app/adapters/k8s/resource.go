@@ -10,13 +10,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
 // tableMediaType asks the API server to render objects as a table.
 //
 // This is the same mechanism kubectl uses for its output: the server decides
-// the columns and formats the cells. K8Sense leans on it for every kind it has
+// the columns and formats the cells. PodSteer leans on it for every kind it has
 // no purpose-built model for, which is what makes a freshly installed
 // operator's CRDs browsable without anyone writing code for them — and what
 // keeps the columns right when a CRD changes its printer columns.
@@ -41,7 +41,7 @@ func (a *Adapter) ListTable(ctx context.Context, id domain.ClusterID, kind domai
 	}
 
 	// includeObject=Metadata makes the server attach each row's object
-	// metadata. Without it a row is only rendered cells, and K8Sense would
+	// metadata. Without it a row is only rendered cells, and PodSteer would
 	// have to guess which column holds the name in order to link the row —
 	// a guess that breaks on any CRD whose printer puts the name elsewhere.
 	body, err := restClient.Get().

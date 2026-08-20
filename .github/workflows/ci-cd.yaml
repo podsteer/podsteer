@@ -115,7 +115,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sbom
-          path: build/bin/sbom/k8sense.cdx.json
+          path: build/bin/sbom/podsteer.cdx.json
           retention-days: 14
           if-no-files-found: error
 
@@ -180,14 +180,14 @@ jobs:
           # runner-native arm64 build silently does not.
           - name: macos-universal
             runner: macos-latest
-            artifact: k8sense-macos-universal
+            artifact: podsteer-macos-universal
             platform: darwin/universal
           - name: windows-amd64
             runner: windows-latest
-            artifact: k8sense-windows-amd64
+            artifact: podsteer-windows-amd64
           - name: linux-amd64
             runner: ubuntu-latest
-            artifact: k8sense-linux-amd64
+            artifact: podsteer-linux-amd64
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
@@ -215,7 +215,7 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
 
       # Wails generates bindings by compiling and RUNNING the application, and
-      # it does so before building the frontend. K8Sense refuses to start
+      # it does so before building the frontend. PodSteer refuses to start
       # without an embedded bundle, so on a clean checkout that first run exits
       # 1 and fails the build. Building the frontend here breaks the cycle; the
       # `-s` below then stops Wails repeating the work.
@@ -235,9 +235,9 @@ jobs:
       - name: Name The macOS Bundle
         if: runner.os == 'macOS'
         run: |
-          if [ -d build/bin/k8sense.app ]; then
-            mv build/bin/k8sense.app build/bin/.rename.app
-            mv build/bin/.rename.app build/bin/K8Sense.app
+          if [ -d build/bin/podsteer.app ]; then
+            mv build/bin/podsteer.app build/bin/.rename.app
+            mv build/bin/.rename.app build/bin/PodSteer.app
           fi
 
       - name: Build Application (Linux)
@@ -290,11 +290,11 @@ jobs:
       - name: Version The Release Assets
         run: |
           version="${{ github.ref_name }}"
-          mv artifacts/k8sense.cdx.json "artifacts/k8sense_${version}_sbom.cdx.json"
-          for f in artifacts/k8sense-*.zip; do
+          mv artifacts/podsteer.cdx.json "artifacts/podsteer_${version}_sbom.cdx.json"
+          for f in artifacts/podsteer-*.zip; do
             [ -e "$f" ] || continue
-            platform=$(basename "$f" .zip | sed 's/^k8sense-//')
-            mv "$f" "artifacts/k8sense_${version}_${platform}.zip"
+            platform=$(basename "$f" .zip | sed 's/^podsteer-//')
+            mv "$f" "artifacts/podsteer_${version}_${platform}.zip"
           done
           ls -la artifacts/
 
@@ -304,8 +304,8 @@ jobs:
       - name: Checksums
         run: |
           cd artifacts
-          shasum -a 256 *.zip > "k8sense_${{ github.ref_name }}_checksums.txt"
-          cat "k8sense_${{ github.ref_name }}_checksums.txt"
+          shasum -a 256 *.zip > "podsteer_${{ github.ref_name }}_checksums.txt"
+          cat "podsteer_${{ github.ref_name }}_checksums.txt"
 
       # `gh` rather than a third-party release action: it ships on the runner,
       # needs no extra token plumbing, and keeps one less unpinned dependency

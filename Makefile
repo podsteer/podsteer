@@ -1,4 +1,4 @@
-# K8Sense developer tasks.
+# PodSteer developer tasks.
 #
 # The Wails CLI drives dev and release builds; everything else is the native
 # tooling for the two halves of the codebase. The tagging targets follow the
@@ -7,9 +7,9 @@
 
 MAKEFLAGS += --no-print-directory
 
-BASE = k8sense
-RAW_NAME = k8sense
-APPLICATION_NAME = K8Sense
+BASE = podsteer
+RAW_NAME = podsteer
+APPLICATION_NAME = PodSteer
 
 WAILS ?= wails
 NPM   ?= npm
@@ -30,12 +30,12 @@ endif
 # Where `wails build` leaves the executable. On macOS it is buried inside the
 # .app bundle; elsewhere it sits directly in build/bin.
 ifeq ($(shell uname -s),Darwin)
-	APP_BIN := build/bin/K8Sense.app/Contents/MacOS/k8sense
-	APP_BUNDLE := build/bin/K8Sense.app
+	APP_BIN := build/bin/PodSteer.app/Contents/MacOS/podsteer
+	APP_BUNDLE := build/bin/PodSteer.app
 else ifeq ($(OS),Windows_NT)
-	APP_BIN := build/bin/k8sense.exe
+	APP_BIN := build/bin/podsteer.exe
 else
-	APP_BIN := build/bin/k8sense
+	APP_BIN := build/bin/podsteer
 endif
 
 # Colors
@@ -62,7 +62,7 @@ SUBCOMMAND := $(wordlist 2,2,$(MAKECMDGOALS))
 	@:
 
 define BANNER
-	@echo -e "${CYAN} K8Sense${NC} - a fast, native Kubernetes client"
+	@echo -e "${CYAN} PodSteer${NC} - a fast, native Kubernetes client"
 	@echo ""
 	@echo -e " Repository : ${YELLOW}https://github.com/$(BASE)/$(RAW_NAME)${NC}"
 	@echo -e " Branch     : ${YELLOW}$(BRANCH)${NC}"
@@ -107,7 +107,7 @@ help:
 
 # Every Wails command below depends on web-build for the same reason: Wails
 # generates bindings by COMPILING AND RUNNING the application, and it does that
-# BEFORE it builds the frontend. K8Sense refuses to start without an embedded
+# BEFORE it builds the frontend. PodSteer refuses to start without an embedded
 # bundle (app/adapters/assets), so on a clean checkout — where the embed
 # directory holds only its .gitkeep — that first run exits 1 and takes the whole
 # command with it. Building the frontend first breaks the cycle.
@@ -136,12 +136,12 @@ ifdef APP_BUNDLE
 	@# sees in /Applications, so it is renamed here — in one place, rather
 	@# than in CI and locally separately.
 	@# Through a temporary name, because APFS is case-INSENSITIVE by default:
-	@# `k8sense.app` and `K8Sense.app` are the same path, so removing the
+	@# `podsteer.app` and `PodSteer.app` are the same path, so removing the
 	@# destination first deletes the bundle being renamed, and a direct `mv`
 	@# is a no-op that leaves the old casing in place.
-	@if [ -d build/bin/k8sense.app ]; then \
-		mv build/bin/k8sense.app build/bin/.k8sense-rename.app; \
-		mv build/bin/.k8sense-rename.app $(APP_BUNDLE); \
+	@if [ -d build/bin/podsteer.app ]; then \
+		mv build/bin/podsteer.app build/bin/.podsteer-rename.app; \
+		mv build/bin/.podsteer-rename.app $(APP_BUNDLE); \
 	fi
 endif
 
@@ -154,9 +154,9 @@ endif
 run: build
 	@echo ""
 	@echo -e "${BLUE}Launching $(APPLICATION_NAME)... (Ctrl-C to stop)${NC}"
-	@echo -e "${CYAN}Tip: K8SENSE_LOG_LEVEL=debug make run${NC} for verbose logging"
+	@echo -e "${CYAN}Tip: PODSTEER_LOG_LEVEL=debug make run${NC} for verbose logging"
 	@echo ""
-	@K8SENSE_LOG_LEVEL=$${K8SENSE_LOG_LEVEL:-info} ./$(APP_BIN)
+	@PODSTEER_LOG_LEVEL=$${PODSTEER_LOG_LEVEL:-info} ./$(APP_BIN)
 
 ifdef APP_BUNDLE
 # Launches the packaged .app the way Finder would — detached, with its own Dock
@@ -216,7 +216,7 @@ brand:
 embed-stub:
 	@mkdir -p app/adapters/assets/dist
 	@test -f app/adapters/assets/dist/index.html || \
-		printf '<!doctype html><title>K8Sense</title><p>Run `make web-build`.\n' \
+		printf '<!doctype html><title>PodSteer</title><p>Run `make web-build`.\n' \
 			> app/adapters/assets/dist/index.html
 
 deps:

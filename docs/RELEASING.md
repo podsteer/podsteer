@@ -1,6 +1,6 @@
 # Releasing
 
-K8Sense follows the ParliTrack branch and tag standard. What differs is what a
+PodSteer follows the ParliTrack branch and tag standard. What differs is what a
 tag *does*: a desktop application has no environment to deploy into, so tags
 produce artefacts and GitHub Releases rather than a rollout.
 

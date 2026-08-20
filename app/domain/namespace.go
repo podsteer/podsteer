@@ -78,7 +78,7 @@ const (
 	// rejects new objects.
 	NamespacePhaseTerminating NamespacePhase = "Terminating"
 
-	// NamespacePhaseUnknown covers any phase this version of K8Sense does not
+	// NamespacePhaseUnknown covers any phase this version of PodSteer does not
 	// recognise, so that an unfamiliar cluster degrades instead of failing.
 	NamespacePhaseUnknown NamespacePhase = "Unknown"
 )

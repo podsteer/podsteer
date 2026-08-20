@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
 func TestNewServerEndpoint(t *testing.T) {

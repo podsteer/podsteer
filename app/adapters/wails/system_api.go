@@ -9,7 +9,7 @@ import (
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"k8sense/app/adapters/notices"
+	"podsteer/app/adapters/notices"
 )
 
 // AppInfo describes the running application to the UI.
@@ -29,7 +29,7 @@ type AppInfo struct {
 }
 
 // website is the project's home page, offered from the status bar.
-const website = "https://k8sense.com"
+const website = "https://podsteer.com"
 
 // SystemAPI exposes application-level facts and shell integration.
 type SystemAPI struct {
@@ -83,7 +83,7 @@ type Credit struct {
 	Expression string `json:"expression"`
 }
 
-// Credits returns every dependency K8Sense ships, with its licence.
+// Credits returns every dependency PodSteer ships, with its licence.
 //
 // Not decoration: MIT, BSD, ISC and Apache-2.0 all require the licence and its
 // copyright notice to be distributed with the binary, and a desktop

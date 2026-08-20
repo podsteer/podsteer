@@ -11,14 +11,14 @@ import (
 	"sync"
 	"time"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // This file records what a cluster looked like over time, so the dashboard can
 // show a trend rather than an instant.
 //
-// The sampler is the only long-lived goroutine in K8Sense. It has one owner
+// The sampler is the only long-lived goroutine in PodSteer. It has one owner
 // (this service), one way to stop (Close), and it waits for its work to finish
 // before it returns — which is the standard this codebase holds goroutines to,
 // and matters more here than usual because it writes files.
@@ -99,7 +99,7 @@ func NewHistoryService(deps HistoryServiceDeps) (*HistoryService, error) {
 		logger:   logger.With(slog.String("service", "history")),
 		// The default records a day. Long enough for the trend on the
 		// dashboard to be useful across a working day, short enough that
-		// nobody discovers K8Sense has been keeping a month of data they
+		// nobody discovers PodSteer has been keeping a month of data they
 		// never asked for.
 		retention:   domain.NewRetention(1),
 		interval:    domain.DefaultSamplingInterval,
@@ -277,7 +277,7 @@ func (s *HistoryService) Series(
 	}
 
 	// Never serve beyond the retention window, whatever the caller asks for:
-	// the operator's setting is a statement about what K8Sense keeps, and it
+	// the operator's setting is a statement about what PodSteer keeps, and it
 	// would be a poor one if a wider query still returned older data that
 	// pruning had not swept yet.
 	cutoff := time.Now().UTC().Add(-window)
@@ -304,7 +304,7 @@ func (s *HistoryService) Retention(context.Context) (domain.Retention, error) {
 // SetRetention changes how long samples are kept and enforces it at once.
 //
 // Enforcing immediately is the whole contract: an operator who reduces
-// retention — or turns recording off — is telling K8Sense to stop holding
+// retention — or turns recording off — is telling PodSteer to stop holding
 // data it already has, not merely to stop adding to it.
 func (s *HistoryService) SetRetention(ctx context.Context, retention domain.Retention) error {
 	retention = domain.NewRetention(retention.Days)

@@ -14,12 +14,12 @@ const (
 	// reached and identified.
 	EventClusterConnected EventName = "cluster:connected"
 
-	// EventClusterUnreachable is raised when a cluster that K8Sense tried to
+	// EventClusterUnreachable is raised when a cluster that PodSteer tried to
 	// reach did not answer.
 	EventClusterUnreachable EventName = "cluster:unreachable"
 )
 
-// DomainEvent is something noteworthy that happened inside K8Sense.
+// DomainEvent is something noteworthy that happened inside PodSteer.
 //
 // Events let the application layer tell the UI about state changes it did not
 // ask for, which is what a desktop client needs: connection state moves on its

@@ -1,5 +1,5 @@
 /**
- * The only ECharts K8Sense ships.
+ * The only ECharts PodSteer ships.
  *
  * This module exists so the imports below can be *static named* imports.
  * Registering the same pieces inline with `await import('echarts/charts')` and

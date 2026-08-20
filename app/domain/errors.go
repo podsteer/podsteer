@@ -44,6 +44,6 @@ var (
 	ErrEmptyResourceName = errors.New("resource name must not be empty")
 
 	// ErrClusterNotConnected reports that an operation was attempted against a
-	// cluster K8Sense has not connected to.
+	// cluster PodSteer has not connected to.
 	ErrClusterNotConnected = errors.New("cluster not connected")
 )

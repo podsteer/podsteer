@@ -1,4 +1,4 @@
-// Package application holds the K8Sense use cases.
+// Package application holds the PodSteer use cases.
 //
 // A use case orchestrates: it validates input, calls outbound ports in the
 // right order, applies the domain's rules to the results and publishes events.

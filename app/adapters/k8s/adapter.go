@@ -8,8 +8,8 @@ import (
 
 	apiversion "k8s.io/apimachinery/pkg/version"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // Adapter is the driven adapter for Kubernetes.

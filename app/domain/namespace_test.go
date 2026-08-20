@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
 func TestNewNamespaceName(t *testing.T) {

@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 268 72" width="268" height="72" role="img" aria-label="K8Sense">
-  <title>K8Sense</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 268 72" width="268" height="72" role="img" aria-label="PodSteer">
+  <title>PodSteer</title>
 
   <!--
     The horizontal lockup: mark, then wordmark. For dark backgrounds; the blue is lightened so it clears contrast on dark surfaces.
@@ -21,6 +21,6 @@
   <text x="78" y="48"
         font-family="'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif"
         font-size="34" font-weight="600" letter-spacing="-0.6">
-    <tspan fill="#8ab4f8">K8</tspan><tspan fill="#e6e1e9">Sense</tspan>
+    <tspan fill="#8ab4f8">Pod</tspan><tspan fill="#e6e1e9">Steer</tspan>
   </text>
 </svg>

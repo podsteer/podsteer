@@ -1,5 +1,5 @@
 /**
- * Enumerating what K8Sense ships, and what merely builds it.
+ * Enumerating what PodSteer ships, and what merely builds it.
  *
  * That distinction is the crux of the whole exercise. A licence obligation
  * attaches to DISTRIBUTION: an MPL-2.0 CSS compiler that runs on a developer's
@@ -52,7 +52,7 @@ const LICENCE_FILES = [
  */
 const NOTICE_FILES = ['NOTICE', 'NOTICE.txt', 'NOTICE.md']
 
-/** The release platforms K8Sense builds for. */
+/** The release platforms PodSteer builds for. */
 const PLATFORMS = [
   { GOOS: 'darwin', GOARCH: 'arm64', tags: [] },
   { GOOS: 'windows', GOARCH: 'amd64', tags: [] },
@@ -163,7 +163,7 @@ function goModulesFor(repoRoot, platform) {
     output
       .split('\n')
       .map((line) => line.trim())
-      .filter((line) => line && line !== '@' && !line.startsWith('k8sense@')),
+      .filter((line) => line && line !== '@' && !line.startsWith('podsteer@')),
   )
 }
 
@@ -311,7 +311,7 @@ export function collect(repoRoot) {
     run('go', ['list', '-m', '-f', '{{.Path}}@{{.Version}}', 'all'], { cwd: repoRoot })
       .split('\n')
       .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith('k8sense@')),
+      .filter((line) => line && !line.startsWith('podsteer@')),
   )
 
   // `go list -m all` reports the whole module GRAPH, which includes modules

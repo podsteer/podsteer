@@ -68,7 +68,7 @@
   {:else if workspace.clusters.length === 0}
     <EmptyState
       title="No clusters configured"
-      description="K8Sense found no usable contexts in your kubeconfig. Add one with `kubectl config set-context`, then reload."
+      description="PodSteer found no usable contexts in your kubeconfig. Add one with `kubectl config set-context`, then reload."
     >
       {#snippet action()}
         <Button variant="tonal" onclick={workspace.loadClusters}>Reload kubeconfig</Button>

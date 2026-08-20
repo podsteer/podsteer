@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // Sample is one recorded measurement of a cluster, as the chart plots it.
@@ -133,7 +133,7 @@ func (h *HistoryAPI) GetSeries(clusterID string, windowMinutes, maxPoints int) (
 	}, nil
 }
 
-// HistorySettings is what K8Sense records, and how often.
+// HistorySettings is what PodSteer records, and how often.
 type HistorySettings struct {
 	// RetentionDays is 0 when nothing is recorded.
 	RetentionDays int `json:"retentionDays"`

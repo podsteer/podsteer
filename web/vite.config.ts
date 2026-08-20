@@ -19,7 +19,7 @@ const EMBED_DIR = fileURLToPath(new URL('../app/adapters/assets/dist', import.me
  */
 function keepEmbedDirectory(): Plugin {
   return {
-    name: 'k8sense:keep-embed-directory',
+    name: 'podsteer:keep-embed-directory',
     apply: 'build',
     closeBundle() {
       writeFileSync(`${EMBED_DIR}/.gitkeep`, '')
@@ -28,7 +28,7 @@ function keepEmbedDirectory(): Plugin {
 }
 
 /**
- * Vite configuration for the K8Sense frontend.
+ * Vite configuration for the PodSteer frontend.
  *
  * The unusual part is `build.outDir`. Go's embed directive cannot reach into a
  * parent directory, so the compiled bundle has to sit next to the Go package

@@ -1,4 +1,4 @@
-# K8Sense
+# PodSteer
 
 A desktop Kubernetes client built on Wails v2 (Go backend + the OS's native
 webview) rather than Electron, so that it starts fast and stays small in
@@ -26,7 +26,7 @@ app/
 
 ## Multi-cluster is the core assumption
 
-K8Sense holds several clusters open at once — one per tab — so **no port or
+PodSteer holds several clusters open at once — one per tab — so **no port or
 service has a notion of "the current cluster"**. Every call takes a
 `domain.ClusterID`. `application.Registry` tracks what is open (in connection
 order, which is the tab order); the frontend's `workspace.svelte.ts` mirrors it
@@ -50,7 +50,7 @@ are deliberately two paths:
 
 The **cluster overview is neither tier**: it is an assessment, not a list, so
 it is deliberately absent from `domain/catalog.go` and the frontend pins it
-above the categories under the id `k8sense/overview`. Putting it in the catalog
+above the categories under the id `podsteer/overview`. Putting it in the catalog
 would offer it to every consumer that expects to be able to GET what it names.
 
 `domain/catalog.go` is the single source of truth for the navigator. Adding a
@@ -106,7 +106,7 @@ See `web/vite.config.ts`.
 That directory's contents are git-ignored except a tracked `.gitkeep`, because
 `//go:embed all:dist` will not compile if the directory is missing from a fresh
 clone. `emptyOutDir` deletes the placeholder on every build, so a small Vite
-plugin (`k8sense:keep-embed-directory`) rewrites it — do not remove it.
+plugin (`podsteer:keep-embed-directory`) rewrites it — do not remove it.
 
 **The frontend must be built before any Wails command.** Wails generates its
 bindings by compiling *and running* the application, and it does that before it
@@ -125,7 +125,7 @@ a blank window nobody can diagnose.
 Kubernetes reports only the present: the metrics API has no notion of a series,
 so a chart of anything needs a record somebody kept. `HistoryService` samples
 each connected cluster every 30 seconds while the application runs and writes
-to `~/.config/K8Sense/history` (or the platform equivalent), 0600, never
+to `~/.config/PodSteer/history` (or the platform equivalent), 0600, never
 anywhere else.
 
 That makes the coverage the window the app was open, which is weaker than a
@@ -246,5 +246,5 @@ the webview (see the CSP in `web/index.html`).
 
 ## Configuration
 
-All optional, all prefixed `K8SENSE_`: `KUBECONFIG`, `QPS`, `BURST`,
+All optional, all prefixed `PODSTEER_`: `KUBECONFIG`, `QPS`, `BURST`,
 `REQUEST_TIMEOUT`, `LOG_LEVEL`, `LOG_SOURCE`. See `app/config/config.go`.

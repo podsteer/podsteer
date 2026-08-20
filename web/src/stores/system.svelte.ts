@@ -10,10 +10,10 @@ import { appInfo as fetchAppInfo, openURL, type AppInfo } from '$lib/api/client'
 
 /** Shown until the backend answers, and if it never does. */
 const UNKNOWN: AppInfo = {
-  name: 'K8Sense',
+  name: 'PodSteer',
   version: '—',
   platform: '',
-  website: 'https://k8sense.com',
+  website: 'https://podsteer.com',
 }
 
 /**

@@ -5,14 +5,14 @@ import (
 	"sync"
 )
 
-// This file is the catalog of kinds K8Sense knows about up front. It is the
+// This file is the catalog of kinds PodSteer knows about up front. It is the
 // single source of truth for the navigator, so adding a section to the UI is
 // an entry here rather than a change in the frontend.
 //
 // Kinds discovered at runtime — everything defined by a CRD — are not listed
 // here. They are appended to this catalog by the discovery adapter, which is
 // why the lookup below is guarded: the CRD set of a cluster is not known until
-// K8Sense has connected to it.
+// PodSteer has connected to it.
 
 // Built-in kinds. `Rich: true` marks the ones with a purpose-built model and
 // column set; the rest are served by the generic table path, which renders
@@ -89,7 +89,7 @@ var builtInKinds = []ResourceKind{
 		Namespaced: false, Category: CategoryAccessControl, Title: "Cluster Role Bindings", Singular: "Cluster Role Binding"},
 }
 
-// Catalog holds the kinds K8Sense can browse, per cluster.
+// Catalog holds the kinds PodSteer can browse, per cluster.
 //
 // Built-in kinds are shared by every cluster. Custom resource definitions are
 // not: two clusters routinely run different operators, so a CRD registered

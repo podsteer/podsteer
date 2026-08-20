@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // WorkloadAPI exposes the workload use cases to the frontend.

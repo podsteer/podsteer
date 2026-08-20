@@ -30,7 +30,7 @@ const (
 	//
 	// Kubernetes has no such phase: a terminating pod keeps reporting Running
 	// until it disappears, which is the single most confusing thing a naive
-	// pod list shows. K8Sense promotes it to a phase of its own because that
+	// pod list shows. PodSteer promotes it to a phase of its own because that
 	// is how an operator actually thinks about the pod.
 	PodPhaseTerminating PodPhase = "Terminating"
 )
@@ -38,7 +38,7 @@ const (
 // NewPodPhase maps a raw API phase onto the known set.
 //
 // An unrecognised phase degrades to PodPhaseUnknown instead of failing: a pod
-// K8Sense cannot fully classify is still worth showing to the operator, and a
+// PodSteer cannot fully classify is still worth showing to the operator, and a
 // future Kubernetes release must not make the pod list unreadable.
 func NewPodPhase(raw string) PodPhase {
 	switch PodPhase(strings.TrimSpace(raw)) {
@@ -110,7 +110,7 @@ type Container struct {
 // Requests and limits are what the *scheduler* works with, and they are a
 // different question from what a pod actually uses: a cluster can be full —
 // nothing more will schedule — while sitting at 8% real utilisation, because
-// scheduling is decided by requests alone. Carrying both is what lets K8Sense
+// scheduling is decided by requests alone. Carrying both is what lets PodSteer
 // say that out loud instead of showing a reassuring usage bar.
 type Resources struct {
 	// CPUMilli is CPU in millicores. 1000 = one core.
@@ -134,7 +134,7 @@ func (r Resources) Add(other Resources) Resources {
 // constructor takes a struct rather than positional parameters.
 type PodSpec struct {
 	// UID is the Kubernetes object UID. Optional: it is absent on objects
-	// synthesised in tests, and Pod identity within K8Sense is namespace+name.
+	// synthesised in tests, and Pod identity within PodSteer is namespace+name.
 	UID string
 	// Name is the pod name. Required.
 	Name string
@@ -178,7 +178,7 @@ type PodSpec struct {
 
 // Pod is a Kubernetes pod as observed in a cluster at a point in time.
 //
-// Within K8Sense a pod is identified by the triple (cluster, namespace, name).
+// Within PodSteer a pod is identified by the triple (cluster, namespace, name).
 // The value is a read-only snapshot: it is never written back to the cluster,
 // so it carries observed status rather than desired spec.
 type Pod struct {

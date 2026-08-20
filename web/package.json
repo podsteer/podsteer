@@ -1,9 +1,9 @@
 {
-  "name": "k8sense-web",
+  "name": "podsteer-web",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "K8Sense frontend: Svelte 5 + Vite + Tailwind CSS with Material Design 3 tokens.",
+  "description": "PodSteer frontend: Svelte 5 + Vite + Tailwind CSS with Material Design 3 tokens.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

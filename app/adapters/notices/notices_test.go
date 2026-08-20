@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"k8sense/app/adapters/notices"
+	"podsteer/app/adapters/notices"
 )
 
 // These tests assert properties of the COMMITTED inventory, not of the code

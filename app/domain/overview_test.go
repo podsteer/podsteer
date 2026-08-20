@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
-// The overview is the one place in K8Sense that makes a judgement rather than
+// The overview is the one place in PodSteer that makes a judgement rather than
 // reporting a fact, so the judgements are what these tests pin down: which
 // states count as problems, which do not, and how the problems group.
 
@@ -721,7 +721,7 @@ func TestRestartHotspotsRankByRestartCount(t *testing.T) {
 }
 
 // A pod that is up now but has restarted forty times is invisible in every
-// list K8Sense shows — this is the only place it surfaces.
+// list PodSteer shows — this is the only place it surfaces.
 func TestRestartFindingReportsHealthyButFlappingPods(t *testing.T) {
 	t.Parallel()
 

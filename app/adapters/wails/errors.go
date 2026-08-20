@@ -6,15 +6,15 @@ import (
 	"fmt"
 	"log/slog"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // ErrorCode is the stable, machine-readable classification of a failed call.
 //
 // Wails serialises a returned error to the string produced by Error() and
 // rejects the JavaScript promise with it, so there is no room for a structured
-// error object on the wire. K8Sense therefore encodes the code as a bracketed
+// error object on the wire. PodSteer therefore encodes the code as a bracketed
 // prefix — "[forbidden] you are not allowed to list pods ..." — which the
 // frontend parses back out (see web/src/lib/api/errors.ts).
 //

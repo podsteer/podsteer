@@ -12,8 +12,8 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // Default client tuning. See package documentation for the reasoning.
@@ -27,10 +27,10 @@ const (
 	// instead of queueing behind the rate limiter.
 	defaultBurst = 100
 
-	// defaultUserAgent identifies K8Sense in API server audit logs. Clusters
+	// defaultUserAgent identifies PodSteer in API server audit logs. Clusters
 	// with request-tracing or admission policies key off this, so a generic
-	// "Go-http-client" would make K8Sense traffic unattributable.
-	defaultUserAgent = "k8sense"
+	// "Go-http-client" would make PodSteer traffic unattributable.
+	defaultUserAgent = "podsteer"
 
 	// protobufContentType is the Kubernetes protobuf media type. Core API
 	// group objects (pods, namespaces) serialise to it, and decoding it costs
@@ -60,7 +60,7 @@ type Config struct {
 	// Zero means defaultBurst.
 	Burst int
 
-	// UserAgent identifies K8Sense to the API server. Empty means
+	// UserAgent identifies PodSteer to the API server. Empty means
 	// defaultUserAgent.
 	UserAgent string
 }
@@ -79,7 +79,7 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-// clients is the set of API clients K8Sense needs against one cluster.
+// clients is the set of API clients PodSteer needs against one cluster.
 //
 // They are built and cached together because they all derive from the same
 // REST config and the same expensive credential resolution. Building them
@@ -173,7 +173,7 @@ func (f *clientFactory) restConfig(id domain.ClusterID) (*rest.Config, error) {
 	cfg.AcceptContentTypes = acceptContentTypes
 
 	// Timeout is deliberately left unset. It would apply to every request made
-	// through this config, including the long-lived watches K8Sense will open
+	// through this config, including the long-lived watches PodSteer will open
 	// for live resource updates. Per-request deadlines belong on the context,
 	// which the inbound adapter attaches.
 

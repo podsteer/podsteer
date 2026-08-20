@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"slices"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
 // Wire types for the cluster dashboard. As with the other DTO files these are

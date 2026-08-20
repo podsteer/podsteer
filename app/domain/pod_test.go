@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
 // newPodSpec returns a valid spec that individual tests mutate, so each case

@@ -5,10 +5,10 @@ import (
 	"slices"
 	"sync"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
-// Registry tracks which clusters K8Sense currently has open.
+// Registry tracks which clusters PodSteer currently has open.
 //
 // This replaces the single "active cluster" the application used to hold. A
 // desktop client showing one tab per cluster is genuinely multi-cluster: the

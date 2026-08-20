@@ -1,6 +1,6 @@
 // Package config resolves the application's runtime configuration.
 //
-// Every setting has a working default, so K8Sense starts with no environment
+// Every setting has a working default, so PodSteer starts with no environment
 // at all; the variables exist for troubleshooting and for pointing a build at
 // a non-standard kubeconfig. Configuration is read once, at startup, in the
 // composition root — no other package reads the environment.
@@ -15,8 +15,8 @@ import (
 	"time"
 )
 
-// envPrefix namespaces every K8Sense environment variable.
-const envPrefix = "K8SENSE_"
+// envPrefix namespaces every PodSteer environment variable.
+const envPrefix = "PODSTEER_"
 
 // Config is the fully resolved application configuration.
 type Config struct {
@@ -75,8 +75,8 @@ type LogConfig struct {
 func Default() Config {
 	return Config{
 		App: AppConfig{
-			Name:    "k8sense",
-			Title:   "K8Sense",
+			Name:    "podsteer",
+			Title:   "PodSteer",
 			Version: "dev",
 		},
 		Window: WindowConfig{
@@ -99,7 +99,7 @@ func Default() Config {
 // Load returns the default configuration with environment overrides applied.
 //
 // A malformed value is an error rather than a silent fallback: someone who
-// sets K8SENSE_QPS=fifty needs to be told, not quietly given 50.
+// sets PODSTEER_QPS=fifty needs to be told, not quietly given 50.
 func Load() (Config, error) {
 	cfg := Default()
 

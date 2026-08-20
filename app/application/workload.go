@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"slices"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // WorkloadServiceDeps are the collaborators WorkloadService needs.

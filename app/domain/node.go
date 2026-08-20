@@ -218,5 +218,5 @@ func (n Node) CPUPercent() float64 { return n.allocatable.CPUPercent(n.usage) }
 // MemoryPercent returns memory usage against allocatable.
 func (n Node) MemoryPercent() float64 { return n.allocatable.MemoryPercent(n.usage) }
 
-// KnownPressureConditions returns the conditions K8Sense treats as problems.
+// KnownPressureConditions returns the conditions PodSteer treats as problems.
 func KnownPressureConditions() []NodeCondition { return slices.Clone(pressureConditions) }

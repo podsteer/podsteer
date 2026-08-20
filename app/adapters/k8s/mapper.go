@@ -11,11 +11,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apiversion "k8s.io/apimachinery/pkg/version"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
 // This file is the anti-corruption layer between Kubernetes API types and the
-// K8Sense domain. Nothing outside this package should ever see a corev1 value,
+// PodSteer domain. Nothing outside this package should ever see a corev1 value,
 // and nothing in here should encode business rules — it translates, the domain
 // decides.
 
@@ -80,10 +80,10 @@ func podMessage(pod *corev1.Pod) string {
 	return pod.Status.Message
 }
 
-// mapPodPhase derives the phase K8Sense shows from the pod's reported phase.
+// mapPodPhase derives the phase PodSteer shows from the pod's reported phase.
 //
 // The one substitution is deletion: a pod with a deletion timestamp keeps
-// reporting Running right up until it vanishes, so K8Sense reports Terminating
+// reporting Running right up until it vanishes, so PodSteer reports Terminating
 // instead — the same correction kubectl applies in its STATUS column.
 func mapPodPhase(pod *corev1.Pod) domain.PodPhase {
 	if pod.DeletionTimestamp != nil {

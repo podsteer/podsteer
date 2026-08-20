@@ -1,11 +1,11 @@
-# K8Sense brand
+# PodSteer brand
 
 ## The mark
 
 A hexagon with a pulse through it.
 
 **The hexagon is a cluster** — a cell, a container, a unit that tiles with
-others. **The pulse is the product.** K8Sense does not list a cluster, it reads
+others. **The pulse is the product.** PodSteer does not list a cluster, it reads
 one: the line is a vital sign, and the rise is the thing worth looking at. It
 is the same shape as the trend chart on the dashboard, which is not a
 coincidence.
@@ -25,13 +25,13 @@ outline, spokes radiating from a centre, or the Kubernetes blue (#326CE5).
 
 | File | Use |
 | :--- | :--- |
-| `k8sense-mark.svg` | The mark alone, in brand blue. Light backgrounds, documents, README headers. |
-| `k8sense-mark-white.svg` | The mark in `currentColor`, defaulting to white. Dark or coloured backgrounds; inline it in HTML and it inherits the text colour. |
-| `k8sense-tile.svg` | Mark on the blue tile. Avatars, app icon, anywhere it needs its own ground. |
-| `k8sense-logo.svg` | Horizontal lockup for light backgrounds. |
-| `k8sense-logo-dark.svg` | Horizontal lockup for dark backgrounds, with the blue lightened for contrast. |
-| `k8sense-favicon.svg` | A 16-pixel drawing, not a scaled-down mark. See below. |
-| `k8sense-social.svg` | 1280×640 share card: GitHub repository preview, Open Graph, LinkedIn. |
+| `podsteer-mark.svg` | The mark alone, in brand blue. Light backgrounds, documents, README headers. |
+| `podsteer-mark-white.svg` | The mark in `currentColor`, defaulting to white. Dark or coloured backgrounds; inline it in HTML and it inherits the text colour. |
+| `podsteer-tile.svg` | Mark on the blue tile. Avatars, app icon, anywhere it needs its own ground. |
+| `podsteer-logo.svg` | Horizontal lockup for light backgrounds. |
+| `podsteer-logo-dark.svg` | Horizontal lockup for dark backgrounds, with the blue lightened for contrast. |
+| `podsteer-favicon.svg` | A 16-pixel drawing, not a scaled-down mark. See below. |
+| `podsteer-social.svg` | 1280×640 share card: GitHub repository preview, Open Graph, LinkedIn. |
 | `png/` | Rendered exports. Regenerate with `make brand`. |
 
 ### Why the favicon is a different drawing
@@ -40,7 +40,7 @@ At 16px the mark's 6.5-unit hexagon stroke lands on two-thirds of a pixel and
 the whole thing turns to grey mush — this was measured, not assumed. The
 favicon keeps the half that carries the meaning (the pulse) on the ground that
 carries the brand (the tile), and drops the hexagon. Do not substitute a
-scaled-down `k8sense-tile.svg`; it is unreadable at that size.
+scaled-down `podsteer-tile.svg`; it is unreadable at that size.
 
 ## Colour
 
@@ -58,8 +58,8 @@ Never place the `#1976D2` mark on a dark background — use the white or
 
 ## The wordmark
 
-"K8Sense" — one word, capital K, digit 8, capital S. Not "K8sense", "k8Sense"
-or "K8 Sense".
+"PodSteer" — one word, capital P, capital S. Not "Podsteer", "podSteer" or
+"Pod Steer".
 
 The lockups set it in the system sans stack as **live text**, so it stays
 editable and searchable. That means it depends on the reader's fonts. Before
@@ -79,7 +79,7 @@ Minimum sizes: mark 24px, lockup 120px wide, favicon variant below that.
   at 880px inside a 1024px canvas. The margin is deliberate: macOS icons are
   not edge-to-edge and Wails adds no padding of its own.
 - `web/public/favicon.svg`, `favicon-32.png`, `apple-touch-icon.png` — served
-  by the dev server and by k8sense.com. The webview itself never asks for a
+  by the dev server and by podsteer.com. The webview itself never asks for a
   favicon; the browser does.
 - `web/src/lib/components/Splash.svelte` — the mark redrawn in the splash's own
   gradient, because it sits on the splash's dark ground rather than on blue.

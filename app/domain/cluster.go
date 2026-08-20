@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// ClusterID identifies a cluster connection known to K8Sense.
+// ClusterID identifies a cluster connection known to PodSteer.
 //
 // It is derived from the kubeconfig context name because that is the only
 // handle which is simultaneously unique within a kubeconfig, stable across
@@ -71,7 +71,7 @@ func (e ServerEndpoint) IsZero() bool { return e.raw == "" }
 
 // ServerVersion is the version reported by a cluster's API server.
 //
-// It doubles as proof of reachability: K8Sense only learns a version by
+// It doubles as proof of reachability: PodSteer only learns a version by
 // completing a round trip, so a Cluster carrying one has demonstrably been
 // reached with the credentials in its kubeconfig context.
 type ServerVersion struct {
@@ -107,7 +107,7 @@ type ClusterSpec struct {
 	IsCurrent bool
 }
 
-// Cluster is a Kubernetes cluster K8Sense can talk to, as described by one
+// Cluster is a Kubernetes cluster PodSteer can talk to, as described by one
 // kubeconfig context.
 //
 // The entity is identified by its ID; two Cluster values denote the same
@@ -159,7 +159,7 @@ func (c Cluster) IsCurrent() bool { return c.isCurrent }
 // the cluster has been reached.
 func (c Cluster) Version() ServerVersion { return c.version }
 
-// IsReachable reports whether K8Sense has completed a round trip to this
+// IsReachable reports whether PodSteer has completed a round trip to this
 // cluster's API server during this session.
 func (c Cluster) IsReachable() bool { return !c.version.IsZero() }
 

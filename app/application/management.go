@@ -7,8 +7,8 @@ import (
 	"io"
 	"log/slog"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // ManagementService orchestrates write operations on Kubernetes resources.

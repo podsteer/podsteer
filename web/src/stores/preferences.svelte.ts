@@ -1,7 +1,7 @@
 /**
  * Durable UI preferences.
  *
- * Everything an operator adjusts about how K8Sense *looks* lives here and
+ * Everything an operator adjusts about how PodSteer *looks* lives here and
  * survives a restart: the colour theme, page size, which columns are shown and
  * how wide, whether the navigator is collapsed, how often views refresh.
  *
@@ -20,7 +20,7 @@ export const PAGE_SIZES = [10, 25, 50, 100] as const
 /** How many rows a page holds. */
 export type PageSize = (typeof PAGE_SIZES)[number]
 
-/** The colour schemes K8Sense can render in. */
+/** The colour schemes PodSteer can render in. */
 export const THEMES = ['dark', 'light'] as const
 
 /** A resolved colour scheme — what is actually painted. */
@@ -62,7 +62,7 @@ export const REFRESH_INTERVALS = [
   { label: 'Manual only', value: 0 },
 ] as const
 
-const STORAGE_KEY = 'k8sense.preferences.v1'
+const STORAGE_KEY = 'podsteer.preferences.v1'
 
 /** Per-column overrides, keyed by column id within a kind. */
 interface ColumnPreference {
@@ -98,7 +98,7 @@ interface PersistedShape {
 }
 
 const DEFAULTS: PersistedShape = {
-  // System, so K8Sense matches the desktop it was launched from rather than
+  // System, so PodSteer matches the desktop it was launched from rather than
   // asserting a preference nobody expressed.
   themePreference: 'system',
   pageSize: 25,
@@ -228,7 +228,7 @@ class Preferences {
    * happens once, on a cluster nobody has opened before — after that, the
    * operator's own choice always wins, because kubeconfig's "default" is a
    * fallback for kubectl, not a statement about which namespace matters to
-   * whoever is looking at K8Sense.
+   * whoever is looking at PodSteer.
    */
   getClusterNamespace = (clusterId: string): string | undefined => this.namespaceByCluster[clusterId]
 

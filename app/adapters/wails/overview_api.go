@@ -4,8 +4,8 @@ import (
 	"errors"
 	"log/slog"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // OverviewAPI exposes the cluster dashboard.

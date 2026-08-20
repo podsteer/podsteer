@@ -3,7 +3,7 @@
  *
  * Every context the kubeconfig offers starts in the implicit "Default" group.
  * Groups created here are a way to give dozens of contexts meaning — "prod
- * eu", "edge", "qa" — and a kubeconfig does not offer, so it is a K8Sense
+ * eu", "edge", "qa" — and a kubeconfig does not offer, so it is a PodSteer
  * concept rather than anything read back from kubectl.
  *
  * Group membership is keyed by context name, the handle every other API
@@ -35,7 +35,7 @@ export const DEFAULT_GROUP_ID = 'default'
 /** Display name of the default group. */
 export const DEFAULT_GROUP_NAME = 'Default'
 
-const STORAGE_KEY = 'k8sense.groups.v1'
+const STORAGE_KEY = 'podsteer.groups.v1'
 
 interface PersistedShape {
   /** Operator-created groups, in creation order. */

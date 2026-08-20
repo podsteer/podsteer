@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
 // Wire types for the resources the navigator browses. As with dto.go these are
@@ -30,7 +30,7 @@ type ResourceKind struct {
 	Title string `json:"title"`
 	// Singular is the singular display name.
 	Singular string `json:"singular"`
-	// Rich reports whether K8Sense has purpose-built columns for this kind.
+	// Rich reports whether PodSteer has purpose-built columns for this kind.
 	// The UI routes rich kinds to their own view and everything else to the
 	// generic table.
 	Rich bool `json:"rich"`

@@ -10,7 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"k8sense/app/domain"
+	"podsteer/app/domain"
 )
 
 // ListPods returns the pods in namespace, or across every namespace when it is

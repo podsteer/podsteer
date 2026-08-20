@@ -1,4 +1,4 @@
-// Package ports declares the boundaries of the K8Sense hexagon.
+// Package ports declares the boundaries of the PodSteer hexagon.
 //
 // Two families of interface live here, and the distinction is the whole point
 // of the pattern:

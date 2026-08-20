@@ -19,9 +19,9 @@
   import LinkedinIcon from './icons/LinkedinIcon.svelte'
   import BlueskyIcon from './icons/BlueskyIcon.svelte'
 
-  const GITHUB_URL = 'https://github.com/k8sense'
-  const LINKEDIN_URL = 'https://linkedin.com/company/k8sense'
-  const BLUESKY_URL = 'https://bsky.app/profile/k8sense.com'
+  const GITHUB_URL = 'https://github.com/podsteer'
+  const LINKEDIN_URL = 'https://linkedin.com/company/podsteer'
+  const BLUESKY_URL = 'https://bsky.app/profile/podsteer.com'
 
   const session = $derived(workspace.active)
 
@@ -95,8 +95,8 @@
   {/if}
 
   <div class="ml-auto flex items-center gap-3">
-    <!-- Share K8Sense: distinct from the follow-us icons after it — this
-         shares the app itself, not K8Sense's own accounts. -->
+    <!-- Share PodSteer: distinct from the follow-us icons after it — this
+         shares the app itself, not PodSteer's own accounts. -->
     <ShareMenu />
 
     {@render sep()}
@@ -106,7 +106,7 @@
       <button
         type="button"
         onclick={() => openSocial(GITHUB_URL)}
-        aria-label="K8Sense on GitHub"
+        aria-label="PodSteer on GitHub"
         title="GitHub"
         class="state-layer flex cursor-pointer items-center rounded-xs opacity-70 transition-opacity duration-100 hover:opacity-100"
       >
@@ -115,7 +115,7 @@
       <button
         type="button"
         onclick={() => openSocial(LINKEDIN_URL)}
-        aria-label="K8Sense on LinkedIn"
+        aria-label="PodSteer on LinkedIn"
         title="LinkedIn"
         class="state-layer flex cursor-pointer items-center rounded-xs opacity-70 transition-opacity duration-100 hover:opacity-100"
       >
@@ -124,7 +124,7 @@
       <button
         type="button"
         onclick={() => openSocial(BLUESKY_URL)}
-        aria-label="K8Sense on Bluesky"
+        aria-label="PodSteer on Bluesky"
         title="Bluesky"
         class="state-layer flex cursor-pointer items-center rounded-xs opacity-70 transition-opacity duration-100 hover:opacity-100"
       >
@@ -141,7 +141,7 @@
       class="state-layer flex cursor-pointer items-center gap-1 rounded-xs px-1 text-primary/80
              transition-colors duration-100 hover:text-primary"
     >
-      k8sense.com
+      podsteer.com
       <ExternalLink class="size-3" strokeWidth={2} />
     </button>
 

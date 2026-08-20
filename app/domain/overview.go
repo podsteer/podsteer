@@ -10,7 +10,7 @@ import (
 
 // This file turns a snapshot of a cluster into an assessment of it.
 //
-// Every other list in K8Sense answers "what is there". The overview answers
+// Every other list in PodSteer answers "what is there". The overview answers
 // "what is wrong, and what should I look at first" — which is the question an
 // operator actually opens a cluster with. That makes it analysis, not
 // presentation, so it lives in the domain: it is testable without a cluster,
@@ -824,7 +824,7 @@ func diagnosePod(pod Pod, now time.Time) (podProblem, bool) {
 // diagnoseContainerReason maps a container's reason onto a problem.
 //
 // The reasons are the API server's own strings. Anything unrecognised falls
-// through as a warning rather than being dropped: a reason K8Sense has not
+// through as a warning rather than being dropped: a reason PodSteer has not
 // seen is still a reason the pod is not running.
 func diagnoseContainerReason(reason string, age time.Duration) (podProblem, bool) {
 	switch reason {
@@ -1402,7 +1402,7 @@ func configurationFindings(pods []Pod, summary PodSummary) []Finding {
 
 // restartFindings reports pods that are up now but keep dying.
 //
-// Nothing else in K8Sense surfaces these: the pod is Running, its containers
+// Nothing else in PodSteer surfaces these: the pod is Running, its containers
 // are ready, and every list shows it as healthy. A container that has restarted
 // forty times is nevertheless dropping requests every time it does, and the
 // count is the only trace left once it comes back.

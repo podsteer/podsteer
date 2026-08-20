@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"k8sense/app/adapters/history"
-	"k8sense/app/domain"
+	"podsteer/app/adapters/history"
+	"podsteer/app/domain"
 )
 
 func sample(at time.Time, cpu int64) domain.Sample {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Generates the third-party notices K8Sense ships, and enforces the licence
+ * Generates the third-party notices PodSteer ships, and enforces the licence
  * policy while it is there.
  *
  * Two jobs, deliberately in one command. The inventory and the policy check

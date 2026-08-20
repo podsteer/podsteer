@@ -26,7 +26,7 @@
   second, equal-sized gap after them so the Home tab does not sit flush
   against the window controls. In native fullscreen the traffic lights are
   gone and so is the reason for that padding, so it collapses to the same
-  `px-3` inset the navigator uses for its own content, and "K8Sense" fills
+  `px-3` inset the navigator uses for its own content, and "PodSteer" fills
   the space instead of leaving it blank — sitting in the exact column the
   sidebar's text sits in below it, rather than an arbitrary one.
 
@@ -77,7 +77,7 @@
    * balance as the gap between the window's own edge and the lights. That
    * reasoning stops applying the moment fullscreen hides the lights, at
    * which point `pl-3` takes over — the same inset the navigator's own
-   * content uses, so "K8Sense" lines up with the sidebar text under it.
+   * content uses, so "PodSteer" lines up with the sidebar text under it.
    */
   const leadingPadding = $derived(isMac && !windowState.isFullscreen ? 'pl-[100px]' : 'pl-3')
 </script>
@@ -98,7 +98,7 @@
       class="flex shrink-0 items-center pr-3 pl-1.5 text-label-large font-bold text-on-surface"
       aria-hidden="true"
     >
-      K8Sense
+      PodSteer
     </div>
   {/if}
 

@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="K8Sense">
-  <title>K8Sense</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="PodSteer">
+  <title>PodSteer</title>
 
   <!--
     The tile: avatar, app icon, anywhere the mark needs its own ground.
@@ -12,14 +12,14 @@
     a circle — LinkedIn, Bluesky, Slack all do — cannot clip it.
   -->
   <defs>
-    <linearGradient id="k8sense-tile-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="podsteer-tile-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#1976D2"/>
       <stop offset="100%" stop-color="#1557b0"/>
     </linearGradient>
   </defs>
 
   <path d="M4 16 Q4 4 16 4 L104 4 Q116 4 116 16 L116 104 Q116 116 104 116 L16 116 Q4 116 4 104 Z"
-        fill="url(#k8sense-tile-gradient)"/>
+        fill="url(#podsteer-tile-gradient)"/>
 
   <g transform="translate(60 60) scale(0.8) translate(-60 -60)"
      fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">

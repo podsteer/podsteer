@@ -1,6 +1,6 @@
-# K8Sense License
+# PodSteer License
 
-Copyright 2026 K8Sense
+Copyright 2026 PodSteer
 
 Licensed under the Apache License, Version 2.0. The full text follows.
 
@@ -194,7 +194,7 @@ Licensed under the Apache License, Version 2.0. The full text follows.
       same "printed page" as the copyright notice for easier
       identification within third-party archives.
 
-   Copyright 2026 K8Sense
+   Copyright 2026 PodSteer
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.

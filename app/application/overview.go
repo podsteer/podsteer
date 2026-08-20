@@ -8,15 +8,15 @@ import (
 	"sync"
 	"time"
 
-	"k8sense/app/domain"
-	"k8sense/app/ports"
+	"podsteer/app/domain"
+	"podsteer/app/ports"
 )
 
 // OverviewServiceDeps are the collaborators the overview needs.
 //
 // It reads through the same ports as every other use case rather than being
 // given a privileged view of the cluster: the overview is an assessment of the
-// data K8Sense already has, not a second way of getting it.
+// data PodSteer already has, not a second way of getting it.
 type OverviewServiceDeps struct {
 	// Cluster reads nodes, namespaces and the server version. Required.
 	Cluster ports.ClusterPort

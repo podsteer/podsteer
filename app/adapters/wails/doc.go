@@ -1,4 +1,4 @@
-// Package wails is the driving (inbound) adapter that exposes the K8Sense use
+// Package wails is the driving (inbound) adapter that exposes the PodSteer use
 // cases to the Svelte frontend.
 //
 // Wails binds the exported methods of the structs it is given and generates

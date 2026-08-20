@@ -1,4 +1,4 @@
-module k8sense
+module podsteer
 
 go 1.26.0
 
