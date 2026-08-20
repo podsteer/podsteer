@@ -48,7 +48,8 @@ NC     := \033[0m
 
 .PHONY: help dev build run open bindings notices sbom test check web-build embed-stub deps clean \
         tag tag-show-inner tag-patch-inner tag-minor-inner tag-major-inner \
-        tag-rc-inner tag-main-inner bump-inner ensure-branch ensure-clean fetch
+        tag-rc-inner tag-main-inner bump-inner ensure-branch ensure-clean \
+        ensure-notices fetch
 
 .DEFAULT_GOAL := help
 
@@ -113,7 +114,17 @@ help:
 dev: web-build
 	$(WAILS) dev $(BUILD_TAGS)
 
-build: web-build
+# `notices` as well, because the licence inventory is EMBEDDED in the binary
+# this produces. A packaged application whose Credits pane disagrees with the
+# dependencies actually linked into it fails the obligation it exists to meet,
+# so the check runs on every real build rather than only in CI. It costs about
+# two seconds and also enforces the policy — a forbidden dependency stops the
+# build here rather than at release.
+#
+# Deliberately NOT a dependency of `dev`: the inner loop should let somebody
+# try a dependency before deciding to keep it. `build`, `run` and `open` are
+# where the artefact becomes real, and that is where the rule applies.
+build: web-build notices
 	$(WAILS) build -clean -trimpath -s $(BUILD_TAGS)
 
 # Builds a release binary and launches it in the foreground, so application
@@ -220,6 +231,17 @@ ensure-branch:
 		exit 1; \
 	fi
 
+# Refuses to tag a commit whose licence inventory does not match its
+# dependencies.
+#
+# CI checks the same thing, but it checks it AFTER the tag exists — and a tag
+# is the one thing in this workflow that cannot simply be amended, because
+# pushing it is what triggers a build and a release. Catching the drift here
+# costs two seconds and saves deleting a published tag.
+ensure-notices:
+	@node build/generate-notices.mjs > /dev/null
+	@if [ -n "$$(git status --porcelain -- app/adapters/notices/notices.json)" ]; then 		echo -e "${RED}Error: the licence inventory is out of date.${NC}"; 		echo ""; 		echo -e "${YELLOW}It has been regenerated. Review and commit it, then tag again.${NC}"; 		echo ""; 		git --no-pager diff --stat -- app/adapters/notices/notices.json; 		echo ""; 		exit 1; 	fi
+
 ensure-clean:
 	@if [ -n "$$(git status --porcelain)" ]; then \
 		echo -e "${RED}Error: You have uncommitted changes.${NC}"; \
@@ -260,7 +282,7 @@ tag-show-inner: ensure-branch fetch
 # The "is there anything to tag" question asks whether there are commits since
 # the last tag — NOT whether there are unpushed commits. Pushing as you go is
 # normal, and conflating the two refuses perfectly taggable work.
-bump-inner: fetch ensure-branch ensure-clean
+bump-inner: fetch ensure-branch ensure-notices ensure-clean
 	@if [ "$(BRANCH)" != "develop" ]; then \
 		echo -e "${RED}Error: Development tags are only cut on 'develop'.${NC}"; \
 		echo ""; \
@@ -339,7 +361,7 @@ tag-major-inner:
 # Cuts a release candidate from the current development base. Unlike a
 # production tag this does not require a merge to main — a candidate exists
 # precisely to be tested before that merge happens.
-tag-rc-inner: fetch ensure-branch ensure-clean
+tag-rc-inner: fetch ensure-branch ensure-notices ensure-clean
 	@if [ "$(BRANCH)" != "develop" ]; then \
 		echo -e "${RED}Error: Release candidates are cut on 'develop'.${NC}"; \
 		echo ""; \
@@ -373,7 +395,7 @@ tag-rc-inner: fetch ensure-branch ensure-clean
 # Promotes the latest development tag's base version to production. The merge
 # check is what stops a production tag being cut at a commit that never went
 # through review.
-tag-main-inner: fetch ensure-branch ensure-clean
+tag-main-inner: fetch ensure-branch ensure-notices ensure-clean
 	@echo -e "${BLUE}Checking if develop is merged into main...${NC}"
 	@if ! git merge-base --is-ancestor origin/develop HEAD; then \
 		echo -e "${RED}Error: 'develop' is not merged into 'main'.${NC}"; \
