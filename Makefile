@@ -30,8 +30,8 @@ endif
 # Where `wails build` leaves the executable. On macOS it is buried inside the
 # .app bundle; elsewhere it sits directly in build/bin.
 ifeq ($(shell uname -s),Darwin)
-	APP_BIN := build/bin/k8sense.app/Contents/MacOS/k8sense
-	APP_BUNDLE := build/bin/k8sense.app
+	APP_BIN := build/bin/K8Sense.app/Contents/MacOS/k8sense
+	APP_BUNDLE := build/bin/K8Sense.app
 else ifeq ($(OS),Windows_NT)
 	APP_BIN := build/bin/k8sense.exe
 else
@@ -129,6 +129,21 @@ dev: web-build
 # where the artefact becomes real, and that is where the rule applies.
 build: web-build notices
 	$(WAILS) build -clean -trimpath -s $(BUILD_TAGS)
+ifdef APP_BUNDLE
+	@# Wails names the bundle after `outputfilename`, which has to stay
+	@# lowercase: it is also the executable name, and that is what a Linux
+	@# package and a Homebrew cask put on a PATH. The BUNDLE is what a person
+	@# sees in /Applications, so it is renamed here — in one place, rather
+	@# than in CI and locally separately.
+	@# Through a temporary name, because APFS is case-INSENSITIVE by default:
+	@# `k8sense.app` and `K8Sense.app` are the same path, so removing the
+	@# destination first deletes the bundle being renamed, and a direct `mv`
+	@# is a no-op that leaves the old casing in place.
+	@if [ -d build/bin/k8sense.app ]; then \
+		mv build/bin/k8sense.app build/bin/.k8sense-rename.app; \
+		mv build/bin/.k8sense-rename.app $(APP_BUNDLE); \
+	fi
+endif
 
 # Builds a release binary and launches it in the foreground, so application
 # logs land in this terminal rather than in the system log. Ctrl-C stops it.

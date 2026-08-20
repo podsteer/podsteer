@@ -1,0 +1,106 @@
+name: Update Homebrew Tap
+
+# Rewrites the cask in k8sense/homebrew-tap after a production release, so
+# `brew install --cask k8sense` serves the version that was just published.
+#
+# Separate from ci-cd.yaml deliberately. That workflow's release job builds and
+# publishes; this one reacts to a release having been published, which is the
+# only moment the download URL and its checksum both exist. Folding it in would
+# mean computing a checksum for an asset GitHub had not finished storing.
+#
+# Production tags only. A -dev- or -rc- build is not something anyone should
+# get from `brew install`.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish to the tap, e.g. v1.2.3'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  cask:
+    name: Publish Cask
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve The Release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ github.event.inputs.tag || github.event.release.tag_name }}"
+
+          # Pre-releases and development builds are not what `brew install`
+          # should hand somebody.
+          case "$tag" in
+            *-dev-*|*-rc-*)
+              echo "::notice::$tag is a pre-release; the tap serves production tags only."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          version="${tag#v}"
+          asset="k8sense_${tag}_macos-universal.zip"
+          url="https://github.com/${{ github.repository }}/releases/download/${tag}/${asset}"
+
+          # Downloaded rather than read from the checksums asset: the point is
+          # to checksum the bytes Homebrew will actually fetch from this URL,
+          # not to repeat a number computed elsewhere.
+          echo "Downloading $url"
+          curl -fsSL --retry 3 --retry-delay 5 -o "$asset" "$url"
+          sha256=$(sha256sum "$asset" | cut -d' ' -f1)
+
+          {
+            echo "skip=false"
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "sha256=$sha256"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check Out The Tap
+        if: steps.release.outputs.skip == 'false'
+        uses: actions/checkout@v7
+        with:
+          repository: k8sense/homebrew-tap
+          # A PAT with `contents: write` on the tap. GITHUB_TOKEN is scoped to
+          # THIS repository and cannot push to another one, which is the usual
+          # reason a workflow like this silently does nothing.
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Rewrite The Cask
+        if: steps.release.outputs.skip == 'false'
+        run: |
+          cask=tap/Casks/k8sense.rb
+          # Only the two lines that change per release. A regenerated file
+          # would drop the caveats and the zap list, which are prose rather
+          # than release metadata.
+          sed -i -E \
+            -e 's|^  version ".*"$|  version "${{ steps.release.outputs.version }}"|' \
+            -e 's|^  sha256 ".*"$|  sha256 "${{ steps.release.outputs.sha256 }}"|' \
+            "$cask"
+          git -C tap diff -- Casks/k8sense.rb
+
+      - name: Verify The Cask Still Parses
+        if: steps.release.outputs.skip == 'false'
+        run: ruby -c tap/Casks/k8sense.rb
+
+      - name: Commit
+        if: steps.release.outputs.skip == 'false'
+        working-directory: tap
+        run: |
+          if git diff --quiet -- Casks/k8sense.rb; then
+            echo "::notice::The cask already describes ${{ steps.release.outputs.tag }}."
+            exit 0
+          fi
+          git config user.name  "k8sense-bot"
+          git config user.email "bot@k8sense.com"
+          git add Casks/k8sense.rb
+          git commit -m "k8sense ${{ steps.release.outputs.version }}"
+          git push

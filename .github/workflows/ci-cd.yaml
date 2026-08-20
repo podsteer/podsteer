@@ -175,9 +175,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macos-arm64
+          # One universal binary rather than two builds: it is the single
+          # URL a Homebrew cask needs, and it works on Intel Macs, which a
+          # runner-native arm64 build silently does not.
+          - name: macos-universal
             runner: macos-latest
-            artifact: k8sense-macos-arm64
+            artifact: k8sense-macos-universal
+            platform: darwin/universal
           - name: windows-amd64
             runner: windows-latest
             artifact: k8sense-windows-amd64
@@ -222,7 +226,19 @@ jobs:
 
       - name: Build Application
         if: runner.os != 'Linux'
-        run: wails build -clean -trimpath -s
+        run: wails build -clean -trimpath -s ${{ matrix.platform && format('-platform {0}', matrix.platform) || '' }}
+
+      # The bundle is renamed for the same reason the Makefile renames it: the
+      # executable stays lowercase for PATHs, the bundle is what a person sees
+      # in /Applications. Through a temporary name because the runner's disk is
+      # case-insensitive.
+      - name: Name The macOS Bundle
+        if: runner.os == 'macOS'
+        run: |
+          if [ -d build/bin/k8sense.app ]; then
+            mv build/bin/k8sense.app build/bin/.rename.app
+            mv build/bin/.rename.app build/bin/K8Sense.app
+          fi
 
       - name: Build Application (Linux)
         if: runner.os == 'Linux'
@@ -269,8 +285,27 @@ jobs:
       # The SBOM is built once, in the gate, and describes the release rather
       # than any one platform's binary — so it is named for the tag here
       # instead of being regenerated per platform.
-      - name: Version The SBOM Filename
-        run: mv artifacts/k8sense.cdx.json "artifacts/k8sense-${{ github.ref_name }}.cdx.json"
+      # Artifacts are uploaded under stable names so the matrix does not need
+      # the tag; the release is where they gain their version, in one place.
+      - name: Version The Release Assets
+        run: |
+          version="${{ github.ref_name }}"
+          mv artifacts/k8sense.cdx.json "artifacts/k8sense_${version}_sbom.cdx.json"
+          for f in artifacts/k8sense-*.zip; do
+            [ -e "$f" ] || continue
+            platform=$(basename "$f" .zip | sed 's/^k8sense-//')
+            mv "$f" "artifacts/k8sense_${version}_${platform}.zip"
+          done
+          ls -la artifacts/
+
+      # A cask and a package manager both need a checksum they did not compute
+      # themselves. Published as an asset so it can be fetched without
+      # downloading every binary to verify one.
+      - name: Checksums
+        run: |
+          cd artifacts
+          shasum -a 256 *.zip > "k8sense_${{ github.ref_name }}_checksums.txt"
+          cat "k8sense_${{ github.ref_name }}_checksums.txt"
 
       # `gh` rather than a third-party release action: it ships on the runner,
       # needs no extra token plumbing, and keeps one less unpinned dependency
@@ -285,7 +320,7 @@ jobs:
             PRERELEASE=""
           fi
           gh release create "${{ github.ref_name }}" \
-            artifacts/*.zip artifacts/*.cdx.json \
+            artifacts/*.zip artifacts/*.cdx.json artifacts/*checksums.txt \
             --title "${{ github.ref_name }}" \
             --generate-notes \
             $PRERELEASE
