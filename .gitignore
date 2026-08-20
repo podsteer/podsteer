@@ -31,6 +31,11 @@ go.work.sum
 # Node
 /web/node_modules/
 
+# Wails hashes package.json to decide whether to re-run `npm install`, and
+# writes the digest beside it on every `wails dev`/`wails build`. It is a local
+# build cache, not a lockfile — committing it would just churn.
+/web/package.json.md5
+
 # IDE-specific files
 .vscode/
 .idea/

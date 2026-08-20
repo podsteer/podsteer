@@ -82,10 +82,17 @@
   aria-label="Cluster resources"
 >
   <!-- Namespace selector area: same height and border as the main toolbar,
-       so the two form one continuous line. -->
+       so the two form one continuous line.
+
+       The title tests `selectedKind` as well as `isNamespaced`: the overview is
+       deliberately not a catalog entry, so `selectedKind` is undefined there
+       AND `isNamespaced` is false — testing only the latter renders
+       "undefined are cluster-scoped" on the view every session opens with. -->
   <div
     class="flex h-14 shrink-0 items-center border-b border-outline-variant/60 px-3"
-    title={!session.isNamespaced ? `${session.selectedKind?.title} are cluster-scoped` : undefined}
+    title={session.selectedKind && !session.isNamespaced
+      ? `${session.selectedKind.title} are cluster-scoped`
+      : undefined}
   >
     <Select
       label="Namespace"
