@@ -226,7 +226,7 @@
     <button
       type="button"
       onclick={toggleFollow}
-      class="h-8 rounded-sm px-3 text-sm transition-colors
+      class="h-8 rounded-xs px-3 text-sm transition-colors
              {follow ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'}"
       title={follow ? 'Disable follow mode' : 'Enable follow mode'}
     >
@@ -237,7 +237,7 @@
     <button
       type="button"
       onclick={toggleAutoScroll}
-      class="h-8 rounded-sm px-3 text-sm transition-colors
+      class="h-8 rounded-xs px-3 text-sm transition-colors
              {autoScroll ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'}"
       title={autoScroll ? 'Disable auto-scroll' : 'Enable auto-scroll'}
     >
@@ -248,7 +248,7 @@
     <button
       type="button"
       onclick={clearLogs}
-      class="h-8 rounded-sm bg-surface-container px-3 text-sm text-on-surface-variant hover:bg-surface-container-high"
+      class="h-8 rounded-xs bg-surface-container px-3 text-sm text-on-surface-variant hover:bg-surface-container-high"
       title="Clear logs"
     >
       Clear

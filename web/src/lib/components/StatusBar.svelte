@@ -108,7 +108,7 @@
         onclick={() => openSocial(GITHUB_URL)}
         aria-label="PodSteer on GitHub"
         title="GitHub"
-        class="state-layer flex cursor-pointer items-center rounded-sm opacity-70 transition-opacity duration-100 hover:opacity-100"
+        class="state-layer flex cursor-pointer items-center rounded-xs opacity-70 transition-opacity duration-100 hover:opacity-100"
       >
         <GithubIcon class="size-3.5" />
       </button>
@@ -117,7 +117,7 @@
         onclick={() => openSocial(LINKEDIN_URL)}
         aria-label="PodSteer on LinkedIn"
         title="LinkedIn"
-        class="state-layer flex cursor-pointer items-center rounded-sm opacity-70 transition-opacity duration-100 hover:opacity-100"
+        class="state-layer flex cursor-pointer items-center rounded-xs opacity-70 transition-opacity duration-100 hover:opacity-100"
       >
         <LinkedinIcon class="size-3.5" />
       </button>
@@ -126,7 +126,7 @@
         onclick={() => openSocial(BLUESKY_URL)}
         aria-label="PodSteer on Bluesky"
         title="Bluesky"
-        class="state-layer flex cursor-pointer items-center rounded-sm opacity-70 transition-opacity duration-100 hover:opacity-100"
+        class="state-layer flex cursor-pointer items-center rounded-xs opacity-70 transition-opacity duration-100 hover:opacity-100"
       >
         <BlueskyIcon class="size-3.5" />
       </button>
@@ -138,7 +138,7 @@
     <button
       type="button"
       onclick={openWebsite}
-      class="state-layer flex cursor-pointer items-center gap-1 rounded-sm px-1 text-primary/80
+      class="state-layer flex cursor-pointer items-center gap-1 rounded-xs px-1 text-primary/80
              transition-colors duration-100 hover:text-primary"
     >
       podsteer.com

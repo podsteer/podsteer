@@ -171,7 +171,7 @@
                     type="button"
                     onclick={() => preferences.setTheme(choice)}
                     aria-pressed={preferences.themePreference === choice}
-                    class="state-layer h-9 min-w-24 rounded-sm border px-4 text-label-large
+                    class="state-layer h-9 min-w-24 rounded-xs border px-4 text-label-large
                            transition-colors duration-150 ease-standard
                            {preferences.themePreference === choice
                              ? 'border-transparent bg-secondary-container text-on-secondary-container'
@@ -200,7 +200,7 @@
                   <button
                     type="button"
                     onclick={() => preferences.setPageSize(size as PageSize)}
-                    class="state-layer h-8 min-w-12 rounded-sm border px-3 text-label-large
+                    class="state-layer h-8 min-w-12 rounded-xs border px-3 text-label-large
                            transition-colors duration-150 ease-standard
                            {preferences.pageSize === size
                              ? 'border-transparent bg-secondary-container text-on-secondary-container'

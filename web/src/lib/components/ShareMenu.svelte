@@ -96,7 +96,7 @@
     onclick={() => (open = !open)}
     aria-expanded={open}
     aria-haspopup="menu"
-    class="state-layer flex cursor-pointer items-center gap-1 rounded-sm px-1 opacity-70
+    class="state-layer flex cursor-pointer items-center gap-1 rounded-xs px-1 opacity-70
            transition-opacity duration-100 hover:opacity-100"
   >
     Share on
