@@ -290,6 +290,20 @@
     else onclose()
   }
 
+  /**
+   * The one field style this dialog uses.
+   *
+   * Held in a constant rather than repeated four times, because the fault
+   * being fixed here was four fields that had drifted to three different
+   * heights. Matches SearchField, which is what a text input looks like
+   * everywhere else in the application.
+   */
+  const FIELD =
+    'h-8 min-w-0 flex-1 rounded-lg border border-outline-variant/60 bg-surface-container-low px-3 ' +
+    'text-body-medium text-on-surface placeholder:text-on-surface-variant/50 ' +
+    'transition-colors duration-150 ease-standard hover:border-outline ' +
+    'focus:border-primary focus:outline-none'
+
   /** Focuses a freshly mounted field and selects what is in it. */
   function claimFocus(node: HTMLInputElement): void {
     node.focus()
@@ -333,25 +347,26 @@
       {organisation.defaultProjectName} › {organisation.defaultGroupNameFor(DEFAULT_PROJECT_ID)}.
     </p>
 
-    <!-- New project -->
-    <div class="mt-5 flex items-start gap-2">
-      <label class="relative block flex-1">
-        <span
-          class="absolute -top-2 left-3 z-10 bg-surface-container-high px-1 text-body-small text-on-surface-variant"
-        >
-          Project name
-        </span>
+    <!-- New project.
+         The label sits above rather than notching the border. A floating
+         label needs a field tall enough to hold it, which is how this ended
+         up 48px high beside a 32px button — every control in the application
+         is h-8, and this one was half again as tall as the thing next to it. -->
+    <div class="mt-5">
+      <label for="new-project-name" class="text-body-small text-on-surface-variant">
+        Project name
+      </label>
+      <div class="mt-1.5 flex items-center gap-2">
         <input
+          id="new-project-name"
           type="text"
           bind:value={newProjectName}
           placeholder="e.g. Checkout"
           onkeydown={(event) => event.key === 'Enter' && addProject()}
-          class="h-12 w-full rounded-xs border border-outline bg-transparent px-4 text-body-large
-                 text-on-surface transition-colors duration-150 ease-standard
-                 hover:border-on-surface focus:border-primary focus:outline-none"
+          class={FIELD}
         />
-      </label>
-      <Button variant="tonal" class="mt-2" onclick={addProject}>Add</Button>
+        <Button variant="tonal" onclick={addProject}>Add</Button>
+      </div>
     </div>
     {#if newProjectError}
       <p class="mt-1.5 text-body-small text-error">{newProjectError}</p>
@@ -386,13 +401,10 @@
                 onkeydown={onRenameKeydown}
                 aria-label="Rename {project.name}"
                 use:claimFocus
-                class="h-9 min-w-0 flex-1 rounded-xs border border-primary bg-transparent px-3
-                       text-body-medium text-on-surface focus:outline-none"
+                class={FIELD}
               />
-              <button type="button" onclick={commitRename}
-                class="shrink-0 text-label-large text-primary hover:underline">Save</button>
-              <button type="button" onclick={cancelRename}
-                class="shrink-0 text-label-large text-on-surface-variant hover:text-on-surface">Cancel</button>
+              <Button variant="text" onclick={cancelRename}>Cancel</Button>
+              <Button variant="tonal" onclick={commitRename}>Save</Button>
             {:else}
               <span class="grid w-4 shrink-0 place-items-center text-on-surface-variant/30">
                 {#if !project.isDefault}
@@ -424,10 +436,8 @@
               </span>
 
               {#if isRow(confirmDelete, 'project', project.id)}
-                <button type="button" onclick={() => remove(row)}
-                  class="shrink-0 text-label-large text-error hover:underline">Delete</button>
-                <button type="button" onclick={() => (confirmDelete = null)}
-                  class="shrink-0 text-label-large text-on-surface-variant hover:text-on-surface">Keep</button>
+                <Button variant="text" onclick={() => (confirmDelete = null)}>Keep</Button>
+                <Button variant="filled" onclick={() => remove(row)}>Delete</Button>
               {:else}
                 <button
                   type="button"
@@ -509,13 +519,10 @@
                     onkeydown={onRenameKeydown}
                     aria-label="Rename {group.name}"
                     use:claimFocus
-                    class="h-8 min-w-0 flex-1 rounded-xs border border-primary bg-transparent px-3
-                           text-body-medium text-on-surface focus:outline-none"
+                    class={FIELD}
                   />
-                  <button type="button" onclick={commitRename}
-                    class="shrink-0 text-label-large text-primary hover:underline">Save</button>
-                  <button type="button" onclick={cancelRename}
-                    class="shrink-0 text-label-large text-on-surface-variant hover:text-on-surface">Cancel</button>
+                  <Button variant="text" onclick={cancelRename}>Cancel</Button>
+                  <Button variant="tonal" onclick={commitRename}>Save</Button>
                 {:else}
                   <span class="grid w-4 shrink-0 place-items-center text-on-surface-variant/30">
                     {#if !group.isDefault}
@@ -542,10 +549,8 @@
                   </span>
 
                   {#if isRow(confirmDelete, 'group', group.id, project.id)}
-                    <button type="button" onclick={() => remove(grow)}
-                      class="shrink-0 text-label-large text-error hover:underline">Delete</button>
-                    <button type="button" onclick={() => (confirmDelete = null)}
-                      class="shrink-0 text-label-large text-on-surface-variant hover:text-on-surface">Keep</button>
+                    <Button variant="text" onclick={() => (confirmDelete = null)}>Keep</Button>
+                    <Button variant="filled" onclick={() => remove(grow)}>Delete</Button>
                   {:else}
                     <button
                       type="button"
@@ -649,13 +654,10 @@
                       if (event.key === 'Enter') addGroup(project.id)
                       if (event.key === 'Escape') addingGroupIn = null
                     }}
-                    class="h-8 min-w-0 flex-1 rounded-xs border border-primary bg-transparent px-3
-                           text-body-medium text-on-surface focus:outline-none"
+                    class={FIELD}
                   />
-                  <button type="button" onclick={() => addGroup(project.id)}
-                    class="shrink-0 text-label-large text-primary hover:underline">Add</button>
-                  <button type="button" onclick={() => (addingGroupIn = null)}
-                    class="shrink-0 text-label-large text-on-surface-variant hover:text-on-surface">Cancel</button>
+                  <Button variant="text" onclick={() => (addingGroupIn = null)}>Cancel</Button>
+                  <Button variant="tonal" onclick={() => addGroup(project.id)}>Add</Button>
                 </div>
                 {#if newGroupError}
                   <p class="mt-1 text-body-small text-error">{newGroupError}</p>
