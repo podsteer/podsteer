@@ -280,6 +280,54 @@
 }
 
 /*
+ * The one text-field style.
+ *
+ * Every text input, textarea and select trigger in the application uses this,
+ * because they had drifted to four radii and three heights across twelve
+ * files — a 16px radius on a 32px-tall field is half its height, which is why
+ * some of them read as pills rather than as fields.
+ *
+ * 8px matches the console's `--md-shape-corner-sm`, which is the radius its
+ * dropdowns and inputs use, so the two applications agree.
+ *
+ * Height is deliberately NOT set: a toolbar search, a dialog field and a
+ * multi-line textarea are legitimately different sizes. Everything that makes
+ * them look like the same control — radius, border, ground, focus — is here.
+ */
+@utility field {
+  --wails-draggable: no-drag;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-outline-variant);
+  background-color: var(--color-surface-container-lowest);
+  color: var(--color-on-surface);
+  transition:
+    border-color 150ms var(--ease-standard),
+    box-shadow 150ms var(--ease-standard);
+
+  &::placeholder {
+    color: color-mix(in oklab, var(--color-on-surface-variant) 50%, transparent);
+  }
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-outline);
+  }
+
+  /* Focus is a ring drawn on the border rather than an outline offset from it,
+     so a focused field does not grow and shift the row it sits in. */
+  &:focus,
+  &:focus-visible {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 1px var(--color-primary);
+  }
+
+  &:disabled {
+    opacity: 0.38;
+    pointer-events: none;
+  }
+}
+
+/*
  * MD3 state layers.
  *
  * Interactive surfaces express hover/focus/press by compositing a translucent

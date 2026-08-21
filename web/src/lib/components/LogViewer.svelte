@@ -260,7 +260,7 @@
         type="text"
         bind:value={searchQuery}
         placeholder="Search logs..."
-        class="h-8 w-48 rounded-xs border border-outline bg-surface px-2 text-sm text-on-surface placeholder:text-on-surface-variant/50"
+        class="field h-8 w-48 px-2 text-sm"
       />
       {#if searchQuery}
         <span class="text-xs text-on-surface-variant">

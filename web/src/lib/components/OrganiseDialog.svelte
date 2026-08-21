@@ -290,20 +290,6 @@
     else onclose()
   }
 
-  /**
-   * The one field style this dialog uses.
-   *
-   * Held in a constant rather than repeated four times, because the fault
-   * being fixed here was four fields that had drifted to three different
-   * heights. Matches SearchField, which is what a text input looks like
-   * everywhere else in the application.
-   */
-  const FIELD =
-    'h-8 min-w-0 flex-1 rounded-lg border border-outline-variant/60 bg-surface-container-low px-3 ' +
-    'text-body-medium text-on-surface placeholder:text-on-surface-variant/50 ' +
-    'transition-colors duration-150 ease-standard hover:border-outline ' +
-    'focus:border-primary focus:outline-none'
-
   /** Focuses a freshly mounted field and selects what is in it. */
   function claimFocus(node: HTMLInputElement): void {
     node.focus()
@@ -363,7 +349,7 @@
           bind:value={newProjectName}
           placeholder="e.g. Checkout"
           onkeydown={(event) => event.key === 'Enter' && addProject()}
-          class={FIELD}
+          class="field h-8 min-w-0 flex-1 px-3 text-body-medium"
         />
         <Button variant="tonal" onclick={addProject}>Add</Button>
       </div>
@@ -401,10 +387,10 @@
                 onkeydown={onRenameKeydown}
                 aria-label="Rename {project.name}"
                 use:claimFocus
-                class={FIELD}
+                class="field h-8 min-w-0 flex-1 px-3 text-body-medium"
               />
-              <Button variant="text" onclick={cancelRename}>Cancel</Button>
-              <Button variant="tonal" onclick={commitRename}>Save</Button>
+              <Button variant="outlined" onclick={cancelRename}>Cancel</Button>
+              <Button variant="filled" onclick={commitRename}>Save</Button>
             {:else}
               <span class="grid w-4 shrink-0 place-items-center text-on-surface-variant/30">
                 {#if !project.isDefault}
@@ -436,7 +422,7 @@
               </span>
 
               {#if isRow(confirmDelete, 'project', project.id)}
-                <Button variant="text" onclick={() => (confirmDelete = null)}>Keep</Button>
+                <Button variant="outlined" onclick={() => (confirmDelete = null)}>Keep</Button>
                 <Button variant="filled" onclick={() => remove(row)}>Delete</Button>
               {:else}
                 <button
@@ -519,10 +505,10 @@
                     onkeydown={onRenameKeydown}
                     aria-label="Rename {group.name}"
                     use:claimFocus
-                    class={FIELD}
+                    class="field h-8 min-w-0 flex-1 px-3 text-body-medium"
                   />
-                  <Button variant="text" onclick={cancelRename}>Cancel</Button>
-                  <Button variant="tonal" onclick={commitRename}>Save</Button>
+                  <Button variant="outlined" onclick={cancelRename}>Cancel</Button>
+                  <Button variant="filled" onclick={commitRename}>Save</Button>
                 {:else}
                   <span class="grid w-4 shrink-0 place-items-center text-on-surface-variant/30">
                     {#if !group.isDefault}
@@ -549,7 +535,7 @@
                   </span>
 
                   {#if isRow(confirmDelete, 'group', group.id, project.id)}
-                    <Button variant="text" onclick={() => (confirmDelete = null)}>Keep</Button>
+                    <Button variant="outlined" onclick={() => (confirmDelete = null)}>Keep</Button>
                     <Button variant="filled" onclick={() => remove(grow)}>Delete</Button>
                   {:else}
                     <button
@@ -654,10 +640,10 @@
                       if (event.key === 'Enter') addGroup(project.id)
                       if (event.key === 'Escape') addingGroupIn = null
                     }}
-                    class={FIELD}
+                    class="field h-8 min-w-0 flex-1 px-3 text-body-medium"
                   />
-                  <Button variant="text" onclick={() => (addingGroupIn = null)}>Cancel</Button>
-                  <Button variant="tonal" onclick={() => addGroup(project.id)}>Add</Button>
+                  <Button variant="outlined" onclick={() => (addingGroupIn = null)}>Cancel</Button>
+                  <Button variant="filled" onclick={() => addGroup(project.id)}>Add</Button>
                 </div>
                 {#if newGroupError}
                   <p class="mt-1 text-body-small text-error">{newGroupError}</p>

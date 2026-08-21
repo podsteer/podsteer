@@ -54,11 +54,7 @@
     {placeholder}
     oninput={(event) => onchange(event.currentTarget.value)}
     onkeydown={handleKeydown}
-    class="no-drag h-8 w-full rounded-lg border border-outline-variant/60 bg-surface-container-low
-           pl-9 text-body-medium text-on-surface placeholder:text-on-surface-variant/50
-           transition-all duration-150 ease-standard
-           hover:border-outline focus:border-primary focus:bg-surface focus:shadow-sm focus:outline-none
-           {value ? 'pr-8' : 'pr-16'}"
+    class="field h-8 w-full pl-9 text-body-medium {value ? 'pr-8' : 'pr-16'}"
   />
 
   {#if value}

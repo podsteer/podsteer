@@ -8,6 +8,7 @@
   bottom of the screen.
 -->
 <script lang="ts">
+  import Select from './Select.svelte'
   import { PAGE_SIZES, preferences, type PageSize } from '$stores/preferences.svelte'
   import { ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from '@lucide/svelte'
 
@@ -29,18 +30,13 @@
 </script>
 
 <div class="flex shrink-0 items-center gap-2 {className}">
-  <select
-    value={preferences.pageSize}
-    onchange={(event) => preferences.setPageSize(Number(event.currentTarget.value) as PageSize)}
-    title="Rows per page"
-    class="h-8 rounded-md border border-outline-variant/60 bg-transparent px-1.5 text-body-medium
-           text-on-surface transition-colors duration-100
-           hover:border-outline focus:border-primary focus:outline-none"
-  >
-    {#each PAGE_SIZES as size (size)}
-      <option value={size} class="bg-surface-container text-on-surface">{size} / page</option>
-    {/each}
-  </select>
+  <Select
+    compact
+    label="Rows per page"
+    value={String(preferences.pageSize)}
+    options={PAGE_SIZES.map((size) => ({ value: String(size), label: `${size} / page` }))}
+    onchange={(next) => preferences.setPageSize(Number(next) as PageSize)}
+  />
 
   <span class="whitespace-nowrap text-body-medium tabular-nums text-on-surface-variant/70">
     {rangeStart}–{rangeEnd} of {totalCount}

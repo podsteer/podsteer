@@ -64,7 +64,7 @@
         type="number"
         bind:value={replicas}
         min="0"
-        class="mt-1 w-full rounded-xs border border-outline bg-surface px-3 py-2 text-body-medium text-on-surface"
+        class="field mt-1 w-full px-3 py-2 text-body-medium"
       />
     </label>
 

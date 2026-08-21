@@ -134,9 +134,7 @@
       bind:value={filter}
       placeholder="Filter by name or licence…"
       aria-label="Filter components"
-      class="h-9 w-full rounded-md border border-outline-variant bg-surface-container px-3
-             text-body-medium text-on-surface outline-none
-             placeholder:text-on-surface-variant/50 focus:border-primary"
+      class="field h-8 w-full px-3 text-body-medium"
     />
 
     <div class="min-h-0 flex-1 overflow-y-auto rounded-lg border border-outline-variant/50">

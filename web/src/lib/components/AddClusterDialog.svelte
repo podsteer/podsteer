@@ -176,9 +176,7 @@
           spellcheck="false"
           placeholder={'apiVersion: v1\nkind: Config\nclusters:\n  - cluster:\n      server: https://…'}
           aria-label="Kubeconfig"
-          class="mt-4 min-h-56 flex-1 resize-none rounded-md border border-outline bg-surface px-3 py-2
-                 font-mono text-body-small text-on-surface transition-colors duration-150
-                 hover:border-on-surface focus:border-primary focus:outline-none"
+          class="field mt-4 min-h-56 flex-1 resize-none px-3 py-2 font-mono text-body-small"
         ></textarea>
 
         <!-- One row, so the panel does not jump as the message changes. -->
