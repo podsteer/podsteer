@@ -22,6 +22,7 @@ import {
   scaleWorkload,
   updateResource,
   type Cluster,
+  type Finding,
   type K8sEvent,
   type Namespace,
   type Node,
@@ -348,17 +349,73 @@ export class ClusterSession {
   readonly pagedTableRows = $derived(this.#slice(this.sortedTableRows))
 
   /**
+   * Findings that need acting on, minus anything the operator has snoozed.
+   *
+   * The counts the backend reports are deliberately not used for this: it
+   * assesses the cluster and has no idea what somebody chose to live with
+   * until Tuesday. Snoozing is applied here, once, so the verdict, this count
+   * and the navigator badge cannot disagree about what is outstanding.
+   */
+  readonly activeIssues = $derived(
+    (this.overview?.findings ?? []).filter(
+      (finding) => finding.severity !== 'info' && !this.isFullySnoozed(finding),
+    ),
+  )
+
+  /** Findings every object of which is currently quietened. */
+  readonly snoozedIssues = $derived(
+    (this.overview?.findings ?? []).filter(
+      (finding) => finding.severity !== 'info' && this.isFullySnoozed(finding),
+    ),
+  )
+
+  /** How many of a finding's listed objects are snoozed. */
+  snoozedSubjectCount = (finding: Finding): number =>
+    finding.subjects.filter(
+      (subject) =>
+        preferences.snoozedUntil(this.cluster.id, finding.id, subject.namespace, subject.name) > 0,
+    ).length
+
+  /**
+   * Whether a finding has nothing left to say.
+   *
+   * Every object it names has to be snoozed, and it must not be truncated:
+   * quietening the twenty-five rows of a capped list says nothing about the
+   * fifteen it never showed, and treating that as silence would drop a
+   * finding whose greater part was never seen.
+   */
+  isFullySnoozed = (finding: Finding): boolean =>
+    finding.subjects.length > 0 &&
+    !finding.truncated &&
+    this.snoozedSubjectCount(finding) === finding.subjects.length
+
+  /**
    * How many findings need attention, from the last assessment.
    *
    * Info findings are excluded: they are worth reading but do not mean
    * anything is wrong, and a badge that is permanently lit stops being read.
    */
-  readonly issueCount = $derived(
-    (this.overview?.criticalCount ?? 0) + (this.overview?.warningCount ?? 0),
-  )
+  readonly issueCount = $derived(this.activeIssues.length)
 
   /** Whether any finding is critical, which decides the badge's colour. */
-  readonly hasCriticalIssues = $derived((this.overview?.criticalCount ?? 0) > 0)
+  readonly hasCriticalIssues = $derived(
+    this.activeIssues.some((finding) => finding.severity === 'critical'),
+  )
+
+  /**
+   * The verdict, re-graded over what is actually outstanding.
+   *
+   * The same rule the backend applies (domain/overview.go grade) — worst
+   * severity wins — but over the findings left after snoozing. Re-applying it
+   * here rather than reading `overview.health` is what makes a snooze mean
+   * something: quietening the only warning on a cluster should leave it
+   * reading as healthy, not as degraded by something deliberately deferred.
+   */
+  readonly health = $derived.by((): 'healthy' | 'degraded' | 'critical' => {
+    if (this.activeIssues.some((finding) => finding.severity === 'critical')) return 'critical'
+    if (this.activeIssues.length > 0) return 'degraded'
+    return 'healthy'
+  })
 
   /** Counts for the header summary, meaningful only for pod views. */
   readonly podSummary = $derived({

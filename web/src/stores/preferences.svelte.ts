@@ -64,6 +64,19 @@ export const REFRESH_INTERVALS = [
 
 const STORAGE_KEY = 'podsteer.preferences.v1'
 
+/**
+ * Identifies one snoozed object within one finding.
+ *
+ * JSON rather than a joined string: every part is free text a cluster decides
+ * — a finding id already containing ':' and '|', a namespace, an object name —
+ * and any separator character picked would eventually turn up inside one of
+ * them and merge two unrelated snoozes. This also stays legible in devtools,
+ * which a delimiter nobody can type does not.
+ */
+function snoozeKey(findingId: string, namespace: string, name: string): string {
+  return JSON.stringify([findingId, namespace, name])
+}
+
 /** Per-column overrides, keyed by column id within a kind. */
 interface ColumnPreference {
   /** Pixel width after the operator dragged the divider. */
@@ -95,6 +108,8 @@ interface PersistedShape {
   findingsExpanded: boolean
   /** clusterId -> the namespace filter it was last left on. */
   namespaceByCluster: Record<string, string>
+  /** clusterId -> snoozeKey() -> epoch milliseconds when the snooze lapses. */
+  snoozes: Record<string, Record<string, number>>
   /** kindId -> columnId -> preference */
   columns: Record<string, Record<string, ColumnPreference>>
 }
@@ -111,6 +126,7 @@ const DEFAULTS: PersistedShape = {
   expandedCategories: [],
   findingsExpanded: false,
   namespaceByCluster: {},
+  snoozes: {},
   columns: {},
 }
 
@@ -145,6 +161,26 @@ class Preferences {
 
   /** clusterId -> last-selected namespace filter. */
   namespaceByCluster = $state<Record<string, string>>({})
+
+  /**
+   * Objects the operator has deliberately quietened, per cluster.
+   *
+   * Snoozing is per object within a finding, not per finding: "CrashLoopBackOff
+   * on twelve pods" is rarely twelve things anybody wants to defer together,
+   * and the one pod nobody may restart until the freeze ends should not take
+   * the other eleven's alarm with it.
+   *
+   * Scoped to the finding as well as the object, so quietening a pod's restart
+   * loop says nothing about the same pod failing to mount a volume tomorrow.
+   *
+   * A snooze silences what it covers for as long as it lasts: once every
+   * object of a finding is quiet the finding drops out of the verdict, the
+   * count and the navigator badge, because half a dismissal — still counted,
+   * merely folded away — is the version nobody trusts. Everything stays
+   * listed, dimmed and reversible, so quietening something is never the same
+   * as losing it.
+   */
+  snoozes = $state<Record<string, Record<string, number>>>({})
 
   /** kindId -> columnId -> preference. */
   columns = $state<Record<string, Record<string, ColumnPreference>>>({})
@@ -260,6 +296,67 @@ class Preferences {
     this.#save()
   }
 
+  // --- Snoozed findings -----------------------------------------------------
+
+  /**
+   * When an object's snooze lapses within a finding, or 0 when it is not
+   * snoozed.
+   *
+   * Expiry is evaluated on read rather than on a timer. Nothing here needs to
+   * fire at the moment it lapses — the overview is re-derived on every
+   * assessment, so a snooze that ran out is gone by the next refresh, and on
+   * "Manual only" it reappears the moment somebody asks for fresh data, which
+   * is exactly when they are looking.
+   */
+  snoozedUntil = (clusterId: string, findingId: string, namespace: string, name: string): number => {
+    const until = this.snoozes[clusterId]?.[snoozeKey(findingId, namespace, name)] ?? 0
+    return until > Date.now() ? until : 0
+  }
+
+  /** Quietens one object of a finding for `durationMs` from now. */
+  snooze = (
+    clusterId: string,
+    findingId: string,
+    namespace: string,
+    name: string,
+    durationMs: number,
+  ): void => {
+    const forCluster = {
+      ...(this.snoozes[clusterId] ?? {}),
+      [snoozeKey(findingId, namespace, name)]: Date.now() + durationMs,
+    }
+    this.snoozes = { ...this.snoozes, [clusterId]: forCluster }
+    this.#save()
+  }
+
+  /** Brings one object back before its snooze lapses. */
+  unsnooze = (clusterId: string, findingId: string, namespace: string, name: string): void => {
+    const forCluster = { ...(this.snoozes[clusterId] ?? {}) }
+    delete forCluster[snoozeKey(findingId, namespace, name)]
+    this.snoozes = { ...this.snoozes, [clusterId]: forCluster }
+    this.#save()
+  }
+
+  /**
+   * Drops lapsed entries.
+   *
+   * Called before every write, so the stored object cannot grow without bound
+   * on a cluster whose findings churn — each new pod problem gets a new id,
+   * and without this the file would accumulate one dead key per snooze
+   * forever.
+   */
+  #pruneSnoozes(): Record<string, Record<string, number>> {
+    const now = Date.now()
+    const kept: Record<string, Record<string, number>> = {}
+    for (const [clusterId, findings] of Object.entries(this.snoozes)) {
+      const live = Object.fromEntries(
+        Object.entries(findings).filter(([, until]) => typeof until === 'number' && until > now),
+      )
+      if (Object.keys(live).length > 0) kept[clusterId] = live
+    }
+    return kept
+  }
+
   // --- Columns --------------------------------------------------------------
 
   /** Returns the stored width for a column, or undefined to use its default. */
@@ -343,6 +440,9 @@ class Preferences {
       if (stored.namespaceByCluster && typeof stored.namespaceByCluster === 'object') {
         this.namespaceByCluster = stored.namespaceByCluster
       }
+      if (stored.snoozes && typeof stored.snoozes === 'object') {
+        this.snoozes = stored.snoozes
+      }
       if (stored.columns && typeof stored.columns === 'object') this.columns = stored.columns
     } catch {
       // Corrupt or unavailable storage must not stop the app starting. The
@@ -362,6 +462,7 @@ class Preferences {
         expandedCategories: this.expandedCategories,
         findingsExpanded: this.findingsExpanded,
         namespaceByCluster: this.namespaceByCluster,
+        snoozes: this.#pruneSnoozes(),
         columns: this.columns,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))

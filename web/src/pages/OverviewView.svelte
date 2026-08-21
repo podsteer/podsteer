@@ -42,9 +42,20 @@
 
   const overview = $derived(session.overview)
 
-  /** Findings the operator should act on, and the rest. */
-  const issues = $derived((overview?.findings ?? []).filter((finding) => finding.severity !== 'info'))
+  /**
+   * Findings the operator should act on, and the rest.
+   *
+   * The two lists of issues come from the session rather than being filtered
+   * here, because that is where snoozing is applied — the navigator badge, the
+   * verdict and this list all have to agree about what is outstanding, and
+   * three separate filters eventually would not.
+   */
+  const issues = $derived(session.activeIssues)
+  const snoozed = $derived(session.snoozedIssues)
   const notes = $derived((overview?.findings ?? []).filter((finding) => finding.severity === 'info'))
+
+  const criticalCount = $derived(issues.filter((finding) => finding.severity === 'critical').length)
+  const warningCount = $derived(issues.length - criticalCount)
 
   const HEALTH = {
     healthy: {
@@ -64,7 +75,7 @@
     },
   } as const
 
-  const health = $derived(HEALTH[(overview?.health ?? 'healthy') as keyof typeof HEALTH])
+  const health = $derived(HEALTH[session.health])
   const HealthIcon = $derived(health.icon)
 
   /** Which quantity the trend chart plots. */
@@ -101,6 +112,16 @@
     session.lastRefreshedAt
     void current.load()
   })
+
+  /**
+   * When one object's snooze lapses within a finding, for this cluster.
+   *
+   * Scoped to the finding as well as the object, so deferring a pod's restart
+   * loop says nothing about the same pod failing to mount a volume tomorrow.
+   */
+  function snoozedUntil(findingId: string, namespace: string, name: string): number {
+    return preferences.snoozedUntil(session.cluster.id, findingId, namespace, name)
+  }
 
   /** Opens a kind's list from a finding. */
   function openList(kindId: string): void {
@@ -141,11 +162,16 @@
               {overview.nodes.ready} of {overview.nodes.total} nodes ready · {overview.pods.total} pods
               {#if notes.length > 0}· {notes.length} {notes.length === 1 ? 'note' : 'notes'}{/if}
             {:else}
-              {overview.criticalCount > 0 ? `${overview.criticalCount} critical` : ''}
-              {overview.criticalCount > 0 && overview.warningCount > 0 ? ' · ' : ''}
-              {overview.warningCount > 0 ? `${overview.warningCount} warning` : ''}
+              {criticalCount > 0 ? `${criticalCount} critical` : ''}
+              {criticalCount > 0 && warningCount > 0 ? ' · ' : ''}
+              {warningCount > 0 ? `${warningCount} warning` : ''}
               {issues.length === 1 ? ' finding' : ' findings'}
             {/if}
+            <!-- Always said, and said here. A cluster that reads as healthy
+                 only because somebody deferred its two warnings is not the
+                 same cluster as one with nothing wrong, and the difference
+                 belongs next to the verdict rather than three clicks away. -->
+            {#if snoozed.length > 0}· {snoozed.length} snoozed{/if}
           </p>
         </div>
 
@@ -169,7 +195,7 @@
         </dl>
       </div>
 
-      {#if issues.length > 0}
+      {#if issues.length + snoozed.length > 0}
         <!-- Full width and inside the card's tint, so the toggle reads as
              belonging to the verdict rather than floating between sections. -->
         <button
@@ -189,9 +215,37 @@
         </button>
 
         {#if preferences.findingsExpanded}
-          <div id="overview-findings" class="flex flex-col gap-2 px-4 pt-1 pb-4">
+          <!-- One distance throughout: the gap between findings, the padding
+               around them and the space below the toggle are all the same, so
+               each finding reads as its own card rather than as a row in a
+               stack. The toggle carries its own hover background, so its
+               padding is part of that control and not part of this gap. -->
+          <div id="overview-findings" class="flex flex-col gap-4 p-4">
             {#each issues as finding (finding.id)}
-              <FindingCard {finding} onopen={openList} onselect={openObject} />
+              <FindingCard
+                {finding}
+                snoozedUntil={(namespace, name) => snoozedUntil(finding.id, namespace, name)}
+                onopen={openList}
+                onselect={openObject}
+                onsnooze={(namespace, name, durationMs) =>
+                  preferences.snooze(session.cluster.id, finding.id, namespace, name, durationMs)}
+                onunsnooze={(namespace, name) =>
+                  preferences.unsnooze(session.cluster.id, finding.id, namespace, name)}
+              />
+            {/each}
+
+            <!-- Below the live ones, in the order attention is owed. -->
+            {#each snoozed as finding (finding.id)}
+              <FindingCard
+                {finding}
+                snoozedUntil={(namespace, name) => snoozedUntil(finding.id, namespace, name)}
+                onopen={openList}
+                onselect={openObject}
+                onsnooze={(namespace, name, durationMs) =>
+                  preferences.snooze(session.cluster.id, finding.id, namespace, name, durationMs)}
+                onunsnooze={(namespace, name) =>
+                  preferences.unsnooze(session.cluster.id, finding.id, namespace, name)}
+              />
             {/each}
           </div>
         {/if}

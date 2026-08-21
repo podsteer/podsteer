@@ -28,8 +28,23 @@
   }
 
   interface Props {
-    /** Describes the field. Rendered above, or as the accessible name when compact. */
+    /**
+     * Describes the field. Rendered as the panel's heading, and as the
+     * accessible name when compact unless `accessibleName` overrides it.
+     *
+     * Keep it short: it is a heading, and a long one is what a panel has to
+     * stretch to fit.
+     */
     label: string
+    /**
+     * The accessible name and tooltip, when they should say more than the
+     * heading does.
+     *
+     * A per-row control needs to name the row it belongs to for anyone
+     * navigating by keyboard or screen reader, while the visible heading has
+     * to stay short enough not to widen the panel past the object it names.
+     */
+    accessibleName?: string
     value: string
     options: Option[]
     disabled?: boolean
@@ -38,6 +53,13 @@
      * The console's `is-compact` variant, for pagination and toolbars.
      */
     compact?: boolean
+    /**
+     * Shown on the trigger when nothing is selected.
+     *
+     * Lets the same control act as a menu of one-shot choices — Snooze for an
+     * hour, a day — where there is no standing value to display afterwards.
+     */
+    placeholder?: string
     /** Called with the newly chosen value. */
     onchange?: (value: string) => void
     class?: string
@@ -45,10 +67,12 @@
 
   let {
     label,
+    accessibleName,
     value,
     options,
     disabled = false,
     compact = false,
+    placeholder = '',
     onchange,
     class: className = '',
   }: Props = $props()
@@ -221,8 +245,8 @@
     {disabled}
     aria-haspopup="listbox"
     aria-expanded={open}
-    aria-label={compact ? label : undefined}
-    title={compact ? label : undefined}
+    aria-label={compact ? (accessibleName ?? label) : undefined}
+    title={compact ? (accessibleName ?? label) : undefined}
     onclick={() => (open ? hide() : show())}
     onkeydown={onTriggerKeydown}
     class="flex w-full items-center justify-between gap-2 text-left text-body-medium
@@ -232,8 +256,8 @@
       : 'field h-8 px-3'}
            {open && compact ? 'border-outline-variant/60' : ''}"
   >
-    <span class="truncate">
-      {selected ? selected.label : ''}
+    <span class="truncate {selected ? '' : 'text-on-surface-variant'}">
+      {selected ? selected.label : placeholder}
       {#if selected?.hint}
         <span class="text-on-surface-variant/70">— {selected.hint}</span>
       {/if}
@@ -250,7 +274,7 @@
       bind:this={panel}
       data-select-root
       role="listbox"
-      aria-label={label}
+      aria-label={accessibleName ?? label}
       tabindex="-1"
       use:place={anchor}
       onkeydown={onPanelKeydown}
