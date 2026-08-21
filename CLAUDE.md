@@ -125,8 +125,11 @@ a blank window nobody can diagnose.
 Kubernetes reports only the present: the metrics API has no notion of a series,
 so a chart of anything needs a record somebody kept. `HistoryService` samples
 each connected cluster every 30 seconds while the application runs and writes
-to `~/.config/PodSteer/history` (or the platform equivalent), 0600, never
-anywhere else.
+0600 files under `os.UserConfigDir()/PodSteer/history`, never anywhere else.
+That is `~/Library/Application Support/PodSteer` on macOS — **not**
+`~/.config`, which is only where it lands on Linux, and which this file used to
+claim unconditionally. Windows is `%AppData%\PodSteer`. The Homebrew cask's
+`zap` list names the macOS paths and has to be kept in step.
 
 That makes the coverage the window the app was open, which is weaker than a
 monitoring stack and **must be presented as such** — `SeriesResult.spanSeconds`

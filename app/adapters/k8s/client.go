@@ -9,6 +9,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 
@@ -150,12 +151,41 @@ func (f *clientFactory) configFlags(id domain.ClusterID) *genericclioptions.Conf
 // rawConfig returns the parsed kubeconfig, merged across $KUBECONFIG entries
 // exactly as kubectl would merge them.
 func (f *clientFactory) rawConfig() (clientcmdapi.Config, error) {
-	raw, err := f.configFlags("").ToRawKubeConfigLoader().RawConfig()
+	loader := f.configFlags("").ToRawKubeConfigLoader()
+
+	raw, err := loader.RawConfig()
 	if err != nil {
+		// Say so when the file is merely unreadable, before reporting it as
+		// unparseable. On macOS this is the difference between "kubeconfig
+		// unavailable" and the one sentence that explains the permission
+		// dialog the operator just saw.
+		if hint := kubeconfigPermissionHint(f.kubeconfigPath(loader)); hint != "" {
+			return clientcmdapi.Config{}, fmt.Errorf("reading kubeconfig: %w: %s",
+				ports.ErrKubeconfigUnavailable, hint)
+		}
 		return clientcmdapi.Config{}, fmt.Errorf("reading kubeconfig: %w: %w",
 			ports.ErrKubeconfigUnavailable, err)
 	}
 	return raw, nil
+}
+
+// kubeconfigPath returns the file a permission failure would be about.
+//
+// The configured override wins; otherwise it is the first entry of the
+// loader's precedence list, which is $KUBECONFIG's first path or
+// ~/.kube/config. Only the first is named: a merge list that fails on its
+// second entry is rare, and naming every candidate would bury the one that
+// matters.
+func (f *clientFactory) kubeconfigPath(loader clientcmd.ClientConfig) string {
+	if f.cfg.KubeconfigPath != "" {
+		return f.cfg.KubeconfigPath
+	}
+	if access, ok := loader.ConfigAccess().(*clientcmd.ClientConfigLoadingRules); ok {
+		if len(access.Precedence) > 0 {
+			return access.Precedence[0]
+		}
+	}
+	return clientcmd.NewDefaultClientConfigLoadingRules().GetDefaultFilename()
 }
 
 // restConfig builds a tuned REST configuration for one cluster.

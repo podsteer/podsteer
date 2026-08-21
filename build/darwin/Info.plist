@@ -30,6 +30,30 @@
         <string>true</string>
         <key>NSHumanReadableCopyright</key>
         <string>{{.Info.Copyright}}</string>
+        <!-- Why a Kubernetes client asks for your Documents folder.
+             PodSteer reads one file it did not choose: the kubeconfig, at
+             $KUBECONFIG or ~/.kube/config. Plenty of people keep that
+             somewhere macOS protects, or symlink ~/.kube into Documents,
+             Dropbox or iCloud Drive — and then the open() resolves into a
+             protected folder and macOS asks. It is a real access, so the
+             prompt cannot be avoided; what CAN be avoided is an unexplained
+             one. For a tool whose whole claim is that it talks to nothing
+             else, a permission dialog with no reason attached is the worst
+             possible first impression, so every folder a kubeconfig might
+             plausibly live in gets a string.
+
+             These are optional for the Files-and-Folders services: omitting
+             them does not suppress the prompt, it only leaves it silent. -->
+        <key>NSDocumentsFolderUsageDescription</key>
+        <string>PodSteer reads this only if your kubeconfig, or a certificate it names, is stored in your Documents folder.</string>
+        <key>NSDesktopFolderUsageDescription</key>
+        <string>PodSteer reads this only if your kubeconfig, or a certificate it names, is stored on your Desktop.</string>
+        <key>NSDownloadsFolderUsageDescription</key>
+        <string>PodSteer reads this only if your kubeconfig, or a certificate it names, is stored in your Downloads folder.</string>
+        <key>NSNetworkVolumesUsageDescription</key>
+        <string>PodSteer reads this only if your kubeconfig, or a certificate it names, is stored on a network volume.</string>
+        <key>NSRemovableVolumesUsageDescription</key>
+        <string>PodSteer reads this only if your kubeconfig, or a certificate it names, is stored on a removable volume.</string>
         {{if .Info.FileAssociations}}
         <key>CFBundleDocumentTypes</key>
         <array>

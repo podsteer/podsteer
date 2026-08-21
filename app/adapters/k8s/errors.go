@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"syscall"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -80,4 +83,57 @@ func isTransportFailure(err error) bool {
 		errors.Is(err, syscall.ECONNRESET) ||
 		errors.Is(err, syscall.EHOSTUNREACH) ||
 		errors.Is(err, syscall.ENETUNREACH)
+}
+
+// kubeconfigPermissionHint explains a kubeconfig that exists but may not be
+// read, or returns "" when that is not what went wrong.
+//
+// macOS gates Documents, Desktop, Downloads and network or removable volumes
+// for EVERY process, sandboxed or not. A kubeconfig inside one of them is
+// refused until the operator grants access — and `~/.kube` symlinked into such
+// a folder is a common way to keep the file in a synced or backed-up
+// directory, which means the refusal arrives for a path that does not look
+// protected at all.
+//
+// Two things make the stock error useless here. It reports only that the file
+// could not be read, and it names the path as written — so an operator whose
+// ~/.kube points into Documents is told that ~/.kube/config failed, with
+// nothing connecting that to the permission dialog they just dismissed.
+// Resolving the symlink is the whole diagnosis.
+//
+// Diagnosed by opening the file rather than by unwrapping: client-go collects
+// load failures into an aggregate that does not always preserve the chain
+// errors.Is needs, and the question — may this process read this file — is one
+// the filesystem answers directly.
+func kubeconfigPermissionHint(path string) string {
+	if path == "" {
+		return ""
+	}
+
+	file, err := os.Open(path)
+	if err == nil {
+		_ = file.Close()
+		return ""
+	}
+	if !errors.Is(err, fs.ErrPermission) {
+		return ""
+	}
+
+	// Best effort: an unresolvable symlink is still worth reporting, just
+	// without the extra detail.
+	resolved := path
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		resolved = target
+	}
+
+	if resolved != path {
+		return fmt.Sprintf(
+			"the operating system denied access to %s, which %s points to. "+
+				"Grant PodSteer access under System Settings → Privacy & Security → Files and Folders",
+			resolved, path)
+	}
+	return fmt.Sprintf(
+		"the operating system denied access to %s. "+
+			"Grant PodSteer access under System Settings → Privacy & Security → Files and Folders",
+		resolved)
 }

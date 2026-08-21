@@ -42,8 +42,12 @@ PodSteer may do means restricting the credentials it runs with.
 update check. The webview has no network access at all: a content security
 policy in `web/index.html` forbids every remote origin, and all cluster traffic
 goes through the Go process rather than the page. Two things are written to
-your own configuration directory (display preferences, and sampled capacity
-history at mode 0600) and are transmitted nowhere.
+your own machine and transmitted nowhere: sampled capacity history and its
+retention setting, under the per-user application directory at mode 0600
+(`~/Library/Application Support/PodSteer` on macOS, `~/.config/PodSteer` on
+Linux, `%AppData%\PodSteer` on Windows); and display preferences — theme,
+page size, column widths — which the interface keeps in the webview's own
+storage rather than in that directory.
 
 ### In scope
 
