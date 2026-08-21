@@ -90,6 +90,10 @@ const LEGACY_STORAGE_KEY = 'podsteer.groups.v1'
 interface PersistedShape {
   projects: Project[]
   groups: Group[]
+  /** The default project's name, when the operator has changed it. */
+  defaultProjectName?: string
+  /** Project id -> that project's default group name, where changed. */
+  defaultGroupNames?: Record<string, string>
   /** Cluster context name -> where it sits. Absent means both Defaults. */
   assignments: Record<string, Placement>
   /** Project and group ids the operator collapsed. Absent means expanded. */
@@ -109,6 +113,21 @@ const HOME: Placement = { project: DEFAULT_PROJECT_ID, group: DEFAULT_GROUP_ID }
 class Organisation {
   projects = $state<Project[]>(DEFAULTS.projects)
   groups = $state<Group[]>(DEFAULTS.groups)
+
+  /**
+   * What the two implicit containers are CALLED, where that has been changed.
+   *
+   * Only the names are stored, never the containers. Keeping the default as
+   * absence is what lets a fresh install have empty storage and lets
+   * placementOf repair anything by falling back to "nothing recorded" — so a
+   * rename must not turn it into a record. The ids stay DEFAULT_PROJECT_ID
+   * and DEFAULT_GROUP_ID whatever it is called.
+   *
+   * Group names are per project: renaming one project's default group must
+   * not rename another's.
+   */
+  defaultProjectName = $state<string>(DEFAULT_PROJECT_NAME)
+  defaultGroupNames = $state<Record<string, string>>({})
   assignments = $state<Record<string, Placement>>(DEFAULTS.assignments)
 
   /**
@@ -157,9 +176,13 @@ class Organisation {
     return stored
   }
 
+  /** What a project's default group is called. */
+  defaultGroupNameFor = (projectId: string): string =>
+    this.defaultGroupNames[projectId] ?? DEFAULT_GROUP_NAME
+
   /** Every group in a project, its Default first. */
   groupsIn = (projectId: string): Array<{ id: string; name: string; isDefault: boolean }> => [
-    { id: DEFAULT_GROUP_ID, name: DEFAULT_GROUP_NAME, isDefault: true },
+    { id: DEFAULT_GROUP_ID, name: this.defaultGroupNameFor(projectId), isDefault: true },
     ...this.groups
       .filter((group) => group.projectId === projectId)
       .map((group) => ({ id: group.id, name: group.name, isDefault: false })),
@@ -167,7 +190,7 @@ class Organisation {
 
   /** Every project, the Default first, in the operator's order. */
   allProjects = (): Array<{ id: string; name: string; isDefault: boolean }> => [
-    { id: DEFAULT_PROJECT_ID, name: DEFAULT_PROJECT_NAME, isDefault: true },
+    { id: DEFAULT_PROJECT_ID, name: this.defaultProjectName, isDefault: true },
     ...this.projects.map((project) => ({ id: project.id, name: project.name, isDefault: false })),
   ]
 
@@ -278,9 +301,15 @@ class Organisation {
     const problem = this.#validateProject(name, id)
     if (problem) return problem
 
-    this.projects = this.projects.map((project) =>
-      project.id === id ? { ...project, name: name.trim() } : project,
-    )
+    if (id === DEFAULT_PROJECT_ID) {
+      // The name, and only the name. Materialising a record here would undo
+      // the "default is absence" invariant everything else depends on.
+      this.defaultProjectName = name.trim()
+    } else {
+      this.projects = this.projects.map((project) =>
+        project.id === id ? { ...project, name: name.trim() } : project,
+      )
+    }
     this.#save()
     return null
   }
@@ -305,6 +334,12 @@ class Organisation {
     }
     this.assignments = assignments
 
+    if (id in this.defaultGroupNames) {
+      const names = { ...this.defaultGroupNames }
+      delete names[id]
+      this.defaultGroupNames = names
+    }
+
     this.#forgetCollapsed([id, groupKey(id, DEFAULT_GROUP_ID), ...orphanedKeys])
     this.#save()
   }
@@ -321,16 +356,28 @@ class Organisation {
     return null
   }
 
-  renameGroup = (id: string, name: string): string | null => {
-    const group = this.groups.find((candidate) => candidate.id === id)
-    if (!group) return 'That group no longer exists.'
+  /**
+   * Renames a group.
+   *
+   * `projectId` is required rather than derived, because the default group has
+   * no record to derive it from — and its id is the same in every project, so
+   * without it there is no way to tell which project's default is meant.
+   */
+  renameGroup = (id: string, name: string, projectId: string): string | null => {
+    if (id !== DEFAULT_GROUP_ID && !this.groups.some((group) => group.id === id)) {
+      return 'That group no longer exists.'
+    }
 
-    const problem = this.#validateGroup(name, group.projectId, id)
+    const problem = this.#validateGroup(name, projectId, id)
     if (problem) return problem
 
-    this.groups = this.groups.map((candidate) =>
-      candidate.id === id ? { ...candidate, name: name.trim() } : candidate,
-    )
+    if (id === DEFAULT_GROUP_ID) {
+      this.defaultGroupNames = { ...this.defaultGroupNames, [projectId]: name.trim() }
+    } else {
+      this.groups = this.groups.map((candidate) =>
+        candidate.id === id ? { ...candidate, name: name.trim() } : candidate,
+      )
+    }
     this.#save()
     return null
   }
@@ -458,9 +505,17 @@ class Organisation {
   #validateProject(name: string, ignoreId?: string): string | null {
     const trimmed = name.trim()
     if (!trimmed) return 'Enter a project name.'
-    if (trimmed.toLowerCase() === DEFAULT_PROJECT_NAME.toLowerCase()) {
-      return `"${DEFAULT_PROJECT_NAME}" is reserved for the default project.`
+
+    // The reservation follows the CURRENT name rather than the constant. Once
+    // the default is called "Personal", "Default" is an ordinary name and
+    // "Personal" is the one that would produce two indistinguishable rows.
+    if (
+      ignoreId !== DEFAULT_PROJECT_ID &&
+      trimmed.toLowerCase() === this.defaultProjectName.toLowerCase()
+    ) {
+      return `"${this.defaultProjectName}" is the default project.`
     }
+
     const taken = this.projects.some(
       (project) => project.id !== ignoreId && project.name.toLowerCase() === trimmed.toLowerCase(),
     )
@@ -474,9 +529,14 @@ class Organisation {
   #validateGroup(name: string, projectId: string, ignoreId?: string): string | null {
     const trimmed = name.trim()
     if (!trimmed) return 'Enter a group name.'
-    if (trimmed.toLowerCase() === DEFAULT_GROUP_NAME.toLowerCase()) {
-      return `"${DEFAULT_GROUP_NAME}" is reserved for each project's default group.`
+
+    // Scoped to this project: another project's default may well be called
+    // the same thing, and that is not a collision.
+    const defaultName = this.defaultGroupNameFor(projectId)
+    if (ignoreId !== DEFAULT_GROUP_ID && trimmed.toLowerCase() === defaultName.toLowerCase()) {
+      return `"${defaultName}" is this project's default group.`
     }
+
     const taken = this.groups.some(
       (group) =>
         group.id !== ignoreId &&
@@ -526,6 +586,20 @@ class Organisation {
         )
       : []
     this.groups = groups
+
+    if (typeof stored.defaultProjectName === 'string' && stored.defaultProjectName.trim()) {
+      this.defaultProjectName = stored.defaultProjectName
+    }
+    if (stored.defaultGroupNames && typeof stored.defaultGroupNames === 'object') {
+      const names: Record<string, string> = {}
+      for (const [projectId, name] of Object.entries(stored.defaultGroupNames)) {
+        // Kept only for projects that still exist, since nothing else would
+        // ever prune them; the Default project always does.
+        const lives = projectId === DEFAULT_PROJECT_ID || knownProjects.has(projectId)
+        if (lives && typeof name === 'string' && name.trim()) names[projectId] = name
+      }
+      this.defaultGroupNames = names
+    }
 
     // Placements are repaired on read by placementOf, so storage only has to
     // drop what is malformed rather than what is stale.
@@ -607,6 +681,8 @@ class Organisation {
       const payload: PersistedShape = {
         projects: this.projects,
         groups: this.groups,
+        defaultProjectName: this.defaultProjectName,
+        defaultGroupNames: this.defaultGroupNames,
         assignments: this.assignments,
         collapsed: [...this.collapsed],
       }

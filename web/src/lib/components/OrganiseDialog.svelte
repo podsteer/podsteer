@@ -25,11 +25,7 @@
 -->
 <script lang="ts">
   import Button from './Button.svelte'
-  import {
-    DEFAULT_GROUP_NAME,
-    DEFAULT_PROJECT_NAME,
-    organisation,
-  } from '$stores/organisation.svelte'
+  import { DEFAULT_PROJECT_ID, organisation } from '$stores/organisation.svelte'
   import { workspace } from '$stores/workspace.svelte'
   import {
     ChevronUp,
@@ -122,7 +118,7 @@
     const problem =
       renaming.kind === 'project'
         ? organisation.renameProject(renaming.id, renameValue)
-        : organisation.renameGroup(renaming.id, renameValue)
+        : organisation.renameGroup(renaming.id, renameValue, renaming.projectId ?? '')
 
     renameError = problem
     if (!problem) renaming = null
@@ -149,8 +145,18 @@
     movingGroup = null
   }
 
-  function isRow(a: Row | null, kind: Kind, id: string): boolean {
-    return a?.kind === kind && a.id === id
+  /**
+   * Whether `a` names this exact row.
+   *
+   * The project has to be compared as well as the id. Every project's default
+   * group is `DEFAULT_GROUP_ID`, so matching on the id alone opened all three
+   * default menus at once — and would have put the rename field on all three
+   * rows too. Real groups have unique ids, so this only ever matters for the
+   * defaults, which is exactly why it was easy to miss.
+   */
+  function isRow(a: Row | null, kind: Kind, id: string, projectId?: string): boolean {
+    if (a?.kind !== kind || a.id !== id) return false
+    return projectId === undefined || a.projectId === projectId
   }
 
   // --- Dragging -------------------------------------------------------------
@@ -240,7 +246,7 @@
     <p class="mt-1 text-body-small text-on-surface-variant">
       A project is a system; a group inside it is usually an environment. Drag a row to reorder it,
       or drop a group on a project to move it there. Every context starts in
-      {DEFAULT_PROJECT_NAME} › {DEFAULT_GROUP_NAME}.
+      {organisation.defaultProjectName} › {organisation.defaultGroupNameFor(DEFAULT_PROJECT_ID)}.
     </p>
 
     <!-- New project -->
@@ -316,9 +322,13 @@
               </span>
 
               {#if project.isDefault}
-                <!-- Said rather than left blank: an empty action slot reads as
-                     something missing, not as something fixed. -->
-                <span class="shrink-0 text-body-small text-on-surface-variant/50">always first</span>
+                <!-- Said rather than left blank: an empty slot reads as
+                     something missing, not as something fixed. It can be
+                     renamed — it cannot be moved or deleted, because it is
+                     where everything falls back to. -->
+                <span class="shrink-0 text-body-small text-on-surface-variant/50">
+                  fallback · always first
+                </span>
               {/if}
 
               <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant">
@@ -331,7 +341,7 @@
                   class="shrink-0 text-label-large text-error hover:underline">Delete</button>
                 <button type="button" onclick={() => (confirmDelete = null)}
                   class="shrink-0 text-label-large text-on-surface-variant hover:text-on-surface">Keep</button>
-              {:else if !project.isDefault}
+              {:else}
                 <button
                   type="button"
                   onclick={() => (menuFor = isRow(menuFor, 'project', project.id) ? null : row)}
@@ -357,6 +367,7 @@
                            text-body-medium text-on-surface-variant">
                     <Pencil class="size-4 shrink-0" strokeWidth={1.8} /> Rename
                   </button>
+                  {#if !project.isDefault}
                   <button type="button" role="menuitem"
                     disabled={projectIndex <= 1}
                     onclick={() => { organisation.moveProject(project.id, -1); closeMenu() }}
@@ -379,6 +390,7 @@
                            text-body-medium text-error">
                     <Trash2 class="size-4 shrink-0" strokeWidth={1.8} /> Delete
                   </button>
+                  {/if}
                 </div>
               {/if}
             {/if}
@@ -396,12 +408,12 @@
                 ondrop={(event) => drop(event, grow)}
                 class="group/row relative flex min-h-10 items-center gap-2 rounded-sm px-2 py-1
                        transition-colors duration-150 ease-standard hover:bg-surface-container
-                       {isRow(dragging, 'group', group.id) ? 'opacity-40' : ''}
-                       {isRow(dropOn, 'group', group.id)
+                       {isRow(dragging, 'group', group.id, project.id) ? 'opacity-40' : ''}
+                       {isRow(dropOn, 'group', group.id, project.id)
                          ? 'outline outline-2 outline-dashed outline-primary/50'
                          : ''}"
               >
-                {#if isRow(renaming, 'group', group.id)}
+                {#if isRow(renaming, 'group', group.id, project.id)}
                   <input
                     type="text"
                     bind:value={renameValue}
@@ -431,27 +443,29 @@
                   </span>
 
                   {#if group.isDefault}
-                    <span class="shrink-0 text-body-small text-on-surface-variant/50">always first</span>
+                    <span class="shrink-0 text-body-small text-on-surface-variant/50">
+                      fallback · always first
+                    </span>
                   {/if}
 
                   <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant/70">
                     {group.count}
                   </span>
 
-                  {#if isRow(confirmDelete, 'group', group.id)}
+                  {#if isRow(confirmDelete, 'group', group.id, project.id)}
                     <button type="button" onclick={() => remove(grow)}
                       class="shrink-0 text-label-large text-error hover:underline">Delete</button>
                     <button type="button" onclick={() => (confirmDelete = null)}
                       class="shrink-0 text-label-large text-on-surface-variant hover:text-on-surface">Keep</button>
-                  {:else if !group.isDefault}
+                  {:else}
                     <button
                       type="button"
                       onclick={() => {
-                        menuFor = isRow(menuFor, 'group', group.id) ? null : grow
+                        menuFor = isRow(menuFor, 'group', group.id, project.id) ? null : grow
                         movingGroup = null
                       }}
                       aria-label="Actions for {group.name}"
-                      aria-expanded={isRow(menuFor, 'group', group.id)}
+                      aria-expanded={isRow(menuFor, 'group', group.id, project.id)}
                       class="state-layer grid size-7 shrink-0 place-items-center rounded-full
                              text-on-surface-variant hover:text-on-surface"
                     >
@@ -459,14 +473,14 @@
                     </button>
                   {/if}
 
-                  {#if isRow(menuFor, 'group', group.id)}
+                  {#if isRow(menuFor, 'group', group.id, project.id)}
                     <div
                       role="menu"
                       aria-label="{group.name} actions"
                       class="absolute right-2 top-full z-50 mt-1 w-56 overflow-hidden rounded-md border
                              border-outline-variant bg-surface-container-highest py-1 shadow-level-2"
                     >
-                      {#if movingGroup === group.id}
+                      {#if movingGroup === group.id && !group.isDefault}
                         <p class="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider
                                   text-on-surface-variant/60">
                           Move to project
@@ -496,6 +510,7 @@
                                  text-body-medium text-on-surface-variant">
                           <Pencil class="size-4 shrink-0" strokeWidth={1.8} /> Rename
                         </button>
+                        {#if !group.isDefault}
                         <button type="button" role="menuitem"
                           onclick={() => (movingGroup = group.id)}
                           class="state-layer flex w-full items-center gap-2.5 px-3 py-2 text-left
@@ -524,6 +539,7 @@
                                  text-body-medium text-error">
                           <Trash2 class="size-4 shrink-0" strokeWidth={1.8} /> Delete
                         </button>
+                        {/if}
                       {/if}
                     </div>
                   {/if}
