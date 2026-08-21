@@ -424,6 +424,24 @@
     outline-offset: 2px;
   }
 
+  /*
+   * A table row reached by keyboard.
+   *
+   * An outline is wrong here: a row is a strip of cells with borders between
+   * them, and a rectangle drawn around it lands on top of those. A leading bar
+   * and a tinted ground read as "you are here" without fighting the grid, and
+   * match the selected option in a dropdown, which is the same idea.
+   *
+   * `:focus` rather than `:focus-visible` because the focus is moved
+   * programmatically — from the search field — and a browser is entitled to
+   * decide that was not a keyboard interaction.
+   */
+  tbody tr:focus {
+    outline: none;
+    background-color: var(--color-surface-container);
+    box-shadow: inset 3px 0 0 var(--color-primary);
+  }
+
   /* Hide WebKit's native search input clear/cancel button since we have our own. */
   input[type="search"]::-webkit-search-cancel-button,
   input[type="search"]::-webkit-search-decoration,

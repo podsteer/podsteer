@@ -12,6 +12,7 @@
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
   import Navigator from '$lib/components/Navigator.svelte'
   import Pagination from '$lib/components/Pagination.svelte'
+  import { focusFirstRow } from '$lib/components/DataTable.svelte'
   import SearchField from '$lib/components/SearchField.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import { formatClockTime } from '$lib/format'
@@ -122,6 +123,7 @@
           value={session.search}
           placeholder="Search {session.selectedKind?.title.toLowerCase() ?? 'resources'}…"
           onchange={session.setSearch}
+          onnext={focusFirstRow}
           class="min-w-40 flex-1"
         />
 

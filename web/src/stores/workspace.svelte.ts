@@ -167,6 +167,27 @@ class Workspace {
     this.activeClusterId = null
   }
 
+  /**
+   * Moves one tab left or right, wrapping.
+   *
+   * The picker counts as the first tab rather than as a separate place,
+   * because that is how it behaves: it sits in the same strip, at the head,
+   * and cycling that skipped it would make it unreachable from the keyboard
+   * while every other tab was not.
+   */
+  cycleTab = (delta: -1 | 1): void => {
+    // null for the picker, then one entry per open cluster, in tab order.
+    const order: Array<string | null> = [null, ...this.sessions.map((s) => s.cluster.id)]
+    if (order.length < 2) return
+
+    const from = order.indexOf(this.activeClusterId)
+    const to = (from + delta + order.length) % order.length
+    const target = order[to]
+
+    if (target === null) this.showPicker()
+    else void this.focus(target)
+  }
+
   /** Releases every tab's timer and the event subscription. */
   dispose = (): void => {
     for (const session of this.sessions) session.dispose()

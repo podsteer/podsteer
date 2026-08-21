@@ -16,10 +16,16 @@
     value: string
     placeholder?: string
     onchange: (value: string) => void
+    /**
+     * Asked to move on from the field, by pressing Down. Returns true when
+     * something took focus, so an empty result list leaves the key alone
+     * rather than swallowing it.
+     */
+    onnext?: () => boolean
     class?: string
   }
 
-  let { value, placeholder = 'Search…', onchange, class: className = '' }: Props = $props()
+  let { value, placeholder = 'Search…', onchange, onnext, class: className = '' }: Props = $props()
 
   let inputEl = $state<HTMLInputElement | null>(null)
 
@@ -33,6 +39,15 @@
     // Enter has nothing to confirm — every keystroke already filters the
     // table live — so it just gets the cursor out of the field.
     if (event.key === 'Escape' || event.key === 'Enter') {
+      inputEl?.blur()
+      return
+    }
+
+    // Down goes to what you were searching FOR. Typing a few characters and
+    // reaching for the results is the whole motion; making it a mouse trip
+    // wastes the filtering.
+    if (event.key === 'ArrowDown' && onnext?.()) {
+      event.preventDefault()
       inputEl?.blur()
     }
   }

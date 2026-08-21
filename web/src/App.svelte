@@ -34,7 +34,40 @@
     })
     return () => workspace.dispose()
   })
+
+  /**
+   * Shortcuts that belong to the WINDOW rather than to a tab.
+   *
+   * Here rather than in ClusterWorkspace, which is where ⌘B, ⌘R and ⌘K live:
+   * those act on the cluster in front, so they are unmounted on the picker and
+   * should be. Moving between tabs has to work from the picker too, or the one
+   * tab you cannot leave by keyboard is the one you start on.
+   *
+   * ⌘] / ⌘[ move between tabs, the picker counting as the first.
+   * ⌘N goes to the picker, which is where a new cluster is opened from.
+   */
+  function onKeydown(event: KeyboardEvent): void {
+    if (!(event.metaKey || event.ctrlKey)) return
+
+    switch (event.key) {
+      case ']':
+        event.preventDefault()
+        workspace.cycleTab(1)
+        break
+      case '[':
+        event.preventDefault()
+        workspace.cycleTab(-1)
+        break
+      case 'n':
+      case 'N':
+        event.preventDefault()
+        workspace.showPicker()
+        break
+    }
+  }
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <div class="flex h-screen flex-col overflow-hidden bg-surface">
   <ClusterTabs />

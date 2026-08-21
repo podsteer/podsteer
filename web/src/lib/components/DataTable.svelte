@@ -29,6 +29,24 @@
     /** Starts hidden; the operator opts in from the column menu. */
     defaultHidden?: boolean
   }
+
+  /**
+   * Hands keyboard focus to the table that is currently on screen.
+   *
+   * A module-level registration rather than a DOM query from the toolbar or a
+   * binding threaded through five views: exactly one table is mounted at a
+   * time, the toolbar has no reference to it, and `document.querySelector`
+   * from another component is the kind of coupling that survives right up
+   * until somebody renders a second table.
+   *
+   * Returns false when there is nothing to focus, so the caller can leave the
+   * keystroke alone rather than swallowing it.
+   */
+  let focusHandler: (() => boolean) | null = null
+
+  export function focusFirstRow(): boolean {
+    return focusHandler?.() ?? false
+  }
 </script>
 
 <script lang="ts">
@@ -55,6 +73,121 @@
   }
 
   let { kindId, columns, rows, empty, isEmpty = false, sort = null, onsort }: Props = $props()
+
+  let body = $state<HTMLTableSectionElement | null>(null)
+
+
+
+  /** Every row, in the order they are displayed. */
+  function rowsOf(): HTMLTableRowElement[] {
+    return body ? [...body.querySelectorAll('tr')] : []
+  }
+
+  /**
+   * Rows are made focusable and navigable here rather than by each view.
+   *
+   * Five views render their own <tr>, and none of them should have to know
+   * about keyboard navigation to get it.
+   *
+   * The rows are OBSERVED rather than derived from anything. They change on
+   * search, on paging, on sorting and on every refresh, and the snippet that
+   * renders them is opaque from here — a hand-written list of dependencies
+   * would be wrong the first time somebody added a fourth way to change them,
+   * and wrong silently, since the only symptom is that the keyboard stops
+   * reaching rows that look perfectly normal.
+   *
+   * tabindex is -1 rather than 0: rows are reached by arrowing down from the
+   * search field, not by tabbing through several hundred of them.
+   *
+   * The key handler is attached here rather than written on <tbody> in the
+   * markup, because one listener that delegates cannot go stale — and because
+   * a table section is not an interactive element, which is exactly what the
+   * accessibility linter says when you put a handler on one.
+   */
+  $effect(() => {
+    const node = body
+    if (!node) return
+
+    const number = (): void => {
+      for (const row of rowsOf()) row.tabIndex = -1
+    }
+    number()
+
+    const observer = new MutationObserver(number)
+    observer.observe(node, { childList: true })
+    node.addEventListener('keydown', onRowKeydown)
+
+    return () => {
+      observer.disconnect()
+      node.removeEventListener('keydown', onRowKeydown)
+    }
+  })
+
+  // Registers this table as the one the toolbar can hand focus to.
+  $effect(() => {
+    focusHandler = () => {
+      const first = rowsOf()[0]
+      if (!first) return false
+      first.focus()
+      first.scrollIntoView({ block: 'nearest' })
+      return true
+    }
+    return () => {
+      focusHandler = null
+    }
+  })
+
+  /**
+   * Arrow keys walk the rows; Enter opens one; Escape lets go.
+   *
+   * Enter clicks the row rather than calling a handler of its own, so the
+   * keyboard and the mouse can never open different things — whatever a click
+   * does today is what Enter does.
+   */
+  function onRowKeydown(event: KeyboardEvent): void {
+    const current = (event.target as HTMLElement | null)?.closest('tr')
+    if (!current) return
+
+    const all = rowsOf()
+    const index = all.indexOf(current as HTMLTableRowElement)
+    if (index < 0) return
+
+    const focus = (next: number): void => {
+      const row = all[Math.min(all.length - 1, Math.max(0, next))]
+      row?.focus()
+      row?.scrollIntoView({ block: 'nearest' })
+    }
+
+    switch (event.key) {
+      case 'ArrowDown':
+        event.preventDefault()
+        focus(index + 1)
+        break
+      case 'ArrowUp':
+        event.preventDefault()
+        // Off the top is a return to the search field, not a dead end.
+        if (index === 0) current.blur()
+        else focus(index - 1)
+        break
+      case 'Home':
+        event.preventDefault()
+        focus(0)
+        break
+      case 'End':
+        event.preventDefault()
+        focus(all.length - 1)
+        break
+      case 'Enter':
+      case ' ':
+        event.preventDefault()
+        current.click()
+        break
+      case 'Escape':
+        event.preventDefault()
+        current.blur()
+        break
+    }
+  }
 
   /** Columns the operator has not hidden. */
   const visible = $derived(
@@ -191,7 +324,7 @@
           </tr>
         </thead>
 
-        <tbody>
+        <tbody bind:this={body}>
           {@render rows(isVisible)}
         </tbody>
       </table>
