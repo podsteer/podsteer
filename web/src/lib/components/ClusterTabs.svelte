@@ -170,7 +170,7 @@
       onclick={workspace.showPicker}
       aria-label="Open a cluster"
       title="Open a cluster"
-      class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-md
+      class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-full
              text-on-surface-variant transition-colors duration-100
              hover:bg-surface-container-high hover:text-on-surface"
     >
@@ -188,7 +188,7 @@
     disabled={!workspace.active}
     aria-label="Refresh"
     title="Refresh  ⌘R"
-    class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-md
+    class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-full
            text-on-surface-variant transition-colors duration-100
            hover:bg-surface-container-high hover:text-on-surface
            disabled:pointer-events-none disabled:opacity-30
@@ -209,7 +209,7 @@
     'system'
       ? ` (following the system — currently ${preferences.resolvedTheme})`
       : ''}"
-    class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-md
+    class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-full
            text-on-surface-variant transition-colors duration-100
            hover:bg-surface-container-high hover:text-on-surface"
   >
@@ -228,7 +228,7 @@
     onclick={() => (settingsOpen = true)}
     aria-label="Settings"
     title="Settings  {accelerator(',')}"
-    class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-md
+    class="state-layer no-drag my-1.5 grid w-8 shrink-0 place-items-center rounded-full
            text-on-surface-variant transition-colors duration-100
            hover:bg-surface-container-high hover:text-on-surface"
   >

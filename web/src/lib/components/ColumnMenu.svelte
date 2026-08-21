@@ -45,7 +45,7 @@
     aria-expanded={open}
     aria-label="Choose columns"
     title="Choose columns"
-    class="state-layer grid size-6 place-items-center rounded-md text-on-surface-variant
+    class="state-layer grid size-6 place-items-center rounded-full text-on-surface-variant
            transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
   >
     <Columns3 class="size-3.5" strokeWidth={1.8} />

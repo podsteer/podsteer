@@ -32,9 +32,9 @@
 <div class="flex shrink-0 items-center gap-2 {className}">
   <Select
     compact
-    label="Rows per page"
+    label="Rows"
     value={String(preferences.pageSize)}
-    options={PAGE_SIZES.map((size) => ({ value: String(size), label: `${size} / page` }))}
+    options={PAGE_SIZES.map((size) => ({ value: String(size), label: String(size) }))}
     onchange={(next) => preferences.setPageSize(Number(next) as PageSize)}
   />
 
@@ -42,13 +42,17 @@
     {rangeStart}–{rangeEnd} of {totalCount}
   </span>
 
-  <div class="flex items-center gap-0.5">
+  <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+
+  <!-- No gap: the window's own icon row sets them flush, and a pager that
+       spaced them wider read as a different kind of control. -->
+  <div class="flex items-center">
     <button
       type="button"
       onclick={() => onpage(1)}
       disabled={currentPage <= 1}
       aria-label="First page"
-      class="state-layer grid size-8 shrink-0 place-items-center rounded-md
+      class="state-layer grid size-8 shrink-0 place-items-center rounded-full
              text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
              disabled:pointer-events-none disabled:opacity-30"
     >
@@ -59,7 +63,7 @@
       onclick={() => onpage(currentPage - 1)}
       disabled={currentPage <= 1}
       aria-label="Previous page"
-      class="state-layer grid size-8 shrink-0 place-items-center rounded-md
+      class="state-layer grid size-8 shrink-0 place-items-center rounded-full
              text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
              disabled:pointer-events-none disabled:opacity-30"
     >
@@ -75,7 +79,7 @@
       onclick={() => onpage(currentPage + 1)}
       disabled={currentPage >= pageCount}
       aria-label="Next page"
-      class="state-layer grid size-8 shrink-0 place-items-center rounded-md
+      class="state-layer grid size-8 shrink-0 place-items-center rounded-full
              text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
              disabled:pointer-events-none disabled:opacity-30"
     >
@@ -86,7 +90,7 @@
       onclick={() => onpage(pageCount)}
       disabled={currentPage >= pageCount}
       aria-label="Last page"
-      class="state-layer grid size-8 shrink-0 place-items-center rounded-md
+      class="state-layer grid size-8 shrink-0 place-items-center rounded-full
              text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
              disabled:pointer-events-none disabled:opacity-30"
     >

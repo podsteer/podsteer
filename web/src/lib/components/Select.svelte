@@ -250,7 +250,7 @@
            twice is worse than not showing it. -->
       <p
         aria-hidden="true"
-        class="sticky top-0 z-10 border-b border-outline-variant/60 bg-surface-container px-3 py-1.5
+        class="sticky top-0 z-10 border-b border-outline-variant/60 bg-surface-container py-2 pr-3 pl-4
                text-body-small font-semibold text-on-surface"
       >
         {label}

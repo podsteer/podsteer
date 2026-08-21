@@ -122,7 +122,7 @@
           value={session.search}
           placeholder="Search {session.selectedKind?.title.toLowerCase() ?? 'resources'}…"
           onchange={session.setSearch}
-          class="w-72"
+          class="min-w-40 flex-1"
         />
 
         <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>

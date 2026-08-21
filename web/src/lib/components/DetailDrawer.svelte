@@ -231,7 +231,7 @@
             onclick={() => (restartDialogOpen = true)}
             aria-label="Restart rollout"
             title="Restart rollout"
-            class="state-layer grid size-8 shrink-0 place-items-center rounded-md
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
                    text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
           >
             <RotateCcw class="size-4" strokeWidth={1.8} />
@@ -244,7 +244,7 @@
             onclick={() => (scaleDialogOpen = true)}
             aria-label="Scale"
             title="Scale replicas"
-            class="state-layer grid size-8 shrink-0 place-items-center rounded-md
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
                    text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
           >
             <Scale class="size-4" strokeWidth={1.8} />
@@ -257,7 +257,7 @@
           disabled={!session.manifest}
           aria-label="Edit"
           title="Edit YAML"
-          class="state-layer grid size-8 shrink-0 place-items-center rounded-md
+          class="state-layer grid size-8 shrink-0 place-items-center rounded-full
                  transition-colors duration-100
                  {session.manifest ? 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface' : 'text-on-surface-variant/30'}
                  disabled:pointer-events-none"
@@ -271,7 +271,7 @@
           disabled={!session.manifest}
           aria-label="Copy manifest"
           title="Copy manifest"
-          class="state-layer grid size-8 shrink-0 place-items-center rounded-md
+          class="state-layer grid size-8 shrink-0 place-items-center rounded-full
                  transition-colors duration-100
                  {copied ? 'text-success' : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}
                  disabled:pointer-events-none disabled:opacity-30"
@@ -288,7 +288,7 @@
           onclick={() => (deleteDialogOpen = true)}
           aria-label="Delete"
           title="Delete resource"
-          class="state-layer grid size-8 shrink-0 place-items-center rounded-md
+          class="state-layer grid size-8 shrink-0 place-items-center rounded-full
                  text-on-surface-variant transition-colors duration-100 hover:bg-error/10 hover:text-error"
         >
           <Trash2 class="size-4" strokeWidth={1.8} />
@@ -300,7 +300,7 @@
           type="button"
           onclick={session.closeDetail}
           aria-label="Close details"
-          class="state-layer grid size-8 shrink-0 place-items-center rounded-md
+          class="state-layer grid size-8 shrink-0 place-items-center rounded-full
                  text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
         >
           <X class="size-4" strokeWidth={2} />
