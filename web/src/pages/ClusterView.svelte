@@ -45,9 +45,11 @@
     FolderTree,
     Layers,
     ChevronDown,
+    Globe,
     GripVertical,
     Star,
     Unplug,
+    User,
   } from '@lucide/svelte'
 
   let organiseOpen = $state(false)
@@ -324,7 +326,7 @@
                           >
                           <Card
                             variant="outlined"
-                            class="group relative flex h-full cursor-pointer gap-3 p-4
+                            class="group relative flex h-full cursor-pointer flex-col p-4
                                    transition-all duration-150 hover:border-outline hover:shadow-sm
                                    {open ? 'border-primary/30 bg-primary/[0.03]' : ''}"
                           >
@@ -344,6 +346,7 @@
                               <GripVertical class="size-4" strokeWidth={1.8} />
                             </div>
 
+                            <div class="mb-3 flex gap-3">
                             <div class="grid size-9 shrink-0 place-items-center rounded-lg
                                         {open ? 'bg-primary/10' : 'bg-surface-container-high'}">
                               <Server
@@ -352,11 +355,12 @@
                               />
                             </div>
 
-                            <!-- Name, then who you are, then where it is, then
-                                 what it runs — each on its own line, coarsest
-                                 first. The three below the name share one size
-                                 and one tone, so the name is the only thing
-                                 competing for attention. -->
+                            <!-- Name, then who you are, then where it is —
+                                 each on its own line, coarsest first. The two
+                                 below the name share one size and one tone, so
+                                 the name is the only thing competing for
+                                 attention. What the cluster RUNS is a rung
+                                 lower still and sits below the rule. -->
                             <div class="min-w-0 flex-1">
                               <div class="flex items-center gap-2">
                                 <h5
@@ -373,21 +377,21 @@
                                 {/if}
                               </div>
 
-                              <p class="mt-0.5 truncate text-body-small text-on-surface-variant/70">
-                                {cluster.authInfo || 'no user'}
+                              <p class="mt-0.5 flex items-center gap-1.5 truncate text-body-small
+                                        text-on-surface-variant/70">
+                                <User class="size-3 shrink-0" strokeWidth={1.8} />
+                                <span class="truncate">{cluster.authInfo || 'no user'}</span>
                               </p>
-                              <p class="truncate text-body-small text-on-surface-variant/70">
-                                {cluster.host}
+                              <p class="flex items-center gap-1.5 truncate text-body-small
+                                        text-on-surface-variant/70">
+                                <Globe class="size-3 shrink-0" strokeWidth={1.8} />
+                                <span class="truncate">{cluster.host}</span>
                               </p>
-                              {#if cluster.isReachable}
-                                <p class="truncate text-body-small text-on-surface-variant/70">
-                                  {cluster.version} · {cluster.platform}
-                                </p>
-                              {/if}
                             </div>
 
-                            <!-- Star at the top, actions at the foot. -->
-                            <div class="flex shrink-0 flex-col items-end justify-between gap-2">
+                            <!-- The star belongs to identity, so it stays in
+                                 this row; the controls sit below the rule. -->
+                            <div class="flex shrink-0 flex-col items-end">
                               {#if cluster.isCurrent}
                                 <!-- An indicator, not a control: it reports
                                      which context kubectl would use, and
@@ -403,8 +407,24 @@
                               {:else}
                                 <span class="size-4" aria-hidden="true"></span>
                               {/if}
+                            </div>
+                            </div>
 
-                              <div class="flex items-center gap-0.5">
+                            <!-- Rule, then what the cluster RUNS on the left
+                                 and what you can DO to it on the right.
+                                 `mt-auto` holds the row to the bottom so
+                                 neighbouring cards align whether or not one of
+                                 them has a version to report — an unreachable
+                                 cluster has none until it is opened. -->
+                            <div class="mt-auto flex items-center justify-between gap-2 border-t
+                                        border-outline-variant/60 pt-2.5">
+                              <p class="min-w-0 truncate text-body-small text-on-surface-variant/70">
+                                {#if cluster.isReachable}
+                                  {cluster.version} | {cluster.platform}
+                                {/if}
+                              </p>
+
+                              <div class="flex shrink-0 items-center gap-0.5">
                                 {#if open}
                                   <button
                                     type="button"
