@@ -2,6 +2,8 @@ package history_test
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -220,6 +222,147 @@ func TestTornLineDoesNotCostTheWholeFile(t *testing.T) {
 	}
 	if len(series) != 3 {
 		t.Errorf("length = %d, want the three intact samples", len(series))
+	}
+}
+
+// The chart asks for a window, and the cost should follow the window rather
+// than the retention setting.
+//
+// Seeded well past the 64 KiB chunk the reader steps in, so the backwards scan
+// has to stitch lines across a chunk boundary — the case a single-read
+// implementation passes by accident.
+func TestSeriesReturnsOnlyTheWindowAsked(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := history.New(dir)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Four days at one sample a minute: ~5,760 lines, roughly 800 KiB.
+	const total = 5760
+	base := now.Add(-total * time.Minute)
+	for i := range total {
+		if err := store.Append(ctx, "dev", sample(base.Add(time.Duration(i)*time.Minute), int64(i))); err != nil {
+			t.Fatalf("Append() error = %v", err)
+		}
+	}
+
+	series, err := store.Series(ctx, "dev", now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("Series() error = %v", err)
+	}
+	// The last hour is 60 samples, give or take the boundary.
+	if len(series) < 59 || len(series) > 61 {
+		t.Fatalf("length = %d, want about the 60 samples of the last hour", len(series))
+	}
+	if series[0].At.After(series[len(series)-1].At) {
+		t.Error("samples came back newest first, want oldest first")
+	}
+	if series[0].At.Before(now.Add(-time.Hour).Add(-time.Minute)) {
+		t.Errorf("oldest = %v, want nothing from before the cutoff", series[0].At)
+	}
+
+	// The whole file is still readable, so nothing was lost by reading less.
+	all, err := store.Series(ctx, "dev", time.Time{})
+	if err != nil {
+		t.Fatalf("Series() error = %v", err)
+	}
+	if len(all) != total {
+		t.Errorf("length = %d, want all %d samples", len(all), total)
+	}
+	if all[0].CPUUsageMilli != 0 || all[total-1].CPUUsageMilli != total-1 {
+		t.Error("the full read is not in the order it was written")
+	}
+}
+
+// A clock stepping backwards must not truncate a chart at the anomaly.
+func TestSeriesToleratesASampleOutOfOrder(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := history.New(dir)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	for i := range 30 {
+		at := now.Add(-time.Duration(30-i) * time.Minute)
+		// One sample lands as though the clock had jumped back a day.
+		if i == 15 {
+			at = now.Add(-24 * time.Hour)
+		}
+		if err := store.Append(ctx, "dev", sample(at, int64(i))); err != nil {
+			t.Fatalf("Append() error = %v", err)
+		}
+	}
+
+	series, err := store.Series(ctx, "dev", now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("Series() error = %v", err)
+	}
+	// 29 in the window, and the misdated one correctly outside it.
+	if len(series) != 29 {
+		t.Errorf("length = %d, want the 29 samples either side of the anomaly", len(series))
+	}
+}
+
+// Fifty clusters in a kubeconfig means fifty files here, most of them
+// belonging to clusters nobody has opened in weeks. Those must not be read.
+func TestPruneDiscardsADormantFileWithoutRewritingIt(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := history.New(dir)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	if err := store.Append(ctx, "dormant", sample(now.Add(-72*time.Hour), 1)); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	path := filepath.Join(dir, entries[0].Name())
+	// Appending stamps the file with now; date it to when its samples were
+	// taken, which is what a cluster left alone for three days looks like.
+	stale := now.Add(-72 * time.Hour)
+	if err := os.Chtimes(path, stale, stale); err != nil {
+		t.Fatalf("dating the file: %v", err)
+	}
+
+	if err := store.Prune(ctx, now.Add(-24*time.Hour)); err != nil {
+		t.Fatalf("Prune() error = %v", err)
+	}
+
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Error("a file whose newest sample had expired was kept")
+	}
+}
+
+// The shortcut must not reach a file that is merely quiet.
+func TestPruneKeepsAFileWrittenInsideTheWindow(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := history.New(dir)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	for i := range 3 {
+		if err := store.Append(ctx, "live", sample(now.Add(-time.Duration(i)*time.Minute), int64(i))); err != nil {
+			t.Fatalf("Append() error = %v", err)
+		}
+	}
+
+	if err := store.Prune(ctx, now.Add(-24*time.Hour)); err != nil {
+		t.Fatalf("Prune() error = %v", err)
+	}
+
+	series, err := store.Series(ctx, "live", time.Time{})
+	if err != nil {
+		t.Fatalf("Series() error = %v", err)
+	}
+	if len(series) != 3 {
+		t.Errorf("length = %d, want the three current samples kept", len(series))
 	}
 }
 

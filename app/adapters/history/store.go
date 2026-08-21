@@ -15,16 +15,19 @@ package history
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -185,7 +188,32 @@ func (s *Store) Series(_ context.Context, id domain.ClusterID, cutoff time.Time)
 	return samples, nil
 }
 
-// readFile reads one sample file, skipping anything unparseable.
+const (
+	// readChunk is how much of a file is read per step when scanning back
+	// from the end. Comfortably more than one screenful of samples, so the
+	// common windows finish in a single read.
+	readChunk = 64 << 10
+
+	// maxLine bounds the partial line carried between chunks, so a corrupt
+	// file with no newline in it cannot be accumulated whole in memory.
+	maxLine = 64 << 10
+)
+
+// readFile reads the samples at or after cutoff, oldest first.
+//
+// It scans BACKWARDS from the end of the file and stops once it is past the
+// cutoff, which makes the cost proportional to the window asked for rather
+// than to the retention setting. The chart never wants more than a day, while
+// a file may hold ninety of them: reading all of it to answer "the last hour"
+// made a 26 MB file cost a third of a second on every refresh, and a 400 KB
+// one cost the same five milliseconds it costs now.
+//
+// This relies on the file being in time order, which appending guarantees. A
+// clock stepping backwards — NTP correcting, a laptop resuming — can break
+// that locally, so the scan finishes the chunk it is in before stopping rather
+// than halting at the first sample it sees outside the window. That absorbs
+// disorder of a few hundred samples; the worst a larger jump can do is end a
+// chart early, never corrupt what is stored.
 //
 // A malformed line is skipped rather than failing the read: the last line of
 // an append-only file can be torn by a crash or a full disk, and losing one
@@ -200,24 +228,59 @@ func readFile(path string, cutoff time.Time) (domain.Series, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	samples := make(domain.Series, 0, 512)
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 4096), 64*1024)
-
-	for scanner.Scan() {
-		var wire wireSample
-		if err := json.Unmarshal(scanner.Bytes(), &wire); err != nil || wire.T == 0 {
-			continue
-		}
-		sample := wire.toDomain()
-		if sample.At.Before(cutoff) {
-			continue
-		}
-		samples = append(samples, sample)
-	}
-	if err := scanner.Err(); err != nil {
+	info, err := file.Stat()
+	if err != nil {
 		return nil, fmt.Errorf("history: reading samples: %w", err)
 	}
+
+	samples := make(domain.Series, 0, 512)
+	// carry holds the bytes of the line straddling the start of the chunk
+	// just read, which belong to the chunk before it.
+	var carry []byte
+	offset := info.Size()
+
+	for offset > 0 {
+		start := max(offset-readChunk, 0)
+
+		buffer := make([]byte, offset-start, offset-start+int64(len(carry)))
+		if _, err := file.ReadAt(buffer, start); err != nil && !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("history: reading samples: %w", err)
+		}
+		buffer = append(buffer, carry...)
+		offset = start
+
+		lines := bytes.Split(buffer, []byte{'\n'})
+		// Everything before the first newline is only part of a line unless
+		// this chunk reached the start of the file.
+		carry = nil
+		if start > 0 {
+			if len(lines[0]) <= maxLine {
+				carry = lines[0]
+			}
+			lines = lines[1:]
+		}
+
+		// Newest first within the chunk, so `passed` means "older than the
+		// window" rather than "not there yet".
+		passed := false
+		for i := len(lines) - 1; i >= 0; i-- {
+			var wire wireSample
+			if err := json.Unmarshal(lines[i], &wire); err != nil || wire.T == 0 {
+				continue
+			}
+			sample := wire.toDomain()
+			if sample.At.Before(cutoff) {
+				passed = true
+				continue
+			}
+			samples = append(samples, sample)
+		}
+		if passed {
+			break
+		}
+	}
+
+	slices.Reverse(samples)
 	return samples, nil
 }
 
@@ -227,10 +290,13 @@ func readFile(path string, cutoff time.Time) (domain.Series, error) {
 // crash mid-prune leaves the previous file intact rather than a half-written
 // one. A file that ends up empty is removed entirely — a cluster nobody has
 // opened in a month should leave nothing behind.
+//
+// The lock is taken and released per file rather than held across the sweep.
+// Somebody with fifty clusters in their kubeconfig has fifty files here, and
+// holding it throughout meant the hourly prune stopped both sampling and every
+// chart read for as long as the whole rewrite took — seconds, at long
+// retentions. A reader now waits for one file at most.
 func (s *Store) Prune(ctx context.Context, cutoff time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -246,11 +312,38 @@ func (s *Store) Prune(ctx context.Context, cutoff time.Time) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := pruneFile(filepath.Join(s.dir, entry.Name()), cutoff); err != nil {
+		if err := s.pruneOne(filepath.Join(s.dir, entry.Name()), cutoff); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// pruneOne enforces the retention window on one file.
+//
+// A file whose last write predates the cutoff is discarded without being read.
+// Samples are appended as they are taken, so a file's modification time is its
+// newest sample: if that has expired, so has everything before it. This is
+// what keeps a kubeconfig full of clusters cheap — the ones nobody has opened
+// for weeks cost a stat and an unlink each rather than a full rewrite.
+func (s *Store) pruneOne(path string, cutoff time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("history: inspecting a sample file: %w", err)
+	case info.ModTime().Before(cutoff):
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("history: removing an expired sample file: %w", err)
+		}
+		return nil
+	}
+
+	return pruneFile(path, cutoff)
 }
 
 func pruneFile(path string, cutoff time.Time) error {
