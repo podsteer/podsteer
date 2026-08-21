@@ -196,10 +196,6 @@
 <svelte:window onpointerdown={onPointerDown} onresize={() => open && hide(false)} />
 
 <div data-select-root class="relative {compact ? 'inline-block' : 'block'} {className}">
-  {#if !compact}
-    <span class="mb-1.5 block text-body-small text-on-surface-variant">{label}</span>
-  {/if}
-
   <button
     bind:this={trigger}
     type="button"
@@ -241,8 +237,25 @@
       onkeydown={onPanelKeydown}
       use:claimFocus
       class="fixed z-[70] max-h-[300px] min-w-40 overflow-y-auto overflow-x-hidden rounded-sm border
-             border-outline-variant bg-surface-container py-1 shadow-level-2"
+             border-outline-variant bg-surface-container pb-1 shadow-level-2"
     >
+      <!-- What the dropdown is FOR, said where it is being used rather than
+           above the trigger. A label sitting over the field spent a line of
+           chrome saying something only relevant once the list is open — and
+           when the list is long, this is the thing worth keeping in view, so
+           it sticks rather than scrolling away.
+
+           Hidden from assistive technology because the listbox already
+           carries the same string as its accessible name, and announcing it
+           twice is worse than not showing it. -->
+      <p
+        aria-hidden="true"
+        class="sticky top-0 z-10 border-b border-outline-variant/60 bg-surface-container px-3 py-1.5
+               text-body-small font-semibold text-on-surface"
+      >
+        {label}
+      </p>
+
       {#each options as option, index (option.value)}
         {@const isSelected = option.value === value}
         <button
