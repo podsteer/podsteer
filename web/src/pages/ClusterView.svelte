@@ -4,6 +4,23 @@
   It lists every context in the local kubeconfig, grouped under the operator's
   groups. Opening is an explicit action rather than something that happens at
   launch.
+
+  Three things here are deliberate:
+
+  • **Groups collapse, and the state persists.** Someone with forty contexts
+    across six environments wants five of them shut, and wants them still shut
+    tomorrow. A collapsed group still reports how many of its clusters are
+    open, because that is the fact you would otherwise have to expand it to
+    learn.
+
+  • **Dragging is armed from a handle, not the card.** The application disables
+    text selection globally and opts back in with `data-selectable` — which the
+    cluster name uses. A permanently draggable card would take that back, so
+    the card becomes draggable only while the pointer is on its grip.
+
+  • **Drag is the shortcut, not the mechanism.** Every move is also available
+    from the folder menu on each card, which is what keyboard and screen-reader
+    users get. Nothing is reachable by drag alone.
 -->
 <script lang="ts">
   import Button from '$lib/components/Button.svelte'
@@ -18,17 +35,85 @@
   import {
     Server,
     FolderOpen,
-    Plus,
     CheckCircle,
     Globe,
     User,
     Layers,
+    ChevronDown,
+    GripVertical,
+    Unplug,
   } from '@lucide/svelte'
 
   let manageGroupsOpen = $state(false)
 
-  const sections = $derived(groups.sections(workspace.clusters))
+  /** The cluster currently being dragged, if any. */
+  let draggingId = $state<string | null>(null)
+  /** The group the pointer is currently over during a drag. */
+  let dropTargetId = $state<string | null>(null)
+  /** The cluster whose grip is held, and which may therefore be dragged. */
+  let armedId = $state<string | null>(null)
+  /** The cluster being disconnected, so its button can show it. */
+  let disconnectingId = $state<string | null>(null)
+
+  /**
+   * Empty groups are shown, not hidden.
+   *
+   * Hiding them was the first attempt and it was wrong twice over. Creating a
+   * group in the manager changed nothing on screen, so there was no way to
+   * tell it had worked; and revealing the groups only once a drag began moved
+   * the layout under the cursor at exactly the moment the operator was aiming
+   * at something. A permanently visible placeholder is a stable drop target
+   * and an answer to "where did my new group go".
+   */
+  const sections = $derived(groups.sections(workspace.clusters, true))
+
+  function startDrag(event: DragEvent, clusterId: string): void {
+    if (armedId !== clusterId || !event.dataTransfer) {
+      event.preventDefault()
+      return
+    }
+    draggingId = clusterId
+    event.dataTransfer.effectAllowed = 'move'
+    // Written as well as tracked in state: some environments only expose the
+    // payload through the DataTransfer, and an empty one cancels the drop.
+    event.dataTransfer.setData('text/plain', clusterId)
+  }
+
+  function endDrag(): void {
+    draggingId = null
+    dropTargetId = null
+    armedId = null
+  }
+
+  function dragOver(event: DragEvent, groupId: string): void {
+    if (draggingId === null) return
+    // Preventing the default is what marks this a valid drop target; without
+    // it the browser refuses the drop and the card springs back.
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+    dropTargetId = groupId
+  }
+
+  function drop(event: DragEvent, groupId: string): void {
+    event.preventDefault()
+    const clusterId = draggingId ?? event.dataTransfer?.getData('text/plain') ?? ''
+    if (clusterId && groups.groupIdOf(clusterId) !== groupId) {
+      groups.assign(clusterId, groupId)
+    }
+    endDrag()
+  }
+
+  async function disconnect(clusterId: string): Promise<void> {
+    disconnectingId = clusterId
+    try {
+      await workspace.close(clusterId)
+    } finally {
+      disconnectingId = null
+    }
+  }
 </script>
+
+<svelte:window ondragend={endDrag} />
 
 <div class="mx-auto w-full max-w-4xl px-8 py-10">
   <!-- Header -->
@@ -42,6 +127,9 @@
           <h2 class="text-headline-small font-semibold text-on-surface">Clusters</h2>
           <p class="text-body-medium text-on-surface-variant/70">
             {workspace.clusters.length} contexts from kubeconfig
+            {#if workspace.sessions.length > 0}
+              · {workspace.sessions.length} open
+            {/if}
           </p>
         </div>
       </div>
@@ -75,104 +163,211 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="flex flex-col gap-8">
+    <div class="flex flex-col gap-6">
       {#each sections as section (section.id)}
-        <section aria-label="{section.name} group">
-          <header class="mb-3 flex items-center gap-2 px-1">
-            <Layers class="size-4 text-on-surface-variant/60" strokeWidth={1.8} />
-            <h3 class="text-title-small font-semibold text-on-surface">{section.name}</h3>
-            <span class="rounded-full bg-surface-container-high px-2 py-0.5 text-[11px]
-                         tabular-nums text-on-surface-variant/60">
-              {section.clusters.length}
-            </span>
+        {@const collapsed = groups.isCollapsed(section.id)}
+        {@const openCount = section.clusters.filter((c) => workspace.openIds.has(c.id)).length}
+        {@const isTarget = dropTargetId === section.id && draggingId !== null}
+        <section
+          aria-label="{section.name} group"
+          class="rounded-xl transition-colors duration-150
+                 {isTarget ? 'bg-primary/[0.06] outline outline-2 outline-dashed outline-primary/40' : ''}"
+          ondragover={(event) => dragOver(event, section.id)}
+          ondragleave={() => (dropTargetId = null)}
+          ondrop={(event) => drop(event, section.id)}
+        >
+          <!-- Header doubles as the collapse control and a drop target, so a
+               collapsed group can still be dropped into. -->
+          <header class="flex items-center gap-2 px-1">
+            <button
+              type="button"
+              onclick={() => groups.toggleCollapsed(section.id)}
+              aria-expanded={!collapsed}
+              aria-controls="group-{section.id}"
+              class="state-layer -mx-1 flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1.5
+                     text-left transition-colors duration-150"
+            >
+              <ChevronDown
+                class="size-4 shrink-0 text-on-surface-variant/60 transition-transform duration-150
+                       {collapsed ? '-rotate-90' : ''}"
+                strokeWidth={2}
+              />
+              <Layers class="size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
+              <h3 class="truncate text-title-small font-semibold text-on-surface">{section.name}</h3>
+              <span class="shrink-0 rounded-full bg-surface-container-high px-2 py-0.5 text-[11px]
+                           tabular-nums text-on-surface-variant/60">
+                {section.clusters.length}
+              </span>
+              {#if collapsed && openCount > 0}
+                <!-- The one fact you would have to expand the group to learn. -->
+                <span class="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[11px]
+                             font-medium text-primary">
+                  {openCount} open
+                </span>
+              {/if}
+            </button>
           </header>
 
-          <div class="grid gap-3 sm:grid-cols-1 lg:grid-cols-2">
-            {#each section.clusters as cluster (cluster.id)}
-              {@const open = workspace.openIds.has(cluster.id)}
-              <Card variant="outlined" class="group relative flex items-start gap-3 p-4
-                    transition-all duration-150 hover:border-outline hover:shadow-sm
-                    {open ? 'border-primary/30 bg-primary/[0.03]' : ''}">
-                
-                <!-- Cluster icon -->
-                <div class="grid size-9 shrink-0 place-items-center rounded-lg
-                            {open ? 'bg-primary/10' : 'bg-surface-container-high'}">
-                  <Server
-                    class="size-4.5 {open ? 'text-primary' : 'text-on-surface-variant/70'}"
-                    strokeWidth={1.8}
-                  />
-                </div>
+          {#if !collapsed}
+            <!-- A real list: it is one, and it gives a screen reader the count
+                 and per-item navigation the grid alone would not. -->
+            <div
+              id="group-{section.id}"
+              role="list"
+              class="mt-2 grid gap-3 sm:grid-cols-1 lg:grid-cols-2"
+            >
+              {#each section.clusters as cluster (cluster.id)}
+                {@const open = workspace.openIds.has(cluster.id)}
+                {@const dragging = draggingId === cluster.id}
+                <div
+                  role="listitem"
+                  draggable={armedId === cluster.id}
+                  ondragstart={(event) => startDrag(event, cluster.id)}
+                  ondragend={endDrag}
+                  class="transition-opacity duration-150 {dragging ? 'opacity-40' : ''}"
+                >
+                  <Card variant="outlined" class="group relative flex h-full flex-col gap-3 p-4
+                        transition-all duration-150 hover:border-outline hover:shadow-sm
+                        {open ? 'border-primary/30 bg-primary/[0.03]' : ''}">
 
-                <!-- Cluster info -->
-                <div class="min-w-0 flex-1">
-                  <div class="flex items-center gap-2">
-                    <h3 class="truncate text-title-small font-semibold text-on-surface" data-selectable>
-                      {cluster.id}
-                    </h3>
-                    {#if cluster.isCurrent}
-                      <span class="flex items-center gap-0.5 rounded-full bg-secondary-container
-                                   px-1.5 py-0.5 text-[10px] font-medium text-on-secondary-container">
-                        <CheckCircle class="size-2.5" strokeWidth={2.5} />
-                        current
-                      </span>
-                    {/if}
-                    {#if open}
-                      <span class="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px]
-                                   font-medium text-primary">
-                        open
-                      </span>
-                    {/if}
-                  </div>
+                    <!-- Grip: arms the drag without making the card permanently
+                         draggable, which would take text selection away from
+                         the cluster name. -->
+                    <div
+                      role="presentation"
+                      onpointerdown={() => (armedId = cluster.id)}
+                      onpointerup={() => (armedId = null)}
+                      title="Drag to another group"
+                      class="absolute left-0.5 top-1/2 -translate-y-1/2 cursor-grab p-1
+                             text-on-surface-variant/25 opacity-0 transition-opacity duration-150
+                             group-hover:opacity-100 active:cursor-grabbing"
+                    >
+                      <GripVertical class="size-4" strokeWidth={1.8} />
+                    </div>
 
-                  <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-body-small text-on-surface-variant/70">
-                    <span class="flex items-center gap-1 truncate">
-                      <Globe class="size-3" strokeWidth={1.8} />
-                      {cluster.host}
-                    </span>
-                    <span class="flex items-center gap-1">
-                      <User class="size-3" strokeWidth={1.8} />
-                      {cluster.authInfo || 'no user'}
-                    </span>
-                    {#if cluster.defaultNamespace}
-                      <span class="flex items-center gap-1">
-                        <FolderOpen class="size-3" strokeWidth={1.8} />
-                        {cluster.defaultNamespace}
-                      </span>
-                    {/if}
-                  </div>
-
-                  {#if cluster.isReachable}
-                    <div class="mt-2">
-                      <StatusIndicator
-                        tone="success"
-                        label="{cluster.version} · {cluster.platform}"
+                    <!-- Identity and detail, on their own row.
+                         The actions used to sit beside this, and a third button
+                         plus a long context name truncated the one thing the
+                         card exists to show. -->
+                    <div class="flex items-start gap-3">
+                    <div class="grid size-9 shrink-0 place-items-center rounded-lg
+                                {open ? 'bg-primary/10' : 'bg-surface-container-high'}">
+                      <Server
+                        class="size-4.5 {open ? 'text-primary' : 'text-on-surface-variant/70'}"
+                        strokeWidth={1.8}
                       />
                     </div>
-                  {/if}
-                </div>
 
-                <!-- Actions -->
-                <div class="flex shrink-0 items-center gap-1">
-                  <MoveToGroupMenu clusterId={cluster.id} />
+                    <div class="min-w-0 flex-1">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <h3 class="truncate text-title-small font-semibold text-on-surface" data-selectable>
+                          {cluster.id}
+                        </h3>
+                        {#if cluster.isCurrent}
+                          <span class="flex items-center gap-0.5 rounded-full bg-secondary-container
+                                       px-1.5 py-0.5 text-[10px] font-medium text-on-secondary-container">
+                            <CheckCircle class="size-2.5" strokeWidth={2.5} />
+                            current
+                          </span>
+                        {/if}
+                        {#if open}
+                          <span class="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px]
+                                       font-medium text-primary">
+                            open
+                          </span>
+                        {/if}
+                      </div>
 
-                  <Button
-                    variant={open ? 'text' : cluster.isCurrent ? 'filled' : 'tonal'}
-                    loading={workspace.connectingTo === cluster.id}
-                    disabled={workspace.connectingTo !== null && workspace.connectingTo !== cluster.id}
-                    onclick={() => workspace.open(cluster.id)}
-                  >
-                    {#if workspace.connectingTo === cluster.id}
-                      Connecting
-                    {:else if open}
-                      Go to tab
-                    {:else}
-                      Open
-                    {/if}
-                  </Button>
+                      <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-body-small text-on-surface-variant/70">
+                        <span class="flex items-center gap-1 truncate">
+                          <Globe class="size-3" strokeWidth={1.8} />
+                          {cluster.host}
+                        </span>
+                        <span class="flex items-center gap-1">
+                          <User class="size-3" strokeWidth={1.8} />
+                          {cluster.authInfo || 'no user'}
+                        </span>
+                        {#if cluster.defaultNamespace}
+                          <span class="flex items-center gap-1">
+                            <FolderOpen class="size-3" strokeWidth={1.8} />
+                            {cluster.defaultNamespace}
+                          </span>
+                        {/if}
+                      </div>
+
+                    </div>
+                    </div>
+
+                    <!-- Footer: what the cluster IS on the left, what you can
+                         do with it on the right. Keeping the actions out of the
+                         identity row is what stops a long context name losing
+                         to a button. `mt-auto` holds the footer to the bottom so
+                         neighbouring cards line up whether or not one of them
+                         has a version to report. -->
+                    <div class="mt-auto flex items-center justify-between gap-2 pt-1">
+                      <div class="min-w-0">
+                        {#if cluster.isReachable}
+                          <StatusIndicator
+                            tone="success"
+                            label="{cluster.version} · {cluster.platform}"
+                          />
+                        {/if}
+                      </div>
+
+                      <div class="flex shrink-0 items-center gap-1">
+                        {#if open}
+                        <!-- Disconnecting from here rather than only from the
+                             tab strip: someone tidying up is looking at the
+                             list of everything, not at one tab. -->
+                        <button
+                          type="button"
+                          onclick={() => disconnect(cluster.id)}
+                          disabled={disconnectingId === cluster.id}
+                          aria-label="Disconnect {cluster.id}"
+                          title="Disconnect"
+                          class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                                 text-on-surface-variant transition-colors duration-150
+                                 hover:text-error disabled:pointer-events-none disabled:opacity-40"
+                        >
+                          <Unplug class="size-4.5" strokeWidth={1.8} />
+                        </button>
+                      {/if}
+
+                      <MoveToGroupMenu clusterId={cluster.id} />
+
+                      <Button
+                        variant={open ? 'text' : cluster.isCurrent ? 'filled' : 'tonal'}
+                        loading={workspace.connectingTo === cluster.id}
+                        disabled={workspace.connectingTo !== null && workspace.connectingTo !== cluster.id}
+                        onclick={() => workspace.open(cluster.id)}
+                      >
+                        {#if workspace.connectingTo === cluster.id}
+                          Connecting
+                        {:else if open}
+                          Go to tab
+                        {:else}
+                          Open
+                          {/if}
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
                 </div>
-              </Card>
-            {/each}
-          </div>
+              {/each}
+
+              {#if section.clusters.length === 0}
+                <!-- Doubles as the only hint that cards can be dragged at all;
+                     the grip appears on hover, which nobody discovers unless
+                     something tells them to try. -->
+                <p
+                  class="col-span-full rounded-lg border border-dashed border-outline-variant
+                         px-4 py-5 text-center text-body-small text-on-surface-variant/60"
+                >
+                  Empty — drag a cluster here, or use the folder button on its card
+                </p>
+              {/if}
+            </div>
+          {/if}
         </section>
       {/each}
     </div>

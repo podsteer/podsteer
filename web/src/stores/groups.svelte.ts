@@ -42,11 +42,14 @@ interface PersistedShape {
   groups: Group[]
   /** Cluster context name -> group id. Absent means default. */
   assignments: Record<string, string>
+  /** Group ids the operator collapsed. Absent means expanded. */
+  collapsed: string[]
 }
 
 const DEFAULTS: PersistedShape = {
   groups: [],
   assignments: {},
+  collapsed: [],
 }
 
 class Groups {
@@ -54,6 +57,15 @@ class Groups {
 
   /** Cluster context name -> group id, for clusters moved out of default. */
   assignments = $state<Record<string, string>>(DEFAULTS.assignments)
+
+  /**
+   * Group ids the operator has collapsed.
+   *
+   * Stored as the exception rather than the rule: a newly created group is
+   * expanded, and a shape that only records collapses cannot accidentally
+   * hide a group it has never heard of.
+   */
+  collapsed = $state<Set<string>>(new Set())
 
   constructor() {
     this.#load()
@@ -66,7 +78,7 @@ class Groups {
    * order. Empty sections are dropped: a group with nothing in it is clutter
    * in the picker, though it still appears in the management dialog.
    */
-  sections = (clusters: Cluster[]): GroupSection[] => {
+  sections = (clusters: Cluster[], includeEmpty = false): GroupSection[] => {
     const buckets = new Map<string, Cluster[]>()
     for (const cluster of clusters) {
       const groupId = this.groupIdOf(cluster.id)
@@ -79,17 +91,41 @@ class Groups {
     }
 
     const out: GroupSection[] = []
-    const defaults = buckets.get(DEFAULT_GROUP_ID)
-    if (defaults?.length) {
+    const defaults = buckets.get(DEFAULT_GROUP_ID) ?? []
+    if (defaults.length || includeEmpty) {
       out.push({ id: DEFAULT_GROUP_ID, name: DEFAULT_GROUP_NAME, isDefault: true, clusters: defaults })
     }
     for (const group of this.groups) {
-      const bucket = buckets.get(group.id)
-      if (bucket?.length) {
+      const bucket = buckets.get(group.id) ?? []
+      if (bucket.length || includeEmpty) {
         out.push({ id: group.id, name: group.name, isDefault: false, clusters: bucket })
       }
     }
     return out
+  }
+
+  /** True when the operator has collapsed this group in the picker. */
+  isCollapsed = (groupId: string): boolean => this.collapsed.has(groupId)
+
+  /**
+   * Collapses or expands one group.
+   *
+   * A new Set rather than a mutation: Svelte's reactivity tracks the
+   * assignment, and mutating the existing one in place would leave the picker
+   * showing the previous state.
+   */
+  toggleCollapsed = (groupId: string): void => {
+    const next = new Set(this.collapsed)
+    if (!next.delete(groupId)) next.add(groupId)
+    this.collapsed = next
+    this.#save()
+  }
+
+  /** Expands every group. Used when a drag needs all the targets visible. */
+  expandAll = (): void => {
+    if (this.collapsed.size === 0) return
+    this.collapsed = new Set()
+    this.#save()
   }
 
   /** The group id a cluster belongs to, or DEFAULT_GROUP_ID. */
@@ -134,6 +170,12 @@ class Groups {
    */
   remove = (id: string): void => {
     this.groups = this.groups.filter((group) => group.id !== id)
+
+    if (this.collapsed.has(id)) {
+      const collapsed = new Set(this.collapsed)
+      collapsed.delete(id)
+      this.collapsed = collapsed
+    }
 
     const assignments = { ...this.assignments }
     for (const [clusterId, groupId] of Object.entries(assignments)) {
@@ -204,6 +246,18 @@ class Groups {
         }
       }
       this.assignments = assignments
+
+      // Collapse state is dropped for groups that no longer exist, for the
+      // same reason assignments are: a stale id is a group nobody can expand.
+      // DEFAULT_GROUP_ID is always legitimate.
+      if (Array.isArray(stored.collapsed)) {
+        this.collapsed = new Set(
+          stored.collapsed.filter(
+            (id): id is string =>
+              typeof id === 'string' && (id === DEFAULT_GROUP_ID || known.has(id)),
+          ),
+        )
+      }
     } catch {
       // Corrupt storage must not stop the app starting; the default group
       // catching every cluster is a perfectly usable state.
@@ -215,6 +269,7 @@ class Groups {
       const payload: PersistedShape = {
         groups: this.groups,
         assignments: this.assignments,
+        collapsed: [...this.collapsed],
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
     } catch {
