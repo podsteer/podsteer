@@ -96,12 +96,12 @@ class Workspace {
    * operator clicking it in the picker means "show me that", not "connect
    * again".
    */
-  open = async (clusterId: string): Promise<void> => {
+  open = async (clusterId: string, focus = true): Promise<void> => {
     if (this.connectingTo) return
 
     const existing = this.sessions.find((session) => session.cluster.id === clusterId)
     if (existing) {
-      this.activeClusterId = clusterId
+      if (focus) this.activeClusterId = clusterId
       return
     }
 
@@ -111,7 +111,10 @@ class Workspace {
       this.error = null
 
       const session = this.#adopt(cluster)
-      this.activeClusterId = cluster.id
+      // Not focused when the picker asked for a connection rather than for a
+      // view: connecting several clusters in a row should not throw the
+      // operator into the first one.
+      if (focus) this.activeClusterId = cluster.id
       // Recorded here rather than in the picker: this is the moment a
       // connection is actually made, and it is the only one.
       clusterActivity.markConnected(cluster.id)

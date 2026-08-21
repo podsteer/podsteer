@@ -49,6 +49,7 @@
     ChevronDown,
     Globe,
     GripVertical,
+    Plug,
     Star,
     Unplug,
     User,
@@ -358,22 +359,6 @@
                                    transition-all duration-150 hover:border-outline hover:shadow-sm
                                    {open ? 'border-primary/30 bg-primary/[0.03]' : ''}"
                           >
-                            <!-- Grip: arms the drag without making the card
-                                 permanently draggable, which would take text
-                                 selection away from the cluster name. -->
-                            <div
-                              role="presentation"
-                              onpointerdown={() => (armedId = cluster.id)}
-                              onpointerup={() => (armedId = null)}
-                              onclick={(event) => event.stopPropagation()}
-                              title="Drag to another group"
-                              class="absolute left-0.5 top-1/2 -translate-y-1/2 cursor-grab p-1
-                                     text-on-surface-variant/25 opacity-0 transition-opacity duration-150
-                                     group-hover:opacity-100 active:cursor-grabbing"
-                            >
-                              <GripVertical class="size-4" strokeWidth={1.8} />
-                            </div>
-
                             <div class="mb-3 flex gap-3">
                             <div class="grid size-9 shrink-0 place-items-center rounded-lg
                                         {open ? 'bg-primary/10' : 'bg-surface-container-high'}">
@@ -453,7 +438,40 @@
                                 {formatConnection(connectedAt, open, now)}
                               </p>
 
+                              <!-- Drag, move, connect — in the order you would
+                                   reach for them: where it lives, then where it
+                                   should live, then what to do with it. -->
                               <div class="flex shrink-0 items-center gap-0.5">
+                                <!-- Arms the drag rather than being draggable
+                                     itself, so the card can carry the drag
+                                     image without being permanently draggable —
+                                     which would take text selection away from
+                                     the context name.
+
+                                     Dimmed rather than hidden: a handle nobody
+                                     can see is a feature nobody finds, and it
+                                     brightens with the card to say it is live. -->
+                                <div
+                                  role="presentation"
+                                  onpointerdown={() => (armedId = cluster.id)}
+                                  onpointerup={() => (armedId = null)}
+                                  onclick={(event) => event.stopPropagation()}
+                                  title="Drag to another group"
+                                  class="grid size-8 shrink-0 cursor-grab place-items-center rounded-full
+                                         text-on-surface-variant/30 transition-colors duration-150
+                                         group-hover:text-on-surface-variant/70 active:cursor-grabbing"
+                                >
+                                  <GripVertical class="size-4" strokeWidth={1.8} />
+                                </div>
+
+                                <MoveClusterMenu clusterId={cluster.id} />
+
+                                <!-- Connecting is what the whole card already
+                                     does, so this is a second way to reach it
+                                     rather than the only one — but
+                                     disconnecting has nowhere else to live on
+                                     this screen, and a pair reads better than a
+                                     lone icon that appears only half the time. -->
                                 {#if open}
                                   <button
                                     type="button"
@@ -470,9 +488,34 @@
                                   >
                                     <Unplug class="size-4.5" strokeWidth={1.8} />
                                   </button>
+                                {:else}
+                                  <button
+                                    type="button"
+                                    onclick={(event) => {
+                                      event.stopPropagation()
+                                      // Connects without leaving the picker,
+                                      // which is what makes this worth having
+                                      // beside the card: the card is "take me
+                                      // there", this is "connect this one",
+                                      // and it mirrors Disconnect rather than
+                                      // duplicating the card.
+                                      void workspace.open(cluster.id, false)
+                                    }}
+                                    disabled={workspace.connectingTo !== null}
+                                    aria-label="Connect to {cluster.id}"
+                                    title={workspace.connectingTo === cluster.id ? 'Connecting…' : 'Connect'}
+                                    class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                                           text-on-surface-variant transition-colors duration-150
+                                           hover:text-primary disabled:pointer-events-none disabled:opacity-40"
+                                  >
+                                    <Plug
+                                      class="size-4.5 {workspace.connectingTo === cluster.id
+                                        ? 'animate-pulse text-primary'
+                                        : ''}"
+                                      strokeWidth={1.8}
+                                    />
+                                  </button>
                                 {/if}
-
-                                <MoveClusterMenu clusterId={cluster.id} />
                               </div>
                             </div>
                           </Card>
