@@ -26,7 +26,7 @@
 {#if error}
   <div
     role="alert"
-    class="flex items-start gap-3 rounded-lg border border-error/20 bg-error-container/80 px-4 py-3
+    class="flex items-start gap-3 rounded-sm border border-error/20 bg-error-container/80 px-4 py-3
            text-on-error-container {className}"
   >
     <AlertCircle class="mt-0.5 size-5 shrink-0 text-error" strokeWidth={2} />

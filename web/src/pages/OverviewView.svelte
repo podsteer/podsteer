@@ -124,7 +124,7 @@
   {:else}
     <div class="mx-auto flex max-w-[1400px] flex-col gap-5 p-5">
       <!-- Verdict -->
-      <section class="flex flex-wrap items-center gap-4 rounded-xl border p-4 {health.classes}">
+      <section class="flex flex-wrap items-center gap-4 rounded-sm border p-4 {health.classes}">
         <HealthIcon class="size-8 shrink-0" strokeWidth={1.6} />
 
         <div class="min-w-0 flex-1">
@@ -165,7 +165,7 @@
       <!-- A source that could not be read is stated, never silently zeroed. -->
       {#if overview.unavailable.length > 0}
         <p
-          class="flex items-center gap-2 rounded-lg border border-outline-variant/40 bg-surface-container-low
+          class="flex items-center gap-2 rounded-sm border border-outline-variant/40 bg-surface-container-low
                  px-3 py-2 text-body-small text-on-surface-variant"
         >
           <CircleSlash class="size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
@@ -186,7 +186,7 @@
       {/if}
 
       <!-- Capacity -->
-      <section class="flex flex-col gap-3 rounded-xl border border-outline-variant/40 bg-surface-container-low p-4">
+      <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
         <div class="flex items-baseline justify-between gap-3">
           <h3 class="text-title-medium font-semibold text-on-surface">Capacity</h3>
           <span class="text-body-small text-on-surface-variant/70">
@@ -230,7 +230,7 @@
            record: sampled every 30 seconds while the application is open. It
            says so rather than implying the completeness a monitoring stack
            would have. -->
-      <section class="flex flex-col gap-3 rounded-xl border border-outline-variant/40 bg-surface-container-low p-4">
+      <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
             <TrendingUp class="size-4 text-on-surface-variant" strokeWidth={1.8} />
@@ -239,7 +239,7 @@
 
           <div class="flex items-center gap-3">
             <!-- Metric -->
-            <div class="flex rounded-md border border-outline-variant/60 p-0.5">
+            <div class="flex rounded-sm border border-outline-variant/60 p-0.5">
               {#each METRIC_TABS as tab (tab.id)}
                 <button
                   type="button"
@@ -256,7 +256,7 @@
             </div>
 
             <!-- Window -->
-            <div class="flex rounded-md border border-outline-variant/60 p-0.5">
+            <div class="flex rounded-sm border border-outline-variant/60 p-0.5">
               {#each TREND_WINDOWS as option (option.minutes)}
                 <button
                   type="button"
@@ -294,7 +294,7 @@
 
       <div class="grid gap-4 lg:grid-cols-2">
         <!-- Inventory -->
-        <section class="flex flex-col gap-3 rounded-xl border border-outline-variant/40 bg-surface-container-low p-4">
+        <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
           <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
             <Boxes class="size-4 text-on-surface-variant" strokeWidth={1.8} />
             Workloads
@@ -359,7 +359,7 @@
         </section>
 
         <!-- Nodes -->
-        <section class="flex flex-col gap-3 rounded-xl border border-outline-variant/40 bg-surface-container-low p-4">
+        <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
           <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
             <Server class="size-4 text-on-surface-variant" strokeWidth={1.8} />
             Nodes
@@ -409,7 +409,7 @@
       <div class="grid gap-4 lg:grid-cols-2">
         <!-- Namespaces, ranked by what they reserve rather than what they use:
              reservations are what fill a cluster. -->
-        <section class="flex flex-col gap-3 rounded-xl border border-outline-variant/40 bg-surface-container-low p-4">
+        <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
           <div class="flex items-baseline justify-between gap-3">
             <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
               <Layers class="size-4 text-on-surface-variant" strokeWidth={1.8} />
@@ -461,7 +461,7 @@
         </section>
 
         <!-- Restart hotspots: pods every list shows as healthy. -->
-        <section class="flex flex-col gap-3 rounded-xl border border-outline-variant/40 bg-surface-container-low p-4">
+        <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
           <div class="flex items-baseline justify-between gap-3">
             <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
               <RefreshCw class="size-4 text-on-surface-variant" strokeWidth={1.8} />

@@ -38,7 +38,7 @@
   }
 
   const base = $derived(
-    `rounded-md text-on-surface transition-[background-color,box-shadow] duration-150 ease-standard ${VARIANT_CLASSES[variant]}`,
+    `rounded-sm text-on-surface transition-[background-color,box-shadow] duration-150 ease-standard ${VARIANT_CLASSES[variant]}`,
   )
   const selection = $derived(selected ? 'ring-2 ring-primary' : '')
 </script>

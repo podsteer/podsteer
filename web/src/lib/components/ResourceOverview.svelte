@@ -129,7 +129,7 @@
           <h3 class="mb-3 text-title-medium text-on-surface">Containers ({containers.length})</h3>
           <div class="space-y-3">
             {#each containers as container, i (i)}
-              <div class="rounded-lg border border-outline-variant bg-surface-container-low p-3">
+              <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
                 <p class="mb-2 text-body-medium font-medium text-on-surface" data-selectable>{container.name}</p>
                 <div class="grid grid-cols-2 gap-2 text-body-small">
                   <div>
@@ -177,7 +177,7 @@
           <h3 class="mb-3 text-title-medium text-on-surface">Init Containers ({initContainers.length})</h3>
           <div class="space-y-3">
             {#each initContainers as container, i (i)}
-              <div class="rounded-lg border border-outline-variant bg-surface-container-low p-3">
+              <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
                 <p class="mb-2 text-body-medium font-medium text-on-surface" data-selectable>{container.name}</p>
                 <div class="grid grid-cols-2 gap-2 text-body-small">
                   <div>
@@ -197,7 +197,7 @@
           <h3 class="mb-3 text-title-medium text-on-surface">Volumes ({volumes.length})</h3>
           <div class="space-y-2">
             {#each volumes as volume, i (i)}
-              <div class="rounded-lg border border-outline-variant bg-surface-container-low p-3">
+              <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
                 <p class="text-body-medium font-medium text-on-surface" data-selectable>{volume.name}</p>
                 <p class="mt-1 text-body-small text-on-surface-variant">
                   {#if volume.emptyDir}
@@ -276,7 +276,7 @@
         <h3 class="mb-3 text-title-medium text-on-surface">Conditions</h3>
         <div class="space-y-2">
           {#each conditions as condition, i (i)}
-            <div class="rounded-lg border border-outline-variant bg-surface-container-low p-3">
+            <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
               <div class="flex items-center justify-between">
                 <p class="text-body-medium font-medium text-on-surface">{condition.type}</p>
                 <span

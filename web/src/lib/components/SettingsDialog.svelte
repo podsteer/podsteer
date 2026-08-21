@@ -76,7 +76,7 @@
 
   <div
     class="fixed top-1/2 left-1/2 z-50 flex h-[36rem] max-h-[85vh] w-[52rem] max-w-[92vw]
-           -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border
+           -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-sm border
            border-outline-variant bg-surface-container-high shadow-level-3"
     role="dialog"
     aria-modal="true"
@@ -96,7 +96,7 @@
           type="button"
           onclick={() => (section = entry.id)}
           aria-current={section === entry.id ? 'page' : undefined}
-          class="state-layer flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left
+          class="state-layer flex items-center gap-2.5 rounded-sm px-2.5 py-2 text-left
                  transition-colors duration-100
                  {section === entry.id
                    ? 'bg-primary/12 text-primary'
@@ -171,7 +171,7 @@
                     type="button"
                     onclick={() => preferences.setTheme(choice)}
                     aria-pressed={preferences.themePreference === choice}
-                    class="state-layer h-9 min-w-24 rounded-xs border px-4 text-label-large
+                    class="state-layer h-9 min-w-24 rounded-sm border px-4 text-label-large
                            transition-colors duration-150 ease-standard
                            {preferences.themePreference === choice
                              ? 'border-transparent bg-secondary-container text-on-secondary-container'
@@ -200,7 +200,7 @@
                   <button
                     type="button"
                     onclick={() => preferences.setPageSize(size as PageSize)}
-                    class="state-layer h-8 min-w-12 rounded-xs border px-3 text-label-large
+                    class="state-layer h-8 min-w-12 rounded-sm border px-3 text-label-large
                            transition-colors duration-150 ease-standard
                            {preferences.pageSize === size
                              ? 'border-transparent bg-secondary-container text-on-secondary-container'
@@ -290,7 +290,7 @@
               {/each}
             </div>
 
-            <p class="mt-5 rounded-lg border border-outline-variant/50 bg-surface-container px-3 py-2
+            <p class="mt-5 rounded-sm border border-outline-variant/50 bg-surface-container px-3 py-2
                       text-body-small leading-relaxed text-on-surface-variant">
               Samples are capacity figures only — no object names, no logs, no manifests. They are
               written to your own configuration directory and are never sent anywhere. Choosing

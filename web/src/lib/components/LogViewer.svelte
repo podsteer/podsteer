@@ -201,7 +201,7 @@
       <select
         bind:value={selectedContainer}
         onchange={restartStream}
-        class="h-8 rounded-xs border border-outline bg-surface px-2 text-sm text-on-surface"
+        class="h-8 rounded-sm border border-outline bg-surface px-2 text-sm text-on-surface"
       >
         <option value="">All containers</option>
         {#each allContainers as container}
@@ -214,7 +214,7 @@
     <select
       bind:value={tailLines}
       onchange={restartStream}
-      class="h-8 rounded-xs border border-outline bg-surface px-2 text-sm text-on-surface"
+      class="h-8 rounded-sm border border-outline bg-surface px-2 text-sm text-on-surface"
     >
       <option value={100}>Last 100 lines</option>
       <option value={500}>Last 500 lines</option>
@@ -226,7 +226,7 @@
     <button
       type="button"
       onclick={toggleFollow}
-      class="h-8 rounded-xs px-3 text-sm transition-colors
+      class="h-8 rounded-sm px-3 text-sm transition-colors
              {follow ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'}"
       title={follow ? 'Disable follow mode' : 'Enable follow mode'}
     >
@@ -237,7 +237,7 @@
     <button
       type="button"
       onclick={toggleAutoScroll}
-      class="h-8 rounded-xs px-3 text-sm transition-colors
+      class="h-8 rounded-sm px-3 text-sm transition-colors
              {autoScroll ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'}"
       title={autoScroll ? 'Disable auto-scroll' : 'Enable auto-scroll'}
     >
@@ -248,7 +248,7 @@
     <button
       type="button"
       onclick={clearLogs}
-      class="h-8 rounded-xs bg-surface-container px-3 text-sm text-on-surface-variant hover:bg-surface-container-high"
+      class="h-8 rounded-sm bg-surface-container px-3 text-sm text-on-surface-variant hover:bg-surface-container-high"
       title="Clear logs"
     >
       Clear

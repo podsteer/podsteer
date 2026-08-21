@@ -50,7 +50,7 @@
 </script>
 
 <article
-  class="overflow-hidden rounded-lg border border-outline-variant/40 border-l-[3px] bg-surface-container-low {style.accent}"
+  class="overflow-hidden rounded-sm border border-outline-variant/40 border-l-[3px] bg-surface-container-low {style.accent}"
 >
   <div class="flex items-start gap-3 p-3">
     <Icon class="mt-0.5 size-[18px] shrink-0 {style.iconClass}" strokeWidth={2} />
@@ -85,7 +85,7 @@
             type="button"
             onclick={() => (expanded = !expanded)}
             aria-expanded={expanded}
-            class="state-layer flex items-center gap-1 rounded-md px-1.5 py-1 text-label-medium
+            class="state-layer flex items-center gap-1 rounded-sm px-1.5 py-1 text-label-medium
                    text-on-surface-variant transition-colors duration-100
                    hover:bg-surface-container hover:text-on-surface"
           >
@@ -102,7 +102,7 @@
           <button
             type="button"
             onclick={() => onopen?.(finding.kindId)}
-            class="state-layer flex items-center gap-1 rounded-md px-1.5 py-1 text-label-medium
+            class="state-layer flex items-center gap-1 rounded-sm px-1.5 py-1 text-label-medium
                    text-primary transition-colors duration-100 hover:bg-primary/10"
           >
             Open list

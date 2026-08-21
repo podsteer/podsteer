@@ -96,7 +96,7 @@
     onclick={() => (open = !open)}
     aria-expanded={open}
     aria-haspopup="menu"
-    class="state-layer flex cursor-pointer items-center gap-1 rounded-xs px-1 opacity-70
+    class="state-layer flex cursor-pointer items-center gap-1 rounded-sm px-1 opacity-70
            transition-opacity duration-100 hover:opacity-100"
   >
     Share on
@@ -105,7 +105,7 @@
 
   {#if open}
     <div
-      class="absolute bottom-full left-0 z-50 mb-1.5 w-48 overflow-hidden rounded-lg
+      class="absolute bottom-full left-0 z-50 mb-1.5 w-48 overflow-hidden rounded-sm
              border border-outline-variant/60 bg-surface-container-high py-1.5 shadow-level-2"
       role="menu"
     >

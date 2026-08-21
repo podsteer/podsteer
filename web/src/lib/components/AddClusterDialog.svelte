@@ -133,7 +133,7 @@
 
   <div class="pointer-events-none fixed inset-0 z-50 grid place-items-center p-4">
     <div
-      class="pointer-events-auto flex max-h-[85vh] w-[42rem] max-w-[94vw] flex-col rounded-xl
+      class="pointer-events-auto flex max-h-[85vh] w-[42rem] max-w-[94vw] flex-col rounded-sm
              border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
       role="dialog"
       aria-modal="true"

@@ -32,7 +32,7 @@
 
   <div
     class="fixed top-1/2 left-1/2 z-[70] w-[28rem] max-w-[90vw] -translate-x-1/2 -translate-y-1/2
-           rounded-xl border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
+           rounded-sm border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
     aria-modal="true"
     aria-label="Delete resource"

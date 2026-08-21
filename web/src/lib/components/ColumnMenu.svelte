@@ -53,7 +53,7 @@
 
   {#if open}
     <div
-      class="absolute top-full right-0 z-30 mt-1 w-56 rounded-lg border border-outline-variant/60
+      class="absolute top-full right-0 z-30 mt-1 w-56 rounded-sm border border-outline-variant/60
              bg-surface-container-high py-1.5 shadow-level-3"
       role="menu"
     >
@@ -65,7 +65,7 @@
         {#each columns as column (column.id)}
           <li>
             <label
-              class="flex cursor-pointer items-center gap-2.5 rounded-md px-3 py-1.5 text-body-small
+              class="flex cursor-pointer items-center gap-2.5 rounded-sm px-3 py-1.5 text-body-small
                      text-on-surface transition-colors duration-75 hover:bg-surface-container-highest
                      {column.pinned ? 'cursor-default opacity-50' : ''}"
             >

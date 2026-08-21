@@ -239,7 +239,7 @@
         <select
           value={activeContainer}
           onchange={(e) => switchContainer((e.target as HTMLSelectElement).value)}
-          class="h-6 rounded-xs border border-outline bg-surface px-1.5 text-xs text-on-surface"
+          class="h-6 rounded-sm border border-outline bg-surface px-1.5 text-xs text-on-surface"
         >
           {#each containers as c}
             <option value={c}>{c}</option>
@@ -255,7 +255,7 @@
         <button
           type="button"
           onclick={reconnect}
-          class="flex items-center gap-1 rounded-xs bg-primary px-2 py-1 text-xs text-on-primary hover:bg-primary/90"
+          class="flex items-center gap-1 rounded-sm bg-primary px-2 py-1 text-xs text-on-primary hover:bg-primary/90"
         >
           <svg viewBox="0 0 24 24" class="size-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />

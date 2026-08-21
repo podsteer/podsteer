@@ -59,7 +59,7 @@
   aria-label={label}
   aria-busy={loading}
   class="state-layer no-drag inline-flex h-8 shrink-0 items-center justify-center gap-2
-         rounded-xs px-4 text-label-large whitespace-nowrap
+         rounded-sm px-4 text-label-large whitespace-nowrap
          transition-[box-shadow,opacity] duration-150 ease-standard
          disabled:pointer-events-none disabled:opacity-38
          {VARIANT_CLASSES[variant]} {className}"

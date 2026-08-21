@@ -183,7 +183,7 @@
   <!-- Header -->
   <div class="mb-8 flex items-start justify-between gap-4">
     <div class="flex items-center gap-3">
-      <div class="grid size-10 place-items-center rounded-lg bg-primary/10">
+      <div class="grid size-10 place-items-center rounded-sm bg-primary/10">
         <Server class="size-5 text-primary" strokeWidth={1.8} />
       </div>
       <div>
@@ -244,7 +244,7 @@
               onclick={() => organisation.toggleCollapsed(project.id)}
               aria-expanded={!projectCollapsed}
               aria-controls="project-{project.id}"
-              class="state-layer -mx-1 flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1
+              class="state-layer -mx-1 flex min-w-0 flex-1 items-center gap-2 rounded-sm px-1 py-1
                      text-left transition-colors duration-150"
             >
               <ChevronDown
@@ -278,7 +278,7 @@
                 {@const isTarget = dropTargetKey === key && draggingId !== null}
                 <section
                   aria-label="{group.name} group in {project.name}"
-                  class="rounded-xl transition-colors duration-150
+                  class="rounded-sm transition-colors duration-150
                          {isTarget
                            ? 'bg-primary/[0.06] outline outline-2 outline-dashed outline-primary/40'
                            : ''}"
@@ -295,7 +295,7 @@
                       onclick={() => organisation.toggleCollapsed(key)}
                       aria-expanded={!groupCollapsed}
                       aria-controls="group-{key}"
-                      class="state-layer -mx-1 flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1
+                      class="state-layer -mx-1 flex min-w-0 flex-1 items-center gap-2 rounded-sm px-1 py-1
                              text-left transition-colors duration-150"
                     >
                       <ChevronDown
@@ -359,7 +359,7 @@
                                 activate(cluster.id)
                               }
                             }}
-                            class="h-full rounded-md focus-visible:outline focus-visible:outline-2
+                            class="h-full rounded-sm focus-visible:outline focus-visible:outline-2
                                    focus-visible:outline-primary"
                           >
                           <Card
@@ -369,7 +369,7 @@
                                    {open ? 'border-primary/30 bg-primary/[0.03]' : ''}"
                           >
                             <div class="mb-3 flex gap-3">
-                            <div class="grid size-9 shrink-0 place-items-center rounded-lg
+                            <div class="grid size-9 shrink-0 place-items-center rounded-sm
                                         {open ? 'bg-primary/10' : 'bg-surface-container-high'}">
                               <Server
                                 class="size-4.5 {open ? 'text-primary' : 'text-on-surface-variant/70'}"
@@ -539,7 +539,7 @@
                              at all; the grip appears on hover, which nobody
                              discovers unless something tells them to try. -->
                         <p
-                          class="col-span-full rounded-lg border border-dashed border-outline-variant
+                          class="col-span-full rounded-sm border border-dashed border-outline-variant
                                  px-4 py-5 text-center text-body-small text-on-surface-variant/60"
                         >
                           Empty — drag a cluster here, or use the folder button on its card

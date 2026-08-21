@@ -133,7 +133,7 @@
       aria-label="Move to"
       data-move-menu
       use:place={anchor}
-      class="fixed z-[70] max-h-80 w-64 overflow-y-auto rounded-md border
+      class="fixed z-[70] max-h-80 w-64 overflow-y-auto rounded-sm border
              border-outline-variant bg-surface-container-high py-1 shadow-level-2"
     >
       {#each destinations as project (project.id)}

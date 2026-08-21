@@ -44,7 +44,7 @@
 
   <div
     class="fixed top-1/2 left-1/2 z-[70] flex h-[80vh] w-[48rem] max-w-[95vw] -translate-x-1/2 -translate-y-1/2
-           flex-col rounded-xl border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
+           flex-col rounded-sm border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
     aria-modal="true"
     aria-label="Edit resource"

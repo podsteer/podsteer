@@ -114,7 +114,7 @@
         type="button"
         onclick={() => session.selectKind(OVERVIEW_KIND_ID)}
         aria-current={onOverview ? 'page' : undefined}
-        class="group/item flex w-full items-center gap-2 rounded-md px-2 py-[7px] text-left
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
                transition-all duration-100 ease-standard
                {onOverview
                  ? 'bg-primary/12 text-primary'
@@ -158,7 +158,7 @@
           type="button"
           onclick={() => preferences.toggleCategory(section.category)}
           aria-expanded={open}
-          class="state-layer group flex w-full items-center gap-2 rounded-md px-2 py-1.5
+          class="state-layer group flex w-full items-center gap-2 rounded-sm px-2 py-1.5
                  text-on-surface-variant transition-colors duration-100 hover:bg-surface-container"
         >
           <ChevronDown
@@ -195,7 +195,7 @@
                     onclick={() => session.selectKind(kind.id)}
                     aria-current={selected ? 'page' : undefined}
                     title={kind.group ? `${kind.kind} · ${kind.group}/${kind.version}` : kind.kind}
-                    class="group/item flex w-full items-center gap-2 rounded-md px-2 py-[5px] text-left
+                    class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
                            transition-all duration-100 ease-standard
                            {selected
                              ? 'bg-primary/12 text-primary'

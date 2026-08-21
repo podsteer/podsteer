@@ -320,7 +320,7 @@
        receives the click that dismisses the dialog. -->
   <div class="pointer-events-none fixed inset-0 z-50 grid place-items-center p-4">
     <div
-      class="pointer-events-auto flex max-h-[85vh] w-[44rem] max-w-[94vw] flex-col rounded-xl
+      class="pointer-events-auto flex max-h-[85vh] w-[44rem] max-w-[94vw] flex-col rounded-sm
              border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
       role="dialog"
       aria-modal="true"
@@ -443,7 +443,7 @@
                   role="menu"
                   aria-label="{project.name} actions"
                   use:anchorMenu={{ rect: menuAnchor, key: null }}
-                  class="fixed z-[60] w-52 overflow-hidden rounded-md border
+                  class="fixed z-[60] w-52 overflow-hidden rounded-sm border
                          border-outline-variant bg-surface-container-highest py-1 shadow-level-2"
                 >
                   <button type="button" role="menuitem"
@@ -557,7 +557,7 @@
                       role="menu"
                       aria-label="{group.name} actions"
                       use:anchorMenu={{ rect: menuAnchor, key: movingGroup }}
-                      class="fixed z-[60] max-h-[60vh] w-56 overflow-y-auto rounded-md border
+                      class="fixed z-[60] max-h-[60vh] w-56 overflow-y-auto rounded-sm border
                              border-outline-variant bg-surface-container-highest py-1 shadow-level-2"
                     >
                       {#if movingGroup === group.id && !group.isDefault}

@@ -137,7 +137,7 @@
       class="field h-8 w-full px-3 text-body-medium"
     />
 
-    <div class="min-h-0 flex-1 overflow-y-auto rounded-lg border border-outline-variant/50">
+    <div class="min-h-0 flex-1 overflow-y-auto rounded-sm border border-outline-variant/50">
       {#each groups as [ecosystem, entries] (ecosystem)}
         <h4
           class="sticky top-0 z-10 border-b border-outline-variant/50 bg-surface-container-high
