@@ -59,7 +59,12 @@
 <div class="relative">
   <button
     type="button"
-    onclick={() => (open = !open)}
+    onclick={(event) => {
+      // The card around this button activates the cluster on click. Opening a
+      // menu must not also connect to it.
+      event.stopPropagation()
+      open = !open
+    }}
     aria-label="Move {clusterId} to a project or group"
     aria-expanded={open}
     title="Move to…"
@@ -79,7 +84,10 @@
       tabindex="-1"
       aria-label="Close menu"
       class="fixed inset-0 z-40 cursor-default"
-      onclick={() => (open = false)}
+      onclick={(event) => {
+        event.stopPropagation()
+        open = false
+      }}
     ></button>
 
     <div
@@ -105,7 +113,10 @@
             type="button"
             role="menuitemradio"
             aria-checked={current}
-            onclick={() => choose(project.id, group.id)}
+            onclick={(event) => {
+              event.stopPropagation()
+              choose(project.id, group.id)
+            }}
             class="state-layer flex w-full items-center gap-2 py-2 pl-5 pr-3 text-left text-body-medium
                    {current ? 'text-on-surface' : 'text-on-surface-variant'}"
           >

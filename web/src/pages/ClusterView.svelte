@@ -5,7 +5,12 @@
   organisation: project, then group, then clusters. Opening is an explicit
   action rather than something that happens at launch.
 
-  Four things here are deliberate:
+  Five things here are deliberate:
+
+  • **The card is the button.** Clicking anywhere on it opens the cluster, or
+    brings its tab forward if it is already open, so the common action needs no
+    aim. The icons beside it are the uncommon ones and stop the click reaching
+    the card.
 
   • **Both levels collapse, and the state persists.** Someone with forty
     contexts across six systems wants most of them shut, and wants them still
@@ -33,19 +38,15 @@
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
   import OrganiseDialog from '$lib/components/OrganiseDialog.svelte'
   import MoveClusterMenu from '$lib/components/MoveClusterMenu.svelte'
-  import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import { groupKey, organisation } from '$stores/organisation.svelte'
   import { workspace } from '$stores/workspace.svelte'
   import {
     Server,
-    FolderOpen,
     FolderTree,
-    CheckCircle,
-    Globe,
-    User,
     Layers,
     ChevronDown,
     GripVertical,
+    Star,
     Unplug,
   } from '@lucide/svelte'
 
@@ -116,6 +117,25 @@
     } finally {
       disconnectingId = null
     }
+  }
+
+  /**
+   * Opens a cluster, or brings its tab forward when it is already open.
+   *
+   * A selection in progress is left alone: a click fires when the pointer goes
+   * down and up on the same element, which is exactly what selecting a context
+   * name to copy it looks like. Opening a cluster because somebody wanted the
+   * text would be the worst kind of surprise, since it costs a connection.
+   */
+  function activate(clusterId: string): void {
+    if ((window.getSelection()?.toString() ?? '') !== '') return
+    if (workspace.openIds.has(clusterId)) void workspace.focus(clusterId)
+    else void workspace.open(clusterId)
+  }
+
+  /** What activating this card would do, for anyone who cannot see it. */
+  function activateLabel(clusterId: string, isOpen: boolean): string {
+    return isOpen ? `Go to the ${clusterId} tab` : `Open ${clusterId}`
   }
 
   /** How many of a set of clusters are currently open. */
@@ -279,10 +299,35 @@
                           ondragend={endDrag}
                           class="transition-opacity duration-150 {dragging ? 'opacity-40' : ''}"
                         >
-                          <Card variant="outlined" class="group relative flex h-full flex-col gap-3 p-4
-                                transition-all duration-150 hover:border-outline hover:shadow-sm
-                                {open ? 'border-primary/30 bg-primary/[0.03]' : ''}">
-
+                          <!-- The card IS the primary action, so the whole
+                               surface activates it. Wrapping the card rather
+                               than overlaying it keeps the content clickable
+                               in its own right — an overlay would need
+                               pointer-events-none underneath, which takes text
+                               selection away from the context name. A div with
+                               a role rather than Card's `interactive` button,
+                               because the icons inside are buttons and nesting
+                               one inside another is invalid. -->
+                          <div
+                            role="button"
+                            tabindex="0"
+                            aria-label={activateLabel(cluster.id, open)}
+                            onclick={() => activate(cluster.id)}
+                            onkeydown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault()
+                                activate(cluster.id)
+                              }
+                            }}
+                            class="h-full rounded-md focus-visible:outline focus-visible:outline-2
+                                   focus-visible:outline-primary"
+                          >
+                          <Card
+                            variant="outlined"
+                            class="group relative flex h-full cursor-pointer gap-3 p-4
+                                   transition-all duration-150 hover:border-outline hover:shadow-sm
+                                   {open ? 'border-primary/30 bg-primary/[0.03]' : ''}"
+                          >
                             <!-- Grip: arms the drag without making the card
                                  permanently draggable, which would take text
                                  selection away from the cluster name. -->
@@ -290,6 +335,7 @@
                               role="presentation"
                               onpointerdown={() => (armedId = cluster.id)}
                               onpointerup={() => (armedId = null)}
+                              onclick={(event) => event.stopPropagation()}
                               title="Drag to another group"
                               class="absolute left-0.5 top-1/2 -translate-y-1/2 cursor-grab p-1
                                      text-on-surface-variant/25 opacity-0 transition-opacity duration-150
@@ -298,82 +344,74 @@
                               <GripVertical class="size-4" strokeWidth={1.8} />
                             </div>
 
-                            <!-- Identity and detail, on their own row. The
-                                 actions used to sit beside this, and a third
-                                 button plus a long context name truncated the
-                                 one thing the card exists to show. -->
-                            <div class="flex items-start gap-3">
-                              <div class="grid size-9 shrink-0 place-items-center rounded-lg
-                                          {open ? 'bg-primary/10' : 'bg-surface-container-high'}">
-                                <Server
-                                  class="size-4.5 {open ? 'text-primary' : 'text-on-surface-variant/70'}"
-                                  strokeWidth={1.8}
-                                />
-                              </div>
-
-                              <div class="min-w-0 flex-1">
-                                <div class="flex flex-wrap items-center gap-2">
-                                  <h5 class="truncate text-title-small font-semibold text-on-surface" data-selectable>
-                                    {cluster.id}
-                                  </h5>
-                                  {#if cluster.isCurrent}
-                                    <span class="flex items-center gap-0.5 rounded-full bg-secondary-container
-                                                 px-1.5 py-0.5 text-[10px] font-medium text-on-secondary-container">
-                                      <CheckCircle class="size-2.5" strokeWidth={2.5} />
-                                      current
-                                    </span>
-                                  {/if}
-                                  {#if open}
-                                    <span class="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px]
-                                                 font-medium text-primary">
-                                      open
-                                    </span>
-                                  {/if}
-                                </div>
-
-                                <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-body-small text-on-surface-variant/70">
-                                  <span class="flex items-center gap-1 truncate">
-                                    <Globe class="size-3" strokeWidth={1.8} />
-                                    {cluster.host}
-                                  </span>
-                                  <span class="flex items-center gap-1">
-                                    <User class="size-3" strokeWidth={1.8} />
-                                    {cluster.authInfo || 'no user'}
-                                  </span>
-                                  {#if cluster.defaultNamespace}
-                                    <span class="flex items-center gap-1">
-                                      <FolderOpen class="size-3" strokeWidth={1.8} />
-                                      {cluster.defaultNamespace}
-                                    </span>
-                                  {/if}
-                                </div>
-                              </div>
+                            <div class="grid size-9 shrink-0 place-items-center rounded-lg
+                                        {open ? 'bg-primary/10' : 'bg-surface-container-high'}">
+                              <Server
+                                class="size-4.5 {open ? 'text-primary' : 'text-on-surface-variant/70'}"
+                                strokeWidth={1.8}
+                              />
                             </div>
 
-                            <!-- Footer: what the cluster IS on the left, what
-                                 you can do with it on the right. `mt-auto`
-                                 holds it to the bottom so neighbouring cards
-                                 line up whether or not one of them has a
-                                 version to report. -->
-                            <div class="mt-auto flex items-center justify-between gap-2 pt-1">
-                              <div class="min-w-0">
-                                {#if cluster.isReachable}
-                                  <StatusIndicator
-                                    tone="success"
-                                    label="{cluster.version} · {cluster.platform}"
-                                  />
+                            <!-- Name, then who you are, then where it is, then
+                                 what it runs — each on its own line, coarsest
+                                 first. The three below the name share one size
+                                 and one tone, so the name is the only thing
+                                 competing for attention. -->
+                            <div class="min-w-0 flex-1">
+                              <div class="flex items-center gap-2">
+                                <h5
+                                  class="truncate text-title-small font-semibold text-on-surface"
+                                  data-selectable
+                                >
+                                  {cluster.id}
+                                </h5>
+                                {#if open}
+                                  <span class="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px]
+                                               font-medium text-primary">
+                                    open
+                                  </span>
                                 {/if}
                               </div>
 
-                              <div class="flex shrink-0 items-center gap-1">
+                              <p class="mt-0.5 truncate text-body-small text-on-surface-variant/70">
+                                {cluster.authInfo || 'no user'}
+                              </p>
+                              <p class="truncate text-body-small text-on-surface-variant/70">
+                                {cluster.host}
+                              </p>
+                              {#if cluster.isReachable}
+                                <p class="truncate text-body-small text-on-surface-variant/70">
+                                  {cluster.version} · {cluster.platform}
+                                </p>
+                              {/if}
+                            </div>
+
+                            <!-- Star at the top, actions at the foot. -->
+                            <div class="flex shrink-0 flex-col items-end justify-between gap-2">
+                              {#if cluster.isCurrent}
+                                <!-- An indicator, not a control: it reports
+                                     which context kubectl would use, and
+                                     changing that means writing to the
+                                     kubeconfig, which PodSteer does not do. -->
+                                <span
+                                  class="pointer-events-none text-primary"
+                                  title="Your kubeconfig's current context"
+                                  aria-label="Current context"
+                                >
+                                  <Star class="size-4" strokeWidth={2} fill="currentColor" />
+                                </span>
+                              {:else}
+                                <span class="size-4" aria-hidden="true"></span>
+                              {/if}
+
+                              <div class="flex items-center gap-0.5">
                                 {#if open}
-                                  <!-- Disconnecting from here rather than only
-                                       from the tab strip: someone tidying up is
-                                       looking at the list of everything, not at
-                                       one tab. -->
                                   <button
                                     type="button"
-                                    onclick={() => disconnect(cluster.id)}
+                                    onclick={(event) => {
+                                      event.stopPropagation()
+                                      disconnect(cluster.id)
+                                    }}
                                     disabled={disconnectingId === cluster.id}
                                     aria-label="Disconnect {cluster.id}"
                                     title="Disconnect"
@@ -386,24 +424,10 @@
                                 {/if}
 
                                 <MoveClusterMenu clusterId={cluster.id} />
-
-                                <Button
-                                  variant={open ? 'text' : cluster.isCurrent ? 'filled' : 'tonal'}
-                                  loading={workspace.connectingTo === cluster.id}
-                                  disabled={workspace.connectingTo !== null && workspace.connectingTo !== cluster.id}
-                                  onclick={() => workspace.open(cluster.id)}
-                                >
-                                  {#if workspace.connectingTo === cluster.id}
-                                    Connecting
-                                  {:else if open}
-                                    Go to tab
-                                  {:else}
-                                    Open
-                                  {/if}
-                                </Button>
                               </div>
                             </div>
                           </Card>
+                          </div>
                         </div>
                       {/each}
 
