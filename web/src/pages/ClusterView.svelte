@@ -57,17 +57,27 @@
   let organiseOpen = $state(false)
 
   /**
-   * A clock, so "connected for 3m" does not sit at "0s" until something else
-   * happens to redraw.
+   * A clock, so "Connected for 12s" counts rather than sitting where it
+   * started.
+   *
+   * Every second, because that figure is shown in seconds for its first
+   * minute — a slower tick made it jump 5s, 35s, 1m, which reads as broken
+   * rather than as coarse.
+   *
+   * It runs only while something is connected, since "Connected for" is the
+   * only line that counts upward. "Last connected" and "Never connected" do
+   * not change meaningfully while anyone is looking at them, and the picker
+   * unmounts whenever a tab is in front — so returning Home re-mounts it and
+   * re-reads the clock, which is when those two want to be right.
    *
    * Not the refresh interval, and deliberately not governed by it: that
-   * setting says how often to RE-READ A CLUSTER, and this reads nothing. It is
-   * a render concern with no I/O behind it, so it ticks at a rate that keeps a
-   * minute-resolution figure honest and stops when the picker unmounts.
+   * setting says how often to RE-READ A CLUSTER. This reads nothing and makes
+   * no request.
    */
   let now = $state(Date.now())
   $effect(() => {
-    const clock = setInterval(() => (now = Date.now()), 30_000)
+    if (workspace.sessions.length === 0) return
+    const clock = setInterval(() => (now = Date.now()), 1000)
     return () => clearInterval(clock)
   })
 
