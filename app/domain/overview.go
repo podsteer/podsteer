@@ -166,6 +166,17 @@ type Finding struct {
 	OldestSeconds int64
 }
 
+// Truncated reports whether the cap dropped objects that Count includes.
+//
+// Count exceeding the listed subjects is not enough on its own to mean that:
+// grouped events collapse repeats of one message into a single row, so a
+// finding can honestly say "2 warning events" while listing one line. Only the
+// cap actually withholds anything, so only the cap is reported as doing so —
+// an "and 1 more" that expands to nothing is worse than no note at all.
+func (f Finding) Truncated() bool {
+	return len(f.Subjects) >= maxSubjects && f.Count > len(f.Subjects)
+}
+
 // ResourceUsage is one dimension of cluster capacity, in a single unit.
 //
 // It carries four numbers that are routinely conflated. Requests decide what
@@ -1469,9 +1480,13 @@ func eventFindings(events []Event, existing []Finding, now time.Time) []Finding 
 
 	type group struct {
 		subjects []Subject
-		count    int
-		newest   time.Time
-		message  string
+		// seen deduplicates the rows: a pod that logs the same message twice
+		// is one line saying so, not the same line twice. The event count
+		// above it is what states how often it happened.
+		seen    map[string]bool
+		count   int
+		newest  time.Time
+		message string
 	}
 
 	groups := make(map[string]*group)
@@ -1487,7 +1502,7 @@ func eventFindings(events []Event, existing []Finding, now time.Time) []Finding 
 
 		current, seen := groups[event.Reason()]
 		if !seen {
-			current = &group{message: event.Message()}
+			current = &group{message: event.Message(), seen: make(map[string]bool, 4)}
 			groups[event.Reason()] = current
 			order = append(order, event.Reason())
 		}
@@ -1497,7 +1512,9 @@ func eventFindings(events []Event, existing []Finding, now time.Time) []Finding 
 			current.newest = event.LastSeen()
 			current.message = event.Message()
 		}
-		if len(current.subjects) < maxSubjects {
+		row := string(event.Namespace()) + "/" + event.InvolvedName() + "\x00" + event.Message()
+		if len(current.subjects) < maxSubjects && !current.seen[row] {
+			current.seen[row] = true
 			current.subjects = append(current.subjects, Subject{
 				Kind:      event.InvolvedKind(),
 				Namespace: event.Namespace(),

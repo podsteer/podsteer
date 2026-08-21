@@ -610,6 +610,57 @@ func TestEventFindingsSkipAlreadyExplainedObjects(t *testing.T) {
 	}
 }
 
+// Two identical events on the same object are one line, not two.
+//
+// This is what a repeated warning actually looks like — the same message from
+// the same pod, minutes apart — and listing it twice told the operator nothing
+// the count above it had not. It also has to be true for the list to render at
+// all: the frontend keys the rows by the object they name.
+func TestEventFindingsListRepeatsOfOneMessageOnce(t *testing.T) {
+	t.Parallel()
+
+	newEvent := func(name, message string, ago time.Duration) domain.Event {
+		t.Helper()
+		event, err := domain.NewEvent(domain.EventSpec{
+			Name: name, Namespace: "default", ClusterID: "dev",
+			Type: domain.EventWarning, Reason: "FailedDeclare", Message: message,
+			InvolvedKind: "Pod", InvolvedName: "queue-1", Count: 1,
+			FirstSeen: overviewNow.Add(-ago), LastSeen: overviewNow.Add(-ago),
+		})
+		if err != nil {
+			t.Fatalf("building event: %v", err)
+		}
+		return event
+	}
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Events: []domain.Event{
+			newEvent("q.1", "failed to declare queue", 8*time.Minute),
+			newEvent("q.2", "failed to declare queue", 2*time.Minute),
+			newEvent("q.3", "failed to declare exchange", time.Minute),
+		},
+		Now: overviewNow,
+	})
+
+	finding, ok := findingByTitle(overview.Findings, "FailedDeclare")
+	if !ok {
+		t.Fatalf("findings = %v, want FailedDeclare", titles(overview.Findings))
+	}
+	// Three events, of which two say the same thing: the extent is still 3.
+	if finding.Count != 3 {
+		t.Errorf("count = %d, want 3 — the count states how often it happened", finding.Count)
+	}
+	if len(finding.Subjects) != 2 {
+		t.Fatalf("subjects = %+v, want the two distinct messages", finding.Subjects)
+	}
+	// Nothing was withheld, so nothing must claim to have been: an
+	// "and 1 more" here expands to an empty list.
+	if finding.Truncated() {
+		t.Error("Truncated() is true although only duplicates were collapsed")
+	}
+}
+
 // Stale events are history, not the current state of the cluster.
 func TestEventFindingsIgnoreOldEvents(t *testing.T) {
 	t.Parallel()

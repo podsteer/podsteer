@@ -244,7 +244,7 @@ func toFindings(findings []domain.Finding) []Finding {
 			Subjects:      subjects,
 			Count:         finding.Count,
 			KindID:        finding.KindID,
-			Truncated:     finding.Count > len(subjects),
+			Truncated:     finding.Truncated(),
 			OldestSeconds: finding.OldestSeconds,
 		})
 	}
