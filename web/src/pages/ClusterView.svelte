@@ -38,6 +38,8 @@
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
   import OrganiseDialog from '$lib/components/OrganiseDialog.svelte'
   import MoveClusterMenu from '$lib/components/MoveClusterMenu.svelte'
+  import { formatConnection, formatConnectionTitle } from '$lib/format'
+  import { clusterActivity } from '$stores/activity.svelte'
   import { groupKey, organisation } from '$stores/organisation.svelte'
   import { workspace } from '$stores/workspace.svelte'
   import {
@@ -53,6 +55,21 @@
   } from '@lucide/svelte'
 
   let organiseOpen = $state(false)
+
+  /**
+   * A clock, so "connected for 3m" does not sit at "0s" until something else
+   * happens to redraw.
+   *
+   * Not the refresh interval, and deliberately not governed by it: that
+   * setting says how often to RE-READ A CLUSTER, and this reads nothing. It is
+   * a render concern with no I/O behind it, so it ticks at a rate that keeps a
+   * minute-resolution figure honest and stops when the picker unmounts.
+   */
+  let now = $state(Date.now())
+  $effect(() => {
+    const clock = setInterval(() => (now = Date.now()), 30_000)
+    return () => clearInterval(clock)
+  })
 
   /** The cluster currently being dragged, if any. */
   let draggingId = $state<string | null>(null)
@@ -294,6 +311,7 @@
                       {#each group.clusters as cluster (cluster.id)}
                         {@const open = workspace.openIds.has(cluster.id)}
                         {@const dragging = draggingId === cluster.id}
+                        {@const connectedAt = clusterActivity.connectedAt(cluster.id)}
                         <div
                           role="listitem"
                           draggable={armedId === cluster.id}
@@ -418,10 +436,11 @@
                                  cluster has none until it is opened. -->
                             <div class="mt-auto flex items-center justify-between gap-2 border-t
                                         border-outline-variant/60 pt-2.5">
-                              <p class="min-w-0 truncate text-body-small text-on-surface-variant/70">
-                                {#if cluster.isReachable}
-                                  {cluster.version} | {cluster.platform}
-                                {/if}
+                              <p
+                                class="min-w-0 truncate text-body-small text-on-surface-variant/70"
+                                title={formatConnectionTitle(connectedAt)}
+                              >
+                                {formatConnection(connectedAt, open, now)}
                               </p>
 
                               <div class="flex shrink-0 items-center gap-0.5">

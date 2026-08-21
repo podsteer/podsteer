@@ -19,6 +19,7 @@ import {
   type Unsubscribe,
 } from '$lib/api/client'
 import { ApiError, toApiError } from '$lib/api/errors'
+import { clusterActivity } from './activity.svelte'
 import { ClusterSession, type LoadStatus } from './session.svelte'
 
 class Workspace {
@@ -111,6 +112,9 @@ class Workspace {
 
       const session = this.#adopt(cluster)
       this.activeClusterId = cluster.id
+      // Recorded here rather than in the picker: this is the moment a
+      // connection is actually made, and it is the only one.
+      clusterActivity.markConnected(cluster.id)
 
       // Mark it open in the picker without re-reading the kubeconfig.
       this.clusters = this.clusters.map((entry) => (entry.id === cluster.id ? cluster : entry))

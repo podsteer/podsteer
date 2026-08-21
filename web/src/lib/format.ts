@@ -89,3 +89,31 @@ export function podTone(pod: Pod): Tone {
 export function formatRestarts(restarts: number): string {
   return restarts === 0 ? '0' : String(restarts)
 }
+
+/**
+ * How long a cluster has been connected, or how long ago it last was.
+ *
+ * `connectedAt` is when the connection was MADE, so one timestamp phrases both
+ * — the elapsed time is the same figure, only the tense differs.
+ */
+export function formatConnection(
+  connectedAt: number | null,
+  isOpen: boolean,
+  now: number,
+): string {
+  if (connectedAt === null) {
+    // A cluster open without a recorded time is possible: storage can be
+    // cleared under a running application. Say the true part rather than
+    // counting from a moment nobody knows.
+    return isOpen ? 'Connected' : 'Never connected'
+  }
+
+  const elapsed = formatAge(Math.max(0, now - connectedAt) / 1000)
+  return isOpen ? `Connected for ${elapsed}` : `Last connected ${elapsed} ago`
+}
+
+/** The exact moment behind formatConnection's relative phrasing. */
+export function formatConnectionTitle(connectedAt: number | null): string | undefined {
+  if (connectedAt === null) return undefined
+  return `Connected on ${new Date(connectedAt).toLocaleString()}`
+}
