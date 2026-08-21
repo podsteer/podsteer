@@ -18,7 +18,6 @@
   import TrendChart from '$lib/components/TrendChart.svelte'
   import { formatAge } from '$lib/format'
   import { ClusterHistory, TREND_WINDOWS } from '$stores/history.svelte'
-  import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import {
     CheckCircle2,
@@ -86,18 +85,19 @@
 
   $effect(() => {
     const current = history
+
+    // Reading lastRefreshedAt is what makes that true. It subscribes this
+    // effect to the session's refresh cycle, so the chart reloads in the same
+    // turn the numbers above it do — one timer, one moment.
+    //
+    // A second setInterval here was the previous approach and could not keep
+    // that promise: started at a different instant, it drifted out of phase
+    // with the session's timer, and clamping it to the backend's sampling
+    // cadence put the chart on a different period entirely whenever sampling
+    // was slower than Settings → Refresh. Following the session also means
+    // "Manual only" and ⌘R are honoured for free.
+    session.lastRefreshedAt
     void current.load()
-
-    const interval = preferences.effectiveIntervalMs
-    if (interval <= 0) return
-
-    // Never poll faster than the backend samples: anything quicker just
-    // redraws the same points.
-    const timer = setInterval(
-      () => void current.load(),
-      Math.max(interval, current.intervalSeconds * 1000),
-    )
-    return () => clearInterval(timer)
   })
 
   /** Opens a kind's list from a finding. */

@@ -68,6 +68,19 @@ type HistoryService struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	once   sync.Once
+
+	// newTicker builds the sampler's tick source. Unexported and set only by
+	// tests: the cadence floor is ten seconds, so a test that waited for real
+	// ticks would have to sleep for half a minute to observe two of them.
+	// Substituting the source is what lets the cadence itself be asserted
+	// rather than assumed.
+	newTicker func(time.Duration) (<-chan time.Time, func())
+}
+
+// realTicker is the production tick source.
+func realTicker(d time.Duration) (<-chan time.Time, func()) {
+	ticker := time.NewTicker(d)
+	return ticker.C, ticker.Stop
 }
 
 var _ ports.HistoryService = (*HistoryService)(nil)
@@ -105,6 +118,7 @@ func NewHistoryService(deps HistoryServiceDeps) (*HistoryService, error) {
 		interval:    domain.DefaultSamplingInterval,
 		done:        make(chan struct{}),
 		reconfigure: make(chan struct{}, 1),
+		newTicker:   realTicker,
 	}
 	service.retention, service.interval = service.loadSettings()
 
@@ -147,8 +161,12 @@ func (s *HistoryService) Close() {
 func (s *HistoryService) run(ctx context.Context) {
 	defer close(s.done)
 
-	samples := time.NewTicker(s.SamplingInterval())
-	defer samples.Stop()
+	sampleTicks, stopSamples := s.newTicker(s.SamplingInterval())
+	// Through a closure, because the sampler is rebuilt on reconfigure and a
+	// bare `defer stopSamples()` would capture the FIRST one — leaving
+	// whichever ticker was live at shutdown unstopped.
+	defer func() { stopSamples() }()
+
 	prunes := time.NewTicker(pruneInterval)
 	defer prunes.Stop()
 
@@ -165,7 +183,7 @@ func (s *HistoryService) run(ctx context.Context) {
 		case <-ctx.Done():
 			s.logger.Debug("sampler stopped")
 			return
-		case <-samples.C:
+		case <-sampleTicks:
 			s.sampleAll(ctx)
 		case <-prunes.C:
 			s.prune(ctx)
@@ -173,8 +191,8 @@ func (s *HistoryService) run(ctx context.Context) {
 			// Rebuild rather than Reset: the new cadence should start from
 			// now, so shortening it takes effect immediately instead of after
 			// the old, longer tick has elapsed.
-			samples.Stop()
-			samples = time.NewTicker(s.SamplingInterval())
+			stopSamples()
+			sampleTicks, stopSamples = s.newTicker(s.SamplingInterval())
 		}
 	}
 }
