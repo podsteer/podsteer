@@ -63,6 +63,16 @@
 
   /** Whose overflow menu is open, if any. */
   let menuFor = $state<Row | null>(null)
+  /**
+   * Where that menu should appear, in viewport coordinates.
+   *
+   * The menus are positioned `fixed` against the button that opened them
+   * rather than absolutely inside the row. The row sits in the scrolling list,
+   * and an absolutely positioned child cannot escape a scroll container — so
+   * a menu on the last visible row was clipped in half by the very element
+   * that makes the list scrollable.
+   */
+  let menuAnchor = $state<DOMRect | null>(null)
   /** Whose "move to project" list is showing inside that menu. */
   let movingGroup = $state<string | null>(null)
 
@@ -140,9 +150,56 @@
     confirmDelete = null
   }
 
+  function openMenu(row: Row, event: MouseEvent, alreadyOpen: boolean): void {
+    if (alreadyOpen) {
+      closeMenu()
+      return
+    }
+    menuAnchor = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    menuFor = row
+    movingGroup = null
+  }
+
   function closeMenu(): void {
     menuFor = null
+    menuAnchor = null
     movingGroup = null
+  }
+
+  /**
+   * Places a menu under its button, then pulls it back inside the viewport.
+   *
+   * Measured after render rather than predicted: the group menu changes height
+   * when it switches to the project list, and guessing from an item count
+   * would be wrong the moment an item is added. `deps` exists only so the
+   * action re-runs when that content changes.
+   */
+  function anchorMenu(node: HTMLElement, deps: { rect: DOMRect | null; key: unknown }): {
+    update: (next: { rect: DOMRect | null; key: unknown }) => void
+  } {
+    const place = ({ rect }: { rect: DOMRect | null }): void => {
+      if (!rect) return
+      const margin = 8
+      const { width, height } = node.getBoundingClientRect()
+
+      // Right-aligned to the button, because the button sits at the right end
+      // of its row and a left-aligned menu would hang off the dialog.
+      const left = Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin))
+
+      // Below by preference; above when that would overflow; clamped when
+      // neither fits, which is the case on a short window.
+      let top = rect.bottom + 4
+      if (top + height > window.innerHeight - margin) {
+        const above = rect.top - height - 4
+        top = above >= margin ? above : Math.max(margin, window.innerHeight - height - margin)
+      }
+
+      node.style.left = `${left}px`
+      node.style.top = `${top}px`
+    }
+
+    place(deps)
+    return { update: place }
   }
 
   /**
@@ -207,6 +264,23 @@
     endDrag()
   }
 
+  /**
+   * Dismisses an open menu on a click elsewhere.
+   *
+   * A window listener rather than a full-screen backdrop element. The dialog
+   * sits in its own stacking context, so a backdrop outside it is above the
+   * menus nested within it however the z-indexes are written — it covered the
+   * menu and swallowed every click on an item. Asking what was clicked has no
+   * such problem, and the toggle buttons are excluded so the click that opens
+   * a menu does not immediately close it again.
+   */
+  function onPointerDown(event: MouseEvent): void {
+    if (!menuFor) return
+    const target = event.target as HTMLElement | null
+    if (target?.closest('[role="menu"], [data-menu-toggle]')) return
+    closeMenu()
+  }
+
   function onKeydown(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || !open) return
     // Escape unwinds the innermost thing first: a menu, then a rename, then
@@ -223,7 +297,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onKeydown} ondragend={endDrag} />
+<svelte:window onkeydown={onKeydown} ondragend={endDrag} onpointerdown={onPointerDown} />
 
 {#if open}
   <button
@@ -234,14 +308,24 @@
     onclick={onclose}
   ></button>
 
-  <div
-    class="fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-[36rem] max-w-[92vw] -translate-x-1/2
-           -translate-y-1/2 flex-col rounded-xl border border-outline-variant
-           bg-surface-container-high p-6 shadow-level-3"
-    role="dialog"
-    aria-modal="true"
-    aria-label="Projects and groups"
-  >
+  <!-- Centred by a grid layer rather than by -translate-x/y-1/2.
+       A CSS transform makes an element the containing block for `position:
+       fixed` descendants, so the row menus below — which are fixed, in order
+       to escape the list's scroll container — resolved their viewport
+       coordinates against the dialog instead and landed a couple of hundred
+       pixels off. Centring without a transform is the fix; compensating for
+       the offset in the maths would only have hidden it.
+
+       The layer ignores pointer events so the backdrop underneath still
+       receives the click that dismisses the dialog. -->
+  <div class="pointer-events-none fixed inset-0 z-50 grid place-items-center p-4">
+    <div
+      class="pointer-events-auto flex max-h-[85vh] w-[44rem] max-w-[94vw] flex-col rounded-xl
+             border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Projects and groups"
+    >
     <h2 class="text-headline-small text-on-surface">Projects and groups</h2>
     <p class="mt-1 text-body-small text-on-surface-variant">
       A project is a system; a group inside it is usually an environment. Drag a row to reorder it,
@@ -274,7 +358,10 @@
     {/if}
 
     <!-- The tree -->
-    <div class="mt-4 min-h-0 flex-1 overflow-y-auto">
+    <!-- A fixed-positioned menu does not travel with its row, so scrolling
+         the list out from under one would leave it stranded. Closing is both
+         simpler and what every other menu in the application does. -->
+    <div class="mt-4 min-h-[9rem] flex-1 overflow-y-auto" onscroll={closeMenu}>
       {#each tree as project, projectIndex (project.id)}
         {@const row = { kind: 'project' as Kind, id: project.id }}
         {@const isDropTarget = isRow(dropOn, 'project', project.id)}
@@ -344,7 +431,8 @@
               {:else}
                 <button
                   type="button"
-                  onclick={() => (menuFor = isRow(menuFor, 'project', project.id) ? null : row)}
+                  onclick={(event) => openMenu(row, event, isRow(menuFor, 'project', project.id))}
+                  data-menu-toggle
                   aria-label="Actions for {project.name}"
                   aria-expanded={isRow(menuFor, 'project', project.id)}
                   class="state-layer grid size-8 shrink-0 place-items-center rounded-full
@@ -358,7 +446,8 @@
                 <div
                   role="menu"
                   aria-label="{project.name} actions"
-                  class="absolute right-2 top-full z-50 mt-1 w-52 overflow-hidden rounded-md border
+                  use:anchorMenu={{ rect: menuAnchor, key: null }}
+                  class="fixed z-[60] w-52 overflow-hidden rounded-md border
                          border-outline-variant bg-surface-container-highest py-1 shadow-level-2"
                 >
                   <button type="button" role="menuitem"
@@ -460,10 +549,9 @@
                   {:else}
                     <button
                       type="button"
-                      onclick={() => {
-                        menuFor = isRow(menuFor, 'group', group.id, project.id) ? null : grow
-                        movingGroup = null
-                      }}
+                      onclick={(event) =>
+                        openMenu(grow, event, isRow(menuFor, 'group', group.id, project.id))}
+                      data-menu-toggle
                       aria-label="Actions for {group.name}"
                       aria-expanded={isRow(menuFor, 'group', group.id, project.id)}
                       class="state-layer grid size-7 shrink-0 place-items-center rounded-full
@@ -477,7 +565,8 @@
                     <div
                       role="menu"
                       aria-label="{group.name} actions"
-                      class="absolute right-2 top-full z-50 mt-1 w-56 overflow-hidden rounded-md border
+                      use:anchorMenu={{ rect: menuAnchor, key: movingGroup }}
+                      class="fixed z-[60] max-h-[60vh] w-56 overflow-y-auto rounded-md border
                              border-outline-variant bg-surface-container-highest py-1 shadow-level-2"
                     >
                       {#if movingGroup === group.id && !group.isDefault}
@@ -599,17 +688,7 @@
     <div class="mt-5 flex shrink-0 justify-end">
       <Button onclick={onclose}>Done</Button>
     </div>
+    </div>
   </div>
 
-  <!-- Closes an open row menu on any outside click, without swallowing the
-       click that opened it. Sits under the menus and above everything else. -->
-  {#if menuFor}
-    <button
-      type="button"
-      tabindex="-1"
-      aria-label="Close menu"
-      class="fixed inset-0 z-40 cursor-default"
-      onclick={closeMenu}
-    ></button>
-  {/if}
 {/if}
