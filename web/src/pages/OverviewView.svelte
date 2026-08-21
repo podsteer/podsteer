@@ -18,6 +18,7 @@
   import TrendChart from '$lib/components/TrendChart.svelte'
   import { formatAge } from '$lib/format'
   import { ClusterHistory, TREND_WINDOWS } from '$stores/history.svelte'
+  import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import {
     CheckCircle2,
@@ -26,6 +27,7 @@
     Boxes,
     Server,
     Layers,
+    ChevronRight,
     RefreshCw,
     Activity,
     CircleSlash,
@@ -123,8 +125,13 @@
     </div>
   {:else}
     <div class="mx-auto flex max-w-[1400px] flex-col gap-5 p-5">
-      <!-- Verdict -->
-      <section class="flex flex-wrap items-center gap-4 rounded-sm border p-4 {health.classes}">
+      <!-- Verdict, and the findings behind it.
+           The findings used to be a section of their own below this card, and
+           two of them filled the screen before the operator had read the
+           verdict that summarises them. The card IS the alarm; the detail is a
+           click away, and stays where it was left. -->
+      <section class="rounded-sm border {health.classes}">
+      <div class="flex flex-wrap items-center gap-4 p-4">
         <HealthIcon class="size-8 shrink-0" strokeWidth={1.6} />
 
         <div class="min-w-0 flex-1">
@@ -160,6 +167,35 @@
             <dd class="tabular-nums">{formatAge(overview.nodes.oldestSeconds)}</dd>
           </div>
         </dl>
+      </div>
+
+      {#if issues.length > 0}
+        <!-- Full width and inside the card's tint, so the toggle reads as
+             belonging to the verdict rather than floating between sections. -->
+        <button
+          type="button"
+          onclick={preferences.toggleFindings}
+          aria-expanded={preferences.findingsExpanded}
+          aria-controls="overview-findings"
+          class="state-layer flex w-full items-center gap-1.5 border-t border-current/15 px-4 py-2
+                 text-left text-label-large opacity-80 transition-opacity duration-100 hover:opacity-100"
+        >
+          <ChevronRight
+            class="size-4 shrink-0 transition-transform duration-150
+                   {preferences.findingsExpanded ? 'rotate-90' : ''}"
+            strokeWidth={2}
+          />
+          {preferences.findingsExpanded ? 'Hide details' : 'Show details'}
+        </button>
+
+        {#if preferences.findingsExpanded}
+          <div id="overview-findings" class="flex flex-col gap-2 px-4 pt-1 pb-4">
+            {#each issues as finding (finding.id)}
+              <FindingCard {finding} onopen={openList} onselect={openObject} />
+            {/each}
+          </div>
+        {/if}
+      {/if}
       </section>
 
       <!-- A source that could not be read is stated, never silently zeroed. -->
@@ -171,18 +207,6 @@
           <CircleSlash class="size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
           Assessed without {overview.unavailable.join(', ')} — those figures are missing rather than zero.
         </p>
-      {/if}
-
-      <!-- Findings -->
-      {#if issues.length > 0}
-        <section class="flex flex-col gap-2">
-          <h3 class="text-label-large uppercase tracking-wider text-on-surface-variant">
-            Needs attention
-          </h3>
-          {#each issues as finding (finding.id)}
-            <FindingCard {finding} onopen={openList} onselect={openObject} />
-          {/each}
-        </section>
       {/if}
 
       <!-- Capacity -->

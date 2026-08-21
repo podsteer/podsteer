@@ -91,6 +91,8 @@ interface PersistedShape {
   navigatorWidth: number
   /** Category names the operator has expanded in the navigator tree. */
   expandedCategories: string[]
+  /** Whether the overview's verdict card shows its findings. */
+  findingsExpanded: boolean
   /** clusterId -> the namespace filter it was last left on. */
   namespaceByCluster: Record<string, string>
   /** kindId -> columnId -> preference */
@@ -107,6 +109,7 @@ const DEFAULTS: PersistedShape = {
   navigatorCollapsed: false,
   navigatorWidth: 240,
   expandedCategories: [],
+  findingsExpanded: false,
   namespaceByCluster: {},
   columns: {},
 }
@@ -132,6 +135,13 @@ class Preferences {
    * (say, just Workloads) is exactly what greets them next time.
    */
   expandedCategories = $state<string[]>(DEFAULTS.expandedCategories)
+
+  /**
+   * Collapsed by default: the verdict and the count are the alarm, and the
+   * findings below them were taking a screenful before the operator had read
+   * either.
+   */
+  findingsExpanded = $state<boolean>(DEFAULTS.findingsExpanded)
 
   /** clusterId -> last-selected namespace filter. */
   namespaceByCluster = $state<Record<string, string>>({})
@@ -211,6 +221,19 @@ class Preferences {
 
   /** Whether a navigator category is currently expanded. */
   isCategoryExpanded = (category: string): boolean => this.expandedCategories.includes(category)
+
+  /**
+   * Whether the overview's verdict card shows its findings.
+   *
+   * Persisted like every other collapse in the application, and for a sharper
+   * reason here: the workspace remounts on every tab switch, so a choice held
+   * in the view would be forgotten each time somebody looked at another
+   * cluster and came back.
+   */
+  toggleFindings = (): void => {
+    this.findingsExpanded = !this.findingsExpanded
+    this.#save()
+  }
 
   toggleCategory = (category: string): void => {
     this.expandedCategories = this.expandedCategories.includes(category)
@@ -305,6 +328,10 @@ class Preferences {
       if (typeof stored.navigatorCollapsed === 'boolean') {
         this.navigatorCollapsed = stored.navigatorCollapsed
       }
+
+      if (typeof stored.findingsExpanded === 'boolean') {
+        this.findingsExpanded = stored.findingsExpanded
+      }
       if (typeof stored.navigatorWidth === 'number' && stored.navigatorWidth >= 180 && stored.navigatorWidth <= 400) {
         this.navigatorWidth = stored.navigatorWidth
       }
@@ -333,6 +360,7 @@ class Preferences {
         navigatorCollapsed: this.navigatorCollapsed,
         navigatorWidth: this.navigatorWidth,
         expandedCategories: this.expandedCategories,
+        findingsExpanded: this.findingsExpanded,
         namespaceByCluster: this.namespaceByCluster,
         columns: this.columns,
       }
