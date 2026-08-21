@@ -19,6 +19,11 @@ import (
 type fakeKubeconfig struct {
 	clusters []domain.Cluster
 	err      error
+
+	// merged records what Merge was asked to add, so a test can assert the
+	// service forwarded the paste rather than inventing one.
+	merged string
+	merge  domain.KubeconfigMerge
 }
 
 var _ ports.KubeconfigPort = (*fakeKubeconfig)(nil)
@@ -274,4 +279,20 @@ func (f *fakeEvents) ListEventsForResource(context.Context, domain.ClusterID, do
 		return nil, f.err
 	}
 	return append([]domain.Event(nil), f.events...), nil
+}
+
+func (f *fakeKubeconfig) PreviewMerge(_ context.Context, raw string) (domain.KubeconfigMerge, error) {
+	if f.err != nil {
+		return domain.KubeconfigMerge{}, f.err
+	}
+	_ = raw
+	return f.merge, nil
+}
+
+func (f *fakeKubeconfig) Merge(_ context.Context, raw string) (domain.KubeconfigMerge, error) {
+	if f.err != nil {
+		return domain.KubeconfigMerge{}, f.err
+	}
+	f.merged = raw
+	return f.merge, nil
 }

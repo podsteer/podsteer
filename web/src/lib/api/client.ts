@@ -11,12 +11,15 @@
  */
 
 import {
+  AddKubeconfig as bindAddKubeconfig,
   Connect as bindConnect,
   Connections as bindConnections,
   Disconnect as bindDisconnect,
   ListClusters as bindListClusters,
   ListNamespaces as bindListNamespaces,
   ListNodes as bindListNodes,
+  PreviewKubeconfig as bindPreviewKubeconfig,
+  ReadKubeconfigFile as bindReadKubeconfigFile,
 } from '$lib/wailsjs/go/wails/ClusterAPI'
 import {
   GetManifest as bindGetManifest,
@@ -57,6 +60,8 @@ import { toApiError } from './errors'
 
 /** A cluster described by the local kubeconfig. */
 export type Cluster = wails.Cluster
+/** What adding a kubeconfig would change, or did. */
+export type KubeconfigMerge = wails.KubeconfigMerge
 /** A namespace in a connected cluster. */
 export type Namespace = wails.Namespace
 /** A pod, with derived status and measured usage. */
@@ -140,6 +145,27 @@ async function call<T>(operation: () => Promise<T>): Promise<T> {
 /** Lists every cluster in the local kubeconfig. Works before connecting. */
 export function listClusters(): Promise<Cluster[]> {
   return call(() => bindListClusters())
+}
+
+/** Reports what adding a kubeconfig would change, without touching the file. */
+export function previewKubeconfig(raw: string): Promise<KubeconfigMerge> {
+  return call(() => bindPreviewKubeconfig(raw))
+}
+
+/** Adds a kubeconfig to the local one and reports what changed. */
+export function addKubeconfig(raw: string): Promise<KubeconfigMerge> {
+  return call(() => bindAddKubeconfig(raw))
+}
+
+/**
+ * Opens a native file picker and returns the chosen file's contents.
+ *
+ * An empty string means the operator cancelled, which is not an error. The
+ * file is read on the Go side because the webview cannot open files — and
+ * should not be able to.
+ */
+export function readKubeconfigFile(): Promise<string> {
+  return call(() => bindReadKubeconfigFile())
 }
 
 /**

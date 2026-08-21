@@ -247,6 +247,22 @@ The local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`) and the API servers
 it names. Nothing else: no telemetry, no update check, no network access from
 the webview (see the CSP in `web/index.html`).
 
+The kubeconfig is **read on every call and written in exactly one place**:
+`KubeconfigPort.Merge`, behind Add cluster. Everything about that write is
+shaped by the fact that the file holds credentials — the paste is parsed and
+the plan computed before the file is opened, an existing context name is
+refused rather than replaced, symlinks are resolved so a `~/.kube` pointing
+into a synced folder is written THROUGH rather than over, the previous
+contents are copied to `<path>.podsteer.bak`, and the new contents reach a
+temporary file in the same directory which is synced and renamed over the
+target, preserving the mode. `app/adapters/k8s/kubeconfig_merge_test.go`
+asserts each of those, because every one of them is a way to lose somebody's
+access to a cluster quietly.
+
+`current-context` is never touched. Adding a cluster is not a request to
+switch to it, and kubectl in another terminal must not change target because
+somebody pasted a config here.
+
 ## Domain quirks worth knowing
 
 - **A Job is judged by whether it failed, not by whether it finished.**

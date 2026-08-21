@@ -36,6 +36,7 @@
   import Card from '$lib/components/Card.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
+  import AddClusterDialog from '$lib/components/AddClusterDialog.svelte'
   import OrganiseDialog from '$lib/components/OrganiseDialog.svelte'
   import MoveClusterMenu from '$lib/components/MoveClusterMenu.svelte'
   import { formatConnection, formatConnectionTitle } from '$lib/format'
@@ -50,12 +51,14 @@
     Globe,
     GripVertical,
     Plug,
+    Plus,
     Star,
     Unplug,
     User,
   } from '@lucide/svelte'
 
   let organiseOpen = $state(false)
+  let addOpen = $state(false)
 
   /**
    * A clock, so "Connected for 12s" counts rather than sitting where it
@@ -194,10 +197,16 @@
       </div>
     </div>
 
-    <Button variant="tonal" onclick={() => (organiseOpen = true)}>
-      <FolderTree class="size-4" strokeWidth={1.8} />
-      Organise
-    </Button>
+    <div class="flex shrink-0 items-center gap-2">
+      <Button variant="tonal" onclick={() => (organiseOpen = true)}>
+        <FolderTree class="size-4" strokeWidth={1.8} />
+        Organise
+      </Button>
+      <Button onclick={() => (addOpen = true)}>
+        <Plus class="size-4" strokeWidth={2} />
+        Add cluster
+      </Button>
+    </div>
   </div>
 
   <ErrorBanner
@@ -406,10 +415,12 @@
                                  this row; the controls sit below the rule. -->
                             <div class="flex shrink-0 flex-col items-end">
                               {#if cluster.isCurrent}
-                                <!-- An indicator, not a control: it reports
-                                     which context kubectl would use, and
-                                     changing that means writing to the
-                                     kubeconfig, which PodSteer does not do. -->
+                                <!-- An indicator, not a control. PodSteer can
+                                     write to the kubeconfig now — Add cluster
+                                     does — but adding a context and switching
+                                     which one kubectl uses are different acts,
+                                     and the second changes the behaviour of
+                                     every other terminal on the machine. -->
                                 <span
                                   class="pointer-events-none text-primary"
                                   title="Your kubeconfig's current context"
@@ -547,3 +558,4 @@
 </div>
 
 <OrganiseDialog open={organiseOpen} onclose={() => (organiseOpen = false)} />
+<AddClusterDialog open={addOpen} onclose={() => (addOpen = false)} />

@@ -33,6 +33,15 @@ var (
 	// or parsed, so no cluster can be discovered.
 	ErrKubeconfigUnavailable = errors.New("kubeconfig unavailable")
 
+	// ErrKubeconfigInvalid means text offered as a kubeconfig could not be
+	// parsed as one, or parsed but described nothing to add.
+	ErrKubeconfigInvalid = errors.New("not a usable kubeconfig")
+
+	// ErrKubeconfigConflict means the incoming kubeconfig names a context the
+	// local one already defines. Refused rather than merged: replacing a
+	// working context's credentials is not something to do on a paste.
+	ErrKubeconfigConflict = errors.New("context already exists")
+
 	// ErrMetricsUnavailable means the cluster serves no metrics API.
 	//
 	// This is an ordinary condition, not a fault: metrics-server is an add-on

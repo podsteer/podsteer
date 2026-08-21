@@ -304,6 +304,22 @@ export namespace wails {
 	        this.maxIntervalSeconds = source["maxIntervalSeconds"];
 	    }
 	}
+	export class KubeconfigMerge {
+	    added: string[];
+	    conflicts: string[];
+	    path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new KubeconfigMerge(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.added = source["added"];
+	        this.conflicts = source["conflicts"];
+	        this.path = source["path"];
+	    }
+	}
 	export class Namespace {
 	    name: string;
 	    phase: string;

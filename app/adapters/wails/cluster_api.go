@@ -3,7 +3,10 @@ package wails
 import (
 	"errors"
 	"log/slog"
+	"os"
 	"time"
+
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
@@ -154,4 +157,90 @@ func (c *ClusterAPI) ListNodes(clusterID string) ([]Node, error) {
 	}
 
 	return toNodes(nodes, time.Now()), nil
+}
+
+// KubeconfigMerge is what adding a kubeconfig would change, or did.
+type KubeconfigMerge struct {
+	// Added names the contexts that would be, or were, added.
+	Added []string `json:"added"`
+	// Conflicts names contexts the kubeconfig already defines. A merge with
+	// any of these is refused.
+	Conflicts []string `json:"conflicts"`
+	// Path is the file that was, or would be, written.
+	Path string `json:"path"`
+}
+
+func toKubeconfigMerge(merge domain.KubeconfigMerge) KubeconfigMerge {
+	// Never nil: the frontend maps over these, and `null` from Go would
+	// arrive as a value it has to guard on every use.
+	added := merge.Added
+	if added == nil {
+		added = []string{}
+	}
+	conflicts := merge.Conflicts
+	if conflicts == nil {
+		conflicts = []string{}
+	}
+	return KubeconfigMerge{Added: added, Conflicts: conflicts, Path: merge.Path}
+}
+
+// PreviewKubeconfig reports what adding the given kubeconfig would change.
+//
+// Separate from AddKubeconfig so the dialog can show what is about to happen
+// while the operator is still typing, without a keystroke ever being able to
+// write to the file.
+func (c *ClusterAPI) PreviewKubeconfig(raw string) (KubeconfigMerge, error) {
+	ctx, cancel := c.app.requestContext()
+	defer cancel()
+
+	merge, err := c.clusters.PreviewKubeconfig(ctx, raw)
+	if err != nil {
+		return KubeconfigMerge{}, apiError(c.logger, "PreviewKubeconfig", err)
+	}
+	return toKubeconfigMerge(merge), nil
+}
+
+// AddKubeconfig adds the given kubeconfig to the local one.
+func (c *ClusterAPI) AddKubeconfig(raw string) (KubeconfigMerge, error) {
+	ctx, cancel := c.app.requestContext()
+	defer cancel()
+
+	merge, err := c.clusters.AddKubeconfig(ctx, raw)
+	if err != nil {
+		return toKubeconfigMerge(merge), apiError(c.logger, "AddKubeconfig", err)
+	}
+	return toKubeconfigMerge(merge), nil
+}
+
+// ReadKubeconfigFile opens a native file picker and returns what was chosen.
+//
+// The file is read HERE rather than handed to the frontend as a path, because
+// the webview cannot open files — and should not be able to. An empty string
+// means the operator cancelled, which is not an error.
+func (c *ClusterAPI) ReadKubeconfigFile() (string, error) {
+	runtimeCtx, ok := c.app.runtimeContext()
+	if !ok {
+		return "", apiError(c.logger, "ReadKubeconfigFile",
+			errors.New("the window is not ready"))
+	}
+
+	path, err := wailsruntime.OpenFileDialog(runtimeCtx, wailsruntime.OpenDialogOptions{
+		Title: "Choose a kubeconfig",
+		Filters: []wailsruntime.FileFilter{
+			{DisplayName: "Kubeconfig (*.yaml, *.yml, *.conf, config)", Pattern: "*.yaml;*.yml;*.conf;config"},
+			{DisplayName: "All files", Pattern: "*"},
+		},
+	})
+	if err != nil {
+		return "", apiError(c.logger, "ReadKubeconfigFile", err)
+	}
+	if path == "" {
+		return "", nil
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", apiError(c.logger, "ReadKubeconfigFile", err)
+	}
+	return string(content), nil
 }

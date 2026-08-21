@@ -213,6 +213,32 @@ func (s *ClusterService) ListNamespaces(ctx context.Context, id domain.ClusterID
 //
 // Control-plane nodes sort first, then alphabetically: they are the ones whose
 // health explains everything else, so they belong at the top of the list.
+// PreviewKubeconfig reports what adding raw would change, touching nothing.
+func (s *ClusterService) PreviewKubeconfig(
+	ctx context.Context, raw string,
+) (domain.KubeconfigMerge, error) {
+	return s.kubeconfig.PreviewMerge(ctx, raw)
+}
+
+// AddKubeconfig adds raw to the kubeconfig and reports what changed.
+//
+// Nothing is connected as a result. Adding a cluster and opening it are
+// separate acts: a paste that turns out to name six contexts should not open
+// six connections, and the picker showing them is the confirmation that the
+// write worked.
+func (s *ClusterService) AddKubeconfig(
+	ctx context.Context, raw string,
+) (domain.KubeconfigMerge, error) {
+	merge, err := s.kubeconfig.Merge(ctx, raw)
+	if err != nil {
+		return merge, err
+	}
+
+	s.logger.InfoContext(ctx, "kubeconfig updated",
+		slog.Int("added", len(merge.Added)))
+	return merge, nil
+}
+
 func (s *ClusterService) ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("listing nodes: %w", err)

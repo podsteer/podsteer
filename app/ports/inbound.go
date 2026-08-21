@@ -34,6 +34,13 @@ type ClusterService interface {
 
 	// ListNodes returns the nodes of a connected cluster.
 	ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error)
+
+	// PreviewKubeconfig reports what adding raw to the kubeconfig would
+	// change, without touching the file.
+	PreviewKubeconfig(ctx context.Context, raw string) (domain.KubeconfigMerge, error)
+
+	// AddKubeconfig adds raw to the kubeconfig and reports what changed.
+	AddKubeconfig(ctx context.Context, raw string) (domain.KubeconfigMerge, error)
 }
 
 // NavigationService describes what a connected cluster can show.

@@ -31,6 +31,19 @@ type KubeconfigPort interface {
 	// Cluster returns the single cluster with the given id, wrapping
 	// domain.ErrClusterNotFound when the kubeconfig describes no such context.
 	Cluster(ctx context.Context, id domain.ClusterID) (domain.Cluster, error)
+
+	// PreviewMerge reports what adding raw to the kubeconfig would change,
+	// without touching the file. Wraps ErrKubeconfigInvalid when raw is not a
+	// kubeconfig, or is one that describes no contexts.
+	PreviewMerge(ctx context.Context, raw string) (domain.KubeconfigMerge, error)
+
+	// Merge adds raw to the kubeconfig and reports what changed.
+	//
+	// This is the ONLY write PodSteer makes to the kubeconfig, and it is
+	// deliberately narrow: it adds contexts and refuses to replace them,
+	// wrapping ErrKubeconfigConflict when the incoming config names one that
+	// already exists.
+	Merge(ctx context.Context, raw string) (domain.KubeconfigMerge, error)
 }
 
 // ClusterPort reads cluster-scoped facts from an API server.
