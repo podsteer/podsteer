@@ -175,14 +175,33 @@
     node.focus()
   }
 
-  /** Places the panel under its trigger, then pulls it inside the viewport. */
+  /**
+   * Places the panel under its trigger, then pulls it inside the viewport.
+   *
+   * A full-width select gets a panel matching its trigger, because the two
+   * read as one control. A compact one gets a panel sized to its own
+   * contents, floored at the trigger's width: "10" through "100" under a
+   * "Rows" heading needs about seven characters, and stretching that to a
+   * fixed minimum left most of the panel empty.
+   */
   function place(node: HTMLElement, rect: DOMRect | null): void {
     if (!rect) return
     const margin = 8
+
+    if (compact) {
+      node.style.minWidth = `${rect.width}px`
+      node.style.width = 'max-content'
+    } else {
+      node.style.width = `${rect.width}px`
+    }
+
+    const width = node.getBoundingClientRect().width
     const height = node.getBoundingClientRect().height
 
-    node.style.width = `${rect.width}px`
-    node.style.left = `${Math.max(margin, Math.min(rect.left, window.innerWidth - rect.width - margin))}px`
+    // Right-aligned to the trigger when it grew past it, so a compact control
+    // near the right edge does not push its panel off screen.
+    const preferredLeft = compact ? rect.right - width : rect.left
+    node.style.left = `${Math.max(margin, Math.min(preferredLeft, window.innerWidth - width - margin))}px`
 
     let top = rect.bottom + 4
     if (top + height > window.innerHeight - margin) {
@@ -236,7 +255,7 @@
       use:place={anchor}
       onkeydown={onPanelKeydown}
       use:claimFocus
-      class="fixed z-[70] max-h-[300px] min-w-40 overflow-y-auto overflow-x-hidden rounded-sm border
+      class="fixed z-[70] max-h-[300px] overflow-y-auto overflow-x-hidden rounded-sm border
              border-outline-variant bg-surface-container pb-1 shadow-level-2"
     >
       <!-- What the dropdown is FOR, said where it is being used rather than

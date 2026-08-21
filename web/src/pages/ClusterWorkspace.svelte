@@ -83,14 +83,14 @@
         aria-label={preferences.navigatorCollapsed ? 'Show sidebar' : 'Hide sidebar'}
         aria-pressed={!preferences.navigatorCollapsed}
         title="{preferences.navigatorCollapsed ? 'Show' : 'Hide'} sidebar  ⌘B"
-        class="state-layer grid size-8 shrink-0 place-items-center rounded-md
+        class="state-layer grid size-8 shrink-0 place-items-center rounded-full
                text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
       >
         <PanelLeft class="size-[18px]" strokeWidth={1.8} />
       </button>
 
       <!-- Resource title and count -->
-      <div class="min-w-0 flex-1">
+      <div class="min-w-0 shrink">
         <div class="flex items-baseline gap-2">
           <h2 class="truncate text-title-medium font-semibold text-on-surface">
             {session.isList ? (session.selectedKind?.title ?? 'Resources') : session.cluster.id}
