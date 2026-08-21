@@ -2,30 +2,45 @@
   Projects and groups.
 
   The whole lifecycle of both levels lives in one place: creating, renaming,
-  reordering and deleting. Nothing here ever strands a cluster — deleting a
-  group drops its members into that project's Default, and deleting a project
-  drops them into the Default project — which is why the two Defaults have no
-  actions of their own.
+  reordering, moving groups between projects, and deleting. Nothing here ever
+  strands a cluster — deleting a group drops its members into that project's
+  Default, and deleting a project drops them into the Default project — which
+  is why the two Defaults have no actions of their own.
+
+  Every row carries ONE control, an overflow menu, rather than a row of icon
+  buttons. Four tiny glyphs at the end of a line were both noisy at two levels
+  of nesting and easy to miss entirely: the first version of this dialog looked
+  like it offered nothing at all, because the only rows with actions were the
+  ones the operator had not created yet.
+
+  Dragging a row is the fast path for the same operations. A project reorders
+  among projects; a group reorders among its own project's groups, or moves to
+  another project by being dropped on that project's row. Everything a drag can
+  do, the menu can also do — a drag is unusable from a keyboard and invisible
+  to a screen reader, so nothing may be reachable by drag alone.
 
   Renaming edits in place: the row becomes the field. Deleting is a two-step
   inline confirm rather than a native confirm(), which the webview cannot be
   relied on to show.
-
-  Reordering is two buttons rather than a drag. The lists are short, the
-  dialog is a list rather than a canvas, and adjacent-swap buttons work from a
-  keyboard — where the picker's drag does not.
 -->
 <script lang="ts">
   import Button from './Button.svelte'
   import {
-    DEFAULT_GROUP_ID,
     DEFAULT_GROUP_NAME,
-    DEFAULT_PROJECT_ID,
     DEFAULT_PROJECT_NAME,
     organisation,
   } from '$stores/organisation.svelte'
   import { workspace } from '$stores/workspace.svelte'
-  import { ChevronUp, ChevronDown, Pencil, Trash2, Plus } from '@lucide/svelte'
+  import {
+    ChevronUp,
+    ChevronDown,
+    EllipsisVertical,
+    FolderInput,
+    GripVertical,
+    Pencil,
+    Plus,
+    Trash2,
+  } from '@lucide/svelte'
 
   interface Props {
     open: boolean
@@ -35,6 +50,12 @@
   let { open, onclose }: Props = $props()
 
   type Kind = 'project' | 'group'
+  interface Row {
+    kind: Kind
+    id: string
+    /** The owning project, for a group row. */
+    projectId?: string
+  }
 
   let newProjectName = $state('')
   let newProjectError = $state<string | null>(null)
@@ -44,13 +65,22 @@
   let newGroupName = $state('')
   let newGroupError = $state<string | null>(null)
 
+  /** Whose overflow menu is open, if any. */
+  let menuFor = $state<Row | null>(null)
+  /** Whose "move to project" list is showing inside that menu. */
+  let movingGroup = $state<string | null>(null)
+
   /** What is being renamed, plus the working copy of its name. */
-  let renaming = $state<{ kind: Kind; id: string } | null>(null)
+  let renaming = $state<Row | null>(null)
   let renameValue = $state('')
   let renameError = $state<string | null>(null)
 
   /** What is one click away from deletion, if anything. */
-  let confirmDelete = $state<{ kind: Kind; id: string } | null>(null)
+  let confirmDelete = $state<Row | null>(null)
+
+  /** The row being dragged, and the row the pointer is over. */
+  let dragging = $state<Row | null>(null)
+  let dropOn = $state<Row | null>(null)
 
   // Deriving from both stores keeps the counts honest while someone
   // reorganises with the dialog open.
@@ -80,10 +110,11 @@
     }
   }
 
-  function startRename(kind: Kind, id: string, name: string): void {
-    renaming = { kind, id }
+  function startRename(row: Row, name: string): void {
+    renaming = row
     renameValue = name
     renameError = null
+    closeMenu()
   }
 
   function commitRename(): void {
@@ -107,24 +138,76 @@
     if (event.key === 'Escape') cancelRename()
   }
 
-  function remove(kind: Kind, id: string): void {
-    if (kind === 'project') organisation.removeProject(id)
-    else organisation.removeGroup(id)
+  function remove(row: Row): void {
+    if (row.kind === 'project') organisation.removeProject(row.id)
+    else organisation.removeGroup(row.id)
     confirmDelete = null
   }
 
-  function isRenaming(kind: Kind, id: string): boolean {
-    return renaming?.kind === kind && renaming.id === id
+  function closeMenu(): void {
+    menuFor = null
+    movingGroup = null
   }
 
-  function isConfirming(kind: Kind, id: string): boolean {
-    return confirmDelete?.kind === kind && confirmDelete.id === id
+  function isRow(a: Row | null, kind: Kind, id: string): boolean {
+    return a?.kind === kind && a.id === id
+  }
+
+  // --- Dragging -------------------------------------------------------------
+
+  function startDrag(event: DragEvent, row: Row): void {
+    if (!event.dataTransfer) return
+    dragging = row
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', row.id)
+    closeMenu()
+  }
+
+  function endDrag(): void {
+    dragging = null
+    dropOn = null
+  }
+
+  /** True when the row being dragged could legally land on `target`. */
+  function accepts(target: Row): boolean {
+    if (!dragging || (dragging.kind === target.kind && dragging.id === target.id)) return false
+    // A project only ever reorders among projects.
+    if (dragging.kind === 'project') return target.kind === 'project'
+    // A group reorders among its own project's groups, or moves to a project.
+    if (target.kind === 'project') return true
+    return dragging.projectId === target.projectId
+  }
+
+  function dragOver(event: DragEvent, target: Row): void {
+    if (!accepts(target)) return
+    // Preventing the default is what marks this a valid drop target; without
+    // it the browser refuses the drop and the row springs back.
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+    dropOn = target
+  }
+
+  function drop(event: DragEvent, target: Row): void {
+    if (!dragging || !accepts(target)) return
+    event.preventDefault()
+
+    if (dragging.kind === 'project') {
+      organisation.placeProjectBefore(dragging.id, target.id)
+    } else if (target.kind === 'project') {
+      organisation.moveGroupToProject(dragging.id, target.id)
+    } else {
+      organisation.placeGroupBefore(dragging.id, target.id)
+    }
+    endDrag()
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    // Escape closes the dialog only when it is not busy cancelling something
-    // smaller — an open rename field owns the key first.
-    if (event.key === 'Escape' && open && renaming === null) onclose()
+    if (event.key !== 'Escape' || !open) return
+    // Escape unwinds the innermost thing first: a menu, then a rename, then
+    // the dialog itself.
+    if (menuFor) closeMenu()
+    else if (renaming) cancelRename()
+    else onclose()
   }
 
   /** Focuses a freshly mounted field and selects what is in it. */
@@ -134,7 +217,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} ondragend={endDrag} />
 
 {#if open}
   <button
@@ -146,7 +229,7 @@
   ></button>
 
   <div
-    class="fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-[34rem] max-w-[92vw] -translate-x-1/2
+    class="fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-[36rem] max-w-[92vw] -translate-x-1/2
            -translate-y-1/2 flex-col rounded-xl border border-outline-variant
            bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
@@ -155,9 +238,9 @@
   >
     <h2 class="text-headline-small text-on-surface">Projects and groups</h2>
     <p class="mt-1 text-body-small text-on-surface-variant">
-      A project is a system; a group inside it is usually an environment. Every context starts in
-      {DEFAULT_PROJECT_NAME} › {DEFAULT_GROUP_NAME} — move clusters from each cluster's card in the
-      picker.
+      A project is a system; a group inside it is usually an environment. Drag a row to reorder it,
+      or drop a group on a project to move it there. Every context starts in
+      {DEFAULT_PROJECT_NAME} › {DEFAULT_GROUP_NAME}.
     </p>
 
     <!-- New project -->
@@ -187,13 +270,23 @@
     <!-- The tree -->
     <div class="mt-4 min-h-0 flex-1 overflow-y-auto">
       {#each tree as project, projectIndex (project.id)}
+        {@const row = { kind: 'project' as Kind, id: project.id }}
+        {@const isDropTarget = isRow(dropOn, 'project', project.id)}
         <section class="mb-1">
           <!-- Project row -->
           <div
-            class="flex min-h-11 items-center gap-2 rounded-sm px-2 py-1.5
-                   transition-colors duration-150 ease-standard hover:bg-surface-container"
+            role="listitem"
+            draggable={!project.isDefault && renaming === null}
+            ondragstart={(event) => startDrag(event, row)}
+            ondragover={(event) => dragOver(event, row)}
+            ondragleave={() => (dropOn = null)}
+            ondrop={(event) => drop(event, row)}
+            class="group/row relative flex min-h-11 items-center gap-2 rounded-sm px-2 py-1.5
+                   transition-colors duration-150 ease-standard hover:bg-surface-container
+                   {isRow(dragging, 'project', project.id) ? 'opacity-40' : ''}
+                   {isDropTarget ? 'outline outline-2 outline-dashed outline-primary/50' : ''}"
           >
-            {#if isRenaming('project', project.id)}
+            {#if isRow(renaming, 'project', project.id)}
               <input
                 type="text"
                 bind:value={renameValue}
@@ -208,78 +301,107 @@
               <button type="button" onclick={cancelRename}
                 class="shrink-0 text-label-large text-on-surface-variant hover:text-on-surface">Cancel</button>
             {:else}
+              <span class="grid w-4 shrink-0 place-items-center text-on-surface-variant/30">
+                {#if !project.isDefault}
+                  <GripVertical
+                    class="size-4 cursor-grab opacity-0 transition-opacity duration-150
+                           group-hover/row:opacity-100"
+                    strokeWidth={1.8}
+                  />
+                {/if}
+              </span>
+
               <span class="min-w-0 flex-1 truncate text-title-small font-semibold text-on-surface">
                 {project.name}
               </span>
+
+              {#if project.isDefault}
+                <!-- Said rather than left blank: an empty action slot reads as
+                     something missing, not as something fixed. -->
+                <span class="shrink-0 text-body-small text-on-surface-variant/50">always first</span>
+              {/if}
+
               <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant">
                 {project.count}
                 {project.count === 1 ? 'cluster' : 'clusters'}
               </span>
 
-              {#if isConfirming('project', project.id)}
-                <button type="button" onclick={() => remove('project', project.id)}
-                  class="shrink-0 text-label-large text-error hover:underline">Confirm delete</button>
+              {#if isRow(confirmDelete, 'project', project.id)}
+                <button type="button" onclick={() => remove(row)}
+                  class="shrink-0 text-label-large text-error hover:underline">Delete</button>
                 <button type="button" onclick={() => (confirmDelete = null)}
                   class="shrink-0 text-label-large text-on-surface-variant hover:text-on-surface">Keep</button>
               {:else if !project.isDefault}
-                <!-- projectIndex counts the Default at 0, so the first movable
-                     project is at 1 and can only go down. -->
                 <button
                   type="button"
-                  onclick={() => organisation.moveProject(project.id, -1)}
-                  disabled={projectIndex <= 1}
-                  aria-label="Move {project.name} up"
-                  title="Move up"
-                  class="state-layer grid size-8 shrink-0 place-items-center rounded-full
-                         text-on-surface-variant hover:text-on-surface
-                         disabled:pointer-events-none disabled:opacity-25"
-                >
-                  <ChevronUp class="size-4" strokeWidth={2} />
-                </button>
-                <button
-                  type="button"
-                  onclick={() => organisation.moveProject(project.id, 1)}
-                  disabled={projectIndex >= tree.length - 1}
-                  aria-label="Move {project.name} down"
-                  title="Move down"
-                  class="state-layer grid size-8 shrink-0 place-items-center rounded-full
-                         text-on-surface-variant hover:text-on-surface
-                         disabled:pointer-events-none disabled:opacity-25"
-                >
-                  <ChevronDown class="size-4" strokeWidth={2} />
-                </button>
-                <button
-                  type="button"
-                  onclick={() => startRename('project', project.id, project.name)}
-                  aria-label="Rename {project.name}"
-                  title="Rename"
+                  onclick={() => (menuFor = isRow(menuFor, 'project', project.id) ? null : row)}
+                  aria-label="Actions for {project.name}"
+                  aria-expanded={isRow(menuFor, 'project', project.id)}
                   class="state-layer grid size-8 shrink-0 place-items-center rounded-full
                          text-on-surface-variant hover:text-on-surface"
                 >
-                  <Pencil class="size-4" strokeWidth={1.8} />
+                  <EllipsisVertical class="size-4" strokeWidth={2} />
                 </button>
-                <button
-                  type="button"
-                  onclick={() => (confirmDelete = { kind: 'project', id: project.id })}
-                  aria-label="Delete {project.name}"
-                  title="Delete"
-                  class="state-layer grid size-8 shrink-0 place-items-center rounded-full
-                         text-on-surface-variant hover:text-error"
+              {/if}
+
+              {#if isRow(menuFor, 'project', project.id)}
+                <div
+                  role="menu"
+                  aria-label="{project.name} actions"
+                  class="absolute right-2 top-full z-50 mt-1 w-52 overflow-hidden rounded-md border
+                         border-outline-variant bg-surface-container-highest py-1 shadow-level-2"
                 >
-                  <Trash2 class="size-4" strokeWidth={1.8} />
-                </button>
+                  <button type="button" role="menuitem"
+                    onclick={() => startRename(row, project.name)}
+                    class="state-layer flex w-full items-center gap-2.5 px-3 py-2 text-left
+                           text-body-medium text-on-surface-variant">
+                    <Pencil class="size-4 shrink-0" strokeWidth={1.8} /> Rename
+                  </button>
+                  <button type="button" role="menuitem"
+                    disabled={projectIndex <= 1}
+                    onclick={() => { organisation.moveProject(project.id, -1); closeMenu() }}
+                    class="state-layer flex w-full items-center gap-2.5 px-3 py-2 text-left
+                           text-body-medium text-on-surface-variant
+                           disabled:pointer-events-none disabled:opacity-35">
+                    <ChevronUp class="size-4 shrink-0" strokeWidth={2} /> Move up
+                  </button>
+                  <button type="button" role="menuitem"
+                    disabled={projectIndex >= tree.length - 1}
+                    onclick={() => { organisation.moveProject(project.id, 1); closeMenu() }}
+                    class="state-layer flex w-full items-center gap-2.5 px-3 py-2 text-left
+                           text-body-medium text-on-surface-variant
+                           disabled:pointer-events-none disabled:opacity-35">
+                    <ChevronDown class="size-4 shrink-0" strokeWidth={2} /> Move down
+                  </button>
+                  <button type="button" role="menuitem"
+                    onclick={() => { confirmDelete = row; closeMenu() }}
+                    class="state-layer flex w-full items-center gap-2.5 px-3 py-2 text-left
+                           text-body-medium text-error">
+                    <Trash2 class="size-4 shrink-0" strokeWidth={1.8} /> Delete
+                  </button>
+                </div>
               {/if}
             {/if}
           </div>
 
           <!-- Groups, indented under their project -->
-          <ul class="ml-3 border-l border-outline-variant/60 pl-3">
+          <ul class="ml-4 border-l border-outline-variant/60 pl-3">
             {#each project.groups as group, groupIndex (group.id)}
+              {@const grow = { kind: 'group' as Kind, id: group.id, projectId: project.id }}
               <li
-                class="flex min-h-10 items-center gap-2 rounded-sm px-2 py-1
-                       transition-colors duration-150 ease-standard hover:bg-surface-container"
+                draggable={!group.isDefault && renaming === null}
+                ondragstart={(event) => startDrag(event, grow)}
+                ondragover={(event) => dragOver(event, grow)}
+                ondragleave={() => (dropOn = null)}
+                ondrop={(event) => drop(event, grow)}
+                class="group/row relative flex min-h-10 items-center gap-2 rounded-sm px-2 py-1
+                       transition-colors duration-150 ease-standard hover:bg-surface-container
+                       {isRow(dragging, 'group', group.id) ? 'opacity-40' : ''}
+                       {isRow(dropOn, 'group', group.id)
+                         ? 'outline outline-2 outline-dashed outline-primary/50'
+                         : ''}"
               >
-                {#if isRenaming('group', group.id)}
+                {#if isRow(renaming, 'group', group.id)}
                   <input
                     type="text"
                     bind:value={renameValue}
@@ -294,63 +416,116 @@
                   <button type="button" onclick={cancelRename}
                     class="shrink-0 text-label-large text-on-surface-variant hover:text-on-surface">Cancel</button>
                 {:else}
+                  <span class="grid w-4 shrink-0 place-items-center text-on-surface-variant/30">
+                    {#if !group.isDefault}
+                      <GripVertical
+                        class="size-3.5 cursor-grab opacity-0 transition-opacity duration-150
+                               group-hover/row:opacity-100"
+                        strokeWidth={1.8}
+                      />
+                    {/if}
+                  </span>
+
                   <span class="min-w-0 flex-1 truncate text-body-medium text-on-surface">
                     {group.name}
                   </span>
+
+                  {#if group.isDefault}
+                    <span class="shrink-0 text-body-small text-on-surface-variant/50">always first</span>
+                  {/if}
+
                   <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant/70">
                     {group.count}
                   </span>
 
-                  {#if isConfirming('group', group.id)}
-                    <button type="button" onclick={() => remove('group', group.id)}
-                      class="shrink-0 text-label-large text-error hover:underline">Confirm delete</button>
+                  {#if isRow(confirmDelete, 'group', group.id)}
+                    <button type="button" onclick={() => remove(grow)}
+                      class="shrink-0 text-label-large text-error hover:underline">Delete</button>
                     <button type="button" onclick={() => (confirmDelete = null)}
                       class="shrink-0 text-label-large text-on-surface-variant hover:text-on-surface">Keep</button>
                   {:else if !group.isDefault}
                     <button
                       type="button"
-                      onclick={() => organisation.moveGroup(group.id, -1)}
-                      disabled={groupIndex <= 1}
-                      aria-label="Move {group.name} up"
-                      title="Move up"
-                      class="state-layer grid size-7 shrink-0 place-items-center rounded-full
-                             text-on-surface-variant hover:text-on-surface
-                             disabled:pointer-events-none disabled:opacity-25"
-                    >
-                      <ChevronUp class="size-3.5" strokeWidth={2} />
-                    </button>
-                    <button
-                      type="button"
-                      onclick={() => organisation.moveGroup(group.id, 1)}
-                      disabled={groupIndex >= project.groups.length - 1}
-                      aria-label="Move {group.name} down"
-                      title="Move down"
-                      class="state-layer grid size-7 shrink-0 place-items-center rounded-full
-                             text-on-surface-variant hover:text-on-surface
-                             disabled:pointer-events-none disabled:opacity-25"
-                    >
-                      <ChevronDown class="size-3.5" strokeWidth={2} />
-                    </button>
-                    <button
-                      type="button"
-                      onclick={() => startRename('group', group.id, group.name)}
-                      aria-label="Rename {group.name}"
-                      title="Rename"
+                      onclick={() => {
+                        menuFor = isRow(menuFor, 'group', group.id) ? null : grow
+                        movingGroup = null
+                      }}
+                      aria-label="Actions for {group.name}"
+                      aria-expanded={isRow(menuFor, 'group', group.id)}
                       class="state-layer grid size-7 shrink-0 place-items-center rounded-full
                              text-on-surface-variant hover:text-on-surface"
                     >
-                      <Pencil class="size-3.5" strokeWidth={1.8} />
+                      <EllipsisVertical class="size-3.5" strokeWidth={2} />
                     </button>
-                    <button
-                      type="button"
-                      onclick={() => (confirmDelete = { kind: 'group', id: group.id })}
-                      aria-label="Delete {group.name}"
-                      title="Delete"
-                      class="state-layer grid size-7 shrink-0 place-items-center rounded-full
-                             text-on-surface-variant hover:text-error"
+                  {/if}
+
+                  {#if isRow(menuFor, 'group', group.id)}
+                    <div
+                      role="menu"
+                      aria-label="{group.name} actions"
+                      class="absolute right-2 top-full z-50 mt-1 w-56 overflow-hidden rounded-md border
+                             border-outline-variant bg-surface-container-highest py-1 shadow-level-2"
                     >
-                      <Trash2 class="size-3.5" strokeWidth={1.8} />
-                    </button>
+                      {#if movingGroup === group.id}
+                        <p class="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider
+                                  text-on-surface-variant/60">
+                          Move to project
+                        </p>
+                        {#each tree as target (target.id)}
+                          <button type="button" role="menuitem"
+                            disabled={target.id === project.id}
+                            onclick={() => {
+                              organisation.moveGroupToProject(group.id, target.id)
+                              closeMenu()
+                            }}
+                            class="state-layer flex w-full items-center gap-2.5 px-3 py-2 text-left
+                                   text-body-medium text-on-surface-variant
+                                   disabled:pointer-events-none disabled:opacity-35">
+                            <span class="truncate">{target.name}</span>
+                            {#if target.id === project.id}
+                              <span class="ml-auto shrink-0 text-body-small text-on-surface-variant/50">
+                                current
+                              </span>
+                            {/if}
+                          </button>
+                        {/each}
+                      {:else}
+                        <button type="button" role="menuitem"
+                          onclick={() => startRename(grow, group.name)}
+                          class="state-layer flex w-full items-center gap-2.5 px-3 py-2 text-left
+                                 text-body-medium text-on-surface-variant">
+                          <Pencil class="size-4 shrink-0" strokeWidth={1.8} /> Rename
+                        </button>
+                        <button type="button" role="menuitem"
+                          onclick={() => (movingGroup = group.id)}
+                          class="state-layer flex w-full items-center gap-2.5 px-3 py-2 text-left
+                                 text-body-medium text-on-surface-variant">
+                          <FolderInput class="size-4 shrink-0" strokeWidth={1.8} /> Move to project…
+                        </button>
+                        <button type="button" role="menuitem"
+                          disabled={groupIndex <= 1}
+                          onclick={() => { organisation.moveGroup(group.id, -1); closeMenu() }}
+                          class="state-layer flex w-full items-center gap-2.5 px-3 py-2 text-left
+                                 text-body-medium text-on-surface-variant
+                                 disabled:pointer-events-none disabled:opacity-35">
+                          <ChevronUp class="size-4 shrink-0" strokeWidth={2} /> Move up
+                        </button>
+                        <button type="button" role="menuitem"
+                          disabled={groupIndex >= project.groups.length - 1}
+                          onclick={() => { organisation.moveGroup(group.id, 1); closeMenu() }}
+                          class="state-layer flex w-full items-center gap-2.5 px-3 py-2 text-left
+                                 text-body-medium text-on-surface-variant
+                                 disabled:pointer-events-none disabled:opacity-35">
+                          <ChevronDown class="size-4 shrink-0" strokeWidth={2} /> Move down
+                        </button>
+                        <button type="button" role="menuitem"
+                          onclick={() => { confirmDelete = grow; closeMenu() }}
+                          class="state-layer flex w-full items-center gap-2.5 px-3 py-2 text-left
+                                 text-body-medium text-error">
+                          <Trash2 class="size-4 shrink-0" strokeWidth={1.8} /> Delete
+                        </button>
+                      {/if}
+                    </div>
                   {/if}
                 {/if}
               </li>
@@ -409,4 +584,16 @@
       <Button onclick={onclose}>Done</Button>
     </div>
   </div>
+
+  <!-- Closes an open row menu on any outside click, without swallowing the
+       click that opened it. Sits under the menus and above everything else. -->
+  {#if menuFor}
+    <button
+      type="button"
+      tabindex="-1"
+      aria-label="Close menu"
+      class="fixed inset-0 z-40 cursor-default"
+      onclick={closeMenu}
+    ></button>
+  {/if}
 {/if}
