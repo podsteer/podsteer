@@ -595,10 +595,13 @@ export class ClusterSession {
 
     // One sound for the batch, at the worst severity in it. Six pods failing
     // at once is one event to an operator, and six overlapping chimes is
-    // noise they cannot count anyway.
+    // noise they cannot count anyway. The worst severity wins because a
+    // critical arriving alongside a warning is a critical arriving.
     if (preferences.alertSoundsEnabled) {
-      const critical = raised.some((finding) => finding.severity === 'critical')
-      void alertPlayer.play(preferences.alertSound, critical ? 'critical' : 'warning')
+      const worst = raised.some((finding) => finding.severity === 'critical')
+        ? 'critical'
+        : 'warning'
+      void alertPlayer.play(preferences.alertSoundFor(worst))
     }
   }
 

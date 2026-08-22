@@ -30,8 +30,32 @@
   import { accelerator } from '$lib/platform'
   import Button from './Button.svelte'
   import CreditsPane from './CreditsPane.svelte'
-  import { ALERT_SOUNDS, alertPlayer } from '$stores/alerts.svelte'
+  import {
+    ALERT_SEVERITIES,
+    ALERT_SOUNDS,
+    SEVERITY_LABELS,
+    SILENT,
+    alertPlayer,
+  } from '$stores/alerts.svelte'
+  import Select from './Select.svelte'
   import { RefreshCw, Palette, Database, Scale, Bell, Play, X } from '@lucide/svelte'
+
+  /**
+   * The sounds, plus silence.
+   *
+   * Silence is offered per severity rather than only as a master switch,
+   * because the arrangement most people want is criticals audible and
+   * warnings not — an operator who hears something every time a pod restarts
+   * stops hearing any of it.
+   */
+  const SOUND_OPTIONS = [
+    { value: SILENT, label: 'Silent', hint: 'no sound' },
+    ...ALERT_SOUNDS.map((sound) => ({
+      value: sound.id,
+      label: sound.label,
+      hint: sound.describe,
+    })),
+  ]
 
   interface Props {
     open: boolean
@@ -263,45 +287,47 @@
             </div>
 
             <div class="border-t border-outline-variant pt-5">
-              <h3 class="text-title-medium text-on-surface">Sound</h3>
+              <h3 class="text-title-medium text-on-surface">Sound per severity</h3>
               <p class="mt-0.5 text-body-small text-on-surface-variant">
-                Choosing one plays it. A critical finding plays the same sound twice, so severity
-                is audible without having to look.
+                Choosing one plays it, and what you hear here is exactly what you will hear when
+                it fires. A batch arriving at once sounds once, at the worst severity in it.
               </p>
 
-              <!-- A list rather than a row of chips: each one carries a
-                   description, because five words are all somebody has to
-                   choose by before they hear it. -->
-              <ul class="mt-3 flex flex-col gap-1">
-                {#each ALERT_SOUNDS as sound (sound.id)}
-                  {@const chosen = preferences.alertSound === sound.id}
-                  <li>
+              <ul class="mt-3 flex flex-col gap-2">
+                {#each ALERT_SEVERITIES as severity (severity)}
+                  {@const chosen = preferences.alertSoundFor(severity)}
+                  <li class="flex items-center gap-3">
+                    <span class="w-20 shrink-0 text-label-large text-on-surface">
+                      {SEVERITY_LABELS[severity]}
+                    </span>
+
+                    <Select
+                      label="Sound for {SEVERITY_LABELS[severity].toLowerCase()} findings"
+                      value={chosen}
+                      options={SOUND_OPTIONS}
+                      class="flex-1"
+                      onchange={(id) => preferences.setAlertSound(severity, id)}
+                    />
+
+                    <!-- Hearing it again without reassigning it: the picker
+                         previews on change, which is no use to somebody
+                         comparing the one they already have. -->
                     <button
                       type="button"
-                      onclick={() => preferences.setAlertSound(sound.id)}
-                      aria-pressed={chosen}
-                      class="state-layer flex w-full items-center gap-3 rounded-xs border px-3 py-2
-                             text-left transition-colors duration-150 ease-standard
-                             {chosen
-                               ? 'border-transparent bg-secondary-container text-on-secondary-container'
-                               : 'border-outline text-on-surface-variant'}"
+                      onclick={() => void alertPlayer.play(chosen)}
+                      disabled={chosen === SILENT}
+                      aria-label="Play the {SEVERITY_LABELS[severity].toLowerCase()} sound"
+                      title="Play"
+                      class="state-layer flex size-8 shrink-0 items-center justify-center rounded-full
+                             text-on-surface-variant transition-colors duration-100
+                             hover:bg-surface-container hover:text-on-surface
+                             disabled:pointer-events-none disabled:opacity-38"
                     >
-                      <Play class="size-4 shrink-0" strokeWidth={2} />
-                      <span class="flex-1 text-label-large">{sound.label}</span>
-                      <span class="text-body-small opacity-70">{sound.describe}</span>
+                      <Play class="size-4" strokeWidth={2} />
                     </button>
                   </li>
                 {/each}
               </ul>
-
-              <button
-                type="button"
-                onclick={() => void alertPlayer.play(preferences.alertSound, 'critical')}
-                class="state-layer mt-3 rounded-xs px-1.5 py-1 text-label-medium text-primary
-                       transition-colors duration-100 hover:bg-primary/10"
-              >
-                Hear it as a critical
-              </button>
             </div>
 
             <!-- Said plainly rather than discovered: an alarm somebody

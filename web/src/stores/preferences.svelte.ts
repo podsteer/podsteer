@@ -14,7 +14,12 @@
  * the webview means adjusting a column width costs no IPC round trip.
  */
 
-import { ALERT_SOUNDS, DEFAULT_ALERT_SOUND, alertPlayer } from './alerts.svelte'
+import {
+  DEFAULT_ALERT_SOUNDS,
+  alertPlayer,
+  isAlertSound,
+  type AlertSeverity,
+} from './alerts.svelte'
 
 /** Page sizes offered. 25 is the default; 100 is the ceiling. */
 export const PAGE_SIZES = [10, 25, 50, 100] as const
@@ -112,10 +117,18 @@ interface PersistedShape {
   namespaceByCluster: Record<string, string>
   /** clusterId -> snoozeKey() -> epoch milliseconds when the snooze lapses. */
   snoozes: Record<string, Record<string, number>>
-  /** Whether a new warning or critical finding makes a sound. */
+  /** Whether a newly raised finding makes a sound at all. */
   alertSoundsEnabled: boolean
-  /** Which motif it plays, from ALERT_SOUNDS. */
-  alertSound: string
+  /** severity -> the id of the motif it plays, or SILENT. */
+  alertSounds: Record<AlertSeverity, string>
+  /**
+   * The single sound earlier builds played for every severity.
+   *
+   * Read once, as the warning sound, and never written again. Somebody who
+   * had already chosen Marimba should not have that quietly become Chime
+   * because the setting grew a second half.
+   */
+  alertSound?: string
   /** kindId -> columnId -> preference */
   columns: Record<string, Record<string, ColumnPreference>>
 }
@@ -137,7 +150,7 @@ const DEFAULTS: PersistedShape = {
   // people mute at the operating system, taking the alarm they DID want with
   // it. Whoever wants this turns it on, and hears the sound as they choose it.
   alertSoundsEnabled: false,
-  alertSound: DEFAULT_ALERT_SOUND,
+  alertSounds: DEFAULT_ALERT_SOUNDS,
   columns: {},
 }
 
@@ -196,8 +209,8 @@ class Preferences {
   /** Whether a newly raised warning or critical finding makes a sound. */
   alertSoundsEnabled = $state<boolean>(DEFAULTS.alertSoundsEnabled)
 
-  /** Which of ALERT_SOUNDS is played. */
-  alertSound = $state<string>(DEFAULTS.alertSound)
+  /** Which motif each severity plays, by id, or SILENT for none. */
+  alertSounds = $state<Record<AlertSeverity, string>>({ ...DEFAULTS.alertSounds })
 
   /** kindId -> columnId -> preference. */
   columns = $state<Record<string, Record<string, ColumnPreference>>>({})
@@ -321,18 +334,22 @@ class Preferences {
   }
 
   /**
-   * Chooses the motif, and plays it.
+   * Chooses one severity's motif, and plays it.
    *
-   * Choosing a sound without hearing it is choosing from five words, so the
+   * Choosing a sound without hearing it is choosing from a few words, so the
    * selection IS the preview. It also does the browser's unlocking for free:
    * this is a click, so the audio context it creates is allowed to run, and
    * the first real alert is not the one that discovers it was suspended.
    */
-  setAlertSound = (id: string): void => {
-    this.alertSound = id
+  setAlertSound = (severity: AlertSeverity, id: string): void => {
+    this.alertSounds = { ...this.alertSounds, [severity]: id }
     this.#save()
-    void alertPlayer.play(id, 'warning')
+    void alertPlayer.play(id)
   }
+
+  /** The motif a severity plays, falling back to its default. */
+  alertSoundFor = (severity: AlertSeverity): string =>
+    this.alertSounds[severity] ?? DEFAULT_ALERT_SOUNDS[severity]
 
   // --- Snoozed findings -----------------------------------------------------
 
@@ -484,10 +501,22 @@ class Preferences {
       if (typeof stored.alertSoundsEnabled === 'boolean') {
         this.alertSoundsEnabled = stored.alertSoundsEnabled
       }
-      // Validated against the catalogue: a sound removed in a later build must
-      // fall back to one that exists rather than to silence.
-      if (ALERT_SOUNDS.some((sound) => sound.id === stored.alertSound)) {
-        this.alertSound = stored.alertSound as string
+      // The one sound earlier builds stored becomes the warning sound, before
+      // the per-severity map is read over it.
+      if (isAlertSound(stored.alertSound)) {
+        this.alertSounds = { ...this.alertSounds, warning: stored.alertSound }
+      }
+      // Each half is validated on its own against the catalogue: a sound
+      // dropped in a later build must fall back to one that exists rather
+      // than leaving that severity mute without saying so.
+      if (stored.alertSounds && typeof stored.alertSounds === 'object') {
+        const restored = { ...this.alertSounds }
+        for (const severity of ['warning', 'critical'] as const) {
+          if (isAlertSound(stored.alertSounds[severity])) {
+            restored[severity] = stored.alertSounds[severity]
+          }
+        }
+        this.alertSounds = restored
       }
       if (stored.columns && typeof stored.columns === 'object') this.columns = stored.columns
     } catch {
@@ -510,7 +539,7 @@ class Preferences {
         namespaceByCluster: this.namespaceByCluster,
         snoozes: this.#pruneSnoozes(),
         alertSoundsEnabled: this.alertSoundsEnabled,
-        alertSound: this.alertSound,
+        alertSounds: this.alertSounds,
         columns: this.columns,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))

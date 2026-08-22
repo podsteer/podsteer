@@ -4,9 +4,9 @@
  * Synthesised with the Web Audio API rather than played from files. Three
  * reasons, in order of how much they matter: a sound file is a third-party
  * asset with a licence to account for in a project that ships its own licence
- * inventory; the binary stays the size it is; and a tone described as numbers
- * can be varied for severity — the same motif, heavier for a critical — where a
- * pair of recordings would have to be two unrelated sounds.
+ * inventory; the binary stays the size it is; and a catalogue described as
+ * numbers costs nothing to extend, which is what lets each severity have a
+ * sound of its own rather than a shared one played louder.
  *
  * Nothing here reaches the network, which is the point of it being an
  * oscillator and not a fetch.
@@ -32,21 +32,37 @@ export interface AlertSound {
   label: string
   /** What it sounds like, for somebody choosing without listening yet. */
   describe: string
+  /**
+   * Master level for this motif.
+   *
+   * Part of the sound rather than of the severity playing it. A sawtooth at
+   * the level of a sine is painful, so loudness is designed alongside the
+   * waveform — and it means what somebody auditions in Settings is exactly
+   * what they will hear at three in the morning.
+   */
+  level: number
   notes: Note[]
 }
+
+/** Chosen when a severity should raise nothing audible. */
+export const SILENT = 'silent'
 
 /**
  * The variants offered in Settings.
  *
- * Deliberately short and pitched above the room rather than musical: this
- * plays while somebody is reading, and the job is to make them look up once,
- * not to be enjoyed. Nothing here rings for more than about half a second.
+ * Deliberately short and pitched to carry rather than to be enjoyed: this
+ * plays while somebody is reading, and the job is to make them look up once.
+ * Nothing here rings for much more than half a second.
+ *
+ * They are ordered gentle to urgent, which is the order somebody assigning one
+ * to warnings and another to criticals is choosing along.
  */
 export const ALERT_SOUNDS: readonly AlertSound[] = [
   {
     id: 'chime',
     label: 'Chime',
     describe: 'Two soft rising notes',
+    level: 0.16,
     notes: [
       { frequency: 880, at: 0, duration: 0.18, peak: 0.5, type: 'sine' },
       { frequency: 1318.5, at: 0.09, duration: 0.34, peak: 0.45, type: 'sine' },
@@ -56,51 +72,130 @@ export const ALERT_SOUNDS: readonly AlertSound[] = [
     id: 'ping',
     label: 'Ping',
     describe: 'One short high tone',
+    level: 0.16,
     notes: [{ frequency: 1568, at: 0, duration: 0.24, peak: 0.42, type: 'sine' }],
   },
   {
     id: 'marimba',
     label: 'Marimba',
     describe: 'A woody two-note figure',
+    level: 0.18,
     notes: [
       { frequency: 659.25, at: 0, duration: 0.3, peak: 0.5, type: 'triangle' },
       { frequency: 987.77, at: 0.07, duration: 0.26, peak: 0.4, type: 'triangle' },
     ],
   },
   {
-    id: 'blip',
-    label: 'Blip',
-    describe: 'Two flat electronic beeps',
+    id: 'knock',
+    label: 'Knock',
+    describe: 'Two low thuds, easy to ignore',
+    level: 0.2,
     notes: [
-      { frequency: 740, at: 0, duration: 0.08, peak: 0.16, type: 'square' },
-      { frequency: 740, at: 0.14, duration: 0.08, peak: 0.16, type: 'square' },
+      { frequency: 180, at: 0, duration: 0.14, peak: 0.5, type: 'triangle' },
+      { frequency: 150, at: 0.13, duration: 0.16, peak: 0.45, type: 'triangle' },
+    ],
+  },
+  {
+    id: 'bell',
+    label: 'Bell',
+    describe: 'One clear note with a long tail',
+    level: 0.15,
+    notes: [
+      { frequency: 1046.5, at: 0, duration: 0.7, peak: 0.45, type: 'sine' },
+      { frequency: 1568, at: 0, duration: 0.4, peak: 0.16, type: 'sine' },
     ],
   },
   {
     id: 'sonar',
     label: 'Sonar',
     describe: 'A low tone sliding upwards',
+    level: 0.18,
+    notes: [{ frequency: 196, at: 0, duration: 0.5, peak: 0.5, type: 'sine', glideTo: 294 }],
+  },
+  {
+    id: 'pulse',
+    label: 'Pulse',
+    describe: 'Three even beats',
+    level: 0.16,
     notes: [
-      { frequency: 196, at: 0, duration: 0.5, peak: 0.5, type: 'sine', glideTo: 294 },
+      { frequency: 660, at: 0, duration: 0.09, peak: 0.42, type: 'sine' },
+      { frequency: 660, at: 0.15, duration: 0.09, peak: 0.42, type: 'sine' },
+      { frequency: 660, at: 0.3, duration: 0.09, peak: 0.42, type: 'sine' },
+    ],
+  },
+  {
+    id: 'blip',
+    label: 'Blip',
+    describe: 'Two flat electronic beeps',
+    level: 0.16,
+    notes: [
+      { frequency: 740, at: 0, duration: 0.08, peak: 0.16, type: 'square' },
+      { frequency: 740, at: 0.14, duration: 0.08, peak: 0.16, type: 'square' },
+    ],
+  },
+  {
+    id: 'descend',
+    label: 'Descend',
+    describe: 'Three notes falling — something got worse',
+    level: 0.18,
+    notes: [
+      { frequency: 1046.5, at: 0, duration: 0.14, peak: 0.45, type: 'triangle' },
+      { frequency: 783.99, at: 0.13, duration: 0.14, peak: 0.45, type: 'triangle' },
+      { frequency: 587.33, at: 0.26, duration: 0.34, peak: 0.45, type: 'triangle' },
+    ],
+  },
+  {
+    id: 'alarm',
+    label: 'Alarm',
+    describe: 'Three urgent blips',
+    level: 0.15,
+    notes: [
+      { frequency: 880, at: 0, duration: 0.08, peak: 0.2, type: 'square' },
+      { frequency: 880, at: 0.12, duration: 0.08, peak: 0.2, type: 'square' },
+      { frequency: 880, at: 0.24, duration: 0.14, peak: 0.2, type: 'square' },
+    ],
+  },
+  {
+    id: 'klaxon',
+    label: 'Klaxon',
+    describe: 'Two harsh alternating tones — hard to miss',
+    level: 0.12,
+    notes: [
+      { frequency: 466.16, at: 0, duration: 0.2, peak: 0.22, type: 'sawtooth' },
+      { frequency: 349.23, at: 0.21, duration: 0.26, peak: 0.22, type: 'sawtooth' },
     ],
   },
 ] as const
 
-export type AlertSoundID = (typeof ALERT_SOUNDS)[number]['id']
+/** The severities that can raise a sound. Info findings never do. */
+export const ALERT_SEVERITIES = ['warning', 'critical'] as const
 
-export const DEFAULT_ALERT_SOUND: AlertSoundID = 'chime'
+export type AlertSeverity = (typeof ALERT_SEVERITIES)[number]
 
-/** Severity decides how insistent the same motif is. */
-export type AlertSeverity = 'warning' | 'critical'
+export const SEVERITY_LABELS: Record<AlertSeverity, string> = {
+  warning: 'Warning',
+  critical: 'Critical',
+}
 
-/** Master level per severity. A critical is louder as well as repeated. */
-const LEVEL: Record<AlertSeverity, number> = { warning: 0.16, critical: 0.22 }
+/**
+ * What each severity plays before anybody chooses.
+ *
+ * Two different sounds, not one sound played twice: the same motif repeated
+ * says "again", and what a critical needs to say is "worse". Descend falls
+ * where Chime rises, which is audible from another room without being learned.
+ */
+export const DEFAULT_ALERT_SOUNDS: Record<AlertSeverity, string> = {
+  warning: 'chime',
+  critical: 'descend',
+}
 
-/** Seconds between the two passes a critical gets. */
-const CRITICAL_GAP = 0.34
+/** Whether an id names a real sound, or silence, and nothing else. */
+export function isAlertSound(id: unknown): id is string {
+  return id === SILENT || ALERT_SOUNDS.some((sound) => sound.id === id)
+}
 
-function soundFor(id: string): AlertSound {
-  return ALERT_SOUNDS.find((sound) => sound.id === id) ?? ALERT_SOUNDS[0]
+function soundFor(id: string): AlertSound | null {
+  return ALERT_SOUNDS.find((sound) => sound.id === id) ?? null
 }
 
 /**
@@ -159,33 +254,37 @@ class AlertPlayer {
   }
 
   /**
-   * Plays one motif.
+   * Plays one motif, exactly as it sounds in Settings.
+   *
+   * No severity argument: which sound a severity plays is the operator's
+   * choice, and nothing here dresses it up afterwards. An earlier version
+   * repeated the motif and raised the level for criticals, which meant the
+   * sound somebody auditioned was not the sound they would be woken by.
    *
    * Failures are swallowed throughout: an alert that cannot be heard must
    * never be an alert that breaks the assessment it came from.
    */
-  async play(id: string, severity: AlertSeverity = 'warning'): Promise<void> {
+  async play(id: string): Promise<void> {
+    if (id === SILENT) return
+
+    const sound = soundFor(id)
+    if (!sound) return
+
     const context = await this.#awake()
     if (!context) return
 
-    const sound = soundFor(id)
     const master = context.createGain()
-    master.gain.value = LEVEL[severity]
+    master.gain.value = sound.level
     master.connect(context.destination)
 
-    const passes = severity === 'critical' ? 2 : 1
     const start = context.currentTime + 0.02
-
-    for (let pass = 0; pass < passes; pass += 1) {
-      for (const note of sound.notes) {
-        this.#ring(context, master, note, start + pass * CRITICAL_GAP)
-      }
+    for (const note of sound.notes) {
+      this.#ring(context, master, note, start)
     }
 
     // Releasing the node graph once the tail has died keeps a long session
     // from accumulating one gain node per alert.
-    const tail = start + (passes - 1) * CRITICAL_GAP + this.#length(sound) + 0.1
-    master.gain.setValueAtTime(master.gain.value, tail)
+    const tail = start + this.#length(sound) + 0.1
     window.setTimeout(() => master.disconnect(), (tail - context.currentTime) * 1000 + 200)
   }
 
