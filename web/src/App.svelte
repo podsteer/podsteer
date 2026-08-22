@@ -13,6 +13,7 @@
   import ClusterWorkspace from '$pages/ClusterWorkspace.svelte'
   import { workspace } from '$stores/workspace.svelte'
   import { loadAppInfo } from '$stores/system.svelte'
+  import { alertPlayer } from '$stores/alerts.svelte'
 
   /**
    * The shortest time the splash stays up. Initialisation is faster than this
@@ -28,6 +29,11 @@
   // timer and the event subscription when it goes away.
   $effect(() => {
     void loadAppInfo()
+    // Audio output is only allowed to start from a user gesture, and a context
+    // created before one exists stays suspended for the life of the process.
+    // Arming here means the first click or keypress of the session wakes it,
+    // so an alert never arrives to find the speaker asleep.
+    alertPlayer.arm()
     const minimum = new Promise((resolve) => setTimeout(resolve, MIN_SPLASH_MS))
     void Promise.all([workspace.initialise(), minimum]).then(() => {
       booted = true

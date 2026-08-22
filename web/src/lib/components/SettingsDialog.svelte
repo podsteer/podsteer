@@ -30,7 +30,8 @@
   import { accelerator } from '$lib/platform'
   import Button from './Button.svelte'
   import CreditsPane from './CreditsPane.svelte'
-  import { RefreshCw, Palette, Database, Scale, X } from '@lucide/svelte'
+  import { ALERT_SOUNDS, alertPlayer } from '$stores/alerts.svelte'
+  import { RefreshCw, Palette, Database, Scale, Bell, Play, X } from '@lucide/svelte'
 
   interface Props {
     open: boolean
@@ -44,6 +45,7 @@
   const SECTIONS = [
     { id: 'refresh', label: 'Refresh', icon: RefreshCw },
     { id: 'appearance', label: 'Appearance', icon: Palette },
+    { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'data', label: 'Data', icon: Database },
     { id: 'credits', label: 'Credits', icon: Scale },
   ] as const
@@ -226,6 +228,91 @@
               </label>
             </div>
           </section>
+        {:else if section === 'notifications'}
+          <section class="flex flex-col gap-6">
+            <div>
+              <h3 class="text-title-medium text-on-surface">Sound on a new finding</h3>
+              <p class="mt-0.5 text-body-small text-on-surface-variant">
+                Plays once when a warning or critical finding appears that was not there before.
+                A problem that persists is announced once, not on every refresh, and anything
+                snoozed stays silent.
+              </p>
+
+              <div class="mt-3 flex gap-2">
+                {#each [true, false] as choice (choice)}
+                  <button
+                    type="button"
+                    onclick={() => preferences.setAlertSoundsEnabled(choice)}
+                    aria-pressed={preferences.alertSoundsEnabled === choice}
+                    class="state-layer h-9 min-w-24 rounded-xs border px-4 text-label-large
+                           transition-colors duration-150 ease-standard
+                           {preferences.alertSoundsEnabled === choice
+                             ? 'border-transparent bg-secondary-container text-on-secondary-container'
+                             : 'border-outline text-on-surface-variant'}"
+                  >
+                    {choice ? 'On' : 'Off'}
+                  </button>
+                {/each}
+              </div>
+
+              {#if !alertPlayer.available}
+                <p class="mt-2 text-body-small text-warning">
+                  This machine has no audio output PodSteer can reach, so nothing will be heard.
+                </p>
+              {/if}
+            </div>
+
+            <div class="border-t border-outline-variant pt-5">
+              <h3 class="text-title-medium text-on-surface">Sound</h3>
+              <p class="mt-0.5 text-body-small text-on-surface-variant">
+                Choosing one plays it. A critical finding plays the same sound twice, so severity
+                is audible without having to look.
+              </p>
+
+              <!-- A list rather than a row of chips: each one carries a
+                   description, because five words are all somebody has to
+                   choose by before they hear it. -->
+              <ul class="mt-3 flex flex-col gap-1">
+                {#each ALERT_SOUNDS as sound (sound.id)}
+                  {@const chosen = preferences.alertSound === sound.id}
+                  <li>
+                    <button
+                      type="button"
+                      onclick={() => preferences.setAlertSound(sound.id)}
+                      aria-pressed={chosen}
+                      class="state-layer flex w-full items-center gap-3 rounded-xs border px-3 py-2
+                             text-left transition-colors duration-150 ease-standard
+                             {chosen
+                               ? 'border-transparent bg-secondary-container text-on-secondary-container'
+                               : 'border-outline text-on-surface-variant'}"
+                    >
+                      <Play class="size-4 shrink-0" strokeWidth={2} />
+                      <span class="flex-1 text-label-large">{sound.label}</span>
+                      <span class="text-body-small opacity-70">{sound.describe}</span>
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+
+              <button
+                type="button"
+                onclick={() => void alertPlayer.play(preferences.alertSound, 'critical')}
+                class="state-layer mt-3 rounded-xs px-1.5 py-1 text-label-medium text-primary
+                       transition-colors duration-100 hover:bg-primary/10"
+              >
+                Hear it as a critical
+              </button>
+            </div>
+
+            <!-- Said plainly rather than discovered: an alarm somebody
+                 believes is watching everything, that is watching one tab, is
+                 worse than no alarm at all. -->
+            <p class="border-t border-outline-variant pt-5 text-body-small text-on-surface-variant/70">
+              Findings are watched on the cluster whose tab is open, whichever view you are
+              reading. Clusters open in other tabs are assessed when you return to them.
+            </p>
+          </section>
+
         {:else if section === 'data'}
           <section>
             <h3 class="text-title-medium text-on-surface">Local history</h3>

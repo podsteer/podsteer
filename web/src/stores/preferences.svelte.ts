@@ -14,6 +14,8 @@
  * the webview means adjusting a column width costs no IPC round trip.
  */
 
+import { ALERT_SOUNDS, DEFAULT_ALERT_SOUND, alertPlayer } from './alerts.svelte'
+
 /** Page sizes offered. 25 is the default; 100 is the ceiling. */
 export const PAGE_SIZES = [10, 25, 50, 100] as const
 
@@ -110,6 +112,10 @@ interface PersistedShape {
   namespaceByCluster: Record<string, string>
   /** clusterId -> snoozeKey() -> epoch milliseconds when the snooze lapses. */
   snoozes: Record<string, Record<string, number>>
+  /** Whether a new warning or critical finding makes a sound. */
+  alertSoundsEnabled: boolean
+  /** Which motif it plays, from ALERT_SOUNDS. */
+  alertSound: string
   /** kindId -> columnId -> preference */
   columns: Record<string, Record<string, ColumnPreference>>
 }
@@ -127,6 +133,11 @@ const DEFAULTS: PersistedShape = {
   findingsExpanded: false,
   namespaceByCluster: {},
   snoozes: {},
+  // Off. An application that starts making noise nobody asked for is one
+  // people mute at the operating system, taking the alarm they DID want with
+  // it. Whoever wants this turns it on, and hears the sound as they choose it.
+  alertSoundsEnabled: false,
+  alertSound: DEFAULT_ALERT_SOUND,
   columns: {},
 }
 
@@ -181,6 +192,12 @@ class Preferences {
    * as losing it.
    */
   snoozes = $state<Record<string, Record<string, number>>>({})
+
+  /** Whether a newly raised warning or critical finding makes a sound. */
+  alertSoundsEnabled = $state<boolean>(DEFAULTS.alertSoundsEnabled)
+
+  /** Which of ALERT_SOUNDS is played. */
+  alertSound = $state<string>(DEFAULTS.alertSound)
 
   /** kindId -> columnId -> preference. */
   columns = $state<Record<string, Record<string, ColumnPreference>>>({})
@@ -294,6 +311,27 @@ class Preferences {
   setClusterNamespace = (clusterId: string, namespace: string): void => {
     this.namespaceByCluster = { ...this.namespaceByCluster, [clusterId]: namespace }
     this.#save()
+  }
+
+  // --- Alert sounds ---------------------------------------------------------
+
+  setAlertSoundsEnabled = (enabled: boolean): void => {
+    this.alertSoundsEnabled = enabled
+    this.#save()
+  }
+
+  /**
+   * Chooses the motif, and plays it.
+   *
+   * Choosing a sound without hearing it is choosing from five words, so the
+   * selection IS the preview. It also does the browser's unlocking for free:
+   * this is a click, so the audio context it creates is allowed to run, and
+   * the first real alert is not the one that discovers it was suspended.
+   */
+  setAlertSound = (id: string): void => {
+    this.alertSound = id
+    this.#save()
+    void alertPlayer.play(id, 'warning')
   }
 
   // --- Snoozed findings -----------------------------------------------------
@@ -443,6 +481,14 @@ class Preferences {
       if (stored.snoozes && typeof stored.snoozes === 'object') {
         this.snoozes = stored.snoozes
       }
+      if (typeof stored.alertSoundsEnabled === 'boolean') {
+        this.alertSoundsEnabled = stored.alertSoundsEnabled
+      }
+      // Validated against the catalogue: a sound removed in a later build must
+      // fall back to one that exists rather than to silence.
+      if (ALERT_SOUNDS.some((sound) => sound.id === stored.alertSound)) {
+        this.alertSound = stored.alertSound as string
+      }
       if (stored.columns && typeof stored.columns === 'object') this.columns = stored.columns
     } catch {
       // Corrupt or unavailable storage must not stop the app starting. The
@@ -463,6 +509,8 @@ class Preferences {
         findingsExpanded: this.findingsExpanded,
         namespaceByCluster: this.namespaceByCluster,
         snoozes: this.#pruneSnoozes(),
+        alertSoundsEnabled: this.alertSoundsEnabled,
+        alertSound: this.alertSound,
         columns: this.columns,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))

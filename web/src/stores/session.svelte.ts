@@ -42,6 +42,7 @@ import {
   type SortAccessors,
   type SortState,
 } from '$lib/sort'
+import { alertPlayer } from './alerts.svelte'
 import { preferences } from './preferences.svelte'
 
 /** Lifecycle of an asynchronous read. */
@@ -180,6 +181,13 @@ export class ClusterSession {
   events = $state<K8sEvent[]>([])
   table = $state<ResourceTable | null>(null)
   overview = $state<Overview | null>(null)
+
+  /**
+   * The non-info finding ids of the previous assessment, or null before the
+   * first one has landed. Not reactive: nothing renders it, and it exists
+   * only to decide what is new.
+   */
+  #lastFindingIds: Set<string> | null = null
 
   status = $state<LoadStatus>('idle')
   error = $state<ApiError | null>(null)
@@ -537,10 +545,76 @@ export class ClusterSession {
     }
   }
 
+  /**
+   * Fetches the assessment on its own, for the views that are not it.
+   *
+   * Errors are swallowed. This is a background refresh of a badge and an
+   * alarm; failing it must never surface as the error state of the list the
+   * operator is looking at, which is fetched separately and has its own.
+   */
+  async #refreshAssessment(): Promise<void> {
+    try {
+      this.#adopt(await getOverview(this.cluster.id))
+    } catch {
+      // The next cycle tries again. A missed assessment is a stale badge for
+      // one interval, not something to interrupt anyone over.
+    }
+  }
+
+  /**
+   * Takes a new assessment, sounding anything it raised.
+   *
+   * "New" is measured against the previous assessment rather than against
+   * everything ever seen, so a problem that clears and comes back is
+   * announced again — which is what somebody watching a flapping workload
+   * needs — while one that simply persists is announced once.
+   *
+   * The first assessment of a session only establishes the baseline. Opening
+   * a cluster that has been broken since Tuesday is not news happening now,
+   * and greeting an operator with a chord of every finding at once is how a
+   * feature like this gets switched off in its first minute.
+   */
+  #adopt(overview: Overview): void {
+    const previous = this.#lastFindingIds
+    const current = new Set(
+      overview.findings.filter((finding) => finding.severity !== 'info').map((finding) => finding.id),
+    )
+    this.#lastFindingIds = current
+    this.overview = overview
+
+    if (previous === null) return
+
+    // Snoozed findings are silent by definition, and so is un-snoozing one:
+    // the id was in the previous set throughout, because that set is not
+    // filtered by snoozing.
+    const raised = overview.findings.filter(
+      (finding) =>
+        finding.severity !== 'info' && !previous.has(finding.id) && !this.isFullySnoozed(finding),
+    )
+    if (raised.length === 0) return
+
+    // One sound for the batch, at the worst severity in it. Six pods failing
+    // at once is one event to an operator, and six overlapping chimes is
+    // noise they cannot count anyway.
+    if (preferences.alertSoundsEnabled) {
+      const critical = raised.some((finding) => finding.severity === 'critical')
+      void alertPlayer.play(preferences.alertSound, critical ? 'critical' : 'warning')
+    }
+  }
+
   /** Issues the call the active view needs. */
   async #fetch(): Promise<unknown> {
     const { id } = this.cluster
     const namespace = this.isNamespaced ? this.namespace : ALL_NAMESPACES
+
+    // The assessment is refreshed whatever is on screen. It used to be
+    // fetched only while the overview was open, which left two things wrong:
+    // the navigator badge kept asserting a count from whenever that page was
+    // last visited — an hour ago, on a cluster that had since broken — and
+    // nothing could raise an alert about a finding while somebody was reading
+    // a pod list. It runs alongside, so a slow assessment never delays the
+    // rows the operator is actually waiting for.
+    if (this.viewMode !== 'overview') void this.#refreshAssessment()
 
     switch (this.viewMode) {
       case 'overview':
@@ -574,7 +648,7 @@ export class ClusterSession {
 
     switch (this.viewMode) {
       case 'overview':
-        this.overview = rows as Overview
+        this.#adopt(rows as Overview)
         break
       case 'pods':
         this.pods = rows as Pod[]
