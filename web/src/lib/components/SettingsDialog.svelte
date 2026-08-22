@@ -100,10 +100,16 @@
     onclick={onclose}
   ></button>
 
+  <!-- Centred by `inset-0 m-auto` rather than by `-translate-1/2`. A transform
+       makes the element a containing block for every `position: fixed`
+       descendant, so a dropdown inside this dialog was being positioned
+       against the dialog instead of against the window and landed in the
+       corner. Auto margins against a full inset centre the same way and leave
+       fixed positioning meaning what it says. -->
   <div
-    class="fixed top-1/2 left-1/2 z-50 flex h-[36rem] max-h-[85vh] w-[52rem] max-w-[92vw]
-           -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-sm border
-           border-outline-variant bg-surface-container-high shadow-level-3"
+    class="fixed inset-0 z-50 m-auto flex h-[36rem] max-h-[85vh] w-[52rem] max-w-[92vw]
+           overflow-hidden rounded-sm border border-outline-variant
+           bg-surface-container-high shadow-level-3"
     role="dialog"
     aria-modal="true"
     aria-label="Settings"

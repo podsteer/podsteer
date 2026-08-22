@@ -11,10 +11,14 @@
   handling below exists to pay that back rather than to decorate: arrows and
   Home/End move, typing jumps, Enter commits, Escape abandons.
 
-  The panel is positioned FIXED against the trigger. Both places this is used
-  sit inside a scrolling ancestor, and an absolutely positioned panel cannot
-  escape one — it would be clipped by the very thing that makes the list
-  scrollable. It flips above when there is no room below.
+  The panel is positioned FIXED against the trigger, which is what lets it
+  escape a scrolling ancestor that would otherwise clip the very list that
+  makes it scrollable. Fixed is not quite absolute, though: it resolves
+  against the nearest ancestor carrying a transform, a filter or containment
+  rather than against the viewport, and a dialog centred with `-translate-1/2`
+  was enough to send a panel to the corner of the window. So the placement
+  measures where it actually landed and corrects for the difference, which
+  works whatever the ancestor did. It flips above when there is no room below.
 -->
 <script lang="ts">
   import { ChevronDown } from '@lucide/svelte'
@@ -175,7 +179,11 @@
         choose(active)
         break
       case 'Escape':
+        // Stopped here as well as defaulted: a dialog listening on the window
+        // for Escape would otherwise close along with the panel, which is one
+        // key press doing two things nobody asked for.
         event.preventDefault()
+        event.stopPropagation()
         hide()
         break
       case 'Tab':
@@ -225,14 +233,27 @@
     // Right-aligned to the trigger when it grew past it, so a compact control
     // near the right edge does not push its panel off screen.
     const preferredLeft = compact ? rect.right - width : rect.left
-    node.style.left = `${Math.max(margin, Math.min(preferredLeft, window.innerWidth - width - margin))}px`
+    const left = Math.max(margin, Math.min(preferredLeft, window.innerWidth - width - margin))
 
     let top = rect.bottom + 4
     if (top + height > window.innerHeight - margin) {
       const above = rect.top - height - 4
       top = above >= margin ? above : Math.max(margin, window.innerHeight - height - margin)
     }
+
+    node.style.left = `${left}px`
     node.style.top = `${top}px`
+
+    // Where it actually landed, which is not always where it was put: a
+    // transformed ancestor makes these coordinates relative to itself. The
+    // difference is measured and subtracted rather than the ancestor being
+    // hunted for, so this stays correct whatever a future dialog does to
+    // centre itself.
+    const landed = node.getBoundingClientRect()
+    if (Math.abs(landed.left - left) > 0.5 || Math.abs(landed.top - top) > 0.5) {
+      node.style.left = `${left - (landed.left - left)}px`
+      node.style.top = `${top - (landed.top - top)}px`
+    }
   }
 </script>
 
