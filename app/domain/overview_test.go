@@ -903,7 +903,8 @@ func TestEfficiencyReportsUsageAgainstRequests(t *testing.T) {
 	// and the OS, none of which requested anything — dividing it by pod
 	// requests reports clusters as more than 100% "efficient".
 	usage := domain.ResourceUsage{
-		Allocatable: 4000, Requests: 2000, Usage: 900, PodUsage: 500, Measured: true,
+		Allocatable: 4000, Requests: 2000, Usage: 900, PodUsage: 500,
+		Measured: true, PodMeasured: true,
 	}
 	if got := usage.Efficiency(); got != 25 {
 		t.Errorf("efficiency = %.0f%%, want 25%% of what the pods reserved", got)
@@ -912,6 +913,17 @@ func TestEfficiencyReportsUsageAgainstRequests(t *testing.T) {
 	unmeasured := domain.ResourceUsage{Allocatable: 4000, Requests: 2000}
 	if got := unmeasured.Efficiency(); got != -1 {
 		t.Errorf("efficiency = %.0f, want -1 when nothing was measured", got)
+	}
+
+	// Measured at the node and nowhere else, which is exactly ephemeral
+	// storage: PodUsage is zero because nothing reports it, not because the
+	// pods are using nothing. Dividing by it announced a cluster wasting
+	// 100% of its disk reservation.
+	nodeOnly := domain.ResourceUsage{
+		Allocatable: 4000, Requests: 2000, Usage: 900, Measured: true,
+	}
+	if got := nodeOnly.Efficiency(); got != -1 {
+		t.Errorf("efficiency = %.0f, want -1 when only the nodes were measured", got)
 	}
 }
 

@@ -220,8 +220,17 @@ type ResourceUsage struct {
 	// reports a cluster as over 100% "efficient", since the numerator counts
 	// system overhead the denominator never claimed.
 	PodUsage int64
-	// Measured reports whether the metrics API answered.
+	// Measured reports whether usage across the nodes is known.
 	Measured bool
+	// PodMeasured reports whether per-POD usage is known, which is a
+	// different question and not always the same answer.
+	//
+	// Ephemeral storage is the case that forced the distinction: the kubelets
+	// report how full the disks are, so Usage is real, but nothing reports
+	// what each pod is using of them. Without this, Efficiency divided a
+	// PodUsage that was never populated by a genuine Requests and announced
+	// that the cluster was wasting 100% of its disk reservation.
+	PodMeasured bool
 }
 
 // RequestPercent returns requests as a percentage of allocatable.
@@ -258,7 +267,7 @@ func (r ResourceUsage) Schedulable() int64 {
 // Deliberately built from PodUsage rather than Usage, so both sides of the
 // ratio describe the same things.
 func (r ResourceUsage) Efficiency() float64 {
-	if !r.Measured || r.Requests <= 0 {
+	if !r.PodMeasured || r.Requests <= 0 {
 		return -1
 	}
 	return percent(r.PodUsage, r.Requests)
@@ -930,6 +939,10 @@ func summariseCapacity(nodes []Node, pods []Pod, measured bool) CapacitySummary 
 	var summary CapacitySummary
 	summary.CPU.Measured = measured
 	summary.Memory.Measured = measured
+	// Only these two have per-pod figures; ephemeral storage is measured at
+	// the node and nowhere else.
+	summary.CPU.PodMeasured = measured
+	summary.Memory.PodMeasured = measured
 
 	for _, node := range nodes {
 		summary.CPU.Capacity += node.Capacity().CPUMilli

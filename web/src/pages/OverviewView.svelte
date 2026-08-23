@@ -347,7 +347,11 @@
           </span>
         </div>
 
-        <div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <!-- Two columns until there is genuinely room for three. Each bar
+             carries four columns of figures inside it, and squeezed to a
+             third of a 900px window those values wrap and collide — a denser
+             layout that cannot be read is worse than an emptier one. -->
+        <div class="grid gap-x-8 gap-y-5 md:grid-cols-2 xl:grid-cols-3">
           <CapacityBar label="CPU" usage={overview.capacity.cpu} unit="cores" />
           <CapacityBar label="Memory" usage={overview.capacity.memory} />
 
@@ -355,11 +359,16 @@
                ephemeral-storage capacity would otherwise get a track reading
                zero of zero, which asserts something the API never said. -->
           {#if hasEphemeral}
-            <CapacityBar
-              label="Ephemeral storage"
-              usage={overview.capacity.ephemeral}
-              note={ephemeralNote}
-            />
+            <!-- Spans the pair while there are only two columns, so the odd
+                 one out fills the row instead of leaving half the card
+                 empty beside it. -->
+            <div class="md:col-span-2 xl:col-span-1">
+              <CapacityBar
+                label="Ephemeral storage"
+                usage={overview.capacity.ephemeral}
+                note={ephemeralNote}
+              />
+            </div>
           {/if}
         </div>
 
