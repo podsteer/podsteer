@@ -86,6 +86,20 @@ utilisation figure that is quietly wrong.
 Metrics are optional by design: `ports.ErrMetricsUnavailable` is an ordinary
 condition, not a fault, and every list must render without metrics-server.
 
+Two sources beyond metrics-server behave the same way and are worth knowing
+about before adding a third:
+
+- **Node disk occupancy comes from the kubelets**, not from any aggregated API
+  — `app/adapters/k8s/filesystems.go` reads `/stats/summary` through the API
+  server's node proxy. It needs the `nodes/proxy` permission, which plenty of
+  clusters do not grant, so it degrades into `Unavailable` under its own name
+  rather than under "metrics". It is one request per node, hence bounded
+  concurrency and a one-minute cache; a partial answer is a success.
+- **Kubernetes support windows are a hand-compiled table** in
+  `app/domain/release.go`. It goes stale by construction, so a release it does
+  not cover is reported as `SupportUnknown` and produces nothing. Never make an
+  unknown version default to unsupported.
+
 Dependencies point inward. `app/domain` and `app/ports` import nothing outside
 the standard library; if either ever needs `client-go`, something has been
 wired backwards.
