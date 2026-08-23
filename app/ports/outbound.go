@@ -58,6 +58,12 @@ type ClusterPort interface {
 	// ListNodes returns the cluster's nodes.
 	ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error)
 
+	// ListPersistentVolumes returns the cluster's provisioned volumes.
+	ListPersistentVolumes(ctx context.Context, id domain.ClusterID) ([]domain.PersistentVolume, error)
+
+	// ListPersistentVolumeClaims returns the claims made against them.
+	ListPersistentVolumeClaims(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.PersistentVolumeClaim, error)
+
 	// DiscoverCustomKinds returns the kinds served by CustomResourceDefinitions
 	// installed in the cluster, for the navigator's Custom Resources section.
 	//

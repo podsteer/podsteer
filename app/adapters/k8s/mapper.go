@@ -546,3 +546,65 @@ func derefInt32(value *int32, fallback int32) int32 {
 func derefBool(value *bool) bool {
 	return value != nil && *value
 }
+
+// --- Storage ----------------------------------------------------------------
+
+// mapPersistentVolume translates a PersistentVolume.
+func mapPersistentVolume(clusterID domain.ClusterID, item *corev1.PersistentVolume) (domain.PersistentVolume, error) {
+	// The claim is a reference to an object that may already be gone, which is
+	// exactly the case worth reporting — so it is rendered as text rather than
+	// resolved.
+	claimRef := ""
+	if ref := item.Spec.ClaimRef; ref != nil {
+		claimRef = ref.Namespace + "/" + ref.Name
+	}
+
+	var capacity int64
+	if size, ok := item.Spec.Capacity[corev1.ResourceStorage]; ok {
+		capacity = size.Value()
+	}
+
+	return domain.NewPersistentVolume(domain.PersistentVolumeSpec{
+		Name:          item.Name,
+		ClusterID:     clusterID,
+		Phase:         domain.VolumePhase(item.Status.Phase),
+		StorageClass:  item.Spec.StorageClassName,
+		CapacityBytes: capacity,
+		ReclaimPolicy: string(item.Spec.PersistentVolumeReclaimPolicy),
+		ClaimRef:      claimRef,
+		CreatedAt:     item.CreationTimestamp.Time,
+	})
+}
+
+// mapPersistentVolumeClaim translates a PersistentVolumeClaim.
+//
+// Requested and actual capacity are kept apart because they routinely differ:
+// providers round up to their own increments, so a claim asking for 3Gi is
+// commonly bound to 4Gi, and reporting the request as the size would
+// understate what the cluster is paying for.
+func mapPersistentVolumeClaim(clusterID domain.ClusterID, item *corev1.PersistentVolumeClaim) (domain.PersistentVolumeClaim, error) {
+	var requested, actual int64
+	if size, ok := item.Spec.Resources.Requests[corev1.ResourceStorage]; ok {
+		requested = size.Value()
+	}
+	if size, ok := item.Status.Capacity[corev1.ResourceStorage]; ok {
+		actual = size.Value()
+	}
+
+	storageClass := ""
+	if item.Spec.StorageClassName != nil {
+		storageClass = *item.Spec.StorageClassName
+	}
+
+	return domain.NewPersistentVolumeClaim(domain.PersistentVolumeClaimSpec{
+		Name:           item.Name,
+		Namespace:      domain.NamespaceName(item.Namespace),
+		ClusterID:      clusterID,
+		Phase:          domain.ClaimPhase(item.Status.Phase),
+		StorageClass:   storageClass,
+		RequestedBytes: requested,
+		CapacityBytes:  actual,
+		VolumeName:     item.Spec.VolumeName,
+		CreatedAt:      item.CreationTimestamp.Time,
+	})
+}

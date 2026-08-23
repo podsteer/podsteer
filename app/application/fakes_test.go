@@ -69,6 +69,8 @@ type fakeKubernetes struct {
 	podUsage        map[string]domain.Metrics
 	nodeUsage       map[string]domain.Metrics
 	nodeFilesystems map[string]domain.NodeFilesystems
+	volumes         []domain.PersistentVolume
+	claims          []domain.PersistentVolumeClaim
 
 	mu               sync.Mutex
 	requestedCluster domain.ClusterID
@@ -150,6 +152,14 @@ func (f *fakeKubernetes) NodeMetrics(_ context.Context, _ domain.ClusterID) (map
 		return nil, ports.ErrMetricsUnavailable
 	}
 	return f.nodeUsage, nil
+}
+
+func (f *fakeKubernetes) ListPersistentVolumes(_ context.Context, _ domain.ClusterID) ([]domain.PersistentVolume, error) {
+	return f.volumes, nil
+}
+
+func (f *fakeKubernetes) ListPersistentVolumeClaims(_ context.Context, _ domain.ClusterID, _ domain.NamespaceName) ([]domain.PersistentVolumeClaim, error) {
+	return f.claims, nil
 }
 
 func (f *fakeKubernetes) NodeFilesystems(_ context.Context, _ domain.ClusterID) (map[string]domain.NodeFilesystems, error) {

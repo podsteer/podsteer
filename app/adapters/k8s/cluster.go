@@ -183,3 +183,66 @@ func supportsList(verbs metav1.Verbs) bool {
 	}
 	return false
 }
+
+// ListPersistentVolumes returns the cluster's provisioned volumes.
+func (a *Adapter) ListPersistentVolumes(ctx context.Context, id domain.ClusterID) ([]domain.PersistentVolume, error) {
+	op := fmt.Sprintf("listing persistent volumes of %q", id)
+
+	client, err := a.factory.clientFor(id)
+	if err != nil {
+		return nil, err
+	}
+
+	list, err := client.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, classify(op, err)
+	}
+
+	volumes := make([]domain.PersistentVolume, 0, len(list.Items))
+	for i := range list.Items {
+		volume, err := mapPersistentVolume(id, &list.Items[i])
+		if err != nil {
+			a.logger.WarnContext(ctx, "skipping unmappable persistent volume",
+				slog.String("cluster", id.String()),
+				slog.String("name", list.Items[i].Name),
+				slog.String("error", err.Error()))
+			continue
+		}
+		volumes = append(volumes, volume)
+	}
+	return volumes, nil
+}
+
+// ListPersistentVolumeClaims returns the claims made against them.
+func (a *Adapter) ListPersistentVolumeClaims(
+	ctx context.Context,
+	id domain.ClusterID,
+	namespace domain.NamespaceName,
+) ([]domain.PersistentVolumeClaim, error) {
+	op := fmt.Sprintf("listing persistent volume claims in %q of %q", namespace, id)
+
+	client, err := a.factory.clientFor(id)
+	if err != nil {
+		return nil, err
+	}
+
+	list, err := client.CoreV1().PersistentVolumeClaims(namespace.String()).
+		List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, classify(op, err)
+	}
+
+	claims := make([]domain.PersistentVolumeClaim, 0, len(list.Items))
+	for i := range list.Items {
+		claim, err := mapPersistentVolumeClaim(id, &list.Items[i])
+		if err != nil {
+			a.logger.WarnContext(ctx, "skipping unmappable persistent volume claim",
+				slog.String("cluster", id.String()),
+				slog.String("name", list.Items[i].Name),
+				slog.String("error", err.Error()))
+			continue
+		}
+		claims = append(claims, claim)
+	}
+	return claims, nil
+}

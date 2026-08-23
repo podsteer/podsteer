@@ -103,6 +103,89 @@ type CapacitySummary struct {
 	Pods      PodCapacity   `json:"pods"`
 }
 
+// StorageSummary is the cluster's persistent storage at a glance.
+type StorageSummary struct {
+	// Provisioned, Unbound and Orphaned are pre-formatted for display.
+	Provisioned string `json:"provisioned"`
+	Unbound     string `json:"unbound"`
+	Orphaned    string `json:"orphaned"`
+	// OrphanedBytes drives whether the row is shown at all, which a formatted
+	// string cannot answer.
+	OrphanedBytes int64 `json:"orphanedBytes"`
+	// Claims and Volumes count each by phase, most interesting first.
+	Claims       []PhaseCount `json:"claims"`
+	Volumes      []PhaseCount `json:"volumes"`
+	TotalClaims  int          `json:"totalClaims"`
+	TotalVolumes int          `json:"totalVolumes"`
+	// Classes breaks the provisioned total down, largest first.
+	Classes []StorageClassUsage `json:"classes"`
+}
+
+// PhaseCount is how many objects are in one phase.
+type PhaseCount struct {
+	Phase string `json:"phase"`
+	Count int    `json:"count"`
+}
+
+// StorageClassUsage is one class's share of the provisioned total.
+type StorageClassUsage struct {
+	Name    string `json:"name"`
+	Volumes int    `json:"volumes"`
+	Size    string `json:"size"`
+	// Share is this class's percentage of the provisioned total, for the bar.
+	Share float64 `json:"share"`
+}
+
+// toStorage translates the storage summary.
+//
+// Phases are emitted in a fixed order rather than by count, so the row does not
+// rearrange itself between refreshes, and zero counts are dropped: a cluster
+// with nothing Lost should say nothing about Lost rather than show a zero
+// beside the phases that matter.
+func toStorage(summary domain.StorageSummary) StorageSummary {
+	claims := make([]PhaseCount, 0, 3)
+	for _, phase := range []domain.ClaimPhase{domain.ClaimBound, domain.ClaimPending, domain.ClaimLost} {
+		if count := summary.Claims[phase]; count > 0 {
+			claims = append(claims, PhaseCount{Phase: string(phase), Count: count})
+		}
+	}
+
+	volumes := make([]PhaseCount, 0, 4)
+	for _, phase := range []domain.VolumePhase{
+		domain.VolumeBound, domain.VolumeAvailable, domain.VolumeReleased, domain.VolumeFailed,
+	} {
+		if count := summary.Volumes[phase]; count > 0 {
+			volumes = append(volumes, PhaseCount{Phase: string(phase), Count: count})
+		}
+	}
+
+	classes := make([]StorageClassUsage, 0, len(summary.Classes))
+	for _, class := range summary.Classes {
+		share := 0.0
+		if summary.ProvisionedBytes > 0 {
+			share = float64(class.Bytes) / float64(summary.ProvisionedBytes) * 100
+		}
+		classes = append(classes, StorageClassUsage{
+			Name:    class.Name,
+			Volumes: class.Volumes,
+			Size:    formatBytesValue(class.Bytes),
+			Share:   share,
+		})
+	}
+
+	return StorageSummary{
+		Provisioned:   formatBytesValue(summary.ProvisionedBytes),
+		Unbound:       formatBytesValue(summary.UnboundBytes),
+		Orphaned:      formatBytesValue(summary.OrphanedBytes),
+		OrphanedBytes: summary.OrphanedBytes,
+		Claims:        claims,
+		Volumes:       volumes,
+		TotalClaims:   summary.TotalClaims,
+		TotalVolumes:  summary.TotalVolumes,
+		Classes:       classes,
+	}
+}
+
 // NodeSummary counts nodes by condition.
 type NodeSummary struct {
 	Total         int `json:"total"`
@@ -191,6 +274,7 @@ type Overview struct {
 	Findings    []Finding             `json:"findings"`
 	Capacity    CapacitySummary       `json:"capacity"`
 	Nodes       NodeSummary           `json:"nodes"`
+	Storage     StorageSummary        `json:"storage"`
 	Pods        PodSummary            `json:"pods"`
 	Workloads   []WorkloadKindSummary `json:"workloads"`
 	Namespaces  []NamespaceLoad       `json:"namespaces"`
@@ -214,6 +298,7 @@ func toOverview(overview domain.Overview) Overview {
 		Findings:    toFindings(overview.Findings),
 		Capacity:    toCapacity(overview.Capacity),
 		Nodes:       toNodeSummary(overview.Nodes),
+		Storage:     toStorage(overview.Storage),
 		Pods:        toPodSummary(overview.Pods),
 		Workloads:   toWorkloadSummaries(overview.Workloads),
 		Namespaces:  toNamespaceLoads(overview.Namespaces, overview.Capacity),

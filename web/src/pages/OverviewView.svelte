@@ -27,6 +27,7 @@
     Boxes,
     Server,
     Layers,
+    HardDrive,
     ChevronRight,
     RefreshCw,
     Activity,
@@ -76,6 +77,19 @@
    * "reporting DiskPressure" is a node the kubelet is already evicting from,
    * because the condition only trips once it is nearly full.
    */
+  /**
+   * Phases that are not simply "working", coloured.
+   *
+   * Bound and Available are the healthy states and stay neutral: colouring
+   * everything is the same as colouring nothing.
+   */
+  const PHASE_TONE: Record<string, string> = {
+    Pending: 'text-warning',
+    Lost: 'text-error',
+    Failed: 'text-error',
+    Released: 'text-warning',
+  }
+
   const PRESSURE_LABELS: Record<string, string> = {
     DiskPressure: 'Out of disk',
     MemoryPressure: 'Out of memory',
@@ -546,6 +560,99 @@
           {/if}
         </section>
       </div>
+
+      <!-- Persistent storage.
+           Provisioned rather than used, and said plainly: how full a volume is
+           belongs to the workload that mounted it and is in no API PodSteer
+           can reach. What IS knowable — what has been provisioned, what is
+           waiting, what nobody uses any more — is the part nothing else
+           surfaces, and the last of those is a bill somebody is still paying. -->
+      {#if overview.storage.totalVolumes > 0 || overview.storage.totalClaims > 0}
+        {@const storage = overview.storage}
+        <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
+          <div class="flex items-baseline justify-between gap-3">
+            <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
+              <HardDrive class="size-4 text-on-surface-variant" strokeWidth={1.8} />
+              Persistent storage
+            </h3>
+            <span class="text-body-small text-on-surface-variant/70">
+              Provisioned, not consumed
+            </span>
+          </div>
+
+          <div class="grid gap-4 sm:grid-cols-3">
+            <div>
+              <p class="text-title-large tabular-nums text-on-surface">{storage.provisioned}</p>
+              <p class="text-label-small uppercase text-on-surface-variant">
+                Bound across {storage.totalVolumes}
+                {storage.totalVolumes === 1 ? 'volume' : 'volumes'}
+              </p>
+            </div>
+            <div>
+              <p class="text-title-large tabular-nums text-on-surface">{storage.totalClaims}</p>
+              <p class="text-label-small uppercase text-on-surface-variant">Claims</p>
+            </div>
+            <div>
+              <p
+                class="text-title-large tabular-nums {storage.orphanedBytes > 0
+                  ? 'text-warning'
+                  : 'text-on-surface-variant/50'}"
+              >
+                {storage.orphanedBytes > 0 ? storage.orphaned : '—'}
+              </p>
+              <p
+                class="text-label-small uppercase text-on-surface-variant"
+                title="Released volumes whose reclaim policy keeps them, so nothing will ever remove them"
+              >
+                Unused, retained
+              </p>
+            </div>
+          </div>
+
+          <!-- Phases, only the ones that exist. A cluster with nothing Lost
+               should say nothing about Lost. -->
+          {#if storage.claims.length > 0 || storage.volumes.length > 0}
+            <div class="flex flex-wrap gap-x-5 gap-y-1 border-t border-outline-variant/40 pt-3 text-body-small">
+              {#each storage.claims as phase (phase.phase)}
+                <span class="tabular-nums {PHASE_TONE[phase.phase] ?? 'text-on-surface-variant'}">
+                  <span class="text-on-surface-variant/70">Claims {phase.phase.toLowerCase()}</span>
+                  {phase.count}
+                </span>
+              {/each}
+              {#each storage.volumes as phase (phase.phase)}
+                <span class="tabular-nums {PHASE_TONE[phase.phase] ?? 'text-on-surface-variant'}">
+                  <span class="text-on-surface-variant/70">Volumes {phase.phase.toLowerCase()}</span>
+                  {phase.count}
+                </span>
+              {/each}
+            </div>
+          {/if}
+
+          <!-- By class, because a cluster quietly paying for premium disks it
+               did not mean to buy cannot see that anywhere else. -->
+          {#if storage.classes.length > 0}
+            <div class="flex flex-col gap-1.5 border-t border-outline-variant/40 pt-3">
+              {#each storage.classes as class_ (class_.name)}
+                <div class="flex items-center gap-3">
+                  <span class="w-40 shrink-0 truncate text-body-small text-on-surface" title={class_.name}>
+                    {class_.name}
+                  </span>
+                  <div class="h-2 flex-1 overflow-hidden rounded-full bg-surface-container-highest">
+                    <span
+                      class="block h-full rounded-full bg-primary/45 transition-all duration-300 ease-standard"
+                      style="width: {Math.max(2, class_.share)}%"
+                    ></span>
+                  </div>
+                  <span class="w-28 shrink-0 text-right text-body-small tabular-nums text-on-surface-variant">
+                    {class_.size}
+                    <span class="text-on-surface-variant/60">×{class_.volumes}</span>
+                  </span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </section>
+      {/if}
 
       <div class="grid gap-4 lg:grid-cols-2">
         <!-- Namespaces, ranked by what they reserve rather than what they use:

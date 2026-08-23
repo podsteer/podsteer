@@ -279,6 +279,149 @@ func TestFilesystemFindingsUseTheFullerOfTheTwoDisks(t *testing.T) {
 	}
 }
 
+// claimFixture builds a claim in the given phase, created `ago` in the past.
+func claimFixture(t *testing.T, name string, phase domain.ClaimPhase, ago time.Duration, bytes int64) domain.PersistentVolumeClaim {
+	t.Helper()
+
+	claim, err := domain.NewPersistentVolumeClaim(domain.PersistentVolumeClaimSpec{
+		Name: name, Namespace: "default", ClusterID: "dev", Phase: phase,
+		StorageClass: "gp3", RequestedBytes: bytes,
+		CreatedAt: overviewNow.Add(-ago),
+	})
+	if err != nil {
+		t.Fatalf("building claim %q: %v", name, err)
+	}
+	return claim
+}
+
+// volumeFixture builds a volume in the given phase.
+func volumeFixture(t *testing.T, name string, phase domain.VolumePhase, policy string, bytes int64) domain.PersistentVolume {
+	t.Helper()
+
+	volume, err := domain.NewPersistentVolume(domain.PersistentVolumeSpec{
+		Name: name, ClusterID: "dev", Phase: phase, StorageClass: "gp3",
+		CapacityBytes: bytes, ReclaimPolicy: policy,
+		CreatedAt: overviewNow.Add(-90 * 24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("building volume %q: %v", name, err)
+	}
+	return volume
+}
+
+// Binding takes time, so a claim provisioning right now is not a fault. This
+// is the difference between a useful finding and one people learn to ignore.
+func TestPendingClaimsAreOnlyReportedOnceTheyAreStuck(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Claims: []domain.PersistentVolumeClaim{
+			claimFixture(t, "provisioning", domain.ClaimPending, 20*time.Second, 8<<30),
+			claimFixture(t, "stuck", domain.ClaimPending, time.Hour, 8<<30),
+			claimFixture(t, "working", domain.ClaimBound, 24*time.Hour, 8<<30),
+		},
+		Now: overviewNow,
+	})
+
+	finding, ok := findingByTitle(overview.Findings, "Claims not bound")
+	if !ok {
+		t.Fatalf("findings = %v, want one for the stuck claim", titles(overview.Findings))
+	}
+	if finding.Count != 1 || finding.Subjects[0].Name != "stuck" {
+		t.Errorf("subjects = %+v, want only the claim that has waited an hour", finding.Subjects)
+	}
+	if !strings.Contains(finding.Subjects[0].Detail, "gp3") {
+		t.Errorf("detail = %q, want the storage class it is waiting on", finding.Subjects[0].Detail)
+	}
+}
+
+// A Lost claim is data the workload will not get back by restarting.
+func TestLostClaimsAreCritical(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Claims:    []domain.PersistentVolumeClaim{claimFixture(t, "gone", domain.ClaimLost, time.Hour, 8<<30)},
+		Now:       overviewNow,
+	})
+
+	finding, ok := findingByTitle(overview.Findings, "Claims whose volume is gone")
+	if !ok {
+		t.Fatalf("findings = %v, want one for the lost claim", titles(overview.Findings))
+	}
+	if finding.Severity != domain.SeverityCritical {
+		t.Errorf("severity = %q, want critical", finding.Severity)
+	}
+}
+
+// Released volumes that will never be reclaimed are storage still being paid
+// for, and nothing else in a Kubernetes client points at them.
+func TestReleasedVolumesAreReportedOnlyWhenNothingWillReclaimThem(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Volumes: []domain.PersistentVolume{
+			volumeFixture(t, "kept", domain.VolumeReleased, "Retain", 100<<30),
+			// Delete means the provisioner is already removing it: reporting
+			// that would be reporting normal cleanup as a problem.
+			volumeFixture(t, "going", domain.VolumeReleased, "Delete", 50<<30),
+			volumeFixture(t, "in-use", domain.VolumeBound, "Delete", 20<<30),
+		},
+		Now: overviewNow,
+	})
+
+	finding, ok := findingByTitle(overview.Findings, "Storage nothing is using")
+	if !ok {
+		t.Fatalf("findings = %v, want one for the retained volume", titles(overview.Findings))
+	}
+	if finding.Count != 1 || finding.Subjects[0].Name != "kept" {
+		t.Errorf("subjects = %+v, want only the Retain volume", finding.Subjects)
+	}
+	// Information, not a fault: keeping the data may well be deliberate.
+	if finding.Severity != domain.SeverityInfo {
+		t.Errorf("severity = %q, want info", finding.Severity)
+	}
+	if overview.Storage.OrphanedBytes != 100<<30 {
+		t.Errorf("orphaned = %d, want only the retained volume's size", overview.Storage.OrphanedBytes)
+	}
+}
+
+// The summary is what the card reads, and only bound volumes are storage the
+// cluster is actually providing.
+func TestStorageSummaryCountsProvisionedAndPending(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Volumes: []domain.PersistentVolume{
+			volumeFixture(t, "one", domain.VolumeBound, "Delete", 100<<30),
+			volumeFixture(t, "two", domain.VolumeBound, "Delete", 20<<30),
+			volumeFixture(t, "spare", domain.VolumeAvailable, "Delete", 500<<30),
+		},
+		Claims: []domain.PersistentVolumeClaim{
+			claimFixture(t, "bound", domain.ClaimBound, time.Hour, 100<<30),
+			claimFixture(t, "waiting", domain.ClaimPending, time.Hour, 8<<30),
+		},
+		Now: overviewNow,
+	})
+
+	storage := overview.Storage
+	if storage.ProvisionedBytes != 120<<30 {
+		t.Errorf("provisioned = %d, want only the bound volumes", storage.ProvisionedBytes)
+	}
+	if storage.UnboundBytes != 8<<30 {
+		t.Errorf("unbound = %d, want what the pending claim asked for", storage.UnboundBytes)
+	}
+	if storage.Claims[domain.ClaimBound] != 1 || storage.Claims[domain.ClaimPending] != 1 {
+		t.Errorf("claims = %v, want one of each", storage.Claims)
+	}
+	if len(storage.Classes) != 1 || storage.Classes[0].Volumes != 2 {
+		t.Errorf("classes = %+v, want gp3 with the two bound volumes", storage.Classes)
+	}
+}
+
 func TestDiagnosePodStates(t *testing.T) {
 	t.Parallel()
 

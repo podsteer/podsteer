@@ -117,6 +117,8 @@ func (s *OverviewService) Overview(ctx context.Context, id domain.ClusterID) (do
 		nodeUsage map[string]domain.Metrics
 		podUsage  map[string]domain.Metrics
 		nodeDisks map[string]domain.NodeFilesystems
+		volumes   []domain.PersistentVolume
+		claims    []domain.PersistentVolumeClaim
 		measured  bool
 	)
 
@@ -169,6 +171,20 @@ func (s *OverviewService) Overview(ctx context.Context, id domain.ClusterID) (do
 	run("namespaces", func() error {
 		result, err := s.cluster.ListNamespaces(ctx, id)
 		namespaces = result
+		return err
+	})
+
+	// Storage is two lists rather than one because they answer different
+	// questions and either can be forbidden on its own.
+	run("volumes", func() error {
+		result, err := s.cluster.ListPersistentVolumes(ctx, id)
+		volumes = result
+		return err
+	})
+
+	run("claims", func() error {
+		result, err := s.cluster.ListPersistentVolumeClaims(ctx, id, domain.NamespaceAll)
+		claims = result
 		return err
 	})
 
@@ -236,6 +252,8 @@ func (s *OverviewService) Overview(ctx context.Context, id domain.ClusterID) (do
 		Workloads:       workloads,
 		Events:          events,
 		Namespaces:      namespaces,
+		Volumes:         volumes,
+		Claims:          claims,
 		Unavailable:     unavailable,
 		MetricsMeasured: measured,
 		Now:             time.Now().UTC(),

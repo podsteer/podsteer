@@ -77,6 +77,8 @@ const (
 	CategoryFindingCapacity FindingCategory = "Capacity"
 	// CategoryFindingConfiguration covers declarations that will hurt later.
 	CategoryFindingConfiguration FindingCategory = "Configuration"
+	// CategoryFindingStorage covers persistent volumes and the claims on them.
+	CategoryFindingStorage FindingCategory = "Storage"
 )
 
 // Thresholds for the rules below. They are named constants rather than magic
@@ -335,6 +337,105 @@ type DiskSummary struct {
 	Filling int
 }
 
+// StorageSummary is the cluster's persistent storage at a glance.
+//
+// Provisioned rather than used, and deliberately so: how full a volume is
+// belongs to the workload that mounted it and is not in any API PodSteer can
+// reach without a per-CSI exporter. What IS knowable — how much has been
+// provisioned, what is waiting, what nobody is using any more — is the part
+// nothing else surfaces.
+type StorageSummary struct {
+	// ProvisionedBytes is the size of every bound volume.
+	ProvisionedBytes int64
+	// UnboundBytes is what claims have asked for and not received.
+	UnboundBytes int64
+	// OrphanedBytes is storage nothing uses that will not clean itself up.
+	OrphanedBytes int64
+	// Claims and Volumes count each by phase.
+	Claims  map[ClaimPhase]int
+	Volumes map[VolumePhase]int
+	// Classes breaks the provisioned total down by storage class, largest
+	// first, so a cluster paying for premium disks it did not mean to buy can
+	// see it.
+	Classes []StorageClassUsage
+	// Total counts, so a card need not sum a map to say "38 claims".
+	TotalClaims  int
+	TotalVolumes int
+}
+
+// StorageClassUsage is one class's share of the provisioned total.
+type StorageClassUsage struct {
+	Name    string
+	Volumes int
+	Bytes   int64
+}
+
+// maxStorageClasses caps the breakdown, which is a card and not a report.
+const maxStorageClasses = 5
+
+// summariseStorage reduces volumes and claims to what an overview shows.
+func summariseStorage(volumes []PersistentVolume, claims []PersistentVolumeClaim) StorageSummary {
+	summary := StorageSummary{
+		Claims:       make(map[ClaimPhase]int, 3),
+		Volumes:      make(map[VolumePhase]int, 4),
+		TotalClaims:  len(claims),
+		TotalVolumes: len(volumes),
+	}
+
+	byClass := make(map[string]*StorageClassUsage, 4)
+	for _, volume := range volumes {
+		summary.Volumes[volume.Phase()]++
+
+		if volume.Orphaned() {
+			summary.OrphanedBytes += volume.CapacityBytes()
+		}
+		if volume.Phase() != VolumeBound {
+			continue
+		}
+		summary.ProvisionedBytes += volume.CapacityBytes()
+
+		// An empty class is real: statically provisioned volumes have none,
+		// and calling that "unknown" would be inventing a name for it.
+		name := volume.StorageClass()
+		if name == "" {
+			name = "(none)"
+		}
+		entry, seen := byClass[name]
+		if !seen {
+			entry = &StorageClassUsage{Name: name}
+			byClass[name] = entry
+		}
+		entry.Volumes++
+		entry.Bytes += volume.CapacityBytes()
+	}
+
+	for _, claim := range claims {
+		summary.Claims[claim.Phase()]++
+		if claim.Phase() != ClaimBound {
+			summary.UnboundBytes += claim.RequestedBytes()
+		}
+	}
+
+	summary.Classes = make([]StorageClassUsage, 0, len(byClass))
+	for _, entry := range byClass {
+		summary.Classes = append(summary.Classes, *entry)
+	}
+	// Largest first, then by name so the order does not shuffle between
+	// refreshes when two classes hold the same amount.
+	sort.SliceStable(summary.Classes, func(i, j int) bool {
+		left, right := summary.Classes[i], summary.Classes[j]
+		if left.Bytes != right.Bytes {
+			return left.Bytes > right.Bytes
+		}
+		return left.Name < right.Name
+	})
+	if len(summary.Classes) > maxStorageClasses {
+		summary.Classes = summary.Classes[:maxStorageClasses]
+	}
+
+	return summary
+}
+
 // PodSummary counts pods by the state an operator cares about.
 type PodSummary struct {
 	Total       int
@@ -414,6 +515,8 @@ type OverviewInput struct {
 	Workloads   []Workload
 	Events      []Event
 	Namespaces  []Namespace
+	Volumes     []PersistentVolume
+	Claims      []PersistentVolumeClaim
 	Unavailable []string
 	// MetricsMeasured reports whether the metrics API answered. Pod usage
 	// being zero is not evidence either way: a genuinely idle pod measures
@@ -432,6 +535,7 @@ type Overview struct {
 	Health      HealthGrade
 	Findings    []Finding
 	Capacity    CapacitySummary
+	Storage     StorageSummary
 	Nodes       NodeSummary
 	Pods        PodSummary
 	Workloads   []WorkloadKindSummary
@@ -466,6 +570,7 @@ func NewOverview(input OverviewInput) Overview {
 	findings = append(findings, workloadFindings(input.Workloads, findings, now)...)
 	findings = append(findings, nodeFindings(input.Nodes, nodes)...)
 	findings = append(findings, filesystemFindings(input.Nodes)...)
+	findings = append(findings, storageFindings(input.Volumes, input.Claims, now)...)
 	findings = append(findings, capacityFindings(capacity)...)
 	findings = append(findings, restartFindings(input.Pods, now)...)
 	findings = append(findings, configurationFindings(input.Pods, pods)...)
@@ -477,6 +582,7 @@ func NewOverview(input OverviewInput) Overview {
 		Version:     input.Version,
 		GeneratedAt: now,
 		Health:      grade(findings),
+		Storage:     summariseStorage(input.Volumes, input.Claims),
 		Findings:    findings,
 		Capacity:    capacity,
 		Nodes:       nodes,
@@ -1274,6 +1380,110 @@ func findingOwnerKey(finding Finding) string {
 	return key
 }
 
+// storageFindings reports claims that never bound and volumes nobody uses.
+//
+// Both are invisible from the workload side. A pod waiting on a claim that
+// will never bind sits at ContainerCreating with an event nobody reads, and a
+// released volume has no pod, no claim and no list to appear in — while the
+// cloud provider bills for it every month.
+func storageFindings(volumes []PersistentVolume, claims []PersistentVolumeClaim, now time.Time) []Finding {
+	var pending, lost []Subject
+	for _, claim := range claims {
+		switch {
+		case claim.Phase() == ClaimLost:
+			lost = append(lost, Subject{
+				Kind: "PersistentVolumeClaim", Namespace: claim.Namespace(), Name: claim.Name(),
+				Detail: "the volume behind it is gone",
+			})
+		case claim.StuckPending(now):
+			pending = append(pending, Subject{
+				Kind: "PersistentVolumeClaim", Namespace: claim.Namespace(), Name: claim.Name(),
+				Detail: fmt.Sprintf("waiting %s for %s",
+					formatDuration(claim.Age(now)), storageClassOrNone(claim.StorageClass())),
+			})
+		}
+	}
+
+	var orphaned []Subject
+	var orphanedBytes int64
+	for _, volume := range volumes {
+		if !volume.Orphaned() {
+			continue
+		}
+		orphanedBytes += volume.CapacityBytes()
+		if len(orphaned) < maxSubjects {
+			orphaned = append(orphaned, Subject{
+				Kind: "PersistentVolume", Name: volume.Name(),
+				Detail: fmt.Sprintf("%s, released %s ago, %s policy",
+					formatBytes(volume.CapacityBytes()), formatDuration(volume.Age(now)),
+					volume.ReclaimPolicy()),
+			})
+		}
+	}
+
+	findings := make([]Finding, 0, 3)
+
+	if len(lost) > 0 {
+		findings = append(findings, Finding{
+			ID:       "storage:lost",
+			Severity: SeverityCritical,
+			Category: CategoryFindingStorage,
+			Title:    "Claims whose volume is gone",
+			Summary:  fmt.Sprintf("%s Lost", plural(len(lost), "claim is", "claims are")),
+			Advice: "The workload's data is not coming back by itself. A Lost claim means the " +
+				"PersistentVolume it was bound to was deleted underneath it, so anything mounting " +
+				"it will fail to start until the claim is recreated against new storage.",
+			Subjects: lost,
+			Count:    len(lost),
+			KindID:   claimKindID,
+		})
+	}
+
+	if len(pending) > 0 {
+		findings = append(findings, Finding{
+			ID:       "storage:pending",
+			Severity: SeverityWarning,
+			Category: CategoryFindingStorage,
+			Title:    "Claims not bound",
+			Summary: fmt.Sprintf("%s waiting longer than %s for storage",
+				plural(len(pending), "claim is", "claims are"), formatDuration(bindingGrace)),
+			Advice: "Pods mounting these sit at ContainerCreating with no failure of their own to " +
+				"read. The usual causes are a storage class that does not exist, a provisioner " +
+				"with no capacity in the pod's zone, or a quota already spent.",
+			Subjects: pending,
+			Count:    len(pending),
+			KindID:   claimKindID,
+		})
+	}
+
+	if len(orphaned) > 0 {
+		findings = append(findings, Finding{
+			ID:       "storage:orphaned",
+			Severity: SeverityInfo,
+			Category: CategoryFindingStorage,
+			Title:    "Storage nothing is using",
+			Summary: fmt.Sprintf("%s Released and kept — %s",
+				plural(len(orphaned), "volume is", "volumes are"), formatBytes(orphanedBytes)),
+			Advice: "Their claims are gone but the reclaim policy keeps them, so nothing will ever " +
+				"remove them. That is deliberate when the data still matters and pure cost when it " +
+				"does not — on a cloud provider these are disks still being billed.",
+			Subjects: orphaned,
+			Count:    len(orphaned),
+			KindID:   volumeKindID,
+		})
+	}
+
+	return findings
+}
+
+// storageClassOrNone names a claim's class for a message.
+func storageClassOrNone(class string) string {
+	if class == "" {
+		return "the default storage class"
+	}
+	return "storage class " + class
+}
+
 // filesystemFindings reports node disks filling before the kubelet reacts.
 //
 // Nothing else in PodSteer can say this, and nothing else in Kubernetes will:
@@ -1747,9 +1957,11 @@ func eventFindings(events []Event, existing []Finding, now time.Time) []Finding 
 // are built the same way ResourceKind.ID does, so a finding can be clicked
 // through to the list it came from.
 const (
-	podKindID   = "core/v1/pods"
-	nodeKindID  = "core/v1/nodes"
-	eventKindID = "core/v1/events"
+	podKindID    = "core/v1/pods"
+	nodeKindID   = "core/v1/nodes"
+	eventKindID  = "core/v1/events"
+	claimKindID  = "core/v1/persistentvolumeclaims"
+	volumeKindID = "core/v1/persistentvolumes"
 )
 
 // workloadKindID returns the navigator id for a controller kind.
@@ -1815,6 +2027,22 @@ func conditionList(conditions []NodeCondition) string {
 
 // formatCPU renders millicores the way an operator reads them: cores above a
 // core, millicores below.
+// formatDuration renders a span the way the rest of PodSteer renders ages:
+// one unit, the largest that is not zero. "waiting 4m" is read at a glance
+// where "waiting 4m17.3s" has to be parsed.
+func formatDuration(d time.Duration) string {
+	switch {
+	case d >= 24*time.Hour:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	case d >= time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	case d >= time.Minute:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+}
+
 func formatCPU(milli int64) string {
 	if milli >= 1000 {
 		return fmt.Sprintf("%.1f cores", float64(milli)/1000)
