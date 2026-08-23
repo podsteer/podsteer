@@ -422,6 +422,87 @@ func TestStorageSummaryCountsProvisionedAndPending(t *testing.T) {
 	}
 }
 
+// Two rankings, because the pod holding the most CPU and the pod holding the
+// most memory are usually different pods.
+func TestTopConsumersRankEachDimensionSeparately(t *testing.T) {
+	t.Parallel()
+
+	usage := func(name string, cpuMilli, memoryBytes int64) domain.Pod {
+		t.Helper()
+		pod := podFixture(t, domain.PodSpec{
+			Name: name, NodeName: "node-1", Phase: domain.PodPhaseRunning,
+			Containers: []domain.Container{{
+				Name: "app", State: domain.ContainerStateRunning,
+				Requests: domain.Resources{CPUMilli: 100, MemoryBytes: 1 << 30},
+			}},
+		})
+		return pod.WithUsage(domain.NewMetrics(cpuMilli, memoryBytes))
+	}
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Pods: []domain.Pod{
+			usage("cpu-hog", 4000, 1<<30),
+			usage("memory-hog", 100, 40<<30),
+			usage("quiet", 10, 1<<28),
+		},
+		MetricsMeasured: true,
+		Now:             overviewNow,
+	})
+
+	consumers := overview.Consumers
+	if !consumers.Measured {
+		t.Fatal("consumers report themselves unmeasured although metrics answered")
+	}
+	if consumers.ByCPU[0].Name != "cpu-hog" {
+		t.Errorf("top by CPU = %q, want cpu-hog", consumers.ByCPU[0].Name)
+	}
+	if consumers.ByMemory[0].Name != "memory-hog" {
+		t.Errorf("top by memory = %q, want memory-hog", consumers.ByMemory[0].Name)
+	}
+
+	// Usage against the reservation is the half that says whether a pod is
+	// merely busy or sized wrong: 4000m used against 100m requested is 4000%.
+	if got := consumers.ByCPU[0].CPUOfRequest(); got != 4000 {
+		t.Errorf("CPU of request = %v, want 4000", got)
+	}
+}
+
+// Without metrics the lists must be empty AND say so: an empty list that looks
+// measured reads as "nothing is using anything".
+func TestTopConsumersAreEmptyWithoutMetrics(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Pods: []domain.Pod{podFixture(t, domain.PodSpec{
+			Name: "app-1", NodeName: "node-1", Phase: domain.PodPhaseRunning,
+			Containers: []domain.Container{{Name: "app", State: domain.ContainerStateRunning}},
+		})},
+		Now: overviewNow,
+	})
+
+	if overview.Consumers.Measured {
+		t.Error("consumers claim to be measured with no metrics")
+	}
+	if len(overview.Consumers.ByCPU) != 0 || len(overview.Consumers.ByMemory) != 0 {
+		t.Errorf("consumers = %+v, want nothing", overview.Consumers)
+	}
+}
+
+// A pod with no reservation is the interesting case, not a gap to hide.
+func TestConsumerWithoutRequestsReportsNoShare(t *testing.T) {
+	t.Parallel()
+
+	consumer := domain.Consumer{CPUMilli: 500, MemoryBytes: 1 << 30}
+	if got := consumer.CPUOfRequest(); got != -1 {
+		t.Errorf("CPU of request = %v, want -1 for a pod that reserved nothing", got)
+	}
+	if got := consumer.MemoryOfRequest(); got != -1 {
+		t.Errorf("memory of request = %v, want -1", got)
+	}
+}
+
 func TestDiagnosePodStates(t *testing.T) {
 	t.Parallel()
 

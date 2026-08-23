@@ -28,6 +28,7 @@
     Server,
     Layers,
     HardDrive,
+    Flame,
     ChevronRight,
     RefreshCw,
     Activity,
@@ -651,6 +652,71 @@
               {/each}
             </div>
           {/if}
+        </section>
+      {/if}
+
+      <!-- What is actually using the cluster.
+           Two rankings rather than one: the pod holding the most CPU and the
+           pod holding the most memory are usually different pods, and one
+           combined "biggest" would hide whichever dimension is under pressure.
+           Each row carries the reservation beside the usage, because usage
+           alone cannot tell a busy pod from one sized wrong. -->
+      {#if overview.consumers.measured && overview.consumers.byCpu.length > 0}
+        <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
+          <div class="flex items-baseline justify-between gap-3">
+            <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
+              <Flame class="size-4 text-on-surface-variant" strokeWidth={1.8} />
+              Top consumers
+            </h3>
+            <span class="text-body-small text-on-surface-variant/70">Measured now, against what was reserved</span>
+          </div>
+
+          <div class="grid gap-x-6 gap-y-4 lg:grid-cols-2">
+            {#each [{ id: 'cpu', label: 'CPU', rows: overview.consumers.byCpu }, { id: 'memory', label: 'Memory', rows: overview.consumers.byMemory }] as column (column.id)}
+              <div class="flex flex-col gap-1.5">
+                <p class="text-label-small uppercase tracking-wider text-on-surface-variant">
+                  {column.label}
+                </p>
+
+                {#each column.rows as row (row.namespace + '/' + row.name)}
+                  <button
+                    type="button"
+                    onclick={() => openObject('core/v1/pods', row.name, row.namespace)}
+                    class="state-layer group flex w-full flex-col gap-1 rounded-xs px-1.5 py-1 text-left
+                           transition-colors duration-100 hover:bg-surface-container"
+                  >
+                    <span class="flex w-full items-baseline gap-2">
+                      <span class="min-w-0 flex-1 truncate text-body-small text-on-surface" title="{row.namespace}/{row.name}">
+                        <span class="text-on-surface-variant/60">{row.namespace}/</span>{row.name}
+                      </span>
+                      <span class="shrink-0 text-body-small tabular-nums text-on-surface">{row.usage}</span>
+                      <!-- Over its reservation is the finding. A pod with no
+                           reservation says so rather than showing nothing. -->
+                      <span
+                        class="w-16 shrink-0 text-right text-label-small tabular-nums
+                               {row.share < 0
+                                 ? 'text-on-surface-variant/50'
+                                 : row.share >= 100
+                                   ? 'text-warning'
+                                   : 'text-on-surface-variant/70'}"
+                        title={row.share < 0
+                          ? 'Nothing reserved'
+                          : `${row.usage} used of ${row.request} reserved`}
+                      >
+                        {row.share < 0 ? 'no request' : `${Math.round(row.share)}%`}
+                      </span>
+                    </span>
+                    <span class="h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
+                      <span
+                        class="block h-full rounded-full bg-primary/45 transition-all duration-300 ease-standard"
+                        style="width: {Math.max(2, row.percent)}%"
+                      ></span>
+                    </span>
+                  </button>
+                {/each}
+              </div>
+            {/each}
+          </div>
         </section>
       {/if}
 

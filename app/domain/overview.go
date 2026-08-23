@@ -125,6 +125,9 @@ const (
 	maxNamespaces = 10
 	// maxHotspots caps the restart list.
 	maxHotspots = 8
+	// maxConsumers caps the top-consumer lists. Five is what somebody reads
+	// under pressure; a tenth-place pod is a query, not a dashboard entry.
+	maxConsumers = 5
 	// diskWarnPercent and diskCriticalPercent are where a node's filesystem
 	// becomes worth saying out loud.
 	//
@@ -436,6 +439,107 @@ func summariseStorage(volumes []PersistentVolume, claims []PersistentVolumeClaim
 	return summary
 }
 
+// Consumer is one pod's measured usage, with the reservation it was given.
+//
+// Both halves are carried because either alone misleads. Usage without the
+// request cannot distinguish a pod doing its job from one that has escaped its
+// sizing, and the request without usage is what every other dashboard already
+// shows.
+type Consumer struct {
+	Namespace NamespaceName
+	Name      string
+	Node      string
+	// CPUMilli and MemoryBytes are measured usage.
+	CPUMilli    int64
+	MemoryBytes int64
+	// CPURequestMilli and MemoryRequestBytes are what it reserved, zero when
+	// it declared nothing.
+	CPURequestMilli    int64
+	MemoryRequestBytes int64
+}
+
+// CPUOfRequest returns usage as a percentage of the CPU reservation, or -1
+// when nothing was reserved to compare against.
+func (c Consumer) CPUOfRequest() float64 {
+	if c.CPURequestMilli <= 0 {
+		return -1
+	}
+	return float64(c.CPUMilli) / float64(c.CPURequestMilli) * 100
+}
+
+// MemoryOfRequest returns usage as a percentage of the memory reservation.
+func (c Consumer) MemoryOfRequest() float64 {
+	if c.MemoryRequestBytes <= 0 {
+		return -1
+	}
+	return float64(c.MemoryBytes) / float64(c.MemoryRequestBytes) * 100
+}
+
+// TopConsumers is what is actually using the cluster.
+//
+// Two separate rankings rather than one combined score: the pod holding the
+// most CPU and the pod holding the most memory are usually different pods, and
+// a single "biggest" would hide whichever dimension is the one under pressure.
+type TopConsumers struct {
+	ByCPU    []Consumer
+	ByMemory []Consumer
+	// Measured says whether metrics answered. Without it these lists are
+	// empty, and an empty list must not read as "nothing is using anything".
+	Measured bool
+}
+
+// topConsumers ranks the pods actually using the cluster.
+func topConsumers(pods []Pod, measured bool) TopConsumers {
+	if !measured {
+		return TopConsumers{}
+	}
+
+	consumers := make([]Consumer, 0, len(pods))
+	for _, pod := range pods {
+		usage := pod.Usage()
+		if !usage.Measured || !pod.OccupiesNode() {
+			continue
+		}
+		requests := pod.Requests()
+		consumers = append(consumers, Consumer{
+			Namespace:          pod.Namespace(),
+			Name:               pod.Name(),
+			Node:               pod.NodeName(),
+			CPUMilli:           usage.CPUMilli,
+			MemoryBytes:        usage.MemoryBytes,
+			CPURequestMilli:    requests.CPUMilli,
+			MemoryRequestBytes: requests.MemoryBytes,
+		})
+	}
+	if len(consumers) == 0 {
+		return TopConsumers{}
+	}
+
+	byCPU := slices.Clone(consumers)
+	// Name breaks ties so the order is stable between refreshes: two idle pods
+	// both measuring zero would otherwise swap places on every assessment.
+	sort.SliceStable(byCPU, func(i, j int) bool {
+		if byCPU[i].CPUMilli != byCPU[j].CPUMilli {
+			return byCPU[i].CPUMilli > byCPU[j].CPUMilli
+		}
+		return byCPU[i].Name < byCPU[j].Name
+	})
+
+	byMemory := slices.Clone(consumers)
+	sort.SliceStable(byMemory, func(i, j int) bool {
+		if byMemory[i].MemoryBytes != byMemory[j].MemoryBytes {
+			return byMemory[i].MemoryBytes > byMemory[j].MemoryBytes
+		}
+		return byMemory[i].Name < byMemory[j].Name
+	})
+
+	return TopConsumers{
+		ByCPU:    byCPU[:min(maxConsumers, len(byCPU))],
+		ByMemory: byMemory[:min(maxConsumers, len(byMemory))],
+		Measured: true,
+	}
+}
+
 // PodSummary counts pods by the state an operator cares about.
 type PodSummary struct {
 	Total       int
@@ -536,6 +640,7 @@ type Overview struct {
 	Findings    []Finding
 	Capacity    CapacitySummary
 	Storage     StorageSummary
+	Consumers   TopConsumers
 	Nodes       NodeSummary
 	Pods        PodSummary
 	Workloads   []WorkloadKindSummary
@@ -590,6 +695,7 @@ func NewOverview(input OverviewInput) Overview {
 		Workloads:   workloads,
 		Namespaces:  summariseNamespaces(input.Pods, input.MetricsMeasured),
 		Restarts:    restartHotspots(input.Pods, now),
+		Consumers:   topConsumers(input.Pods, input.MetricsMeasured),
 		Unavailable: slices.Clone(input.Unavailable),
 	}
 }

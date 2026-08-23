@@ -186,6 +186,86 @@ func toStorage(summary domain.StorageSummary) StorageSummary {
 	}
 }
 
+// Consumer is one pod's measured usage beside what it reserved.
+type Consumer struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Node      string `json:"node"`
+	// Usage and Request are pre-formatted for the dimension being ranked.
+	Usage   string `json:"usage"`
+	Request string `json:"request"`
+	// Share is usage over the reservation as a percentage, or -1 when nothing
+	// was reserved — which is itself worth showing rather than hiding.
+	Share float64 `json:"share"`
+	// Percent is this pod's share of the whole list's largest, for the bar.
+	Percent float64 `json:"percent"`
+}
+
+// TopConsumers is what is actually using the cluster.
+type TopConsumers struct {
+	ByCPU    []Consumer `json:"byCpu"`
+	ByMemory []Consumer `json:"byMemory"`
+	Measured bool       `json:"measured"`
+}
+
+// toConsumers translates one ranking, scaling the bars to its own leader.
+//
+// Scaled to the list's own maximum rather than to the cluster total: five pods
+// out of two hundred are all tiny against the cluster, and bars that are all
+// two pixels long say nothing about which is the big one.
+func toConsumers(consumers []domain.Consumer, cpu bool) []Consumer {
+	if len(consumers) == 0 {
+		return []Consumer{}
+	}
+
+	value := func(c domain.Consumer) int64 {
+		if cpu {
+			return c.CPUMilli
+		}
+		return c.MemoryBytes
+	}
+	request := func(c domain.Consumer) int64 {
+		if cpu {
+			return c.CPURequestMilli
+		}
+		return c.MemoryRequestBytes
+	}
+	format := formatBytesValue
+	if cpu {
+		format = formatMilliValue
+	}
+
+	largest := value(consumers[0])
+	out := make([]Consumer, 0, len(consumers))
+	for _, consumer := range consumers {
+		share := consumer.MemoryOfRequest()
+		if cpu {
+			share = consumer.CPUOfRequest()
+		}
+
+		percent := 0.0
+		if largest > 0 {
+			percent = float64(value(consumer)) / float64(largest) * 100
+		}
+
+		reserved := "—"
+		if request(consumer) > 0 {
+			reserved = format(request(consumer))
+		}
+
+		out = append(out, Consumer{
+			Namespace: string(consumer.Namespace),
+			Name:      consumer.Name,
+			Node:      consumer.Node,
+			Usage:     format(value(consumer)),
+			Request:   reserved,
+			Share:     share,
+			Percent:   percent,
+		})
+	}
+	return out
+}
+
 // NodeSummary counts nodes by condition.
 type NodeSummary struct {
 	Total         int `json:"total"`
@@ -275,6 +355,7 @@ type Overview struct {
 	Capacity    CapacitySummary       `json:"capacity"`
 	Nodes       NodeSummary           `json:"nodes"`
 	Storage     StorageSummary        `json:"storage"`
+	Consumers   TopConsumers          `json:"consumers"`
 	Pods        PodSummary            `json:"pods"`
 	Workloads   []WorkloadKindSummary `json:"workloads"`
 	Namespaces  []NamespaceLoad       `json:"namespaces"`
@@ -299,6 +380,11 @@ func toOverview(overview domain.Overview) Overview {
 		Capacity:    toCapacity(overview.Capacity),
 		Nodes:       toNodeSummary(overview.Nodes),
 		Storage:     toStorage(overview.Storage),
+		Consumers: TopConsumers{
+			ByCPU:    toConsumers(overview.Consumers.ByCPU, true),
+			ByMemory: toConsumers(overview.Consumers.ByMemory, false),
+			Measured: overview.Consumers.Measured,
+		},
 		Pods:        toPodSummary(overview.Pods),
 		Workloads:   toWorkloadSummaries(overview.Workloads),
 		Namespaces:  toNamespaceLoads(overview.Namespaces, overview.Capacity),

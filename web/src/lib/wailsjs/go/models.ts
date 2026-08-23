@@ -150,6 +150,30 @@ export namespace wails {
 	        this.nodes = source["nodes"];
 	    }
 	}
+	export class Consumer {
+	    namespace: string;
+	    name: string;
+	    node: string;
+	    usage: string;
+	    request: string;
+	    share: number;
+	    percent: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Consumer(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.node = source["node"];
+	        this.usage = source["usage"];
+	        this.request = source["request"];
+	        this.share = source["share"];
+	        this.percent = source["percent"];
+	    }
+	}
 	export class Container {
 	    name: string;
 	    image: string;
@@ -598,6 +622,40 @@ export namespace wails {
 	        this.bestEffort = source["bestEffort"];
 	    }
 	}
+	export class TopConsumers {
+	    byCpu: Consumer[];
+	    byMemory: Consumer[];
+	    measured: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TopConsumers(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.byCpu = this.convertValues(source["byCpu"], Consumer);
+	        this.byMemory = this.convertValues(source["byMemory"], Consumer);
+	        this.measured = source["measured"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class StorageClassUsage {
 	    name: string;
 	    volumes: number;
@@ -686,6 +744,7 @@ export namespace wails {
 	    capacity: CapacitySummary;
 	    nodes: NodeSummary;
 	    storage: StorageSummary;
+	    consumers: TopConsumers;
 	    pods: PodSummary;
 	    workloads: WorkloadKindSummary[];
 	    namespaces: NamespaceLoad[];
@@ -710,6 +769,7 @@ export namespace wails {
 	        this.capacity = this.convertValues(source["capacity"], CapacitySummary);
 	        this.nodes = this.convertValues(source["nodes"], NodeSummary);
 	        this.storage = this.convertValues(source["storage"], StorageSummary);
+	        this.consumers = this.convertValues(source["consumers"], TopConsumers);
 	        this.pods = this.convertValues(source["pods"], PodSummary);
 	        this.workloads = this.convertValues(source["workloads"], WorkloadKindSummary);
 	        this.namespaces = this.convertValues(source["namespaces"], NamespaceLoad);
@@ -987,6 +1047,7 @@ export namespace wails {
 		    return a;
 		}
 	}
+	
 	
 	
 	
