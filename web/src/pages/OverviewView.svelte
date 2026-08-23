@@ -221,7 +221,28 @@
         <dl class="flex shrink-0 flex-wrap gap-x-6 gap-y-1 text-body-small">
           <div class="flex flex-col">
             <dt class="opacity-70">Version</dt>
-            <dd class="tabular-nums">{overview.version || '—'}</dd>
+            <dd class="flex items-center gap-1.5 tabular-nums">
+              {overview.version || '—'}
+              <!-- Said where the version already is. A control plane past end
+                   of life receives no fix for a vulnerability disclosed
+                   tomorrow, and nothing in Kubernetes reports that — the
+                   number simply sits there looking like any other. Silent
+                   when the table does not cover the release: claiming a fresh
+                   version is unsupported would be worse than saying nothing. -->
+              {#if overview.support.state === 'ended' || overview.support.state === 'ending'}
+                <span
+                  class="rounded-full px-1.5 py-0.5 text-label-small
+                         {overview.support.state === 'ended'
+                           ? 'bg-warning-container text-on-warning-container'
+                           : 'bg-surface-container-high text-on-surface-variant'}"
+                  title={overview.support.state === 'ended'
+                    ? `${overview.support.minor} stopped receiving patches on ${overview.support.endOfLife}`
+                    : `${overview.support.minor} stops receiving patches on ${overview.support.endOfLife}`}
+                >
+                  {overview.support.state === 'ended' ? 'End of life' : `${overview.support.days}d left`}
+                </span>
+              {/if}
+            </dd>
           </div>
           <div class="flex flex-col">
             <dt class="opacity-70">Nodes</dt>

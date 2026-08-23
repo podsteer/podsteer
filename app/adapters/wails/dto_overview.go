@@ -266,6 +266,30 @@ func toConsumers(consumers []domain.Consumer, cpu bool) []Consumer {
 	return out
 }
 
+// ReleaseSupport is what is known about the version the cluster runs.
+type ReleaseSupport struct {
+	Minor string `json:"minor"`
+	// State is unknown, supported, ending or ended. Unknown means the table
+	// does not cover this release, not that anything is wrong with it.
+	State string `json:"state"`
+	// EndOfLife is formatted for display, empty when nothing is claimed.
+	EndOfLife string `json:"endOfLife"`
+	// Days until that date, negative once it has passed.
+	Days int `json:"days"`
+}
+
+func toReleaseSupport(support domain.ReleaseSupport) ReleaseSupport {
+	out := ReleaseSupport{
+		Minor: support.Minor,
+		State: string(support.State),
+		Days:  support.Days,
+	}
+	if !support.EndOfLife.IsZero() {
+		out.EndOfLife = support.EndOfLife.Format("2 January 2006")
+	}
+	return out
+}
+
 // NodeSummary counts nodes by condition.
 type NodeSummary struct {
 	Total         int `json:"total"`
@@ -356,6 +380,7 @@ type Overview struct {
 	Nodes       NodeSummary           `json:"nodes"`
 	Storage     StorageSummary        `json:"storage"`
 	Consumers   TopConsumers          `json:"consumers"`
+	Support     ReleaseSupport        `json:"support"`
 	Pods        PodSummary            `json:"pods"`
 	Workloads   []WorkloadKindSummary `json:"workloads"`
 	Namespaces  []NamespaceLoad       `json:"namespaces"`
@@ -380,6 +405,7 @@ func toOverview(overview domain.Overview) Overview {
 		Capacity:    toCapacity(overview.Capacity),
 		Nodes:       toNodeSummary(overview.Nodes),
 		Storage:     toStorage(overview.Storage),
+		Support:     toReleaseSupport(overview.Support),
 		Consumers: TopConsumers{
 			ByCPU:    toConsumers(overview.Consumers.ByCPU, true),
 			ByMemory: toConsumers(overview.Consumers.ByMemory, false),

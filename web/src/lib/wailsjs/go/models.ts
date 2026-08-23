@@ -622,6 +622,24 @@ export namespace wails {
 	        this.bestEffort = source["bestEffort"];
 	    }
 	}
+	export class ReleaseSupport {
+	    minor: string;
+	    state: string;
+	    endOfLife: string;
+	    days: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReleaseSupport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.minor = source["minor"];
+	        this.state = source["state"];
+	        this.endOfLife = source["endOfLife"];
+	        this.days = source["days"];
+	    }
+	}
 	export class TopConsumers {
 	    byCpu: Consumer[];
 	    byMemory: Consumer[];
@@ -745,6 +763,7 @@ export namespace wails {
 	    nodes: NodeSummary;
 	    storage: StorageSummary;
 	    consumers: TopConsumers;
+	    support: ReleaseSupport;
 	    pods: PodSummary;
 	    workloads: WorkloadKindSummary[];
 	    namespaces: NamespaceLoad[];
@@ -770,6 +789,7 @@ export namespace wails {
 	        this.nodes = this.convertValues(source["nodes"], NodeSummary);
 	        this.storage = this.convertValues(source["storage"], StorageSummary);
 	        this.consumers = this.convertValues(source["consumers"], TopConsumers);
+	        this.support = this.convertValues(source["support"], ReleaseSupport);
 	        this.pods = this.convertValues(source["pods"], PodSummary);
 	        this.workloads = this.convertValues(source["workloads"], WorkloadKindSummary);
 	        this.namespaces = this.convertValues(source["namespaces"], NamespaceLoad);
@@ -871,6 +891,7 @@ export namespace wails {
 		    return a;
 		}
 	}
+	
 	
 	
 	export class ResourceKind {

@@ -641,6 +641,7 @@ type Overview struct {
 	Capacity    CapacitySummary
 	Storage     StorageSummary
 	Consumers   TopConsumers
+	Support     ReleaseSupport
 	Nodes       NodeSummary
 	Pods        PodSummary
 	Workloads   []WorkloadKindSummary
@@ -670,12 +671,15 @@ func NewOverview(input OverviewInput) Overview {
 
 	owners := newOwnerIndex(input.Workloads)
 
+	support := SupportFor(input.Version, now)
+
 	findings := make([]Finding, 0, 16)
 	findings = append(findings, podFindings(input.Pods, owners, now)...)
 	findings = append(findings, workloadFindings(input.Workloads, findings, now)...)
 	findings = append(findings, nodeFindings(input.Nodes, nodes)...)
 	findings = append(findings, filesystemFindings(input.Nodes)...)
 	findings = append(findings, storageFindings(input.Volumes, input.Claims, now)...)
+	findings = append(findings, releaseFindings(input.Version, support)...)
 	findings = append(findings, capacityFindings(capacity)...)
 	findings = append(findings, restartFindings(input.Pods, now)...)
 	findings = append(findings, configurationFindings(input.Pods, pods)...)
@@ -696,6 +700,7 @@ func NewOverview(input OverviewInput) Overview {
 		Namespaces:  summariseNamespaces(input.Pods, input.MetricsMeasured),
 		Restarts:    restartHotspots(input.Pods, now),
 		Consumers:   topConsumers(input.Pods, input.MetricsMeasured),
+		Support:     support,
 		Unavailable: slices.Clone(input.Unavailable),
 	}
 }
