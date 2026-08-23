@@ -14,11 +14,11 @@
  */
 
 import { init, use } from 'echarts/core'
-import { LineChart } from 'echarts/charts'
+import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 
-use([LineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
+use([LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
 
 /**
  * The minimal surface the charts use.

@@ -15,6 +15,7 @@
 <script lang="ts">
   import CapacityBar from '$lib/components/CapacityBar.svelte'
   import FindingCard from '$lib/components/FindingCard.svelte'
+  import NodeLoadChart from '$lib/components/NodeLoadChart.svelte'
   import TrendChart from '$lib/components/TrendChart.svelte'
   import { formatAge } from '$lib/format'
   import { ClusterHistory, TREND_WINDOWS } from '$stores/history.svelte'
@@ -673,6 +674,27 @@
               {/each}
             </div>
           {/if}
+        </section>
+      {/if}
+
+      <!-- Per-node load. The cluster totals above cannot distinguish an
+           evenly loaded cluster from one where half the nodes are full, and
+           only the second explains a pod that will not schedule on a cluster
+           reading 46% requested. -->
+      {#if overview.nodeLoads.length > 1}
+        <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
+          <div class="flex items-baseline justify-between gap-3">
+            <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
+              <Server class="size-4 text-on-surface-variant" strokeWidth={1.8} />
+              Load per node
+            </h3>
+            <span class="text-body-small text-on-surface-variant/70">Busiest first</span>
+          </div>
+
+          <NodeLoadChart
+            loads={overview.nodeLoads}
+            onselect={(name) => void openObject('core/v1/nodes', name, '')}
+          />
         </section>
       {/if}
 

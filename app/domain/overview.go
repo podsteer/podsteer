@@ -540,6 +540,108 @@ func topConsumers(pods []Pod, measured bool) TopConsumers {
 	}
 }
 
+// NodeLoad is one node's share of the work, in the dimensions that decide
+// whether more will fit on it.
+//
+// The per-node breakdown exists because a cluster total hides the shape of the
+// problem. "46% requested" across eighteen nodes is compatible with every node
+// at 46% and with half of them at 90% while the rest idle — and only the
+// second explains why a pod will not schedule on a cluster that looks
+// half empty.
+type NodeLoad struct {
+	Name         string
+	Ready        bool
+	Schedulable  bool
+	ControlPlane bool
+	// CPUPercent and MemoryPercent are requests against allocatable, which is
+	// what the scheduler decides on.
+	CPUPercent    float64
+	MemoryPercent float64
+	// PodPercent is scheduled pods against the node's own cap, the limit that
+	// catches people out on small instance types.
+	PodPercent float64
+	// DiskPercent is the fullest filesystem, or -1 when no kubelet answered.
+	DiskPercent float64
+	// Pods is how many are on it.
+	Pods int
+}
+
+// nodeLoads computes each node's share of what has been requested.
+func nodeLoads(nodes []Node, pods []Pod) []NodeLoad {
+	if len(nodes) == 0 {
+		return nil
+	}
+
+	type load struct {
+		cpu, memory int64
+		pods        int
+	}
+	byNode := make(map[string]*load, len(nodes))
+	for _, pod := range pods {
+		if !pod.OccupiesNode() || pod.NodeName() == "" {
+			continue
+		}
+		entry, seen := byNode[pod.NodeName()]
+		if !seen {
+			entry = &load{}
+			byNode[pod.NodeName()] = entry
+		}
+		requests := pod.Requests()
+		entry.cpu += requests.CPUMilli
+		entry.memory += requests.MemoryBytes
+		entry.pods++
+	}
+
+	loads := make([]NodeLoad, 0, len(nodes))
+	for _, node := range nodes {
+		entry := byNode[node.Name()]
+		if entry == nil {
+			entry = &load{}
+		}
+
+		allocatable := node.Allocatable()
+		out := NodeLoad{
+			Name:         node.Name(),
+			Ready:        node.Ready(),
+			Schedulable:  !node.Unschedulable(),
+			ControlPlane: node.IsControlPlane(),
+			Pods:         entry.pods,
+			DiskPercent:  -1,
+		}
+		if allocatable.CPUMilli > 0 {
+			out.CPUPercent = float64(entry.cpu) / float64(allocatable.CPUMilli) * 100
+		}
+		if allocatable.MemoryBytes > 0 {
+			out.MemoryPercent = float64(entry.memory) / float64(allocatable.MemoryBytes) * 100
+		}
+		if allocatable.Pods > 0 {
+			out.PodPercent = float64(entry.pods) / float64(allocatable.Pods) * 100
+		}
+		if disks := node.Filesystems(); disks.Measured {
+			out.DiskPercent = disks.Fullest().Percent()
+		}
+		loads = append(loads, out)
+	}
+
+	// Busiest first, by whichever dimension is fullest: the node about to
+	// refuse work is the one worth reading, and sorting by name would bury it
+	// wherever the alphabet put it.
+	sort.SliceStable(loads, func(i, j int) bool {
+		left, right := loads[i].fullest(), loads[j].fullest()
+		if left != right {
+			return left > right
+		}
+		return loads[i].Name < loads[j].Name
+	})
+	return loads
+}
+
+// fullest returns the node's highest pressure across the scheduling
+// dimensions, which is the one that decides whether anything more fits.
+func (l NodeLoad) fullest() float64 {
+	return max(l.CPUPercent, l.MemoryPercent, l.PodPercent)
+}
+
 // PodSummary counts pods by the state an operator cares about.
 type PodSummary struct {
 	Total       int
@@ -642,6 +744,7 @@ type Overview struct {
 	Storage     StorageSummary
 	Consumers   TopConsumers
 	Support     ReleaseSupport
+	NodeLoads   []NodeLoad
 	Nodes       NodeSummary
 	Pods        PodSummary
 	Workloads   []WorkloadKindSummary
@@ -701,6 +804,7 @@ func NewOverview(input OverviewInput) Overview {
 		Restarts:    restartHotspots(input.Pods, now),
 		Consumers:   topConsumers(input.Pods, input.MetricsMeasured),
 		Support:     support,
+		NodeLoads:   nodeLoads(input.Nodes, input.Pods),
 		Unavailable: slices.Clone(input.Unavailable),
 	}
 }

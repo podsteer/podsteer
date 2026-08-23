@@ -484,6 +484,34 @@ export namespace wails {
 	        this.ageSeconds = source["ageSeconds"];
 	    }
 	}
+	export class NodeLoad {
+	    name: string;
+	    ready: boolean;
+	    schedulable: boolean;
+	    controlPlane: boolean;
+	    cpuPercent: number;
+	    memoryPercent: number;
+	    podPercent: number;
+	    diskPercent: number;
+	    pods: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new NodeLoad(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.ready = source["ready"];
+	        this.schedulable = source["schedulable"];
+	        this.controlPlane = source["controlPlane"];
+	        this.cpuPercent = source["cpuPercent"];
+	        this.memoryPercent = source["memoryPercent"];
+	        this.podPercent = source["podPercent"];
+	        this.diskPercent = source["diskPercent"];
+	        this.pods = source["pods"];
+	    }
+	}
 	export class VersionCount {
 	    version: string;
 	    nodes: number;
@@ -764,6 +792,7 @@ export namespace wails {
 	    storage: StorageSummary;
 	    consumers: TopConsumers;
 	    support: ReleaseSupport;
+	    nodeLoads: NodeLoad[];
 	    pods: PodSummary;
 	    workloads: WorkloadKindSummary[];
 	    namespaces: NamespaceLoad[];
@@ -790,6 +819,7 @@ export namespace wails {
 	        this.storage = this.convertValues(source["storage"], StorageSummary);
 	        this.consumers = this.convertValues(source["consumers"], TopConsumers);
 	        this.support = this.convertValues(source["support"], ReleaseSupport);
+	        this.nodeLoads = this.convertValues(source["nodeLoads"], NodeLoad);
 	        this.pods = this.convertValues(source["pods"], PodSummary);
 	        this.workloads = this.convertValues(source["workloads"], WorkloadKindSummary);
 	        this.namespaces = this.convertValues(source["namespaces"], NamespaceLoad);

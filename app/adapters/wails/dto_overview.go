@@ -290,6 +290,38 @@ func toReleaseSupport(support domain.ReleaseSupport) ReleaseSupport {
 	return out
 }
 
+// NodeLoad is one node's share of the work.
+type NodeLoad struct {
+	Name         string  `json:"name"`
+	Ready        bool    `json:"ready"`
+	Schedulable  bool    `json:"schedulable"`
+	ControlPlane bool    `json:"controlPlane"`
+	CPUPercent   float64 `json:"cpuPercent"`
+	MemPercent   float64 `json:"memoryPercent"`
+	PodPercent   float64 `json:"podPercent"`
+	// DiskPercent is -1 when no kubelet answered for this node.
+	DiskPercent float64 `json:"diskPercent"`
+	Pods        int     `json:"pods"`
+}
+
+func toNodeLoads(loads []domain.NodeLoad) []NodeLoad {
+	out := make([]NodeLoad, 0, len(loads))
+	for _, load := range loads {
+		out = append(out, NodeLoad{
+			Name:         load.Name,
+			Ready:        load.Ready,
+			Schedulable:  load.Schedulable,
+			ControlPlane: load.ControlPlane,
+			CPUPercent:   load.CPUPercent,
+			MemPercent:   load.MemoryPercent,
+			PodPercent:   load.PodPercent,
+			DiskPercent:  load.DiskPercent,
+			Pods:         load.Pods,
+		})
+	}
+	return out
+}
+
 // NodeSummary counts nodes by condition.
 type NodeSummary struct {
 	Total         int `json:"total"`
@@ -381,6 +413,7 @@ type Overview struct {
 	Storage     StorageSummary        `json:"storage"`
 	Consumers   TopConsumers          `json:"consumers"`
 	Support     ReleaseSupport        `json:"support"`
+	NodeLoads   []NodeLoad            `json:"nodeLoads"`
 	Pods        PodSummary            `json:"pods"`
 	Workloads   []WorkloadKindSummary `json:"workloads"`
 	Namespaces  []NamespaceLoad       `json:"namespaces"`
@@ -406,6 +439,7 @@ func toOverview(overview domain.Overview) Overview {
 		Nodes:       toNodeSummary(overview.Nodes),
 		Storage:     toStorage(overview.Storage),
 		Support:     toReleaseSupport(overview.Support),
+		NodeLoads:   toNodeLoads(overview.NodeLoads),
 		Consumers: TopConsumers{
 			ByCPU:    toConsumers(overview.Consumers.ByCPU, true),
 			ByMemory: toConsumers(overview.Consumers.ByMemory, false),

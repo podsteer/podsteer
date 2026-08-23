@@ -503,6 +503,59 @@ func TestConsumerWithoutRequestsReportsNoShare(t *testing.T) {
 	}
 }
 
+// A cluster total cannot distinguish an evenly loaded cluster from one where
+// half the nodes are full — which is the case that explains a pod refusing to
+// schedule on a cluster reading 50% requested.
+func TestNodeLoadsRankTheBusiestFirst(t *testing.T) {
+	t.Parallel()
+
+	pod := func(name, node string, cpuMilli int64) domain.Pod {
+		t.Helper()
+		return podFixture(t, domain.PodSpec{
+			Name: name, NodeName: node, Phase: domain.PodPhaseRunning,
+			Containers: []domain.Container{{
+				Name: "app", State: domain.ContainerStateRunning,
+				Requests: domain.Resources{CPUMilli: cpuMilli},
+			}},
+		})
+	}
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Nodes: []domain.Node{
+			nodeFixture(t, "aaa-idle", 4000, 8<<30, 110),
+			nodeFixture(t, "zzz-busy", 4000, 8<<30, 110),
+		},
+		Pods: []domain.Pod{
+			pod("small", "aaa-idle", 200),
+			pod("large", "zzz-busy", 3600),
+		},
+		Now: overviewNow,
+	})
+
+	loads := overview.NodeLoads
+	if len(loads) != 2 {
+		t.Fatalf("loads = %d, want one per node", len(loads))
+	}
+	// Busiest first, not alphabetical: sorting by name would bury the node
+	// about to refuse work wherever the alphabet put it.
+	if loads[0].Name != "zzz-busy" {
+		t.Errorf("first = %q, want the busiest node", loads[0].Name)
+	}
+	if got := loads[0].CPUPercent; got < 89 || got > 91 {
+		t.Errorf("busiest CPU = %v%%, want about 90", got)
+	}
+	if loads[0].Pods != 1 {
+		t.Errorf("pods = %d, want the one scheduled on it", loads[0].Pods)
+	}
+
+	// Unmeasured disk is -1, never 0: a row of zeroes would read as empty
+	// disks rather than as nobody having been asked.
+	if loads[0].DiskPercent != -1 {
+		t.Errorf("disk = %v, want -1 for a node no kubelet answered for", loads[0].DiskPercent)
+	}
+}
+
 func TestDiagnosePodStates(t *testing.T) {
 	t.Parallel()
 

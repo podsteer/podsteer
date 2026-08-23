@@ -96,6 +96,9 @@ export type HistorySettings = wails.HistorySettings
 export type Overview = wails.Overview
 /** One problem, aggregated across the objects it affects. */
 export type Finding = wails.Finding
+
+/** One node's share of what the cluster has been asked to run. */
+export type NodeLoad = wails.NodeLoad
 /** One object a finding is about. */
 export type Subject = wails.Subject
 /** One dimension of cluster capacity. */
