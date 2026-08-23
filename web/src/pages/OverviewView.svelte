@@ -14,6 +14,7 @@
 -->
 <script lang="ts">
   import CapacityBar from '$lib/components/CapacityBar.svelte'
+  import SlotsBar from '$lib/components/SlotsBar.svelte'
   import FindingCard from '$lib/components/FindingCard.svelte'
   import NodeLoadChart from '$lib/components/NodeLoadChart.svelte'
   import TrendChart from '$lib/components/TrendChart.svelte'
@@ -347,11 +348,16 @@
           </span>
         </div>
 
-        <!-- Two columns until there is genuinely room for three. Each bar
-             carries four columns of figures inside it, and squeezed to a
-             third of a 900px window those values wrap and collide — a denser
-             layout that cannot be read is worse than an emptier one. -->
-        <div class="grid gap-x-8 gap-y-5 md:grid-cols-2 xl:grid-cols-3">
+        <!-- Two by two. Three columns squeezed each bar's four figures into
+             a third of the window, where the values wrapped and collided into
+             their neighbour; a denser layout that cannot be read is worse
+             than an emptier one.
+
+             Pod slots is a peer of the resource tracks rather than a footnote
+             below them. It is the limit that catches people out — a node
+             refuses pods at its cap however much CPU and memory are free — so
+             a cluster can be 9% committed everywhere else and still be full. -->
+        <div class="grid gap-x-8 gap-y-5 md:grid-cols-2">
           <CapacityBar label="CPU" usage={overview.capacity.cpu} unit="cores" />
           <CapacityBar label="Memory" usage={overview.capacity.memory} />
 
@@ -359,42 +365,14 @@
                ephemeral-storage capacity would otherwise get a track reading
                zero of zero, which asserts something the API never said. -->
           {#if hasEphemeral}
-            <!-- Spans the pair while there are only two columns, so the odd
-                 one out fills the row instead of leaving half the card
-                 empty beside it. -->
-            <div class="md:col-span-2 xl:col-span-1">
-              <CapacityBar
-                label="Ephemeral storage"
-                usage={overview.capacity.ephemeral}
-                note={ephemeralNote}
-              />
-            </div>
+            <CapacityBar
+              label="Ephemeral storage"
+              usage={overview.capacity.ephemeral}
+              note={ephemeralNote}
+            />
           {/if}
-        </div>
 
-        <!-- Pod slots: the limit that catches people out, because a node
-             refuses pods at its cap however much CPU and memory are free. -->
-        <div class="flex flex-col gap-2 border-t border-outline-variant/40 pt-3">
-          <div class="flex items-baseline justify-between gap-3">
-            <span class="text-label-large text-on-surface">Pod slots</span>
-            <span class="text-body-small tabular-nums text-on-surface-variant">
-              {overview.capacity.pods.scheduled} / {overview.capacity.pods.capacity}
-            </span>
-          </div>
-          <div class="h-3 w-full overflow-hidden rounded-full bg-surface-container-highest">
-            <span
-              class="block h-full rounded-full transition-all duration-300 ease-standard
-                     {overview.capacity.pods.usedPercent >= 85 ? 'bg-error/70' : 'bg-primary/45'}"
-              style="width: {Math.min(100, overview.capacity.pods.usedPercent)}%"
-            ></span>
-          </div>
-          {#if overview.capacity.pods.unschedulable > 0}
-            <p class="text-body-small text-warning">
-              {overview.capacity.pods.unschedulable} pod{overview.capacity.pods.unschedulable === 1
-                ? ''
-                : 's'} waiting for a node
-            </p>
-          {/if}
+          <SlotsBar capacity={overview.capacity.pods} />
         </div>
       </section>
 

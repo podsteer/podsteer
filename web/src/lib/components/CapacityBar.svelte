@@ -18,6 +18,7 @@
 -->
 <script lang="ts">
   import type { ResourceUsage } from '$lib/api/client'
+  import CapacityFigures, { type Figure } from './CapacityFigures.svelte'
 
   interface Props {
     label: string
@@ -64,6 +65,41 @@
    * Values already carrying their own unit — memory's "118.9GiB", CPU's
    * sub-core "500m" — get nothing; a bare number gets the caller's unit.
    */
+  /**
+   * The four figures, in the order they are read.
+   *
+   * Requested above Schedulable on the left, Used above Efficiency on the
+   * right, in every bar whatever the values are — an unavailable figure
+   * greys out rather than disappearing, because a column that shifts when a
+   * number is missing cannot be read down.
+   */
+  const figures = $derived<Figure[]>([
+    {
+      label: 'Requested',
+      value: `${Math.round(usage.requestPercent)}%`,
+    },
+    usage.measured
+      ? {
+          label: 'Used',
+          value: `${usage.usage}${suffix(usage.usage)}`,
+          aside: `(${Math.round(usage.usagePercent)}%)`,
+        }
+      : { label: 'Used', value: '—', muted: true },
+    {
+      label: 'Schedulable',
+      value: `${usage.schedulable}${suffix(usage.schedulable)}`,
+      title: 'Allocatable not already requested',
+    },
+    efficiency !== null
+      ? {
+          label: 'Efficiency',
+          value: `${efficiency}%`,
+          tone: efficiency < 25 ? 'text-warning' : undefined,
+          title: 'Measured usage as a share of what was requested',
+        }
+      : { label: 'Efficiency', value: '—', muted: true },
+  ])
+
   function suffix(value: string): string {
     if (!unit) return ''
     return /[a-zA-Z]$/.test(value) ? '' : ` ${unit}`
@@ -109,51 +145,7 @@
     {/if}
   </div>
 
-  <!-- Four columns: label, value, label, value. Two pairs per row with the
-       labels on a left edge and the figures on a right one, so the numbers
-       line up in a column that can be read down instead of being hunted for
-       between words. A wrapping row of "label value label value" put every
-       figure in a different place on every bar, which is what made three of
-       these side by side hard to follow. -->
-  <dl class="grid grid-cols-[auto_1fr_auto_1fr] items-baseline gap-x-3 gap-y-1.5 text-body-medium">
-    <dt class="text-on-surface-variant">Requested</dt>
-    <dd class="text-right tabular-nums text-on-surface">{Math.round(usage.requestPercent)}%</dd>
-
-    <!-- Memory formats its own unit into the value; CPU does not, so the
-         unit is appended here. Without it "Used 4.47" beside
-         "Used 118.9GiB" reads as a quantity of nothing. -->
-    {#if usage.measured}
-      <dt class="pl-2 text-on-surface-variant">Used</dt>
-      <dd class="text-right tabular-nums text-on-surface">
-        {usage.usage}{suffix(usage.usage)}
-        <span class="text-on-surface-variant/70">({Math.round(usage.usagePercent)}%)</span>
-      </dd>
-    {:else}
-      <dt class="pl-2 text-on-surface-variant/50">Used</dt>
-      <dd class="text-right text-on-surface-variant/50">—</dd>
-    {/if}
-
-    <dt class="text-on-surface-variant" title="Allocatable not already requested">Schedulable</dt>
-    <dd class="text-right tabular-nums text-on-surface">
-      {usage.schedulable}{suffix(usage.schedulable)}
-    </dd>
-
-    <!-- The number nobody else prints: how much of the reservation is real. -->
-    {#if efficiency !== null}
-      <dt
-        class="pl-2 text-on-surface-variant"
-        title="Measured usage as a share of what was requested"
-      >
-        Efficiency
-      </dt>
-      <dd class="text-right tabular-nums {efficiency < 25 ? 'text-warning' : 'text-on-surface'}">
-        {efficiency}%
-      </dd>
-    {:else}
-      <dt class="pl-2 text-on-surface-variant/50">Efficiency</dt>
-      <dd class="text-right text-on-surface-variant/50">—</dd>
-    {/if}
-  </dl>
+  <CapacityFigures {figures} />
 
   {#if note}
     <p class="text-body-small leading-relaxed text-on-surface-variant/60">{note}</p>

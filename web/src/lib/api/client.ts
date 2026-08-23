@@ -99,6 +99,9 @@ export type Finding = wails.Finding
 
 /** One node's share of what the cluster has been asked to run. */
 export type NodeLoad = wails.NodeLoad
+
+/** Pod slots: how many the cluster runs against how many it can. */
+export type PodCapacity = wails.PodCapacity
 /** One object a finding is about. */
 export type Subject = wails.Subject
 /** One dimension of cluster capacity. */
