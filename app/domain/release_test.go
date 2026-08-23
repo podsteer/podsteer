@@ -117,6 +117,34 @@ func TestSupportForSaysNothingAboutVersionsItDoesNotKnow(t *testing.T) {
 	}
 }
 
+// Below the table is out of support, and inferring that is safe in the one
+// direction that matters — unlike inferring it above the table, which would
+// call a release made after this build unsupported.
+func TestSupportForTreatsVersionsBelowTheTableAsEnded(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 23, 0, 0, 0, 0, time.UTC)
+	support := domain.SupportFor(domain.ServerVersion{GitVersion: "v1.1.0"}, now)
+
+	if support.State != domain.SupportEnded {
+		t.Errorf("state = %q, want ended for a release older than the table", support.State)
+	}
+	// The date is genuinely unknown, and must not be invented.
+	if !support.EndOfLife.IsZero() {
+		t.Errorf("end of life = %v, want no date claimed", support.EndOfLife)
+	}
+}
+
+// The table is generated, so its vintage is a fact the interface can state
+// rather than something it has to imply.
+func TestScheduleRecordsWhenItWasCompiled(t *testing.T) {
+	t.Parallel()
+
+	if domain.ScheduleCompiledAt().IsZero() {
+		t.Error("the generated schedule carries no compilation date")
+	}
+}
+
 // A cluster past end of life is worth a finding; one comfortably inside its
 // window must not produce one.
 func TestReleaseFindingOnlyAppearsWhenSupportIsRunningOut(t *testing.T) {

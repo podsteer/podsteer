@@ -276,13 +276,17 @@ type ReleaseSupport struct {
 	EndOfLife string `json:"endOfLife"`
 	// Days until that date, negative once it has passed.
 	Days int `json:"days"`
+	// CompiledAt is when the support table was generated, so an "unknown"
+	// verdict can say it is an old table rather than a broken one.
+	CompiledAt string `json:"compiledAt"`
 }
 
 func toReleaseSupport(support domain.ReleaseSupport) ReleaseSupport {
 	out := ReleaseSupport{
-		Minor: support.Minor,
-		State: string(support.State),
-		Days:  support.Days,
+		Minor:      support.Minor,
+		State:      string(support.State),
+		Days:       support.Days,
+		CompiledAt: domain.ScheduleCompiledAt().Format("2 January 2006"),
 	}
 	if !support.EndOfLife.IsZero() {
 		out.EndOfLife = support.EndOfLife.Format("2 January 2006")

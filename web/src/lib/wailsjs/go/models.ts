@@ -655,6 +655,7 @@ export namespace wails {
 	    state: string;
 	    endOfLife: string;
 	    days: number;
+	    compiledAt: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ReleaseSupport(source);
@@ -666,6 +667,7 @@ export namespace wails {
 	        this.state = source["state"];
 	        this.endOfLife = source["endOfLife"];
 	        this.days = source["days"];
+	        this.compiledAt = source["compiledAt"];
 	    }
 	}
 	export class TopConsumers {

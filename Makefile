@@ -89,6 +89,7 @@ help:
 	@echo ""
 	@echo "Compliance (see docs/LICENCE-POLICY.md):"
 	@echo "  make notices             - Regenerate the licence inventory, enforce the policy"
+	@echo "  make releases            - Refresh the Kubernetes support-window table"
 	@echo "  make sbom                - Emit a CycloneDX SBOM into build/bin/sbom"
 	@echo ""
 	@echo "Brand (see brand/README.md):"
@@ -172,6 +173,13 @@ endif
 # adding a new bound API means the frontend imports bindings that do not exist
 # yet, so the build fails, so the bindings never get generated. A stub is all
 # the embed needs to compile.
+# Refreshes the Kubernetes support-window table from the release team's own
+# schedule. Needs network; run it when preparing a release, not on every build,
+# so an offline build stays reproducible.
+releases:
+	go run ./tools/releasegen
+	@gofmt -w app/domain/release_schedule.go
+
 bindings: embed-stub
 	$(WAILS) generate module $(BUILD_TAGS)
 	@# Wails writes the go/ bindings 755 but copies the runtime/ files straight

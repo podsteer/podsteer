@@ -9,11 +9,15 @@ package domain
 // property of the cluster nothing in the Kubernetes API reports and no client
 // surfaces, while the version string sits at the top of every dashboard.
 //
-// The dates below are a table compiled by hand from the published support
-// windows. That has a cost worth being explicit about: it goes stale, and a
-// version PodSteer has never heard of must not be guessed at. Both directions
-// are handled by saying nothing rather than something wrong — an unknown
-// version is unknown, not unsupported.
+// The dates come from the release team's own schedule, generated into
+// release_schedule.go at build time by tools/releasegen rather than typed out
+// here. They were maintained by hand first, and four of ten entries were
+// wrong by up to a fortnight — a table that looks right, that nobody checks,
+// and that is used to tell somebody their cluster is unsupported.
+//
+// Generated tables still go stale between PodSteer releases, so the rule
+// throughout is to say nothing rather than something wrong: a version the
+// table does not cover is unknown, never unsupported.
 
 import (
 	"fmt"
@@ -44,28 +48,6 @@ const (
 // early enough to be planned around.
 const upgradeNotice = 60 * 24 * time.Hour
 
-// endOfLife maps a Kubernetes minor version to the day its patches stop.
-//
-// Compiled from the published support windows. Entries are only added for
-// releases whose dates are known; the absence of a newer version here means
-// "not in the table", never "unsupported".
-var endOfLife = map[string]time.Time{
-	"1.26": date(2023, time.October, 28),
-	"1.27": date(2024, time.June, 28),
-	"1.28": date(2024, time.October, 28),
-	"1.29": date(2025, time.February, 28),
-	"1.30": date(2025, time.June, 28),
-	"1.31": date(2025, time.October, 28),
-	"1.32": date(2026, time.February, 28),
-	"1.33": date(2026, time.June, 28),
-	"1.34": date(2026, time.October, 28),
-	"1.35": date(2027, time.February, 28),
-}
-
-func date(year int, month time.Month, day int) time.Time {
-	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
-}
-
 // ReleaseSupport is what is known about the version a cluster is running.
 type ReleaseSupport struct {
 	// Minor is the version the verdict applies to, e.g. "1.32".
@@ -89,9 +71,15 @@ func SupportFor(version ServerVersion, now time.Time) ReleaseSupport {
 
 	ends, known := endOfLife[minor]
 	if !known {
-		// Newer than the table, or a distribution that versions itself
-		// differently. Saying nothing is the only honest answer: claiming a
-		// fresh release is unsupported would be worse than silence.
+		// Older than every entry is a safe inference in the one direction
+		// that matters: the table starts at the oldest release the project
+		// still publishes dates for, so anything below it stopped receiving
+		// patches before that. Newer than the table is not — it is a release
+		// made after this build, and calling it unsupported would be exactly
+		// backwards.
+		if oldest, ok := oldestKnown(); ok && compareMinor(minor, oldest) < 0 {
+			return ReleaseSupport{Minor: minor, State: SupportEnded}
+		}
 		return ReleaseSupport{Minor: minor, State: SupportUnknown}
 	}
 
@@ -141,17 +129,64 @@ func minorOf(gitVersion string) (string, bool) {
 	return fmt.Sprintf("%d.%d", major, minor), true
 }
 
+// CompiledAt returns when the support table was generated.
+//
+// Exposed so the interface can say how old the answer is instead of implying
+// it is current: a build from a year ago knows nothing about releases made
+// since, and "unknown" without that context reads as a bug.
+func ScheduleCompiledAt() time.Time { return scheduleCompiledAt }
+
+// oldestKnown returns the lowest minor version in the table.
+func oldestKnown() (string, bool) {
+	oldest := ""
+	for minor := range endOfLife {
+		if oldest == "" || compareMinor(minor, oldest) < 0 {
+			oldest = minor
+		}
+	}
+	return oldest, oldest != ""
+}
+
+// compareMinor orders two "major.minor" strings numerically, because "1.9"
+// sorts after "1.10" as text and before it as a version.
+func compareMinor(left, right string) int {
+	leftMajor, leftMinor := numbers(left)
+	rightMajor, rightMinor := numbers(right)
+	switch {
+	case leftMajor != rightMajor:
+		return leftMajor - rightMajor
+	default:
+		return leftMinor - rightMinor
+	}
+}
+
+func numbers(minor string) (int, int) {
+	parts := strings.SplitN(minor, ".", 2)
+	if len(parts) < 2 {
+		return 0, 0
+	}
+	major, _ := strconv.Atoi(parts[0])
+	small, _ := strconv.Atoi(parts[1])
+	return major, small
+}
+
 // releaseFindings reports a control plane running out of support.
 func releaseFindings(version ServerVersion, support ReleaseSupport) []Finding {
 	switch support.State {
 	case SupportEnded:
+		when := fmt.Sprintf("on %s, %d days ago",
+			support.EndOfLife.Format("2 January 2006"), -support.Days)
+		if support.EndOfLife.IsZero() {
+			// Older than the table goes back, so the date is not known — only
+			// that it is long past.
+			when = "before any release this build has dates for"
+		}
 		return []Finding{{
 			ID:       "release:ended",
 			Severity: SeverityWarning,
 			Category: CategoryFindingConfiguration,
 			Title:    "Kubernetes version out of support",
-			Summary: fmt.Sprintf("%s reached end of life on %s, %d days ago",
-				support.Minor, support.EndOfLife.Format("2 January 2006"), -support.Days),
+			Summary:  fmt.Sprintf("%s reached end of life %s", support.Minor, when),
 			Advice: "No further patches are published for this minor version, including for " +
 				"vulnerabilities disclosed after that date. Managed providers usually keep " +
 				"clusters running well past it and stop shipping fixes, so nothing will fail " +

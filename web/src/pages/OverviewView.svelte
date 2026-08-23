@@ -230,7 +230,17 @@
                    number simply sits there looking like any other. Silent
                    when the table does not cover the release: claiming a fresh
                    version is unsupported would be worse than saying nothing. -->
-              {#if overview.support.state === 'ended' || overview.support.state === 'ending'}
+              {#if overview.support.state === 'unknown' && overview.support.minor}
+                <!-- Newer than the table this build was compiled with, which
+                     is a fact about PodSteer and not about the cluster. Said
+                     quietly, and only on hover, because it is not a problem. -->
+                <span
+                  class="text-label-small text-on-surface-variant/50"
+                  title="This build's support table was compiled on {overview.support.compiledAt} and does not cover {overview.support.minor}"
+                >
+                  ?
+                </span>
+              {:else if overview.support.state === 'ended' || overview.support.state === 'ending'}
                 <span
                   class="rounded-full px-1.5 py-0.5 text-label-small
                          {overview.support.state === 'ended'

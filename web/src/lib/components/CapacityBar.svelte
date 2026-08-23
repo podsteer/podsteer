@@ -73,7 +73,7 @@
 <div class="flex min-w-0 flex-col gap-2">
   <div class="flex items-baseline justify-between gap-3">
     <span class="text-label-large text-on-surface">{label}</span>
-    <span class="text-body-small tabular-nums text-on-surface-variant">
+    <span class="text-body-medium tabular-nums text-on-surface-variant">
       {usage.requests} / {usage.allocatable}
       {#if unit}<span class="text-on-surface-variant/60">{unit}</span>{/if}
     </span>
@@ -109,40 +109,53 @@
     {/if}
   </div>
 
-  <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-body-small text-on-surface-variant/80">
-    <span class="tabular-nums">
-      <span class="text-on-surface-variant">Requested</span>
-      {Math.round(usage.requestPercent)}%
-    </span>
+  <!-- Four columns: label, value, label, value. Two pairs per row with the
+       labels on a left edge and the figures on a right one, so the numbers
+       line up in a column that can be read down instead of being hunted for
+       between words. A wrapping row of "label value label value" put every
+       figure in a different place on every bar, which is what made three of
+       these side by side hard to follow. -->
+  <dl class="grid grid-cols-[auto_1fr_auto_1fr] items-baseline gap-x-3 gap-y-1.5 text-body-medium">
+    <dt class="text-on-surface-variant">Requested</dt>
+    <dd class="text-right tabular-nums text-on-surface">{Math.round(usage.requestPercent)}%</dd>
 
     <!-- Memory formats its own unit into the value; CPU does not, so the
          unit is appended here. Without it "Used 4.47" beside
          "Used 118.9GiB" reads as a quantity of nothing. -->
     {#if usage.measured}
-      <span class="tabular-nums">
-        <span class="text-on-surface-variant">Used</span>
-        {usage.usage}{suffix(usage.usage)} ({Math.round(usage.usagePercent)}%)
-      </span>
+      <dt class="pl-2 text-on-surface-variant">Used</dt>
+      <dd class="text-right tabular-nums text-on-surface">
+        {usage.usage}{suffix(usage.usage)}
+        <span class="text-on-surface-variant/70">({Math.round(usage.usagePercent)}%)</span>
+      </dd>
+    {:else}
+      <dt class="pl-2 text-on-surface-variant/50">Used</dt>
+      <dd class="text-right text-on-surface-variant/50">—</dd>
     {/if}
 
-    <span class="tabular-nums">
-      <span class="text-on-surface-variant">Free to schedule</span>
+    <dt class="text-on-surface-variant" title="Allocatable not already requested">Schedulable</dt>
+    <dd class="text-right tabular-nums text-on-surface">
       {usage.schedulable}{suffix(usage.schedulable)}
-    </span>
+    </dd>
 
     <!-- The number nobody else prints: how much of the reservation is real. -->
     {#if efficiency !== null}
-      <span
-        class="tabular-nums {efficiency < 25 ? 'text-warning' : ''}"
+      <dt
+        class="pl-2 text-on-surface-variant"
         title="Measured usage as a share of what was requested"
       >
-        <span class="text-on-surface-variant">Efficiency</span>
+        Efficiency
+      </dt>
+      <dd class="text-right tabular-nums {efficiency < 25 ? 'text-warning' : 'text-on-surface'}">
         {efficiency}%
-      </span>
+      </dd>
+    {:else}
+      <dt class="pl-2 text-on-surface-variant/50">Efficiency</dt>
+      <dd class="text-right text-on-surface-variant/50">—</dd>
     {/if}
-  </div>
+  </dl>
 
   {#if note}
-    <p class="text-body-small text-on-surface-variant/60">{note}</p>
+    <p class="text-body-small leading-relaxed text-on-surface-variant/60">{note}</p>
   {/if}
 </div>
