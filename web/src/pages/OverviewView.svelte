@@ -502,6 +502,26 @@
                  different jobs fixed in three different places, and one line
                  saying "3 under pressure" only sends somebody to the node list
                  to find out which of them it is. -->
+            <!-- Disk occupancy, which no other view in PodSteer can show:
+                 the API server does not know how full a node's disk is, so
+                 this is the kubelets' own answer. Only rendered when at least
+                 one of them gave it. -->
+            {#if overview.nodes.disks.measured > 0}
+              <dt class="text-on-surface-variant" title="Across {overview.nodes.disks.measured} of {overview.nodes.total} nodes">
+                Fullest disk
+              </dt>
+              <dd
+                class="text-right tabular-nums {overview.nodes.disks.fullestPercent >= 90
+                  ? 'text-error'
+                  : overview.nodes.disks.fullestPercent >= 80
+                    ? 'text-warning'
+                    : 'text-on-surface'}"
+                title={overview.nodes.disks.fullestNode}
+              >
+                {Math.round(overview.nodes.disks.fullestPercent)}%
+              </dd>
+            {/if}
+
             {#each overview.nodes.pressure as pressure (pressure.condition)}
               <dt class="text-on-surface-variant">{PRESSURE_LABELS[pressure.condition] ?? pressure.condition}</dt>
               <dd class="text-right tabular-nums text-warning">{pressure.nodes}</dd>

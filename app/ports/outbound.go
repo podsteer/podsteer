@@ -102,6 +102,18 @@ type MetricsPort interface {
 
 	// NodeMetrics returns usage keyed by node name.
 	NodeMetrics(ctx context.Context, id domain.ClusterID) (map[string]domain.Metrics, error)
+
+	// NodeFilesystems returns disk occupancy keyed by node name.
+	//
+	// Read from each kubelet rather than from an aggregated API, because no
+	// aggregated API carries it: metrics-server serves CPU and memory only.
+	// That means it needs the nodes/proxy permission, which plenty of
+	// clusters do not grant — so like everything else here it may fail with
+	// ErrMetricsUnavailable and the assessment must continue without it.
+	//
+	// A partial answer is a success: on a large cluster one unreachable
+	// kubelet must not cost the other fifty.
+	NodeFilesystems(ctx context.Context, id domain.ClusterID) (map[string]domain.NodeFilesystems, error)
 }
 
 // HistoryPort stores and reads the samples PodSteer takes of a cluster.

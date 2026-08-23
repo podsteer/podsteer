@@ -198,6 +198,24 @@ export namespace wails {
 	        this.expression = source["expression"];
 	    }
 	}
+	export class DiskSummary {
+	    measured: number;
+	    fullestPercent: number;
+	    fullestNode: string;
+	    filling: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiskSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.measured = source["measured"];
+	        this.fullestPercent = source["fullestPercent"];
+	        this.fullestNode = source["fullestNode"];
+	        this.filling = source["filling"];
+	    }
+	}
 	export class Event {
 	    name: string;
 	    namespace: string;
@@ -464,6 +482,7 @@ export namespace wails {
 	    underPressure: number;
 	    controlPlane: number;
 	    pressure: ConditionCount[];
+	    disks: DiskSummary;
 	    kubeletVersions: VersionCount[];
 	    oldestSeconds: number;
 	
@@ -480,6 +499,7 @@ export namespace wails {
 	        this.underPressure = source["underPressure"];
 	        this.controlPlane = source["controlPlane"];
 	        this.pressure = this.convertValues(source["pressure"], ConditionCount);
+	        this.disks = this.convertValues(source["disks"], DiskSummary);
 	        this.kubeletVersions = this.convertValues(source["kubeletVersions"], VersionCount);
 	        this.oldestSeconds = source["oldestSeconds"];
 	    }

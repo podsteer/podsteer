@@ -113,6 +113,8 @@ type NodeSummary struct {
 	ControlPlane  int `json:"controlPlane"`
 	// Pressure counts nodes per condition raised, most affected first.
 	Pressure []ConditionCount `json:"pressure"`
+	// Disks summarises node filesystem occupancy, when kubelets answered.
+	Disks DiskSummary `json:"disks"`
 	// KubeletVersions counts nodes per version, most common first.
 	KubeletVersions []VersionCount `json:"kubeletVersions"`
 	OldestSeconds   int64          `json:"oldestSeconds"`
@@ -322,8 +324,33 @@ func toNodeSummary(summary domain.NodeSummary) NodeSummary {
 		UnderPressure:   summary.UnderPressure,
 		ControlPlane:    summary.ControlPlane,
 		Pressure:        pressureCounts(summary.Pressure),
+		Disks:           toDiskSummary(summary.Disks),
 		KubeletVersions: versions,
 		OldestSeconds:   summary.OldestSeconds,
+	}
+}
+
+// DiskSummary is what the kubelets said about node filesystems.
+type DiskSummary struct {
+	// Measured is how many nodes answered. Zero means the cluster did not
+	// grant nodes/proxy, or no kubelet could be reached.
+	Measured int `json:"measured"`
+	// Fullest is the highest occupancy across every node that answered, which
+	// is the one that decides when eviction starts.
+	FullestPercent float64 `json:"fullestPercent"`
+	// FullestNode names it, so the figure can be acted on.
+	FullestNode string `json:"fullestNode"`
+	// Filling counts nodes past the warning threshold.
+	Filling int `json:"filling"`
+}
+
+// toDiskSummary translates the domain's reduction.
+func toDiskSummary(summary domain.DiskSummary) DiskSummary {
+	return DiskSummary{
+		Measured:       summary.Measured,
+		FullestPercent: summary.FullestPercent,
+		FullestNode:    summary.FullestNode,
+		Filling:        summary.Filling,
 	}
 }
 

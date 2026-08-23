@@ -66,8 +66,9 @@ type fakeKubernetes struct {
 	workloads    []domain.Workload
 	workloadsErr error
 
-	podUsage  map[string]domain.Metrics
-	nodeUsage map[string]domain.Metrics
+	podUsage        map[string]domain.Metrics
+	nodeUsage       map[string]domain.Metrics
+	nodeFilesystems map[string]domain.NodeFilesystems
 
 	mu               sync.Mutex
 	requestedCluster domain.ClusterID
@@ -149,6 +150,13 @@ func (f *fakeKubernetes) NodeMetrics(_ context.Context, _ domain.ClusterID) (map
 		return nil, ports.ErrMetricsUnavailable
 	}
 	return f.nodeUsage, nil
+}
+
+func (f *fakeKubernetes) NodeFilesystems(_ context.Context, _ domain.ClusterID) (map[string]domain.NodeFilesystems, error) {
+	if f.nodeFilesystems == nil {
+		return nil, ports.ErrMetricsUnavailable
+	}
+	return f.nodeFilesystems, nil
 }
 
 func (f *fakeKubernetes) record(id domain.ClusterID, namespace domain.NamespaceName) {

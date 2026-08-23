@@ -174,6 +174,111 @@ func TestPressureIsReportedPerCondition(t *testing.T) {
 	}
 }
 
+// The measurement no other part of Kubernetes carries: how full a node's disk
+// is BEFORE the kubelet says DiskPressure and starts evicting.
+func TestFilesystemFindingsWarnBeforeTheKubeletReacts(t *testing.T) {
+	t.Parallel()
+
+	withDisk := func(name string, usedPercent float64) domain.Node {
+		t.Helper()
+		node, err := domain.NewNode(domain.NodeSpec{
+			Name: name, ClusterID: "dev", Ready: true, KubeletVersion: "v1.32.7",
+			Capacity:    domain.Capacity{CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110},
+			Allocatable: domain.Capacity{CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110},
+			CreatedAt:   overviewNow.Add(-24 * time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("building node %q: %v", name, err)
+		}
+		const size = 100 << 30
+		return node.WithFilesystems(domain.NodeFilesystems{
+			Nodefs:   domain.Filesystem{CapacityBytes: size, UsedBytes: int64(size * usedPercent / 100)},
+			Measured: true,
+		})
+	}
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Nodes: []domain.Node{
+			withDisk("quiet", 40),
+			withDisk("filling", 84),
+			withDisk("nearly-full", 93),
+		},
+		Now: overviewNow,
+	})
+
+	warning, ok := findingByTitle(overview.Findings, "Node disks filling")
+	if !ok {
+		t.Fatalf("findings = %v, want one for the filling disk", titles(overview.Findings))
+	}
+	if warning.Count != 1 || warning.Subjects[0].Name != "filling" {
+		t.Errorf("warning names %+v, want only the node at 84%%", warning.Subjects)
+	}
+
+	critical, ok := findingByTitle(overview.Findings, "Node disks nearly full")
+	if !ok {
+		t.Fatalf("findings = %v, want one for the nearly full disk", titles(overview.Findings))
+	}
+	if critical.Severity != domain.SeverityCritical {
+		t.Errorf("severity = %q, want critical", critical.Severity)
+	}
+	if critical.Count != 1 || critical.Subjects[0].Name != "nearly-full" {
+		t.Errorf("critical names %+v, want only the node at 93%%", critical.Subjects)
+	}
+
+	// Occupancy also fills in the capacity dimension the API server cannot.
+	if !overview.Capacity.Ephemeral.Measured {
+		t.Error("ephemeral usage is unmeasured although kubelets reported it")
+	}
+}
+
+// A node nobody could measure must not be reported as an empty disk.
+func TestFilesystemFindingsIgnoreUnmeasuredNodes(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Nodes:     []domain.Node{nodeFixture(t, "node-1", 4000, 8<<30, 110)},
+		Now:       overviewNow,
+	})
+
+	for _, title := range []string{"Node disks filling", "Node disks nearly full"} {
+		if _, ok := findingByTitle(overview.Findings, title); ok {
+			t.Errorf("finding %q was raised for a node no kubelet answered for", title)
+		}
+	}
+	if overview.Capacity.Ephemeral.Measured {
+		t.Error("ephemeral usage claims to be measured with no kubelet data")
+	}
+}
+
+// The kubelet evicts on whichever filesystem crosses first, so the fuller one
+// is the one worth reporting.
+func TestFilesystemFindingsUseTheFullerOfTheTwoDisks(t *testing.T) {
+	t.Parallel()
+
+	node := nodeFixture(t, "split", 4000, 8<<30, 110).
+		WithFilesystems(domain.NodeFilesystems{
+			Nodefs:   domain.Filesystem{CapacityBytes: 100 << 30, UsedBytes: 20 << 30},
+			Imagefs:  domain.Filesystem{CapacityBytes: 100 << 30, UsedBytes: 95 << 30},
+			Measured: true,
+		})
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Nodes:     []domain.Node{node},
+		Now:       overviewNow,
+	})
+
+	finding, ok := findingByTitle(overview.Findings, "Node disks nearly full")
+	if !ok {
+		t.Fatalf("findings = %v, want the image filesystem reported", titles(overview.Findings))
+	}
+	if !strings.Contains(finding.Subjects[0].Detail, "95%") {
+		t.Errorf("detail = %q, want the fuller filesystem's figure", finding.Subjects[0].Detail)
+	}
+}
+
 func TestDiagnosePodStates(t *testing.T) {
 	t.Parallel()
 

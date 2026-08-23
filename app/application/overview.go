@@ -116,6 +116,7 @@ func (s *OverviewService) Overview(ctx context.Context, id domain.ClusterID) (do
 
 		nodeUsage map[string]domain.Metrics
 		podUsage  map[string]domain.Metrics
+		nodeDisks map[string]domain.NodeFilesystems
 		measured  bool
 	)
 
@@ -193,6 +194,15 @@ func (s *OverviewService) Overview(ctx context.Context, id domain.ClusterID) (do
 		return err
 	})
 
+	// Named separately from "metrics" so an operator can tell which half is
+	// missing: a cluster commonly has metrics-server and no nodes/proxy, and
+	// "assessed without metrics" would be wrong about the half that worked.
+	run("node filesystems", func() error {
+		result, err := s.metrics.NodeFilesystems(ctx, id)
+		nodeDisks = result
+		return err
+	})
+
 	// One goroutine per controller kind, each appending under the lock. The
 	// order they finish in does not matter: the assessment sorts everything it
 	// reports.
@@ -215,6 +225,7 @@ func (s *OverviewService) Overview(ctx context.Context, id domain.ClusterID) (do
 	// are joined here rather than in the domain: the domain should not know
 	// that usage came from a different API than the pod did.
 	nodes = attachNodeUsage(nodes, nodeUsage)
+	nodes = attachNodeFilesystems(nodes, nodeDisks)
 	pods = attachPodUsage(pods, podUsage)
 
 	overview := domain.NewOverview(domain.OverviewInput{
@@ -254,6 +265,25 @@ func attachNodeUsage(nodes []domain.Node, usage map[string]domain.Metrics) []dom
 	for _, node := range nodes {
 		if measured, ok := usage[node.Name()]; ok {
 			node = node.WithUsage(measured)
+		}
+		enriched = append(enriched, node)
+	}
+	return enriched
+}
+
+// attachNodeFilesystems returns the nodes carrying their disk occupancy.
+func attachNodeFilesystems(
+	nodes []domain.Node,
+	filesystems map[string]domain.NodeFilesystems,
+) []domain.Node {
+	if len(filesystems) == 0 {
+		return nodes
+	}
+
+	enriched := make([]domain.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if measured, ok := filesystems[node.Name()]; ok {
+			node = node.WithFilesystems(measured)
 		}
 		enriched = append(enriched, node)
 	}

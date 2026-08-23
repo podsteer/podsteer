@@ -123,6 +123,16 @@ const (
 	maxNamespaces = 10
 	// maxHotspots caps the restart list.
 	maxHotspots = 8
+	// diskWarnPercent and diskCriticalPercent are where a node's filesystem
+	// becomes worth saying out loud.
+	//
+	// Both sit BELOW the kubelet's own eviction threshold, which defaults to
+	// 10% available. That is the whole point of reading occupancy directly:
+	// DiskPressure is the alarm that sounds once pods are already being
+	// evicted, and these are the two before it, while somebody can still
+	// clear a log directory instead of losing a workload.
+	diskWarnPercent     = 80.0
+	diskCriticalPercent = 90.0
 )
 
 // Subject is one object a finding is about.
@@ -289,6 +299,8 @@ type NodeSummary struct {
 	Cordoned      int
 	UnderPressure int
 	ControlPlane  int
+	// Disks is what the kubelets reported about their own filesystems.
+	Disks DiskSummary
 	// Pressure counts nodes per condition currently raised.
 	//
 	// Split rather than summed because the three mean different things and
@@ -303,6 +315,24 @@ type NodeSummary struct {
 	// OldestSeconds is the age of the longest-lived node, a decent proxy for
 	// the age of the cluster itself.
 	OldestSeconds int64
+}
+
+// DiskSummary reduces per-node filesystem occupancy to what a card shows.
+//
+// Separate from the pressure counts above because it answers a different
+// question: pressure says the kubelet has already reacted, this says how close
+// it is to having to.
+type DiskSummary struct {
+	// Measured is how many nodes answered. Zero means no kubelet could be
+	// read, most often because the cluster does not grant nodes/proxy.
+	Measured int
+	// FullestPercent is the highest occupancy across the nodes that answered,
+	// and FullestNode names it. One number is enough for a card: the node
+	// closest to full is the one that decides when eviction starts.
+	FullestPercent float64
+	FullestNode    string
+	// Filling counts nodes past the warning threshold.
+	Filling int
 }
 
 // PodSummary counts pods by the state an operator cares about.
@@ -435,6 +465,7 @@ func NewOverview(input OverviewInput) Overview {
 	findings = append(findings, podFindings(input.Pods, owners, now)...)
 	findings = append(findings, workloadFindings(input.Workloads, findings, now)...)
 	findings = append(findings, nodeFindings(input.Nodes, nodes)...)
+	findings = append(findings, filesystemFindings(input.Nodes)...)
 	findings = append(findings, capacityFindings(capacity)...)
 	findings = append(findings, restartFindings(input.Pods, now)...)
 	findings = append(findings, configurationFindings(input.Pods, pods)...)
@@ -504,6 +535,17 @@ func summariseNodes(nodes []Node, now time.Time) NodeSummary {
 		}
 		if node.Unschedulable() {
 			summary.Cordoned++
+		}
+		if disks := node.Filesystems(); disks.Measured {
+			summary.Disks.Measured++
+			percent := disks.Fullest().Percent()
+			if percent > summary.Disks.FullestPercent {
+				summary.Disks.FullestPercent = percent
+				summary.Disks.FullestNode = node.Name()
+			}
+			if percent >= diskWarnPercent {
+				summary.Disks.Filling++
+			}
 		}
 		if conditions := node.ActiveConditions(); len(conditions) > 0 {
 			summary.UnderPressure++
@@ -575,6 +617,16 @@ func summariseCapacity(nodes []Node, pods []Pod, measured bool) CapacitySummary 
 		summary.Memory.Allocatable += node.Allocatable().MemoryBytes
 		summary.Ephemeral.Capacity += node.Capacity().EphemeralBytes
 		summary.Ephemeral.Allocatable += node.Allocatable().EphemeralBytes
+
+		// Occupancy comes from the kubelets, not from the API server, and is
+		// summed only across the nodes that answered. Measured is set as soon
+		// as ONE did: a cluster where half the kubelets are unreachable
+		// should still say what it knows about the other half rather than
+		// report the whole dimension as unmeasured.
+		if disks := node.Filesystems(); disks.Measured {
+			summary.Ephemeral.Usage += disks.Nodefs.UsedBytes
+			summary.Ephemeral.Measured = true
+		}
 
 		if !node.Unschedulable() && node.Ready() {
 			summary.Pods.Capacity += node.Allocatable().Pods
@@ -1220,6 +1272,78 @@ func findingOwnerKey(finding Finding) string {
 		return ""
 	}
 	return key
+}
+
+// filesystemFindings reports node disks filling before the kubelet reacts.
+//
+// Nothing else in PodSteer can say this, and nothing else in Kubernetes will:
+// the API server does not know how full a node's disk is, and by the time the
+// node itself says DiskPressure the eviction has started. A node at 88% is
+// invisible in every list and is the last cheap moment to act.
+func filesystemFindings(nodes []Node) []Finding {
+	var warning, critical []Subject
+
+	for _, node := range nodes {
+		disks := node.Filesystems()
+		if !disks.Measured {
+			continue
+		}
+
+		// The fullest of the two decides: nodefs and imagefs are separate
+		// filesystems on some runtimes, and the kubelet evicts on whichever
+		// crosses its threshold first.
+		fullest := disks.Fullest()
+		percent := fullest.Percent()
+		if percent < diskWarnPercent {
+			continue
+		}
+
+		subject := Subject{
+			Kind: "Node",
+			Name: node.Name(),
+			Detail: fmt.Sprintf("%.0f%% full — %s of %s used",
+				percent, formatBytes(fullest.UsedBytes), formatBytes(fullest.CapacityBytes)),
+		}
+		if percent >= diskCriticalPercent {
+			critical = append(critical, subject)
+		} else {
+			warning = append(warning, subject)
+		}
+	}
+
+	findings := make([]Finding, 0, 2)
+	if len(critical) > 0 {
+		findings = append(findings, Finding{
+			ID:       "node:disk:critical",
+			Severity: SeverityCritical,
+			Category: CategoryFindingNode,
+			Title:    "Node disks nearly full",
+			Summary: fmt.Sprintf("%s over %.0f%% full",
+				plural(len(critical), "node filesystem is", "node filesystems are"), diskCriticalPercent),
+			Advice: "The kubelet evicts pods and garbage-collects images once free space crosses " +
+				"its threshold, which is close now. Container logs and an unbounded emptyDir are " +
+				"the usual causes, and both are recoverable without touching the workload.",
+			Subjects: critical,
+			Count:    len(critical),
+			KindID:   nodeKindID,
+		})
+	}
+	if len(warning) > 0 {
+		findings = append(findings, Finding{
+			ID:       "node:disk:warning",
+			Severity: SeverityWarning,
+			Category: CategoryFindingNode,
+			Title:    "Node disks filling",
+			Summary: fmt.Sprintf("%s over %.0f%% full",
+				plural(len(warning), "node filesystem is", "node filesystems are"), diskWarnPercent),
+			Advice: "Nothing has failed yet. This is the window before the kubelet starts " +
+				"reclaiming, and the cheapest moment to find out what is growing.",
+			Subjects: warning,
+			Count:    len(warning),
+			KindID:   nodeKindID,
+		})
+	}
+	return findings
 }
 
 // pressureTitle names a pressure condition the way an operator would.

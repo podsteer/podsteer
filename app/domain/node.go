@@ -88,6 +88,7 @@ type Node struct {
 	capacity         Capacity
 	allocatable      Capacity
 	usage            Metrics
+	filesystems      NodeFilesystems
 	createdAt        time.Time
 }
 
@@ -172,6 +173,19 @@ func (n Node) Usage() Metrics { return n.usage }
 // site.
 func (n Node) WithUsage(usage Metrics) Node {
 	n.usage = usage
+	return n
+}
+
+// Filesystems returns how full the node's disks are, if a kubelet said.
+func (n Node) Filesystems() NodeFilesystems { return n.filesystems }
+
+// WithFilesystems returns the node carrying its measured disk occupancy.
+//
+// Attached rather than constructed with the node for the same reason usage is:
+// it comes from a different endpoint, needs a different permission, and is
+// routinely absent.
+func (n Node) WithFilesystems(filesystems NodeFilesystems) Node {
+	n.filesystems = filesystems
 	return n
 }
 

@@ -43,6 +43,59 @@ func (m Metrics) Add(other Metrics) Metrics {
 	}
 }
 
+// Filesystem is how full one of a node's disks is.
+//
+// This is the number no other part of the Kubernetes API carries. Capacity and
+// allocatable describe what the SCHEDULER may hand out; neither says how much
+// of the disk is actually occupied, and the DiskPressure condition is a
+// latch that only closes once the kubelet has already started evicting. A
+// filesystem at 82% is invisible everywhere else and is the moment somebody
+// can still act on it cheaply.
+type Filesystem struct {
+	// UsedBytes is what is occupied right now.
+	UsedBytes int64
+	// CapacityBytes is the size of the filesystem.
+	CapacityBytes int64
+}
+
+// Percent returns how full the filesystem is, or 0 when its size is unknown.
+func (f Filesystem) Percent() float64 {
+	if f.CapacityBytes <= 0 {
+		return 0
+	}
+	return float64(f.UsedBytes) / float64(f.CapacityBytes) * 100
+}
+
+// IsZero reports whether nothing was reported.
+func (f Filesystem) IsZero() bool { return f == Filesystem{} }
+
+// NodeFilesystems is what a kubelet reports about its own disks.
+//
+// Two of them, because they fill for different reasons and are cleared in
+// different ways. Nodefs is where volumes, container writable layers and logs
+// live; imagefs holds pulled images and is reclaimed by garbage collection.
+// On most clusters they are the same underlying disk, and on some they are
+// not — which is why the kubelet reports them separately and why guessing
+// would be wrong.
+type NodeFilesystems struct {
+	// Nodefs is the kubelet's working filesystem.
+	Nodefs Filesystem
+	// Imagefs holds container images. Equal to Nodefs when they share a disk.
+	Imagefs Filesystem
+	// Measured distinguishes a node that reported zero from one that was
+	// never asked, or that refused to answer.
+	Measured bool
+}
+
+// Fullest returns whichever filesystem is closest to full, which is the one
+// that decides whether the kubelet starts evicting.
+func (n NodeFilesystems) Fullest() Filesystem {
+	if n.Imagefs.Percent() > n.Nodefs.Percent() {
+		return n.Imagefs
+	}
+	return n.Nodefs
+}
+
 // Capacity is a node's resource capacity or allocatable amount.
 type Capacity struct {
 	// CPUMilli is total CPU in millicores.

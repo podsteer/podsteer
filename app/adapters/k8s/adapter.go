@@ -22,6 +22,9 @@ import (
 type Adapter struct {
 	factory *clientFactory
 	logger  *slog.Logger
+	// filesystems caches node disk sweeps, which are one request per node and
+	// answer a question whose value moves in hours.
+	filesystems filesystemCache
 }
 
 // Compile-time proof that the adapter satisfies every outbound port it claims.
@@ -96,4 +99,9 @@ func (a *Adapter) ServerVersion(ctx context.Context, id domain.ClusterID) (domai
 // connections rather than leaving them pooled.
 func (a *Adapter) Invalidate(id domain.ClusterID) {
 	a.factory.invalidate(id)
+	// The disk sweep goes with them. Its whole value is being a minute stale
+	// rather than ten seconds stale, and carrying that across a reconnect
+	// would answer the first assessment of a freshly opened cluster with
+	// numbers from before it was closed.
+	a.filesystems.forget(id)
 }
