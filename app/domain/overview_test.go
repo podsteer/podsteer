@@ -67,6 +67,113 @@ func findingByTitle(findings []domain.Finding, title string) (domain.Finding, bo
 	return domain.Finding{}, false
 }
 
+// Ephemeral storage is capacity like any other, and the one an operator has
+// no reservation protecting: hardly anybody declares it.
+func TestCapacityCountsNodeEphemeralStorage(t *testing.T) {
+	t.Parallel()
+
+	node, err := domain.NewNode(domain.NodeSpec{
+		Name: "node-1", ClusterID: "dev", Ready: true, KubeletVersion: "v1.32.7",
+		Capacity: domain.Capacity{
+			CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110, EphemeralBytes: 200 << 30,
+		},
+		// Allocatable is lower than capacity, as it always is in reality: the
+		// kubelet reserves for itself and holds back the eviction threshold.
+		Allocatable: domain.Capacity{
+			CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110, EphemeralBytes: 180 << 30,
+		},
+		CreatedAt: overviewNow.Add(-24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("building node: %v", err)
+	}
+
+	pod := podFixture(t, domain.PodSpec{
+		Name: "writer-1", NodeName: "node-1", Phase: domain.PodPhaseRunning,
+		Containers: []domain.Container{{
+			Name:     "app",
+			State:    domain.ContainerStateRunning,
+			Requests: domain.Resources{CPUMilli: 100, EphemeralBytes: 2 << 30},
+			Limits:   domain.Resources{EphemeralBytes: 4 << 30},
+		}},
+	})
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Nodes:     []domain.Node{node},
+		Pods:      []domain.Pod{pod},
+		Now:       overviewNow,
+	})
+
+	ephemeral := overview.Capacity.Ephemeral
+	if ephemeral.Capacity != 200<<30 {
+		t.Errorf("capacity = %d, want the node's whole scratch disk", ephemeral.Capacity)
+	}
+	if ephemeral.Allocatable != 180<<30 {
+		t.Errorf("allocatable = %d, want what the scheduler may hand out", ephemeral.Allocatable)
+	}
+	if ephemeral.Requests != 2<<30 {
+		t.Errorf("requests = %d, want the pod's declaration", ephemeral.Requests)
+	}
+	if ephemeral.Limits != 4<<30 {
+		t.Errorf("limits = %d, want the pod's ceiling", ephemeral.Limits)
+	}
+}
+
+// "3 nodes under pressure" is not actionable: disk, memory and PIDs are three
+// different jobs, fixed in three different places.
+func TestPressureIsReportedPerCondition(t *testing.T) {
+	t.Parallel()
+
+	build := func(name string, conditions ...domain.NodeCondition) domain.Node {
+		t.Helper()
+		node, err := domain.NewNode(domain.NodeSpec{
+			Name: name, ClusterID: "dev", Ready: true, KubeletVersion: "v1.32.7",
+			Capacity:         domain.Capacity{CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110},
+			Allocatable:      domain.Capacity{CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110},
+			ActiveConditions: conditions,
+			CreatedAt:        overviewNow.Add(-24 * time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("building node %q: %v", name, err)
+		}
+		return node
+	}
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Nodes: []domain.Node{
+			build("node-1", domain.NodeDiskPressure),
+			build("node-2", domain.NodeDiskPressure, domain.NodeMemoryPressure),
+			build("node-3"),
+		},
+		Now: overviewNow,
+	})
+
+	disk, ok := findingByTitle(overview.Findings, "Nodes out of disk")
+	if !ok {
+		t.Fatalf("findings = %v, want one naming disk", titles(overview.Findings))
+	}
+	if disk.Count != 2 {
+		t.Errorf("disk pressure count = %d, want both nodes", disk.Count)
+	}
+	memory, ok := findingByTitle(overview.Findings, "Nodes out of memory")
+	if !ok {
+		t.Fatalf("findings = %v, want one naming memory", titles(overview.Findings))
+	}
+	if memory.Count != 1 {
+		t.Errorf("memory pressure count = %d, want the one node", memory.Count)
+	}
+
+	// The node counted once overall, and once per condition it raises.
+	if overview.Nodes.UnderPressure != 2 {
+		t.Errorf("underPressure = %d, want the two affected nodes", overview.Nodes.UnderPressure)
+	}
+	if got := overview.Nodes.Pressure[domain.NodeDiskPressure]; got != 2 {
+		t.Errorf("disk pressure nodes = %d, want 2", got)
+	}
+}
+
 func TestDiagnosePodStates(t *testing.T) {
 	t.Parallel()
 

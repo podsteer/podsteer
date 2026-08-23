@@ -73,6 +73,18 @@ type ResourceUsage struct {
 	Efficiency float64 `json:"efficiency"`
 	// Measured distinguishes "measured zero" from "no metrics-server".
 	Measured bool `json:"measured"`
+	// Reported says whether the cluster published any capacity for this
+	// dimension at all.
+	//
+	// The amounts above are pre-formatted for display, so the frontend cannot
+	// tell "0" from "not published" by looking at them — and the difference
+	// matters for ephemeral storage, which some providers do not report.
+	// Drawing an empty track for it would assert a measurement nobody made.
+	Reported bool `json:"reported"`
+	// Declared says whether anything requests this dimension. Ephemeral
+	// storage is usually declared by nothing at all, which is a finding about
+	// the cluster rather than a gap in the data.
+	Declared bool `json:"declared"`
 }
 
 // PodCapacity is how many pods the cluster runs against how many it can.
@@ -85,9 +97,10 @@ type PodCapacity struct {
 
 // CapacitySummary is the cluster's capacity across every dimension.
 type CapacitySummary struct {
-	CPU    ResourceUsage `json:"cpu"`
-	Memory ResourceUsage `json:"memory"`
-	Pods   PodCapacity   `json:"pods"`
+	CPU       ResourceUsage `json:"cpu"`
+	Memory    ResourceUsage `json:"memory"`
+	Ephemeral ResourceUsage `json:"ephemeral"`
+	Pods      PodCapacity   `json:"pods"`
 }
 
 // NodeSummary counts nodes by condition.
@@ -98,6 +111,8 @@ type NodeSummary struct {
 	Cordoned      int `json:"cordoned"`
 	UnderPressure int `json:"underPressure"`
 	ControlPlane  int `json:"controlPlane"`
+	// Pressure counts nodes per condition raised, most affected first.
+	Pressure []ConditionCount `json:"pressure"`
 	// KubeletVersions counts nodes per version, most common first.
 	KubeletVersions []VersionCount `json:"kubeletVersions"`
 	OldestSeconds   int64          `json:"oldestSeconds"`
@@ -253,8 +268,9 @@ func toFindings(findings []domain.Finding) []Finding {
 
 func toCapacity(capacity domain.CapacitySummary) CapacitySummary {
 	return CapacitySummary{
-		CPU:    toResourceUsage(capacity.CPU, formatMilliValue),
-		Memory: toResourceUsage(capacity.Memory, formatBytesValue),
+		CPU:       toResourceUsage(capacity.CPU, formatMilliValue),
+		Memory:    toResourceUsage(capacity.Memory, formatBytesValue),
+		Ephemeral: toResourceUsage(capacity.Ephemeral, formatBytesValue),
 		Pods: PodCapacity{
 			Scheduled:     capacity.Pods.Scheduled,
 			Capacity:      capacity.Pods.Capacity,
@@ -284,6 +300,8 @@ func toResourceUsage(usage domain.ResourceUsage, format func(int64) string) Reso
 		UsagePercent:   usage.UsagePercent(),
 		Efficiency:     usage.Efficiency(),
 		Measured:       usage.Measured,
+		Reported:       usage.Allocatable > 0,
+		Declared:       usage.Requests > 0,
 	}
 }
 
@@ -303,9 +321,31 @@ func toNodeSummary(summary domain.NodeSummary) NodeSummary {
 		Cordoned:        summary.Cordoned,
 		UnderPressure:   summary.UnderPressure,
 		ControlPlane:    summary.ControlPlane,
+		Pressure:        pressureCounts(summary.Pressure),
 		KubeletVersions: versions,
 		OldestSeconds:   summary.OldestSeconds,
 	}
+}
+
+// ConditionCount is how many nodes are raising one condition.
+type ConditionCount struct {
+	Condition string `json:"condition"`
+	Nodes     int    `json:"nodes"`
+}
+
+// pressureCounts flattens the per-condition map into a stable slice.
+//
+// Ordered by the domain's own list of conditions rather than by count, so the
+// row does not reorder itself between refreshes as numbers move — a strip that
+// rearranges is one an operator has to re-read every time.
+func pressureCounts(pressure map[domain.NodeCondition]int) []ConditionCount {
+	counts := make([]ConditionCount, 0, len(pressure))
+	for _, condition := range domain.KnownPressureConditions() {
+		if nodes := pressure[condition]; nodes > 0 {
+			counts = append(counts, ConditionCount{Condition: string(condition), Nodes: nodes})
+		}
+	}
+	return counts
 }
 
 func toPodSummary(summary domain.PodSummary) PodSummary {

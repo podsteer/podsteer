@@ -269,6 +269,14 @@ type CapacitySummary struct {
 	CPU ResourceUsage
 	// Memory is in bytes.
 	Memory ResourceUsage
+	// Ephemeral is node scratch disk, in bytes.
+	//
+	// Its Usage is only ever set when the kubelet's own statistics could be
+	// read, because nothing in the core API knows how full a node's disk is.
+	// Requests against it are usually near zero — hardly anybody declares
+	// ephemeral-storage — which is the point: the reservation that would have
+	// protected the disk does not exist.
+	Ephemeral ResourceUsage
 	// Pods counts scheduling slots.
 	Pods PodCapacity
 }
@@ -281,6 +289,14 @@ type NodeSummary struct {
 	Cordoned      int
 	UnderPressure int
 	ControlPlane  int
+	// Pressure counts nodes per condition currently raised.
+	//
+	// Split rather than summed because the three mean different things and
+	// are fixed in different ways: DiskPressure is somebody's log or image
+	// cache, MemoryPressure is a workload sized wrong, PIDPressure is
+	// something forking. One number saying "3 nodes under pressure" tells an
+	// operator to go and read the node list to find out which of those it is.
+	Pressure map[NodeCondition]int
 	// KubeletVersions counts nodes per kubelet version, so a skewed cluster
 	// is visible without opening the node list.
 	KubeletVersions map[string]int
@@ -474,7 +490,10 @@ func rankFindings(findings []Finding) {
 // --- summaries ------------------------------------------------------------
 
 func summariseNodes(nodes []Node, now time.Time) NodeSummary {
-	summary := NodeSummary{KubeletVersions: make(map[string]int, 2)}
+	summary := NodeSummary{
+		KubeletVersions: make(map[string]int, 2),
+		Pressure:        make(map[NodeCondition]int, len(KnownPressureConditions())),
+	}
 
 	for _, node := range nodes {
 		summary.Total++
@@ -486,8 +505,11 @@ func summariseNodes(nodes []Node, now time.Time) NodeSummary {
 		if node.Unschedulable() {
 			summary.Cordoned++
 		}
-		if len(node.ActiveConditions()) > 0 {
+		if conditions := node.ActiveConditions(); len(conditions) > 0 {
 			summary.UnderPressure++
+			for _, condition := range conditions {
+				summary.Pressure[condition]++
+			}
 		}
 		if node.IsControlPlane() {
 			summary.ControlPlane++
@@ -551,6 +573,8 @@ func summariseCapacity(nodes []Node, pods []Pod, measured bool) CapacitySummary 
 		summary.CPU.Allocatable += node.Allocatable().CPUMilli
 		summary.Memory.Capacity += node.Capacity().MemoryBytes
 		summary.Memory.Allocatable += node.Allocatable().MemoryBytes
+		summary.Ephemeral.Capacity += node.Capacity().EphemeralBytes
+		summary.Ephemeral.Allocatable += node.Allocatable().EphemeralBytes
 
 		if !node.Unschedulable() && node.Ready() {
 			summary.Pods.Capacity += node.Allocatable().Pods
@@ -579,6 +603,8 @@ func summariseCapacity(nodes []Node, pods []Pod, measured bool) CapacitySummary 
 		summary.CPU.Limits += limits.CPUMilli
 		summary.Memory.Requests += requests.MemoryBytes
 		summary.Memory.Limits += limits.MemoryBytes
+		summary.Ephemeral.Requests += requests.EphemeralBytes
+		summary.Ephemeral.Limits += limits.EphemeralBytes
 
 		// Summed separately from the node usage above so the efficiency
 		// ratio compares pods with pods.
@@ -1196,18 +1222,59 @@ func findingOwnerKey(finding Finding) string {
 	return key
 }
 
+// pressureTitle names a pressure condition the way an operator would.
+func pressureTitle(condition NodeCondition) string {
+	switch condition {
+	case NodeDiskPressure:
+		return "Nodes out of disk"
+	case NodeMemoryPressure:
+		return "Nodes out of memory"
+	case NodePIDPressure:
+		return "Nodes out of process IDs"
+	default:
+		return "Nodes under pressure"
+	}
+}
+
+// pressureAdvice says what each condition actually means for the workload,
+// which is the half a condition name never carries.
+func pressureAdvice(condition NodeCondition) string {
+	switch condition {
+	case NodeDiskPressure:
+		return "The kubelet is garbage-collecting images and will evict pods to reclaim disk. " +
+			"It is usually container logs, an emptyDir nobody bounded, or an image cache that " +
+			"has never been swept — and it only reports this once it is nearly full, so the " +
+			"eviction has already started."
+	case NodeMemoryPressure:
+		return "The kubelet is reclaiming memory and evicts BestEffort pods first, then " +
+			"Burstable ones over their requests. Pods with requests matching what they use " +
+			"are the last to be touched."
+	case NodePIDPressure:
+		return "Something on the node is forking faster than processes exit. New containers " +
+			"will fail to start before existing ones are affected."
+	default:
+		return "The kubelet has started reclaiming resources on these nodes and will evict " +
+			"BestEffort pods first."
+	}
+}
+
 func nodeFindings(nodes []Node, summary NodeSummary) []Finding {
 	findings := make([]Finding, 0, 4)
 
-	var notReady, pressured, cordoned []Subject
+	var notReady, cordoned []Subject
+	pressured := make(map[NodeCondition][]Subject, len(KnownPressureConditions()))
 	for _, node := range nodes {
 		switch {
 		case !node.Ready():
 			notReady = append(notReady, Subject{Kind: "Node", Name: node.Name(), Detail: node.Status()})
-		case len(node.ActiveConditions()) > 0:
-			pressured = append(pressured, Subject{
-				Kind: "Node", Name: node.Name(), Detail: conditionList(node.ActiveConditions()),
-			})
+		default:
+			// One entry per condition rather than one per node: a node that is
+			// both out of disk and out of memory is two different jobs.
+			for _, condition := range node.ActiveConditions() {
+				pressured[condition] = append(pressured[condition], Subject{
+					Kind: "Node", Name: node.Name(), Detail: conditionList(node.ActiveConditions()),
+				})
+			}
 		}
 		if node.Unschedulable() {
 			cordoned = append(cordoned, Subject{Kind: "Node", Name: node.Name(), Detail: "cordoned"})
@@ -1229,17 +1296,23 @@ func nodeFindings(nodes []Node, summary NodeSummary) []Finding {
 		})
 	}
 
-	if len(pressured) > 0 {
+	// Iterated over the known conditions rather than over the map, so the
+	// order of these findings is the same on every assessment.
+	for _, condition := range KnownPressureConditions() {
+		subjects := pressured[condition]
+		if len(subjects) == 0 {
+			continue
+		}
 		findings = append(findings, Finding{
-			ID:       "node:pressure",
+			ID:       "node:pressure:" + string(condition),
 			Severity: SeverityWarning,
 			Category: CategoryFindingNode,
-			Title:    "Nodes under pressure",
-			Summary:  fmt.Sprintf("%s reporting a pressure condition", plural(len(pressured), "node is", "nodes are")),
-			Advice: "The kubelet has started reclaiming resources on these nodes and will evict " +
-				"BestEffort pods first.",
-			Subjects: pressured,
-			Count:    len(pressured),
+			Title:    pressureTitle(condition),
+			Summary: fmt.Sprintf("%s reporting %s",
+				plural(len(subjects), "node is", "nodes are"), condition),
+			Advice:   pressureAdvice(condition),
+			Subjects: subjects,
+			Count:    len(subjects),
 			KindID:   nodeKindID,
 		})
 	}

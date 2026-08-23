@@ -117,6 +117,11 @@ type Resources struct {
 	CPUMilli int64
 	// MemoryBytes is memory in bytes.
 	MemoryBytes int64
+	// EphemeralBytes is scratch disk on the node itself — the container
+	// writable layer, emptyDir volumes and logs. Declaring it is rare, which
+	// is exactly why it is worth reporting: a node whose disk fills has no
+	// reservation to fall back on and the kubelet starts evicting.
+	EphemeralBytes int64
 }
 
 // IsZero reports whether nothing was declared.
@@ -125,8 +130,9 @@ func (r Resources) IsZero() bool { return r == Resources{} }
 // Add returns the sum of two declarations.
 func (r Resources) Add(other Resources) Resources {
 	return Resources{
-		CPUMilli:    r.CPUMilli + other.CPUMilli,
-		MemoryBytes: r.MemoryBytes + other.MemoryBytes,
+		CPUMilli:       r.CPUMilli + other.CPUMilli,
+		MemoryBytes:    r.MemoryBytes + other.MemoryBytes,
+		EphemeralBytes: r.EphemeralBytes + other.EphemeralBytes,
 	}
 }
 

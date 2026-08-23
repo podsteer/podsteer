@@ -54,6 +54,34 @@
   const snoozed = $derived(session.snoozedIssues)
   const notes = $derived((overview?.findings ?? []).filter((finding) => finding.severity === 'info'))
 
+  /**
+   * Node scratch disk — the container writable layer, emptyDir volumes and
+   * logs. Shown beside CPU and memory because it is a scheduling dimension
+   * like them, and because it is the one nobody reserves: a node whose disk
+   * fills has no allocation protecting it, and the kubelet's answer is to
+   * evict.
+   */
+  const hasEphemeral = $derived(overview?.capacity.ephemeral.reported ?? false)
+
+  const ephemeralNote = $derived(
+    overview && !overview.capacity.ephemeral.declared
+      ? 'Nothing requests it, so nothing is reserved — the scheduler will fill these disks.'
+      : '',
+  )
+
+  /**
+   * Pressure conditions in the words an operator uses for them.
+   *
+   * The Kubernetes names say which resource but not what is happening: a node
+   * "reporting DiskPressure" is a node the kubelet is already evicting from,
+   * because the condition only trips once it is nearly full.
+   */
+  const PRESSURE_LABELS: Record<string, string> = {
+    DiskPressure: 'Out of disk',
+    MemoryPressure: 'Out of memory',
+    PIDPressure: 'Out of process IDs',
+  }
+
   const criticalCount = $derived(issues.filter((finding) => finding.severity === 'critical').length)
   const warningCount = $derived(issues.length - criticalCount)
 
@@ -272,9 +300,20 @@
           </span>
         </div>
 
-        <div class="grid gap-5 md:grid-cols-2">
+        <div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           <CapacityBar label="CPU" usage={overview.capacity.cpu} unit="cores" />
           <CapacityBar label="Memory" usage={overview.capacity.memory} />
+
+          <!-- Only when the cluster reports any. A node that never published
+               ephemeral-storage capacity would otherwise get a track reading
+               zero of zero, which asserts something the API never said. -->
+          {#if hasEphemeral}
+            <CapacityBar
+              label="Ephemeral storage"
+              usage={overview.capacity.ephemeral}
+              note={ephemeralNote}
+            />
+          {/if}
         </div>
 
         <!-- Pod slots: the limit that catches people out, because a node
@@ -459,10 +498,14 @@
               <dd class="text-right tabular-nums text-warning">{overview.nodes.cordoned}</dd>
             {/if}
 
-            {#if overview.nodes.underPressure > 0}
-              <dt class="text-on-surface-variant">Under pressure</dt>
-              <dd class="text-right tabular-nums text-warning">{overview.nodes.underPressure}</dd>
-            {/if}
+            <!-- Named individually. Disk, memory and process IDs are three
+                 different jobs fixed in three different places, and one line
+                 saying "3 under pressure" only sends somebody to the node list
+                 to find out which of them it is. -->
+            {#each overview.nodes.pressure as pressure (pressure.condition)}
+              <dt class="text-on-surface-variant">{PRESSURE_LABELS[pressure.condition] ?? pressure.condition}</dt>
+              <dd class="text-right tabular-nums text-warning">{pressure.nodes}</dd>
+            {/each}
 
             <dt class="text-on-surface-variant">Control plane</dt>
             <dd class="text-right tabular-nums text-on-surface">{overview.nodes.controlPlane}</dd>

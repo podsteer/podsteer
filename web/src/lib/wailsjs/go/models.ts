@@ -48,6 +48,8 @@ export namespace wails {
 	    usagePercent: number;
 	    efficiency: number;
 	    measured: boolean;
+	    reported: boolean;
+	    declared: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ResourceUsage(source);
@@ -66,11 +68,14 @@ export namespace wails {
 	        this.usagePercent = source["usagePercent"];
 	        this.efficiency = source["efficiency"];
 	        this.measured = source["measured"];
+	        this.reported = source["reported"];
+	        this.declared = source["declared"];
 	    }
 	}
 	export class CapacitySummary {
 	    cpu: ResourceUsage;
 	    memory: ResourceUsage;
+	    ephemeral: ResourceUsage;
 	    pods: PodCapacity;
 	
 	    static createFrom(source: any = {}) {
@@ -81,6 +86,7 @@ export namespace wails {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.cpu = this.convertValues(source["cpu"], ResourceUsage);
 	        this.memory = this.convertValues(source["memory"], ResourceUsage);
+	        this.ephemeral = this.convertValues(source["ephemeral"], ResourceUsage);
 	        this.pods = this.convertValues(source["pods"], PodCapacity);
 	    }
 	
@@ -128,6 +134,20 @@ export namespace wails {
 	        this.isReachable = source["isReachable"];
 	        this.version = source["version"];
 	        this.platform = source["platform"];
+	    }
+	}
+	export class ConditionCount {
+	    condition: string;
+	    nodes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConditionCount(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.condition = source["condition"];
+	        this.nodes = source["nodes"];
 	    }
 	}
 	export class Container {
@@ -443,6 +463,7 @@ export namespace wails {
 	    cordoned: number;
 	    underPressure: number;
 	    controlPlane: number;
+	    pressure: ConditionCount[];
 	    kubeletVersions: VersionCount[];
 	    oldestSeconds: number;
 	
@@ -458,6 +479,7 @@ export namespace wails {
 	        this.cordoned = source["cordoned"];
 	        this.underPressure = source["underPressure"];
 	        this.controlPlane = source["controlPlane"];
+	        this.pressure = this.convertValues(source["pressure"], ConditionCount);
 	        this.kubeletVersions = this.convertValues(source["kubeletVersions"], VersionCount);
 	        this.oldestSeconds = source["oldestSeconds"];
 	    }

@@ -165,6 +165,9 @@ func mapResources(list corev1.ResourceList) domain.Resources {
 	if memory, ok := list[corev1.ResourceMemory]; ok {
 		resources.MemoryBytes = memory.Value()
 	}
+	if ephemeral, ok := list[corev1.ResourceEphemeralStorage]; ok {
+		resources.EphemeralBytes = ephemeral.Value()
+	}
 	return resources
 }
 
@@ -284,6 +287,9 @@ func mapCapacity(list corev1.ResourceList) domain.Capacity {
 	}
 	if pods, ok := list[corev1.ResourcePods]; ok {
 		capacity.Pods = pods.Value()
+	}
+	if ephemeral, ok := list[corev1.ResourceEphemeralStorage]; ok {
+		capacity.EphemeralBytes = ephemeral.Value()
 	}
 	return capacity
 }

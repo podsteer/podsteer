@@ -24,9 +24,17 @@
     usage: ResourceUsage
     /** Shown under the bar as the unit, e.g. "cores" or "memory". */
     unit?: string
+    /**
+     * A line beneath the figures, for a dimension whose numbers need one.
+     *
+     * Ephemeral storage is the case: almost nobody declares it, so its track
+     * is honestly empty, and an empty track with no explanation reads as a
+     * failure to measure rather than as the finding it is.
+     */
+    note?: string
   }
 
-  let { label, usage, unit = '' }: Props = $props()
+  let { label, usage, unit = '', note = '' }: Props = $props()
 
   const requestWidth = $derived(Math.max(0, Math.min(100, usage.requestPercent)))
   const usageWidth = $derived(usage.measured ? Math.max(0, Math.min(100, usage.usagePercent)) : 0)
@@ -62,7 +70,7 @@
   }
 </script>
 
-<div class="flex flex-col gap-2">
+<div class="flex min-w-0 flex-col gap-2">
   <div class="flex items-baseline justify-between gap-3">
     <span class="text-label-large text-on-surface">{label}</span>
     <span class="text-body-small tabular-nums text-on-surface-variant">
@@ -133,4 +141,8 @@
       </span>
     {/if}
   </div>
+
+  {#if note}
+    <p class="text-body-small text-on-surface-variant/60">{note}</p>
+  {/if}
 </div>

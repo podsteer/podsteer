@@ -51,6 +51,12 @@ type Capacity struct {
 	MemoryBytes int64
 	// Pods is the maximum number of pods the node accepts.
 	Pods int64
+	// EphemeralBytes is the node's scratch disk, as the kubelet reports it.
+	//
+	// Not the root filesystem's size: the allocatable figure has the
+	// kubelet's own reservation and the eviction threshold already taken off
+	// it, which is the number the scheduler actually works with.
+	EphemeralBytes int64
 }
 
 // IsZero reports whether the capacity is unset.
