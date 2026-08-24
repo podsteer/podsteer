@@ -46,6 +46,7 @@ export namespace wails {
 	    requestPercent: number;
 	    limitPercent: number;
 	    usagePercent: number;
+	    schedulablePercent: number;
 	    efficiency: number;
 	    measured: boolean;
 	    reported: boolean;
@@ -66,6 +67,7 @@ export namespace wails {
 	        this.requestPercent = source["requestPercent"];
 	        this.limitPercent = source["limitPercent"];
 	        this.usagePercent = source["usagePercent"];
+	        this.schedulablePercent = source["schedulablePercent"];
 	        this.efficiency = source["efficiency"];
 	        this.measured = source["measured"];
 	        this.reported = source["reported"];

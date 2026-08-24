@@ -67,6 +67,9 @@ type ResourceUsage struct {
 	RequestPercent float64 `json:"requestPercent"`
 	LimitPercent   float64 `json:"limitPercent"`
 	UsagePercent   float64 `json:"usagePercent"`
+	// SchedulablePercent is the headroom as a share of allocatable, so every
+	// figure on the card can show its amount and its proportion.
+	SchedulablePercent float64 `json:"schedulablePercent"`
 	// Efficiency is usage as a percentage of requests, or -1 when nothing was
 	// measured. It is the number that says how much of the reservation is
 	// actually being used.
@@ -526,19 +529,20 @@ func toResourceUsage(usage domain.ResourceUsage, format func(int64) string) Reso
 	}
 
 	return ResourceUsage{
-		Allocatable:    format(usage.Allocatable),
-		Requests:       format(usage.Requests),
-		Limits:         format(usage.Limits),
-		Usage:          measuredUsage,
-		PodUsage:       measuredPodUsage,
-		Schedulable:    format(usage.Schedulable()),
-		RequestPercent: usage.RequestPercent(),
-		LimitPercent:   usage.LimitPercent(),
-		UsagePercent:   usage.UsagePercent(),
-		Efficiency:     usage.Efficiency(),
-		Measured:       usage.Measured,
-		Reported:       usage.Allocatable > 0,
-		Declared:       usage.Requests > 0,
+		Allocatable:        format(usage.Allocatable),
+		Requests:           format(usage.Requests),
+		Limits:             format(usage.Limits),
+		Usage:              measuredUsage,
+		PodUsage:           measuredPodUsage,
+		Schedulable:        format(usage.Schedulable()),
+		RequestPercent:     usage.RequestPercent(),
+		LimitPercent:       usage.LimitPercent(),
+		UsagePercent:       usage.UsagePercent(),
+		SchedulablePercent: usage.SchedulablePercent(),
+		Efficiency:         usage.Efficiency(),
+		Measured:           usage.Measured,
+		Reported:           usage.Allocatable > 0,
+		Declared:           usage.Requests > 0,
 	}
 }
 

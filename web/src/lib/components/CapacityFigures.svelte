@@ -47,7 +47,10 @@
     >
       {figure.value}
       {#if figure.aside}
-        <span class="text-on-surface-variant/70">{figure.aside}</span>
+        <!-- A step smaller than the amount it follows. The proportion is the
+             second thing read, not the first, and the size difference buys
+             the room that keeps the pair on one line in a narrow window. -->
+        <span class="text-body-small text-on-surface-variant/70">{figure.aside}</span>
       {/if}
     </dd>
   {/each}

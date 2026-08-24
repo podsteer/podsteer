@@ -76,7 +76,8 @@
   const figures = $derived<Figure[]>([
     {
       label: 'Requested',
-      value: `${Math.round(usage.requestPercent)}%`,
+      value: `${usage.requests}${suffix(usage.requests)}`,
+      aside: `(${Math.round(usage.requestPercent)}%)`,
     },
     usage.measured
       ? {
@@ -88,8 +89,12 @@
     {
       label: 'Schedulable',
       value: `${usage.schedulable}${suffix(usage.schedulable)}`,
+      aside: `(${Math.round(usage.schedulablePercent)}%)`,
       title: 'Allocatable not already requested',
     },
+    // Efficiency has no amount of its own to show: it IS the ratio between
+    // the two figures above it, so a percentage is the whole quantity rather
+    // than half of one.
     efficiency !== null
       ? {
           label: 'Efficiency',

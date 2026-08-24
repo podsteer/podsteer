@@ -35,16 +35,28 @@
    */
   const tone = $derived(capacity.usedPercent >= 85 ? 'bg-error/70' : 'bg-primary/45')
 
+  /** The free share, floored for the same reason as the count above it. */
+  const freePercent = $derived(Math.max(0, 100 - capacity.usedPercent))
+
+  /**
+   * Three figures, not four.
+   *
+   * A slot has no requested-versus-used distinction to fill a fourth: a pod
+   * occupies one or it does not, so Scheduled already carries the share that
+   * a resource track spends two rows saying. Padding the grid to four would
+   * mean inventing a figure, and the empty cell is the honest shape.
+   */
   const figures = $derived<Figure[]>([
-    { label: 'Scheduled', value: capacity.scheduled.toLocaleString() },
     {
-      label: 'Used',
-      value: `${Math.round(capacity.usedPercent)}%`,
+      label: 'Scheduled',
+      value: capacity.scheduled.toLocaleString(),
+      aside: `(${Math.round(capacity.usedPercent)}%)`,
       tone: capacity.usedPercent >= 85 ? 'text-warning' : undefined,
     },
     {
       label: 'Schedulable',
       value: free.toLocaleString(),
+      aside: `(${Math.round(freePercent)}%)`,
       title: 'Slots on ready, uncordoned nodes that nothing occupies',
     },
     capacity.unschedulable > 0

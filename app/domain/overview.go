@@ -257,6 +257,16 @@ func (r ResourceUsage) Schedulable() int64 {
 	return r.Allocatable - r.Requests
 }
 
+// SchedulablePercent returns that headroom as a percentage of allocatable.
+//
+// Computed here rather than as 100 minus the requested share, which is only
+// the same number while requests stay inside allocatable. An overcommitted
+// cluster requests more than it has, and "-7% free" is a worse answer than
+// none.
+func (r ResourceUsage) SchedulablePercent() float64 {
+	return percent(r.Schedulable(), r.Allocatable)
+}
+
 // Efficiency returns what the pods actually use as a percentage of what they
 // reserved, or -1 when there is nothing to compare.
 //
