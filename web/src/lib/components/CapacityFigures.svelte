@@ -10,13 +10,16 @@
 <script lang="ts">
   export interface Figure {
     label: string
-    /** Already formatted. An em dash is the right value for "not known". */
-    value: string
-    /** Optional smaller aside after the value, e.g. a percentage. */
-    aside?: string
-    /** Colours the value when it is worth noticing. */
+    /**
+     * The amount, already formatted and without a unit — the label carries
+     * that. Empty for a figure that is only ever a proportion.
+     */
+    value?: string
+    /** The share, e.g. "47%". Empty for a figure that has no denominator. */
+    percent?: string
+    /** Colours the figure when it is worth noticing. */
     tone?: string
-    /** Greys the whole pair when the figure is unavailable rather than zero. */
+    /** Greys the whole row when the figure is unavailable rather than zero. */
     muted?: boolean
     title?: string
   }
@@ -40,18 +43,35 @@
     >
       {figure.label}
     </dt>
+    <!-- Amount, rule, share. The share sits in a slot wide enough for its
+         longest possible value, so the rule between them lands in the same
+         place on every row of every track — which is what makes it a guide
+         the eye can follow down the card rather than punctuation that drifts
+         with whatever number happens to be there.
+
+         Both parts are kept and both are hidden rather than dropped when a
+         figure has only one of them: a row that omits its cells would pull
+         its amount out to the edge and break the very alignment the slot
+         exists to hold. -->
     <dd
-      class="text-right tabular-nums {figure.muted
+      class="flex items-baseline justify-end gap-2 tabular-nums {figure.muted
         ? 'text-on-surface-variant/50'
         : (figure.tone ?? 'text-on-surface')}"
     >
-      {figure.value}
-      {#if figure.aside}
-        <!-- A step smaller than the amount it follows. The proportion is the
-             second thing read, not the first, and the size difference buys
-             the room that keeps the pair on one line in a narrow window. -->
-        <span class="text-body-small text-on-surface-variant/70">{figure.aside}</span>
-      {/if}
+      <span>{figure.value ?? ''}</span>
+      <span
+        aria-hidden="true"
+        class="text-outline-variant {figure.value && figure.percent ? '' : 'invisible'}"
+      >
+        |
+      </span>
+      <span
+        class="w-[4.5ch] text-right {figure.muted || figure.tone
+          ? ''
+          : 'text-on-surface-variant'}"
+      >
+        {figure.percent ?? ''}
+      </span>
     </dd>
   {/each}
 </dl>

@@ -50,13 +50,13 @@
     {
       label: 'Scheduled',
       value: capacity.scheduled.toLocaleString(),
-      aside: `(${Math.round(capacity.usedPercent)}%)`,
+      percent: `${Math.round(capacity.usedPercent)}%`,
       tone: capacity.usedPercent >= 85 ? 'text-warning' : undefined,
     },
     {
       label: 'Schedulable',
       value: free.toLocaleString(),
-      aside: `(${Math.round(freePercent)}%)`,
+      percent: `${Math.round(freePercent)}%`,
       title: 'Slots on ready, uncordoned nodes that nothing occupies',
     },
     capacity.unschedulable > 0

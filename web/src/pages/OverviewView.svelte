@@ -358,7 +358,10 @@
              refuses pods at its cap however much CPU and memory are free — so
              a cluster can be 9% committed everywhere else and still be full. -->
         <div class="grid gap-x-8 gap-y-5 md:grid-cols-2">
-          <CapacityBar label="CPU" usage={overview.capacity.cpu} unit="cores" />
+          <!-- The unit lives in the label now, so the figures below stay bare
+               numbers and the rule between amount and share lines up across
+               all four tracks. -->
+          <CapacityBar label="CPU cores" usage={overview.capacity.cpu} />
           <CapacityBar label="Memory" usage={overview.capacity.memory} />
 
           <!-- Only when the cluster reports any. A node that never published

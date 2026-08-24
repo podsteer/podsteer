@@ -23,8 +23,6 @@
   interface Props {
     label: string
     usage: ResourceUsage
-    /** Shown under the bar as the unit, e.g. "cores" or "memory". */
-    unit?: string
     /**
      * A line beneath the figures, for a dimension whose numbers need one.
      *
@@ -35,7 +33,7 @@
     note?: string
   }
 
-  let { label, usage, unit = '', note = '' }: Props = $props()
+  let { label, usage, note = '' }: Props = $props()
 
   const requestWidth = $derived(Math.max(0, Math.min(100, usage.requestPercent)))
   const usageWidth = $derived(usage.measured ? Math.max(0, Math.min(100, usage.usagePercent)) : 0)
@@ -60,12 +58,6 @@
   const efficiency = $derived(usage.efficiency >= 0 ? Math.round(usage.efficiency) : null)
 
   /**
-   * The unit to append to a formatted figure.
-   *
-   * Values already carrying their own unit — memory's "118.9GiB", CPU's
-   * sub-core "500m" — get nothing; a bare number gets the caller's unit.
-   */
-  /**
    * The four figures, in the order they are read.
    *
    * Requested above Schedulable on the left, Used above Efficiency on the
@@ -76,39 +68,36 @@
   const figures = $derived<Figure[]>([
     {
       label: 'Requested',
-      value: `${usage.requests}${suffix(usage.requests)}`,
-      aside: `(${Math.round(usage.requestPercent)}%)`,
+      value: usage.requests,
+      percent: `${Math.round(usage.requestPercent)}%`,
     },
     usage.measured
       ? {
           label: 'Used',
-          value: `${usage.usage}${suffix(usage.usage)}`,
-          aside: `(${Math.round(usage.usagePercent)}%)`,
+          value: usage.usage,
+          percent: `${Math.round(usage.usagePercent)}%`,
         }
       : { label: 'Used', value: '—', muted: true },
     {
       label: 'Schedulable',
-      value: `${usage.schedulable}${suffix(usage.schedulable)}`,
-      aside: `(${Math.round(usage.schedulablePercent)}%)`,
+      value: usage.schedulable,
+      percent: `${Math.round(usage.schedulablePercent)}%`,
       title: 'Allocatable not already requested',
     },
-    // Efficiency has no amount of its own to show: it IS the ratio between
-    // the two figures above it, so a percentage is the whole quantity rather
-    // than half of one.
+    // Efficiency has no amount of its own: it IS the ratio between the two
+    // figures above it, so it occupies the share column and leaves the
+    // amount empty, which puts it under the other percentages where it can
+    // be compared with them.
     efficiency !== null
       ? {
           label: 'Efficiency',
-          value: `${efficiency}%`,
+          percent: `${efficiency}%`,
           tone: efficiency < 25 ? 'text-warning' : undefined,
           title: 'Measured usage as a share of what was requested',
         }
       : { label: 'Efficiency', value: '—', muted: true },
   ])
 
-  function suffix(value: string): string {
-    if (!unit) return ''
-    return /[a-zA-Z]$/.test(value) ? '' : ` ${unit}`
-  }
 </script>
 
 <div class="flex min-w-0 flex-col gap-2">
@@ -116,7 +105,6 @@
     <span class="text-label-large text-on-surface">{label}</span>
     <span class="text-body-medium tabular-nums text-on-surface-variant">
       {usage.requests} / {usage.allocatable}
-      {#if unit}<span class="text-on-surface-variant/60">{unit}</span>{/if}
     </span>
   </div>
 
