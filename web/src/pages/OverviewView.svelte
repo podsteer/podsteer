@@ -14,6 +14,7 @@
 -->
 <script lang="ts">
   import CapacityBar from '$lib/components/CapacityBar.svelte'
+  import InfoHint from '$lib/components/InfoHint.svelte'
   import type { Figure } from '$lib/components/CapacityFigures.svelte'
   import SlotsBar from '$lib/components/SlotsBar.svelte'
   import FindingCard from '$lib/components/FindingCard.svelte'
@@ -122,6 +123,80 @@
       tone: percent >= 90 ? 'text-error' : percent >= 80 ? 'text-warning' : undefined,
       title: `${disks.fullestNode} — the fullest of ${disks.measured} node filesystems`,
     }
+  })
+
+  /**
+   * The six facts the Nodes card states, in the order they are asked for.
+   *
+   * Built here rather than inline so the card and the card beside it can be
+   * kept the same length: Workloads lists six kinds, so this lists six rows,
+   * and a row with nothing to say shows a dash instead of vanishing and
+   * shortening the card.
+   */
+  const nodeRows = $derived.by(() => {
+    const nodes = overview?.nodes
+    if (!nodes) return []
+
+    const versions = nodes.kubeletVersions
+    const skewed = versions.length > 1
+
+    return [
+      {
+        label: 'Schedulable',
+        value: `${nodes.schedulable}/${nodes.total}`,
+        title: 'Ready, uncordoned and carrying no blocking taint',
+        tone: nodes.schedulable === 0 ? 'text-warning' : undefined,
+      },
+      {
+        label: 'Tainted',
+        value: `${nodes.tainted}/${nodes.total}`,
+        title: 'Refuse pods that do not tolerate their taint',
+      },
+      {
+        label: 'Control plane',
+        value: `${nodes.controlPlane}/${nodes.total}`,
+      },
+      // A dash rather than 0% when no kubelet answered: nothing in the core
+      // API knows how full a disk is, and reporting zero would say the
+      // opposite of "nobody was asked".
+      nodes.disks.measured > 0
+        ? {
+            label: 'Fullest disk',
+            value: `${Math.round(nodes.disks.fullestPercent)}%`,
+            title: `${nodes.disks.fullestNode} — across ${nodes.disks.measured} of ${nodes.total} nodes`,
+            tone:
+              nodes.disks.fullestPercent >= 90
+                ? 'text-error'
+                : nodes.disks.fullestPercent >= 80
+                  ? 'text-warning'
+                  : undefined,
+          }
+        : {
+            label: 'Fullest disk',
+            value: '—',
+            tone: 'text-on-surface-variant/50',
+            title: 'No kubelet could be read, so disk occupancy is unknown',
+          },
+      // One version is a fact; more than one is usually an upgrade that
+      // stopped part-way, so the breakdown moves behind an icon and the
+      // figure itself carries the warning.
+      skewed
+        ? {
+            label: 'Kubelet',
+            value: `${versions.length} versions`,
+            tone: 'text-warning',
+            hint: versions.map((entry) => `${entry.version} on ${entry.nodes}`).join(', '),
+          }
+        : {
+            label: 'Kubelet',
+            value: versions[0]?.version ?? '—',
+          },
+      {
+        label: 'Oldest',
+        value: formatAge(nodes.oldestSeconds),
+        title: "Age of the longest-lived node, a fair proxy for the cluster's own",
+      },
+    ]
   })
 
   const criticalCount = $derived(issues.filter((finding) => finding.severity === 'critical').length)
@@ -542,12 +617,15 @@
         </section>
 
         <!-- Nodes.
-             The same shape as Workloads beside it: a divided list of counts,
-             then the three states worth a glance, then what varies across the
-             fleet. The rows answer "what can this cluster accept" rather than
-             restating Ready three ways — Schedulable against Total is the one
-             number that explains why a pod will not place on a cluster whose
-             nodes are all healthy. -->
+             The same shape as Workloads beside it, down to the row count: six
+             facts, then the three states worth a glance. Nothing sits below
+             the footer, which is why the kubelet versions became a row rather
+             than a block — a card with a tail its neighbour does not have
+             reads as a different kind of card.
+
+             Every row is always present, an unavailable one showing a dash
+             rather than disappearing. A card whose height changes with what
+             could be measured is one that moves the page under the reader. -->
         <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
           <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
             <Server class="size-4 text-on-surface-variant" strokeWidth={1.8} />
@@ -555,87 +633,25 @@
           </h3>
 
           <ul class="flex flex-col divide-y divide-outline-variant/30">
-            <li class="flex items-center gap-3 py-1.5">
-              <span
-                class="flex-1 truncate text-body-medium text-on-surface"
-                title="Ready, uncordoned and carrying no blocking taint"
-              >
-                Schedulable
-              </span>
-              <span class="shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant">
-                {overview.nodes.schedulable}/{overview.nodes.total}
-              </span>
-            </li>
-
-            {#if overview.nodes.tainted > 0}
+            {#each nodeRows as row (row.label)}
               <li class="flex items-center gap-3 py-1.5">
                 <span
-                  class="flex-1 truncate text-body-medium text-on-surface"
-                  title="Refuse pods that do not tolerate their taint"
+                  class="flex flex-1 items-center gap-1.5 truncate text-body-medium text-on-surface"
+                  title={row.title}
                 >
-                  Tainted
-                </span>
-                <span class="shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant">
-                  {overview.nodes.tainted}/{overview.nodes.total}
-                </span>
-              </li>
-            {/if}
-
-            <li class="flex items-center gap-3 py-1.5">
-              <span class="flex-1 truncate text-body-medium text-on-surface">Control plane</span>
-              <span class="shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant">
-                {overview.nodes.controlPlane}/{overview.nodes.total}
-              </span>
-            </li>
-
-            <!-- Only when a kubelet answered. A row reading 0% would say the
-                 disks are empty rather than that nobody was asked. -->
-            {#if overview.nodes.disks.measured > 0}
-              <li class="flex items-center gap-3 py-1.5">
-                <span
-                  class="flex-1 truncate text-body-medium text-on-surface"
-                  title="{overview.nodes.disks.fullestNode} — across {overview.nodes.disks
-                    .measured} of {overview.nodes.total} nodes"
-                >
-                  Fullest disk
+                  {row.label}
+                  {#if row.hint}
+                    <InfoHint text={row.hint} label="About {row.label.toLowerCase()}" />
+                  {/if}
                 </span>
                 <span
-                  class="shrink-0 text-right text-body-medium tabular-nums {overview.nodes.disks
-                    .fullestPercent >= 90
-                    ? 'text-error'
-                    : overview.nodes.disks.fullestPercent >= 80
-                      ? 'text-warning'
-                      : 'text-on-surface-variant'}"
+                  class="shrink-0 text-right text-body-medium tabular-nums {row.tone ??
+                    'text-on-surface-variant'}"
                 >
-                  {Math.round(overview.nodes.disks.fullestPercent)}%
-                </span>
-              </li>
-            {/if}
-
-            <!-- Each pressure condition names itself: disk, memory and process
-                 IDs are three different jobs fixed in three different places. -->
-            {#each overview.nodes.pressure as pressure (pressure.condition)}
-              <li class="flex items-center gap-3 py-1.5">
-                <span class="flex-1 truncate text-body-medium text-warning">
-                  {PRESSURE_LABELS[pressure.condition] ?? pressure.condition}
-                </span>
-                <span class="shrink-0 text-right text-body-medium tabular-nums text-warning">
-                  {pressure.nodes}/{overview.nodes.total}
+                  {row.value}
                 </span>
               </li>
             {/each}
-
-            <li class="flex items-center gap-3 py-1.5">
-              <span
-                class="flex-1 truncate text-body-medium text-on-surface"
-                title="Age of the longest-lived node, a fair proxy for the cluster's own"
-              >
-                Oldest
-              </span>
-              <span class="shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant">
-                {formatAge(overview.nodes.oldestSeconds)}
-              </span>
-            </li>
           </ul>
 
           <div class="mt-1 grid grid-cols-3 gap-3 border-t border-outline-variant/40 pt-3 text-center">
@@ -664,20 +680,6 @@
               <p class="text-label-small uppercase text-on-surface-variant">Cordoned</p>
             </div>
           </div>
-
-          {#if overview.nodes.kubeletVersions.length > 0}
-            <div class="border-t border-outline-variant/40 pt-2">
-              <p class="mb-1 text-label-small uppercase text-on-surface-variant">Kubelet</p>
-              <ul class="flex flex-wrap gap-x-3 gap-y-1 text-body-small">
-                {#each overview.nodes.kubeletVersions as version (version.version)}
-                  <li class="tabular-nums text-on-surface-variant">
-                    {version.version}
-                    <span class="text-on-surface-variant/60">×{version.nodes}</span>
-                  </li>
-                {/each}
-              </ul>
-            </div>
-          {/if}
         </section>
       </div>
 
