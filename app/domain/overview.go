@@ -435,6 +435,10 @@ type StorageSummary struct {
 	// Total counts, so a card need not sum a map to say "38 claims".
 	TotalClaims  int
 	TotalVolumes int
+	// Largest is the biggest bound volume, which is worth naming: storage
+	// grows quietly and one volume is usually most of the bill.
+	LargestBytes int64
+	LargestName  string
 }
 
 // StorageClassUsage is one class's share of the provisioned total.
@@ -467,6 +471,10 @@ func summariseStorage(volumes []PersistentVolume, claims []PersistentVolumeClaim
 			continue
 		}
 		summary.ProvisionedBytes += volume.CapacityBytes()
+		if volume.CapacityBytes() > summary.LargestBytes {
+			summary.LargestBytes = volume.CapacityBytes()
+			summary.LargestName = volume.Name()
+		}
 
 		// An empty class is real: statically provisioned volumes have none,
 		// and calling that "unknown" would be inventing a name for it.

@@ -201,6 +201,65 @@
     ]
   })
 
+  /** How many claims are in one phase, zero when none are. */
+  function claimPhase(phase: string): number {
+    return overview?.storage.claims.find((entry) => entry.phase === phase)?.count ?? 0
+  }
+
+  /**
+   * What the storage card states, in the order it is asked for.
+   *
+   * Volumes and claims are counted separately rather than assumed equal: they
+   * are one-to-one on a healthy cluster and the moment they are not is
+   * exactly what this card exists to show.
+   */
+  const storageRows = $derived.by(() => {
+    const storage = overview?.storage
+    if (!storage) return []
+
+    const volumesBound = storage.volumes.find((entry) => entry.phase === 'Bound')?.count ?? 0
+
+    return [
+      {
+        label: 'Provisioned',
+        value: storage.provisioned,
+        title: 'Total size of every bound volume',
+      },
+      {
+        label: 'Volumes',
+        value: `${volumesBound}/${storage.totalVolumes}`,
+        title: 'Bound of every volume the cluster has',
+      },
+      {
+        label: 'Claims',
+        value: `${claimPhase('Bound')}/${storage.totalClaims}`,
+        title: 'Bound of every claim workloads have made',
+      },
+      {
+        label: 'Largest volume',
+        value: storage.largestBytes > 0 ? storage.largest : '—',
+        tone: storage.largestBytes > 0 ? undefined : 'text-on-surface-variant/50',
+        title: storage.largestName || 'No bound volumes',
+      },
+      // Both of these are usually nothing, and both are worth a permanent row
+      // rather than one that appears only once there is bad news: a zero
+      // states that somebody checked.
+      {
+        label: 'Waiting to bind',
+        value: storage.unboundBytes > 0 ? storage.unbound : '—',
+        tone: storage.unboundBytes > 0 ? 'text-warning' : 'text-on-surface-variant/50',
+        title: 'Storage claims have asked for and not received',
+      },
+      {
+        label: 'Unused, retained',
+        value: storage.orphanedBytes > 0 ? storage.orphaned : '—',
+        tone: storage.orphanedBytes > 0 ? 'text-warning' : 'text-on-surface-variant/50',
+        title:
+          'Released volumes whose reclaim policy keeps them, so nothing will ever remove them',
+      },
+    ]
+  })
+
   const criticalCount = $derived(issues.filter((finding) => finding.severity === 'critical').length)
   const warningCount = $derived(issues.length - criticalCount)
 
@@ -689,11 +748,16 @@
       </div>
 
       <!-- Persistent storage.
-           Provisioned rather than used, and said plainly: how full a volume is
-           belongs to the workload that mounted it and is in no API PodSteer
-           can reach. What IS knowable — what has been provisioned, what is
-           waiting, what nobody uses any more — is the part nothing else
-           surfaces, and the last of those is a bill somebody is still paying. -->
+           The same language as the two cards above it: divided rows on the
+           left, the totals along the bottom, and regular type throughout. The
+           width it has spare goes to the class breakdown rather than to
+           bigger numbers — a headline set in 30pt is not more informative
+           than the same figure in a row, it is just louder.
+
+           Provisioned rather than consumed, said out loud. How full a volume
+           is belongs to the workload that mounted it and is in no API
+           PodSteer can reach without a per-CSI exporter, so claiming
+           otherwise would be inventing a number. -->
       {#if overview.storage.totalVolumes > 0 || overview.storage.totalClaims > 0}
         {@const storage = overview.storage}
         <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
@@ -702,82 +766,90 @@
               <HardDrive class="size-4 text-on-surface-variant" strokeWidth={1.8} />
               Persistent storage
             </h3>
-            <span class="text-body-small text-on-surface-variant/70">
-              Provisioned, not consumed
-            </span>
+            <span class="text-body-small text-on-surface-variant/70">Provisioned, not consumed</span>
           </div>
 
-          <div class="grid gap-4 sm:grid-cols-3">
-            <div>
-              <p class="text-title-large tabular-nums text-on-surface">{storage.provisioned}</p>
-              <p class="text-label-small uppercase text-on-surface-variant">
-                Bound across {storage.totalVolumes}
-                {storage.totalVolumes === 1 ? 'volume' : 'volumes'}
-              </p>
-            </div>
-            <div>
-              <p class="text-title-large tabular-nums text-on-surface">{storage.totalClaims}</p>
-              <p class="text-label-small uppercase text-on-surface-variant">Claims</p>
-            </div>
-            <div>
-              <p
-                class="text-title-large tabular-nums {storage.orphanedBytes > 0
-                  ? 'text-warning'
-                  : 'text-on-surface-variant/50'}"
-              >
-                {storage.orphanedBytes > 0 ? storage.orphaned : '—'}
-              </p>
-              <p
-                class="text-label-small uppercase text-on-surface-variant"
-                title="Released volumes whose reclaim policy keeps them, so nothing will ever remove them"
-              >
-                Unused, retained
-              </p>
-            </div>
-          </div>
-
-          <!-- Phases, only the ones that exist. A cluster with nothing Lost
-               should say nothing about Lost. -->
-          {#if storage.claims.length > 0 || storage.volumes.length > 0}
-            <div class="flex flex-wrap gap-x-5 gap-y-1 border-t border-outline-variant/40 pt-3 text-body-small">
-              {#each storage.claims as phase (phase.phase)}
-                <span class="tabular-nums {PHASE_TONE[phase.phase] ?? 'text-on-surface-variant'}">
-                  <span class="text-on-surface-variant/70">Claims {phase.phase.toLowerCase()}</span>
-                  {phase.count}
-                </span>
-              {/each}
-              {#each storage.volumes as phase (phase.phase)}
-                <span class="tabular-nums {PHASE_TONE[phase.phase] ?? 'text-on-surface-variant'}">
-                  <span class="text-on-surface-variant/70">Volumes {phase.phase.toLowerCase()}</span>
-                  {phase.count}
-                </span>
-              {/each}
-            </div>
-          {/if}
-
-          <!-- By class, because a cluster quietly paying for premium disks it
-               did not mean to buy cannot see that anywhere else. -->
-          {#if storage.classes.length > 0}
-            <div class="flex flex-col gap-1.5 border-t border-outline-variant/40 pt-3">
-              {#each storage.classes as class_ (class_.name)}
-                <div class="flex items-center gap-3">
-                  <span class="w-40 shrink-0 truncate text-body-small text-on-surface" title={class_.name}>
-                    {class_.name}
+          <div class="grid gap-x-8 gap-y-3 md:grid-cols-2">
+            <ul class="flex flex-col divide-y divide-outline-variant/30">
+              {#each storageRows as row (row.label)}
+                <li class="flex items-center gap-3 py-1.5">
+                  <span class="flex min-w-0 flex-1 items-center gap-1.5">
+                    <span class="truncate text-body-medium text-on-surface" title={row.title}>
+                      {row.label}
+                    </span>
                   </span>
-                  <div class="h-2 flex-1 overflow-hidden rounded-full bg-surface-container-highest">
+                  <span
+                    class="shrink-0 text-right text-body-medium tabular-nums {row.tone ??
+                      'text-on-surface-variant'}"
+                  >
+                    {row.value}
+                  </span>
+                </li>
+              {/each}
+            </ul>
+
+            <!-- By class, because a cluster quietly paying for premium disks
+                 it did not mean to buy cannot see that anywhere else. -->
+            {#if storage.classes.length > 0}
+              <div class="flex flex-col gap-1.5">
+                <p class="text-label-small uppercase tracking-wider text-on-surface-variant">
+                  By storage class
+                </p>
+                {#each storage.classes as class_ (class_.name)}
+                  <div class="flex items-center gap-3">
                     <span
-                      class="block h-full rounded-full bg-primary/45 transition-all duration-300 ease-standard"
-                      style="width: {Math.max(2, class_.share)}%"
-                    ></span>
+                      class="w-32 shrink-0 truncate text-body-medium text-on-surface"
+                      title={class_.name}
+                    >
+                      {class_.name}
+                    </span>
+                    <div class="h-2 flex-1 overflow-hidden rounded-full bg-surface-container-highest">
+                      <span
+                        class="block h-full rounded-full bg-primary/45 transition-all duration-300 ease-standard"
+                        style="width: {Math.max(2, class_.share)}%"
+                      ></span>
+                    </div>
+                    <span
+                      class="w-28 shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant"
+                    >
+                      {class_.size}
+                      <span class="text-body-small text-on-surface-variant/60">×{class_.volumes}</span>
+                    </span>
                   </div>
-                  <span class="w-28 shrink-0 text-right text-body-small tabular-nums text-on-surface-variant">
-                    {class_.size}
-                    <span class="text-on-surface-variant/60">×{class_.volumes}</span>
-                  </span>
-                </div>
-              {/each}
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <!-- Claims by phase, where the other two cards put their pod and
+               node states. Bound is the working state; the other two are the
+               ones somebody has to do something about. -->
+          <div class="mt-1 grid grid-cols-3 gap-3 border-t border-outline-variant/40 pt-3 text-center">
+            <div>
+              <p class="text-title-large tabular-nums text-on-surface">{claimPhase('Bound')}</p>
+              <p class="text-label-small uppercase text-on-surface-variant">Bound</p>
             </div>
-          {/if}
+            <div>
+              <p
+                class="text-title-large tabular-nums {claimPhase('Pending') > 0
+                  ? 'text-warning'
+                  : 'text-on-surface'}"
+              >
+                {claimPhase('Pending')}
+              </p>
+              <p class="text-label-small uppercase text-on-surface-variant">Pending</p>
+            </div>
+            <div>
+              <p
+                class="text-title-large tabular-nums {claimPhase('Lost') > 0
+                  ? 'text-error'
+                  : 'text-on-surface'}"
+              >
+                {claimPhase('Lost')}
+              </p>
+              <p class="text-label-small uppercase text-on-surface-variant">Lost</p>
+            </div>
+          </div>
         </section>
       {/if}
 

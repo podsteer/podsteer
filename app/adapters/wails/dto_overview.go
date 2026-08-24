@@ -157,6 +157,13 @@ type StorageSummary struct {
 	Volumes      []PhaseCount `json:"volumes"`
 	TotalClaims  int          `json:"totalClaims"`
 	TotalVolumes int          `json:"totalVolumes"`
+	// Largest is the biggest bound volume, pre-formatted, with the name that
+	// makes it actionable.
+	Largest      string `json:"largest"`
+	LargestName  string `json:"largestName"`
+	LargestBytes int64  `json:"largestBytes"`
+	// UnboundBytes drives whether the waiting row says anything.
+	UnboundBytes int64 `json:"unboundBytes"`
 	// Classes breaks the provisioned total down, largest first.
 	Classes []StorageClassUsage `json:"classes"`
 }
@@ -222,6 +229,10 @@ func toStorage(summary domain.StorageSummary) StorageSummary {
 		Volumes:       volumes,
 		TotalClaims:   summary.TotalClaims,
 		TotalVolumes:  summary.TotalVolumes,
+		Largest:       formatBytesValue(summary.LargestBytes),
+		LargestName:   summary.LargestName,
+		LargestBytes:  summary.LargestBytes,
+		UnboundBytes:  summary.UnboundBytes,
 		Classes:       classes,
 	}
 }

@@ -787,6 +787,10 @@ export namespace wails {
 	    volumes: PhaseCount[];
 	    totalClaims: number;
 	    totalVolumes: number;
+	    largest: string;
+	    largestName: string;
+	    largestBytes: number;
+	    unboundBytes: number;
 	    classes: StorageClassUsage[];
 	
 	    static createFrom(source: any = {}) {
@@ -803,6 +807,10 @@ export namespace wails {
 	        this.volumes = this.convertValues(source["volumes"], PhaseCount);
 	        this.totalClaims = source["totalClaims"];
 	        this.totalVolumes = source["totalVolumes"];
+	        this.largest = source["largest"];
+	        this.largestName = source["largestName"];
+	        this.largestBytes = source["largestBytes"];
+	        this.unboundBytes = source["unboundBytes"];
 	        this.classes = this.convertValues(source["classes"], StorageClassUsage);
 	    }
 	
