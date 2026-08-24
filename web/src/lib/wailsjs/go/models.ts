@@ -571,6 +571,8 @@ export namespace wails {
 	    cordoned: number;
 	    underPressure: number;
 	    controlPlane: number;
+	    schedulable: number;
+	    tainted: number;
 	    pressure: ConditionCount[];
 	    disks: DiskSummary;
 	    kubeletVersions: VersionCount[];
@@ -588,6 +590,8 @@ export namespace wails {
 	        this.cordoned = source["cordoned"];
 	        this.underPressure = source["underPressure"];
 	        this.controlPlane = source["controlPlane"];
+	        this.schedulable = source["schedulable"];
+	        this.tainted = source["tainted"];
 	        this.pressure = this.convertValues(source["pressure"], ConditionCount);
 	        this.disks = this.convertValues(source["disks"], DiskSummary);
 	        this.kubeletVersions = this.convertValues(source["kubeletVersions"], VersionCount);

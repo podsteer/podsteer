@@ -504,7 +504,7 @@
                     {#if kind.degraded > 0}
                       <span class="text-body-small text-warning">{kind.degraded} degraded</span>
                     {/if}
-                    <span class="w-16 shrink-0 text-right text-body-small tabular-nums text-on-surface-variant">
+                    <span class="w-16 shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant">
                       {kind.healthy}/{kind.total}
                     </span>
                   </button>
@@ -541,61 +541,129 @@
           </div>
         </section>
 
-        <!-- Nodes -->
+        <!-- Nodes.
+             The same shape as Workloads beside it: a divided list of counts,
+             then the three states worth a glance, then what varies across the
+             fleet. The rows answer "what can this cluster accept" rather than
+             restating Ready three ways — Schedulable against Total is the one
+             number that explains why a pod will not place on a cluster whose
+             nodes are all healthy. -->
         <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
           <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
             <Server class="size-4 text-on-surface-variant" strokeWidth={1.8} />
             Nodes
           </h3>
 
-          <dl class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-body-small">
-            <dt class="text-on-surface-variant">Ready</dt>
-            <dd class="text-right tabular-nums text-on-surface">
-              {overview.nodes.ready} / {overview.nodes.total}
-            </dd>
-
-            {#if overview.nodes.notReady > 0}
-              <dt class="text-error">Not ready</dt>
-              <dd class="text-right tabular-nums text-error">{overview.nodes.notReady}</dd>
-            {/if}
-
-            {#if overview.nodes.cordoned > 0}
-              <dt class="text-on-surface-variant">Cordoned</dt>
-              <dd class="text-right tabular-nums text-warning">{overview.nodes.cordoned}</dd>
-            {/if}
-
-            <!-- Named individually. Disk, memory and process IDs are three
-                 different jobs fixed in three different places, and one line
-                 saying "3 under pressure" only sends somebody to the node list
-                 to find out which of them it is. -->
-            <!-- Disk occupancy, which no other view in PodSteer can show:
-                 the API server does not know how full a node's disk is, so
-                 this is the kubelets' own answer. Only rendered when at least
-                 one of them gave it. -->
-            {#if overview.nodes.disks.measured > 0}
-              <dt class="text-on-surface-variant" title="Across {overview.nodes.disks.measured} of {overview.nodes.total} nodes">
-                Fullest disk
-              </dt>
-              <dd
-                class="text-right tabular-nums {overview.nodes.disks.fullestPercent >= 90
-                  ? 'text-error'
-                  : overview.nodes.disks.fullestPercent >= 80
-                    ? 'text-warning'
-                    : 'text-on-surface'}"
-                title={overview.nodes.disks.fullestNode}
+          <ul class="flex flex-col divide-y divide-outline-variant/30">
+            <li class="flex items-center gap-3 py-1.5">
+              <span
+                class="flex-1 truncate text-body-medium text-on-surface"
+                title="Ready, uncordoned and carrying no blocking taint"
               >
-                {Math.round(overview.nodes.disks.fullestPercent)}%
-              </dd>
+                Schedulable
+              </span>
+              <span class="shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant">
+                {overview.nodes.schedulable}/{overview.nodes.total}
+              </span>
+            </li>
+
+            {#if overview.nodes.tainted > 0}
+              <li class="flex items-center gap-3 py-1.5">
+                <span
+                  class="flex-1 truncate text-body-medium text-on-surface"
+                  title="Refuse pods that do not tolerate their taint"
+                >
+                  Tainted
+                </span>
+                <span class="shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant">
+                  {overview.nodes.tainted}/{overview.nodes.total}
+                </span>
+              </li>
             {/if}
 
+            <li class="flex items-center gap-3 py-1.5">
+              <span class="flex-1 truncate text-body-medium text-on-surface">Control plane</span>
+              <span class="shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant">
+                {overview.nodes.controlPlane}/{overview.nodes.total}
+              </span>
+            </li>
+
+            <!-- Only when a kubelet answered. A row reading 0% would say the
+                 disks are empty rather than that nobody was asked. -->
+            {#if overview.nodes.disks.measured > 0}
+              <li class="flex items-center gap-3 py-1.5">
+                <span
+                  class="flex-1 truncate text-body-medium text-on-surface"
+                  title="{overview.nodes.disks.fullestNode} — across {overview.nodes.disks
+                    .measured} of {overview.nodes.total} nodes"
+                >
+                  Fullest disk
+                </span>
+                <span
+                  class="shrink-0 text-right text-body-medium tabular-nums {overview.nodes.disks
+                    .fullestPercent >= 90
+                    ? 'text-error'
+                    : overview.nodes.disks.fullestPercent >= 80
+                      ? 'text-warning'
+                      : 'text-on-surface-variant'}"
+                >
+                  {Math.round(overview.nodes.disks.fullestPercent)}%
+                </span>
+              </li>
+            {/if}
+
+            <!-- Each pressure condition names itself: disk, memory and process
+                 IDs are three different jobs fixed in three different places. -->
             {#each overview.nodes.pressure as pressure (pressure.condition)}
-              <dt class="text-on-surface-variant">{PRESSURE_LABELS[pressure.condition] ?? pressure.condition}</dt>
-              <dd class="text-right tabular-nums text-warning">{pressure.nodes}</dd>
+              <li class="flex items-center gap-3 py-1.5">
+                <span class="flex-1 truncate text-body-medium text-warning">
+                  {PRESSURE_LABELS[pressure.condition] ?? pressure.condition}
+                </span>
+                <span class="shrink-0 text-right text-body-medium tabular-nums text-warning">
+                  {pressure.nodes}/{overview.nodes.total}
+                </span>
+              </li>
             {/each}
 
-            <dt class="text-on-surface-variant">Control plane</dt>
-            <dd class="text-right tabular-nums text-on-surface">{overview.nodes.controlPlane}</dd>
-          </dl>
+            <li class="flex items-center gap-3 py-1.5">
+              <span
+                class="flex-1 truncate text-body-medium text-on-surface"
+                title="Age of the longest-lived node, a fair proxy for the cluster's own"
+              >
+                Oldest
+              </span>
+              <span class="shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant">
+                {formatAge(overview.nodes.oldestSeconds)}
+              </span>
+            </li>
+          </ul>
+
+          <div class="mt-1 grid grid-cols-3 gap-3 border-t border-outline-variant/40 pt-3 text-center">
+            <div>
+              <p class="text-title-large tabular-nums text-on-surface">{overview.nodes.ready}</p>
+              <p class="text-label-small uppercase text-on-surface-variant">Ready</p>
+            </div>
+            <div>
+              <p
+                class="text-title-large tabular-nums {overview.nodes.notReady > 0
+                  ? 'text-error'
+                  : 'text-on-surface'}"
+              >
+                {overview.nodes.notReady}
+              </p>
+              <p class="text-label-small uppercase text-on-surface-variant">Not ready</p>
+            </div>
+            <div>
+              <p
+                class="text-title-large tabular-nums {overview.nodes.cordoned > 0
+                  ? 'text-warning'
+                  : 'text-on-surface'}"
+              >
+                {overview.nodes.cordoned}
+              </p>
+              <p class="text-label-small uppercase text-on-surface-variant">Cordoned</p>
+            </div>
+          </div>
 
           {#if overview.nodes.kubeletVersions.length > 0}
             <div class="border-t border-outline-variant/40 pt-2">

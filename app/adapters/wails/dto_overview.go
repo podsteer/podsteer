@@ -374,6 +374,10 @@ type NodeSummary struct {
 	Cordoned      int `json:"cordoned"`
 	UnderPressure int `json:"underPressure"`
 	ControlPlane  int `json:"controlPlane"`
+	// Schedulable counts nodes an ordinary pod could be placed on, and
+	// Tainted those that refuse one without a toleration.
+	Schedulable int `json:"schedulable"`
+	Tainted     int `json:"tainted"`
 	// Pressure counts nodes per condition raised, most affected first.
 	Pressure []ConditionCount `json:"pressure"`
 	// Disks summarises node filesystem occupancy, when kubelets answered.
@@ -599,6 +603,8 @@ func toNodeSummary(summary domain.NodeSummary) NodeSummary {
 		Cordoned:        summary.Cordoned,
 		UnderPressure:   summary.UnderPressure,
 		ControlPlane:    summary.ControlPlane,
+		Schedulable:     summary.Schedulable,
+		Tainted:         summary.Tainted,
 		Pressure:        pressureCounts(summary.Pressure),
 		Disks:           toDiskSummary(summary.Disks),
 		KubeletVersions: versions,

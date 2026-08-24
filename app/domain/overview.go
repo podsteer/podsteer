@@ -368,6 +368,13 @@ type NodeSummary struct {
 	Cordoned      int
 	UnderPressure int
 	ControlPlane  int
+	// Schedulable counts nodes an ordinary pod could actually be placed on:
+	// ready, uncordoned and carrying no blocking taint. On a cluster of
+	// dedicated pools this is a small fraction of Total, and the gap is the
+	// most useful thing this summary can say.
+	Schedulable int
+	// Tainted counts nodes that refuse pods which do not tolerate them.
+	Tainted int
 	// Disks is what the kubelets reported about their own filesystems.
 	Disks DiskSummary
 	// Pressure counts nodes per condition currently raised.
@@ -920,6 +927,12 @@ func summariseNodes(nodes []Node, now time.Time) NodeSummary {
 		}
 		if node.Unschedulable() {
 			summary.Cordoned++
+		}
+		if node.Reserved() {
+			summary.Tainted++
+		}
+		if node.Ready() && !node.Unschedulable() && !node.Reserved() {
+			summary.Schedulable++
 		}
 		if disks := node.Filesystems(); disks.Measured {
 			summary.Disks.Measured++
