@@ -185,7 +185,9 @@
             label: 'Kubelet',
             value: `${versions.length} versions`,
             tone: 'text-warning',
-            hint: versions.map((entry) => `${entry.version} on ${entry.nodes}`).join(', '),
+            hint: versions
+              .map((entry) => `${entry.version} on ${entry.nodes} ${entry.nodes === 1 ? 'node' : 'nodes'}`)
+              .join(', '),
           }
         : {
             label: 'Kubelet',
@@ -635,11 +637,14 @@
           <ul class="flex flex-col divide-y divide-outline-variant/30">
             {#each nodeRows as row (row.label)}
               <li class="flex items-center gap-3 py-1.5">
-                <span
-                  class="flex flex-1 items-center gap-1.5 truncate text-body-medium text-on-surface"
-                  title={row.title}
-                >
-                  {row.label}
+                <!-- The truncation belongs to the text alone. Wrapping the
+                     hint in it too clipped the tooltip: `truncate` is
+                     `overflow: hidden`, which an absolutely positioned child
+                     cannot escape, so the panel opened and was never drawn. -->
+                <span class="flex min-w-0 flex-1 items-center gap-1.5">
+                  <span class="truncate text-body-medium text-on-surface" title={row.title}>
+                    {row.label}
+                  </span>
                   {#if row.hint}
                     <InfoHint text={row.hint} label="About {row.label.toLowerCase()}" />
                   {/if}

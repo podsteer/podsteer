@@ -63,11 +63,14 @@
   </button>
 
   {#if open}
-    <!-- Above the icon, so a note attached to a card heading does not cover
-         the figures it is explaining. -->
+    <!-- Above the icon and growing rightwards from it.
+         Centring reads better in the abstract and is wrong here: these icons
+         follow a short label at the left of a card, so a centred panel hung
+         half of itself over the card's edge and lost its first few words.
+         Anchoring the left edge to the icon keeps the whole note inside. -->
     <span
       role="tooltip"
-      class="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1.5 w-64 -translate-x-1/2
+      class="pointer-events-none absolute bottom-full left-0 z-30 mb-1.5 w-64
              rounded-sm border border-outline-variant bg-surface-container-high px-3 py-2
              text-body-small leading-relaxed font-normal text-on-surface shadow-level-2"
     >
