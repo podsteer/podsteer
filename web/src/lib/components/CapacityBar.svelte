@@ -54,8 +54,12 @@
         : 'bg-primary/45',
   )
 
-  /** Efficiency is -1 when nothing was measured. */
-  const efficiency = $derived(usage.efficiency >= 0 ? Math.round(usage.efficiency) : null)
+  /**
+   * Efficiency as a number, for the threshold only — the printed figure comes
+   * formatted from the Go side like every other. -1 means nothing was
+   * measured, which is not the same as nothing being used.
+   */
+  const efficiency = $derived(usage.efficiency >= 0 ? usage.efficiency : null)
 
   /**
    * The four figures, in the order they are read.
@@ -69,19 +73,19 @@
     {
       label: 'Requested',
       value: usage.requests,
-      percent: `${Math.round(usage.requestPercent)}%`,
+      percent: usage.requestPercentLabel,
     },
     usage.measured
       ? {
           label: 'Used',
           value: usage.usage,
-          percent: `${Math.round(usage.usagePercent)}%`,
+          percent: usage.usagePercentLabel,
         }
       : { label: 'Used', value: '—', muted: true },
     {
       label: 'Schedulable',
       value: usage.schedulable,
-      percent: `${Math.round(usage.schedulablePercent)}%`,
+      percent: usage.schedulablePercentLabel,
       title: 'Allocatable not already requested',
     },
     // Efficiency has no amount of its own: it IS the ratio between the two
@@ -91,7 +95,7 @@
     efficiency !== null
       ? {
           label: 'Efficiency',
-          percent: `${efficiency}%`,
+          percent: usage.efficiencyLabel,
           tone: efficiency < 25 ? 'text-warning' : undefined,
           title: 'Measured usage as a share of what was requested',
         }

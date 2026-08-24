@@ -240,6 +240,7 @@ func mapNode(clusterID domain.ClusterID, node *corev1.Node) (domain.Node, error)
 		ActiveConditions: active,
 		Unschedulable:    node.Spec.Unschedulable,
 		Taints:           len(node.Spec.Taints),
+		BlockingTaints:   blockingTaints(node.Spec.Taints),
 		KubeletVersion:   node.Status.NodeInfo.KubeletVersion,
 		OSImage:          node.Status.NodeInfo.OSImage,
 		Architecture:     node.Status.NodeInfo.Architecture,
@@ -545,6 +546,22 @@ func derefInt32(value *int32, fallback int32) int32 {
 // derefBool reads an optional bool, treating unset as false.
 func derefBool(value *bool) bool {
 	return value != nil && *value
+}
+
+// blockingTaints counts the taints that actually refuse pods.
+//
+// PreferNoSchedule is excluded: it asks the scheduler to avoid the node and
+// is ignored when nowhere else will do, so a node carrying only that one is
+// not reserved in any sense a capacity figure should reflect.
+func blockingTaints(taints []corev1.Taint) int {
+	blocking := 0
+	for _, taint := range taints {
+		if taint.Effect == corev1.TaintEffectNoSchedule ||
+			taint.Effect == corev1.TaintEffectNoExecute {
+			blocking++
+		}
+	}
+	return blocking
 }
 
 // --- Storage ----------------------------------------------------------------

@@ -21,10 +21,15 @@
 
   let { capacity }: Props = $props()
 
-  const width = $derived(Math.max(0, Math.min(100, capacity.usedPercent)))
-
-  /** Free slots, floored: a cluster past its cap has none rather than fewer. */
-  const free = $derived(Math.max(0, capacity.capacity - capacity.scheduled))
+  /**
+   * Everything below is printed, not computed.
+   *
+   * Every count and share arrives formatted from the Go side, which is where
+   * the thresholds and the rounding are tested. The only arithmetic left is
+   * clamping a bar to its track, which is a drawing concern rather than a
+   * fact about the cluster.
+   */
+  const width = $derived(Math.max(0, Math.min(100, capacity.usedPercentValue)))
 
   /**
    * 85% is where this starts to matter.
@@ -33,48 +38,68 @@
    * overcommitted the way CPU can: there is no burst past the cap, and the
    * pods that do not fit simply stay Pending.
    */
-  const tone = $derived(capacity.usedPercent >= 85 ? 'bg-error/70' : 'bg-primary/45')
-
-  /** The free share, floored for the same reason as the count above it. */
-  const freePercent = $derived(Math.max(0, 100 - capacity.usedPercent))
+  const crowded = $derived(capacity.usedPercentValue >= 85)
 
   /**
-   * Three figures, not four.
+   * Four figures in two pairs. The top pair is the slots — taken and free —
+   * and the bottom pair is what became of the pods: working, or still waiting
+   * for somewhere to run.
    *
-   * A slot has no requested-versus-used distinction to fill a fourth: a pod
-   * occupies one or it does not, so Scheduled already carries the share that
-   * a resource track spends two rows saying. Padding the grid to four would
-   * mean inventing a figure, and the empty cell is the honest shape.
+   * Healthy earns its own row because Scheduled says a slot is occupied and
+   * nothing whatever about the workload in it. A cluster can be comfortably
+   * within its cap with a third of those pods crash-looping.
    */
   const figures = $derived<Figure[]>([
     {
       label: 'Scheduled',
-      value: capacity.scheduled.toLocaleString(),
-      percent: `${Math.round(capacity.usedPercent)}%`,
-      tone: capacity.usedPercent >= 85 ? 'text-warning' : undefined,
+      value: capacity.scheduledLabel,
+      percent: capacity.usedPercent,
+      tone: crowded ? 'text-warning' : undefined,
     },
     {
       label: 'Schedulable',
-      value: free.toLocaleString(),
-      percent: `${Math.round(freePercent)}%`,
-      title: 'Slots on ready, uncordoned nodes that nothing occupies',
+      value: capacity.freeLabel,
+      percent: capacity.freePercent,
+      title: 'Slots on ready, uncordoned, untainted nodes that nothing occupies',
     },
-    capacity.unschedulable > 0
-      ? {
-          label: 'Waiting',
-          value: capacity.unschedulable.toLocaleString(),
-          tone: 'text-warning',
-          title: 'Pods the scheduler has not placed on any node',
-        }
-      : { label: 'Waiting', value: '0' },
+    {
+      label: 'Healthy',
+      value: capacity.healthyLabel,
+      percent: capacity.healthyPercent,
+      tone: capacity.healthy < capacity.scheduled ? 'text-warning' : undefined,
+      title: 'Scheduled pods that are actually doing their job',
+    },
+    {
+      label: 'Waiting',
+      value: capacity.unschedulableLabel,
+      percent: capacity.waitingPercent,
+      tone: capacity.unschedulable > 0 ? 'text-warning' : undefined,
+      title: 'Pods the scheduler has not placed on any node',
+    },
   ])
+
+  /**
+   * Said out loud when the cluster has any, because the two numbers differ
+   * and the difference is not a mistake.
+   *
+   * A control-plane node advertises its hundred-odd slots like any other and
+   * will never accept a pod that does not tolerate its taint. Counting them
+   * as headroom is the error; excluding them without saying so would be a
+   * different one.
+   */
+  const reservedNote = $derived(
+    capacity.reserved > 0
+      ? `${capacity.reservedLabel} more slots on ${capacity.reservedNodes} tainted ` +
+        `${capacity.reservedNodes === 1 ? 'node' : 'nodes'}, for pods that tolerate them.`
+      : '',
+  )
 </script>
 
 <div class="flex min-w-0 flex-col gap-2">
   <div class="flex items-baseline justify-between gap-3">
     <span class="text-label-large text-on-surface">Pod slots</span>
     <span class="text-body-medium tabular-nums text-on-surface-variant">
-      {capacity.scheduled.toLocaleString()} / {capacity.capacity.toLocaleString()}
+      {capacity.scheduledLabel} / {capacity.capacityLabel}
     </span>
   </div>
 
@@ -84,10 +109,15 @@
     aria-label="Pod slots: {capacity.scheduled} of {capacity.capacity} occupied"
   >
     <span
-      class="absolute inset-y-0 left-0 rounded-full transition-all duration-300 ease-standard {tone}"
+      class="absolute inset-y-0 left-0 rounded-full transition-all duration-300 ease-standard
+             {crowded ? 'bg-error/70' : 'bg-primary/45'}"
       style="width: {width}%"
     ></span>
   </div>
 
   <CapacityFigures {figures} />
+
+  {#if reservedNote}
+    <p class="text-body-small leading-relaxed text-on-surface-variant/60">{reservedNote}</p>
+  {/if}
 </div>

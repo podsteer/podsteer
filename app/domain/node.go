@@ -52,6 +52,13 @@ type NodeSpec struct {
 	Unschedulable bool
 	// Taints is how many taints the node carries.
 	Taints int
+	// BlockingTaints is how many of those actually refuse pods — the
+	// NoSchedule and NoExecute effects.
+	//
+	// Counted apart from Taints because PreferNoSchedule refuses nothing: it
+	// is a hint the scheduler may ignore, and treating a node carrying only
+	// that one as reserved would understate the cluster.
+	BlockingTaints int
 	// KubeletVersion is the kubelet's version, e.g. "v1.32.7".
 	KubeletVersion string
 	// OSImage describes the host OS.
@@ -81,6 +88,7 @@ type Node struct {
 	activeConditions []NodeCondition
 	unschedulable    bool
 	taints           int
+	blockingTaints   int
 	kubeletVersion   string
 	osImage          string
 	architecture     string
@@ -110,6 +118,7 @@ func NewNode(spec NodeSpec) (Node, error) {
 		activeConditions: slices.Clone(spec.ActiveConditions),
 		unschedulable:    spec.Unschedulable,
 		taints:           spec.Taints,
+		blockingTaints:   spec.BlockingTaints,
 		kubeletVersion:   spec.KubeletVersion,
 		osImage:          spec.OSImage,
 		architecture:     spec.Architecture,
@@ -143,6 +152,14 @@ func (n Node) Unschedulable() bool { return n.unschedulable }
 
 // Taints returns how many taints the node carries.
 func (n Node) Taints() int { return n.taints }
+
+// Reserved reports a node that refuses pods which do not tolerate it.
+//
+// The distinction matters wherever capacity is summed: a control-plane node's
+// hundred-odd pod slots are real, and unavailable to everything that has not
+// been told to tolerate the taint. Counting them as free headroom overstates
+// what the cluster can actually accept.
+func (n Node) Reserved() bool { return n.blockingTaints > 0 }
 
 // ActiveConditions returns a copy of the problem conditions currently true.
 func (n Node) ActiveConditions() []NodeCondition { return slices.Clone(n.activeConditions) }

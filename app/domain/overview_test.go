@@ -556,6 +556,131 @@ func TestNodeLoadsRankTheBusiestFirst(t *testing.T) {
 	}
 }
 
+// A tainted node advertises its slots like any other and will never accept a
+// pod that does not tolerate it. Counting them as headroom is what makes a
+// cluster look like it has room no ordinary workload can reach.
+func TestPodCapacityExcludesSlotsOnTaintedNodes(t *testing.T) {
+	t.Parallel()
+
+	node := func(name string, blocking int) domain.Node {
+		t.Helper()
+		built, err := domain.NewNode(domain.NodeSpec{
+			Name: name, ClusterID: "dev", Ready: true, KubeletVersion: "v1.32.7",
+			Capacity:       domain.Capacity{CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110},
+			Allocatable:    domain.Capacity{CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110},
+			Taints:         blocking,
+			BlockingTaints: blocking,
+			CreatedAt:      overviewNow.Add(-24 * time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("building node %q: %v", name, err)
+		}
+		return built
+	}
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Nodes: []domain.Node{
+			node("worker-1", 0),
+			node("worker-2", 0),
+			node("control-plane-1", 1),
+		},
+		Now: overviewNow,
+	})
+
+	pods := overview.Capacity.Pods
+	if pods.Capacity != 220 {
+		t.Errorf("capacity = %d, want the two untainted nodes' slots", pods.Capacity)
+	}
+	if pods.Reserved != 110 {
+		t.Errorf("reserved = %d, want the tainted node's slots", pods.Reserved)
+	}
+	if pods.ReservedNodes != 1 {
+		t.Errorf("reserved nodes = %d, want 1", pods.ReservedNodes)
+	}
+}
+
+// PreferNoSchedule refuses nothing — the scheduler ignores it when nowhere
+// else will do — so a node carrying only that is not reserved.
+func TestPodCapacityCountsNodesWithSoftTaints(t *testing.T) {
+	t.Parallel()
+
+	soft, err := domain.NewNode(domain.NodeSpec{
+		Name: "soft", ClusterID: "dev", Ready: true, KubeletVersion: "v1.32.7",
+		Capacity:    domain.Capacity{CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110},
+		Allocatable: domain.Capacity{CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110},
+		// One taint, none of them blocking.
+		Taints:    1,
+		CreatedAt: overviewNow.Add(-24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("building node: %v", err)
+	}
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev", Nodes: []domain.Node{soft}, Now: overviewNow,
+	})
+
+	if got := overview.Capacity.Pods.Capacity; got != 110 {
+		t.Errorf("capacity = %d, want the node counted", got)
+	}
+	if got := overview.Capacity.Pods.Reserved; got != 0 {
+		t.Errorf("reserved = %d, want none", got)
+	}
+}
+
+// Scheduled says a slot is taken and nothing about the workload in it.
+func TestPodCapacityCountsHealthySeparatelyFromScheduled(t *testing.T) {
+	t.Parallel()
+
+	working := podFixture(t, domain.PodSpec{
+		Name: "working", NodeName: "node-1", Phase: domain.PodPhaseRunning,
+		Containers: []domain.Container{{Name: "app", State: domain.ContainerStateRunning, Ready: true}},
+	})
+	broken := podFixture(t, domain.PodSpec{
+		Name: "broken", NodeName: "node-1", Phase: domain.PodPhaseRunning,
+		Containers: []domain.Container{
+			{Name: "app", State: domain.ContainerStateWaiting, Reason: "CrashLoopBackOff"},
+		},
+	})
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Nodes:     []domain.Node{nodeFixture(t, "node-1", 4000, 8<<30, 110)},
+		Pods:      []domain.Pod{working, broken},
+		Now:       overviewNow,
+	})
+
+	pods := overview.Capacity.Pods
+	if pods.Scheduled != 2 {
+		t.Errorf("scheduled = %d, want both pods occupying slots", pods.Scheduled)
+	}
+	if pods.Healthy != 1 {
+		t.Errorf("healthy = %d, want only the working pod", pods.Healthy)
+	}
+	if got := pods.HealthyPercent(); got != 50 {
+		t.Errorf("healthy percent = %v, want half of what is scheduled", got)
+	}
+}
+
+// Free slots must never go negative, and the shares must agree with them.
+func TestPodCapacityFreeIsFlooredAtZero(t *testing.T) {
+	t.Parallel()
+
+	full := domain.PodCapacity{Scheduled: 120, Capacity: 110}
+	if got := full.Free(); got != 0 {
+		t.Errorf("free = %d, want none on a cluster past its own cap", got)
+	}
+	if got := full.FreePercent(); got != 0 {
+		t.Errorf("free percent = %v, want 0", got)
+	}
+
+	waiting := domain.PodCapacity{Scheduled: 90, Capacity: 110, Unschedulable: 10}
+	if got := waiting.WaitingPercent(); got != 10 {
+		t.Errorf("waiting percent = %v, want a tenth of everything wanting to run", got)
+	}
+}
+
 func TestDiagnosePodStates(t *testing.T) {
 	t.Parallel()
 

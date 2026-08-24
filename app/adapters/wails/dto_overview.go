@@ -3,7 +3,9 @@ package wails
 import (
 	"cmp"
 	"fmt"
+	"math"
 	"slices"
+	"strconv"
 
 	"github.com/podsteer/podsteer/app/domain"
 )
@@ -70,6 +72,13 @@ type ResourceUsage struct {
 	// SchedulablePercent is the headroom as a share of allocatable, so every
 	// figure on the card can show its amount and its proportion.
 	SchedulablePercent float64 `json:"schedulablePercent"`
+	// The same four shares, rounded and rendered here rather than by the
+	// browser. The card prints these; the numbers above drive the bar and the
+	// threshold colours.
+	RequestPercentLabel     string `json:"requestPercentLabel"`
+	UsagePercentLabel       string `json:"usagePercentLabel"`
+	SchedulablePercentLabel string `json:"schedulablePercentLabel"`
+	EfficiencyLabel         string `json:"efficiencyLabel"`
 	// Efficiency is usage as a percentage of requests, or -1 when nothing was
 	// measured. It is the number that says how much of the reservation is
 	// actually being used.
@@ -91,11 +100,39 @@ type ResourceUsage struct {
 }
 
 // PodCapacity is how many pods the cluster runs against how many it can.
+// Every count arrives pre-formatted alongside its raw value: the strings are
+// what the card prints, and the numbers are what it makes decisions with —
+// whether to colour a figure, whether to show a row at all. The frontend does
+// no arithmetic on any of it, so the rounding somebody reads here is the same
+// rounding the Go tests assert.
 type PodCapacity struct {
-	Scheduled     int     `json:"scheduled"`
-	Capacity      int64   `json:"capacity"`
-	Unschedulable int     `json:"unschedulable"`
-	UsedPercent   float64 `json:"usedPercent"`
+	Scheduled      int    `json:"scheduled"`
+	ScheduledLabel string `json:"scheduledLabel"`
+	Healthy        int    `json:"healthy"`
+	HealthyLabel   string `json:"healthyLabel"`
+	Capacity       int64  `json:"capacity"`
+	CapacityLabel  string `json:"capacityLabel"`
+	// Free is the slots nothing occupies.
+	Free      int64  `json:"free"`
+	FreeLabel string `json:"freeLabel"`
+	// Reserved is slots on tainted nodes, which only a pod that tolerates
+	// them can use. Zero on most clusters, most of the machine on some.
+	Reserved      int64  `json:"reserved"`
+	ReservedLabel string `json:"reservedLabel"`
+	// ReservedNodes is how many nodes hold them, for the sentence that
+	// explains the difference between the two figures.
+	ReservedNodes int `json:"reservedNodes"`
+
+	Unschedulable      int    `json:"unschedulable"`
+	UnschedulableLabel string `json:"unschedulableLabel"`
+
+	// The shares, already rounded, as strings ending in a per-cent sign.
+	UsedPercent    string `json:"usedPercent"`
+	FreePercent    string `json:"freePercent"`
+	HealthyPercent string `json:"healthyPercent"`
+	WaitingPercent string `json:"waitingPercent"`
+	// UsedPercentValue drives the bar and the threshold colour.
+	UsedPercentValue float64 `json:"usedPercentValue"`
 }
 
 // CapacitySummary is the cluster's capacity across every dimension.
@@ -511,12 +548,7 @@ func toCapacity(capacity domain.CapacitySummary) CapacitySummary {
 		CPU:       toResourceUsage(capacity.CPU, formatMilliValue),
 		Memory:    toResourceUsage(capacity.Memory, formatBytesValue),
 		Ephemeral: toResourceUsage(capacity.Ephemeral, formatBytesValue),
-		Pods: PodCapacity{
-			Scheduled:     capacity.Pods.Scheduled,
-			Capacity:      capacity.Pods.Capacity,
-			Unschedulable: capacity.Pods.Unschedulable,
-			UsedPercent:   capacity.Pods.UsedPercent(),
-		},
+		Pods:      toPodCapacity(capacity.Pods),
 	}
 }
 
@@ -543,6 +575,11 @@ func toResourceUsage(usage domain.ResourceUsage, format func(int64) string) Reso
 		Measured:           usage.Measured,
 		Reported:           usage.Allocatable > 0,
 		Declared:           usage.Requests > 0,
+
+		RequestPercentLabel:     formatPercent(usage.RequestPercent()),
+		UsagePercentLabel:       formatPercent(usage.UsagePercent()),
+		SchedulablePercentLabel: formatPercent(usage.SchedulablePercent()),
+		EfficiencyLabel:         efficiencyLabel(usage.Efficiency()),
 	}
 }
 
@@ -591,6 +628,66 @@ func toDiskSummary(summary domain.DiskSummary) DiskSummary {
 		FullestNode:    summary.FullestNode,
 		Filling:        summary.Filling,
 	}
+}
+
+// toPodCapacity formats every pod-slot figure for display.
+func toPodCapacity(pods domain.PodCapacity) PodCapacity {
+	return PodCapacity{
+		Scheduled:      pods.Scheduled,
+		ScheduledLabel: formatCount(int64(pods.Scheduled)),
+		Healthy:        pods.Healthy,
+		HealthyLabel:   formatCount(int64(pods.Healthy)),
+		Capacity:       pods.Capacity,
+		CapacityLabel:  formatCount(pods.Capacity),
+		Free:           pods.Free(),
+		FreeLabel:      formatCount(pods.Free()),
+		Reserved:       pods.Reserved,
+		ReservedLabel:  formatCount(pods.Reserved),
+		ReservedNodes:  pods.ReservedNodes,
+
+		Unschedulable:      pods.Unschedulable,
+		UnschedulableLabel: formatCount(int64(pods.Unschedulable)),
+
+		UsedPercent:      formatPercent(pods.UsedPercent()),
+		FreePercent:      formatPercent(pods.FreePercent()),
+		HealthyPercent:   formatPercent(pods.HealthyPercent()),
+		WaitingPercent:   formatPercent(pods.WaitingPercent()),
+		UsedPercentValue: pods.UsedPercent(),
+	}
+}
+
+// formatCount renders a whole number with thousands separators.
+//
+// Done here rather than with the browser's toLocaleString so the grouping is
+// the same on every machine: a screenshot from one operator's laptop and the
+// figure another reads should not differ by locale when the cluster does not.
+func formatCount(value int64) string {
+	digits := strconv.FormatInt(value, 10)
+	if len(digits) <= 3 {
+		return digits
+	}
+
+	var out []byte
+	for i, digit := range []byte(digits) {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, digit)
+	}
+	return string(out)
+}
+
+// efficiencyLabel renders efficiency, which is -1 when nothing was measured.
+func efficiencyLabel(efficiency float64) string {
+	if efficiency < 0 {
+		return ""
+	}
+	return formatPercent(efficiency)
+}
+
+// formatPercent rounds a share and renders it with its sign.
+func formatPercent(value float64) string {
+	return strconv.FormatFloat(math.Round(value), 'f', 0, 64) + "%"
 }
 
 // ConditionCount is how many nodes are raising one condition.

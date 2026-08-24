@@ -287,15 +287,60 @@ func (r ResourceUsage) Efficiency() float64 {
 type PodCapacity struct {
 	// Scheduled is how many non-terminal pods occupy nodes.
 	Scheduled int
-	// Capacity is the sum of the nodes' pod limits, counting only schedulable
-	// nodes: a cordoned node's slots are not available to anything.
+	// Healthy is how many of those are actually doing their job, by
+	// Pod.IsHealthy. Scheduled says a slot is taken; this says the workload
+	// in it is working, which is a different question with the same
+	// denominator.
+	Healthy int
+	// Capacity is the sum of the nodes' pod limits on nodes a pod could
+	// actually land on: ready, uncordoned and carrying no blocking taint.
+	//
+	// Taints are the part every other client gets wrong. A control-plane node
+	// advertises its hundred-odd slots like any other, and nothing without a
+	// toleration will ever occupy one — counting them made a cluster look
+	// like it had headroom that no ordinary workload could reach.
 	Capacity int64
+	// Reserved is the slots excluded above: real, on healthy nodes, and
+	// available only to pods that tolerate the taint. Reported rather than
+	// silently dropped, because on a cluster of dedicated node pools it is
+	// most of the machine.
+	Reserved int64
+	// ReservedNodes is how many nodes hold the reserved slots, for the
+	// sentence that explains why two capacity figures differ.
+	ReservedNodes int
 	// Unschedulable is how many pods are waiting for a node.
 	Unschedulable int
 }
 
 // UsedPercent returns occupancy as a percentage of capacity.
 func (p PodCapacity) UsedPercent() float64 { return percent(int64(p.Scheduled), p.Capacity) }
+
+// Free returns the slots nothing occupies, floored: a cluster past its own
+// cap has none rather than a negative number.
+func (p PodCapacity) Free() int64 {
+	if p.Capacity <= int64(p.Scheduled) {
+		return 0
+	}
+	return p.Capacity - int64(p.Scheduled)
+}
+
+// FreePercent returns those slots as a percentage of capacity.
+func (p PodCapacity) FreePercent() float64 { return percent(p.Free(), p.Capacity) }
+
+// HealthyPercent returns working pods as a percentage of scheduled ones.
+//
+// Measured against what is scheduled rather than against capacity: the
+// question is whether the pods that got a slot are working, and dividing by
+// slots nobody has claimed would answer a different one badly.
+func (p PodCapacity) HealthyPercent() float64 {
+	return percent(int64(p.Healthy), int64(p.Scheduled))
+}
+
+// WaitingPercent returns unplaced pods as a percentage of everything that
+// wants to run — those placed plus those still waiting.
+func (p PodCapacity) WaitingPercent() float64 {
+	return percent(int64(p.Unschedulable), int64(p.Scheduled+p.Unschedulable))
+}
 
 // CapacitySummary is the cluster's capacity across every dimension.
 type CapacitySummary struct {
@@ -972,8 +1017,16 @@ func summariseCapacity(nodes []Node, pods []Pod, measured bool) CapacitySummary 
 			summary.Ephemeral.Measured = true
 		}
 
+		// A pod can only land where the scheduler will place it: not on a
+		// cordoned node, not on one that is not ready, and not on one whose
+		// taint it does not tolerate.
 		if !node.Unschedulable() && node.Ready() {
-			summary.Pods.Capacity += node.Allocatable().Pods
+			if node.Reserved() {
+				summary.Pods.Reserved += node.Allocatable().Pods
+				summary.Pods.ReservedNodes++
+			} else {
+				summary.Pods.Capacity += node.Allocatable().Pods
+			}
 		}
 
 		// Node metrics are the truthful total: pod metrics omit whatever the
@@ -994,6 +1047,9 @@ func summariseCapacity(nodes []Node, pods []Pod, measured bool) CapacitySummary 
 		}
 
 		summary.Pods.Scheduled++
+		if pod.IsHealthy() {
+			summary.Pods.Healthy++
+		}
 		requests, limits := pod.Requests(), pod.Limits()
 		summary.CPU.Requests += requests.CPUMilli
 		summary.CPU.Limits += limits.CPUMilli

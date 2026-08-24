@@ -20,9 +20,23 @@ export namespace wails {
 	}
 	export class PodCapacity {
 	    scheduled: number;
+	    scheduledLabel: string;
+	    healthy: number;
+	    healthyLabel: string;
 	    capacity: number;
+	    capacityLabel: string;
+	    free: number;
+	    freeLabel: string;
+	    reserved: number;
+	    reservedLabel: string;
+	    reservedNodes: number;
 	    unschedulable: number;
-	    usedPercent: number;
+	    unschedulableLabel: string;
+	    usedPercent: string;
+	    freePercent: string;
+	    healthyPercent: string;
+	    waitingPercent: string;
+	    usedPercentValue: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new PodCapacity(source);
@@ -31,9 +45,23 @@ export namespace wails {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.scheduled = source["scheduled"];
+	        this.scheduledLabel = source["scheduledLabel"];
+	        this.healthy = source["healthy"];
+	        this.healthyLabel = source["healthyLabel"];
 	        this.capacity = source["capacity"];
+	        this.capacityLabel = source["capacityLabel"];
+	        this.free = source["free"];
+	        this.freeLabel = source["freeLabel"];
+	        this.reserved = source["reserved"];
+	        this.reservedLabel = source["reservedLabel"];
+	        this.reservedNodes = source["reservedNodes"];
 	        this.unschedulable = source["unschedulable"];
+	        this.unschedulableLabel = source["unschedulableLabel"];
 	        this.usedPercent = source["usedPercent"];
+	        this.freePercent = source["freePercent"];
+	        this.healthyPercent = source["healthyPercent"];
+	        this.waitingPercent = source["waitingPercent"];
+	        this.usedPercentValue = source["usedPercentValue"];
 	    }
 	}
 	export class ResourceUsage {
@@ -47,6 +75,10 @@ export namespace wails {
 	    limitPercent: number;
 	    usagePercent: number;
 	    schedulablePercent: number;
+	    requestPercentLabel: string;
+	    usagePercentLabel: string;
+	    schedulablePercentLabel: string;
+	    efficiencyLabel: string;
 	    efficiency: number;
 	    measured: boolean;
 	    reported: boolean;
@@ -68,6 +100,10 @@ export namespace wails {
 	        this.limitPercent = source["limitPercent"];
 	        this.usagePercent = source["usagePercent"];
 	        this.schedulablePercent = source["schedulablePercent"];
+	        this.requestPercentLabel = source["requestPercentLabel"];
+	        this.usagePercentLabel = source["usagePercentLabel"];
+	        this.schedulablePercentLabel = source["schedulablePercentLabel"];
+	        this.efficiencyLabel = source["efficiencyLabel"];
 	        this.efficiency = source["efficiency"];
 	        this.measured = source["measured"];
 	        this.reported = source["reported"];
