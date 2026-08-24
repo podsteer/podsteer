@@ -18,7 +18,7 @@
   import type { Figure } from '$lib/components/CapacityFigures.svelte'
   import SlotsBar from '$lib/components/SlotsBar.svelte'
   import FindingCard from '$lib/components/FindingCard.svelte'
-  import NodeLoadChart from '$lib/components/NodeLoadChart.svelte'
+  import NodeLoadGrid from '$lib/components/NodeLoadGrid.svelte'
   import TrendChart from '$lib/components/TrendChart.svelte'
   import { formatAge } from '$lib/format'
   import { ClusterHistory, TREND_WINDOWS } from '$stores/history.svelte'
@@ -867,7 +867,7 @@
             <span class="text-body-small text-on-surface-variant/70">Busiest first</span>
           </div>
 
-          <NodeLoadChart
+          <NodeLoadGrid
             loads={overview.nodeLoads}
             onselect={(name) => void openObject('core/v1/nodes', name, '')}
           />

@@ -14,27 +14,11 @@
  */
 
 import { init, use } from 'echarts/core'
-import { BarChart, LineChart } from 'echarts/charts'
-import {
-  GridComponent,
-  LegendComponent,
-  MarkLineComponent,
-  TooltipComponent,
-} from 'echarts/components'
+import { LineChart } from 'echarts/charts'
+import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 
-use([
-  LineChart,
-  BarChart,
-  GridComponent,
-  TooltipComponent,
-  LegendComponent,
-  // Threshold rules on the node-load chart. Registered explicitly like
-  // everything else here: markLine is silently ignored without it, which is
-  // exactly how it failed — the option was accepted and nothing was drawn.
-  MarkLineComponent,
-  CanvasRenderer,
-])
+use([LineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
 
 /**
  * The minimal surface the charts use.
