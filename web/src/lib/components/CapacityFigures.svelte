@@ -33,12 +33,20 @@
 
 <dl class="grid grid-cols-[auto_1fr_auto_1fr] items-baseline gap-x-3 gap-y-1.5 text-body-medium">
   {#each figures as figure, index (figure.label)}
-    <!-- Every second pair is the right-hand one, and takes a little padding so
-         its label does not crowd the value ending beside it. -->
+    <!-- The label carries the emphasis and the figures recede, which is the
+         opposite of the usual arrangement and right here: the four labels are
+         identical on every track, so they are what the eye navigates by, and
+         somebody scanning for Efficiency should find the word before the
+         number.
+
+         The right-hand pair takes a wider indent than the gap between a label
+         and its own value. Without it "47% Used" ran together as one phrase;
+         the space is what separates the end of one figure from the start of
+         the next. -->
     <dt
-      class="{index % 2 === 1 ? 'pl-2' : ''} {figure.muted
+      class="{index % 2 === 1 ? 'pl-6' : ''} {figure.muted
         ? 'text-on-surface-variant/50'
-        : 'text-on-surface-variant'}"
+        : 'text-on-surface'}"
       title={figure.title}
     >
       {figure.label}
@@ -53,10 +61,13 @@
          figure has only one of them: a row that omits its cells would pull
          its amount out to the edge and break the very alignment the slot
          exists to hold. -->
+    <!-- Amount and share take one colour, set on the row rather than on each
+         span: they are two halves of one reading, and giving the number more
+         weight than its proportion made the pair look like two facts. -->
     <dd
       class="flex items-baseline justify-end gap-2 tabular-nums {figure.muted
         ? 'text-on-surface-variant/50'
-        : (figure.tone ?? 'text-on-surface')}"
+        : (figure.tone ?? 'text-on-surface-variant')}"
     >
       <span>{figure.value ?? ''}</span>
       <span
@@ -65,13 +76,7 @@
       >
         |
       </span>
-      <span
-        class="w-[4.5ch] text-right {figure.muted || figure.tone
-          ? ''
-          : 'text-on-surface-variant'}"
-      >
-        {figure.percent ?? ''}
-      </span>
+      <span class="w-[4.5ch] text-right">{figure.percent ?? ''}</span>
     </dd>
   {/each}
 </dl>
