@@ -14,6 +14,7 @@
 <script lang="ts">
   import type { PodCapacity } from '$lib/api/client'
   import CapacityFigures, { type Figure } from './CapacityFigures.svelte'
+  import InfoHint from './InfoHint.svelte'
 
   interface Props {
     capacity: PodCapacity
@@ -79,8 +80,12 @@
   ])
 
   /**
-   * Said out loud when the cluster has any, because the two numbers differ
-   * and the difference is not a mistake.
+   * Behind an icon rather than printed under the figures.
+   *
+   * It qualifies the total without belonging beside it permanently: inline it
+   * pushed the card taller than its neighbour and competed with the figures,
+   * and dropped entirely it would leave a capacity that looks wrong to anyone
+   * checking it against kubectl.
    *
    * A control-plane node advertises its hundred-odd slots like any other and
    * will never accept a pod that does not tolerate its taint. Counting them
@@ -97,7 +102,12 @@
 
 <div class="flex min-w-0 flex-col gap-2">
   <div class="flex items-baseline justify-between gap-3">
-    <span class="text-label-large text-on-surface">Pod slots</span>
+    <span class="flex items-center gap-1.5 text-label-large text-on-surface">
+      Pod slots
+      {#if reservedNote}
+        <InfoHint text={reservedNote} label="Why some slots are not counted" />
+      {/if}
+    </span>
     <span class="text-body-medium tabular-nums text-on-surface-variant">
       {capacity.scheduledLabel} / {capacity.capacityLabel}
     </span>
@@ -116,8 +126,4 @@
   </div>
 
   <CapacityFigures {figures} />
-
-  {#if reservedNote}
-    <p class="text-body-small leading-relaxed text-on-surface-variant/60">{reservedNote}</p>
-  {/if}
 </div>

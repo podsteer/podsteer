@@ -31,9 +31,18 @@
      * failure to measure rather than as the finding it is.
      */
     note?: string
+    /**
+     * Replaces the Efficiency figure for a track that cannot have one.
+     *
+     * Ephemeral storage is the case: efficiency compares what pods USE with
+     * what they RESERVED, and nothing anywhere reports per-pod disk use. The
+     * slot is better spent on a figure that exists than on a dash explaining
+     * that one does not.
+     */
+    fourth?: Figure
   }
 
-  let { label, usage, note = '' }: Props = $props()
+  let { label, usage, note = '', fourth }: Props = $props()
 
   const requestWidth = $derived(Math.max(0, Math.min(100, usage.requestPercent)))
   const usageWidth = $derived(usage.measured ? Math.max(0, Math.min(100, usage.usagePercent)) : 0)
@@ -92,14 +101,15 @@
     // figures above it, so it occupies the share column and leaves the
     // amount empty, which puts it under the other percentages where it can
     // be compared with them.
-    efficiency !== null
-      ? {
-          label: 'Efficiency',
-          percent: usage.efficiencyLabel,
-          tone: efficiency < 25 ? 'text-warning' : undefined,
-          title: 'Measured usage as a share of what was requested',
-        }
-      : { label: 'Efficiency', value: '—', muted: true },
+    fourth ??
+      (efficiency !== null
+        ? {
+            label: 'Efficiency',
+            percent: usage.efficiencyLabel,
+            tone: efficiency < 25 ? 'text-warning' : undefined,
+            title: 'Measured usage as a share of what was requested',
+          }
+        : { label: 'Efficiency', value: '—', muted: true }),
   ])
 
 </script>

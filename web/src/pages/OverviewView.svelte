@@ -14,6 +14,7 @@
 -->
 <script lang="ts">
   import CapacityBar from '$lib/components/CapacityBar.svelte'
+  import type { Figure } from '$lib/components/CapacityFigures.svelte'
   import SlotsBar from '$lib/components/SlotsBar.svelte'
   import FindingCard from '$lib/components/FindingCard.svelte'
   import NodeLoadChart from '$lib/components/NodeLoadChart.svelte'
@@ -31,6 +32,7 @@
     Layers,
     HardDrive,
     Flame,
+    Gauge,
     ChevronRight,
     RefreshCw,
     Activity,
@@ -98,6 +100,29 @@
     MemoryPressure: 'Out of memory',
     PIDPressure: 'Out of process IDs',
   }
+
+  /**
+   * What stands in for Efficiency on the ephemeral track.
+   *
+   * That figure compares what pods use with what they reserved, and nothing
+   * reports per-pod disk use — so the slot held a dash. The fullest node is
+   * the number worth having there instead, and for the same reason the load
+   * chart exists: 13% used across eighteen nodes is equally consistent with
+   * every disk at 13% and with one at 90% about to start evicting.
+   */
+  const fullestDisk = $derived.by((): Figure => {
+    const disks = overview?.nodes.disks
+    if (!disks || disks.measured === 0) {
+      return { label: 'Fullest node', value: '—', muted: true }
+    }
+    const percent = Math.round(disks.fullestPercent)
+    return {
+      label: 'Fullest node',
+      percent: `${percent}%`,
+      tone: percent >= 90 ? 'text-error' : percent >= 80 ? 'text-warning' : undefined,
+      title: `${disks.fullestNode} — the fullest of ${disks.measured} node filesystems`,
+    }
+  })
 
   const criticalCount = $derived(issues.filter((finding) => finding.severity === 'critical').length)
   const warningCount = $derived(issues.length - criticalCount)
@@ -342,7 +367,10 @@
       <!-- Capacity -->
       <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
         <div class="flex items-baseline justify-between gap-3">
-          <h3 class="text-title-medium font-semibold text-on-surface">Capacity</h3>
+          <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
+            <Gauge class="size-4 text-on-surface-variant" strokeWidth={1.8} />
+            Capacity
+          </h3>
           <span class="text-body-small text-on-surface-variant/70">
             Requests decide what schedules, not usage
           </span>
@@ -372,6 +400,7 @@
               label="Ephemeral storage"
               usage={overview.capacity.ephemeral}
               note={ephemeralNote}
+              fourth={fullestDisk}
             />
           {/if}
 
