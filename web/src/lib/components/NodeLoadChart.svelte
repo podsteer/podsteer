@@ -32,14 +32,52 @@
   let failed = $state(false)
 
   /**
-   * Room per node, plus the axis and legend.
+   * How many nodes are drawn before the reader asks for more.
    *
-   * Sized from the data rather than fixed: a three-node cluster in a 600px box
-   * is three stripes floating in space, and a fifty-node cluster in one is
-   * unreadable. Capped so a very large cluster scrolls its card instead of
-   * pushing everything below it off the page.
+   * Five is a card; eighteen is a page of its own. The list is sorted busiest
+   * first, so the five that matter are the five already shown and expanding is
+   * a choice rather than a chore.
    */
-  const height = $derived(Math.min(680, Math.max(160, loads.length * 34 + 64)))
+  const COLLAPSED = 5
+
+  let expanded = $state(false)
+
+  const shown = $derived(expanded ? loads : loads.slice(0, COLLAPSED))
+  const hidden = $derived(Math.max(0, loads.length - COLLAPSED))
+
+  /**
+   * Row height, plus the axis and legend.
+   *
+   * Sized from what is actually drawn rather than from the whole fleet, so
+   * collapsing the list collapses the card with it.
+   */
+  const height = $derived(shown.length * 46 + 62)
+
+  /**
+   * Node names share a prefix, and it is never the interesting part.
+   *
+   * Every node here begins "euc3-de1-dev-", so truncating from the right —
+   * which is what an axis does by default — produced eighteen labels reading
+   * "euc3-de1-dev-eck-01-worke…", identical to each other and useless. The
+   * shared opening is dropped instead, leaving the part that differs.
+   */
+  const prefix = $derived.by(() => {
+    if (loads.length < 2) return ''
+
+    const names = loads.map((load) => load.name)
+    let length = 0
+    while (length < names[0].length && names.every((name) => name[length] === names[0][length])) {
+      length += 1
+    }
+    // Cut back to a separator so the remainder starts at a word rather than
+    // mid-token: "ck-01-worker" helps nobody.
+    const cut = names[0].slice(0, length)
+    const boundary = Math.max(cut.lastIndexOf('-'), cut.lastIndexOf('.'))
+    return boundary > 0 ? cut.slice(0, boundary + 1) : ''
+  })
+
+  const shortName = (name: string): string =>
+    prefix && name.startsWith(prefix) ? name.slice(prefix.length) : name
 
   /** See TrendChart: the palette is read from CSS so the chart follows the theme. */
   function palette(): Record<string, string> {
@@ -47,15 +85,17 @@
     const read = (name: string, fallback: string) =>
       styles.getPropertyValue(name).trim() || fallback
     return {
-      primary: read('--primary', '#b69df8'),
-      secondary: read('--secondary', '#cbc2db'),
+      primary: read('--primary', '#8ab4f8'),
+      secondary: read('--secondary', '#ccc2dc'),
       tertiary: read('--tertiary', '#efb8c8'),
+      success: read('--success', '#8bd5a0'),
       onSurface: read('--on-surface', '#e6e1e9'),
       onSurfaceVariant: read('--on-surface-variant', '#cac4d0'),
       outline: read('--outline-variant', '#49454f'),
-      surface: read('--surface-container-low', '#1d1b20'),
+      surface: read('--surface-container-high', '#2b2930'),
       warning: read('--warning', '#f5c267'),
       error: read('--error', '#f2b8b5'),
+      font: styles.getPropertyValue('--font-sans').trim() || 'system-ui, sans-serif',
     }
   }
 
@@ -64,33 +104,23 @@
 
     // Reversed because ECharts draws a category axis bottom-up, and the
     // busiest node — the one this chart is FOR — belongs at the top.
-    const rows = [...loads].reverse()
-    const names = rows.map((load) => load.name)
+    const rows = [...shown].reverse()
 
     /**
-     * One dimension's bars, coloured per node rather than per series.
+     * One dimension, in one colour.
      *
-     * A node past 90% of anything is about to refuse work, so it is coloured
-     * as the exception it is instead of being left for the reader to measure
-     * against the axis.
+     * Fixed rather than painted per value. The previous version coloured each
+     * bar by its own reading, which meant the legend swatch — drawn from the
+     * series colour — disagreed with every bar it was supposed to identify:
+     * the Memory key showed green above pink bars. Severity is carried by the
+     * threshold lines instead, where it does not have to fight the legend.
      */
-    const series = (
-      name: string,
-      pick: (load: NodeLoad) => number,
-      base: string,
-    ): unknown => ({
+    const series = (name: string, pick: (load: NodeLoad) => number, colour: string): unknown => ({
       name,
       type: 'bar',
-      barMaxWidth: 7,
-      itemStyle: {
-        borderRadius: 2,
-        color: (params: { dataIndex: number }) => {
-          const value = pick(rows[params.dataIndex])
-          if (value >= 90) return colours.error
-          if (value >= 75) return colours.warning
-          return base
-        },
-      },
+      barMaxWidth: 6,
+      barGap: '20%',
+      itemStyle: { color: colour, borderRadius: 3 },
       data: rows.map((load) => Math.max(0, Math.round(pick(load) * 10) / 10)),
     })
 
@@ -99,49 +129,81 @@
     // asked", which is the opposite of the truth.
     const anyDisk = rows.some((load) => load.diskPercent >= 0)
 
+    const marker = (at: number, colour: string, label: string): unknown => ({
+      xAxis: at,
+      lineStyle: { color: colour, type: 'dashed', width: 1 },
+      // At the top of the rule, not the bottom: the bottom is where the axis
+      // ticks are, and an "80%" threshold label landed exactly on the "80%"
+      // gridline label underneath it.
+      label: {
+        formatter: label,
+        color: colour,
+        fontSize: 11,
+        fontFamily: colours.font,
+        position: 'end',
+      },
+    })
+
     return {
       backgroundColor: 'transparent',
       animation: false,
-      grid: { left: 8, right: 40, top: 30, bottom: 8, containLabel: true },
+      textStyle: { fontFamily: colours.font },
+      grid: { left: 8, right: 24, top: 34, bottom: 4, containLabel: true },
       legend: {
         top: 0,
         right: 0,
         itemWidth: 10,
         itemHeight: 10,
-        textStyle: { color: colours.onSurfaceVariant, fontSize: 11 },
+        itemGap: 14,
+        textStyle: { color: colours.onSurfaceVariant, fontSize: 12, fontFamily: colours.font },
       },
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'shadow' },
         backgroundColor: colours.surface,
         borderColor: colours.outline,
-        textStyle: { color: colours.onSurface, fontSize: 12 },
+        textStyle: { color: colours.onSurface, fontSize: 12, fontFamily: colours.font },
         valueFormatter: (value: number) => `${value}%`,
       },
       xAxis: {
         type: 'value',
         max: 100,
-        axisLabel: { color: colours.onSurfaceVariant, fontSize: 11, formatter: '{value}%' },
-        splitLine: { lineStyle: { color: colours.outline, opacity: 0.35 } },
+        axisLabel: {
+          color: colours.onSurfaceVariant,
+          fontSize: 12,
+          fontFamily: colours.font,
+          formatter: '{value}%',
+        },
+        splitLine: { lineStyle: { color: colours.outline, opacity: 0.3 } },
       },
       yAxis: {
         type: 'category',
-        data: names,
+        data: rows.map((load) => shortName(load.name)),
         axisLabel: {
-          color: colours.onSurfaceVariant,
-          fontSize: 11,
-          width: 150,
+          color: colours.onSurface,
+          fontSize: 12,
+          fontFamily: colours.font,
+          width: 190,
           overflow: 'truncate',
         },
         axisLine: { lineStyle: { color: colours.outline } },
         axisTick: { show: false },
       },
       series: [
-        series('CPU requested', (load) => load.cpuPercent, colours.primary),
-        series('Memory requested', (load) => load.memoryPercent, colours.secondary),
-        series('Pod slots', (load) => load.podPercent, colours.tertiary),
+        {
+          ...(series('CPU requested', (load) => load.cpuPercent, colours.primary) as object),
+          // The thresholds ride on the first series so they are drawn once
+          // rather than four times on top of each other.
+          markLine: {
+            silent: true,
+            symbol: 'none',
+            data: [marker(80, colours.warning, '80%'), marker(90, colours.error, '90%')],
+          },
+        },
+        series('Memory requested', (load) => load.memoryPercent, colours.tertiary),
+        series('Pod slots', (load) => load.podPercent, colours.secondary),
         ...(anyDisk
-          ? [series('Disk used', (load) => Math.max(0, load.diskPercent), colours.onSurfaceVariant)]
+          ? [series('Disk used', (load) => Math.max(0, load.diskPercent), colours.success)]
           : []),
       ],
     }
@@ -178,12 +240,16 @@
     }
   })
 
-  // Redraw on data and on theme. resolvedTheme rather than the preference, so
-  // it repaints when the OS flips at sunset without anything being chosen.
+  // Redraw on data, on expansion and on theme. resolvedTheme rather than the
+  // preference, so it repaints when the OS flips at sunset without anything
+  // being chosen.
   $effect(() => {
-    void loads
+    void shown
     void preferences.resolvedTheme
     chart?.setOption(buildOption(), true)
+    // The container's height changes when the list expands, and a canvas
+    // sized at build time keeps the height it was built at.
+    chart?.resize()
   })
 
   /**
@@ -191,16 +257,16 @@
    *
    * Bound imperatively rather than through the chart's own event API, which
    * the minimal Chart surface in $lib/echarts deliberately does not expose:
-   * the y-axis label under the pointer is enough to identify the row, and
-   * keeping the shared type small is worth more than a typed handler here.
+   * the row under the pointer is enough to identify the node, and keeping the
+   * shared type small is worth more than a typed handler here.
    */
   function pickNode(event: MouseEvent): void {
     if (!onselect || !container) return
 
     const bounds = container.getBoundingClientRect()
-    const rows = [...loads].reverse()
+    const rows = [...shown].reverse()
     // The plot area starts below the legend; rows divide what is left evenly.
-    const top = bounds.top + 30
+    const top = bounds.top + 34
     const usable = bounds.height - 38
     if (usable <= 0 || rows.length === 0) return
 
@@ -225,4 +291,19 @@
     style="height: {height}px"
     class="w-full {onselect ? 'cursor-pointer' : ''}"
   ></div>
+
+  <!-- Under the chart rather than beside the heading: it changes what is
+       below it, and a control that reaches across a card to do that is one
+       people press by accident. -->
+  {#if hidden > 0}
+    <button
+      type="button"
+      onclick={() => (expanded = !expanded)}
+      aria-expanded={expanded}
+      class="state-layer mt-1 self-start rounded-xs px-1.5 py-1 text-label-medium text-primary
+             transition-colors duration-100 hover:bg-primary/10"
+    >
+      {expanded ? `Show the busiest ${COLLAPSED}` : `Show all ${loads.length} nodes`}
+    </button>
+  {/if}
 {/if}
