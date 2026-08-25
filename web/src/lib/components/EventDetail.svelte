@@ -16,6 +16,7 @@
 <script lang="ts">
   import { Activity } from '@lucide/svelte'
   import { iconForKind } from '$lib/kindIcons'
+  import DetailSection from './DetailSection.svelte'
 
   interface InvolvedObject {
     kind: string
@@ -139,23 +140,18 @@
          the message read as an unlabelled quotation above an unlabelled
          list. -->
     {#if message}
-      <section class="flex flex-col gap-1.5">
-        <h4 class="text-body-medium font-semibold text-on-surface">Message</h4>
-        <!-- In full and selectable. It is the one field somebody came to read,
-             and the list could only ever show a truncated line of it. -->
-        <p
-          class="rounded-sm border border-outline-variant/40 bg-surface-container px-3 py-2
-                 text-body-medium leading-relaxed text-on-surface"
-          data-selectable
-        >
+      <DetailSection title="Message">
+        <!-- In full, selectable, and unboxed. It is the one field somebody
+             came to read, and the list could only ever show a truncated line
+             of it — but a border around it made a sentence look like an
+             exhibit, when the section's own rule already sets it apart. -->
+        <p class="text-body-medium leading-relaxed text-on-surface" data-selectable>
           {message}
         </p>
-      </section>
+      </DetailSection>
     {/if}
 
-    <section class="flex flex-col gap-1.5">
-      <h4 class="text-body-medium font-semibold text-on-surface">Details</h4>
-
+    <DetailSection title="Details">
       <!-- A quarter for the labels and the rest for the values, both aligned
            left. Values here are of wildly different lengths — "Warning"
            beside a sixty-character event name — and right-aligning them
@@ -168,6 +164,6 @@
           </dd>
         {/each}
       </dl>
-    </section>
+    </DetailSection>
   </div>
 {/if}
