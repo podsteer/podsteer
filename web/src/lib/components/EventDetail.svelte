@@ -9,12 +9,13 @@
   An event is unusual among Kubernetes objects in having nothing under spec or
   status — everything worth reading is at the top level, which is why the
   generic overview showed almost none of it. It is also the only kind that is
-  entirely ABOUT something else, so the object it concerns is a link rather
-  than a string: arriving at an event and not being able to reach the pod it
-  describes is the dead end this pane exists to remove.
+  entirely ABOUT something else, so the object it concerns is written as a path
+  whose last part is a link: arriving at an event and not being able to reach
+  the pod it describes is the dead end this pane exists to remove.
 -->
 <script lang="ts">
-  import { AlertTriangle, Activity, ArrowUpRight } from '@lucide/svelte'
+  import { Activity } from '@lucide/svelte'
+  import { iconForKind } from '$lib/kindIcons'
 
   interface InvolvedObject {
     kind: string
@@ -40,6 +41,15 @@
   })
 
   const isWarning = $derived(event?.type === 'Warning')
+
+  /**
+   * The icon of the thing the event is about, not a generic alarm.
+   *
+   * The severity is already in the colour, so the shape is free to say what
+   * kind of object this concerns — which is the first thing somebody wants
+   * from an event, and the same icon the row they clicked was marked with.
+   */
+  const Icon = $derived(involved ? iconForKind({ kind: involved.kind }) : Activity)
   const message = $derived((event?.message as string) ?? '')
   const reason = $derived((event?.reason as string) ?? 'Event')
 
@@ -90,18 +100,35 @@
 
 {#if event}
   <div class="flex flex-col gap-5 p-4">
-    <!-- What this is, marked the way the row that led here was marked. -->
+    <!-- Marked the way the row that led here was marked: the object's own
+         icon, in the severity's colour and weight. -->
     <div class="flex items-start gap-3">
-      {#if isWarning}
-        <AlertTriangle class="mt-0.5 size-5 shrink-0 text-gauge-warn" strokeWidth={2.75} />
-      {:else}
-        <Activity class="mt-0.5 size-5 shrink-0 text-on-surface-variant/50" strokeWidth={1.75} />
-      {/if}
+      <Icon
+        class="mt-0.5 size-5 shrink-0 {isWarning ? 'text-gauge-warn' : 'text-on-surface-variant/50'}"
+        strokeWidth={isWarning ? 2.75 : 1.75}
+      />
       <div class="min-w-0">
         <h3 class="text-title-medium font-semibold text-on-surface">{reason}</h3>
+
+        <!-- A path rather than a sentence, and its last part is where it
+             goes. "Pod · name" read as a caption; "Pod / name" reads as the
+             address of something, which is what it is. -->
         {#if involved}
-          <p class="text-body-small text-on-surface-variant">
-            {involved.kind} · {involved.name}
+          <p class="flex min-w-0 items-baseline gap-1.5 text-body-medium text-on-surface-variant">
+            <span class="shrink-0">{involved.kind}</span>
+            <span class="shrink-0 text-on-surface-variant/40" aria-hidden="true">/</span>
+            {#if canOpen && onopen}
+              <button
+                type="button"
+                onclick={() => onopen?.(involved)}
+                class="resource-link min-w-0 truncate text-left"
+                title="Open {involved.kind.toLowerCase()} {involved.name}"
+              >
+                {involved.name}
+              </button>
+            {:else}
+              <span class="min-w-0 truncate">{involved.name}</span>
+            {/if}
           </p>
         {/if}
       </div>
@@ -117,18 +144,6 @@
       >
         {message}
       </p>
-    {/if}
-
-    <!-- The object this is about, as somewhere to go. -->
-    {#if involved && canOpen && onopen}
-      <button
-        type="button"
-        onclick={() => onopen?.(involved)}
-        class="resource-link flex items-center gap-2 self-start text-body-medium"
-      >
-        Open {involved.kind.toLowerCase()}
-        <ArrowUpRight class="size-4 shrink-0" strokeWidth={2} />
-      </button>
     {/if}
 
     <dl class="grid grid-cols-[auto_1fr] items-baseline gap-x-6 gap-y-2">

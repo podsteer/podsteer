@@ -243,12 +243,16 @@
 <svelte:window onkeydown={onKeydown} />
 
 {#if session.selectedName}
-  <!-- Scrim -->
+  <!-- Scrim: dimmed, not blurred.
+       The row behind the drawer is what was clicked, and the rows around it
+       are the context somebody reads the detail against — a blur takes both
+       away to decorate a panel that already has its own surface and shadow to
+       separate it. -->
   <button
     type="button"
     aria-label="Close details"
     tabindex="-1"
-    class="fixed inset-0 z-40 cursor-default bg-scrim/30 backdrop-blur-[1px]"
+    class="fixed inset-0 z-40 cursor-default bg-scrim/30"
     onclick={session.closeDetail}
   ></button>
 
