@@ -14,14 +14,26 @@
   import { Fingerprint } from '@lucide/svelte'
   import { preferences } from '$stores/preferences.svelte'
   import ToolbarToggle from './ToolbarToggle.svelte'
+
+  interface Props {
+    /** Locks the control, for a view that cannot safely be re-seeded. */
+    disabled?: boolean
+    /** Said on hover when it is locked. */
+    disabledReason?: string
+  }
+
+  let { disabled = false, disabledReason }: Props = $props()
 </script>
 
 <ToolbarToggle
   icon={Fingerprint}
   label="Managed fields"
   pressed={preferences.showManagedFields}
-  title={preferences.showManagedFields
-    ? 'Showing managedFields — the API server’s record of which controller owns which field'
-    : 'Hiding managedFields — click to show the API server’s field-ownership record'}
+  {disabled}
+  title={disabled
+    ? (disabledReason ?? 'Unavailable')
+    : preferences.showManagedFields
+      ? 'Showing managedFields — the API server’s record of which controller owns which field'
+      : 'Hiding managedFields — click to show the API server’s field-ownership record'}
   onclick={preferences.toggleManagedFields}
 />

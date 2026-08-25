@@ -26,7 +26,11 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
   import {
+    Decoration,
+    type DecorationSet,
     EditorView,
+    ViewPlugin,
+    type ViewUpdate,
     keymap,
     lineNumbers,
     highlightActiveLine,
@@ -35,7 +39,7 @@
     highlightSpecialChars,
   } from '@codemirror/view'
   import { yaml } from '@codemirror/lang-yaml'
-  import { Compartment, EditorState } from '@codemirror/state'
+  import { Compartment, EditorState, StateEffect, StateField } from '@codemirror/state'
   import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
   import {
     bracketMatching,
@@ -47,14 +51,26 @@
   } from '@codemirror/language'
   import { tags } from '@lezer/highlight'
   import { preferences } from '$stores/preferences.svelte'
+  import { findMatches } from '$lib/textSearch'
 
   interface Props {
     content: string
     readonly?: boolean
     onchange?: (value: string) => void
+    /** Text to find and highlight. Empty clears the highlighting. */
+    query?: string
+    /** Hands the parent the controls it cannot reach from outside. */
+    onready?: (api: EditorApi) => void
   }
 
-  let { content, readonly = false, onchange }: Props = $props()
+  export interface EditorApi {
+    /** Moves the selection to the next match, wrapping at the end. */
+    findNext: () => void
+    /** Moves the selection to the previous match, wrapping at the start. */
+    findPrevious: () => void
+  }
+
+  let { content, readonly = false, onchange, query = '', onready }: Props = $props()
 
   let editorContainer: HTMLDivElement
   let editor: EditorView | null = null
@@ -68,6 +84,115 @@
    * toggled the toolbar button.
    */
   const wrapping = new Compartment()
+
+  /**
+   * Find, without @codemirror/search.
+   *
+   * The package was the obvious choice and turns out to buy almost nothing
+   * here: its highlighter returns no decorations unless CodeMirror's OWN
+   * search panel is open, and this toolbar deliberately replaces that panel.
+   * The matching that would be left — a case-insensitive substring scan over
+   * a document of a few hundred lines — is the thirty lines below, and not
+   * worth another entry in the shipped licence inventory.
+   *
+   * The matching itself lives in $lib/textSearch, because the toolbar needs
+   * the same answer to show a count.
+   */
+  const setQuery = StateEffect.define<string>()
+
+  const queryField = StateField.define<string>({
+    create: () => '',
+    update(value, transaction) {
+      for (const effect of transaction.effects) if (effect.is(setQuery)) return effect.value
+      return value
+    },
+  })
+
+  const matchMark = Decoration.mark({ class: 'cm-yaml-match' })
+  const currentMark = Decoration.mark({ class: 'cm-yaml-match cm-yaml-match-current' })
+
+  /**
+   * Decorates matches in the visible ranges only.
+   *
+   * Scanning the whole document on every keystroke would be wasted work on
+   * lines nobody is looking at, and CodeMirror re-runs this as the viewport
+   * moves, so scrolling reveals the rest.
+   */
+  const highlighter = ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet
+
+      constructor(view: EditorView) {
+        this.decorations = this.build(view)
+      }
+
+      update(update: ViewUpdate) {
+        if (
+          update.docChanged ||
+          update.viewportChanged ||
+          update.selectionSet ||
+          update.startState.field(queryField) !== update.state.field(queryField)
+        ) {
+          this.decorations = this.build(update.view)
+        }
+      }
+
+      build(view: EditorView): DecorationSet {
+        const needle = view.state.field(queryField)
+        if (!needle) return Decoration.none
+
+        const ranges = []
+        const head = view.state.selection.main
+        for (const { from, to } of view.visibleRanges) {
+          const text = view.state.sliceDoc(from, to)
+          for (const [start, end] of findMatches(text, needle, from)) {
+            const isCurrent = head.from === start && head.to === end
+            ranges.push((isCurrent ? currentMark : matchMark).range(start, end))
+          }
+        }
+        // Decoration sets must be sorted by position.
+        ranges.sort((a, b) => a.from - b.from)
+        return Decoration.set(ranges)
+      }
+    },
+    { decorations: (plugin) => plugin.decorations },
+  )
+
+  /** All matches in the whole document, for counting and for stepping. */
+  function allMatches(view: EditorView): Array<[number, number]> {
+    const needle = view.state.field(queryField)
+    if (!needle) return []
+    return findMatches(view.state.doc.toString(), needle)
+  }
+
+  /**
+   * Steps to the next or previous match, wrapping at either end.
+   *
+   * Wrapping rather than stopping: a search that goes quiet at the last match
+   * looks broken, and the alternative is making somebody scroll back to the
+   * top to carry on.
+   */
+  function step(direction: 1 | -1): void {
+    if (!editor) return
+    const found = allMatches(editor)
+    if (found.length === 0) return
+
+    const from = editor.state.selection.main.from
+    let index: number
+    if (direction === 1) {
+      index = found.findIndex(([start]) => start > from)
+      if (index === -1) index = 0
+    } else {
+      index = found.map(([start]) => start).filter((start) => start < from).length - 1
+      if (index < 0) index = found.length - 1
+    }
+
+    const [start, end] = found[index]
+    editor.dispatch({
+      selection: { anchor: start, head: end },
+      effects: EditorView.scrollIntoView(start, { y: 'center' }),
+    })
+  }
 
   /**
    * The chrome: everything that is not the text itself.
@@ -132,6 +257,17 @@
       backgroundColor: 'color-mix(in oklab, var(--error) 22%, transparent)',
     },
 
+    // Amber for a match and a solid amber for the one you are on — the same
+    // two-tier reading the gauges use, rather than the yellow-on-light and
+    // cyan-on-dark CodeMirror ships, which belong to neither theme here.
+    '.cm-yaml-match': {
+      backgroundColor: 'color-mix(in oklab, var(--gauge-warn) 30%, transparent)',
+      borderRadius: '2px',
+    },
+    '.cm-yaml-match-current': {
+      backgroundColor: 'color-mix(in oklab, var(--gauge-warn) 70%, transparent)',
+    },
+
   })
 
   /**
@@ -174,6 +310,8 @@
       indentOnInput(),
       foldGutter(),
       syntaxHighlighting(highlighting),
+      queryField,
+      highlighter,
       keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
       yaml(),
       theme,
@@ -194,10 +332,20 @@
       state: EditorState.create({ doc: content, extensions }),
       parent: editorContainer,
     })
+
+    onready?.({
+      findNext: () => step(1),
+      findPrevious: () => step(-1),
+    })
   })
 
   onDestroy(() => {
     editor?.destroy()
+  })
+
+  $effect(() => {
+    const needle = query
+    editor?.dispatch({ effects: setQuery.of(needle) })
   })
 
   $effect(() => {

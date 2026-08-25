@@ -16,10 +16,8 @@
   import EventDetail from './EventDetail.svelte'
   import { iconForKind } from '$lib/kindIcons'
   import { parse } from 'yaml'
-  import YamlEditor from './YamlEditor.svelte'
-  import PaneToolbar from './PaneToolbar.svelte'
-  import WrapLinesToggle from './WrapLinesToggle.svelte'
-  import ManagedFieldsToggle from './ManagedFieldsToggle.svelte'
+  import YamlPane from './YamlPane.svelte'
+  import ToolbarButton from './ToolbarButton.svelte'
   import { withoutManagedFields } from '$lib/manifest'
   import { preferences } from '$stores/preferences.svelte'
   import DeleteDialog from './DeleteDialog.svelte'
@@ -198,9 +196,19 @@
     actionError = null
   })
 
+  /**
+   * Copies the manifest AS SHOWN, managed fields included only if they are.
+   *
+   * The button sits in the YAML toolbar now, directly above the text, so what
+   * it copies has to be that text. Copying the unfiltered object from a
+   * control beside a filtered view put 465 lines on the clipboard while 232
+   * were on screen — and the difference is invisible until it is pasted
+   * somewhere. Anybody who wants the whole thing turns managed fields back on
+   * first, which is exactly what the neighbouring control is for.
+   */
   async function copyManifest(): Promise<void> {
-    if (!session.manifest) return
-    await navigator.clipboard.writeText(session.manifest)
+    if (!shownManifest) return
+    await navigator.clipboard.writeText(shownManifest)
     copied = true
     setTimeout(() => (copied = false), 1500)
   }
@@ -362,43 +370,11 @@
           </button>
         {/if}
 
-        <!-- Shown disabled rather than hidden when it cannot apply, so the
-             row of actions keeps its shape and says why: an icon that
-             disappears leaves somebody wondering whether they misremembered
-             it, while one that is greyed out and explains itself on hover
-             answers the question. -->
-        <button
-          type="button"
-          onclick={() => (editDialogOpen = true)}
-          disabled={!canEdit}
-          aria-label="Edit"
-          title={editHint}
-          class="state-layer grid size-8 shrink-0 place-items-center rounded-full
-                 transition-colors duration-100
-                 {canEdit ? 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface' : 'text-on-surface-variant/30'}
-                 disabled:pointer-events-none"
-        >
-          <Pencil class="size-4" strokeWidth={1.8} />
-        </button>
-
-        <button
-          type="button"
-          onclick={copyManifest}
-          disabled={!session.manifest}
-          aria-label="Copy manifest"
-          title="Copy manifest"
-          class="state-layer grid size-8 shrink-0 place-items-center rounded-full
-                 transition-colors duration-100
-                 {copied ? 'text-success' : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}
-                 disabled:pointer-events-none disabled:opacity-30"
-        >
-          {#if copied}
-            <Check class="size-4" strokeWidth={2.5} />
-          {:else}
-            <Copy class="size-4" strokeWidth={1.8} />
-          {/if}
-        </button>
-
+        <!-- Edit and Copy used to sit here. They act on the manifest, so they
+             now live in the YAML tab's toolbar beside it — a control belongs
+             next to the thing it changes, and from the Overview tab "Copy"
+             gave no clue that what landed on the clipboard was YAML. Delete
+             stays: it acts on the object, not on any one view of it. -->
         <button
           type="button"
           onclick={() => (deleteDialogOpen = true)}
@@ -542,15 +518,25 @@
           {:else if session.manifest}
             <!-- The toolbar only appears once there is text for it to govern:
                  a wrap button above a spinner controls nothing. -->
-            <div class="flex h-full flex-col">
-              <PaneToolbar>
-                <WrapLinesToggle />
-                <ManagedFieldsToggle />
-              </PaneToolbar>
-              <div class="min-h-0 flex-1">
-                <YamlEditor content={shownManifest ?? ''} readonly={true} />
-              </div>
-            </div>
+            <YamlPane content={shownManifest ?? ''} readonly={true}>
+              {#snippet actions()}
+                <ToolbarButton
+                  icon={Pencil}
+                  label="Edit"
+                  title={editHint}
+                  disabled={!canEdit}
+                  onclick={() => (editDialogOpen = true)}
+                />
+                <ToolbarButton
+                  icon={copied ? Check : Copy}
+                  label="Copy manifest"
+                  title={copied ? 'Copied' : 'Copy manifest'}
+                  active={copied}
+                  disabled={!shownManifest}
+                  onclick={copyManifest}
+                />
+              {/snippet}
+            </YamlPane>
           {/if}
         </div>
       {/if}
