@@ -13,6 +13,8 @@
   import LogViewer from './LogViewer.svelte'
   import ResourceOverview from './ResourceOverview.svelte'
   import EventsView from './EventsView.svelte'
+  import EventDetail from './EventDetail.svelte'
+  import { parse } from 'yaml'
   import YamlEditor from './YamlEditor.svelte'
   import DeleteDialog from './DeleteDialog.svelte'
   import ScaleDialog from './ScaleDialog.svelte'
@@ -60,6 +62,44 @@
   )
 
   const isPod = $derived(session.selectedKindId === 'core/v1/pods')
+
+  const isEvent = $derived(session.selectedKindId === 'core/v1/events')
+
+  /**
+   * The selected event, parsed from its own manifest.
+   *
+   * Everything an event says lives at the top level rather than under spec or
+   * status, which is why the generic overview showed almost none of it.
+   */
+  const parsedEvent = $derived.by((): Record<string, unknown> | null => {
+    if (!isEvent || !session.manifest) return null
+    try {
+      return parse(session.manifest) as Record<string, unknown>
+    } catch {
+      return null
+    }
+  })
+
+  /**
+   * The navigator id for the kind an event is about, or null when this
+   * cluster does not serve it.
+   *
+   * An event can name a kind PodSteer has no list for — a CRD removed since
+   * the event fired, most obviously — so the link is offered only when there
+   * is somewhere for it to go.
+   */
+  const involvedKindId = $derived.by((): string | null => {
+    const involved = parsedEvent?.involvedObject as Record<string, string> | undefined
+    if (!involved?.kind) return null
+    return session.kinds.find((kind) => kind.kind === involved.kind)?.id ?? null
+  })
+
+  /** Opens the object an event is about, in the list it belongs to. */
+  async function openInvolved(target: { name: string; namespace: string }): Promise<void> {
+    if (!involvedKindId) return
+    await session.selectKind(involvedKindId)
+    await session.openDetail(target.name, target.namespace)
+  }
 
   const isScalable = $derived(
     session.selectedKindId === 'apps/v1/deployments' ||
@@ -192,7 +232,10 @@
     { id: 'overview', label: 'Overview', icon: Info, show: () => true },
     { id: 'logs', label: 'Logs', icon: ScrollText, show: () => isPod || isWorkloadWithLogs },
     { id: 'terminal', label: 'Terminal', icon: TerminalSquare, show: () => isPod || isWorkloadWithLogs },
-    { id: 'events', label: 'Events', icon: Activity, show: () => true },
+    // An event has no events of its own, and asking for them returns the
+    // empty list that means "nothing recent" — which reads as a fault here
+    // rather than as the tautology it is.
+    { id: 'events', label: 'Events', icon: Activity, show: () => !isEvent },
     { id: 'yaml', label: 'YAML', icon: FileCode, show: () => true },
   ]
 </script>
@@ -340,7 +383,9 @@
 
     <!-- Tab content -->
     <div class="min-h-0 flex-1 overflow-auto bg-surface-container-lowest">
-      {#if activeTab === 'overview'}
+      {#if activeTab === 'overview' && isEvent}
+        <EventDetail event={parsedEvent} canOpen={involvedKindId !== null} onopen={openInvolved} />
+      {:else if activeTab === 'overview'}
         <ResourceOverview
           manifest={session.manifest}
           selectedPod={selectedPod}

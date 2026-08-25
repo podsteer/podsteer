@@ -49,7 +49,16 @@
 
   {#snippet rows(isVisible)}
     {#each session.pagedEvents as event (event.namespace + '/' + event.name)}
-      <tr class="border-t border-outline-variant/40 hover:bg-surface-container-low">
+      {@const selected =
+        session.selectedName === event.name && session.selectedNamespace === event.namespace}
+      <!-- Clickable like every other list. An event was the one row in the
+           application that led nowhere, which left its message readable only
+           as much of it as the column happened to fit. -->
+      <tr
+        class="cursor-pointer border-t border-outline-variant/40 transition-colors duration-100
+               {selected ? 'bg-secondary-container/40' : 'hover:bg-surface-container-low'}"
+        onclick={() => session.openDetail(event.name, event.namespace)}
+      >
         {#if isVisible('type')}
           <td class="overflow-hidden py-1.5 pr-3 pl-6">
             <StatusIndicator
