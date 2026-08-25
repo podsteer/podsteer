@@ -233,3 +233,69 @@ func TestMapServerVersionHandlesNil(t *testing.T) {
 		t.Errorf("mapServerVersion(nil) = %+v, want the zero value", got)
 	}
 }
+
+// An event that exists happened at least once, whatever the API left unset.
+//
+// Kubernetes has two generations of this field and a real cluster carries
+// both: events.k8s.io sets `series.count` when something repeats and NOTHING
+// when it happens once, while the older form sets `count`. Reading the legacy
+// field alone reported "0" against events that had just fired.
+func TestMapEventCountsBothGenerations(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		event corev1.Event
+		want  int32
+	}{
+		{
+			name: "modern, fired once, nothing set",
+			event: corev1.Event{
+				EventTime: metav1.NewMicroTime(time.Now()),
+			},
+			want: 1,
+		},
+		{
+			name: "modern, repeating",
+			event: corev1.Event{
+				Series:    &corev1.EventSeries{Count: 46},
+				EventTime: metav1.NewMicroTime(time.Now()),
+			},
+			want: 46,
+		},
+		{
+			name:  "legacy count",
+			event: corev1.Event{Count: 9},
+			want:  9,
+		},
+		{
+			name: "series wins over the legacy field it supersedes",
+			event: corev1.Event{
+				Count:  3,
+				Series: &corev1.EventSeries{Count: 12},
+			},
+			want: 12,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			event := test.event
+			event.Name = "probe.17c"
+			event.Namespace = "default"
+			event.Type = string(domain.EventWarning)
+			event.Reason = "Probing"
+			event.InvolvedObject = corev1.ObjectReference{Kind: "Pod", Name: "app-1"}
+
+			mapped, err := mapEvent("dev", &event)
+			if err != nil {
+				t.Fatalf("mapEvent() error = %v", err)
+			}
+			if got := mapped.Count(); got != test.want {
+				t.Errorf("count = %d, want %d", got, test.want)
+			}
+		})
+	}
+}

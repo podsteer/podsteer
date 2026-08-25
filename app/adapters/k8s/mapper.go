@@ -480,7 +480,7 @@ func mapEvent(clusterID domain.ClusterID, event *corev1.Event) (domain.Event, er
 		InvolvedKind: event.InvolvedObject.Kind,
 		InvolvedName: event.InvolvedObject.Name,
 		Source:       eventSource(event),
-		Count:        event.Count,
+		Count:        eventCount(event),
 		FirstSeen:    event.FirstTimestamp.Time,
 		LastSeen:     eventLastSeen(event),
 	})
@@ -492,6 +492,26 @@ func eventSource(event *corev1.Event) string {
 		return event.Source.Component
 	}
 	return event.ReportingController
+}
+
+// eventCount returns how many times the event has fired.
+//
+// The same two generations that complicate the timestamps complicate this.
+// `series.count` carries the repeat count for events emitted through the
+// events.k8s.io API, `count` for the older form — and an event created once
+// through the new API sets NEITHER, which is not zero occurrences. It is one.
+//
+// Reading the legacy field alone reported "Count 0" against events that had
+// demonstrably just happened, which is the sort of figure that makes somebody
+// distrust the column rather than the event.
+func eventCount(event *corev1.Event) int32 {
+	if event.Series != nil && event.Series.Count > 0 {
+		return event.Series.Count
+	}
+	if event.Count > 0 {
+		return event.Count
+	}
+	return 1
 }
 
 // eventLastSeen returns when the event most recently fired.
