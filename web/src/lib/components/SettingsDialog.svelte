@@ -281,33 +281,57 @@
                 the colour is never the only way to read it.
               </p>
 
+              <!-- Each line switches off on its own. Somebody who only wants
+                   to know about the serious case turns the first one off and
+                   gets blue all the way to the second, at whatever value they
+                   chose for it. -->
               <ul class="mt-4 flex flex-col gap-3">
-                <li class="flex items-center gap-3">
-                  <span class="flex w-24 shrink-0 items-center gap-2 text-body-medium text-on-surface">
-                    <span class="size-3 shrink-0 rounded-full bg-gauge-warn"></span>
-                    Amber
-                  </span>
-                  <Select
-                    label="Amber from"
-                    value={String(preferences.warnThreshold)}
-                    options={THRESHOLD_OPTIONS}
-                    class="flex-1"
-                    onchange={(value) => preferences.setWarnThreshold(Number(value))}
-                  />
-                </li>
-                <li class="flex items-center gap-3">
-                  <span class="flex w-24 shrink-0 items-center gap-2 text-body-medium text-on-surface">
-                    <span class="size-3 shrink-0 rounded-full bg-gauge-critical"></span>
-                    Red
-                  </span>
-                  <Select
-                    label="Red from"
-                    value={String(preferences.criticalThreshold)}
-                    options={THRESHOLD_OPTIONS}
-                    class="flex-1"
-                    onchange={(value) => preferences.setCriticalThreshold(Number(value))}
-                  />
-                </li>
+                {#each [{ id: 'warn', name: 'Amber', swatch: 'bg-gauge-warn', on: preferences.warnEnabled, value: preferences.warnThreshold, setOn: preferences.setWarnEnabled, setValue: preferences.setWarnThreshold }, { id: 'critical', name: 'Red', swatch: 'bg-gauge-critical', on: preferences.criticalEnabled, value: preferences.criticalThreshold, setOn: preferences.setCriticalEnabled, setValue: preferences.setCriticalThreshold }] as line (line.id)}
+                  <li class="flex items-center gap-3">
+                    <span
+                      class="flex w-20 shrink-0 items-center gap-2 text-body-medium
+                             {line.on ? 'text-on-surface' : 'text-on-surface-variant/50'}"
+                    >
+                      <span
+                        class="size-3 shrink-0 rounded-full {line.swatch} {line.on
+                          ? ''
+                          : 'opacity-30'}"
+                      ></span>
+                      {line.name}
+                    </span>
+
+                    <div class="flex shrink-0">
+                      {#each [true, false] as choice (choice)}
+                        <button
+                          type="button"
+                          onclick={() => line.setOn(choice)}
+                          aria-pressed={line.on === choice}
+                          aria-label="{line.name} threshold {choice ? 'on' : 'off'}"
+                          class="state-layer h-9 w-14 border text-label-large transition-colors
+                                 duration-150 ease-standard
+                                 {choice ? 'rounded-l-xs' : '-ml-px rounded-r-xs'}
+                                 {line.on === choice
+                                   ? 'border-transparent bg-secondary-container text-on-secondary-container'
+                                   : 'border-outline text-on-surface-variant'}"
+                        >
+                          {choice ? 'On' : 'Off'}
+                        </button>
+                      {/each}
+                    </div>
+
+                    <!-- Still adjustable while off, so a line can be set up
+                         before it is switched on rather than after. -->
+                    <div class="flex-1 {line.on ? '' : 'opacity-50'}">
+                      <Select
+                        label="{line.name} threshold"
+                        value={String(line.value)}
+                        options={THRESHOLD_OPTIONS}
+                        class="w-full"
+                        onchange={(value) => line.setValue(Number(value))}
+                      />
+                    </div>
+                  </li>
+                {/each}
               </ul>
 
               <!-- Shown rather than described. Somebody choosing a number
@@ -327,8 +351,9 @@
               </div>
 
               <p class="mt-3 text-body-small text-on-surface-variant/70">
-                The two cannot cross. Moving one past the other pushes it along rather than
-                leaving a range that could never be coloured.
+                The two cannot cross: moving one past the other pushes it along rather than
+                leaving a range that could never be coloured. With both off, every bar stays
+                blue however full it gets.
               </p>
             </div>
           </section>

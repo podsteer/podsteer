@@ -15,7 +15,6 @@
   import type { PodCapacity } from '$lib/api/client'
   import CapacityFigures, { type Figure } from './CapacityFigures.svelte'
   import GaugeTrack from './GaugeTrack.svelte'
-  import { preferences } from '$stores/preferences.svelte'
   import InfoHint from './InfoHint.svelte'
 
   interface Props {
@@ -35,17 +34,6 @@
   const width = $derived(Math.max(0, Math.min(100, capacity.usedPercentValue)))
 
   /**
-   * Past the operator's own warning line.
-   *
-   * This used to warn at 85, a number nothing else in the application used.
-   * Slots genuinely behave differently from CPU — there is no bursting past a
-   * node's cap, the pods that do not fit simply stay Pending — but that is an
-   * argument for the reader choosing one line, not for this card keeping a
-   * private one.
-   */
-  const crowded = $derived(capacity.usedPercentValue >= preferences.warnThreshold)
-
-  /**
    * Four figures in two pairs. The top pair is the slots — taken and free —
    * and the bottom pair is what became of the pods: working, or still waiting
    * for somewhere to run.
@@ -59,7 +47,6 @@
       label: 'Scheduled',
       value: capacity.scheduledLabel,
       percent: capacity.usedPercent,
-      tone: crowded ? 'text-gauge-warn' : undefined,
     },
     {
       label: 'Schedulable',

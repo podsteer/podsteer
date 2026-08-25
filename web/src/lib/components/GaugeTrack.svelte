@@ -55,10 +55,22 @@
 
   let { value, height = 'h-2', width = 'w-full', label, children }: Props = $props()
 
-  const warn = $derived(preferences.warnThreshold)
-  const critical = $derived(preferences.criticalThreshold)
+  /**
+   * Where each band begins, or null when the operator has turned it off.
+   *
+   * A line that is off does not exist for this track: with amber off, blue
+   * runs all the way to the red line rather than stopping early at a boundary
+   * nothing is drawn at. With both off the bar is blue however full it gets,
+   * which is a legitimate way to read a cluster somebody already knows is
+   * busy.
+   */
+  const warn = $derived(preferences.warnEnabled ? preferences.warnThreshold : null)
+  const critical = $derived(preferences.criticalEnabled ? preferences.criticalThreshold : null)
 
   const filled = $derived(Math.max(0, Math.min(100, value)))
+
+  /** Where blue gives way — to amber if it is on, otherwise to red, else never. */
+  const firstBand = $derived(warn ?? critical ?? 100)
 
   /**
    * The three segments, each the width of its own band.
@@ -67,9 +79,9 @@
    * not reached: at 85% the amber runs from the first threshold to 85 and the
    * red is not drawn at all.
    */
-  const normal = $derived(Math.min(filled, warn))
-  const over = $derived(Math.max(0, Math.min(filled, critical) - warn))
-  const severe = $derived(Math.max(0, filled - critical))
+  const normal = $derived(Math.min(filled, firstBand))
+  const over = $derived(warn === null ? 0 : Math.max(0, Math.min(filled, critical ?? 100) - warn))
+  const severe = $derived(critical === null ? 0 : Math.max(0, filled - critical))
 </script>
 
 <div
@@ -91,7 +103,7 @@
       <span
         class="absolute inset-y-0 bg-gauge-warn transition-all duration-300 ease-standard
                {severe > 0 ? '' : 'rounded-r-full'}"
-        style="left: {warn}%; width: {over}%"
+        style="left: {warn ?? 0}%; width: {over}%"
       ></span>
     {/if}
 
@@ -99,7 +111,7 @@
       <span
         class="absolute inset-y-0 rounded-r-full bg-gauge-critical transition-all duration-300
                ease-standard"
-        style="left: {critical}%; width: {severe}%"
+        style="left: {critical ?? 0}%; width: {severe}%"
       ></span>
     {/if}
   {/if}
@@ -107,14 +119,20 @@
   {@render children?.()}
 
   <!-- Drawn over the fill, so a bar that has passed a threshold still shows
-       where it was. Both are always present: a marker that appeared only once
-       it had been crossed would be telling somebody what they can already
-       see. -->
-  <span class="absolute inset-y-0 w-px bg-on-surface/45" style="left: {warn}%" title="{warn}%"
-  ></span>
-  <span
-    class="absolute inset-y-0 w-px bg-on-surface/45"
-    style="left: {critical}%"
-    title="{critical}%"
-  ></span>
+       where it was — and only for the lines that are switched on, since a
+       mark with no band behind it would be a rule nobody set. Both are drawn
+       whether or not the fill has reached them: a marker that appeared only
+       once it had been crossed would be telling somebody what they can
+       already see. -->
+  {#if warn !== null}
+    <span class="absolute inset-y-0 w-px bg-on-surface/45" style="left: {warn}%" title="{warn}%"
+    ></span>
+  {/if}
+  {#if critical !== null}
+    <span
+      class="absolute inset-y-0 w-px bg-on-surface/45"
+      style="left: {critical}%"
+      title="{critical}%"
+    ></span>
+  {/if}
 </div>

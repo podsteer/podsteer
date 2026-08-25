@@ -128,6 +128,9 @@ interface PersistedShape {
   /** Where a utilisation bar turns amber, and where it turns red. */
   warnThreshold: number
   criticalThreshold: number
+  /** Whether each line is drawn at all. */
+  warnEnabled: boolean
+  criticalEnabled: boolean
   /** Whether a newly raised finding makes a sound at all. */
   alertSoundsEnabled: boolean
   /** severity -> the id of the motif it plays, or SILENT. */
@@ -162,6 +165,11 @@ const DEFAULTS: PersistedShape = {
   // and because they are the numbers most operators already run alerts on.
   warnThreshold: 80,
   criticalThreshold: 90,
+  // Both on. An operator who only wants to hear about the serious case can
+  // turn the first one off, but a default that says nothing until something
+  // is already critical is a default that arrives too late.
+  warnEnabled: true,
+  criticalEnabled: true,
   // Off. An application that starts making noise nobody asked for is one
   // people mute at the operating system, taking the alarm they DID want with
   // it. Whoever wants this turns it on, and hears the sound as they choose it.
@@ -231,6 +239,16 @@ class Preferences {
    */
   warnThreshold = $state<number>(DEFAULTS.warnThreshold)
   criticalThreshold = $state<number>(DEFAULTS.criticalThreshold)
+
+  /**
+   * Whether each line is drawn.
+   *
+   * Turning one off does not move the other: somebody who wants only the
+   * critical line gets blue all the way to it, and their choice of where it
+   * sits is untouched by the one they are not using.
+   */
+  warnEnabled = $state<boolean>(DEFAULTS.warnEnabled)
+  criticalEnabled = $state<boolean>(DEFAULTS.criticalEnabled)
 
   /** Whether a newly raised warning or critical finding makes a sound. */
   alertSoundsEnabled = $state<boolean>(DEFAULTS.alertSoundsEnabled)
@@ -366,6 +384,16 @@ class Preferences {
     if (this.criticalThreshold <= this.warnThreshold) {
       this.criticalThreshold = clampThreshold(this.warnThreshold + 5)
     }
+    this.#save()
+  }
+
+  setWarnEnabled = (enabled: boolean): void => {
+    this.warnEnabled = enabled
+    this.#save()
+  }
+
+  setCriticalEnabled = (enabled: boolean): void => {
+    this.criticalEnabled = enabled
     this.#save()
   }
 
@@ -561,6 +589,10 @@ class Preferences {
       if (this.criticalThreshold <= this.warnThreshold) {
         this.criticalThreshold = clampThreshold(this.warnThreshold + 5)
       }
+      if (typeof stored.warnEnabled === 'boolean') this.warnEnabled = stored.warnEnabled
+      if (typeof stored.criticalEnabled === 'boolean') {
+        this.criticalEnabled = stored.criticalEnabled
+      }
       if (typeof stored.alertSoundsEnabled === 'boolean') {
         this.alertSoundsEnabled = stored.alertSoundsEnabled
       }
@@ -603,6 +635,8 @@ class Preferences {
         snoozes: this.#pruneSnoozes(),
         warnThreshold: this.warnThreshold,
         criticalThreshold: this.criticalThreshold,
+        warnEnabled: this.warnEnabled,
+        criticalEnabled: this.criticalEnabled,
         alertSoundsEnabled: this.alertSoundsEnabled,
         alertSounds: this.alertSounds,
         columns: this.columns,

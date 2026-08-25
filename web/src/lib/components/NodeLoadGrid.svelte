@@ -89,12 +89,17 @@
     ]
   }
 
-  /** Figure colour, matching the track it belongs to. */
+  /**
+   * Figures stay one colour whatever the reading.
+   *
+   * The bar beside them already says how full the node is, in bands, against
+   * marks. Colouring the number as well said it twice and made a row of four
+   * tracks look like four separate alarms — and a figure that changes colour
+   * is one somebody reads as a state rather than as the quantity it is.
+   * Unmeasured is the one exception, because that is not a reading at all.
+   */
   function figureTone(value: number): string {
-    if (value < 0) return 'text-on-surface-variant/40'
-    if (value >= preferences.criticalThreshold) return 'text-gauge-critical'
-    if (value >= preferences.warnThreshold) return 'text-gauge-warn'
-    return 'text-on-surface-variant'
+    return value < 0 ? 'text-on-surface-variant/40' : 'text-on-surface-variant'
   }
 </script>
 
