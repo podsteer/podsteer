@@ -14,6 +14,8 @@
 <script lang="ts">
   import type { PodCapacity } from '$lib/api/client'
   import CapacityFigures, { type Figure } from './CapacityFigures.svelte'
+  import GaugeTrack from './GaugeTrack.svelte'
+  import { preferences } from '$stores/preferences.svelte'
   import InfoHint from './InfoHint.svelte'
 
   interface Props {
@@ -33,13 +35,15 @@
   const width = $derived(Math.max(0, Math.min(100, capacity.usedPercentValue)))
 
   /**
-   * 85% is where this starts to matter.
+   * Past the operator's own warning line.
    *
-   * Earlier than the resource tracks warn, because slots cannot be
-   * overcommitted the way CPU can: there is no burst past the cap, and the
-   * pods that do not fit simply stay Pending.
+   * This used to warn at 85, a number nothing else in the application used.
+   * Slots genuinely behave differently from CPU — there is no bursting past a
+   * node's cap, the pods that do not fit simply stay Pending — but that is an
+   * argument for the reader choosing one line, not for this card keeping a
+   * private one.
    */
-  const crowded = $derived(capacity.usedPercentValue >= 85)
+  const crowded = $derived(capacity.usedPercentValue >= preferences.warnThreshold)
 
   /**
    * Four figures in two pairs. The top pair is the slots — taken and free —
@@ -55,7 +59,7 @@
       label: 'Scheduled',
       value: capacity.scheduledLabel,
       percent: capacity.usedPercent,
-      tone: crowded ? 'text-warning' : undefined,
+      tone: crowded ? 'text-gauge-warn' : undefined,
     },
     {
       label: 'Schedulable',
@@ -113,17 +117,7 @@
     </span>
   </div>
 
-  <div
-    class="relative h-3 w-full overflow-hidden rounded-full bg-surface-container-highest"
-    role="img"
-    aria-label="Pod slots: {capacity.scheduled} of {capacity.capacity} occupied"
-  >
-    <span
-      class="absolute inset-y-0 left-0 rounded-full transition-all duration-300 ease-standard
-             {crowded ? 'bg-error/70' : 'bg-primary/45'}"
-      style="width: {width}%"
-    ></span>
-  </div>
+  <GaugeTrack value={capacity.usedPercentValue} height="h-3" label="Pod slots" />
 
   <CapacityFigures {figures} />
 </div>

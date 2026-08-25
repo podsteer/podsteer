@@ -71,6 +71,14 @@ export const REFRESH_INTERVALS = [
 
 const STORAGE_KEY = 'podsteer.preferences.v1'
 
+/** The range a threshold may sensibly take, in whole per cent. */
+export const THRESHOLD_RANGE = { min: 50, max: 99 } as const
+
+function clampThreshold(value: number): number {
+  if (!Number.isFinite(value)) return 80
+  return Math.min(THRESHOLD_RANGE.max, Math.max(THRESHOLD_RANGE.min, Math.round(value)))
+}
+
 /**
  * Identifies one snoozed object within one finding.
  *
@@ -117,6 +125,9 @@ interface PersistedShape {
   namespaceByCluster: Record<string, string>
   /** clusterId -> snoozeKey() -> epoch milliseconds when the snooze lapses. */
   snoozes: Record<string, Record<string, number>>
+  /** Where a utilisation bar turns amber, and where it turns red. */
+  warnThreshold: number
+  criticalThreshold: number
   /** Whether a newly raised finding makes a sound at all. */
   alertSoundsEnabled: boolean
   /** severity -> the id of the motif it plays, or SILENT. */
@@ -146,6 +157,11 @@ const DEFAULTS: PersistedShape = {
   findingsExpanded: false,
   namespaceByCluster: {},
   snoozes: {},
+  // 80 and 90 because they are where Kubernetes itself starts to behave
+  // differently — the kubelet's default eviction threshold leaves 10% free —
+  // and because they are the numbers most operators already run alerts on.
+  warnThreshold: 80,
+  criticalThreshold: 90,
   // Off. An application that starts making noise nobody asked for is one
   // people mute at the operating system, taking the alarm they DID want with
   // it. Whoever wants this turns it on, and hears the sound as they choose it.
@@ -205,6 +221,16 @@ class Preferences {
    * as losing it.
    */
   snoozes = $state<Record<string, Record<string, number>>>({})
+
+  /**
+   * Where a utilisation bar stops being comfortable.
+   *
+   * One pair for the whole application. A cluster does not have one meaning
+   * of "nearly full" per card, and an operator who moves the line because
+   * their own nodes run hot means it everywhere.
+   */
+  warnThreshold = $state<number>(DEFAULTS.warnThreshold)
+  criticalThreshold = $state<number>(DEFAULTS.criticalThreshold)
 
   /** Whether a newly raised warning or critical finding makes a sound. */
   alertSoundsEnabled = $state<boolean>(DEFAULTS.alertSoundsEnabled)
@@ -323,6 +349,32 @@ class Preferences {
 
   setClusterNamespace = (clusterId: string, namespace: string): void => {
     this.namespaceByCluster = { ...this.namespaceByCluster, [clusterId]: namespace }
+    this.#save()
+  }
+
+  // --- Thresholds -----------------------------------------------------------
+
+  /**
+   * Moves the amber line, pushing the red one ahead of it if it has to.
+   *
+   * The two cannot cross: a warning that fires after the critical would
+   * colour nothing, and silently accepting that is worse than adjusting the
+   * other end where the operator can see it happen.
+   */
+  setWarnThreshold = (value: number): void => {
+    this.warnThreshold = clampThreshold(value)
+    if (this.criticalThreshold <= this.warnThreshold) {
+      this.criticalThreshold = clampThreshold(this.warnThreshold + 5)
+    }
+    this.#save()
+  }
+
+  /** Moves the red line, pulling the amber one back if it has to. */
+  setCriticalThreshold = (value: number): void => {
+    this.criticalThreshold = clampThreshold(value)
+    if (this.warnThreshold >= this.criticalThreshold) {
+      this.warnThreshold = clampThreshold(this.criticalThreshold - 5)
+    }
     this.#save()
   }
 
@@ -498,6 +550,17 @@ class Preferences {
       if (stored.snoozes && typeof stored.snoozes === 'object') {
         this.snoozes = stored.snoozes
       }
+      // Validated and re-ordered on the way in, because storage outlives the
+      // code that wrote it and a pair read back crossed would colour nothing.
+      if (typeof stored.warnThreshold === 'number') {
+        this.warnThreshold = clampThreshold(stored.warnThreshold)
+      }
+      if (typeof stored.criticalThreshold === 'number') {
+        this.criticalThreshold = clampThreshold(stored.criticalThreshold)
+      }
+      if (this.criticalThreshold <= this.warnThreshold) {
+        this.criticalThreshold = clampThreshold(this.warnThreshold + 5)
+      }
       if (typeof stored.alertSoundsEnabled === 'boolean') {
         this.alertSoundsEnabled = stored.alertSoundsEnabled
       }
@@ -538,6 +601,8 @@ class Preferences {
         findingsExpanded: this.findingsExpanded,
         namespaceByCluster: this.namespaceByCluster,
         snoozes: this.#pruneSnoozes(),
+        warnThreshold: this.warnThreshold,
+        criticalThreshold: this.criticalThreshold,
         alertSoundsEnabled: this.alertSoundsEnabled,
         alertSounds: this.alertSounds,
         columns: this.columns,

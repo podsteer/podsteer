@@ -18,6 +18,7 @@
 -->
 <script lang="ts">
   import type { ResourceUsage } from '$lib/api/client'
+  import { preferences } from '$stores/preferences.svelte'
   import CapacityFigures, { type Figure } from './CapacityFigures.svelte'
 
   interface Props {
@@ -51,16 +52,22 @@
   const limitOffset = $derived(Math.max(0, Math.min(100, usage.limitPercent)))
   const limitsOvercommitted = $derived(usage.limitPercent > 100)
 
+  const warn = $derived(preferences.warnThreshold)
+  const critical = $derived(preferences.criticalThreshold)
+
   /**
-   * Reservations crossing 90% is the point at which scheduling failures start,
-   * so the track changes colour there rather than at an arbitrary "full".
+   * The requests band, in the application's three gauge colours.
+   *
+   * It used to have thresholds of its own — 75 and 90 — which meant this bar
+   * turned amber at a number no other bar did. One pair of lines now, set by
+   * the operator, applied everywhere.
    */
   const requestTone = $derived(
-    usage.requestPercent >= 90
-      ? 'bg-error/70'
-      : usage.requestPercent >= 75
-        ? 'bg-warning/70'
-        : 'bg-primary/45',
+    usage.requestPercent >= critical
+      ? 'bg-gauge-critical'
+      : usage.requestPercent >= warn
+        ? 'bg-gauge-warn'
+        : 'bg-gauge-normal',
   )
 
   /**
@@ -106,7 +113,7 @@
         ? {
             label: 'Efficiency',
             percent: usage.efficiencyLabel,
-            tone: efficiency < 25 ? 'text-warning' : undefined,
+            tone: efficiency < 25 ? 'text-gauge-warn' : undefined,
             title: 'Measured usage as a share of what was requested',
           }
         : { label: 'Efficiency', value: '—', muted: true }),
@@ -127,7 +134,8 @@
     role="img"
     aria-label="{label}: {usage.requests} requested of {usage.allocatable} allocatable"
   >
-    <!-- Requests: the band that decides schedulability. -->
+    <!-- Requests: the band that decides schedulability, in the gauge palette
+         so its colour means the same here as on every other bar. -->
     <span
       class="absolute inset-y-0 left-0 rounded-full transition-all duration-300 ease-standard {requestTone}"
       style="width: {requestWidth}%"
@@ -137,15 +145,26 @@
          much is real" rather than as a competing measurement. -->
     {#if usage.measured}
       <span
-        class="absolute inset-y-[3px] left-0 rounded-full bg-primary transition-all duration-300 ease-standard"
+        class="absolute inset-y-[3px] left-0 rounded-full bg-on-surface/70 transition-all duration-300 ease-standard"
         style="width: {usageWidth}%"
       ></span>
     {/if}
 
-    <!-- Limits marker. -->
+    <!-- The two thresholds, on every bar in the application at the same
+         values. Thin, because this track already carries a limits marker
+         that has to stay the louder of the three. -->
+    <span class="absolute inset-y-0 w-px bg-on-surface/45" style="left: {warn}%" title="{warn}%"
+    ></span>
+    <span
+      class="absolute inset-y-0 w-px bg-on-surface/45"
+      style="left: {critical}%"
+      title="{critical}%"
+    ></span>
+
+    <!-- Limits marker: what could happen if everything peaked at once. -->
     {#if usage.limitPercent > 0}
       <span
-        class="absolute inset-y-0 w-0.5 {limitsOvercommitted ? 'bg-error' : 'bg-on-surface/40'}"
+        class="absolute inset-y-0 w-0.5 {limitsOvercommitted ? 'bg-gauge-critical' : 'bg-on-surface'}"
         style="left: {limitOffset}%"
         title="Limits: {usage.limits}{limitsOvercommitted ? ' — more than the cluster has' : ''}"
       ></span>

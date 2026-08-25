@@ -38,7 +38,19 @@
     alertPlayer,
   } from '$stores/alerts.svelte'
   import Select from './Select.svelte'
-  import { RefreshCw, Palette, Database, Scale, Bell, Play, X } from '@lucide/svelte'
+  import GaugeTrack from './GaugeTrack.svelte'
+  import { RefreshCw, Palette, Database, Scale, Bell, Gauge, Play, X } from '@lucide/svelte'
+
+  /**
+   * The values a threshold may take, every five per cent.
+   *
+   * Coarse on purpose: the difference between 80 and 82 is not a decision
+   * anybody makes deliberately, and a free-text box invites 800.
+   */
+  const THRESHOLD_OPTIONS = Array.from({ length: 10 }, (_, index) => {
+    const value = 50 + index * 5
+    return { value: String(value), label: `${value}%` }
+  })
 
   /**
    * The sounds, plus silence.
@@ -69,6 +81,7 @@
   const SECTIONS = [
     { id: 'refresh', label: 'Refresh', icon: RefreshCw },
     { id: 'appearance', label: 'Appearance', icon: Palette },
+    { id: 'thresholds', label: 'Thresholds', icon: Gauge },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'data', label: 'Data', icon: Database },
     { id: 'credits', label: 'Credits', icon: Scale },
@@ -258,6 +271,68 @@
               </label>
             </div>
           </section>
+        {:else if section === 'thresholds'}
+          <section class="flex flex-col gap-6">
+            <div>
+              <h3 class="text-title-medium text-on-surface">When a bar changes colour</h3>
+              <p class="mt-0.5 text-body-small text-on-surface-variant">
+                Every bar that measures how full something is uses these two lines: blue below the
+                first, amber between them, red past the second. Both are marked on the track, so
+                the colour is never the only way to read it.
+              </p>
+
+              <ul class="mt-4 flex flex-col gap-3">
+                <li class="flex items-center gap-3">
+                  <span class="flex w-24 shrink-0 items-center gap-2 text-body-medium text-on-surface">
+                    <span class="size-3 shrink-0 rounded-full bg-gauge-warn"></span>
+                    Amber
+                  </span>
+                  <Select
+                    label="Amber from"
+                    value={String(preferences.warnThreshold)}
+                    options={THRESHOLD_OPTIONS}
+                    class="flex-1"
+                    onchange={(value) => preferences.setWarnThreshold(Number(value))}
+                  />
+                </li>
+                <li class="flex items-center gap-3">
+                  <span class="flex w-24 shrink-0 items-center gap-2 text-body-medium text-on-surface">
+                    <span class="size-3 shrink-0 rounded-full bg-gauge-critical"></span>
+                    Red
+                  </span>
+                  <Select
+                    label="Red from"
+                    value={String(preferences.criticalThreshold)}
+                    options={THRESHOLD_OPTIONS}
+                    class="flex-1"
+                    onchange={(value) => preferences.setCriticalThreshold(Number(value))}
+                  />
+                </li>
+              </ul>
+
+              <!-- Shown rather than described. Somebody choosing a number
+                   wants to see where it lands. -->
+              <div class="mt-4 flex flex-col gap-1.5">
+                <p class="text-label-small uppercase tracking-wider text-on-surface-variant">
+                  Preview
+                </p>
+                {#each [Math.max(5, preferences.warnThreshold - 20), Math.round((preferences.warnThreshold + preferences.criticalThreshold) / 2), Math.min(100, preferences.criticalThreshold + 5)] as sample (sample)}
+                  <div class="flex items-center gap-3">
+                    <GaugeTrack value={sample} label="Example at {sample} per cent" />
+                    <span class="w-[4.5ch] shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant">
+                      {sample}%
+                    </span>
+                  </div>
+                {/each}
+              </div>
+
+              <p class="mt-3 text-body-small text-on-surface-variant/70">
+                The two cannot cross. Moving one past the other pushes it along rather than
+                leaving a range that could never be coloured.
+              </p>
+            </div>
+          </section>
+
         {:else if section === 'notifications'}
           <section class="flex flex-col gap-6">
             <div>

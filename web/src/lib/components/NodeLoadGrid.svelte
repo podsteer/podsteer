@@ -18,6 +18,8 @@
 -->
 <script lang="ts">
   import type { NodeLoad } from '$lib/api/client'
+  import { preferences } from '$stores/preferences.svelte'
+  import GaugeTrack from './GaugeTrack.svelte'
 
   interface Props {
     loads: NodeLoad[]
@@ -40,15 +42,6 @@
 
   const shown = $derived(expanded ? loads : loads.slice(0, COLLAPSED))
   const hidden = $derived(Math.max(0, loads.length - COLLAPSED))
-
-  /**
-   * Where a track stops being comfortable.
-   *
-   * The same numbers the capacity card and the findings use. A cluster does
-   * not have one meaning of "nearly full" per component.
-   */
-  const WARN = 80
-  const CRITICAL = 90
 
   interface Track {
     label: string
@@ -96,18 +89,11 @@
     ]
   }
 
-  /** Bar colour by how close the track is to refusing work. */
-  function tone(value: number): string {
-    if (value >= CRITICAL) return 'bg-error/70'
-    if (value >= WARN) return 'bg-warning/70'
-    return 'bg-primary/45'
-  }
-
   /** Figure colour, matching the track it belongs to. */
   function figureTone(value: number): string {
     if (value < 0) return 'text-on-surface-variant/40'
-    if (value >= CRITICAL) return 'text-error'
-    if (value >= WARN) return 'text-warning'
+    if (value >= preferences.criticalThreshold) return 'text-gauge-critical'
+    if (value >= preferences.warnThreshold) return 'text-gauge-warn'
     return 'text-on-surface-variant'
   }
 </script>
@@ -178,29 +164,7 @@
               {track.label}
             </span>
 
-            <div
-              class="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-container-highest"
-              role="img"
-              aria-label="{track.label}: {track.value < 0
-                ? 'not measured'
-                : `${track.amount}, ${track.share}`}"
-            >
-              {#if track.value >= 0}
-                <span
-                  class="absolute inset-y-0 left-0 rounded-full transition-all duration-300
-                         ease-standard {tone(track.value)}"
-                  style="width: {Math.min(100, track.value)}%"
-                ></span>
-              {/if}
-
-              <!-- The same marker the capacity tracks carry, at the same
-                   threshold, so a reader who has learnt one has learnt both. -->
-              <span
-                class="absolute inset-y-0 w-0.5 bg-on-surface/40"
-                style="left: {WARN}%"
-                title="{WARN}%"
-              ></span>
-            </div>
+            <GaugeTrack value={track.value} height="h-1.5" label={track.label} />
 
             <span
               class="flex shrink-0 items-baseline gap-2 text-body-medium tabular-nums {figureTone(

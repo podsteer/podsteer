@@ -24,6 +24,25 @@
  * launch never flashes white at the frame.
  */
 
+/* ---- Gauge colours ------------------------------------------------------
+ *
+ * Three colours for every utilisation bar in the application: blue below the
+ * first threshold, amber between the two, red past the second.
+ *
+ * Declared once and deliberately NOT redeclared per theme, unlike every other
+ * colour here. The rest of the palette adapts because it is chrome; these
+ * three are the reading itself. An operator who learns that amber means
+ * "getting full" on a dark screen must not have to learn it again on a light
+ * one, and a screenshot of a bar should mean the same thing to whoever it is
+ * sent to. They are mid-tones for that reason — dark enough to read on a pale
+ * surface, bright enough on a dark one.
+ */
+:root {
+  --gauge-normal: #4f86e8;
+  --gauge-warn: #e0982f;
+  --gauge-critical: #d8453c;
+}
+
 /* ---- Google Blue scheme, dark (the default theme) ------------------------ */
 :root {
   color-scheme: dark;
@@ -139,6 +158,10 @@
  * mechanism that lets one stylesheet serve both themes.
  */
 @theme inline {
+  --color-gauge-normal: var(--gauge-normal);
+  --color-gauge-warn: var(--gauge-warn);
+  --color-gauge-critical: var(--gauge-critical);
+
   --color-primary: var(--primary);
   --color-on-primary: var(--on-primary);
   --color-primary-container: var(--primary-container);

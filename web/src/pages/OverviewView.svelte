@@ -803,9 +803,13 @@
                     >
                       {class_.name}
                     </span>
+                    <!-- A share of the total, not a utilisation, so it takes
+                         no thresholds: a class holding every volume in the
+                         cluster is not "critical", it is the only class. One
+                         neutral colour from the same palette. -->
                     <div class="h-2 flex-1 overflow-hidden rounded-full bg-surface-container-highest">
                       <span
-                        class="block h-full rounded-full bg-primary/45 transition-all duration-300 ease-standard"
+                        class="block h-full rounded-full bg-gauge-normal/70 transition-all duration-300 ease-standard"
                         style="width: {Math.max(2, class_.share)}%"
                       ></span>
                     </div>
@@ -916,7 +920,7 @@
                                {row.share < 0
                                  ? 'text-on-surface-variant/50'
                                  : row.share >= 100
-                                   ? 'text-warning'
+                                   ? 'text-gauge-warn'
                                    : 'text-on-surface-variant/70'}"
                         title={row.share < 0
                           ? 'Nothing reserved'
@@ -925,9 +929,13 @@
                         {row.share < 0 ? 'no request' : `${Math.round(row.share)}%`}
                       </span>
                     </span>
+                    <!-- Scaled to the list's own leader, which is a ranking
+                         rather than a reading: the top pod is always 100% of
+                         itself. The figure beside it carries the threshold
+                         colour, because usage against a reservation IS one. -->
                     <span class="h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
                       <span
-                        class="block h-full rounded-full bg-primary/45 transition-all duration-300 ease-standard"
+                        class="block h-full rounded-full bg-gauge-normal/70 transition-all duration-300 ease-standard"
                         style="width: {Math.max(2, row.percent)}%"
                       ></span>
                     </span>
