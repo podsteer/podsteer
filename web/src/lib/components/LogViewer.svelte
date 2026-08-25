@@ -5,6 +5,13 @@
   scrollable container. The operator can select which container to view (for
   multi-container pods), toggle follow mode, and search within the logs.
 
+  Searching marks matches in place rather than hiding what does not match, the
+  same as the manifest pane, and a ruler down the right edge shows where they
+  fall in the whole stream. The filter control collapses the view to the
+  matching lines when that is what is wanted — which is often, on a long
+  stream — and the ruler goes away with it, because against a filtered list
+  every visible line matches and the track would say nothing.
+
   For deployments and other workloads, it can aggregate logs from multiple pods.
 -->
 <script lang="ts">
@@ -19,7 +26,7 @@
   import ToolbarButton from './ToolbarButton.svelte'
   import WrapLinesToggle from './WrapLinesToggle.svelte'
   import { splitOnMatches } from '$lib/textSearch'
-  import { ArrowDownToLine, Check, Copy, Eraser, Radio } from '@lucide/svelte'
+  import { ArrowDownToLine, Check, Copy, Eraser, ListFilter, Radio } from '@lucide/svelte'
 
   /**
    * Shapes of the `log:line` / `log:end` event payloads.
@@ -72,6 +79,24 @@
   let copied = $state(false)
 
   /**
+   * Whether the query hides the lines it does not match.
+   *
+   * Off by default, so searching behaves as it does on a manifest: every line
+   * stays, the matches are marked, and the ruler shows where they fall. That
+   * ruler is the reason for the default — markers need the non-matching lines
+   * present to mark against, and against a filtered list every visible line
+   * matches and the track is a solid bar.
+   *
+   * On, it does what the box used to do unconditionally, which is the right
+   * tool once a stream is long enough that the matches are what you want and
+   * the rest is what you are trying to get rid of.
+   */
+  let filterMode = $state(false)
+
+  /** Which match Enter last moved to, as an index into `matching`. */
+  let currentMatch = $state(-1)
+
+  /**
    * Copies what is on screen, which is the filtered set when filtering.
    *
    * The same rule the manifest's copy button follows: a control sitting above
@@ -90,12 +115,111 @@
     }
   }
 
-  // Filter logs by search query
-  const filteredLogs = $derived(
-    searchQuery
-      ? logs.filter((log) => log.line.toLowerCase().includes(searchQuery.toLowerCase()))
-      : logs
-  )
+  /**
+   * Every line, tagged with whether it matches and where it started.
+   *
+   * The original index is carried through because filtering renames nothing:
+   * the ruler, the jump and the highlight all have to refer to the same line
+   * whether or not its neighbours are on screen.
+   */
+  const decorated = $derived.by(() => {
+    const needle = searchQuery.toLowerCase()
+    return logs.map((log, index) => ({
+      log,
+      index,
+      matches: needle !== '' && log.line.toLowerCase().includes(needle),
+    }))
+  })
+
+  const matching = $derived(searchQuery ? decorated.filter((row) => row.matches) : [])
+
+  /** What is actually rendered. */
+  const rows = $derived(filterMode && searchQuery ? matching : decorated)
+
+  /** Kept for the copy button, which copies what is shown. */
+  const filteredLogs = $derived(rows.map((row) => row.log))
+
+  /**
+   * Scrolls a line to the middle of the pane.
+   *
+   * `scrollTop` rather than scrollIntoView: the latter walks up the ancestor
+   * chain and would scroll the drawer itself to bring the pane into view,
+   * moving things the reader did not ask to move.
+   */
+  function revealLine(index: number): void {
+    if (!logContainer) return
+    const element = logContainer.querySelector<HTMLElement>(`[data-log-index="${index}"]`)
+    if (!element) return
+    logContainer.scrollTop = element.offsetTop - logContainer.clientHeight / 2
+  }
+
+  function stepMatch(direction: 1 | -1): void {
+    if (matching.length === 0) return
+    const next = (currentMatch + direction + matching.length) % matching.length
+    currentMatch = next
+    revealLine(matching[next].index)
+  }
+
+  /**
+   * Where the matching lines fall, as fractions of the scrollable height.
+   *
+   * Measured from the rendered rows rather than computed from line counts,
+   * because a wrapped line is several rows tall and a marker placed by index
+   * would drift down the pane. Only the matching rows are measured, so the
+   * cost is the size of the result rather than of the log.
+   *
+   * Read after a frame: the rows have to exist and be laid out before their
+   * offsets mean anything.
+   */
+  let markers = $state<number[]>([])
+
+  $effect(() => {
+    // Anything that moves a line, changes which lines match, or changes how
+    // tall a line is.
+    const active = searchQuery !== '' && !filterMode
+    void logs.length
+    void preferences.wrapLines
+    void matching.length
+
+    if (!active || !logContainer) {
+      markers = []
+      return
+    }
+
+    const frame = requestAnimationFrame(() => {
+      if (!logContainer) return
+      const height = logContainer.scrollHeight
+      if (height <= 0) {
+        markers = []
+        return
+      }
+      const seen = new Set<number>()
+      const found: number[] = []
+      for (const element of logContainer.querySelectorAll<HTMLElement>('[data-log-match]')) {
+        const fraction = element.offsetTop / height
+        const key = Math.round(fraction * 200)
+        if (seen.has(key)) continue
+        seen.add(key)
+        found.push(fraction)
+      }
+      markers = found
+    })
+    return () => cancelAnimationFrame(frame)
+  })
+
+  /** A new query starts from the first match rather than from wherever it left off. */
+  $effect(() => {
+    const needle = searchQuery
+    currentMatch = -1
+    if (needle && !filterMode) {
+      requestAnimationFrame(() => {
+        if (matching.length > 0) {
+          currentMatch = 0
+          revealLine(matching[0].index)
+        }
+      })
+    }
+  })
 
   // Get all unique containers across all pods
   const allContainers = $derived.by(() => {
@@ -161,8 +285,11 @@
       logs = logs.slice(-10000)
     }
 
-    // Auto-scroll to bottom if enabled
-    if (autoScroll && logContainer) {
+    // Auto-scroll to bottom if enabled — but never while a search is active.
+    // Somebody who has just jumped to a match is reading it, and a stream that
+    // yanks the view back to the newest line every time a pod says something
+    // makes the match impossible to read.
+    if (autoScroll && !searchQuery && logContainer) {
       requestAnimationFrame(() => {
         logContainer.scrollTop = logContainer.scrollHeight
       })
@@ -243,10 +370,12 @@
         value={searchQuery}
         placeholder="Filter lines"
         label="Filter the log lines"
-        count="{filteredLogs.length}/{logs.length}"
-        empty={filteredLogs.length === 0}
+        count="{matching.length}/{logs.length}"
+        empty={matching.length === 0}
         autofocus
         onchange={(value) => (searchQuery = value)}
+        onnext={filterMode ? undefined : () => stepMatch(1)}
+        onprevious={filterMode ? undefined : () => stepMatch(-1)}
       />
     {/snippet}
 
@@ -290,6 +419,18 @@
 
       <WrapLinesToggle />
       <ToolbarToggle
+        icon={ListFilter}
+        label="Filter to matches"
+        pressed={filterMode}
+        disabled={!searchQuery}
+        title={!searchQuery
+          ? 'Type something to filter by'
+          : filterMode
+            ? 'Showing only matching lines — click to show them all again'
+            : 'Showing every line with the matches marked — click to hide the rest'}
+        onclick={() => (filterMode = !filterMode)}
+      />
+      <ToolbarToggle
         icon={Radio}
         label="Follow"
         pressed={follow}
@@ -327,9 +468,10 @@
   </PaneToolbar>
 
   <!-- Log output -->
+  <div class="relative min-h-0 flex-1">
   <div
     bind:this={logContainer}
-    class="min-h-0 flex-1 overflow-auto bg-surface-container-lowest p-3 font-mono text-xs leading-relaxed"
+    class="relative h-full overflow-auto bg-surface-container-lowest p-3 font-mono text-xs leading-relaxed"
   >
     {#if logs.length === 0}
       <div class="flex h-full items-center justify-center text-on-surface-variant">
@@ -343,10 +485,16 @@
            the pane's width, so every hover stripe still spans the full
            width instead of ending raggedly at each line's own length. -->
       <div class={preferences.wrapLines ? '' : 'w-max min-w-full'}>
-        {#each filteredLogs as log, i (i)}
+        {#each rows as row (row.index)}
+          {@const log = row.log}
           <div
+            data-log-index={row.index}
+            data-log-match={row.matches && !filterMode ? '' : undefined}
             class="hover:bg-surface-container-low
-                   {preferences.wrapLines ? 'break-all whitespace-pre-wrap' : 'whitespace-pre'}"
+                   {preferences.wrapLines ? 'break-all whitespace-pre-wrap' : 'whitespace-pre'}
+                   {!filterMode && currentMatch >= 0 && matching[currentMatch]?.index === row.index
+              ? 'bg-gauge-warn/12'
+              : ''}"
           >
             {#if isMultiPod && log.podName}
               <span class="text-primary">{log.podName}:</span>
@@ -365,6 +513,21 @@
         {/each}
       </div>
     {/if}
+  </div>
+
+  <!-- Where the matches fall in the whole stream. Only when the rest of the
+       lines are still there: against a filtered list every visible line
+       matches, and the track would be one unbroken bar. -->
+  {#if markers.length > 0}
+    <div class="pointer-events-none absolute inset-y-0 right-0 w-2.5" aria-hidden="true">
+      {#each markers as fraction (fraction)}
+        <span
+          class="absolute right-0.5 h-0.5 w-1.5 rounded-full bg-gauge-warn"
+          style="top: {(fraction * 100).toFixed(3)}%"
+        ></span>
+      {/each}
+    </div>
+  {/if}
   </div>
 
   <!-- Status bar -->
