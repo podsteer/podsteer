@@ -18,6 +18,7 @@
   import { EventsOn, EventsOff } from '$lib/wailsjs/runtime/runtime'
   import { StreamLogs, StopLogStream } from '$lib/wailsjs/go/wails/ManagementAPI'
   import { onMount, onDestroy } from 'svelte'
+  import { SvelteMap } from 'svelte/reactivity'
   import { preferences } from '$stores/preferences.svelte'
   import PaneToolbar from './PaneToolbar.svelte'
   import Select from './Select.svelte'
@@ -70,7 +71,16 @@
   let follow = $state(true)
   let tailLines = $state(100)
   let searchQuery = $state('')
-  let streamIds = $state<Map<string, string>>(new Map())
+  /**
+   * podName -> the backend's id for its stream.
+   *
+   * A SvelteMap, not a plain one in $state. Svelte 5 proxies objects and
+   * arrays but NOT Map or Set, so `.set()` on a plain map mutates without
+   * telling anybody — which is why the status bar read "Streaming from 0
+   * pods" while lines were arriving: the template was still seeing the empty
+   * map assigned before the loop that filled it.
+   */
+  let streamIds = new SvelteMap<string, string>()
   let logs = $state<Array<{ podName: string; line: string }>>([])
   let isStreaming = $state(false)
   let autoScroll = $state(true)
@@ -240,7 +250,7 @@
     for (const streamId of streamIds.values()) {
       await StopLogStream(streamId)
     }
-    streamIds = new Map()
+    streamIds.clear()
     logs = []
     isStreaming = true
 
@@ -263,7 +273,7 @@
     for (const streamId of streamIds.values()) {
       await StopLogStream(streamId)
     }
-    streamIds = new Map()
+    streamIds.clear()
     isStreaming = false
   }
 
@@ -313,11 +323,18 @@
   }
 
   // Toggle follow mode
-  function toggleFollow() {
+  /**
+   * Starts or stops the stream, rather than only ever starting it.
+   *
+   * Turning follow off used to do nothing at all — the condition only fired
+   * on the way back ON — so the control said "click to stop" and the lines
+   * kept arriving. Off now stops the streams and leaves what has been
+   * collected on screen; on opens them again, which re-fetches the tail.
+   */
+  async function toggleFollow(): Promise<void> {
     follow = !follow
-    if (follow && !isStreaming) {
-      startStream()
-    }
+    if (follow) await startStream()
+    else await stopStream()
   }
 
   // Toggle auto-scroll
@@ -532,15 +549,31 @@
 
   <!-- Status bar -->
   <div class="flex items-center justify-between border-t border-outline-variant bg-surface-container-low px-3 py-1 text-xs text-on-surface-variant">
-    <span>
+    <!-- A flex row, so the dot and the words are set apart by a real gap
+         rather than by whatever whitespace the markup happened to leave. -->
+    <span class="flex items-center gap-2">
       {#if isStreaming}
-        <span class="inline-block h-2 w-2 animate-pulse rounded-full bg-success"></span>
-        Streaming from {streamIds.size} {streamIds.size === 1 ? 'pod' : 'pods'}
+        <!-- Blue, not green. Green was the one colour left in the application
+             asserting a fourth meaning, and "this is working" is already what
+             blue says on every gauge and every status mark. -->
+        <span class="inline-block size-2 shrink-0 animate-pulse rounded-full bg-gauge-normal"></span>
+        {#if streamIds.size > 0}
+          Streaming from {streamIds.size}
+          {streamIds.size === 1 ? 'pod' : 'pods'}
+        {:else}
+          <!-- Streams open before the backend has answered with their ids.
+               "Streaming from 0 pods" contradicted itself for that moment,
+               and read as a fault rather than as a step. -->
+          Connecting…
+        {/if}
       {:else}
-        <span class="inline-block h-2 w-2 rounded-full bg-on-surface-variant"></span>
-        Stopped
+        <span class="inline-block size-2 shrink-0 rounded-full bg-on-surface-variant/50"></span>
+        {logs.length > 0 ? 'Stopped' : 'Not streaming'}
       {/if}
     </span>
-    <span>{filteredLogs.length} lines</span>
+    <span class="tabular-nums">
+      {filteredLogs.length}
+      {filteredLogs.length === 1 ? 'line' : 'lines'}
+    </span>
   </div>
 </div>
