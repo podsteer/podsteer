@@ -118,7 +118,7 @@
             <button
               type="button"
               onclick={() => onselect?.(load.name)}
-              class="resource-link min-w-0 truncate text-left text-label-large text-on-surface"
+              class="resource-link min-w-0 truncate text-left text-label-large"
               title="Open {load.name}"
             >
               {load.name}

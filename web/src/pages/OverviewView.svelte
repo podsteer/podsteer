@@ -631,7 +631,9 @@
                     onclick={() => openList(kind.kindId)}
                     class="resource-link flex w-full items-center gap-3 py-1.5 text-left"
                   >
-                    <span class="flex-1 truncate text-body-medium text-on-surface">{kind.title}</span>
+                    <!-- No colour of its own, or it would beat the one the
+                         link gives it and never change on hover. -->
+                    <span class="flex-1 truncate text-body-medium">{kind.title}</span>
                     {#if kind.rolling > 0}
                       <span class="text-body-small text-primary" title="Rollout in progress">
                         {kind.rolling} rolling
@@ -915,7 +917,7 @@
                          enough that sharing a row with the figures left them
                          truncated to the point of being unidentifiable. -->
                     <span
-                      class="min-w-0 truncate text-body-medium text-on-surface"
+                      class="min-w-0 truncate text-body-medium"
                       title="{row.namespace}/{row.name} on {row.node}"
                     >
                       <span class="text-on-surface-variant/60">{row.namespace}/</span>{row.name}
@@ -948,11 +950,13 @@
                           aria-hidden="true"
                           class="text-outline-variant {row.shareLabel ? '' : 'invisible'}">|</span
                         >
-                        <!-- Over its reservation is the finding, and this
-                             figure is the only thing that carries it: the bar
-                             beside it measures something else entirely. -->
+                        <!-- Plain, like every other figure beside a bar. The
+                             bar carries the overrun now that it measures a
+                             pod against its own reservation; it did not when
+                             it was a ranking, which is why this used to be
+                             the one tinted figure on the page. -->
                         <span
-                          class="w-[4.5ch] text-right {row.share >= 100 ? 'text-gauge-warn' : ''}"
+                          class="w-[4.5ch] text-right"
                           title={row.shareLabel
                             ? `${row.usage} used of ${row.request} reserved`
                             : 'Nothing reserved'}
@@ -996,7 +1000,7 @@
                     <button
                       type="button"
                       onclick={() => session.selectNamespace(load.name)}
-                      class="resource-link min-w-0 truncate text-body-medium text-on-surface"
+                      class="resource-link min-w-0 truncate text-body-medium"
                       title="Filter everything to {load.name}"
                     >
                       {load.name}

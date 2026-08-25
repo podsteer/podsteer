@@ -363,8 +363,15 @@
  * buttons `cursor: default` deliberately, to match native controls — right for
  * a button that performs an action, wrong for a name that behaves like a link
  * and is the only signal that it can be followed at all.
+ *
+ * It sets the resting colour as well as the hover one, and that is the part
+ * worth knowing: an element that declares its own `text-on-surface` never
+ * changes on hover, because its own colour beats the one it would otherwise
+ * inherit. So the name inside a link must NOT set a colour — it takes both
+ * from here, and the figures beside it keep theirs by declaring one.
  */
 @utility resource-link {
+  color: var(--on-surface);
   cursor: pointer;
   transition: color 100ms var(--ease-standard, ease);
 
