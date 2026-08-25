@@ -14,6 +14,7 @@
 -->
 <script lang="ts">
   import CapacityBar from '$lib/components/CapacityBar.svelte'
+  import GaugeTrack from '$lib/components/GaugeTrack.svelte'
   import InfoHint from '$lib/components/InfoHint.svelte'
   import type { Figure } from '$lib/components/CapacityFigures.svelte'
   import SlotsBar from '$lib/components/SlotsBar.svelte'
@@ -628,8 +629,7 @@
                   <button
                     type="button"
                     onclick={() => openList(kind.kindId)}
-                    class="flex w-full items-center gap-3 py-1.5 text-left transition-colors duration-100
-                           hover:text-primary"
+                    class="resource-link flex w-full items-center gap-3 py-1.5 text-left"
                   >
                     <span class="flex-1 truncate text-body-medium text-on-surface">{kind.title}</span>
                     {#if kind.rolling > 0}
@@ -909,31 +909,35 @@
                   <button
                     type="button"
                     onclick={() => openObject('core/v1/pods', row.name, row.namespace)}
-                    class="group flex w-full min-w-0 flex-col gap-1 text-left"
+                    class="resource-link flex w-full min-w-0 flex-col gap-1 text-left"
                   >
                     <!-- The pod alone on its line. Namespaced names are long
                          enough that sharing a row with the figures left them
                          truncated to the point of being unidentifiable. -->
                     <span
-                      class="min-w-0 truncate text-body-medium text-on-surface
-                             transition-colors duration-100 group-hover:text-primary"
+                      class="min-w-0 truncate text-body-medium text-on-surface"
                       title="{row.namespace}/{row.name} on {row.node}"
                     >
                       <span class="text-on-surface-variant/60">{row.namespace}/</span>{row.name}
                     </span>
 
                     <span class="flex w-full items-center gap-3">
-                      <!-- Scaled to the list's own leader, which is a ranking
-                           rather than a reading: the top pod is always 100%
-                           of itself, so it takes no thresholds and no marks. -->
-                      <span
-                        class="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-container-highest"
-                      >
-                        <span
-                          class="block h-full rounded-full bg-gauge-normal transition-all duration-300 ease-standard"
-                          style="width: {Math.max(2, row.percent)}%"
-                        ></span>
-                      </span>
+                      <!-- Usage against this pod's OWN reservation, not its
+                           rank in the list. The ranking is already carried by
+                           the order and by the amount printed beside it,
+                           whereas nothing else here says whether a pod has
+                           outgrown what it asked for — which is the question
+                           the card's own subtitle poses. Being a utilisation,
+                           it takes the same bands and marks as every other
+                           bar; a pod that reserved nothing gets an empty
+                           track, because there is no reservation to measure
+                           it against. -->
+                      <GaugeTrack
+                        value={row.share}
+                        height="h-1.5"
+                        width="min-w-0 flex-1"
+                        label="{row.name} against its reservation"
+                      />
 
                       <span
                         class="flex shrink-0 items-baseline gap-2 text-body-medium tabular-nums
@@ -980,37 +984,60 @@
           {#if overview.namespaces.length === 0}
             <p class="text-body-small text-on-surface-variant/60">Nothing scheduled.</p>
           {:else}
+            <!-- Laid out like the consumers and the node grid: the name on
+                 its own line, then the bar with its figures. What a namespace
+                 has RESERVED is the reading, because reservations are what
+                 fill a cluster — the usage beside it is how much of that
+                 reservation is real. -->
             <ul class="flex flex-col gap-2">
               {#each overview.namespaces as load (load.name)}
-                <li class="flex flex-col gap-1">
+                <li class="flex min-w-0 flex-col gap-1">
                   <div class="flex items-baseline justify-between gap-3">
                     <button
                       type="button"
                       onclick={() => session.selectNamespace(load.name)}
-                      class="min-w-0 truncate text-body-medium text-on-surface transition-colors
-                             duration-100 hover:text-primary"
+                      class="resource-link min-w-0 truncate text-body-medium text-on-surface"
                       title="Filter everything to {load.name}"
                     >
                       {load.name}
                     </button>
-                    <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant">
-                      {load.cpuRequests}
-                      {#if load.measured}
-                        <span class="text-on-surface-variant/60">· using {load.cpuUsage}</span>
-                      {/if}
-                    </span>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <span class="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-container-highest">
-                      <span
-                        class="block h-full rounded-full bg-primary/50"
-                        style="width: {Math.min(100, load.cpuShare)}%"
-                      ></span>
-                    </span>
-                    <span class="w-24 shrink-0 text-right text-body-small text-on-surface-variant/60">
+                    <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant/70">
                       {load.pods} pod{load.pods === 1 ? '' : 's'}{load.notReady > 0
                         ? `, ${load.notReady} down`
                         : ''}
+                    </span>
+                  </div>
+
+                  <div class="flex items-center gap-3">
+                    <GaugeTrack
+                      value={load.cpuShare}
+                      height="h-1.5"
+                      width="min-w-0 flex-1"
+                      label="{load.name} share of requested CPU"
+                    />
+                    <!-- Both halves are quantities here, not a quantity and a
+                         percentage, so both need room for a unit: "22.21
+                         cores" does not fit the slot a "92%" lives in, and
+                         wrapped onto two lines it took the row with it. -->
+                    <span
+                      class="flex shrink-0 items-baseline gap-2 text-body-medium tabular-nums
+                             whitespace-nowrap text-on-surface-variant"
+                    >
+                      <span class="w-[4.75rem] text-right" title="Requested">
+                        {load.cpuRequests}
+                      </span>
+                      <span
+                        aria-hidden="true"
+                        class="text-outline-variant {load.measured ? '' : 'invisible'}">|</span
+                      >
+                      <span
+                        class="w-[4.75rem] text-right"
+                        title={load.measured
+                          ? `${load.cpuUsage} actually used`
+                          : 'No metrics, so usage is unknown'}
+                      >
+                        {load.measured ? load.cpuUsage : ''}
+                      </span>
                     </span>
                   </div>
                 </li>
@@ -1040,8 +1067,7 @@
                   <button
                     type="button"
                     onclick={() => openObject('core/v1/pods', hotspot.name, hotspot.namespace)}
-                    class="flex w-full items-center gap-3 py-1.5 text-left transition-colors duration-100
-                           hover:text-primary"
+                    class="resource-link flex w-full items-center gap-3 py-1.5 text-left"
                   >
                     <span class="min-w-0 flex-1 truncate text-body-small" title={hotspot.name}>
                       <span class="text-on-surface-variant/60">{hotspot.namespace}/</span

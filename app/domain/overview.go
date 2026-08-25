@@ -122,7 +122,11 @@ const (
 	// daemonset cannot produce a payload with a thousand entries in it.
 	maxSubjects = 25
 	// maxNamespaces caps the namespace breakdown.
-	maxNamespaces = 10
+	//
+	// Five, like the consumer rankings beside it. A tenth-place namespace is
+	// a query rather than a dashboard entry, and the card is read to answer
+	// "who is holding the cluster", which the top few settle.
+	maxNamespaces = 5
 	// maxHotspots caps the restart list.
 	maxHotspots = 8
 	// maxConsumers caps the top-consumer lists. Five is what somebody reads

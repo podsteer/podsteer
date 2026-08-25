@@ -118,8 +118,7 @@
             <button
               type="button"
               onclick={() => onselect?.(load.name)}
-              class="min-w-0 truncate text-left text-label-large text-on-surface
-                     transition-colors duration-100 hover:text-primary"
+              class="resource-link min-w-0 truncate text-left text-label-large text-on-surface"
               title="Open {load.name}"
             >
               {load.name}

@@ -245,8 +245,8 @@
             onclick={() => onselect?.(finding.kindId, subject.name, subject.namespace)}
             disabled={!onselect}
             class="flex min-w-0 flex-1 items-start gap-3 px-4 py-2.5 text-left transition-colors
-                   duration-100 enabled:hover:bg-surface-container-high disabled:cursor-default
-                   {until > 0 ? 'opacity-55' : ''}"
+                   duration-100 enabled:cursor-pointer enabled:hover:bg-surface-container-high
+                   disabled:cursor-default {until > 0 ? 'opacity-55' : ''}"
           >
             <span class="min-w-0 flex-1 truncate text-body-small text-on-surface" title={subject.name}>
               {#if subject.namespace}<span class="text-on-surface-variant/60">{subject.namespace}/</span

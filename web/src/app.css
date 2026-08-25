@@ -351,6 +351,30 @@
 }
 
 /*
+ * A resource name that opens the thing it names.
+ *
+ * The dashboard is full of them — a pod in Top consumers, a node in the load
+ * grid, a kind in the inventory — and they were each deciding for themselves
+ * how to look. One class now, so every name that can be opened says so the
+ * same way: it turns the accent colour under the pointer, and the pointer
+ * becomes a hand.
+ *
+ * The cursor is the half that has to be spelt out. Tailwind's own reset gives
+ * buttons `cursor: default` deliberately, to match native controls — right for
+ * a button that performs an action, wrong for a name that behaves like a link
+ * and is the only signal that it can be followed at all.
+ */
+@utility resource-link {
+  cursor: pointer;
+  transition: color 100ms var(--ease-standard, ease);
+
+  &:hover {
+    color: var(--primary);
+  }
+}
+
+
+/*
  * MD3 state layers.
  *
  * Interactive surfaces express hover/focus/press by compositing a translucent
