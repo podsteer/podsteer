@@ -1065,6 +1065,10 @@
           {#if overview.restarts.length === 0}
             <p class="text-body-small text-on-surface-variant/60">Nothing has restarted.</p>
           {:else}
+            <!-- Divided rows at the same weight as Workloads and Nodes: the
+                 name carries the emphasis, the count recedes, and the middle
+                 of the row is for the two things that change what the count
+                 means — why it restarted, and whether it is up now. -->
             <ul class="flex flex-col divide-y divide-outline-variant/30">
               {#each overview.restarts as hotspot (hotspot.namespace + '/' + hotspot.name)}
                 <li>
@@ -1073,16 +1077,30 @@
                     onclick={() => openObject('core/v1/pods', hotspot.name, hotspot.namespace)}
                     class="resource-link flex w-full items-center gap-3 py-1.5 text-left"
                   >
-                    <span class="min-w-0 flex-1 truncate text-body-small" title={hotspot.name}>
+                    <span
+                      class="min-w-0 flex-1 truncate text-body-medium"
+                      title="{hotspot.namespace}/{hotspot.name}"
+                    >
                       <span class="text-on-surface-variant/60">{hotspot.namespace}/</span
                       >{hotspot.name}
                     </span>
-                    {#if hotspot.reason}
-                      <span class="shrink-0 text-body-small text-warning">{hotspot.reason}</span>
+
+                    <!-- Down now is a different problem from having been down:
+                         one is history worth reading, the other is happening.
+                         The distinction was in the data and shown nowhere. -->
+                    {#if !hotspot.healthy}
+                      <span class="shrink-0 text-label-small uppercase text-error">Not ready</span>
                     {/if}
+
+                    {#if hotspot.reason}
+                      <span class="shrink-0 truncate text-body-small text-on-surface-variant/70">
+                        {hotspot.reason}
+                      </span>
+                    {/if}
+
                     <span
-                      class="w-14 shrink-0 text-right text-body-small tabular-nums text-on-surface-variant"
-                      title="over {formatAge(hotspot.ageSeconds)}"
+                      class="w-14 shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant"
+                      title="{hotspot.restarts} restarts over {formatAge(hotspot.ageSeconds)}"
                     >
                       {hotspot.restarts}×
                     </span>
