@@ -158,6 +158,45 @@
     { decorations: (plugin) => plugin.decorations },
   )
 
+  /**
+   * Where each match sits vertically, as a fraction of the whole document.
+   *
+   * Taken from CodeMirror's own layout (`lineBlockAt().top / contentHeight`)
+   * rather than from line NUMBERS, because with wrapping on a line is not a
+   * fixed height — a 300-character annotation occupies six rows and a `kind:`
+   * one, so a marker placed by line index would drift further down the file
+   * the more wrapped lines it passed.
+   *
+   * Positions within half a per cent of each other collapse into one: at a
+   * few hundred pixels of track, drawing 120 separate ticks for 120 matches
+   * paints a solid bar that says nothing about where they are.
+   */
+  let markers = $state<number[]>([])
+
+  function updateMarkers(): void {
+    if (!editor) {
+      markers = []
+      return
+    }
+    const needle = editor.state.field(queryField)
+    const height = editor.contentHeight
+    if (!needle || height <= 0) {
+      markers = []
+      return
+    }
+
+    const seen = new Set<number>()
+    const out: number[] = []
+    for (const [start] of findMatches(editor.state.doc.toString(), needle)) {
+      const fraction = editor.lineBlockAt(start).top / height
+      const key = Math.round(fraction * 200)
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(fraction)
+    }
+    markers = out
+  }
+
   /** All matches in the whole document, for counting and for stepping. */
   function allMatches(view: EditorView): Array<[number, number]> {
     const needle = view.state.field(queryField)
@@ -320,13 +359,17 @@
       wrapping.of(preferences.wrapLines ? EditorView.lineWrapping : []),
     ]
 
-    if (!readonly && onchange) {
-      extensions.push(
-        EditorView.updateListener.of((update) => {
-          if (update.docChanged) onchange(update.state.doc.toString())
-        }),
-      )
-    }
+    // One listener for both jobs. Geometry changes matter as much as document
+    // changes here: re-wrapping moves every marker below the line that
+    // reflowed, and so does the editor being resized.
+    extensions.push(
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged && !readonly) onchange?.(update.state.doc.toString())
+        if (update.docChanged || update.geometryChanged || update.viewportChanged) {
+          updateMarkers()
+        }
+      }),
+    )
 
     editor = new EditorView({
       state: EditorState.create({ doc: content, extensions }),
@@ -337,22 +380,59 @@
       findNext: () => step(1),
       findPrevious: () => step(-1),
     })
+
+    updateMarkers()
   })
 
   onDestroy(() => {
     editor?.destroy()
   })
 
+  /**
+   * Moves to the first match as the query is typed, not only on Enter.
+   *
+   * Anchored at the START of the current selection rather than at the top of
+   * the document: typing `n`, `na`, `nam` should refine in place, and
+   * searching from the top each time would drag the view back up on every
+   * keystroke — while searching from the END of the selection would walk
+   * forward through the file as the word grew.
+   */
   $effect(() => {
     const needle = query
-    editor?.dispatch({ effects: setQuery.of(needle) })
+    if (!editor) return
+
+    editor.dispatch({ effects: setQuery.of(needle) })
+
+    if (!needle) {
+      updateMarkers()
+      return
+    }
+
+    const found = findMatches(editor.state.doc.toString(), needle)
+    if (found.length > 0) {
+      const anchorAt = editor.state.selection.main.from
+      const next = found.find(([start]) => start >= anchorAt) ?? found[0]
+      editor.dispatch({
+        selection: { anchor: next[0], head: next[1] },
+        effects: EditorView.scrollIntoView(next[0], { y: 'center' }),
+      })
+    }
+    updateMarkers()
   })
 
   $effect(() => {
     const wrap = preferences.wrapLines
-    editor?.dispatch({
+    if (!editor) return
+
+    editor.dispatch({
       effects: wrapping.reconfigure(wrap ? EditorView.lineWrapping : []),
     })
+
+    // Re-measured after the reflow, not during it. CodeMirror sizes wrapped
+    // lines in a later measure pass, so markers recomputed in the same tick
+    // are placed against the OLD geometry — which showed up as a marker that
+    // did not return to where it started after wrap was switched off and on.
+    editor.requestMeasure({ read: () => updateMarkers() })
   })
 
   // Only when it genuinely differs, or every keystroke in an editable
@@ -366,8 +446,24 @@
   })
 </script>
 
-<div class="h-full w-full overflow-hidden">
+<div class="relative h-full w-full overflow-hidden">
   <div bind:this={editorContainer} class="h-full w-full"></div>
+
+  <!-- An overview ruler down the right edge, showing where the matches are.
+       Not interactive: it answers "how many, and roughly where" at a glance,
+       and clicking it would be a second, worse way of doing what Enter
+       already does. `pointer-events-none` keeps it clear of the scrollbar
+       underneath, which is the thing somebody actually reaches for. -->
+  {#if markers.length > 0}
+    <div class="pointer-events-none absolute inset-y-0 right-0 w-2.5" aria-hidden="true">
+      {#each markers as fraction (fraction)}
+        <span
+          class="absolute right-0.5 h-0.5 w-1.5 rounded-full bg-gauge-warn"
+          style="top: {(fraction * 100).toFixed(3)}%"
+        ></span>
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <style>
