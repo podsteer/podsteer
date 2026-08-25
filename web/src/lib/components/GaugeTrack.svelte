@@ -30,6 +30,17 @@
     value: number
     /** Track thickness. */
     height?: string
+    /**
+     * How the track takes its width from whatever contains it.
+     *
+     * It cannot decide for itself. `flex-1` sets flex-basis on the MAIN axis,
+     * so in the flex COLUMN a capacity card lays its label, bar and figures
+     * out in, it sets the basis of the HEIGHT to zero and collapses the track
+     * to nothing — while in the flex row a node's track sits in, it is
+     * exactly right. The default suits a column or a plain block; a caller in
+     * a row passes "min-w-0 flex-1".
+     */
+    width?: string
     /** Names the reading for anyone who cannot see it. */
     label: string
     /**
@@ -42,7 +53,7 @@
     children?: Snippet
   }
 
-  let { value, height = 'h-2', label, children }: Props = $props()
+  let { value, height = 'h-2', width = 'w-full', label, children }: Props = $props()
 
   const warn = $derived(preferences.warnThreshold)
   const critical = $derived(preferences.criticalThreshold)
@@ -62,7 +73,7 @@
 </script>
 
 <div
-  class="relative {height} min-w-0 flex-1 overflow-hidden rounded-full bg-surface-container-highest"
+  class="relative {height} {width} overflow-hidden rounded-full bg-surface-container-highest"
   role="img"
   aria-label="{label}: {value < 0 ? 'not measured' : `${Math.round(value)} per cent`}"
 >

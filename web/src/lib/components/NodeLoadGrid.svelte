@@ -164,7 +164,12 @@
               {track.label}
             </span>
 
-            <GaugeTrack value={track.value} height="h-1.5" label={track.label} />
+            <GaugeTrack
+              value={track.value}
+              height="h-1.5"
+              width="min-w-0 flex-1"
+              label={track.label}
+            />
 
             <span
               class="flex shrink-0 items-baseline gap-2 text-body-medium tabular-nums {figureTone(
