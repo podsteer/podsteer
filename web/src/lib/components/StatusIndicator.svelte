@@ -1,81 +1,58 @@
 <!--
-  A tonal status indicator with dot + label. Used in tables and cards.
+  The status of one row, as a single mark.
 
-  Colour is never the only carrier of meaning: the label is always rendered
-  alongside, so the status survives a monochrome display and a colour-blind
-  reader.
+  Shape carries the meaning and colour grades it: a triangle means something
+  wants attention, a filled disc means it does not. That ordering matters —
+  colour alone would leave amber and red indistinguishable to a reader who
+  cannot separate them, whereas a triangle is a triangle at any setting, and
+  the full text is always on the element as its accessible name and tooltip.
+
+  A disc rather than a tick for the healthy state. A check mark is the symbol
+  of a control somebody operates — a box they tick — and in a column of
+  clickable rows it invited being read as one. A disc asserts a state and
+  offers nothing to press.
+
+  No label and no badge beside it. A status column repeating "Running" down
+  two hundred rows is two hundred words nobody reads, and the whole value of
+  the column is that the exceptions are visible without reading any of it.
 -->
 <script lang="ts">
   import type { Tone } from '$lib/format'
-  import {
-    CheckCircle,
-    AlertTriangle,
-    XCircle,
-    Info,
-    Circle,
-  } from '@lucide/svelte'
+  import { AlertTriangle, Circle } from '@lucide/svelte'
 
   interface Props {
-    /** Semantic tone driving the colour. */
+    /** Semantic tone driving shape and colour. */
     tone?: Tone
-    /** The status text. */
+    /** The status text. Not drawn, but named for assistive technology. */
     label: string
-    /** Renders the dot only, with the label as an accessible name. */
-    compact?: boolean
-    /** Animates the dot, for states that are actively changing. */
+    /** Animates the mark, for states that are actively changing. */
     pulse?: boolean
     class?: string
   }
 
-  let { tone = 'neutral', label, compact = false, pulse = false, class: className = '' }: Props =
-    $props()
+  let { tone = 'neutral', label, pulse = false, class: className = '' }: Props = $props()
 
-  const ICON_MAP = {
-    success: CheckCircle,
-    warning: AlertTriangle,
-    error: XCircle,
-    info: Info,
-    neutral: Circle,
-  }
+  /** Attention is a triangle; everything else is a disc. */
+  const NEEDS_ATTENTION: Tone[] = ['warning', 'error']
 
-  const COLOR_CLASSES: Record<Tone, string> = {
+  const COLOUR: Record<Tone, string> = {
     success: 'text-success',
     warning: 'text-warning',
     error: 'text-error',
     info: 'text-primary',
-    neutral: 'text-on-surface-variant/60',
+    // Informational rather than healthy — a Normal event is not a claim that
+    // anything is well, so it does not get the colour that would say so.
+    neutral: 'text-on-surface-variant/50',
   }
 
-  const BG_CLASSES: Record<Tone, string> = {
-    success: 'bg-success/10',
-    warning: 'bg-warning/10',
-    error: 'bg-error/10',
-    info: 'bg-primary/10',
-    neutral: 'bg-surface-container',
-  }
-
-  const StatusIcon = $derived(ICON_MAP[tone])
+  const attention = $derived(NEEDS_ATTENTION.includes(tone))
+  const StatusIcon = $derived(attention ? AlertTriangle : Circle)
 </script>
 
-{#if compact}
-  <span
-    class="inline-flex {className}"
-    title={label}
-    aria-label={label}
-  >
-    <StatusIcon
-      class="size-3.5 {COLOR_CLASSES[tone]} {pulse ? 'animate-pulse' : ''}"
-      strokeWidth={2}
-    />
-  </span>
-{:else}
-  <span
-    class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 {BG_CLASSES[tone]} {className}"
-  >
-    <StatusIcon
-      class="size-3 shrink-0 {COLOR_CLASSES[tone]} {pulse ? 'animate-pulse' : ''}"
-      strokeWidth={2.2}
-    />
-    <span class="text-body-medium font-medium {COLOR_CLASSES[tone]}">{label}</span>
-  </span>
-{/if}
+<span class="inline-flex {className}" title={label} aria-label={label} role="img">
+  <StatusIcon
+    class="size-4 shrink-0 {COLOUR[tone]} {pulse ? 'animate-pulse' : ''}"
+    strokeWidth={2}
+    fill={attention ? 'none' : 'currentColor'}
+  />
+</span>

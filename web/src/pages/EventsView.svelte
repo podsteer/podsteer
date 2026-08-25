@@ -18,27 +18,15 @@
 
   let { session }: Props = $props()
 
-  /**
-   * When first, message last.
-   *
-   * "When did this happen" is the first question asked of an event and the
-   * column answering it used to be the last one, which on any ordinary window
-   * put it past the right edge — the widths totalled more than the table had,
-   * so the one figure that dates the row was reachable only by scrolling.
-   *
-   * Message goes last for the opposite reason: it is the longest and the only
-   * one that loses nothing by being truncated, since the full text is in the
-   * tooltip and the row opens onto it.
-   */
   const COLUMNS: Column[] = [
-    { id: 'age', label: 'Last seen', width: 110, numeric: true },
-    { id: 'type', label: 'Type', width: 110 },
-    { id: 'reason', label: 'Reason', width: 190, pinned: true },
-    { id: 'object', label: 'Object', width: 280 },
-    { id: 'namespace', label: 'Namespace', width: 150 },
-    { id: 'count', label: 'Count', width: 80, numeric: true },
-    { id: 'message', label: 'Message', width: 460 },
+    { id: 'type', label: 'Type', width: 96 },
+    { id: 'reason', label: 'Reason', width: 200, pinned: true },
+    { id: 'object', label: 'Object', width: 300 },
+    { id: 'namespace', label: 'Namespace', width: 160 },
+    { id: 'message', label: 'Message', width: 520 },
     { id: 'source', label: 'Source', width: 150, defaultHidden: true },
+    { id: 'count', label: 'Count', width: 96, numeric: true },
+    { id: 'age', label: 'Last seen', width: 116, numeric: true },
   ]
 </script>
 
@@ -61,13 +49,8 @@
   {#snippet rows(isVisible)}
     {#each session.pagedEvents as event (event.namespace + '/' + event.name)}
       <tr class="border-t border-outline-variant/40 hover:bg-surface-container-low">
-        {#if isVisible('age')}
-          <td class="truncate py-1.5 pr-3 pl-6 text-right tabular-nums text-on-surface-variant">
-            {formatAge(event.ageSeconds)}
-          </td>
-        {/if}
         {#if isVisible('type')}
-          <td class="overflow-hidden px-3 py-1.5">
+          <td class="overflow-hidden py-1.5 pr-3 pl-6">
             <StatusIndicator tone={event.isWarning ? 'warning' : 'neutral'} label={event.type} />
           </td>
         {/if}
@@ -96,6 +79,11 @@
         {/if}
         {#if isVisible('source')}
           <td class="truncate px-3 py-1.5 text-on-surface-variant">{event.source || '—'}</td>
+        {/if}
+        {#if isVisible('age')}
+          <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+            {formatAge(event.ageSeconds)}
+          </td>
         {/if}
         <td></td>
       </tr>

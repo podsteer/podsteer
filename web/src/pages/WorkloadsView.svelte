@@ -24,7 +24,7 @@
   const isCronJob = $derived(session.selectedKindId === 'batch/v1/cronjobs')
 
   const columns = $derived<Column[]>([
-    { id: 'status', label: 'Status', width: 150 },
+    { id: 'status', label: 'Status', width: 96 },
     { id: 'name', label: 'Name', width: 300, pinned: true },
     { id: 'namespace', label: 'Namespace', width: 150 },
     ...(isCronJob

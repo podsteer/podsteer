@@ -21,7 +21,7 @@
   let { session }: Props = $props()
 
   const COLUMNS: Column[] = [
-    { id: 'status', label: 'Status', width: 150 },
+    { id: 'status', label: 'Status', width: 96 },
     { id: 'name', label: 'Name', width: 300, pinned: true },
     { id: 'roles', label: 'Roles', width: 140 },
     { id: 'cpu', label: 'CPU', width: 200 },
