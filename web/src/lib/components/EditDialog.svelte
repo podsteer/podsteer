@@ -11,6 +11,8 @@
 <script lang="ts">
   import Button from './Button.svelte'
   import YamlEditor from './YamlEditor.svelte'
+  import PaneToolbar from './PaneToolbar.svelte'
+  import WrapLinesToggle from './WrapLinesToggle.svelte'
 
   interface Props {
     open: boolean
@@ -51,7 +53,7 @@
   ></button>
 
   <div
-    class="fixed top-1/2 left-1/2 z-[70] flex h-[80vh] w-[48rem] max-w-[95vw] -translate-x-1/2 -translate-y-1/2
+    class="fixed top-1/2 left-1/2 z-[70] flex h-[85vh] w-[68rem] max-w-[95vw] -translate-x-1/2 -translate-y-1/2
            flex-col rounded-sm border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
     aria-modal="true"
@@ -66,8 +68,13 @@
     <!-- The frame is the dialog's, not the editor's: YamlEditor paints no
          background of its own, so it takes this one and cannot disagree with
          the panel around it. -->
-    <div class="field mt-4 min-h-0 flex-1 overflow-hidden">
-      <YamlEditor content={editedManifest} onchange={(value) => (editedManifest = value)} />
+    <div class="field mt-4 flex min-h-0 flex-1 flex-col overflow-hidden">
+      <PaneToolbar>
+        <WrapLinesToggle />
+      </PaneToolbar>
+      <div class="min-h-0 flex-1">
+        <YamlEditor content={editedManifest} onchange={(value) => (editedManifest = value)} />
+      </div>
     </div>
 
     <div class="mt-4 flex justify-end gap-3">

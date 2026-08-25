@@ -11,6 +11,9 @@
   import { EventsOn, EventsOff } from '$lib/wailsjs/runtime/runtime'
   import { StreamLogs, StopLogStream } from '$lib/wailsjs/go/wails/ManagementAPI'
   import { onMount, onDestroy } from 'svelte'
+  import { preferences } from '$stores/preferences.svelte'
+  import PaneToolbar from './PaneToolbar.svelte'
+  import WrapLinesToggle from './WrapLinesToggle.svelte'
 
   /**
    * Shapes of the `log:line` / `log:end` event payloads.
@@ -194,9 +197,13 @@
 </script>
 
 <div class="flex h-full flex-col">
-  <!-- Controls -->
-  <div class="flex items-center gap-2 border-b border-outline-variant bg-surface-container-low px-3 py-2">
-    <!-- Container selector (only show if multiple containers) -->
+  <!-- Controls. The same shell the YAML panes use, so a control that governs
+       how text is displayed sits in the same place whichever tab it is on. -->
+  <PaneToolbar>
+    {#snippet children()}
+      <WrapLinesToggle />
+      <div class="mx-1 h-5 w-px bg-outline-variant/40"></div>
+      <!-- Container selector (only show if multiple containers) -->
     {#if allContainers.length > 1}
       <select
         bind:value={selectedContainer}
@@ -254,8 +261,9 @@
       Clear
     </button>
 
-    <!-- Search -->
-    <div class="ml-auto flex items-center gap-1">
+    {/snippet}
+
+    {#snippet trailing()}
       <input
         type="text"
         bind:value={searchQuery}
@@ -267,27 +275,38 @@
           {filteredLogs.length}/{logs.length}
         </span>
       {/if}
-    </div>
-  </div>
+    {/snippet}
+  </PaneToolbar>
 
   <!-- Log output -->
   <div
     bind:this={logContainer}
-    class="flex-1 overflow-auto bg-surface-container-lowest p-3 font-mono text-xs leading-relaxed"
+    class="min-h-0 flex-1 overflow-auto bg-surface-container-lowest p-3 font-mono text-xs leading-relaxed"
   >
     {#if logs.length === 0}
       <div class="flex h-full items-center justify-center text-on-surface-variant">
         {isStreaming ? 'Waiting for logs...' : 'No logs available'}
       </div>
     {:else}
-      {#each filteredLogs as log, i (i)}
-        <div class="whitespace-pre-wrap break-all hover:bg-surface-container-low">
-          {#if isMultiPod && log.podName}
-            <span class="text-primary">{log.podName}:</span>
-          {/if}
-          <span class="text-on-surface">{log.line}</span>
-        </div>
-      {/each}
+      <!-- Unwrapped, the lines have to be allowed to be wider than the pane or
+           there is nothing to scroll to: a block child shrinks to its
+           container and the long text simply overflows invisibly. `w-max`
+           sizes this to the LONGEST line and `min-w-full` keeps it at least
+           the pane's width, so every hover stripe still spans the full
+           width instead of ending raggedly at each line's own length. -->
+      <div class={preferences.wrapLines ? '' : 'w-max min-w-full'}>
+        {#each filteredLogs as log, i (i)}
+          <div
+            class="hover:bg-surface-container-low
+                   {preferences.wrapLines ? 'break-all whitespace-pre-wrap' : 'whitespace-pre'}"
+          >
+            {#if isMultiPod && log.podName}
+              <span class="text-primary">{log.podName}:</span>
+            {/if}
+            <span class="text-on-surface">{log.line}</span>
+          </div>
+        {/each}
+      </div>
     {/if}
   </div>
 

@@ -17,6 +17,8 @@
   import { iconForKind } from '$lib/kindIcons'
   import { parse } from 'yaml'
   import YamlEditor from './YamlEditor.svelte'
+  import PaneToolbar from './PaneToolbar.svelte'
+  import WrapLinesToggle from './WrapLinesToggle.svelte'
   import DeleteDialog from './DeleteDialog.svelte'
   import ScaleDialog from './ScaleDialog.svelte'
   import EditDialog from './EditDialog.svelte'
@@ -520,7 +522,16 @@
               </p>
             </div>
           {:else if session.manifest}
-            <YamlEditor content={session.manifest} readonly={true} />
+            <!-- The toolbar only appears once there is text for it to govern:
+                 a wrap button above a spinner controls nothing. -->
+            <div class="flex h-full flex-col">
+              <PaneToolbar>
+                <WrapLinesToggle />
+              </PaneToolbar>
+              <div class="min-h-0 flex-1">
+                <YamlEditor content={session.manifest} readonly={true} />
+              </div>
+            </div>
           {/if}
         </div>
       {/if}

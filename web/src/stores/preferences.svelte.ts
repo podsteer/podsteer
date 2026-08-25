@@ -121,6 +121,15 @@ interface PersistedShape {
   expandedCategories: string[]
   /** Whether the overview's verdict card shows its findings. */
   findingsExpanded: boolean
+  /**
+   * Whether monospaced panes wrap long lines instead of scrolling sideways.
+   *
+   * One setting for every such pane rather than one per tab. Wrapping is a
+   * reading habit, not a property of a particular manifest, and somebody who
+   * turns it off to line up a log's columns wants the YAML tab to stop
+   * reflowing too.
+   */
+  wrapLines: boolean
   /** clusterId -> the namespace filter it was last left on. */
   namespaceByCluster: Record<string, string>
   /** clusterId -> snoozeKey() -> epoch milliseconds when the snooze lapses. */
@@ -158,6 +167,7 @@ const DEFAULTS: PersistedShape = {
   navigatorWidth: 240,
   expandedCategories: [],
   findingsExpanded: false,
+  wrapLines: true,
   namespaceByCluster: {},
   snoozes: {},
   // 80 and 90 because they are where Kubernetes itself starts to behave
@@ -206,6 +216,9 @@ class Preferences {
    * either.
    */
   findingsExpanded = $state<boolean>(DEFAULTS.findingsExpanded)
+
+  /** Whether monospaced panes wrap long lines. See the shape above. */
+  wrapLines = $state<boolean>(DEFAULTS.wrapLines)
 
   /** clusterId -> last-selected namespace filter. */
   namespaceByCluster = $state<Record<string, string>>({})
@@ -342,6 +355,11 @@ class Preferences {
    */
   toggleFindings = (): void => {
     this.findingsExpanded = !this.findingsExpanded
+    this.#save()
+  }
+
+  toggleWrapLines = (): void => {
+    this.wrapLines = !this.wrapLines
     this.#save()
   }
 
@@ -564,6 +582,9 @@ class Preferences {
       if (typeof stored.findingsExpanded === 'boolean') {
         this.findingsExpanded = stored.findingsExpanded
       }
+      if (typeof stored.wrapLines === 'boolean') {
+        this.wrapLines = stored.wrapLines
+      }
       if (typeof stored.navigatorWidth === 'number' && stored.navigatorWidth >= 180 && stored.navigatorWidth <= 400) {
         this.navigatorWidth = stored.navigatorWidth
       }
@@ -631,6 +652,7 @@ class Preferences {
         navigatorWidth: this.navigatorWidth,
         expandedCategories: this.expandedCategories,
         findingsExpanded: this.findingsExpanded,
+        wrapLines: this.wrapLines,
         namespaceByCluster: this.namespaceByCluster,
         snoozes: this.#pruneSnoozes(),
         warnThreshold: this.warnThreshold,

@@ -35,7 +35,7 @@
     highlightSpecialChars,
   } from '@codemirror/view'
   import { yaml } from '@codemirror/lang-yaml'
-  import { EditorState } from '@codemirror/state'
+  import { Compartment, EditorState } from '@codemirror/state'
   import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
   import {
     bracketMatching,
@@ -46,6 +46,7 @@
     HighlightStyle,
   } from '@codemirror/language'
   import { tags } from '@lezer/highlight'
+  import { preferences } from '$stores/preferences.svelte'
 
   interface Props {
     content: string
@@ -57,6 +58,16 @@
 
   let editorContainer: HTMLDivElement
   let editor: EditorView | null = null
+
+  /**
+   * Line wrapping, reconfigurable without rebuilding the editor.
+   *
+   * A compartment is the only way CodeMirror lets one extension be swapped in
+   * place. Recreating the view instead would work and would also throw away
+   * the undo history, the fold state and the caret every time somebody
+   * toggled the toolbar button.
+   */
+  const wrapping = new Compartment()
 
   /**
    * The chrome: everything that is not the text itself.
@@ -168,7 +179,7 @@
       theme,
       EditorState.readOnly.of(readonly),
       EditorView.editable.of(!readonly),
-      EditorView.lineWrapping,
+      wrapping.of(preferences.wrapLines ? EditorView.lineWrapping : []),
     ]
 
     if (!readonly && onchange) {
@@ -187,6 +198,13 @@
 
   onDestroy(() => {
     editor?.destroy()
+  })
+
+  $effect(() => {
+    const wrap = preferences.wrapLines
+    editor?.dispatch({
+      effects: wrapping.reconfigure(wrap ? EditorView.lineWrapping : []),
+    })
   })
 
   // Only when it genuinely differs, or every keystroke in an editable
