@@ -18,7 +18,7 @@
 -->
 <script lang="ts">
   import type { ResourceUsage } from '$lib/api/client'
-  import { preferences } from '$stores/preferences.svelte'
+  import GaugeTrack from './GaugeTrack.svelte'
   import CapacityFigures, { type Figure } from './CapacityFigures.svelte'
 
   interface Props {
@@ -45,30 +45,11 @@
 
   let { label, usage, note = '', fourth }: Props = $props()
 
-  const requestWidth = $derived(Math.max(0, Math.min(100, usage.requestPercent)))
   const usageWidth = $derived(usage.measured ? Math.max(0, Math.min(100, usage.usagePercent)) : 0)
 
   /** Limits may exceed allocatable, so the marker is clamped to the track. */
   const limitOffset = $derived(Math.max(0, Math.min(100, usage.limitPercent)))
   const limitsOvercommitted = $derived(usage.limitPercent > 100)
-
-  const warn = $derived(preferences.warnThreshold)
-  const critical = $derived(preferences.criticalThreshold)
-
-  /**
-   * The requests band, in the application's three gauge colours.
-   *
-   * It used to have thresholds of its own — 75 and 90 — which meant this bar
-   * turned amber at a number no other bar did. One pair of lines now, set by
-   * the operator, applied everywhere.
-   */
-  const requestTone = $derived(
-    usage.requestPercent >= critical
-      ? 'bg-gauge-critical'
-      : usage.requestPercent >= warn
-        ? 'bg-gauge-warn'
-        : 'bg-gauge-normal',
-  )
 
   /**
    * Efficiency as a number, for the threshold only — the printed figure comes
@@ -129,47 +110,39 @@
     </span>
   </div>
 
-  <div
-    class="relative h-3 w-full overflow-hidden rounded-full bg-surface-container-highest"
-    role="img"
-    aria-label="{label}: {usage.requests} requested of {usage.allocatable} allocatable"
+  <!-- The requested band is the reading, so it comes from the shared track
+       and is banded like every other bar. Usage and limits ride on top,
+       because they are the two things this bar says that no other does. -->
+  <GaugeTrack
+    value={usage.requestPercent}
+    height="h-3"
+    label="{label} requested, {usage.requests} of {usage.allocatable}"
   >
-    <!-- Requests: the band that decides schedulability, in the gauge palette
-         so its colour means the same here as on every other bar. -->
-    <span
-      class="absolute inset-y-0 left-0 rounded-full transition-all duration-300 ease-standard {requestTone}"
-      style="width: {requestWidth}%"
-    ></span>
+    {#snippet children()}
+      <!-- Usage: drawn on top and narrower, so it reads as "of that band,
+           this much is real" rather than as a competing measurement. -->
+      {#if usage.measured}
+        <span
+          class="absolute inset-y-[3px] left-0 rounded-full bg-on-surface/70 transition-all
+                 duration-300 ease-standard"
+          style="width: {usageWidth}%"
+        ></span>
+      {/if}
 
-    <!-- Usage: drawn on top and narrower, so it reads as "of that band, this
-         much is real" rather than as a competing measurement. -->
-    {#if usage.measured}
-      <span
-        class="absolute inset-y-[3px] left-0 rounded-full bg-on-surface/70 transition-all duration-300 ease-standard"
-        style="width: {usageWidth}%"
-      ></span>
-    {/if}
-
-    <!-- The two thresholds, on every bar in the application at the same
-         values. Thin, because this track already carries a limits marker
-         that has to stay the louder of the three. -->
-    <span class="absolute inset-y-0 w-px bg-on-surface/45" style="left: {warn}%" title="{warn}%"
-    ></span>
-    <span
-      class="absolute inset-y-0 w-px bg-on-surface/45"
-      style="left: {critical}%"
-      title="{critical}%"
-    ></span>
-
-    <!-- Limits marker: what could happen if everything peaked at once. -->
-    {#if usage.limitPercent > 0}
-      <span
-        class="absolute inset-y-0 w-0.5 {limitsOvercommitted ? 'bg-gauge-critical' : 'bg-on-surface'}"
-        style="left: {limitOffset}%"
-        title="Limits: {usage.limits}{limitsOvercommitted ? ' — more than the cluster has' : ''}"
-      ></span>
-    {/if}
-  </div>
+      <!-- Limits: what could happen if everything peaked at once, which
+           routinely exceeds the cluster — so this marker is allowed to sit
+           past the end, and is the loudest of the three on this track. -->
+      {#if usage.limitPercent > 0}
+        <span
+          class="absolute inset-y-0 w-0.5 {limitsOvercommitted
+            ? 'bg-gauge-critical'
+            : 'bg-on-surface'}"
+          style="left: {limitOffset}%"
+          title="Limits: {usage.limits}{limitsOvercommitted ? ' — more than the cluster has' : ''}"
+        ></span>
+      {/if}
+    {/snippet}
+  </GaugeTrack>
 
   <CapacityFigures {figures} />
 
