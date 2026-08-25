@@ -134,25 +134,40 @@
       </div>
     </div>
 
-    <!-- The message in full and selectable. It is the one field somebody came
-         to read, and the list could only ever show a truncated line of it. -->
+    <!-- Named sections, because the pane holds two different things: the one
+         sentence the cluster wrote, and the facts around it. Without headings
+         the message read as an unlabelled quotation above an unlabelled
+         list. -->
     {#if message}
-      <p
-        class="rounded-sm border border-outline-variant/40 bg-surface-container px-3 py-2
-               text-body-medium leading-relaxed text-on-surface"
-        data-selectable
-      >
-        {message}
-      </p>
+      <section class="flex flex-col gap-1.5">
+        <h4 class="text-body-medium font-semibold text-on-surface">Message</h4>
+        <!-- In full and selectable. It is the one field somebody came to read,
+             and the list could only ever show a truncated line of it. -->
+        <p
+          class="rounded-sm border border-outline-variant/40 bg-surface-container px-3 py-2
+                 text-body-medium leading-relaxed text-on-surface"
+          data-selectable
+        >
+          {message}
+        </p>
+      </section>
     {/if}
 
-    <dl class="grid grid-cols-[auto_1fr] items-baseline gap-x-6 gap-y-2">
-      {#each rows as row (row.label)}
-        <dt class="text-body-medium text-on-surface">{row.label}</dt>
-        <dd class="min-w-0 text-right text-body-medium break-words text-on-surface-variant">
-          {row.value}
-        </dd>
-      {/each}
-    </dl>
+    <section class="flex flex-col gap-1.5">
+      <h4 class="text-body-medium font-semibold text-on-surface">Details</h4>
+
+      <!-- A quarter for the labels and the rest for the values, both aligned
+           left. Values here are of wildly different lengths — "Warning"
+           beside a sixty-character event name — and right-aligning them
+           against a ragged left edge left nothing to read down. -->
+      <dl class="grid grid-cols-[25%_1fr] gap-x-4 gap-y-2">
+        {#each rows as row (row.label)}
+          <dt class="text-body-medium text-on-surface-variant">{row.label}</dt>
+          <dd class="min-w-0 text-body-medium break-words text-on-surface" data-selectable>
+            {row.value}
+          </dd>
+        {/each}
+      </dl>
+    </section>
   </div>
 {/if}

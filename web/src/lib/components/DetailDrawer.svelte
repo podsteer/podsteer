@@ -14,6 +14,7 @@
   import ResourceOverview from './ResourceOverview.svelte'
   import EventsView from './EventsView.svelte'
   import EventDetail from './EventDetail.svelte'
+  import { iconForKind } from '$lib/kindIcons'
   import { parse } from 'yaml'
   import YamlEditor from './YamlEditor.svelte'
   import DeleteDialog from './DeleteDialog.svelte'
@@ -55,10 +56,9 @@
   let actionError = $state<string | null>(null)
   let workloadPods = $state<Pod[]>([])
 
-  const subtitle = $derived(
-    session.selectedNamespace
-      ? `${session.selectedNamespace} · ${session.selectedKind?.singular ?? ''}`
-      : (session.selectedKind?.singular ?? ''),
+  /** The selected kind's own icon, so the drawer is marked like its row. */
+  const KindIcon = $derived(
+    session.selectedKind ? iconForKind(session.selectedKind) : undefined,
   )
 
   const isPod = $derived(session.selectedKindId === 'core/v1/pods')
@@ -261,13 +261,40 @@
            border-l border-outline-variant/60 bg-surface shadow-level-3"
     aria-label="Object details"
   >
-    <!-- Header -->
+    <!-- Header.
+         The kind's own icon and a path, the same way the event pane addresses
+         the object it is about — so a drawer says what it is holding before
+         its name is read, and says it with the mark the row was carrying. -->
     <header class="flex items-center gap-3 border-b border-outline-variant/60 px-4 py-3">
+      {#if KindIcon}
+        <span class="inline-flex shrink-0" title={session.selectedKind?.singular}>
+          <KindIcon class="size-5 text-on-surface-variant/60" strokeWidth={1.75} />
+        </span>
+      {/if}
+
       <div class="min-w-0 flex-1">
         <h2 class="truncate text-title-medium font-semibold text-on-surface" data-selectable>
           {session.selectedName}
         </h2>
-        <p class="truncate text-body-small text-on-surface-variant/70">{subtitle}</p>
+
+        <!-- Kind, then namespace, which is where it lives. The namespace is a
+             link because it is somewhere to go: it filters the whole
+             application to that namespace, which is what somebody reading a
+             detail usually wants next. -->
+        <p class="flex min-w-0 items-baseline gap-1.5 text-body-small text-on-surface-variant/70">
+          <span class="shrink-0">{session.selectedKind?.singular ?? 'Object'}</span>
+          {#if session.selectedNamespace}
+            <span class="shrink-0 text-on-surface-variant/40" aria-hidden="true">/</span>
+            <button
+              type="button"
+              onclick={() => session.selectNamespace(session.selectedNamespace)}
+              class="resource-link min-w-0 truncate text-left"
+              title="Filter to {session.selectedNamespace}"
+            >
+              {session.selectedNamespace}
+            </button>
+          {/if}
+        </p>
       </div>
 
       <!-- Action buttons -->
