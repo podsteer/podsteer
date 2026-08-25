@@ -11,7 +11,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { formatAge, podStatusLabel, podTone } from '$lib/format'
   import type { ClusterSession } from '$stores/session.svelte'
-  import { Box } from '@lucide/svelte'
+  import { Box, CircleDot } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -20,7 +20,7 @@
   let { session }: Props = $props()
 
   const COLUMNS: Column[] = [
-    { id: 'status', label: 'Status', width: 96 },
+    { id: 'status', label: 'Status', width: 56, icon: CircleDot },
     { id: 'name', label: 'Name', width: 320, pinned: true },
     { id: 'namespace', label: 'Namespace', width: 150 },
     { id: 'cpu', label: 'CPU', width: 80, numeric: true },
@@ -65,13 +65,13 @@
             <StatusIndicator
               tone={podTone(pod)}
               label={podStatusLabel(pod)}
+              icon={Box}
               pulse={pod.phase === 'Terminating'}
             />
           </td>
         {/if}
         <td class="px-3 py-1.5" title={pod.name}>
           <span class="flex items-center gap-2">
-            <Box class="size-3.5 shrink-0 text-on-surface-variant/40" strokeWidth={1.5} />
             <span class="truncate font-medium text-on-surface">{pod.name}</span>
           </span>
         </td>

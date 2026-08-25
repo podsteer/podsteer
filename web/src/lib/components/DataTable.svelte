@@ -28,6 +28,16 @@
     pinned?: boolean
     /** Starts hidden; the operator opts in from the column menu. */
     defaultHidden?: boolean
+    /**
+     * Drawn instead of the heading text.
+     *
+     * For a column whose cells are marks rather than words: the status
+     * columns are as wide as one glyph, and "Status" spelt out was wider than
+     * everything it was labelling. The label is still what the sort control
+     * and the column menu announce, so nothing is lost to anyone reading by
+     * name.
+     */
+    icon?: Component
   }
 
   /**
@@ -50,7 +60,7 @@
 </script>
 
 <script lang="ts">
-  import type { Snippet } from 'svelte'
+  import type { Component, Snippet } from 'svelte'
   import type { SortState } from '$lib/sort'
   import { preferences } from '$stores/preferences.svelte'
   import ColumnMenu from './ColumnMenu.svelte'
@@ -281,7 +291,16 @@
                          {column.numeric ? 'flex-row-reverse' : ''}
                          {active ? 'text-primary' : 'hover:text-on-surface'}"
                 >
-                  <span class="truncate">{column.label}</span>
+                  {#if column.icon}
+                    {@const HeaderIcon = column.icon}
+                    <HeaderIcon
+                      class="size-4 shrink-0"
+                      strokeWidth={1.8}
+                      aria-label={column.label}
+                    />
+                  {:else}
+                    <span class="truncate">{column.label}</span>
+                  {/if}
                   {#if active}
                     {#if sort?.direction === 'asc'}
                       <ChevronUp class="size-3.5 shrink-0 text-primary" strokeWidth={2.5} />

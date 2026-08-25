@@ -13,7 +13,7 @@
   import type { Tone } from '$lib/format'
   import type { ClusterSession } from '$stores/session.svelte'
   import type { Workload } from '$lib/api/client'
-  import { Layers, Container } from '@lucide/svelte'
+  import { Container, Layers, CircleDot } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -24,7 +24,7 @@
   const isCronJob = $derived(session.selectedKindId === 'batch/v1/cronjobs')
 
   const columns = $derived<Column[]>([
-    { id: 'status', label: 'Status', width: 96 },
+    { id: 'status', label: 'Status', width: 56, icon: CircleDot },
     { id: 'name', label: 'Name', width: 300, pinned: true },
     { id: 'namespace', label: 'Namespace', width: 150 },
     ...(isCronJob
@@ -77,12 +77,16 @@
       >
         {#if isVisible('status')}
           <td class="overflow-hidden py-1.5 pr-3 pl-5">
-            <StatusIndicator tone={tone(workload)} label={workload.status} pulse={workload.isRolling} />
+            <StatusIndicator
+              tone={tone(workload)}
+              label={workload.status}
+              icon={Layers}
+              pulse={workload.isRolling}
+            />
           </td>
         {/if}
         <td class="px-3 py-1.5" title={workload.name}>
           <span class="flex items-center gap-2">
-            <Layers class="size-3.5 shrink-0 text-on-surface-variant/40" strokeWidth={1.5} />
             <span class="truncate font-medium text-on-surface">{workload.name}</span>
           </span>
         </td>

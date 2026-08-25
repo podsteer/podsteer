@@ -12,7 +12,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { formatAge } from '$lib/format'
   import type { ClusterSession } from '$stores/session.svelte'
-  import { Server } from '@lucide/svelte'
+  import { Server, CircleDot } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -21,7 +21,7 @@
   let { session }: Props = $props()
 
   const COLUMNS: Column[] = [
-    { id: 'status', label: 'Status', width: 96 },
+    { id: 'status', label: 'Status', width: 56, icon: CircleDot },
     { id: 'name', label: 'Name', width: 300, pinned: true },
     { id: 'roles', label: 'Roles', width: 140 },
     { id: 'cpu', label: 'CPU', width: 200 },
@@ -59,12 +59,12 @@
             <StatusIndicator
               tone={node.isHealthy ? (node.unschedulable ? 'warning' : 'success') : 'error'}
               label={node.status}
+              icon={Server}
             />
           </td>
         {/if}
         <td class="px-3 py-1.5" title={node.name}>
           <span class="flex items-center gap-2">
-            <Server class="size-3.5 shrink-0 text-on-surface-variant/40" strokeWidth={1.5} />
             <span class="truncate font-medium text-on-surface">{node.name}</span>
           </span>
         </td>
