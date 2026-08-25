@@ -19,9 +19,17 @@
   same frame, with no reactivity and nothing to keep in step. It follows a
   theme that did not exist when this was written for free.
 
-  The surface is transparent for the same reason. Whatever the editor is
+  The editor's own surface is transparent for the same reason: whatever it is
   dropped into decides the background, so it cannot disagree with its
   container the way a hardcoded one did.
+
+  The GUTTER is the exception, and has to be opaque. It is `position: sticky`,
+  so when wrapping is off and the content scrolls sideways the text passes
+  underneath it — and a transparent gutter lets that text show through the
+  line numbers. Every CodeMirror theme paints it for this reason; leaving it
+  transparent looked correct until something scrolled horizontally, which is
+  why it survived until the search box started jumping to matches. Hence
+  `surface`: the one colour this component cannot infer and must be told.
 -->
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
@@ -59,6 +67,16 @@
     onchange?: (value: string) => void
     /** Text to find and highlight. Empty clears the highlighting. */
     query?: string
+    /**
+     * The colour behind the editor, painted into the sticky gutter.
+     *
+     * It has to match whatever the editor sits on, and nothing in CSS can
+     * work that out from here — `background-color: inherit` copies a
+     * transparent parent's transparency. Both current hosts are
+     * surface-container-lowest (the drawer body, and the dialog's field), so
+     * that is the default; a host on another surface passes its own.
+     */
+    surface?: string
     /** Hands the parent the controls it cannot reach from outside. */
     onready?: (api: EditorApi) => void
   }
@@ -70,7 +88,14 @@
     findPrevious: () => void
   }
 
-  let { content, readonly = false, onchange, query = '', onready }: Props = $props()
+  let {
+    content,
+    readonly = false,
+    onchange,
+    query = '',
+    surface = 'var(--surface-container-lowest)',
+    onready,
+  }: Props = $props()
 
   let editorContainer: HTMLDivElement
   let editor: EditorView | null = null
@@ -236,78 +261,85 @@
   /**
    * The chrome: everything that is not the text itself.
    *
+   * A function rather than a value so that reading `surface` is an explicit
+   * snapshot taken at mount, which is when the editor is configured, rather
+   * than a prop captured at init by accident.
+   *
    * `color-mix` rather than fixed tints, so a selection is the theme's own
    * primary at low strength in both schemes instead of a blue that only
    * works against one of them.
    */
-  const theme = EditorView.theme({
-    '&': {
-      height: '100%',
-      fontSize: '13px',
-      // Inherited from whatever hosts the editor. See the note above.
-      backgroundColor: 'transparent',
-      color: 'var(--on-surface)',
-    },
-    '&.cm-focused': { outline: 'none' },
-    '.cm-scroller': {
-      overflow: 'auto',
-      fontFamily: 'var(--font-mono)',
-      lineHeight: '1.6',
-    },
-    '.cm-content': {
-      padding: '8px 0',
-      caretColor: 'var(--primary)',
-      // The application sets `user-select: none` on the body, which a
-      // read-only editor (contenteditable=false) would otherwise inherit —
-      // leaving a manifest that cannot be copied, which is most of the point
-      // of showing it.
-      userSelect: 'text',
-      cursor: 'text',
-    },
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--primary)' },
+  function buildTheme() {
+      return EditorView.theme({
+      '&': {
+        height: '100%',
+        fontSize: '13px',
+        // Inherited from whatever hosts the editor. See the note above.
+        backgroundColor: 'transparent',
+        color: 'var(--on-surface)',
+      },
+      '&.cm-focused': { outline: 'none' },
+      '.cm-scroller': {
+        overflow: 'auto',
+        fontFamily: 'var(--font-mono)',
+        lineHeight: '1.6',
+      },
+      '.cm-content': {
+        padding: '8px 0',
+        caretColor: 'var(--primary)',
+        // The application sets `user-select: none` on the body, which a
+        // read-only editor (contenteditable=false) would otherwise inherit —
+        // leaving a manifest that cannot be copied, which is most of the point
+        // of showing it.
+        userSelect: 'text',
+        cursor: 'text',
+      },
+      '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--primary)' },
 
-    '.cm-gutters': {
-      minWidth: '44px',
-      backgroundColor: 'transparent',
-      color: 'var(--code-punctuation)',
-      border: 'none',
-    },
-    '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 12px' },
-    '.cm-foldGutter .cm-gutterElement': { color: 'var(--code-punctuation)' },
+      // Opaque, and deliberately so — see the note at the top of this file.
+      '.cm-gutters': {
+        minWidth: '44px',
+        backgroundColor: surface,
+        color: 'var(--code-punctuation)',
+        border: 'none',
+      },
+      '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 12px' },
+      '.cm-foldGutter .cm-gutterElement': { color: 'var(--code-punctuation)' },
 
-    // A wash rather than a band: the line the caret is on should be findable
-    // without the highlight competing with the text sitting on it.
-    '.cm-activeLine': {
-      backgroundColor: 'color-mix(in oklab, var(--on-surface) 5%, transparent)',
-    },
-    '.cm-activeLineGutter': {
-      backgroundColor: 'color-mix(in oklab, var(--on-surface) 5%, transparent)',
-      color: 'var(--on-surface-variant)',
-    },
+      // A wash rather than a band: the line the caret is on should be findable
+      // without the highlight competing with the text sitting on it.
+      '.cm-activeLine': {
+        backgroundColor: 'color-mix(in oklab, var(--on-surface) 5%, transparent)',
+      },
+      '.cm-activeLineGutter': {
+        backgroundColor: 'color-mix(in oklab, var(--on-surface) 5%, transparent)',
+        color: 'var(--on-surface-variant)',
+      },
 
-    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
-      backgroundColor: 'color-mix(in oklab, var(--primary) 28%, transparent)',
-    },
-    '&.cm-focused .cm-matchingBracket': {
-      backgroundColor: 'color-mix(in oklab, var(--primary) 22%, transparent)',
-      outline: 'none',
-    },
-    '&.cm-focused .cm-nonmatchingBracket': {
-      backgroundColor: 'color-mix(in oklab, var(--error) 22%, transparent)',
-    },
+      '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
+        backgroundColor: 'color-mix(in oklab, var(--primary) 28%, transparent)',
+      },
+      '&.cm-focused .cm-matchingBracket': {
+        backgroundColor: 'color-mix(in oklab, var(--primary) 22%, transparent)',
+        outline: 'none',
+      },
+      '&.cm-focused .cm-nonmatchingBracket': {
+        backgroundColor: 'color-mix(in oklab, var(--error) 22%, transparent)',
+      },
 
-    // Amber for a match and a solid amber for the one you are on — the same
-    // two-tier reading the gauges use, rather than the yellow-on-light and
-    // cyan-on-dark CodeMirror ships, which belong to neither theme here.
-    '.cm-yaml-match': {
-      backgroundColor: 'color-mix(in oklab, var(--gauge-warn) 30%, transparent)',
-      borderRadius: '2px',
-    },
-    '.cm-yaml-match-current': {
-      backgroundColor: 'color-mix(in oklab, var(--gauge-warn) 70%, transparent)',
-    },
+      // Amber for a match and a solid amber for the one you are on — the same
+      // two-tier reading the gauges use, rather than the yellow-on-light and
+      // cyan-on-dark CodeMirror ships, which belong to neither theme here.
+      '.cm-yaml-match': {
+        backgroundColor: 'color-mix(in oklab, var(--gauge-warn) 30%, transparent)',
+        borderRadius: '2px',
+      },
+      '.cm-yaml-match-current': {
+        backgroundColor: 'color-mix(in oklab, var(--gauge-warn) 70%, transparent)',
+      },
 
-  })
+    })
+  }
 
   /**
    * The text itself.
@@ -353,7 +385,7 @@
       highlighter,
       keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
       yaml(),
-      theme,
+      buildTheme(),
       EditorState.readOnly.of(readonly),
       EditorView.editable.of(!readonly),
       wrapping.of(preferences.wrapLines ? EditorView.lineWrapping : []),
