@@ -130,6 +130,14 @@ interface PersistedShape {
    * reflowing too.
    */
   wrapLines: boolean
+  /**
+   * Whether a manifest shows `metadata.managedFields`.
+   *
+   * Off, as in kubectl since 1.21. It is server-side apply's bookkeeping, it
+   * is half the length of a real object, and somebody who opens the YAML tab
+   * is looking for spec.
+   */
+  showManagedFields: boolean
   /** clusterId -> the namespace filter it was last left on. */
   namespaceByCluster: Record<string, string>
   /** clusterId -> snoozeKey() -> epoch milliseconds when the snooze lapses. */
@@ -168,6 +176,7 @@ const DEFAULTS: PersistedShape = {
   expandedCategories: [],
   findingsExpanded: false,
   wrapLines: true,
+  showManagedFields: false,
   namespaceByCluster: {},
   snoozes: {},
   // 80 and 90 because they are where Kubernetes itself starts to behave
@@ -219,6 +228,9 @@ class Preferences {
 
   /** Whether monospaced panes wrap long lines. See the shape above. */
   wrapLines = $state<boolean>(DEFAULTS.wrapLines)
+
+  /** Whether a manifest shows managed fields. See the shape above. */
+  showManagedFields = $state<boolean>(DEFAULTS.showManagedFields)
 
   /** clusterId -> last-selected namespace filter. */
   namespaceByCluster = $state<Record<string, string>>({})
@@ -360,6 +372,11 @@ class Preferences {
 
   toggleWrapLines = (): void => {
     this.wrapLines = !this.wrapLines
+    this.#save()
+  }
+
+  toggleManagedFields = (): void => {
+    this.showManagedFields = !this.showManagedFields
     this.#save()
   }
 
@@ -585,6 +602,9 @@ class Preferences {
       if (typeof stored.wrapLines === 'boolean') {
         this.wrapLines = stored.wrapLines
       }
+      if (typeof stored.showManagedFields === 'boolean') {
+        this.showManagedFields = stored.showManagedFields
+      }
       if (typeof stored.navigatorWidth === 'number' && stored.navigatorWidth >= 180 && stored.navigatorWidth <= 400) {
         this.navigatorWidth = stored.navigatorWidth
       }
@@ -653,6 +673,7 @@ class Preferences {
         expandedCategories: this.expandedCategories,
         findingsExpanded: this.findingsExpanded,
         wrapLines: this.wrapLines,
+        showManagedFields: this.showManagedFields,
         namespaceByCluster: this.namespaceByCluster,
         snoozes: this.#pruneSnoozes(),
         warnThreshold: this.warnThreshold,

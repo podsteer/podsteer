@@ -19,6 +19,9 @@
   import YamlEditor from './YamlEditor.svelte'
   import PaneToolbar from './PaneToolbar.svelte'
   import WrapLinesToggle from './WrapLinesToggle.svelte'
+  import ManagedFieldsToggle from './ManagedFieldsToggle.svelte'
+  import { withoutManagedFields } from '$lib/manifest'
+  import { preferences } from '$stores/preferences.svelte'
   import DeleteDialog from './DeleteDialog.svelte'
   import ScaleDialog from './ScaleDialog.svelte'
   import EditDialog from './EditDialog.svelte'
@@ -66,6 +69,21 @@
   const isPod = $derived(session.selectedKindId === 'core/v1/pods')
 
   const isEvent = $derived(session.selectedKindId === 'core/v1/events')
+
+  /**
+   * The manifest as shown, which is not always the manifest as fetched.
+   *
+   * Filtered here rather than in the Go adapter so the toggle is instant and
+   * costs no round trip — and so that what the API server sent is still the
+   * thing held in memory, with the trimming a property of the view.
+   */
+  const shownManifest = $derived(
+    session.manifest === null
+      ? null
+      : preferences.showManagedFields
+        ? session.manifest
+        : withoutManagedFields(session.manifest),
+  )
 
   /**
    * Whether editing this object means anything.
@@ -527,9 +545,10 @@
             <div class="flex h-full flex-col">
               <PaneToolbar>
                 <WrapLinesToggle />
+                <ManagedFieldsToggle />
               </PaneToolbar>
               <div class="min-h-0 flex-1">
-                <YamlEditor content={session.manifest} readonly={true} />
+                <YamlEditor content={shownManifest ?? ''} readonly={true} />
               </div>
             </div>
           {/if}
