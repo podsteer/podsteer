@@ -1,8 +1,16 @@
 <!--
   Dialog for editing a resource's YAML manifest.
+
+  The same editor the drawer reads a manifest in, not a textarea. Editing is
+  the more demanding of the two jobs — indentation decides meaning in YAML,
+  and a mistyped key is invisible in unhighlighted monospace — so the view
+  with line numbers and syntax colour belonged here at least as much as in the
+  read-only tab. Having them differ also made applying a change feel like it
+  happened somewhere other than the application.
 -->
 <script lang="ts">
   import Button from './Button.svelte'
+  import YamlEditor from './YamlEditor.svelte'
 
   interface Props {
     open: boolean
@@ -55,12 +63,12 @@
       Edit the YAML manifest below and click Apply to update the resource.
     </p>
 
-    <textarea
-      bind:value={editedManifest}
-      class="field mt-4 min-h-0 flex-1 resize-none px-3 py-2
-             font-mono text-body-small leading-relaxed text-on-surface"
-      data-selectable
-    ></textarea>
+    <!-- The frame is the dialog's, not the editor's: YamlEditor paints no
+         background of its own, so it takes this one and cannot disagree with
+         the panel around it. -->
+    <div class="field mt-4 min-h-0 flex-1 overflow-hidden">
+      <YamlEditor content={editedManifest} onchange={(value) => (editedManifest = value)} />
+    </div>
 
     <div class="mt-4 flex justify-end gap-3">
       <Button variant="outlined" onclick={onclose}>Cancel</Button>

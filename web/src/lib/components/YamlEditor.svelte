@@ -1,17 +1,27 @@
 <!--
-  Professional YAML editor with full syntax highlighting using CodeMirror.
+  A YAML manifest, read or edited.
 
-  Features:
-  - Full YAML syntax highlighting with colors
-  - Line numbers
-  - Active line highlighting
-  - Code folding
-  - Bracket matching
-  - Search and replace (Cmd+F / Ctrl+F)
-  - Undo/redo history
-  - Dark theme (Tokyo Night inspired)
-  - Responsive sizing
-  - Read-only and editable modes
+  CodeMirror with YAML highlighting, line numbers, folding and bracket
+  matching — the same component in the drawer's YAML tab and in the edit
+  dialog, so that reading a manifest and changing one look like the same act.
+  The dialog used to be a bare textarea, which made editing feel like leaving
+  the application.
+
+  EVERY COLOUR HERE IS A CSS VARIABLE, and that is the whole design.
+
+  The editor previously shipped One Dark, a fixed palette that stayed dark on
+  a light theme — a black rectangle sitting in a white panel. The obvious
+  repair is to keep two palettes and swap them when the theme changes, but
+  that means the component has to know the theme, subscribe to it, and rebuild
+  its extensions on every change. Referencing the same custom properties the
+  rest of the application uses avoids all of it: the variables are redefined
+  on :root by the theme, so the editor repaints with everything else, in the
+  same frame, with no reactivity and nothing to keep in step. It follows a
+  theme that did not exist when this was written for free.
+
+  The surface is transparent for the same reason. Whatever the editor is
+  dropped into decides the background, so it cannot disagree with its
+  container the way a hardcoded one did.
 -->
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
@@ -25,22 +35,17 @@
     highlightSpecialChars,
   } from '@codemirror/view'
   import { yaml } from '@codemirror/lang-yaml'
-  import { oneDark } from '@codemirror/theme-one-dark'
   import { EditorState } from '@codemirror/state'
-  import {
-    defaultKeymap,
-    history,
-    historyKeymap,
-    indentWithTab,
-  } from '@codemirror/commands'
+  import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
   import {
     bracketMatching,
     indentOnInput,
     foldGutter,
     foldKeymap,
     syntaxHighlighting,
-    defaultHighlightStyle,
+    HighlightStyle,
   } from '@codemirror/language'
+  import { tags } from '@lezer/highlight'
 
   interface Props {
     content: string
@@ -53,6 +58,99 @@
   let editorContainer: HTMLDivElement
   let editor: EditorView | null = null
 
+  /**
+   * The chrome: everything that is not the text itself.
+   *
+   * `color-mix` rather than fixed tints, so a selection is the theme's own
+   * primary at low strength in both schemes instead of a blue that only
+   * works against one of them.
+   */
+  const theme = EditorView.theme({
+    '&': {
+      height: '100%',
+      fontSize: '13px',
+      // Inherited from whatever hosts the editor. See the note above.
+      backgroundColor: 'transparent',
+      color: 'var(--on-surface)',
+    },
+    '&.cm-focused': { outline: 'none' },
+    '.cm-scroller': {
+      overflow: 'auto',
+      fontFamily: 'var(--font-mono)',
+      lineHeight: '1.6',
+    },
+    '.cm-content': {
+      padding: '8px 0',
+      caretColor: 'var(--primary)',
+      // The application sets `user-select: none` on the body, which a
+      // read-only editor (contenteditable=false) would otherwise inherit —
+      // leaving a manifest that cannot be copied, which is most of the point
+      // of showing it.
+      userSelect: 'text',
+      cursor: 'text',
+    },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--primary)' },
+
+    '.cm-gutters': {
+      minWidth: '44px',
+      backgroundColor: 'transparent',
+      color: 'var(--code-punctuation)',
+      border: 'none',
+    },
+    '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 12px' },
+    '.cm-foldGutter .cm-gutterElement': { color: 'var(--code-punctuation)' },
+
+    // A wash rather than a band: the line the caret is on should be findable
+    // without the highlight competing with the text sitting on it.
+    '.cm-activeLine': {
+      backgroundColor: 'color-mix(in oklab, var(--on-surface) 5%, transparent)',
+    },
+    '.cm-activeLineGutter': {
+      backgroundColor: 'color-mix(in oklab, var(--on-surface) 5%, transparent)',
+      color: 'var(--on-surface-variant)',
+    },
+
+    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
+      backgroundColor: 'color-mix(in oklab, var(--primary) 28%, transparent)',
+    },
+    '&.cm-focused .cm-matchingBracket': {
+      backgroundColor: 'color-mix(in oklab, var(--primary) 22%, transparent)',
+      outline: 'none',
+    },
+    '&.cm-focused .cm-nonmatchingBracket': {
+      backgroundColor: 'color-mix(in oklab, var(--error) 22%, transparent)',
+    },
+
+  })
+
+  /**
+   * The text itself.
+   *
+   * Sparse on purpose. The YAML grammar reports every unquoted scalar and
+   * every quoted string as `content`, so a palette that gave numbers and
+   * booleans their own colours would be asserting a distinction the parser
+   * cannot actually make. What is left is the distinction that matters when
+   * reading a manifest: keys against values.
+   */
+  const highlighting = HighlightStyle.define([
+    { tag: tags.definition(tags.propertyName), color: 'var(--code-key)', fontWeight: '500' },
+    { tag: tags.propertyName, color: 'var(--code-key)' },
+    { tag: tags.lineComment, color: 'var(--code-comment)', fontStyle: 'italic' },
+    {
+      tag: [tags.separator, tags.punctuation, tags.squareBracket, tags.brace],
+      color: 'var(--code-punctuation)',
+    },
+    // Anchors, aliases, tags and directives: statements about the document
+    // rather than data in it, so they read as a class of their own.
+    {
+      tag: [tags.labelName, tags.typeName, tags.keyword, tags.meta, tags.attributeValue],
+      color: 'var(--code-meta)',
+    },
+    { tag: tags.special(tags.string), color: 'var(--code-meta)' },
+    { tag: [tags.content, tags.string], color: 'var(--on-surface)' },
+    { tag: tags.invalid, color: 'var(--error)' },
+  ])
+
   onMount(() => {
     const extensions = [
       lineNumbers(),
@@ -64,76 +162,39 @@
       bracketMatching(),
       indentOnInput(),
       foldGutter(),
-      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-      keymap.of([
-        ...defaultKeymap,
-        ...historyKeymap,
-        ...foldKeymap,
-        indentWithTab,
-      ]),
+      syntaxHighlighting(highlighting),
+      keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
       yaml(),
-      oneDark,
+      theme,
+      EditorState.readOnly.of(readonly),
       EditorView.editable.of(!readonly),
       EditorView.lineWrapping,
-      // Custom theme overrides for the editor container
-      EditorView.theme({
-        '&': {
-          height: '100%',
-          fontSize: '13px',
-        },
-        '.cm-scroller': {
-          overflow: 'auto',
-          fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", Monaco, Menlo, "Ubuntu Mono", monospace',
-        },
-        '.cm-content': {
-          padding: '8px 0',
-        },
-        '.cm-gutters': {
-          minWidth: '44px',
-        },
-        '.cm-lineNumbers .cm-gutterElement': {
-          padding: '0 8px 0 12px',
-        },
-      }),
     ]
 
-    // Add change listener only when editable
     if (!readonly && onchange) {
       extensions.push(
         EditorView.updateListener.of((update) => {
-          if (update.docChanged && onchange) {
-            onchange(update.state.doc.toString())
-          }
+          if (update.docChanged) onchange(update.state.doc.toString())
         }),
       )
     }
 
-    const state = EditorState.create({
-      doc: content,
-      extensions,
-    })
-
     editor = new EditorView({
-      state,
+      state: EditorState.create({ doc: content, extensions }),
       parent: editorContainer,
     })
   })
 
   onDestroy(() => {
-    if (editor) {
-      editor.destroy()
-    }
+    editor?.destroy()
   })
 
-  // Update editor content when prop changes
+  // Only when it genuinely differs, or every keystroke in an editable
+  // instance would replace the document the caret is sitting in.
   $effect(() => {
     if (editor && content !== editor.state.doc.toString()) {
       editor.dispatch({
-        changes: {
-          from: 0,
-          to: editor.state.doc.length,
-          insert: content,
-        },
+        changes: { from: 0, to: editor.state.doc.length, insert: content },
       })
     }
   })
@@ -146,9 +207,5 @@
 <style>
   :global(.cm-editor) {
     height: 100% !important;
-  }
-
-  :global(.cm-editor.cm-focused) {
-    outline: none !important;
   }
 </style>

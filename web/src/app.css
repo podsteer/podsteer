@@ -97,6 +97,19 @@
   --inverse-surface: #e6e0e9;
   --inverse-on-surface: #322f35;
   --inverse-primary: #1a73e8;
+
+  /* Syntax colours for the YAML editor. Four, because the YAML grammar only
+     distinguishes four things worth separating: a key, a comment, the
+     punctuation holding the structure together, and the anchors/tags/
+     directives that are metadata about the document rather than part of it.
+     Values are deliberately left in the body colour — plain scalars and
+     quoted strings are both `content` to the parser, so colouring them would
+     be inventing a distinction the language does not make, and the reason to
+     read YAML is the keys anyway. */
+  --code-key: #8ab4f8;
+  --code-comment: #8f8a97;
+  --code-punctuation: #6f6a77;
+  --code-meta: #efb8c8;
 }
 
 /* ---- Google Blue scheme, light ------------------------------------------- */
@@ -150,6 +163,11 @@
   --inverse-surface: #322f35;
   --inverse-on-surface: #f5eff7;
   --inverse-primary: #8ab4f8;
+
+  --code-key: #1a73e8;
+  --code-comment: #6b6773;
+  --code-punctuation: #8c8794;
+  --code-meta: #7d5260;
 }
 
 /*
