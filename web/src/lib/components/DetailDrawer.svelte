@@ -66,6 +66,23 @@
   const isEvent = $derived(session.selectedKindId === 'core/v1/events')
 
   /**
+   * Whether editing this object means anything.
+   *
+   * An event is a record of something that already happened: the API will
+   * accept a patch and the cluster will take no notice, so offering the
+   * action would be offering a change that cannot have an effect.
+   */
+  const canEdit = $derived(!!session.manifest && !isEvent)
+
+  const editHint = $derived(
+    isEvent
+      ? 'An event is a record of something that happened — there is nothing to change'
+      : session.manifest
+        ? 'Edit YAML'
+        : 'Nothing loaded yet',
+  )
+
+  /**
    * The selected event, parsed from its own manifest.
    *
    * Everything an event says lives at the top level rather than under spec or
@@ -325,15 +342,20 @@
           </button>
         {/if}
 
+        <!-- Shown disabled rather than hidden when it cannot apply, so the
+             row of actions keeps its shape and says why: an icon that
+             disappears leaves somebody wondering whether they misremembered
+             it, while one that is greyed out and explains itself on hover
+             answers the question. -->
         <button
           type="button"
           onclick={() => (editDialogOpen = true)}
-          disabled={!session.manifest}
+          disabled={!canEdit}
           aria-label="Edit"
-          title="Edit YAML"
+          title={editHint}
           class="state-layer grid size-8 shrink-0 place-items-center rounded-full
                  transition-colors duration-100
-                 {session.manifest ? 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface' : 'text-on-surface-variant/30'}
+                 {canEdit ? 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface' : 'text-on-surface-variant/30'}
                  disabled:pointer-events-none"
         >
           <Pencil class="size-4" strokeWidth={1.8} />

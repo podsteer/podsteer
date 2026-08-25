@@ -100,7 +100,10 @@
 </script>
 
 {#if event}
-  <div class="flex flex-col gap-5 p-4">
+  <!-- The sections are far enough apart to read as separate things. At the
+       tighter spacing the rule under a heading sat almost on the text above
+       it, so the pane read as one block with lines through it. -->
+  <div class="flex flex-col gap-7 p-4">
     <!-- Marked the way the row that led here was marked: the object's own
          icon, in the severity's colour and weight. -->
     <div class="flex items-start gap-3">
@@ -157,9 +160,14 @@
            beside a sixty-character event name — and right-aligning them
            against a ragged left edge left nothing to read down. -->
       <dl class="grid grid-cols-[25%_1fr] gap-x-4 gap-y-2">
+        <!-- The label carries the emphasis and the value recedes, as on the
+             capacity card and for the same reason: the labels are the same on
+             every event, so they are what the eye navigates by, and somebody
+             looking for "Reported by" should find the words before the name
+             beside them. -->
         {#each rows as row (row.label)}
-          <dt class="text-body-medium text-on-surface-variant">{row.label}</dt>
-          <dd class="min-w-0 text-body-medium break-words text-on-surface" data-selectable>
+          <dt class="text-body-medium text-on-surface">{row.label}</dt>
+          <dd class="min-w-0 text-body-medium break-words text-on-surface-variant" data-selectable>
             {row.value}
           </dd>
         {/each}
