@@ -15,8 +15,8 @@
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import { Search, X } from '@lucide/svelte'
   import PaneToolbar from './PaneToolbar.svelte'
+  import ToolbarSearch from './ToolbarSearch.svelte'
   import WrapLinesToggle from './WrapLinesToggle.svelte'
   import ManagedFieldsToggle from './ManagedFieldsToggle.svelte'
   import YamlEditor, { type EditorApi } from './YamlEditor.svelte'
@@ -48,7 +48,6 @@
 
   let query = $state('')
   let api = $state<EditorApi | null>(null)
-  let input = $state<HTMLInputElement | null>(null)
 
   /**
    * Counted from the text directly, not asked of the editor.
@@ -61,99 +60,21 @@
    */
   const matches = $derived(findMatches(content, query).length)
 
-  /**
-   * The search box takes focus when the pane appears.
-   *
-   * Opening the YAML tab is nearly always the start of looking for something
-   * in it, and the alternative — focus on a read-only editor — is a caret
-   * somebody cannot type into anyway. In the dialog it costs one click to
-   * reach the text, which is the trade asked for.
-   *
-   * Guarded so it fires once per mount rather than on every keystroke: the
-   * effect would otherwise re-run whenever `input` was reassigned and steal
-   * focus back from the editor mid-edit.
-   */
-  let focused = false
-  $effect(() => {
-    if (input && !focused) {
-      focused = true
-      input.focus()
-    }
-  })
-
-  function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      // Shift steps backwards, the convention every find box shares.
-      if (event.shiftKey) api?.findPrevious()
-      else api?.findNext()
-    } else if (event.key === 'Escape' && query) {
-      // Clears the search rather than closing the drawer behind it: while
-      // there is something in the box, Escape belongs to the box.
-      event.stopPropagation()
-      query = ''
-    }
-  }
 </script>
 
 <div class="flex h-full flex-col">
   <PaneToolbar>
     {#snippet children()}
-      <!-- The one control that is typed into, so it takes the free space.
-           The margin is the gap between it and the first icon: at the
-           toolbar's own spacing the field's border sat almost against the
-           wrap button, and the two read as one control. -->
-      <div class="relative mr-3 flex min-w-0 flex-1 items-center">
-        <Search
-          class="pointer-events-none absolute left-2 size-3.5 text-on-surface-variant/50"
-          strokeWidth={1.8}
-        />
-        <!-- Every suggestion mechanism off. This is a find box over one
-             document, so a dropdown of things typed into other find boxes is
-             noise that covers the first line of the result — and the webview
-             will offer exactly that unless told not to. `name` is omitted for
-             the same reason: an unnamed field is not one autofill recognises.
-             The two data attributes are for the password managers that ignore
-             `autocomplete` on principle. -->
-        <input
-          bind:this={input}
-          bind:value={query}
-          onkeydown={onKeydown}
-          type="text"
-          placeholder="Search"
-          aria-label="Search the manifest"
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="off"
-          spellcheck="false"
-          data-1p-ignore
-          data-lpignore="true"
-          class="field h-7 w-full min-w-0 py-0 pr-16 pl-7 text-body-small"
-        />
-        {#if query}
-          <!-- The count sits inside the field, where it answers the question
-               the typing just asked without moving anything. -->
-          <span
-            class="pointer-events-none absolute right-7 text-body-small tabular-nums
-                   {matches === 0 ? 'text-on-surface-variant/50' : 'text-on-surface-variant'}"
-          >
-            {matches}
-          </span>
-          <button
-            type="button"
-            onclick={() => {
-              query = ''
-              input?.focus()
-            }}
-            aria-label="Clear search"
-            title="Clear search"
-            class="absolute right-1.5 grid size-5 place-items-center rounded-full
-                   text-on-surface-variant/60 transition-colors hover:text-on-surface"
-          >
-            <X class="size-3.5" strokeWidth={2} />
-          </button>
-        {/if}
-      </div>
+      <ToolbarSearch
+        value={query}
+        label="Search the manifest"
+        count={String(matches)}
+        empty={matches === 0}
+        autofocus
+        onchange={(value) => (query = value)}
+        onnext={() => api?.findNext()}
+        onprevious={() => api?.findPrevious()}
+      />
     {/snippet}
 
     {#snippet trailing()}

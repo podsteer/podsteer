@@ -13,7 +13,12 @@
   import { onMount, onDestroy } from 'svelte'
   import { preferences } from '$stores/preferences.svelte'
   import PaneToolbar from './PaneToolbar.svelte'
+  import ToolbarSearch from './ToolbarSearch.svelte'
+  import ToolbarToggle from './ToolbarToggle.svelte'
+  import ToolbarButton from './ToolbarButton.svelte'
   import WrapLinesToggle from './WrapLinesToggle.svelte'
+  import { splitOnMatches } from '$lib/textSearch'
+  import { ArrowDownToLine, Check, Copy, Eraser, Radio } from '@lucide/svelte'
 
   /**
    * Shapes of the `log:line` / `log:end` event payloads.
@@ -60,6 +65,26 @@
   let autoScroll = $state(true)
 
   let logContainer: HTMLDivElement
+  let copied = $state(false)
+
+  /**
+   * Copies what is on screen, which is the filtered set when filtering.
+   *
+   * The same rule the manifest's copy button follows: a control sitting above
+   * a filtered view copies that view, or the clipboard disagrees with the
+   * screen in a way nobody notices until they paste it.
+   */
+  async function copyLogs(): Promise<void> {
+    const text = filteredLogs.map((log) => (isMultiPod && log.podName ? `${log.podName}: ${log.line}` : log.line)).join('\n')
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      copied = true
+      setTimeout(() => (copied = false), 1500)
+    } catch {
+      copied = false
+    }
+  }
 
   // Filter logs by search query
   const filteredLogs = $derived(
@@ -197,84 +222,95 @@
 </script>
 
 <div class="flex h-full flex-col">
-  <!-- Controls. The same shell the YAML panes use, so a control that governs
-       how text is displayed sits in the same place whichever tab it is on. -->
+  <!-- The same shell and the same reading order as the manifest panes: what
+       you are looking for, then what is streamed, then how it is shown, then
+       what can be done to it. The rules separate those groups.
+
+       The one deliberate difference is what the query DOES. On a manifest it
+       finds and jumps; here it filters, because a log is a stream of
+       independent lines and showing only the ones that match is the whole
+       point — jumping between occurrences of "error" through ten thousand
+       lines is a worse tool for the same job. The matched text is still
+       highlighted in the same amber, so the two panes look alike even where
+       they behave differently. -->
   <PaneToolbar>
     {#snippet children()}
-      <WrapLinesToggle />
-      <div class="mx-1 h-5 w-px bg-outline-variant/40"></div>
-      <!-- Container selector (only show if multiple containers) -->
-    {#if allContainers.length > 1}
-      <select
-        bind:value={selectedContainer}
-        onchange={restartStream}
-        class="h-8 rounded-sm border border-outline bg-surface px-2 text-sm text-on-surface"
-      >
-        <option value="">All containers</option>
-        {#each allContainers as container}
-          <option value={container}>{container}</option>
-        {/each}
-      </select>
-    {/if}
-
-    <!-- Tail lines -->
-    <select
-      bind:value={tailLines}
-      onchange={restartStream}
-      class="h-8 rounded-sm border border-outline bg-surface px-2 text-sm text-on-surface"
-    >
-      <option value={100}>Last 100 lines</option>
-      <option value={500}>Last 500 lines</option>
-      <option value={1000}>Last 1000 lines</option>
-      <option value={5000}>Last 5000 lines</option>
-    </select>
-
-    <!-- Follow toggle -->
-    <button
-      type="button"
-      onclick={toggleFollow}
-      class="h-8 rounded-xs px-3 text-sm transition-colors
-             {follow ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'}"
-      title={follow ? 'Disable follow mode' : 'Enable follow mode'}
-    >
-      Follow
-    </button>
-
-    <!-- Auto-scroll toggle -->
-    <button
-      type="button"
-      onclick={toggleAutoScroll}
-      class="h-8 rounded-xs px-3 text-sm transition-colors
-             {autoScroll ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'}"
-      title={autoScroll ? 'Disable auto-scroll' : 'Enable auto-scroll'}
-    >
-      Auto-scroll
-    </button>
-
-    <!-- Clear -->
-    <button
-      type="button"
-      onclick={clearLogs}
-      class="h-8 rounded-xs bg-surface-container px-3 text-sm text-on-surface-variant hover:bg-surface-container-high"
-      title="Clear logs"
-    >
-      Clear
-    </button>
-
+      <ToolbarSearch
+        value={searchQuery}
+        placeholder="Filter lines"
+        label="Filter the log lines"
+        count="{filteredLogs.length}/{logs.length}"
+        empty={filteredLogs.length === 0}
+        onchange={(value) => (searchQuery = value)}
+      />
     {/snippet}
 
     {#snippet trailing()}
-      <input
-        type="text"
-        bind:value={searchQuery}
-        placeholder="Search logs..."
-        class="field h-8 w-48 px-2 text-sm"
-      />
-      {#if searchQuery}
-        <span class="text-xs text-on-surface-variant">
-          {filteredLogs.length}/{logs.length}
-        </span>
+      <!-- What is streamed. These re-open the stream rather than changing the
+           view, which is why they sit apart from the toggles. -->
+      {#if allContainers.length > 1}
+        <select
+          bind:value={selectedContainer}
+          onchange={restartStream}
+          aria-label="Container"
+          class="field h-7 max-w-36 px-1.5 text-body-small"
+        >
+          <option value="">All containers</option>
+          {#each allContainers as container (container)}
+            <option value={container}>{container}</option>
+          {/each}
+        </select>
       {/if}
+
+      <select
+        bind:value={tailLines}
+        onchange={restartStream}
+        aria-label="Lines to fetch"
+        class="field h-7 px-1.5 text-body-small"
+      >
+        <option value={100}>Last 100</option>
+        <option value={500}>Last 500</option>
+        <option value={1000}>Last 1000</option>
+        <option value={5000}>Last 5000</option>
+      </select>
+
+      <div class="mx-1 h-5 w-px bg-outline-variant/40"></div>
+
+      <WrapLinesToggle />
+      <ToolbarToggle
+        icon={Radio}
+        label="Follow"
+        pressed={follow}
+        title={follow ? 'Following the stream — click to stop' : 'Not following — click to stream new lines'}
+        onclick={toggleFollow}
+      />
+      <ToolbarToggle
+        icon={ArrowDownToLine}
+        label="Scroll to newest"
+        pressed={autoScroll}
+        title={autoScroll
+          ? 'Sticking to the newest line — click to stay where you are'
+          : 'Staying put — click to follow the newest line'}
+        onclick={toggleAutoScroll}
+      />
+
+      <div class="mx-1 h-5 w-px bg-outline-variant/40"></div>
+
+      <ToolbarButton
+        icon={copied ? Check : Copy}
+        label="Copy logs"
+        title={copied ? 'Copied' : 'Copy the lines shown'}
+        active={copied}
+        disabled={filteredLogs.length === 0}
+        onclick={copyLogs}
+      />
+      <ToolbarButton
+        icon={Eraser}
+        label="Clear logs"
+        title="Clear what has been collected so far"
+        disabled={logs.length === 0}
+        onclick={clearLogs}
+      />
     {/snippet}
   </PaneToolbar>
 
@@ -303,7 +339,16 @@
             {#if isMultiPod && log.podName}
               <span class="text-primary">{log.podName}:</span>
             {/if}
-            <span class="text-on-surface">{log.line}</span>
+            <!-- The filter has already decided WHICH lines are here; the
+                 highlight says WHERE in each one, which is the part a filtered
+                 view otherwise leaves you hunting for on a 400-character
+                 line. Same amber as the manifest's matches. -->
+            <span class="text-on-surface"
+              >{#each splitOnMatches(log.line, searchQuery) as run, i (i)}{#if run.match}<mark
+                    class="rounded-xs bg-gauge-warn/30 text-on-surface"
+                    >{run.text}</mark
+                  >{:else}{run.text}{/if}{/each}</span
+            >
           </div>
         {/each}
       </div>

@@ -34,3 +34,31 @@ export function findMatches(text: string, needle: string, offset = 0): Array<[nu
   }
   return found
 }
+
+/**
+ * Splits `text` into runs, marking which ones matched.
+ *
+ * For rendering a highlight in plain DOM, where the editor's decorations are
+ * not available — the log pane draws its own lines, so it needs the match
+ * positions as markup rather than as CodeMirror ranges.
+ *
+ * Always returns at least one run, so a caller can render the result without
+ * special-casing "no query" or "no matches".
+ */
+export function splitOnMatches(
+  text: string,
+  needle: string,
+): Array<{ text: string; match: boolean }> {
+  const found = findMatches(text, needle)
+  if (found.length === 0) return [{ text, match: false }]
+
+  const runs: Array<{ text: string; match: boolean }> = []
+  let at = 0
+  for (const [start, end] of found) {
+    if (start > at) runs.push({ text: text.slice(at, start), match: false })
+    runs.push({ text: text.slice(start, end), match: true })
+    at = end
+  }
+  if (at < text.length) runs.push({ text: text.slice(at), match: false })
+  return runs
+}

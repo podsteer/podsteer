@@ -567,14 +567,6 @@
    "textId": "b176a97483acf9db"
   },
   {
-   "name": "@codemirror/theme-one-dark",
-   "version": "6.1.3",
-   "ecosystem": "npm",
-   "licence": "MIT",
-   "copyright": "Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others",
-   "textId": "b176a97483acf9db"
-  },
-  {
    "name": "@codemirror/view",
    "version": "6.43.9",
    "ecosystem": "npm",
