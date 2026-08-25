@@ -13,6 +13,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { preferences } from '$stores/preferences.svelte'
   import PaneToolbar from './PaneToolbar.svelte'
+  import Select from './Select.svelte'
   import ToolbarSearch from './ToolbarSearch.svelte'
   import ToolbarToggle from './ToolbarToggle.svelte'
   import ToolbarButton from './ToolbarButton.svelte'
@@ -50,6 +51,9 @@
   }
 
   let { clusterId, namespace, podName, containers = [], pods = [] }: Props = $props()
+
+  /** How many lines to ask the API server for. */
+  const TAIL_SIZES = [100, 500, 1000, 5000] as const
 
   // Determine if we're in single pod or multi-pod mode
   const isMultiPod = $derived(pods.length > 0)
@@ -241,6 +245,7 @@
         label="Filter the log lines"
         count="{filteredLogs.length}/{logs.length}"
         empty={filteredLogs.length === 0}
+        autofocus
         onchange={(value) => (searchQuery = value)}
       />
     {/snippet}
@@ -249,30 +254,37 @@
       <!-- What is streamed. These re-open the stream rather than changing the
            view, which is why they sit apart from the toggles. -->
       {#if allContainers.length > 1}
-        <select
-          bind:value={selectedContainer}
-          onchange={restartStream}
-          aria-label="Container"
-          class="field h-7 max-w-36 px-1.5 text-body-small"
-        >
-          <option value="">All containers</option>
-          {#each allContainers as container (container)}
-            <option value={container}>{container}</option>
-          {/each}
-        </select>
+        <Select
+          compact
+          label="Container"
+          accessibleName="Container to stream"
+          value={selectedContainer}
+          options={[
+            { value: '', label: 'All' },
+            ...allContainers.map((container) => ({ value: container, label: container })),
+          ]}
+          onchange={(next) => {
+            selectedContainer = next
+            restartStream()
+          }}
+        />
       {/if}
 
-      <select
-        bind:value={tailLines}
-        onchange={restartStream}
-        aria-label="Lines to fetch"
-        class="field h-7 px-1.5 text-body-small"
-      >
-        <option value={100}>Last 100</option>
-        <option value={500}>Last 500</option>
-        <option value={1000}>Last 1000</option>
-        <option value={5000}>Last 5000</option>
-      </select>
+      <!-- The number alone. "Last 100" spelled the same word out on every
+           option and on the trigger, where the panel's own heading already
+           says what the number counts — and a toolbar has no room to say
+           anything twice. -->
+      <Select
+        compact
+        label="Lines"
+        accessibleName="Lines to fetch"
+        value={String(tailLines)}
+        options={TAIL_SIZES.map((size) => ({ value: String(size), label: String(size) }))}
+        onchange={(next) => {
+          tailLines = Number(next)
+          restartStream()
+        }}
+      />
 
       <div class="mx-1 h-5 w-px bg-outline-variant/40"></div>
 
