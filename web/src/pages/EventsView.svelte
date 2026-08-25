@@ -20,7 +20,7 @@
   let { session }: Props = $props()
 
   const COLUMNS: Column[] = [
-    { id: 'type', label: 'Type', width: 56, icon: CircleDot },
+    { id: 'type', label: 'Type', width: 44, icon: CircleDot },
     { id: 'reason', label: 'Reason', width: 200, pinned: true },
     { id: 'object', label: 'Object', width: 300 },
     { id: 'namespace', label: 'Namespace', width: 160 },

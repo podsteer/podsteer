@@ -13,6 +13,8 @@
 <script lang="ts">
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
+  import { iconForKind } from '$lib/kindIcons'
+  import { CircleDot } from '@lucide/svelte'
   import type { ClusterSession } from '$stores/session.svelte'
 
   interface Props {
@@ -29,7 +31,7 @@
    * "Status". Position is stable for a given kind, which is the scope column
    * preferences are stored at.
    */
-  const columns = $derived<Column[]>(
+  const printed = $derived<Column[]>(
     (table?.columns ?? []).map((column, index) => ({
       id: `c${index}`,
       label: column.name,
@@ -38,6 +40,26 @@
       pinned: index === 0,
       defaultHidden: column.wide,
     })),
+  )
+
+  /** The kind's own icon, so every list begins the way the built-in ones do. */
+  const KindIcon = $derived(
+    session.selectedKind ? iconForKind(session.selectedKind) : undefined,
+  )
+
+  /**
+   * A leading icon column, ahead of whatever the server printed.
+   *
+   * Identity only, and deliberately not coloured: these rows come from the
+   * API server's table printer, which reports whatever a CRD's author chose
+   * to print and models no health at all. Tinting one would mean guessing at
+   * a status from a column that happens to be called "Status", and a guess
+   * dressed as a verdict is worse than no verdict.
+   */
+  const columns = $derived<Column[]>(
+    KindIcon
+      ? [{ id: 'kind', label: 'Kind', width: 44, icon: CircleDot, pinned: true }, ...printed]
+      : printed,
   )
 </script>
 
@@ -67,11 +89,18 @@
                {selected ? 'bg-secondary-container/40' : 'hover:bg-surface-container-low'}"
         onclick={() => row.name && session.openDetail(row.name, row.namespace)}
       >
-        {#each columns as column, index (column.id)}
+        {#if KindIcon && isVisible('kind')}
+          <td class="py-1.5 pr-3 pl-5">
+            <span class="inline-flex" title={session.selectedKind?.singular}>
+              <KindIcon class="size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.75} />
+            </span>
+          </td>
+        {/if}
+        {#each printed as column, index (column.id)}
           {#if isVisible(column.id)}
             <td
               class="truncate py-1.5
-                     {index === 0 ? 'pr-3 pl-6 text-on-surface' : 'px-3 text-on-surface-variant'}
+                     {index === 0 ? 'pr-3 pl-3 text-on-surface' : 'px-3 text-on-surface-variant'}
                      {column.numeric ? 'text-right tabular-nums' : ''}"
               title={row.cells[index]}
             >

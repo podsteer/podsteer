@@ -13,7 +13,8 @@
   import type { Tone } from '$lib/format'
   import type { ClusterSession } from '$stores/session.svelte'
   import type { Workload } from '$lib/api/client'
-  import { Container, Layers, CircleDot } from '@lucide/svelte'
+  import { Container, CircleDot } from '@lucide/svelte'
+  import { iconForKind } from '$lib/kindIcons'
 
   interface Props {
     session: ClusterSession
@@ -24,7 +25,7 @@
   const isCronJob = $derived(session.selectedKindId === 'batch/v1/cronjobs')
 
   const columns = $derived<Column[]>([
-    { id: 'status', label: 'Status', width: 56, icon: CircleDot },
+    { id: 'status', label: 'Status', width: 44, icon: CircleDot },
     { id: 'name', label: 'Name', width: 300, pinned: true },
     { id: 'namespace', label: 'Namespace', width: 150 },
     ...(isCronJob
@@ -80,7 +81,7 @@
             <StatusIndicator
               tone={tone(workload)}
               label={workload.status}
-              icon={Layers}
+              icon={iconForKind({ kind: workload.kind })}
               pulse={workload.isRolling}
             />
           </td>

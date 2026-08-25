@@ -83,9 +83,13 @@
 </script>
 
 <span class="inline-flex {className}" title={label} aria-label={label} role="img">
+  <!-- Heavier stroke for the two that want attention. In a column of two
+       hundred identical glyphs, weight is what separates the exceptions
+       before colour has been read at all — and it survives being printed,
+       dimmed, or seen by somebody who cannot tell amber from red. -->
   <StatusIcon
     class="size-4 shrink-0 {COLOUR[tone]} {pulse ? 'animate-pulse' : ''}"
-    strokeWidth={2}
+    strokeWidth={attention ? 2.75 : 1.75}
     fill={filled ? 'currentColor' : 'none'}
   />
 </span>
