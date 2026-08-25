@@ -881,9 +881,13 @@
       <!-- What is actually using the cluster.
            Two rankings rather than one: the pod holding the most CPU and the
            pod holding the most memory are usually different pods, and one
-           combined "biggest" would hide whichever dimension is under pressure.
-           Each row carries the reservation beside the usage, because usage
-           alone cannot tell a busy pod from one sized wrong. -->
+           combined "biggest" would hide whichever dimension is under
+           pressure.
+
+           Laid out like the node grid beside it — the dimension in the weight
+           a node name carries, the pod on its own line beneath, then the bar
+           and its figures — because they answer the same question from
+           opposite ends: which node is full, and what filled it. -->
       {#if overview.consumers.measured && overview.consumers.byCpu.length > 0}
         <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
           <div class="flex items-baseline justify-between gap-3">
@@ -891,53 +895,67 @@
               <Flame class="size-4 text-on-surface-variant" strokeWidth={1.8} />
               Top consumers
             </h3>
-            <span class="text-body-small text-on-surface-variant/70">Measured now, against what was reserved</span>
+            <span class="text-body-small text-on-surface-variant/70">
+              Measured now, against what was reserved
+            </span>
           </div>
 
-          <div class="grid gap-x-6 gap-y-4 lg:grid-cols-2">
+          <div class="grid gap-x-10 gap-y-5 lg:grid-cols-2">
             {#each [{ id: 'cpu', label: 'CPU', rows: overview.consumers.byCpu }, { id: 'memory', label: 'Memory', rows: overview.consumers.byMemory }] as column (column.id)}
-              <div class="flex flex-col gap-1.5">
-                <p class="text-label-small uppercase tracking-wider text-on-surface-variant">
-                  {column.label}
-                </p>
+              <div class="flex min-w-0 flex-col gap-2">
+                <p class="text-label-large text-on-surface">{column.label}</p>
 
                 {#each column.rows as row (row.namespace + '/' + row.name)}
                   <button
                     type="button"
                     onclick={() => openObject('core/v1/pods', row.name, row.namespace)}
-                    class="state-layer group flex w-full flex-col gap-1 rounded-xs px-1.5 py-1 text-left
-                           transition-colors duration-100 hover:bg-surface-container"
+                    class="group flex w-full min-w-0 flex-col gap-1 text-left"
                   >
-                    <span class="flex w-full items-baseline gap-2">
-                      <span class="min-w-0 flex-1 truncate text-body-small text-on-surface" title="{row.namespace}/{row.name}">
-                        <span class="text-on-surface-variant/60">{row.namespace}/</span>{row.name}
-                      </span>
-                      <span class="shrink-0 text-body-small tabular-nums text-on-surface">{row.usage}</span>
-                      <!-- Over its reservation is the finding. A pod with no
-                           reservation says so rather than showing nothing. -->
-                      <span
-                        class="w-16 shrink-0 text-right text-label-small tabular-nums
-                               {row.share < 0
-                                 ? 'text-on-surface-variant/50'
-                                 : row.share >= 100
-                                   ? 'text-gauge-warn'
-                                   : 'text-on-surface-variant/70'}"
-                        title={row.share < 0
-                          ? 'Nothing reserved'
-                          : `${row.usage} used of ${row.request} reserved`}
-                      >
-                        {row.share < 0 ? 'no request' : `${Math.round(row.share)}%`}
-                      </span>
+                    <!-- The pod alone on its line. Namespaced names are long
+                         enough that sharing a row with the figures left them
+                         truncated to the point of being unidentifiable. -->
+                    <span
+                      class="min-w-0 truncate text-body-medium text-on-surface
+                             transition-colors duration-100 group-hover:text-primary"
+                      title="{row.namespace}/{row.name} on {row.node}"
+                    >
+                      <span class="text-on-surface-variant/60">{row.namespace}/</span>{row.name}
                     </span>
-                    <!-- Scaled to the list's own leader, which is a ranking
-                         rather than a reading: the top pod is always 100% of
-                         itself. The figure beside it carries the threshold
-                         colour, because usage against a reservation IS one. -->
-                    <span class="h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
+
+                    <span class="flex w-full items-center gap-3">
+                      <!-- Scaled to the list's own leader, which is a ranking
+                           rather than a reading: the top pod is always 100%
+                           of itself, so it takes no thresholds and no marks. -->
                       <span
-                        class="block h-full rounded-full bg-gauge-normal/70 transition-all duration-300 ease-standard"
-                        style="width: {Math.max(2, row.percent)}%"
-                      ></span>
+                        class="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-container-highest"
+                      >
+                        <span
+                          class="block h-full rounded-full bg-gauge-normal transition-all duration-300 ease-standard"
+                          style="width: {Math.max(2, row.percent)}%"
+                        ></span>
+                      </span>
+
+                      <span
+                        class="flex shrink-0 items-baseline gap-2 text-body-medium tabular-nums
+                               text-on-surface-variant"
+                      >
+                        <span class="w-16 text-right">{row.usage}</span>
+                        <span
+                          aria-hidden="true"
+                          class="text-outline-variant {row.shareLabel ? '' : 'invisible'}">|</span
+                        >
+                        <!-- Over its reservation is the finding, and this
+                             figure is the only thing that carries it: the bar
+                             beside it measures something else entirely. -->
+                        <span
+                          class="w-[4.5ch] text-right {row.share >= 100 ? 'text-gauge-warn' : ''}"
+                          title={row.shareLabel
+                            ? `${row.usage} used of ${row.request} reserved`
+                            : 'Nothing reserved'}
+                        >
+                          {row.shareLabel || '—'}
+                        </span>
+                      </span>
                     </span>
                   </button>
                 {/each}

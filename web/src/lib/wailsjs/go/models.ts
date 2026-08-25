@@ -195,6 +195,7 @@ export namespace wails {
 	    usage: string;
 	    request: string;
 	    share: number;
+	    shareLabel: string;
 	    percent: number;
 	
 	    static createFrom(source: any = {}) {
@@ -209,6 +210,7 @@ export namespace wails {
 	        this.usage = source["usage"];
 	        this.request = source["request"];
 	        this.share = source["share"];
+	        this.shareLabel = source["shareLabel"];
 	        this.percent = source["percent"];
 	    }
 	}

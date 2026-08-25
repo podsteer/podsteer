@@ -248,6 +248,8 @@ type Consumer struct {
 	// Share is usage over the reservation as a percentage, or -1 when nothing
 	// was reserved — which is itself worth showing rather than hiding.
 	Share float64 `json:"share"`
+	// ShareLabel is that figure formatted, empty when nothing was reserved.
+	ShareLabel string `json:"shareLabel"`
 	// Percent is this pod's share of the whole list's largest, for the bar.
 	Percent float64 `json:"percent"`
 }
@@ -257,6 +259,14 @@ type TopConsumers struct {
 	ByCPU    []Consumer `json:"byCpu"`
 	ByMemory []Consumer `json:"byMemory"`
 	Measured bool       `json:"measured"`
+}
+
+// shareLabel formats usage against a reservation, which may not exist.
+func shareLabel(share float64) string {
+	if share < 0 {
+		return ""
+	}
+	return formatPercent(share)
 }
 
 // toConsumers translates one ranking, scaling the bars to its own leader.
@@ -305,13 +315,14 @@ func toConsumers(consumers []domain.Consumer, cpu bool) []Consumer {
 		}
 
 		out = append(out, Consumer{
-			Namespace: string(consumer.Namespace),
-			Name:      consumer.Name,
-			Node:      consumer.Node,
-			Usage:     format(value(consumer)),
-			Request:   reserved,
-			Share:     share,
-			Percent:   percent,
+			Namespace:  string(consumer.Namespace),
+			Name:       consumer.Name,
+			Node:       consumer.Node,
+			Usage:      format(value(consumer)),
+			Request:    reserved,
+			Share:      share,
+			ShareLabel: shareLabel(share),
+			Percent:    percent,
 		})
 	}
 	return out
