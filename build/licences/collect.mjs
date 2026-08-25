@@ -257,6 +257,11 @@ function normaliseDeclared(license) {
  * Deliberately syntactic rather than clever: a regex over import and
  * re-export specifiers. It only needs to answer "does shipped source name this
  * package", and a false positive fails loudly rather than silently.
+ *
+ * Being syntactic, it cannot tell an import from a sentence containing the
+ * word "from". Captures spanning whitespace are discarded for that reason —
+ * see below — which is the one exception to failing loudly, and a safe one:
+ * no package specifier has ever contained a space.
  */
 function importedPackages(webRoot) {
   const sourceRoot = join(webRoot, 'src')
@@ -276,6 +281,17 @@ function importedPackages(webRoot) {
       const source = readFileSync(path, 'utf8')
       for (const match of source.matchAll(pattern)) {
         const specifier = match[1]
+        // Prose, not code. The pattern cannot tell an import from an English
+        // sentence, and a Svelte attribute reading label="Amber from" puts
+        // the word immediately before a quote — so the capture ran on to the
+        // next quote several lines later and was reported as a missing
+        // package. A specifier can never contain whitespace, so anything that
+        // does is the regex having found a sentence.
+        //
+        // Deliberately narrow: only what provably cannot be a package name is
+        // dropped, because the point of this check is to fail loudly rather
+        // than to quietly excuse whatever it does not recognise.
+        if (/\s/.test(specifier)) continue
         // Relative paths and the project's own $lib/$stores aliases.
         if (specifier.startsWith('.') || specifier.startsWith('$')) continue
         // "@scope/name/deep/path" and "name/deep/path" both reduce to the
