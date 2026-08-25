@@ -138,16 +138,34 @@
           {/if}
 
           <!-- Only what is exceptional. The pod count used to sit here and
-               said the same thing as the Pods track below it. -->
-          {#if !load.ready}
-            <span class="shrink-0 text-label-small uppercase text-error">Not ready</span>
-          {:else if !load.schedulable}
-            <span class="shrink-0 text-label-small uppercase text-warning">Cordoned</span>
-          {:else if load.controlPlane}
-            <span class="shrink-0 text-label-small uppercase text-on-surface-variant/60">
-              Control plane
-            </span>
-          {/if}
+               said the same thing as the Pods track below it.
+
+               Two independent facts, so two chips: what state the node is in,
+               and who is allowed on it. A tainted node's shares are measured
+               against its own capacity, which is correct — a taint does not
+               shrink a node — but without this marker "5% of pod slots used"
+               reads as 95% of headroom anybody can schedule into, and for
+               most workloads it is none. -->
+          <span class="flex shrink-0 items-baseline gap-2 text-label-small uppercase">
+            {#if !load.ready}
+              <span class="text-error">Not ready</span>
+            {:else if !load.schedulable}
+              <span class="text-warning">Cordoned</span>
+            {/if}
+
+            {#if load.controlPlane}
+              <span class="text-on-surface-variant/60" title="Reserved by its control-plane taint">
+                Control plane
+              </span>
+            {:else if load.reserved}
+              <span
+                class="text-on-surface-variant/60"
+                title="Tainted — only pods that tolerate it can be scheduled here"
+              >
+                Tainted
+              </span>
+            {/if}
+          </span>
         </div>
 
         {#each tracks(load) as track (track.label)}

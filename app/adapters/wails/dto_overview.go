@@ -351,6 +351,10 @@ type NodeLoad struct {
 	Ready        bool   `json:"ready"`
 	Schedulable  bool   `json:"schedulable"`
 	ControlPlane bool   `json:"controlPlane"`
+	// Reserved reports a node whose taint refuses untolerated pods. Its
+	// shares are still its own; this is what stops them being read as
+	// headroom anybody can use.
+	Reserved bool `json:"reserved"`
 	// The shares drive the bars and the threshold colours.
 	CPUPercent float64 `json:"cpuPercent"`
 	MemPercent float64 `json:"memoryPercent"`
@@ -399,6 +403,7 @@ func toNodeLoads(loads []domain.NodeLoad) []NodeLoad {
 			Ready:        load.Ready,
 			Schedulable:  load.Schedulable,
 			ControlPlane: load.ControlPlane,
+			Reserved:     load.Reserved,
 			CPUPercent:   load.CPUPercent,
 			MemPercent:   load.MemoryPercent,
 			PodPercent:   load.PodPercent,

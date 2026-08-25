@@ -527,6 +527,7 @@ export namespace wails {
 	    ready: boolean;
 	    schedulable: boolean;
 	    controlPlane: boolean;
+	    reserved: boolean;
 	    cpuPercent: number;
 	    memoryPercent: number;
 	    podPercent: number;
@@ -552,6 +553,7 @@ export namespace wails {
 	        this.ready = source["ready"];
 	        this.schedulable = source["schedulable"];
 	        this.controlPlane = source["controlPlane"];
+	        this.reserved = source["reserved"];
 	        this.cpuPercent = source["cpuPercent"];
 	        this.memoryPercent = source["memoryPercent"];
 	        this.podPercent = source["podPercent"];

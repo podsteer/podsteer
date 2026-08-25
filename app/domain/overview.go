@@ -632,6 +632,14 @@ type NodeLoad struct {
 	Ready        bool
 	Schedulable  bool
 	ControlPlane bool
+	// Reserved reports a node whose taint refuses pods that do not tolerate
+	// it.
+	//
+	// Its shares are still measured against its own capacity, because a taint
+	// does not shrink a node — it restricts who may use it. But saying "5% of
+	// pod slots used" without saying that is how a reader concludes the other
+	// 95% is theirs to schedule into, which for most workloads it is not.
+	Reserved bool
 	// CPUPercent and MemoryPercent are requests against allocatable, which is
 	// what the scheduler decides on.
 	CPUPercent    float64
@@ -692,6 +700,7 @@ func nodeLoads(nodes []Node, pods []Pod) []NodeLoad {
 			Ready:        node.Ready(),
 			Schedulable:  !node.Unschedulable(),
 			ControlPlane: node.IsControlPlane(),
+			Reserved:     node.Reserved(),
 			Pods:         entry.pods,
 			PodCapacity:  allocatable.Pods,
 			CPUMilli:     entry.cpu,
