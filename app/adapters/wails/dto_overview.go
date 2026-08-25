@@ -347,21 +347,53 @@ func toReleaseSupport(support domain.ReleaseSupport) ReleaseSupport {
 
 // NodeLoad is one node's share of the work.
 type NodeLoad struct {
-	Name         string  `json:"name"`
-	Ready        bool    `json:"ready"`
-	Schedulable  bool    `json:"schedulable"`
-	ControlPlane bool    `json:"controlPlane"`
-	CPUPercent   float64 `json:"cpuPercent"`
-	MemPercent   float64 `json:"memoryPercent"`
-	PodPercent   float64 `json:"podPercent"`
+	Name         string `json:"name"`
+	Ready        bool   `json:"ready"`
+	Schedulable  bool   `json:"schedulable"`
+	ControlPlane bool   `json:"controlPlane"`
+	// The shares drive the bars and the threshold colours.
+	CPUPercent float64 `json:"cpuPercent"`
+	MemPercent float64 `json:"memoryPercent"`
+	PodPercent float64 `json:"podPercent"`
 	// DiskPercent is -1 when no kubelet answered for this node.
 	DiskPercent float64 `json:"diskPercent"`
 	Pods        int     `json:"pods"`
+	// The amounts and the shares, formatted here rather than by the browser,
+	// so a node's row reads the same way a capacity track does: the quantity,
+	// then what proportion of the node it is.
+	CPUAmount    string `json:"cpuAmount"`
+	MemAmount    string `json:"memoryAmount"`
+	PodAmount    string `json:"podAmount"`
+	DiskAmount   string `json:"diskAmount"`
+	CPUShare     string `json:"cpuShare"`
+	MemShare     string `json:"memoryShare"`
+	PodShare     string `json:"podShare"`
+	DiskShare    string `json:"diskShare"`
+	DiskMeasured bool   `json:"diskMeasured"`
+}
+
+// diskAmount and diskShare render the one dimension that can be absent.
+//
+// An em dash rather than a zero: nothing in the core API knows how full a
+// node's disk is, and "0" would say the opposite of "nobody could be asked".
+func diskAmount(used int64, measured bool) string {
+	if !measured {
+		return "—"
+	}
+	return formatBytesValue(used)
+}
+
+func diskShare(percent float64, measured bool) string {
+	if !measured {
+		return ""
+	}
+	return formatPercent(percent)
 }
 
 func toNodeLoads(loads []domain.NodeLoad) []NodeLoad {
 	out := make([]NodeLoad, 0, len(loads))
 	for _, load := range loads {
+		measured := load.DiskPercent >= 0
 		out = append(out, NodeLoad{
 			Name:         load.Name,
 			Ready:        load.Ready,
@@ -372,6 +404,17 @@ func toNodeLoads(loads []domain.NodeLoad) []NodeLoad {
 			PodPercent:   load.PodPercent,
 			DiskPercent:  load.DiskPercent,
 			Pods:         load.Pods,
+
+			CPUAmount:  formatMilliValue(load.CPUMilli),
+			MemAmount:  formatBytesValue(load.MemoryBytes),
+			PodAmount:  formatCount(int64(load.Pods)),
+			DiskAmount: diskAmount(load.DiskUsedBytes, measured),
+			CPUShare:   formatPercent(load.CPUPercent),
+			MemShare:   formatPercent(load.MemoryPercent),
+			PodShare:   formatPercent(load.PodPercent),
+			DiskShare:  diskShare(load.DiskPercent, measured),
+
+			DiskMeasured: measured,
 		})
 	}
 	return out

@@ -643,6 +643,14 @@ type NodeLoad struct {
 	DiskPercent float64
 	// Pods is how many are on it.
 	Pods int
+	// The amounts behind those shares. A percentage alone cannot distinguish
+	// a small node that is full from a large one that is busy, and "92%" of
+	// two different machines is two different quantities of memory.
+	CPUMilli      int64
+	MemoryBytes   int64
+	DiskUsedBytes int64
+	// PodCapacity is the node's own cap, the denominator of PodPercent.
+	PodCapacity int64
 }
 
 // nodeLoads computes each node's share of what has been requested.
@@ -685,6 +693,9 @@ func nodeLoads(nodes []Node, pods []Pod) []NodeLoad {
 			Schedulable:  !node.Unschedulable(),
 			ControlPlane: node.IsControlPlane(),
 			Pods:         entry.pods,
+			PodCapacity:  allocatable.Pods,
+			CPUMilli:     entry.cpu,
+			MemoryBytes:  entry.memory,
 			DiskPercent:  -1,
 		}
 		if allocatable.CPUMilli > 0 {
@@ -698,6 +709,7 @@ func nodeLoads(nodes []Node, pods []Pod) []NodeLoad {
 		}
 		if disks := node.Filesystems(); disks.Measured {
 			out.DiskPercent = disks.Fullest().Percent()
+			out.DiskUsedBytes = disks.Fullest().UsedBytes
 		}
 		loads = append(loads, out)
 	}

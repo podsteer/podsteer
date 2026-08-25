@@ -532,6 +532,15 @@ export namespace wails {
 	    podPercent: number;
 	    diskPercent: number;
 	    pods: number;
+	    cpuAmount: string;
+	    memoryAmount: string;
+	    podAmount: string;
+	    diskAmount: string;
+	    cpuShare: string;
+	    memoryShare: string;
+	    podShare: string;
+	    diskShare: string;
+	    diskMeasured: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new NodeLoad(source);
@@ -548,6 +557,15 @@ export namespace wails {
 	        this.podPercent = source["podPercent"];
 	        this.diskPercent = source["diskPercent"];
 	        this.pods = source["pods"];
+	        this.cpuAmount = source["cpuAmount"];
+	        this.memoryAmount = source["memoryAmount"];
+	        this.podAmount = source["podAmount"];
+	        this.diskAmount = source["diskAmount"];
+	        this.cpuShare = source["cpuShare"];
+	        this.memoryShare = source["memoryShare"];
+	        this.podShare = source["podShare"];
+	        this.diskShare = source["diskShare"];
+	        this.diskMeasured = source["diskMeasured"];
 	    }
 	}
 	export class VersionCount {

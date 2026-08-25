@@ -54,21 +54,44 @@
     label: string
     /** Percentage, or -1 when the dimension could not be measured. */
     value: number
+    /** The quantity behind the share, already formatted. */
+    amount: string
+    /** The share, already rounded. Empty when nothing was measured. */
+    share: string
     title: string
   }
 
   function tracks(load: NodeLoad): Track[] {
     return [
-      { label: 'CPU', value: load.cpuPercent, title: 'Requested against allocatable' },
-      { label: 'Memory', value: load.memoryPercent, title: 'Requested against allocatable' },
-      { label: 'Pods', value: load.podPercent, title: 'Scheduled against this node’s cap' },
+      {
+        label: 'CPU',
+        value: load.cpuPercent,
+        amount: load.cpuAmount,
+        share: load.cpuShare,
+        title: 'Requested against allocatable',
+      },
+      {
+        label: 'Memory',
+        value: load.memoryPercent,
+        amount: load.memoryAmount,
+        share: load.memoryShare,
+        title: 'Requested against allocatable',
+      },
+      {
+        label: 'Pods',
+        value: load.podPercent,
+        amount: load.podAmount,
+        share: load.podShare,
+        title: 'Scheduled against this node’s cap',
+      },
       {
         label: 'Disk',
         value: load.diskPercent,
-        title:
-          load.diskPercent >= 0
-            ? 'The fuller of the node’s filesystems'
-            : 'No kubelet answered for this node',
+        amount: load.diskAmount,
+        share: load.diskShare,
+        title: load.diskMeasured
+          ? 'The fuller of the node’s filesystems'
+          : 'No kubelet answered for this node',
       },
     ]
   }
@@ -93,52 +116,56 @@
   <!-- Two columns, so six nodes occupy the width the card already has. One
        column left most of it empty and made the card twice as tall for the
        same information. -->
-  <div class="grid gap-x-8 gap-y-4 lg:grid-cols-2">
+  <div class="grid gap-x-10 gap-y-5 lg:grid-cols-2">
     {#each shown as load (load.name)}
-      <div class="flex min-w-0 flex-col gap-1.5">
-        <!-- The name in full, above its own tracks. An axis gutter could only
-             ever hold a truncated version of it, and node names differ at the
-             end. -->
-        <div class="flex items-baseline justify-between gap-2">
+      <div class="flex min-w-0 flex-col gap-2">
+        <!-- The name in full and in the weight a capacity track's label
+             carries, above its own bars. An axis gutter could only ever hold
+             a truncated version, and node names differ at the end. -->
+        <div class="flex items-baseline justify-between gap-3">
           {#if onselect}
             <button
               type="button"
               onclick={() => onselect?.(load.name)}
-              class="min-w-0 truncate text-left text-body-medium text-on-surface
+              class="min-w-0 truncate text-left text-label-large text-on-surface
                      transition-colors duration-100 hover:text-primary"
               title="Open {load.name}"
             >
               {load.name}
             </button>
           {:else}
-            <span class="min-w-0 truncate text-body-medium text-on-surface">{load.name}</span>
+            <span class="min-w-0 truncate text-label-large text-on-surface">{load.name}</span>
           {/if}
 
-          <span class="flex shrink-0 items-center gap-2 text-label-small">
-            {#if !load.ready}
-              <span class="text-error uppercase">Not ready</span>
-            {:else if !load.schedulable}
-              <span class="text-warning uppercase">Cordoned</span>
-            {/if}
-            {#if load.controlPlane}
-              <span class="text-on-surface-variant/60 uppercase">Control plane</span>
-            {/if}
-            <span class="tabular-nums text-on-surface-variant/60">{load.pods} pods</span>
-          </span>
+          <!-- Only what is exceptional. The pod count used to sit here and
+               said the same thing as the Pods track below it. -->
+          {#if !load.ready}
+            <span class="shrink-0 text-label-small uppercase text-error">Not ready</span>
+          {:else if !load.schedulable}
+            <span class="shrink-0 text-label-small uppercase text-warning">Cordoned</span>
+          {:else if load.controlPlane}
+            <span class="shrink-0 text-label-small uppercase text-on-surface-variant/60">
+              Control plane
+            </span>
+          {/if}
         </div>
 
         {#each tracks(load) as track (track.label)}
-          <div class="flex items-center gap-2">
-            <span class="w-14 shrink-0 text-body-small text-on-surface-variant" title={track.title}>
+          <!-- Label, bar, then amount and share in the columns the capacity
+               card uses: the quantity right-aligned against a rule that never
+               moves, and the share in a slot wide enough for its longest
+               value. -->
+          <div class="flex items-center gap-3">
+            <span class="w-14 shrink-0 text-body-medium text-on-surface" title={track.title}>
               {track.label}
             </span>
 
             <div
-              class="relative h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-container-highest"
+              class="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-container-highest"
               role="img"
               aria-label="{track.label}: {track.value < 0
                 ? 'not measured'
-                : `${Math.round(track.value)} per cent`}"
+                : `${track.amount}, ${track.share}`}"
             >
               {#if track.value >= 0}
                 <span
@@ -158,9 +185,16 @@
             </div>
 
             <span
-              class="w-10 shrink-0 text-right text-body-small tabular-nums {figureTone(track.value)}"
+              class="flex shrink-0 items-baseline gap-2 text-body-medium tabular-nums {figureTone(
+                track.value,
+              )}"
             >
-              {track.value < 0 ? '—' : `${Math.round(track.value)}%`}
+              <span class="w-16 text-right">{track.amount}</span>
+              <span
+                aria-hidden="true"
+                class="text-outline-variant {track.share ? '' : 'invisible'}">|</span
+              >
+              <span class="w-[4.5ch] text-right">{track.share}</span>
             </span>
           </div>
         {/each}
