@@ -22,6 +22,8 @@
   import ToolbarToggle from './ToolbarToggle.svelte'
   import PaneDialog from './PaneDialog.svelte'
   import { withoutManagedFields } from '$lib/manifest'
+  import { gitOpsOwner, revertWarning } from '$lib/gitops'
+  import GitOpsBadge from './GitOpsBadge.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import DeleteDialog from './DeleteDialog.svelte'
   import ScaleDialog from './ScaleDialog.svelte'
@@ -44,6 +46,7 @@
     Check,
     Trash2,
     Maximize2,
+    TriangleAlert,
   } from '@lucide/svelte'
 
   interface Props {
@@ -109,6 +112,22 @@
    * accept a patch and the cluster will take no notice, so offering the
    * action would be offering a change that cannot have an effect.
    */
+  /**
+   * The GitOps controller managing this object, if one is.
+   *
+   * Read from the manifest rather than from the list row, because the
+   * evidence lives in labels and annotations that the table columns do not
+   * carry — and because the manifest is already here for the YAML tab.
+   */
+  const managedBy = $derived.by(() => {
+    if (!session.manifest) return null
+    try {
+      return gitOpsOwner(parse(session.manifest))
+    } catch {
+      return null
+    }
+  })
+
   const canEdit = $derived(!!session.manifest && !isEvent)
 
   const editHint = $derived(
@@ -377,6 +396,25 @@
   the alternative — keeping a hidden copy alive to preserve a buffer — would
   mean two streams open for one pod.
 -->
+<!--
+  The one thing somebody editing a reconciled object needs to know, placed
+  where the decision is made rather than where the object was opened.
+
+  A chip in the header says WHO owns it; this says what happens if you press
+  Apply anyway, which is a different question and only arises here.
+-->
+{#snippet revertNotice()}
+  {#if managedBy}
+    <p
+      class="flex min-w-0 flex-1 items-start gap-2 text-body-small text-gauge-warn"
+      role="status"
+    >
+      <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={2} />
+      <span class="min-w-0">{revertWarning(managedBy)}</span>
+    </p>
+  {/if}
+{/snippet}
+
 {#snippet logsSurface()}
   {#if isPod && selectedPod}
     <LogViewer
@@ -489,6 +527,16 @@
             >
               {session.selectedNamespace}
             </button>
+          {/if}
+
+          <!-- Who owns it, beside where it lives. It belongs in the header
+               rather than on the YAML tab because it is true of the object on
+               every tab, and somebody restarting a rollout or scaling a
+               deployment is about to be reconciled over just as surely as
+               somebody editing the manifest. -->
+          {#if managedBy}
+            <span class="shrink-0 text-on-surface-variant/40" aria-hidden="true">·</span>
+            <GitOpsBadge owner={managedBy} compact />
           {/if}
         </p>
       </div>
@@ -688,11 +736,14 @@
          with nothing in it. -->
     {#if editing && activeTab === 'yaml' && maximized !== 'yaml'}
       <div
-        class="flex shrink-0 items-center justify-end gap-3 border-t border-outline-variant/60
+        class="flex shrink-0 flex-col gap-3 border-t border-outline-variant/60
                bg-surface-container-low px-4 py-3"
       >
-        <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
-        <Button variant="filled" onclick={applyEdit}>Apply</Button>
+        {@render revertNotice()}
+        <div class="flex items-center justify-end gap-3">
+          <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
+          <Button variant="filled" onclick={applyEdit}>Apply</Button>
+        </div>
       </div>
     {/if}
   </aside>
@@ -729,6 +780,7 @@
 
     {#snippet footer()}
       {#if editing}
+        {@render revertNotice()}
         <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
         <Button variant="filled" onclick={applyEdit}>Apply</Button>
       {/if}
