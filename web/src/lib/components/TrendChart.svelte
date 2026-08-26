@@ -82,11 +82,24 @@
    * hard-coding them, so the chart follows the light/dark toggle instead of
    * being a rectangle of the wrong palette.
    */
+  /**
+   * The last palette read, keyed by the theme it was read under.
+   *
+   * getComputedStyle forces the browser to flush pending style work, and this
+   * was called on every redraw — which is every ten-second refresh, per chart.
+   * The answer can only change when the resolved theme does, so it is read
+   * once per theme instead.
+   */
+  let paletteCache: { theme: string; colours: Record<string, string> } | null = null
+
   function palette(): Record<string, string> {
+    const theme = preferences.resolvedTheme
+    if (paletteCache?.theme === theme) return paletteCache.colours
+
     const styles = getComputedStyle(document.documentElement)
     const read = (name: string, fallback: string) =>
       styles.getPropertyValue(name).trim() || fallback
-    return {
+    const colours = {
       primary: read('--primary', '#b69df8'),
       onSurface: read('--on-surface', '#e6e1e9'),
       onSurfaceVariant: read('--on-surface-variant', '#cac4d0'),
@@ -94,6 +107,8 @@
       surface: read('--surface-container-low', '#1d1b20'),
       warning: read('--warning', '#f5c267'),
     }
+    paletteCache = { theme, colours }
+    return colours
   }
 
   function buildOption(): unknown {
@@ -226,15 +241,31 @@
     }
   })
 
+  /** What the last draw was configured for, to decide merge vs rebuild. */
+  let lastTheme = ''
+  let lastMetric = ''
+
   // Redraw when the data or the theme changes. Reading both here is what
   // registers the dependency; `preferences.resolvedTheme` is not otherwise
   // used — but it is the resolved scheme rather than the choice, so the chart
   // repaints when the OS flips at sunset and the preference has not changed.
   $effect(() => {
     void samples
-    void preferences.resolvedTheme
+    const theme = preferences.resolvedTheme
     void metric
-    chart?.setOption(buildOption(), true)
+
+    // notMerge only when the shape of the chart can actually have changed.
+    //
+    // A theme flip or a different metric rewrites axes, colours and formatters
+    // and wants a clean rebuild. A new sample arriving does not: it is the
+    // same chart with more points on it, and merging lets ECharts update the
+    // series in place rather than tearing down and recreating every component
+    // ten seconds after it did so last.
+    const rebuild = theme !== lastTheme || metric !== lastMetric
+    lastTheme = theme
+    lastMetric = metric
+
+    chart?.setOption(buildOption(), rebuild)
   })
 </script>
 

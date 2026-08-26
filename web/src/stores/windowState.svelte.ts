@@ -12,7 +12,8 @@
  * `resize` event, which the webview does receive when the native window
  * changes size for any reason, fullscreen included. A resize re-checks the
  * poll; nothing here claims that is instantaneous, only that it lands within
- * one animation frame of the OS finishing its transition.
+ * one animation frame of the OS finishing its transition. Those resizes are
+ * coalesced to one poll per frame — see #onResize.
  */
 import { WindowIsFullscreen } from '$lib/wailsjs/runtime/runtime'
 
@@ -25,8 +26,24 @@ class WindowState {
     window.addEventListener('resize', this.#onResize)
   }
 
+  /**
+   * Pending re-check, so a drag costs one poll rather than one per frame.
+   *
+   * Dragging a window edge on macOS emits resize at the display's refresh
+   * rate, and each one was an IPC round trip to the Go side asking a question
+   * whose answer changes at most twice in a session. Coalescing to one check
+   * per animation frame keeps the response indistinguishable — the frame is
+   * the soonest anything could be painted with the answer anyway — while
+   * removing about fifty-nine of every sixty calls.
+   */
+  #pending = 0
+
   #onResize = (): void => {
-    void this.#check()
+    if (this.#pending) return
+    this.#pending = requestAnimationFrame(() => {
+      this.#pending = 0
+      void this.#check()
+    })
   }
 
   async #check(): Promise<void> {

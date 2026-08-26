@@ -80,6 +80,15 @@ export const RICH_KIND_IDS = {
 } as const
 
 /** Maps a rich workload kind id onto the controller name the backend expects. */
+/**
+ * How long the filter waits behind the keyboard.
+ *
+ * Long enough that a burst of typing is one pass rather than one per letter,
+ * short enough to read as instant — the threshold where a delay starts being
+ * felt is around a fifth of a second.
+ */
+const SEARCH_DEBOUNCE_MS = 120
+
 const WORKLOAD_KIND_BY_ID: Record<string, string> = {
   'apps/v1/deployments': 'Deployment',
   'apps/v1/statefulsets': 'StatefulSet',
@@ -166,7 +175,11 @@ export class ClusterSession {
   /** The namespace filter. ALL_NAMESPACES means every namespace. */
   namespace = $state<string>(ALL_NAMESPACES)
   /** The client-side search term. */
+  /** The term the lists are filtered by. Trails `typedSearch` by a beat. */
   search = $state<string>('')
+  /** What is in the box right now, applied immediately so typing feels live. */
+  typedSearch = $state<string>('')
+  #searchTimer: ReturnType<typeof setTimeout> | null = null
   /** The 1-based page currently shown. */
   page = $state<number>(1)
 
@@ -496,10 +509,29 @@ export class ClusterSession {
    *
    * Resets to the first page: narrowing a search while on page 4 otherwise
    * lands the operator on an empty page of a shorter list.
+   *
+   * The TYPED text is applied at once so the field never lags the keyboard;
+   * the term the lists filter and sort by follows a beat later. On a few
+   * thousand rows every keystroke otherwise re-filtered, re-sorted, re-paged
+   * and re-rendered the whole table — work that is thrown away by the next
+   * character. A short delay collapses a burst of typing into one pass and is
+   * imperceptible on a word typed at speed.
    */
   setSearch = (search: string): void => {
-    this.search = search
+    this.typedSearch = search
     this.page = 1
+
+    if (this.#searchTimer) clearTimeout(this.#searchTimer)
+    if (search === '') {
+      // Clearing is immediate. It is usually a deliberate "show me everything
+      // again", and waiting for a timer to restore the full list feels broken.
+      this.search = ''
+      return
+    }
+    this.#searchTimer = setTimeout(() => {
+      this.#searchTimer = null
+      this.search = this.typedSearch
+    }, SEARCH_DEBOUNCE_MS)
   }
 
   /** Moves to a page, clamped to the range that exists. */

@@ -38,10 +38,32 @@
    */
   const COLLAPSED = 6
 
+  /**
+   * How many nodes the expanded list will draw.
+   *
+   * Expanding used to mean every node, which on a large cluster is hundreds
+   * of cards and roughly four gauges each, rebuilt on every refresh. The list
+   * is sorted busiest first, so a bound keeps the ones that matter and drops
+   * the tail nobody scrolled to — and the footer says how many were left.
+   */
+  const EXPANDED = 60
+
   let expanded = $state(false)
 
-  const shown = $derived(expanded ? loads : loads.slice(0, COLLAPSED))
+  const shown = $derived(expanded ? loads.slice(0, EXPANDED) : loads.slice(0, COLLAPSED))
   const hidden = $derived(Math.max(0, loads.length - COLLAPSED))
+  /** Nodes the expanded list still does not show. */
+  const beyondExpanded = $derived(Math.max(0, loads.length - EXPANDED))
+
+  /**
+   * The rows to draw, with their gauges built once.
+   *
+   * `tracks(load)` used to be called inside the `{#each}` body, so it
+   * allocated an array and four objects per node on EVERY render — with
+   * fresh identities each time, which made the keyed inner block re-diff on
+   * every ten-second refresh even though nothing about the node had changed.
+   */
+  const rows = $derived(shown.map((load) => ({ load, tracks: tracks(load) })))
 
   interface Track {
     label: string
@@ -108,7 +130,7 @@
        column left most of it empty and made the card twice as tall for the
        same information. -->
   <div class="grid gap-x-10 gap-y-5 lg:grid-cols-2">
-    {#each shown as load (load.name)}
+    {#each rows as { load, tracks: nodeTracks } (load.name)}
       <div class="flex min-w-0 flex-col gap-2">
         <!-- The name in full and in the weight a capacity track's label
              carries, above its own bars. An axis gutter could only ever hold
@@ -158,7 +180,7 @@
           </span>
         </div>
 
-        {#each tracks(load) as track (track.label)}
+        {#each nodeTracks as track (track.label)}
           <!-- Label, bar, then amount and share in the columns the capacity
                card uses: the quantity right-aligned against a rule that never
                moves, and the share in a slot wide enough for its longest
@@ -201,7 +223,20 @@
       class="state-layer self-start rounded-xs px-1.5 py-1 text-label-medium text-primary
              transition-colors duration-100 hover:bg-primary/10"
     >
-      {expanded ? `Show the busiest ${COLLAPSED}` : `Show all ${loads.length} nodes`}
+      <!-- Says what it will actually do. With more nodes than the expanded
+           bound, "Show all" would be a claim the button does not honour. -->
+      {expanded
+        ? `Show the busiest ${COLLAPSED}`
+        : beyondExpanded > 0
+          ? `Show the busiest ${EXPANDED} of ${loads.length} nodes`
+          : `Show all ${loads.length} nodes`}
     </button>
+    {#if expanded && beyondExpanded > 0}
+      <!-- And says what it left out, rather than letting the list end as
+           though that were all of them. -->
+      <p class="text-body-small text-on-surface-variant/70">
+        {beyondExpanded} quieter {beyondExpanded === 1 ? 'node is' : 'nodes are'} not shown.
+      </p>
+    {/if}
   {/if}
 </div>

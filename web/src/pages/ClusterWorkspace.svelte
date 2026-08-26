@@ -117,10 +117,12 @@
       </div>
 
       {#if session.isList}
-        <!-- Search -->
+        <!-- Search. Bound to the TYPED text rather than the debounced term:
+             the field has to keep up with the keyboard even though the table
+             follows a beat behind it. -->
         <SearchField
           bind:this={searchField}
-          value={session.search}
+          value={session.typedSearch}
           placeholder="Search {session.selectedKind?.title.toLowerCase() ?? 'resources'}…"
           onchange={session.setSearch}
           onnext={focusFirstRow}
