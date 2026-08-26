@@ -111,6 +111,22 @@
   const wrapping = new Compartment()
 
   /**
+   * Read-only, reconfigurable.
+   *
+   * `editable` and `readOnly` are ordinary extensions, fixed at construction
+   * unless they sit in a compartment — so toggling the prop on a live editor
+   * did nothing at all, and the pane stayed read-only however the button
+   * looked. It only appeared to work while editing meant mounting a fresh
+   * editor in a dialog.
+   */
+  const editability = new Compartment()
+
+  /** The extensions that express one readonly state. */
+  function editableExtensions(isReadonly: boolean) {
+    return [EditorState.readOnly.of(isReadonly), EditorView.editable.of(!isReadonly)]
+  }
+
+  /**
    * Find, without @codemirror/search.
    *
    * The package was the obvious choice and turns out to buy almost nothing
@@ -386,8 +402,7 @@
       keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
       yaml(),
       buildTheme(),
-      EditorState.readOnly.of(readonly),
-      EditorView.editable.of(!readonly),
+      editability.of(editableExtensions(readonly)),
       wrapping.of(preferences.wrapLines ? EditorView.lineWrapping : []),
     ]
 
@@ -450,6 +465,11 @@
       })
     }
     updateMarkers()
+  })
+
+  $effect(() => {
+    const isReadonly = readonly
+    editor?.dispatch({ effects: editability.reconfigure(editableExtensions(isReadonly)) })
   })
 
   $effect(() => {

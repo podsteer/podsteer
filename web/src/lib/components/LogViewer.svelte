@@ -27,7 +27,7 @@
   import ToolbarButton from './ToolbarButton.svelte'
   import WrapLinesToggle from './WrapLinesToggle.svelte'
   import { splitOnMatches } from '$lib/textSearch'
-  import { ArrowDownToLine, Check, Copy, Eraser, ListFilter, Radio } from '@lucide/svelte'
+  import { ArrowDownToLine, Check, Copy, Eraser, ListFilter, Maximize2, Radio } from '@lucide/svelte'
 
   /**
    * Shapes of the `log:lines` / `log:end` event payloads.
@@ -57,9 +57,16 @@
     containers?: string[]
     /** Multiple pods to aggregate logs from (for workload mode). */
     pods?: Array<{ name: string; containers: string[] }>
+    /**
+     * Offers the pane the whole window. Omitted when it already has it.
+     *
+     * A log is the pane that most wants the room: lines are long, and a
+     * column beside a table wraps or truncates most of them.
+     */
+    onmaximize?: () => void
   }
 
-  let { clusterId, namespace, podName, containers = [], pods = [] }: Props = $props()
+  let { clusterId, namespace, podName, containers = [], pods = [], onmaximize }: Props = $props()
 
   /** How many lines to ask the API server for. */
   const TAIL_SIZES = [100, 500, 1000, 5000] as const
@@ -733,6 +740,14 @@
         disabled={logs.length === 0}
         onclick={clearLogs}
       />
+      {#if onmaximize}
+        <ToolbarButton
+          icon={Maximize2}
+          label="Maximize"
+          title="Open in a larger window"
+          onclick={onmaximize}
+        />
+      {/if}
     {/snippet}
   </PaneToolbar>
 

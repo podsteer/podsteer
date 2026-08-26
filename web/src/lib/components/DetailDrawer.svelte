@@ -17,12 +17,14 @@
   import { iconForKind } from '$lib/kindIcons'
   import { parse } from 'yaml'
   import YamlPane from './YamlPane.svelte'
+  import Button from './Button.svelte'
   import ToolbarButton from './ToolbarButton.svelte'
+  import ToolbarToggle from './ToolbarToggle.svelte'
+  import PaneDialog from './PaneDialog.svelte'
   import { withoutManagedFields } from '$lib/manifest'
   import { preferences } from '$stores/preferences.svelte'
   import DeleteDialog from './DeleteDialog.svelte'
   import ScaleDialog from './ScaleDialog.svelte'
-  import EditDialog from './EditDialog.svelte'
   import RestartDialog from './RestartDialog.svelte'
   import Terminal from './Terminal.svelte'
   import { DeleteResource, RestartRollout } from '$lib/wailsjs/go/wails/ManagementAPI'
@@ -41,6 +43,7 @@
     Copy,
     Check,
     Trash2,
+    Maximize2,
   } from '@lucide/svelte'
 
   interface Props {
@@ -54,7 +57,23 @@
   let copied = $state(false)
   let deleteDialogOpen = $state(false)
   let scaleDialogOpen = $state(false)
-  let editDialogOpen = $state(false)
+  /**
+   * Whether the manifest is being edited, wherever it is being shown.
+   *
+   * Editing used to be a separate dialog, which meant the side panel could
+   * only ever be read from — so changing one field meant opening a window
+   * over the object you were looking at. It is a mode of the pane now, and
+   * the pane appears in two places, so this lives here rather than in either
+   * of them and carries across when one becomes the other.
+   */
+  let editing = $state(false)
+  /** The edited text, or null when not editing. */
+  let draft = $state<string | null>(null)
+  /** What the draft started as, to tell a touched buffer from a fresh one. */
+  let draftOrigin = $state('')
+
+  /** Which pane, if any, has been given the whole window. */
+  let maximized = $state<'yaml' | 'logs' | null>(null)
   let restartDialogOpen = $state(false)
   let actionError = $state<string | null>(null)
   let workloadPods = $state<Pod[]>([])
@@ -276,15 +295,57 @@
     }
   }
 
-  async function handleEdit(manifest: string): Promise<void> {
+  /** True once the draft differs from what it was seeded with. */
+  const dirty = $derived(draft !== null && draft !== draftOrigin)
+
+  function startEditing(): void {
+    const seed = shownManifest ?? ''
+    draft = seed
+    draftOrigin = seed
+    editing = true
+  }
+
+  function stopEditing(): void {
+    editing = false
+    draft = null
+    draftOrigin = ''
+  }
+
+  async function applyEdit(): Promise<void> {
+    if (draft === null) return
     try {
-      await session.updateResource(manifest)
-      editDialogOpen = false
+      await session.updateResource(draft)
+      stopEditing()
       await session.refresh()
     } catch (error) {
       actionError = `Failed to update: ${error}`
     }
   }
+
+  /**
+   * Re-seeds the draft when the managed-fields view changes underneath it.
+   *
+   * Only while the buffer is untouched — the control is disabled once there
+   * is something to lose, which is what makes this safe.
+   */
+  $effect(() => {
+    const seed = preferences.showManagedFields
+    void seed
+    if (editing && !dirty) {
+      const next = shownManifest ?? ''
+      draft = next
+      draftOrigin = next
+    }
+  })
+
+  // Leaving the object, or the tab, ends an edit rather than carrying a draft
+  // for one object onto another.
+  $effect(() => {
+    void session.selectedName
+    void session.selectedNamespace
+    stopEditing()
+    maximized = null
+  })
 
   function onKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape' && session.selectedName) session.closeDetail()
@@ -301,6 +362,79 @@
     { id: 'yaml', label: 'YAML', icon: FileCode, show: () => true },
   ]
 </script>
+
+<!--
+  The manifest pane, defined once and rendered in two places: in the drawer,
+  and in the dialog that gives it the whole window. Sharing the snippet is
+  what makes maximising the same surface rather than a second one — the same
+  toolbar, the same controls, the same draft.
+-->
+<!--
+  The log pane, for the drawer and for the dialog.
+
+  Rendering it in the dialog re-mounts it, which restarts the stream and
+  re-fetches the tail. That is the same thing switching tabs already does, and
+  the alternative — keeping a hidden copy alive to preserve a buffer — would
+  mean two streams open for one pod.
+-->
+{#snippet logsSurface()}
+  {#if isPod && selectedPod}
+    <LogViewer
+      clusterId={session.cluster.id}
+      namespace={selectedPod.namespace}
+      podName={selectedPod.name}
+      containers={selectedPod.containers?.map((c) => c.name) ?? []}
+      onmaximize={maximized === 'logs' ? undefined : () => (maximized = 'logs')}
+    />
+  {:else if isWorkloadWithLogs && workloadPods.length > 0}
+    <LogViewer
+      clusterId={session.cluster.id}
+      namespace={session.selectedNamespace}
+      pods={workloadPods.map((p) => ({
+        name: p.name,
+        containers: p.containers?.map((c: any) => c.name) ?? [],
+      }))}
+      onmaximize={maximized === 'logs' ? undefined : () => (maximized = 'logs')}
+    />
+  {/if}
+{/snippet}
+
+{#snippet yamlSurface()}
+  <YamlPane
+    content={editing ? (draft ?? '') : (shownManifest ?? '')}
+    readonly={!editing}
+    onchange={(value) => (draft = value)}
+    managedFieldsDisabled={editing && dirty}
+    managedFieldsDisabledReason="Can’t change while there are unsaved edits"
+  >
+    {#snippet actions()}
+      <ToolbarToggle
+        icon={Pencil}
+        label="Edit"
+        pressed={editing}
+        disabled={!canEdit}
+        title={editing ? 'Editing — click to stop' : editHint}
+        onclick={() => (editing ? stopEditing() : startEditing())}
+      />
+      <ToolbarButton
+        icon={copied ? Check : Copy}
+        label="Copy manifest"
+        title={copied ? 'Copied' : 'Copy manifest'}
+        active={copied}
+        disabled={!shownManifest}
+        onclick={copyManifest}
+      />
+      {#if maximized !== 'yaml'}
+        <ToolbarButton
+          icon={Maximize2}
+          label="Maximize"
+          title="Open in a larger window"
+          onclick={() => (maximized = 'yaml')}
+        />
+      {/if}
+    {/snippet}
+  </YamlPane>
+{/snippet}
 
 <svelte:window onkeydown={onKeydown} />
 
@@ -459,19 +593,18 @@
           kind={session.selectedKind?.kind}
         />
       {:else if activeTab === 'logs'}
-        {#if isPod && selectedPod}
-          <LogViewer
-            clusterId={session.cluster.id}
-            namespace={selectedPod.namespace}
-            podName={selectedPod.name}
-            containers={selectedPod.containers?.map(c => c.name) ?? []}
-          />
+        {#if maximized === 'logs'}
+          <!-- The pane is in the dialog. Saying so beats an empty tab, which
+               reads as a pane that failed to load. -->
+          <div class="flex h-full items-center justify-center p-4">
+            <p class="text-body-medium text-on-surface-variant/70">
+              Showing the logs in a larger window.
+            </p>
+          </div>
+        {:else if isPod && selectedPod}
+          {@render logsSurface()}
         {:else if isWorkloadWithLogs && workloadPods.length > 0}
-          <LogViewer
-            clusterId={session.cluster.id}
-            namespace={session.selectedNamespace}
-            pods={workloadPods.map(p => ({ name: p.name, containers: p.containers?.map((c: any) => c.name) ?? [] }))}
-          />
+          {@render logsSurface()}
         {:else if isWorkloadWithLogs}
           <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
             <ScrollText class="size-8" strokeWidth={1.2} />
@@ -532,32 +665,36 @@
                 The manifest could not be read. The object may have been deleted.
               </p>
             </div>
+          {:else if maximized === 'yaml'}
+            <!-- The pane is in the dialog. Saying so beats an empty tab. -->
+            <div class="flex h-full items-center justify-center p-4">
+              <p class="text-body-medium text-on-surface-variant/70">
+                Showing the manifest in a larger window.
+              </p>
+            </div>
           {:else if session.manifest}
             <!-- The toolbar only appears once there is text for it to govern:
                  a wrap button above a spinner controls nothing. -->
-            <YamlPane content={shownManifest ?? ''} readonly={true}>
-              {#snippet actions()}
-                <ToolbarButton
-                  icon={Pencil}
-                  label="Edit"
-                  title={editHint}
-                  disabled={!canEdit}
-                  onclick={() => (editDialogOpen = true)}
-                />
-                <ToolbarButton
-                  icon={copied ? Check : Copy}
-                  label="Copy manifest"
-                  title={copied ? 'Copied' : 'Copy manifest'}
-                  active={copied}
-                  disabled={!shownManifest}
-                  onclick={copyManifest}
-                />
-              {/snippet}
-            </YamlPane>
+            {@render yamlSurface()}
           {/if}
         </div>
       {/if}
     </div>
+
+    <!-- Committing an edit made in the panel.
+         Only while editing, and only while the pane is here rather than in
+         the dialog, which carries its own. A drawer that reserved a footer
+         for a mode it is not in would lose a row of the manifest to a bar
+         with nothing in it. -->
+    {#if editing && activeTab === 'yaml' && maximized !== 'yaml'}
+      <div
+        class="flex shrink-0 items-center justify-end gap-3 border-t border-outline-variant/60
+               bg-surface-container-low px-4 py-3"
+      >
+        <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
+        <Button variant="filled" onclick={applyEdit}>Apply</Button>
+      </div>
+    {/if}
   </aside>
 
   <!-- Dialogs -->
@@ -578,12 +715,36 @@
     />
   {/if}
 
-  <EditDialog
-    open={editDialogOpen}
-    manifest={session.manifest ?? ''}
-    onclose={() => (editDialogOpen = false)}
-    onconfirm={handleEdit}
-  />
+  <!-- The same pane, given the window. Closing restores it to the drawer
+       rather than discarding anything: the draft lives above both. -->
+  <PaneDialog
+    open={maximized === 'yaml'}
+    icon={KindIcon}
+    kind={session.selectedKind?.singular}
+    name={session.selectedName ?? ''}
+    label="Manifest"
+    onclose={() => (maximized = null)}
+  >
+    {@render yamlSurface()}
+
+    {#snippet footer()}
+      {#if editing}
+        <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
+        <Button variant="filled" onclick={applyEdit}>Apply</Button>
+      {/if}
+    {/snippet}
+  </PaneDialog>
+
+  <PaneDialog
+    open={maximized === 'logs'}
+    icon={KindIcon}
+    kind={session.selectedKind?.singular}
+    name={session.selectedName ?? ''}
+    label="Logs"
+    onclose={() => (maximized = null)}
+  >
+    {@render logsSurface()}
+  </PaneDialog>
 
   {#if selectedWorkload}
     <RestartDialog
