@@ -9,6 +9,8 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/podsteer/podsteer/app/domain"
 )
@@ -188,6 +190,62 @@ func (a *Adapter) ListEvents(ctx context.Context, id domain.ClusterID, namespace
 	return events, nil
 }
 
+// selectorForWorkload returns the workload's own pod selector, as a string.
+//
+// One GET in exchange for not listing every pod in the namespace. On a
+// namespace of several hundred pods that is the difference between
+// transferring all of them to pick out three and asking for the three.
+//
+// The owner-reference checks downstream are kept even so. A label selector is
+// what the workload itself uses to find its pods, but labels can be shared by
+// a misconfigured neighbour, whereas an ownerReference cannot be.
+func selectorForWorkload(
+	ctx context.Context,
+	client kubernetes.Interface,
+	namespace domain.NamespaceName,
+	kind domain.WorkloadKind,
+	name string,
+) (string, error) {
+	get := metav1.GetOptions{}
+	ns := namespace.String()
+
+	var selector *metav1.LabelSelector
+	switch kind {
+	case domain.WorkloadDeployment:
+		object, err := client.AppsV1().Deployments(ns).Get(ctx, name, get)
+		if err != nil {
+			return "", err
+		}
+		selector = object.Spec.Selector
+	case domain.WorkloadStatefulSet:
+		object, err := client.AppsV1().StatefulSets(ns).Get(ctx, name, get)
+		if err != nil {
+			return "", err
+		}
+		selector = object.Spec.Selector
+	case domain.WorkloadDaemonSet:
+		object, err := client.AppsV1().DaemonSets(ns).Get(ctx, name, get)
+		if err != nil {
+			return "", err
+		}
+		selector = object.Spec.Selector
+	case domain.WorkloadReplicaSet:
+		object, err := client.AppsV1().ReplicaSets(ns).Get(ctx, name, get)
+		if err != nil {
+			return "", err
+		}
+		selector = object.Spec.Selector
+	default:
+		return "", nil
+	}
+
+	parsed, err := metav1.LabelSelectorAsSelector(selector)
+	if err != nil {
+		return "", err
+	}
+	return parsed.String(), nil
+}
+
 // ListPodsForWorkload returns all pods owned by a specific workload.
 //
 // For Deployments, this returns pods owned by the deployment's ReplicaSets.
@@ -196,6 +254,19 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 	client, err := a.factory.clientFor(id)
 	if err != nil {
 		return nil, err
+	}
+
+	// Narrowed by the workload's own selector, so the API server returns its
+	// pods rather than the namespace's. An empty selector (an unsupported
+	// kind, or a workload without one) falls back to the previous behaviour
+	// rather than failing.
+	selector, err := selectorForWorkload(ctx, client, namespace, kind, name)
+	if err != nil {
+		return nil, fmt.Errorf("reading selector for %s %q: %w", kind, name, err)
+	}
+	podOptions := metav1.ListOptions{
+		LabelSelector:   selector,
+		ResourceVersion: cachedResourceVersion,
 	}
 
 	var podList *corev1.PodList
@@ -221,7 +292,7 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 		}
 
 		// Get all pods in the namespace
-		podList, err = client.CoreV1().Pods(namespace.String()).List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
+		podList, err = client.CoreV1().Pods(namespace.String()).List(ctx, podOptions)
 		if err != nil {
 			return nil, fmt.Errorf("listing pods: %w", err)
 		}
@@ -244,7 +315,7 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 
 	case domain.WorkloadStatefulSet, domain.WorkloadDaemonSet, domain.WorkloadReplicaSet:
 		// For these workloads, pods are directly owned by the workload
-		podList, err = client.CoreV1().Pods(namespace.String()).List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
+		podList, err = client.CoreV1().Pods(namespace.String()).List(ctx, podOptions)
 		if err != nil {
 			return nil, fmt.Errorf("listing pods: %w", err)
 		}
@@ -297,30 +368,40 @@ func (a *Adapter) ListEventsForResource(ctx context.Context, id domain.ClusterID
 		return nil, err
 	}
 
-	// List all events in the namespace
+	// Selected by the API server, not by us.
+	//
+	// This listed the namespace's events up to a cap and then filtered them
+	// here, which is not merely wasteful — it is wrong. A namespace busy
+	// enough to exceed the cap could return a page containing none of this
+	// object's events, and the drawer would report that a pod which had just
+	// crash-looped had nothing to say. Asking for the events of one object
+	// removes both the cap's relevance and the transfer.
+	selector := fields.SelectorFromSet(fields.Set{
+		"involvedObject.name": name,
+		"involvedObject.kind": kind,
+	}).String()
+
 	list, err := client.CoreV1().Events(namespace.String()).List(ctx, metav1.ListOptions{
-		Limit: eventListLimit,
+		FieldSelector:   selector,
+		Limit:           eventListLimit,
+		ResourceVersion: cachedResourceVersion,
 	})
 	if err != nil {
 		return nil, classify(op, err)
 	}
 
-	// Filter events for the specific resource
-	events := make([]domain.Event, 0)
+	events := make([]domain.Event, 0, len(list.Items))
 	for i := range list.Items {
 		event := &list.Items[i]
-		// Check if this event is for our resource
-		if event.InvolvedObject.Name == name && event.InvolvedObject.Kind == kind {
-			mappedEvent, err := mapEvent(id, event)
-			if err != nil {
-				a.logger.WarnContext(ctx, "skipping unmappable event",
-					slog.String("cluster", id.String()),
-					slog.String("name", event.Name),
-					slog.String("error", err.Error()))
-				continue
-			}
-			events = append(events, mappedEvent)
+		mappedEvent, err := mapEvent(id, event)
+		if err != nil {
+			a.logger.WarnContext(ctx, "skipping unmappable event",
+				slog.String("cluster", id.String()),
+				slog.String("name", event.Name),
+				slog.String("error", err.Error()))
+			continue
 		}
+		events = append(events, mappedEvent)
 	}
 
 	return events, nil
