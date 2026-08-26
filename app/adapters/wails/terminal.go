@@ -15,8 +15,17 @@ import (
 )
 
 // terminalSizeQueue implements ports.TerminalSizeQueue for resize events.
+//
+// The queue owns its own closing, and that is the whole point of the mutex.
+// A send on a closed channel panics — `select` with a `default` does not
+// change that, it only avoids blocking — so the send and the close have to be
+// serialised or the process dies. It is reachable in ordinary use: the shell
+// exits while the window is being dragged, and a drag emits resizes
+// continuously.
 type terminalSizeQueue struct {
-	ch chan ports.TerminalSize
+	mu     sync.Mutex
+	closed bool
+	ch     chan ports.TerminalSize
 }
 
 func newTerminalSizeQueue() *terminalSizeQueue {
@@ -31,6 +40,37 @@ func (q *terminalSizeQueue) Next() *ports.TerminalSize {
 		return nil
 	}
 	return &size
+}
+
+// send offers a new size, dropping it if the queue is full or already closed.
+//
+// Dropping a size when one is already waiting is deliberate: only the latest
+// matters, and the reader will take it. Holding the lock across the send is
+// safe precisely because the send cannot block — the channel is buffered and
+// the default arm covers a full buffer.
+func (q *terminalSizeQueue) send(size ports.TerminalSize) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if q.closed {
+		return
+	}
+	select {
+	case q.ch <- size:
+	default:
+	}
+}
+
+// close ends the queue, unblocking Next. Safe to call more than once.
+func (q *terminalSizeQueue) close() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if q.closed {
+		return
+	}
+	q.closed = true
+	close(q.ch)
 }
 
 // terminalSession represents a live exec session with a pod container.
@@ -123,13 +163,20 @@ func (t *TerminalAPI) StartSession(clusterID, namespace, podName, containerName 
 
 	// Create the terminal size queue with initial size
 	sizeQueue := newTerminalSizeQueue()
-	sizeQueue.ch <- ports.TerminalSize{
+	sizeQueue.send(ports.TerminalSize{
 		Width:  uint16(cols),
 		Height: uint16(rows),
-	}
+	})
 
-	// Create cancellable context from the app context
-	ctx, cancel := context.WithCancel(t.app.ctx)
+	// Through the accessor, not the field. app.ctx is guarded by app.mu and is
+	// set to nil on shutdown, so reading it bare both races that write and
+	// hands a nil parent to WithCancel — which panics. A session asked for as
+	// the window closes should be refused, the way late events are dropped.
+	parent, ok := t.app.runtimeContext()
+	if !ok {
+		return "", errors.New("application is shutting down")
+	}
+	ctx, cancel := context.WithCancel(parent)
 
 	session := &terminalSession{
 		id:        sessionID,
@@ -157,7 +204,7 @@ func (t *TerminalAPI) StartSession(clusterID, namespace, podName, containerName 
 
 			// Closing signals EOF to the remote shell; the exec is already unwinding.
 			_ = stdinWriter.Close()
-			close(sizeQueue.ch)
+			sizeQueue.close()
 		}()
 
 		// Determine the shell to use
@@ -229,14 +276,13 @@ func (t *TerminalAPI) Resize(sessionID string, cols, rows int) error {
 		return errors.New("terminal session not found")
 	}
 
-	// Non-blocking send (drop if channel is full — next resize will override)
-	select {
-	case session.sizeQueue.ch <- ports.TerminalSize{
+	// The queue decides whether it can still take one. Reading the session
+	// out of the map and then sending is inherently a window in which the
+	// exec goroutine can finish and close the queue underneath us.
+	session.sizeQueue.send(ports.TerminalSize{
 		Width:  uint16(cols),
 		Height: uint16(rows),
-	}:
-	default:
-	}
+	})
 
 	return nil
 }

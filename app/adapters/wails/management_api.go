@@ -61,7 +61,14 @@ func NewManagementAPI(management *application.ManagementService, app *App, logge
 // The stream ends when the pod terminates, the context is cancelled, or an
 // error occurs. A "log:end" event is emitted when the stream closes.
 func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName string, follow bool, tailLines int) (string, error) {
-	ctx, cancel := context.WithCancel(m.app.ctx)
+	// Through the accessor, not the field — see runtimeContext. Reading
+	// app.ctx bare races OnShutdown's write of nil, and WithCancel(nil)
+	// panics rather than failing.
+	parent, ok := m.app.runtimeContext()
+	if !ok {
+		return "", errors.New("application is shutting down")
+	}
+	ctx, cancel := context.WithCancel(parent)
 
 	id, err := domain.NewClusterID(clusterID)
 	if err != nil {

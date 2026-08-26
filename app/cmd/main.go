@@ -111,6 +111,10 @@ func run() error {
 		Registry:   registry,
 		Catalog:    catalog,
 		Logger:     logger,
+		// The adapter's own caches are released here on disconnect, which is
+		// the composition root's job precisely because Invalidate is not a
+		// port — it exists to serve the adapter's caching, not the domain.
+		Invalidator: kubernetes,
 	})
 	if err != nil {
 		return fmt.Errorf("wiring cluster service: %w", err)

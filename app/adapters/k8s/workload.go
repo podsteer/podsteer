@@ -25,7 +25,7 @@ func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace d
 
 	// NamespaceAll renders as the empty string, which is precisely what the
 	// typed client expects for a cross-namespace list.
-	list, err := client.CoreV1().Pods(namespace.String()).List(ctx, metav1.ListOptions{})
+	list, err := client.CoreV1().Pods(namespace.String()).List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
 	if err != nil {
 		return nil, classify(op, err)
 	}
@@ -64,7 +64,7 @@ func (a *Adapter) ListWorkloads(ctx context.Context, id domain.ClusterID, kind d
 	}
 
 	ns := namespace.String()
-	options := metav1.ListOptions{}
+	options := metav1.ListOptions{ResourceVersion: cachedResourceVersion}
 
 	var (
 		workloads []domain.Workload
@@ -204,7 +204,7 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 	case domain.WorkloadDeployment:
 		// For deployments, we need to find all ReplicaSets owned by the deployment,
 		// then find all pods owned by those ReplicaSets.
-		rsList, err := client.AppsV1().ReplicaSets(namespace.String()).List(ctx, metav1.ListOptions{})
+		rsList, err := client.AppsV1().ReplicaSets(namespace.String()).List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
 		if err != nil {
 			return nil, fmt.Errorf("listing replicasets: %w", err)
 		}
@@ -221,7 +221,7 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 		}
 
 		// Get all pods in the namespace
-		podList, err = client.CoreV1().Pods(namespace.String()).List(ctx, metav1.ListOptions{})
+		podList, err = client.CoreV1().Pods(namespace.String()).List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
 		if err != nil {
 			return nil, fmt.Errorf("listing pods: %w", err)
 		}
@@ -244,7 +244,7 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 
 	case domain.WorkloadStatefulSet, domain.WorkloadDaemonSet, domain.WorkloadReplicaSet:
 		// For these workloads, pods are directly owned by the workload
-		podList, err = client.CoreV1().Pods(namespace.String()).List(ctx, metav1.ListOptions{})
+		podList, err = client.CoreV1().Pods(namespace.String()).List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
 		if err != nil {
 			return nil, fmt.Errorf("listing pods: %w", err)
 		}

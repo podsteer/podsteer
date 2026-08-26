@@ -12,6 +12,21 @@ import (
 	"github.com/podsteer/podsteer/app/ports"
 )
 
+// cachedResourceVersion asks the API server to answer a LIST from its watch
+// cache rather than with a quorum read from etcd.
+//
+// Every list here is a POLL: the UI re-reads the whole cluster on a timer,
+// several clusters at once, and the assessment does it again. Quorum reads
+// for that are a cost paid on the API server and on etcd for a guarantee
+// nothing here needs — a dashboard redrawn seconds from now does not require
+// consensus on the exact instant it describes.
+//
+// The trade is real and worth stating: the watch cache can be marginally
+// behind, so an object deleted a moment ago may appear in one more refresh.
+// In practice that is invisible — a deleting pod reports Terminating for
+// seconds regardless — and it is undone by removing this one field.
+const cachedResourceVersion = "0"
+
 // Adapter is the driven adapter for Kubernetes.
 //
 // It satisfies every Kubernetes outbound port. They stay separate interfaces
@@ -25,6 +40,9 @@ type Adapter struct {
 	// filesystems caches node disk sweeps, which are one request per node and
 	// answer a question whose value moves in hours.
 	filesystems filesystemCache
+	// nodeList caches the node names the sweep fans out over, so it does not
+	// re-LIST the set the assessment that triggered it just listed.
+	nodeList nodeNameCache
 }
 
 // Compile-time proof that the adapter satisfies every outbound port it claims.
@@ -99,6 +117,7 @@ func (a *Adapter) ServerVersion(ctx context.Context, id domain.ClusterID) (domai
 // connections rather than leaving them pooled.
 func (a *Adapter) Invalidate(id domain.ClusterID) {
 	a.factory.invalidate(id)
+	a.nodeList.forget(id)
 	// The disk sweep goes with them. Its whole value is being a minute stale
 	// rather than ten seconds stale, and carrying that across a reconnect
 	// would answer the first assessment of a freshly opened cluster with

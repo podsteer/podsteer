@@ -27,6 +27,13 @@ type ClusterServiceDeps struct {
 	Registry *Registry
 	// Catalog holds the browsable kinds per cluster. Required.
 	Catalog *domain.Catalog
+	// Invalidator releases an adapter's per-cluster caches on disconnect.
+	//
+	// Optional, and deliberately not a port: it is a property of the
+	// Kubernetes adapter's caching, not something the domain asks for. A
+	// service wired without one simply keeps whatever the adapter cached,
+	// which is what every test wants.
+	Invalidator ClusterInvalidator
 	// Logger receives diagnostics. Optional; defaults to slog.Default.
 	Logger *slog.Logger
 	// Now supplies the current time. Optional; defaults to time.Now.
@@ -34,15 +41,24 @@ type ClusterServiceDeps struct {
 }
 
 // ClusterService implements the cluster-selection use cases.
+// ClusterInvalidator drops everything an adapter has cached for one cluster.
+//
+// Defined here, at the consumer, because this is the only thing that needs
+// it. The Kubernetes adapter satisfies it without being told to.
+type ClusterInvalidator interface {
+	Invalidate(id domain.ClusterID)
+}
+
 type ClusterService struct {
-	kubeconfig ports.KubeconfigPort
-	cluster    ports.ClusterPort
-	metrics    ports.MetricsPort
-	events     ports.EventPublisher
-	registry   *Registry
-	catalog    *domain.Catalog
-	logger     *slog.Logger
-	now        func() time.Time
+	kubeconfig  ports.KubeconfigPort
+	cluster     ports.ClusterPort
+	metrics     ports.MetricsPort
+	invalidator ClusterInvalidator
+	events      ports.EventPublisher
+	registry    *Registry
+	catalog     *domain.Catalog
+	logger      *slog.Logger
+	now         func() time.Time
 }
 
 // Compile-time proof that the service satisfies its inbound port.
@@ -75,14 +91,15 @@ func NewClusterService(deps ClusterServiceDeps) (*ClusterService, error) {
 	}
 
 	return &ClusterService{
-		kubeconfig: deps.Kubeconfig,
-		cluster:    deps.Cluster,
-		metrics:    deps.Metrics,
-		events:     deps.Events,
-		registry:   deps.Registry,
-		catalog:    deps.Catalog,
-		logger:     logger.With(slog.String("service", "cluster")),
-		now:        now,
+		kubeconfig:  deps.Kubeconfig,
+		cluster:     deps.Cluster,
+		metrics:     deps.Metrics,
+		invalidator: deps.Invalidator,
+		events:      deps.Events,
+		registry:    deps.Registry,
+		catalog:     deps.Catalog,
+		logger:      logger.With(slog.String("service", "cluster")),
+		now:         now,
 	}, nil
 }
 
@@ -181,6 +198,16 @@ func (s *ClusterService) Disconnect(ctx context.Context, id domain.ClusterID) er
 	// The catalog must be cleared too, or a cluster's CRDs would linger and
 	// reappear in the navigator when a different cluster is opened.
 	s.catalog.Forget(id)
+
+	// And the adapter's caches, or disconnecting releases nothing: the pooled
+	// TLS connections stay open, the disk sweep is served to the next
+	// connection from before this one closed, and — worst — the cached client
+	// is keyed by kubeconfig CONTEXT NAME, so a context rewritten to a new
+	// server or a rotated token keeps talking to the old one for the life of
+	// the process.
+	if s.invalidator != nil {
+		s.invalidator.Invalidate(id)
+	}
 
 	s.logger.InfoContext(ctx, "disconnected from cluster", slog.String("cluster", id.String()))
 	return nil

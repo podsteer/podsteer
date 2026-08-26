@@ -20,7 +20,7 @@ func (a *Adapter) ListNamespaces(ctx context.Context, id domain.ClusterID) ([]do
 		return nil, err
 	}
 
-	list, err := client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	list, err := client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
 	if err != nil {
 		return nil, classify(op, err)
 	}
@@ -50,7 +50,7 @@ func (a *Adapter) ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.
 		return nil, err
 	}
 
-	list, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	list, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
 	if err != nil {
 		return nil, classify(op, err)
 	}
@@ -193,7 +193,7 @@ func (a *Adapter) ListPersistentVolumes(ctx context.Context, id domain.ClusterID
 		return nil, err
 	}
 
-	list, err := client.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+	list, err := client.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
 	if err != nil {
 		return nil, classify(op, err)
 	}
@@ -227,7 +227,7 @@ func (a *Adapter) ListPersistentVolumeClaims(
 	}
 
 	list, err := client.CoreV1().PersistentVolumeClaims(namespace.String()).
-		List(ctx, metav1.ListOptions{})
+		List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
 	if err != nil {
 		return nil, classify(op, err)
 	}

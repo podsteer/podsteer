@@ -27,7 +27,7 @@ func (a *Adapter) PodMetrics(ctx context.Context, id domain.ClusterID, namespace
 
 	list, err := set.metrics.MetricsV1beta1().
 		PodMetricses(namespace.String()).
-		List(ctx, metav1.ListOptions{})
+		List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
 	if err != nil {
 		return nil, classifyMetrics(op, err)
 	}
@@ -56,7 +56,7 @@ func (a *Adapter) NodeMetrics(ctx context.Context, id domain.ClusterID) (map[str
 		return nil, err
 	}
 
-	list, err := set.metrics.MetricsV1beta1().NodeMetricses().List(ctx, metav1.ListOptions{})
+	list, err := set.metrics.MetricsV1beta1().NodeMetricses().List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
 	if err != nil {
 		return nil, classifyMetrics(op, err)
 	}

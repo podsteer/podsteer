@@ -202,17 +202,26 @@ func (s *HistoryService) run(ctx context.Context) {
 // Failures are logged and dropped: a cluster that went unreachable between
 // ticks must not stop the others being recorded, and a missing sample is a gap
 // in a chart rather than something to interrupt anyone over.
+// sampleTimeout bounds one cluster's assessment.
+//
+// Generous, because a large cluster over a slow link is not a fault — but
+// finite, because the loop is sequential and one wedged cluster must not cost
+// the others their history.
+const sampleTimeout = 30 * time.Second
+
 func (s *HistoryService) sampleAll(ctx context.Context) {
 	if !s.Enabled() {
 		return
 	}
+
+	interval := s.SamplingInterval()
 
 	for _, cluster := range s.registry.All() {
 		if err := ctx.Err(); err != nil {
 			return
 		}
 
-		overview, err := s.overview.Overview(ctx, cluster.ID())
+		overview, err := s.assess(ctx, cluster.ID(), interval)
 		if err != nil {
 			s.logger.Debug("skipping sample",
 				slog.String("cluster", cluster.ID().String()),
@@ -227,6 +236,39 @@ func (s *HistoryService) sampleAll(ctx context.Context) {
 				slog.String("error", err.Error()))
 		}
 	}
+}
+
+// assess reads one cluster's overview, bounded in time and willing to reuse
+// a recent one.
+//
+// The deadline is the important half. The REST config deliberately sets no
+// client timeout — per-request deadlines belong on the context, attached by
+// whichever inbound adapter made the call — and the sampler is an inbound
+// driver that was attaching none. So the exact case that motivated a request
+// timeout in the first place, a half-open tunnel that accepts the connection
+// and then says nothing, blocked one Overview call indefinitely, which
+// blocked the sequential loop over every OTHER cluster, which stopped both
+// sampling and pruning for all of them — silently, because a missing sample
+// is by design just a gap in a chart.
+//
+// maxAge lets the sampler reuse an assessment the dashboard has just made. A
+// sample taken on a thirty-second timer is no less true for describing a
+// moment a few seconds earlier, and the alternative is reading the whole
+// cluster twice on overlapping timers.
+func (s *HistoryService) assess(
+	ctx context.Context,
+	id domain.ClusterID,
+	maxAge time.Duration,
+) (domain.Overview, error) {
+	ctx, cancel := context.WithTimeout(ctx, sampleTimeout)
+	defer cancel()
+
+	if reusable, ok := s.overview.(interface {
+		OverviewWithin(context.Context, domain.ClusterID, time.Duration) (domain.Overview, error)
+	}); ok {
+		return reusable.OverviewWithin(ctx, id, maxAge)
+	}
+	return s.overview.Overview(ctx, id)
 }
 
 // prune enforces the retention window.

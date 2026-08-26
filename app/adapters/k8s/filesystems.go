@@ -101,6 +101,9 @@ type filesystemCache struct {
 type filesystemEntry struct {
 	at     time.Time
 	result map[string]domain.NodeFilesystems
+	// refused is set when the whole sweep was turned away, and is the reason
+	// to serve back. See the note on caching refusals in NodeFilesystems.
+	refused error
 }
 
 // NodeFilesystems returns disk occupancy keyed by node name.
@@ -112,7 +115,10 @@ type filesystemEntry struct {
 func (a *Adapter) NodeFilesystems(ctx context.Context, id domain.ClusterID) (map[string]domain.NodeFilesystems, error) {
 	op := fmt.Sprintf("reading node filesystems of %q", id)
 
-	if cached, ok := a.filesystems.get(id); ok {
+	if cached, refused, ok := a.filesystems.get(id); ok {
+		if refused != nil {
+			return nil, refused
+		}
 		return cached, nil
 	}
 
@@ -121,7 +127,7 @@ func (a *Adapter) NodeFilesystems(ctx context.Context, id domain.ClusterID) (map
 		return nil, err
 	}
 
-	nodes, err := set.typed.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	nodes, err := a.nodeNames(ctx, id, set)
 	if err != nil {
 		return nil, classify(op, err)
 	}
@@ -129,13 +135,13 @@ func (a *Adapter) NodeFilesystems(ctx context.Context, id domain.ClusterID) (map
 	var (
 		mu      sync.Mutex
 		wg      sync.WaitGroup
-		result  = make(map[string]domain.NodeFilesystems, len(nodes.Items))
+		result  = make(map[string]domain.NodeFilesystems, len(nodes))
 		refused error
 		gate    = make(chan struct{}, filesystemConcurrency)
 	)
 
-	for i := range nodes.Items {
-		name := nodes.Items[i].Name
+	for i := range nodes {
+		name := nodes[i]
 		wg.Add(1)
 
 		go func() {
@@ -166,11 +172,87 @@ func (a *Adapter) NodeFilesystems(ctx context.Context, id domain.ClusterID) (map
 			a.filesystems.put(id, result)
 			return result, nil
 		}
-		return nil, fmt.Errorf("%s: %w: %w", op, ports.ErrMetricsUnavailable, refused)
+		// Remembered for the same minute a success would be, so a cluster
+		// that will not answer is asked once a minute rather than on every
+		// assessment. See putRefusal.
+		err := fmt.Errorf("%s: %w: %w", op, ports.ErrMetricsUnavailable, refused)
+		a.filesystems.putRefusal(id, err)
+		return nil, err
 	}
 
 	a.filesystems.put(id, result)
 	return result, nil
+}
+
+// nodeNames lists the nodes to sweep, reusing the overview's list when it is
+// still fresh.
+//
+// The sweep used to LIST nodes itself, moments after the assessment that
+// triggered it had listed the very same nodes — a second full node LIST per
+// assessment, for a set that changes on the timescale of somebody adding a
+// machine. The cache is written by the node read that precedes it, and is
+// held to the same one-minute window as the sweep itself, so a node joining
+// is picked up on the next minute rather than the next assessment.
+func (a *Adapter) nodeNames(ctx context.Context, id domain.ClusterID, set *clients) ([]string, error) {
+	if names, ok := a.nodeList.get(id); ok {
+		return names, nil
+	}
+
+	list, err := set.typed.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+		// Served from the API server's watch cache rather than a quorum read
+		// from etcd. A sweep of disk usage does not need consensus on the
+		// exact membership of the node set.
+		ResourceVersion: "0",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(list.Items))
+	for i := range list.Items {
+		names = append(names, list.Items[i].Name)
+	}
+	a.nodeList.put(id, names)
+	return names, nil
+}
+
+// nodeNameCache holds the node names of each cluster for the sweep's window.
+type nodeNameCache struct {
+	mu      sync.Mutex
+	entries map[domain.ClusterID]nodeNameEntry
+}
+
+type nodeNameEntry struct {
+	at    time.Time
+	names []string
+}
+
+func (c *nodeNameCache) get(id domain.ClusterID) ([]string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entry, ok := c.entries[id]
+	if !ok || time.Since(entry.at) > filesystemTTL {
+		return nil, false
+	}
+	return entry.names, true
+}
+
+func (c *nodeNameCache) put(id domain.ClusterID, names []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.entries == nil {
+		c.entries = make(map[domain.ClusterID]nodeNameEntry, 2)
+	}
+	c.entries[id] = nodeNameEntry{at: time.Now(), names: names}
+}
+
+func (c *nodeNameCache) forget(id domain.ClusterID) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	delete(c.entries, id)
 }
 
 // nodeSummary reads and decodes one kubelet's statistics.
@@ -212,27 +294,42 @@ func (a *Adapter) nodeSummary(
 	return domain.NodeFilesystems{Nodefs: nodefs, Imagefs: imagefs, Measured: true}, nil
 }
 
-// get returns a cached sweep while it is still fresh.
-func (c *filesystemCache) get(id domain.ClusterID) (map[string]domain.NodeFilesystems, bool) {
+// get returns a cached sweep, or a cached refusal, while it is still fresh.
+func (c *filesystemCache) get(id domain.ClusterID) (map[string]domain.NodeFilesystems, error, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	entry, ok := c.entries[id]
 	if !ok || time.Since(entry.at) > filesystemTTL {
-		return nil, false
+		return nil, nil, false
 	}
-	return entry.result, true
+	return entry.result, entry.refused, true
 }
 
 // put stores a sweep.
 func (c *filesystemCache) put(id domain.ClusterID, result map[string]domain.NodeFilesystems) {
+	c.store(id, filesystemEntry{at: time.Now(), result: result})
+}
+
+// putRefusal remembers that nothing answered, and why.
+//
+// A refusal has to be cached as firmly as a success. Overwhelmingly the cause
+// is a role without nodes/proxy, which will still be true a second from now —
+// and without this the next assessment fans out to every node again, all of
+// them doomed. On a hundred-node cluster that is a hundred pointless requests
+// per assessment, and the overview runs more than once a minute.
+func (c *filesystemCache) putRefusal(id domain.ClusterID, refused error) {
+	c.store(id, filesystemEntry{at: time.Now(), refused: refused})
+}
+
+func (c *filesystemCache) store(id domain.ClusterID, entry filesystemEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.entries == nil {
 		c.entries = make(map[domain.ClusterID]filesystemEntry, 2)
 	}
-	c.entries[id] = filesystemEntry{at: time.Now(), result: result}
+	c.entries[id] = entry
 }
 
 // forget drops a cluster's cached sweep, for when it is disconnected.

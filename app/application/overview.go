@@ -33,6 +33,28 @@ type OverviewServiceDeps struct {
 	Logger *slog.Logger
 }
 
+// overviewFreshness is how stale an assessment the dashboard will accept.
+//
+// Two seconds, which is under half the shortest refresh interval offered, so
+// the dashboard can never appear to skip a tick. It exists to collapse the
+// assessments that arrive almost together — a tab switch landing on top of a
+// timer, the sampler landing on top of the UI — not to slow the UI down.
+const overviewFreshness = 2 * time.Second
+
+// overviewEntry is one cluster's most recent assessment.
+type overviewEntry struct {
+	at       time.Time
+	overview domain.Overview
+}
+
+// overviewCall is an assessment in flight, so that callers arriving while one
+// is running wait for it instead of starting a second.
+type overviewCall struct {
+	done     chan struct{}
+	overview domain.Overview
+	err      error
+}
+
 // OverviewService assembles the cluster dashboard.
 type OverviewService struct {
 	cluster   ports.ClusterPort
@@ -41,6 +63,13 @@ type OverviewService struct {
 	metrics   ports.MetricsPort
 	registry  *Registry
 	logger    *slog.Logger
+
+	// mu guards both maps below. An assessment is ten or so API reads across
+	// the whole cluster, and two callers want one on the same timer: the
+	// dashboard and the history sampler.
+	mu       sync.Mutex
+	cache    map[domain.ClusterID]overviewEntry
+	inflight map[domain.ClusterID]*overviewCall
 }
 
 var _ ports.OverviewService = (*OverviewService)(nil)
@@ -98,9 +127,84 @@ var controllerKinds = []domain.WorkloadKind{
 // alternative is an error page in front of an operator who is looking at this
 // screen precisely because something is wrong.
 func (s *OverviewService) Overview(ctx context.Context, id domain.ClusterID) (domain.Overview, error) {
+	return s.OverviewWithin(ctx, id, overviewFreshness)
+}
+
+// OverviewWithin returns an assessment no older than maxAge, running one only
+// if nothing recent enough is held.
+//
+// It exists for the history sampler, which is the second caller wanting the
+// same ten-or-so cluster-wide reads on its own timer. A sample taken every
+// thirty seconds is no worse for being derived from an assessment the
+// dashboard made a moment ago, so the sampler passes its own interval and
+// almost always reuses one — while the dashboard passes a fraction of its
+// refresh interval and effectively never does.
+//
+// Concurrent callers share one assessment rather than racing. The cost is
+// that they also share the leader's context: if the caller that started the
+// work gives up, everyone waiting on it gets that error and retries on their
+// own schedule. That is the right trade when the alternative is running the
+// whole cluster read twice.
+func (s *OverviewService) OverviewWithin(
+	ctx context.Context,
+	id domain.ClusterID,
+	maxAge time.Duration,
+) (domain.Overview, error) {
+	// Before the cache, always: an assessment held for a cluster that has
+	// since been disconnected must not be served as though it were live.
 	if _, err := s.registry.Get(id); err != nil {
+		s.forget(id)
 		return domain.Overview{}, err
 	}
+
+	s.mu.Lock()
+	if entry, ok := s.cache[id]; ok && maxAge > 0 && time.Since(entry.at) <= maxAge {
+		s.mu.Unlock()
+		return entry.overview, nil
+	}
+
+	if call, ok := s.inflight[id]; ok {
+		s.mu.Unlock()
+		select {
+		case <-call.done:
+			return call.overview, call.err
+		case <-ctx.Done():
+			return domain.Overview{}, ctx.Err()
+		}
+	}
+
+	call := &overviewCall{done: make(chan struct{})}
+	if s.inflight == nil {
+		s.inflight = make(map[domain.ClusterID]*overviewCall, 2)
+	}
+	s.inflight[id] = call
+	s.mu.Unlock()
+
+	call.overview, call.err = s.assess(ctx, id)
+
+	s.mu.Lock()
+	delete(s.inflight, id)
+	if call.err == nil {
+		if s.cache == nil {
+			s.cache = make(map[domain.ClusterID]overviewEntry, 2)
+		}
+		s.cache[id] = overviewEntry{at: time.Now(), overview: call.overview}
+	}
+	s.mu.Unlock()
+
+	close(call.done)
+	return call.overview, call.err
+}
+
+// forget drops a cluster's held assessment.
+func (s *OverviewService) forget(id domain.ClusterID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.cache, id)
+}
+
+// assess performs the assessment itself, unconditionally.
+func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (domain.Overview, error) {
 
 	var (
 		mu          sync.Mutex
