@@ -43,6 +43,7 @@
   }
   interface LogEndEvent {
     streamId: string
+    reason: string
   }
 
   interface Props {
@@ -99,6 +100,8 @@
   /** Unsubscribes for the stream events, so teardown removes only ours. */
   let unsubscribe: Array<() => void> = []
   let copied = $state(false)
+  /** Why the stream ended, when it ended badly. */
+  let streamError = $state('')
 
   /**
    * Whether the query hides the lines it does not match.
@@ -442,6 +445,7 @@
     }
     streamIds.clear()
     logs = []
+    streamError = ''
     isStreaming = true
 
     // Start a stream for each pod
@@ -542,6 +546,14 @@
         wasOurs = true
         break
       }
+    }
+
+    // Why it ended, when it did not end cleanly. Without this every failure
+    // was indistinguishable from a quiet pod: no permission to read logs, a
+    // container that does not exist and a line over the size cap all looked
+    // like the log simply stopping.
+    if (wasOurs && event.reason) {
+      streamError = event.reason
     }
 
     if (wasOurs && streamIds.size === 0) {
@@ -798,7 +810,7 @@
   <div class="flex items-center justify-between border-t border-outline-variant bg-surface-container-low px-3 py-1 text-xs text-on-surface-variant">
     <!-- A flex row, so the dot and the words are set apart by a real gap
          rather than by whatever whitespace the markup happened to leave. -->
-    <span class="flex items-center gap-2">
+    <span class="flex min-w-0 items-center gap-2">
       {#if isStreaming}
         <!-- Blue, not green. Green was the one colour left in the application
              asserting a fourth meaning, and "this is working" is already what
@@ -813,12 +825,19 @@
                and read as a fault rather than as a step. -->
           Connecting…
         {/if}
+      {:else if streamError}
+        <!-- Red, because this is the one state that is a fault rather than a
+             choice. The reason is the API server's own words: "pods
+             \"x\" is forbidden", "container y is not valid for pod z" — which
+             say far more than any wording invented here would. -->
+        <span class="inline-block size-2 shrink-0 rounded-full bg-gauge-critical"></span>
+        <span class="min-w-0 truncate text-gauge-critical" title={streamError}>{streamError}</span>
       {:else}
         <span class="inline-block size-2 shrink-0 rounded-full bg-on-surface-variant/50"></span>
         {logs.length > 0 ? 'Stopped' : 'Not streaming'}
       {/if}
     </span>
-    <span class="tabular-nums">
+    <span class="shrink-0 pl-3 tabular-nums">
       {filteredLogs.length}
       {filteredLogs.length === 1 ? 'line' : 'lines'}
     </span>

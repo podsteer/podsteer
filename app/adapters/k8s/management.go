@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -19,6 +20,12 @@ import (
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
 )
+
+// maxLogLineBytes is the longest single log line the scanner will accept.
+//
+// One megabyte, which is generous for a log line and small enough that a
+// process emitting a multi-megabyte blob cannot exhaust memory here.
+const maxLogLineBytes = 1024 * 1024
 
 // StreamLogs streams pod logs to the provided channel.
 //
@@ -53,7 +60,7 @@ func (a *Adapter) StreamLogs(ctx context.Context, id domain.ClusterID, namespace
 
 	scanner := bufio.NewScanner(stream)
 	// Increase buffer size for long log lines (some apps emit multi-KB lines).
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLogLineBytes)
 
 	for scanner.Scan() {
 		select {
@@ -63,7 +70,19 @@ func (a *Adapter) StreamLogs(ctx context.Context, id domain.ClusterID, namespace
 		}
 	}
 
-	return scanner.Err()
+	// A line over the cap ends the whole stream, not just that line, and
+	// bufio's own wording ("token too long") says nothing about which token
+	// or what the limit is. Named here so the frontend can show an operator
+	// why a pod appeared to stop talking.
+	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return fmt.Errorf(
+				"streaming logs: a single log line exceeded %d MiB, which ends the stream",
+				maxLogLineBytes/(1024*1024))
+		}
+		return err
+	}
+	return nil
 }
 
 // ExecInPod executes a command in a pod container.

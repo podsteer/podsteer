@@ -100,6 +100,9 @@ func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName 
 		}()
 
 		out := make(chan string, 100)
+		// Buffered, and written exactly once, so the writer never blocks on a
+		// receiver that has gone.
+		failure := make(chan error, 1)
 
 		// Start the stream.
 		go func() {
@@ -110,6 +113,7 @@ func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName 
 					slog.String("pod", podName),
 					slog.String("error", err.Error()))
 			}
+			failure <- err
 		}()
 
 		// Forward log lines to the frontend in batches.
@@ -138,9 +142,19 @@ func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName 
 		}
 		forward.flush()
 
-		// Signal end of stream.
+		// The adapter closes `out` as it returns, so its error is either here
+		// already or a moment away. Cancellation is not a failure — it is the
+		// operator having stopped following, or the window closing — so it
+		// ends the stream without a reason.
+		reason := ""
+		if err := <-failure; err != nil && ctx.Err() == nil {
+			reason = err.Error()
+		}
+
+		// Signal end of stream, with why if it was not a clean one.
 		m.app.emit("log:end", LogEndEvent{
 			StreamID: streamID,
+			Reason:   reason,
 		})
 	}()
 

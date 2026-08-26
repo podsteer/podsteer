@@ -259,6 +259,14 @@ type LogLinesEvent struct {
 type LogEndEvent struct {
 	// StreamID identifies the log stream that ended.
 	StreamID string `json:"streamId"`
+	// Reason explains why the stream ended, empty when it ended normally.
+	//
+	// Without this every failure looked identical to the operator, and
+	// identical to success: the lines simply stopped. A role without the
+	// permission to read logs, a container name that does not exist, and a
+	// single line over the size cap all presented as "the pod went quiet".
+	// TerminalExitEvent already carried a reason; this is the same idea.
+	Reason string `json:"reason"`
 }
 
 // formatTime renders t as RFC 3339 in UTC, or "" when it is unset.
