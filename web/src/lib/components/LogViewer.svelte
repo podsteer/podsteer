@@ -17,7 +17,7 @@
 <script lang="ts">
   import { EventsOn, EventsOff } from '$lib/wailsjs/runtime/runtime'
   import { StreamLogs, StopLogStream } from '$lib/wailsjs/go/wails/ManagementAPI'
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount, onDestroy, untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
   import { preferences } from '$stores/preferences.svelte'
   import PaneToolbar from './PaneToolbar.svelte'
@@ -81,7 +81,17 @@
    * map assigned before the loop that filled it.
    */
   let streamIds = new SvelteMap<string, string>()
-  let logs = $state<Array<{ podName: string; line: string }>>([])
+  /**
+   * The collected lines, each with an identity that outlives trimming.
+   *
+   * `seq` exists because the array is trimmed from the FRONT once it reaches
+   * its cap, which renumbers every remaining line. Anything keyed by array
+   * position — the each-block's key, a cache of measured row heights — would
+   * silently point at a different line after the first trim. A counter that
+   * only ever goes up cannot.
+   */
+  let logs = $state<Array<{ seq: number; podName: string; line: string }>>([])
+  let nextSeq = 0
   let isStreaming = $state(false)
   let autoScroll = $state(true)
 
@@ -134,9 +144,8 @@
    */
   const decorated = $derived.by(() => {
     const needle = searchQuery.toLowerCase()
-    return logs.map((log, index) => ({
+    return logs.map((log) => ({
       log,
-      index,
       matches: needle !== '' && log.line.toLowerCase().includes(needle),
     }))
   })
@@ -146,75 +155,241 @@
   /** What is actually rendered. */
   const rows = $derived(filterMode && searchQuery ? matching : decorated)
 
+  /**
+   * Where the matching lines sit WITHIN `rows`.
+   *
+   * Positions rather than the rows themselves, because everything downstream
+   * — the ruler, the jump, the current-match highlight — needs to turn a
+   * match into a scroll offset, and the offset table is indexed by position.
+   */
+  const matchPositions = $derived.by(() => {
+    if (!searchQuery) return []
+    const out: number[] = []
+    for (let i = 0; i < rows.length; i++) if (rows[i].matches) out.push(i)
+    return out
+  })
+
   /** Kept for the copy button, which copies what is shown. */
   const filteredLogs = $derived(rows.map((row) => row.log))
 
-  /**
-   * Scrolls a line to the middle of the pane.
+  /*
+   * ------------------------------------------------------------------
+   * The virtual list
+   * ------------------------------------------------------------------
    *
-   * `scrollTop` rather than scrollIntoView: the latter walks up the ancestor
-   * chain and would scroll the drawer itself to bring the pane into view,
-   * moving things the reader did not ask to move.
+   * Five thousand lines are five thousand DOM nodes, and building them was
+   * seconds of work spread across the load even after the delivery itself was
+   * fixed. Only the rows in view are rendered now; the rest are represented
+   * by a blank spacer above and below, so the scrollbar behaves as if they
+   * were all there.
+   *
+   * Heights are MEASURED rather than assumed. A fixed row height would be
+   * simpler and would be wrong the moment wrapping is on, where one line of
+   * JSON can occupy six rows and the next occupies one — the spacers would
+   * drift and the scrollbar would lie. Unmeasured rows use an estimate taken
+   * from the first row actually rendered, so the guess is at least this
+   * font's line height rather than a number picked in advance.
+   *
+   * Spacer divs rather than absolute positioning: absolutely positioned rows
+   * contribute nothing to their parent's width, which would break the
+   * horizontal scrolling that unwrapped logs depend on.
    */
-  function revealLine(index: number): void {
-    if (!logContainer) return
-    const element = logContainer.querySelector<HTMLElement>(`[data-log-index="${index}"]`)
-    if (!element) return
-    logContainer.scrollTop = element.offsetTop - logContainer.clientHeight / 2
+
+  /** Rows rendered beyond the viewport, so scrolling does not flicker. */
+  const OVERSCAN = 12
+
+  let scrollTop = $state(0)
+  let viewportHeight = $state(0)
+  let estimatedRow = $state(18)
+
+  /**
+   * seq -> measured height in pixels.
+   *
+   * A plain Map, deliberately outside the reactive graph: it is written from
+   * a measurement pass that runs AFTER render, and making it reactive would
+   * mean every measurement scheduled another render. `heightVersion` is
+   * bumped instead, and only when a height actually changed, which is what
+   * makes the loop converge.
+   */
+  const heights = new Map<number, number>()
+  let heightVersion = $state(0)
+
+  /**
+   * Signals that the height table has changed.
+   *
+   * The increment is untracked because `heightVersion++` READS the value in
+   * order to write it, which inside an effect makes that effect depend on its
+   * own output — an update loop Svelte stops with
+   * `effect_update_depth_exceeded`, taking the whole pane down with it.
+   */
+  function invalidateHeights(): void {
+    heightVersion = untrack(() => heightVersion) + 1
   }
 
-  function stepMatch(direction: 1 | -1): void {
-    if (matching.length === 0) return
-    const next = (currentMatch + direction + matching.length) % matching.length
-    currentMatch = next
-    revealLine(matching[next].index)
-  }
-
   /**
-   * Where the matching lines fall, as fractions of the scrollable height.
+   * Running total of row heights: offsets[i] is where row i starts.
    *
-   * Measured from the rendered rows rather than computed from line counts,
-   * because a wrapped line is several rows tall and a marker placed by index
-   * would drift down the pane. Only the matching rows are measured, so the
-   * cost is the size of the result rather than of the log.
-   *
-   * Read after a frame: the rows have to exist and be laid out before their
-   * offsets mean anything.
+   * One extra entry at the end holds the total, which is the height the
+   * scroll container has to pretend to have.
    */
-  let markers = $state<number[]>([])
-
-  $effect(() => {
-    // Anything that moves a line, changes which lines match, or changes how
-    // tall a line is.
-    const active = searchQuery !== '' && !filterMode
-    void logs.length
-    void preferences.wrapLines
-    void matching.length
-
-    if (!active || !logContainer) {
-      markers = []
-      return
+  const offsets = $derived.by(() => {
+    void heightVersion
+    const table = new Float64Array(rows.length + 1)
+    for (let i = 0; i < rows.length; i++) {
+      table[i + 1] = table[i] + (heights.get(rows[i].log.seq) ?? estimatedRow)
     }
+    return table
+  })
+
+  const totalHeight = $derived(offsets.length > 0 ? offsets[offsets.length - 1] : 0)
+
+  /** The last row starting at or before `y`. */
+  function rowAt(y: number): number {
+    let low = 0
+    let high = rows.length - 1
+    while (low < high) {
+      const mid = (low + high + 1) >> 1
+      if (offsets[mid] <= y) low = mid
+      else high = mid - 1
+    }
+    return low
+  }
+
+  const firstRendered = $derived(Math.max(0, rowAt(scrollTop) - OVERSCAN))
+  const lastRendered = $derived(
+    Math.min(rows.length, rowAt(scrollTop + viewportHeight) + 1 + OVERSCAN),
+  )
+
+  /** The rows to render, each carrying its position for offset lookups. */
+  const visibleRows = $derived(
+    rows.slice(firstRendered, lastRendered).map((row, offset) => ({
+      ...row,
+      pos: firstRendered + offset,
+    })),
+  )
+
+  const spacerAbove = $derived(offsets[firstRendered] ?? 0)
+  const spacerBelow = $derived(Math.max(0, totalHeight - (offsets[lastRendered] ?? 0)))
+
+  /**
+   * Measures what was just rendered and corrects the table.
+   *
+   * Runs after paint, and only bumps the version when something actually
+   * differs, so it settles in one pass for uniform rows and in a couple for
+   * wrapped ones instead of oscillating.
+   */
+  $effect(() => {
+    void visibleRows
+    if (!logContainer) return
 
     const frame = requestAnimationFrame(() => {
       if (!logContainer) return
-      const height = logContainer.scrollHeight
-      if (height <= 0) {
-        markers = []
-        return
+      let changed = false
+      for (const element of logContainer.querySelectorAll<HTMLElement>('[data-log-seq]')) {
+        const seq = Number(element.dataset.logSeq)
+        const height = element.offsetHeight
+        if (height <= 0) continue
+        if (heights.get(seq) !== height) {
+          heights.set(seq, height)
+          changed = true
+        }
+        // The first real measurement replaces the guess for everything not
+        // yet seen, which is most of a long log.
+        if (estimatedRow !== height && heights.size === 1) estimatedRow = height
       }
-      const seen = new Set<number>()
-      const found: number[] = []
-      for (const element of logContainer.querySelectorAll<HTMLElement>('[data-log-match]')) {
-        const fraction = element.offsetTop / height
-        const key = Math.round(fraction * 200)
-        if (seen.has(key)) continue
-        seen.add(key)
-        found.push(fraction)
-      }
-      markers = found
+      if (changed) invalidateHeights()
     })
     return () => cancelAnimationFrame(frame)
+  })
+
+  /**
+   * Wrapping changes every row's height, so nothing measured under the old
+   * setting is worth keeping.
+   */
+  $effect(() => {
+    void preferences.wrapLines
+    heights.clear()
+    invalidateHeights()
+  })
+
+  /** Drops heights for lines that have been trimmed away. */
+  $effect(() => {
+    if (logs.length === 0 && heights.size > 0) {
+      heights.clear()
+      invalidateHeights()
+    }
+  })
+
+  function onScroll(): void {
+    if (!logContainer) return
+    scrollTop = logContainer.scrollTop
+    viewportHeight = logContainer.clientHeight
+  }
+
+  /**
+   * Keeps the viewport height current without waiting for a scroll.
+   *
+   * It has to be known before the first scroll or the window would be sized
+   * from a height of zero and render almost nothing — and it changes whenever
+   * the drawer is resized, which no scroll event reports.
+   */
+  $effect(() => {
+    if (!logContainer) return
+    viewportHeight = logContainer.clientHeight
+
+    const observer = new ResizeObserver(() => {
+      if (!logContainer) return
+      viewportHeight = logContainer.clientHeight
+      // A narrower pane re-wraps every line, so nothing measured at the old
+      // width still applies.
+      if (preferences.wrapLines) {
+        heights.clear()
+        invalidateHeights()
+      }
+    })
+    observer.observe(logContainer)
+    return () => observer.disconnect()
+  })
+
+  /**
+   * Scrolls a row to the middle of the pane.
+   *
+   * Computed from the offset table rather than from the element, because with
+   * virtualisation the row being jumped to is usually not rendered yet — its
+   * position is known before it exists.
+   */
+  function revealRow(pos: number): void {
+    if (!logContainer) return
+    logContainer.scrollTop = Math.max(0, offsets[pos] - logContainer.clientHeight / 2)
+  }
+
+  function stepMatch(direction: 1 | -1): void {
+    if (matchPositions.length === 0) return
+    const next = (currentMatch + direction + matchPositions.length) % matchPositions.length
+    currentMatch = next
+    revealRow(matchPositions[next])
+  }
+
+  /**
+   * Where the matching lines fall, as fractions of the whole list.
+   *
+   * Read straight from the offset table now. Measuring rendered elements —
+   * which is how this worked before — cannot survive virtualisation: the
+   * matches outside the viewport have no elements to measure, so the ruler
+   * would only ever mark the part of the log already on screen.
+   */
+  const markers = $derived.by(() => {
+    if (!searchQuery || filterMode || totalHeight <= 0) return []
+    const seen = new Set<number>()
+    const out: number[] = []
+    for (const pos of matchPositions) {
+      const fraction = offsets[pos] / totalHeight
+      const key = Math.round(fraction * 200)
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(fraction)
+    }
+    return out
   })
 
   /** A new query starts from the first match rather than from wherever it left off. */
@@ -223,9 +398,9 @@
     currentMatch = -1
     if (needle && !filterMode) {
       requestAnimationFrame(() => {
-        if (matching.length > 0) {
+        if (matchPositions.length > 0) {
           currentMatch = 0
-          revealLine(matching[0].index)
+          revealRow(matchPositions[0])
         }
       })
     }
@@ -325,7 +500,7 @@
     }
 
     for (const line of event.lines) {
-      logs.push({ podName, line })
+      logs.push({ seq: nextSeq++, podName, line })
     }
 
     if (logs.length > MAX_LINES) {
@@ -546,6 +721,7 @@
   <div class="relative min-h-0 flex-1">
   <div
     bind:this={logContainer}
+    onscroll={onScroll}
     class="relative h-full overflow-auto bg-surface-container-lowest p-3 font-mono text-xs leading-relaxed"
   >
     {#if logs.length === 0}
@@ -560,14 +736,18 @@
            the pane's width, so every hover stripe still spans the full
            width instead of ending raggedly at each line's own length. -->
       <div class={preferences.wrapLines ? '' : 'w-max min-w-full'}>
-        {#each rows as row (row.index)}
+        <!-- The rows that are not rendered, as height. The scrollbar has to
+             behave as though the whole log were here, and these two blanks
+             are what make it. -->
+        <div style="height: {spacerAbove}px" aria-hidden="true"></div>
+
+        {#each visibleRows as row (row.log.seq)}
           {@const log = row.log}
           <div
-            data-log-index={row.index}
-            data-log-match={row.matches && !filterMode ? '' : undefined}
+            data-log-seq={log.seq}
             class="hover:bg-surface-container-low
                    {preferences.wrapLines ? 'break-all whitespace-pre-wrap' : 'whitespace-pre'}
-                   {!filterMode && currentMatch >= 0 && matching[currentMatch]?.index === row.index
+                   {!filterMode && currentMatch >= 0 && matchPositions[currentMatch] === row.pos
               ? 'bg-gauge-warn/12'
               : ''}"
           >
@@ -586,6 +766,8 @@
             >
           </div>
         {/each}
+
+        <div style="height: {spacerBelow}px" aria-hidden="true"></div>
       </div>
     {/if}
   </div>
