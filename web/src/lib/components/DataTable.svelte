@@ -214,15 +214,30 @@
     return visibleIds.has(columnId)
   }
 
-  /** Effective width: the operator's, else the column's default. */
+  /**
+   * Effective width: the column being dragged, else the operator's, else the
+   * default.
+   *
+   * The live width is held here rather than pushed into preferences on every
+   * pointermove, and that matters twice over. Each write serialised the whole
+   * preferences payload — pruning snoozes on the way — into a synchronous
+   * localStorage.setItem, sixty to a hundred and twenty times a second. And
+   * it reassigned `preferences.columns`, which invalidates `visible` and
+   * `visibleIds` above, which every `{#if isVisible(…)}` in every cell of
+   * every row subscribes to: a hundred rows of ten columns is a thousand
+   * conditional blocks re-evaluated per frame of a drag.
+   */
   function widthOf(column: Column): number {
+    if (dragging?.id === column.id) return dragging.width
     return preferences.columnWidth(kindId, column.id) ?? column.width
   }
 
   // --- Resizing -------------------------------------------------------------
 
   /** The column being dragged, if any. */
-  let dragging = $state<{ id: string; startX: number; startWidth: number } | null>(null)
+  let dragging = $state<{ id: string; startX: number; startWidth: number; width: number } | null>(
+    null,
+  )
 
   /** Narrower than this and a column shows nothing useful, only an ellipsis. */
   const MIN_WIDTH = 56
@@ -233,17 +248,20 @@
     event.preventDefault()
     event.stopPropagation()
 
-    dragging = { id: column.id, startX: event.clientX, startWidth: widthOf(column) }
+    const startWidth = widthOf(column)
+    dragging = { id: column.id, startX: event.clientX, startWidth, width: startWidth }
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
   }
 
   function onResizeMove(event: PointerEvent): void {
     if (!dragging) return
     const width = Math.max(MIN_WIDTH, dragging.startWidth + (event.clientX - dragging.startX))
-    preferences.setColumnWidth(kindId, dragging.id, width)
+    dragging = { ...dragging, width }
   }
 
+  /** The one point at which the drag becomes a stored preference. */
   function endResize(): void {
+    if (dragging) preferences.setColumnWidth(kindId, dragging.id, dragging.width)
     dragging = null
   }
 

@@ -71,6 +71,18 @@ export const REFRESH_INTERVALS = [
 
 const STORAGE_KEY = 'podsteer.preferences.v1'
 
+/**
+ * The navigator's width bounds, in pixels.
+ *
+ * Exported because a drag has to apply them while it is in progress: the
+ * clamp used to live only in the setter, so moving the live width out of the
+ * store would have let the sidebar follow the pointer past either end and
+ * snap back on release.
+ */
+export function clampNavigatorWidth(width: number): number {
+  return Math.max(180, Math.min(400, Math.round(width)))
+}
+
 /** The range a threshold may sensibly take, in whole per cent. */
 export const THRESHOLD_RANGE = { min: 50, max: 99 } as const
 
@@ -350,7 +362,7 @@ class Preferences {
   }
 
   setNavigatorWidth = (width: number): void => {
-    this.navigatorWidth = Math.max(180, Math.min(400, Math.round(width)))
+    this.navigatorWidth = clampNavigatorWidth(width)
     this.#save()
   }
 

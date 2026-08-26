@@ -15,7 +15,7 @@
   For deployments and other workloads, it can aggregate logs from multiple pods.
 -->
 <script lang="ts">
-  import { EventsOn, EventsOff } from '$lib/wailsjs/runtime/runtime'
+  import { EventsOn } from '$lib/wailsjs/runtime/runtime'
   import { StreamLogs, StopLogStream } from '$lib/wailsjs/go/wails/ManagementAPI'
   import { onMount, onDestroy, untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
@@ -96,6 +96,8 @@
   let autoScroll = $state(true)
 
   let logContainer: HTMLDivElement
+  /** Unsubscribes for the stream events, so teardown removes only ours. */
+  let unsubscribe: Array<() => void> = []
   let copied = $state(false)
 
   /**
@@ -590,14 +592,19 @@
   }
 
   onMount(() => {
-    EventsOn('log:lines', handleLogLines)
-    EventsOn('log:end', handleLogEnd)
+    // The returned unsubscribes, not EventsOff(name): EventsOff removes every
+    // listener for that name across the whole application, which is harmless
+    // while one log pane is mounted and wrong the moment two are.
+    unsubscribe = [
+      EventsOn('log:lines', handleLogLines),
+      EventsOn('log:end', handleLogEnd),
+    ]
     startStream()
   })
 
   onDestroy(() => {
-    EventsOff('log:lines')
-    EventsOff('log:end')
+    for (const off of unsubscribe) off()
+    unsubscribe = []
     stopStream()
   })
 </script>

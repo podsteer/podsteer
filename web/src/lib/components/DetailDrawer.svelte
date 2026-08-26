@@ -166,25 +166,42 @@
     isScalable ? session.workloads.find(w => w.name === session.selectedName && w.namespace === session.selectedNamespace) : null
   )
 
+  /**
+   * Which pod lookup is the current one.
+   *
+   * Clicking through several workloads leaves overlapping requests in flight,
+   * and without this the LAST TO RETURN wins rather than the last asked for.
+   * That result feeds the Logs and Terminal tabs, so a slow reply for the
+   * deployment you have already navigated away from would stream logs from
+   * the wrong workload's pods — and look entirely convincing while doing it.
+   */
+  let podRequest = 0
+
   $effect(() => {
     if (isWorkloadWithLogs && session.selectedName && session.selectedNamespace) {
       loadWorkloadPods()
     } else {
+      podRequest++
       workloadPods = []
     }
   })
 
   async function loadWorkloadPods() {
     if (!session.selectedKind || !session.selectedName) return
+
+    const request = ++podRequest
     try {
       const kind = session.selectedKind.kind
-      workloadPods = await ListPodsForWorkload(
+      const pods = await ListPodsForWorkload(
         session.cluster.id,
         session.selectedNamespace,
         kind,
         session.selectedName
       )
+      if (request !== podRequest) return
+      workloadPods = pods
     } catch (error) {
+      if (request !== podRequest) return
       console.error('Failed to load workload pods:', error)
       workloadPods = []
     }

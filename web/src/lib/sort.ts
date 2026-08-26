@@ -8,6 +8,40 @@
  * means switching kinds and back finds the view as it was left.
  */
 
+/**
+ * Suffix -> multiplier, built once.
+ *
+ * It was a literal inside parseQuantity, so a CPU or memory sort rebuilt this
+ * sixteen-key object for every row it looked at.
+ */
+const MULTIPLIERS: Record<string, number> = {
+  m: 1e-3,
+  k: 1e3,
+  K: 1e3,
+  M: 1e6,
+  G: 1e9,
+  B: 1,
+  Ki: 1024,
+  Mi: 1024 ** 2,
+  Gi: 1024 ** 3,
+  Ti: 1024 ** 4,
+  Pi: 1024 ** 5,
+  KiB: 1024,
+  MiB: 1024 ** 2,
+  GiB: 1024 ** 3,
+  TiB: 1024 ** 4,
+  PiB: 1024 ** 5,
+}
+
+/** Age suffix -> seconds, built once for the same reason as MULTIPLIERS. */
+const UNIT_SECONDS: Record<string, number> = {
+  s: 1,
+  m: 60,
+  h: 3_600,
+  d: 86_400,
+  y: 31_536_000,
+}
+
 /** Sort direction. */
 export type SortDirection = 'asc' | 'desc'
 
@@ -22,6 +56,20 @@ export type SortValue = string | number | null
 
 /** Column id -> value extractor for one row type. */
 export type SortAccessors<T> = Record<string, (row: T) => SortValue>
+
+/**
+ * One collator for the whole application, built once.
+ *
+ * `localeCompare` with an options object cannot take the engine's fast path —
+ * it constructs or looks up an Intl.Collator on EVERY call. A five-thousand
+ * row sort is on the order of sixty thousand comparisons, so that was sixty
+ * thousand collator lookups plus the collation itself, repeated on every
+ * ten-second refresh.
+ *
+ * `numeric` is what makes generated names order the way an operator reads
+ * them: pod-2 before pod-10.
+ */
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 
 /**
  * Returns rows ordered by the state's column, or the rows untouched when no
@@ -41,9 +89,20 @@ export function sortRows<T>(
   if (!accessor) return rows
 
   const sign = state.direction === 'asc' ? 1 : -1
-  return [...rows].sort((a, b) => {
-    const va = accessor(a)
-    const vb = accessor(b)
+
+  // Each value is read ONCE, not once per comparison.
+  //
+  // The accessors are not free — several parse a Kubernetes quantity with a
+  // regex, and others join an array into a string — and a comparator runs
+  // O(n log n) times. Reading them in the comparator therefore did that work
+  // roughly twelve times per row on a five-thousand-row table, on every
+  // refresh and on every keystroke of a search. Decorating first makes it
+  // exactly once per row.
+  const decorated = rows.map((row) => ({ row, key: accessor(row) }))
+
+  decorated.sort((a, b) => {
+    const va = a.key
+    const vb = b.key
     if (va === null && vb === null) return 0
     if (va === null) return 1
     if (vb === null) return -1
@@ -51,12 +110,11 @@ export function sortRows<T>(
     const order =
       typeof va === 'number' && typeof vb === 'number'
         ? va - vb
-        : String(va).localeCompare(String(vb), undefined, {
-            numeric: true,
-            sensitivity: 'base',
-          })
+        : collator.compare(String(va), String(vb))
     return order * sign
   })
+
+  return decorated.map((entry) => entry.row)
 }
 
 /**
@@ -72,24 +130,6 @@ export function parseQuantity(value: string): number | null {
   const match = /^([\d.]+)(m|KiB|MiB|GiB|TiB|PiB|Ki|Mi|Gi|Ti|Pi|k|K|M|G|B)?$/.exec(value.trim())
   if (!match) return null
 
-  const MULTIPLIERS: Record<string, number> = {
-    m: 1e-3,
-    k: 1e3,
-    K: 1e3,
-    M: 1e6,
-    G: 1e9,
-    B: 1,
-    Ki: 1024,
-    Mi: 1024 ** 2,
-    Gi: 1024 ** 3,
-    Ti: 1024 ** 4,
-    Pi: 1024 ** 5,
-    KiB: 1024,
-    MiB: 1024 ** 2,
-    GiB: 1024 ** 3,
-    TiB: 1024 ** 4,
-    PiB: 1024 ** 5,
-  }
   return Number.parseFloat(match[1]) * (MULTIPLIERS[match[2] ?? ''] ?? 1)
 }
 
@@ -103,13 +143,6 @@ export function parseAgeSeconds(value: string): number | null {
   const trimmed = value.trim()
   if (!trimmed) return null
 
-  const UNIT_SECONDS: Record<string, number> = {
-    s: 1,
-    m: 60,
-    h: 3_600,
-    d: 86_400,
-    y: 31_536_000,
-  }
 
   let total = 0
   let consumed = ''

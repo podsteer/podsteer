@@ -19,7 +19,7 @@
 <script lang="ts">
   import { ALL_NAMESPACES, type ResourceKind } from '$lib/api/client'
   import { OVERVIEW_KIND_ID, type ClusterSession } from '$stores/session.svelte'
-  import { preferences } from '$stores/preferences.svelte'
+  import { clampNavigatorWidth, preferences } from '$stores/preferences.svelte'
   import { categoryMeta, iconForKind } from '$lib/kindIcons'
   import Select from './Select.svelte'
   import { ChevronDown, LayoutDashboard, AlertTriangle } from '@lucide/svelte'
@@ -54,6 +54,15 @@
 
   // --- Resize logic ---
   let resizing = $state(false)
+  /**
+   * The width during a drag, before it becomes a stored preference.
+   *
+   * Writing it to preferences on every pointermove serialised the entire
+   * preferences payload into a synchronous localStorage.setItem sixty-plus
+   * times a second. The gesture only has one outcome worth persisting: where
+   * it ended.
+   */
+  let draggedWidth = $state<number | null>(null)
   let resizeStartX = 0
   let resizeStartWidth = 0
 
@@ -67,18 +76,19 @@
 
   function onResizeMove(event: PointerEvent): void {
     if (!resizing) return
-    const newWidth = resizeStartWidth + (event.clientX - resizeStartX)
-    preferences.setNavigatorWidth(newWidth)
+    draggedWidth = clampNavigatorWidth(resizeStartWidth + (event.clientX - resizeStartX))
   }
 
   function endResize(): void {
+    if (draggedWidth !== null) preferences.setNavigatorWidth(draggedWidth)
+    draggedWidth = null
     resizing = false
   }
 </script>
 
 <nav
   class="relative flex shrink-0 flex-col border-r border-outline-variant/60 bg-surface-container-low"
-  style="width: {preferences.navigatorWidth}px"
+  style="width: {draggedWidth ?? preferences.navigatorWidth}px"
   aria-label="Cluster resources"
 >
   <!-- Namespace selector area: same height and border as the main toolbar,

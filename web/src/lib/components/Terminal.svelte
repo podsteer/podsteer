@@ -18,7 +18,7 @@
   import { FitAddon } from '@xterm/addon-fit'
   import { WebLinksAddon } from '@xterm/addon-web-links'
   import { StartSession, Write, Resize, StopSession } from '$lib/wailsjs/go/wails/TerminalAPI'
-  import { EventsOn, EventsOff } from '$lib/wailsjs/runtime/runtime'
+  import { EventsOn } from '$lib/wailsjs/runtime/runtime'
   import '@xterm/xterm/css/xterm.css'
 
   interface Props {
@@ -48,8 +48,32 @@
   let connectionState = $state<'connecting' | 'connected' | 'disconnected' | 'error'>('connecting')
   let errorMessage = $state<string>('')
 
+  /**
+   * Unsubscribes for the two Wails events, held so they can be undone.
+   *
+   * Subscribing belongs to the COMPONENT, not to the session. It used to live
+   * inside startSession, which is also called by reconnect and by switching
+   * container — and Wails appends listeners without deduplicating, so every
+   * container switch added another handler and every byte from the pod was
+   * written to the terminal one more time than before.
+   *
+   * The returned unsubscribe is used rather than EventsOff(name), because
+   * EventsOff removes every listener for that name across the whole
+   * application. Harmless while only one terminal is mounted, and a trap the
+   * moment a second one is.
+   */
+  let unsubscribe: Array<() => void> = []
+
   onMount(() => {
     initTerminal()
+
+    // Both handlers filter on event.sessionId already, so one subscription
+    // serves every session this component opens.
+    unsubscribe = [
+      EventsOn('terminal:data', handleTerminalData),
+      EventsOn('terminal:exit', handleTerminalExit),
+    ]
+
     startSession()
 
     // Handle window resize
@@ -138,10 +162,6 @@
 
     connectionState = 'connecting'
 
-    // Subscribe to terminal data events
-    EventsOn('terminal:data', handleTerminalData)
-    EventsOn('terminal:exit', handleTerminalExit)
-
     try {
       const cols = terminal.cols
       const rows = terminal.rows
@@ -199,8 +219,8 @@
   }
 
   function cleanup() {
-    EventsOff('terminal:data')
-    EventsOff('terminal:exit')
+    for (const off of unsubscribe) off()
+    unsubscribe = []
 
     if (sessionId) {
       StopSession(sessionId).catch(() => {})

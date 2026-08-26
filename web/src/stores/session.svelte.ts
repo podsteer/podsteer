@@ -157,9 +157,9 @@ export class ClusterSession {
   readonly cluster: Cluster
 
   /** Kinds the navigator can offer, from the backend's per-cluster catalog. */
-  kinds = $state<ResourceKind[]>([])
+  kinds = $state.raw<ResourceKind[]>([])
   /** Namespaces, for the filter. */
-  namespaces = $state<Namespace[]>([])
+  namespaces = $state.raw<Namespace[]>([])
 
   /** The kind currently selected in the navigator. */
   selectedKindId = $state<string>(DEFAULT_KIND_ID)
@@ -174,13 +174,27 @@ export class ClusterSession {
       one must not leak into another. */
   sorts = $state<Record<string, SortState>>({})
 
-  /** Rows for whichever view is active. Only one is populated at a time. */
-  pods = $state<Pod[]>([])
-  nodes = $state<Node[]>([])
-  workloads = $state<Workload[]>([])
-  events = $state<K8sEvent[]>([])
-  table = $state<ResourceTable | null>(null)
-  overview = $state<Overview | null>(null)
+  /**
+   * Rows for whichever view is active. Only one is populated at a time.
+   *
+   * `$state.raw`, not `$state`, and the difference is the cost of a refresh.
+   * A plain `$state` array is deeply proxied: every property read of every
+   * row goes through a proxy trap and CREATES A SIGNAL for that field. The
+   * filter touches four fields per row and the sort accessors touch more, so
+   * a single keystroke over five thousand pods materialised tens of thousands
+   * of signals inside a derived and subscribed it to all of them — then the
+   * next refresh replaced the array and rebuilt the lot.
+   *
+   * Raw state is correct here precisely because nothing ever mutates these in
+   * place: every assignment replaces the whole array with what the backend
+   * just returned. Deep proxying was paying for a capability nothing uses.
+   */
+  pods = $state.raw<Pod[]>([])
+  nodes = $state.raw<Node[]>([])
+  workloads = $state.raw<Workload[]>([])
+  events = $state.raw<K8sEvent[]>([])
+  table = $state.raw<ResourceTable | null>(null)
+  overview = $state.raw<Overview | null>(null)
 
   /**
    * The non-info finding ids of the previous assessment, or null before the

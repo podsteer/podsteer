@@ -24,7 +24,7 @@ import { ClusterSession, type LoadStatus } from './session.svelte'
 
 class Workspace {
   /** Every cluster in the kubeconfig, for the picker. */
-  clusters = $state<Cluster[]>([])
+  clusters = $state.raw<Cluster[]>([])
   clustersStatus = $state<LoadStatus>('idle')
 
   /** Open tabs, in the order they were opened. */
