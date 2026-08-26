@@ -30,30 +30,20 @@
   let { loads, onselect }: Props = $props()
 
   /**
-   * How many nodes are drawn before the reader asks for more.
+   * How many nodes this card draws. All of them, as far as it is concerned.
    *
    * Six, which is three rows of two — enough to fill the card without
-   * becoming the page. The list is sorted busiest first, so the six shown are
-   * the six that matter and expanding is a choice rather than a chore.
-   */
-  const COLLAPSED = 6
-
-  /**
-   * How many nodes the expanded list will draw.
+   * becoming the page, and the same shape every other metric on the overview
+   * takes: a top few, not a browsable list. The list arrives sorted busiest
+   * first, so these are the six worth looking at; the Nodes page is where
+   * somebody goes to see the rest.
    *
-   * Expanding used to mean every node, which on a large cluster is hundreds
-   * of cards and roughly four gauges each, rebuilt on every refresh. The list
-   * is sorted busiest first, so a bound keeps the ones that matter and drops
-   * the tail nobody scrolled to — and the footer says how many were left.
+   * There was an expansion control here. It made this card the one thing on
+   * the page that could grow to hundreds of rows, which is a different kind
+   * of surface from its neighbours, and the answer to "show me every node"
+   * was always the navigator rather than a card on a dashboard.
    */
-  const EXPANDED = 60
-
-  let expanded = $state(false)
-
-  const shown = $derived(expanded ? loads.slice(0, EXPANDED) : loads.slice(0, COLLAPSED))
-  const hidden = $derived(Math.max(0, loads.length - COLLAPSED))
-  /** Nodes the expanded list still does not show. */
-  const beyondExpanded = $derived(Math.max(0, loads.length - EXPANDED))
+  const SHOWN = 6
 
   /**
    * The rows to draw, with their gauges built once.
@@ -63,7 +53,9 @@
    * fresh identities each time, which made the keyed inner block re-diff on
    * every ten-second refresh even though nothing about the node had changed.
    */
-  const rows = $derived(shown.map((load) => ({ load, tracks: tracks(load) })))
+  const rows = $derived(
+    loads.slice(0, SHOWN).map((load) => ({ load, tracks: tracks(load) })),
+  )
 
   interface Track {
     label: string
@@ -215,28 +207,4 @@
     {/each}
   </div>
 
-  {#if hidden > 0}
-    <button
-      type="button"
-      onclick={() => (expanded = !expanded)}
-      aria-expanded={expanded}
-      class="state-layer self-start rounded-xs px-1.5 py-1 text-label-medium text-primary
-             transition-colors duration-100 hover:bg-primary/10"
-    >
-      <!-- Says what it will actually do. With more nodes than the expanded
-           bound, "Show all" would be a claim the button does not honour. -->
-      {expanded
-        ? `Show the busiest ${COLLAPSED}`
-        : beyondExpanded > 0
-          ? `Show the busiest ${EXPANDED} of ${loads.length} nodes`
-          : `Show all ${loads.length} nodes`}
-    </button>
-    {#if expanded && beyondExpanded > 0}
-      <!-- And says what it left out, rather than letting the list end as
-           though that were all of them. -->
-      <p class="text-body-small text-on-surface-variant/70">
-        {beyondExpanded} quieter {beyondExpanded === 1 ? 'node is' : 'nodes are'} not shown.
-      </p>
-    {/if}
-  {/if}
 </div>

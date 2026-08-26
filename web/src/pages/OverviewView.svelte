@@ -870,7 +870,14 @@
               <Server class="size-4 text-on-surface-variant" strokeWidth={1.8} />
               Load per node
             </h3>
-            <span class="text-body-small text-on-surface-variant/70">Busiest first</span>
+            <!-- Says how many, now that nothing on the card offers the rest.
+                 "Busiest first" alone read as a complete list once the expand
+                 control went, and a dashboard that quietly shows six of
+                 eighteen is the sort of small untruth this page cannot
+                 afford. The Nodes page is where the rest live. -->
+            <span class="text-body-small text-on-surface-variant/70">
+              {overview.nodeLoads.length > 6 ? 'Busiest 6' : 'Busiest first'}
+            </span>
           </div>
 
           <NodeLoadGrid
