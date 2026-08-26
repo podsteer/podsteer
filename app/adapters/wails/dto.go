@@ -240,12 +240,19 @@ type ClusterUnreachableEvent struct {
 	At string `json:"at"`
 }
 
-// LogLineEvent is the payload of the "log:line" event.
-type LogLineEvent struct {
+// LogLinesEvent is the payload of the "log:lines" event.
+//
+// A batch rather than a line. One event per line meant a pod's backlog
+// crossed the bridge as thousands of separate messages — 5000 of them for a
+// 5000-line tail, each serialised, posted and dispatched on its own, and each
+// waking the frontend to re-render. Coalescing them costs a few milliseconds
+// of latency nobody can perceive in a log and removes the burst entirely.
+type LogLinesEvent struct {
 	// StreamID identifies the log stream (returned by StreamLogs).
 	StreamID string `json:"streamId"`
-	// Line is the log line text (may include timestamp prefix).
-	Line string `json:"line"`
+	// Lines are the log line texts, oldest first (may include timestamp
+	// prefixes).
+	Lines []string `json:"lines"`
 }
 
 // LogEndEvent is the payload of the "log:end" event.

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
@@ -54,8 +55,9 @@ func NewManagementAPI(management *application.ManagementService, app *App, logge
 
 // StreamLogs streams pod logs to the frontend via events.
 //
-// The frontend must subscribe to "log:line" events to receive log lines.
-// Each event payload is a LogLineEvent with the line text.
+// The frontend must subscribe to "log:lines" events to receive log lines.
+// Each event payload is a LogLinesEvent carrying a BATCH of lines — see the
+// batcher below for why they are not sent one at a time.
 // The stream ends when the pod terminates, the context is cancelled, or an
 // error occurs. A "log:end" event is emitted when the stream closes.
 func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName string, follow bool, tailLines int) (string, error) {
@@ -103,13 +105,31 @@ func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName 
 			}
 		}()
 
-		// Forward log lines to the frontend.
-		for line := range out {
-			m.app.emit("log:line", LogLineEvent{
-				StreamID: streamID,
-				Line:     line,
-			})
+		// Forward log lines to the frontend in batches.
+		//
+		// One emit per line is what made a large tail unusable: asking for
+		// 5000 lines put 5000 separate messages across the bridge as fast as
+		// the channel would drain, and the frontend had to wake for each one.
+		// Batching bounds that by TIME as well as by size, so a quiet pod
+		// still delivers promptly and a noisy one cannot flood anything.
+		forward := newLogBatcher(m.app, streamID)
+		ticker := time.NewTicker(logFlushInterval)
+		defer ticker.Stop()
+
+	drain:
+		for {
+			select {
+			case line, ok := <-out:
+				if !ok {
+					break drain
+				}
+				forward.add(line)
+
+			case <-ticker.C:
+				forward.flush()
+			}
 		}
+		forward.flush()
 
 		// Signal end of stream.
 		m.app.emit("log:end", LogEndEvent{
@@ -118,6 +138,63 @@ func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName 
 	}()
 
 	return streamID, nil
+}
+
+// How long a line may wait for company before being sent on its own.
+//
+// Short enough to read as live — a log arriving 50ms late is indistinguishable
+// from one arriving at once — and long enough that a pod emitting thousands of
+// lines a second is delivered in tens of messages rather than thousands.
+const logFlushInterval = 50 * time.Millisecond
+
+// The most lines to hold before sending regardless of the interval.
+//
+// A bound on memory and on the size of a single message, for the case the
+// interval alone would not catch: a backlog drains far faster than the ticker
+// fires.
+const logBatchSize = 500
+
+// logBatcher coalesces log lines into "log:lines" events.
+//
+// Not safe for concurrent use: it is owned by the single goroutine forwarding
+// one stream, which is the only thing that touches it.
+type logBatcher struct {
+	app      *App
+	streamID string
+	pending  []string
+}
+
+func newLogBatcher(app *App, streamID string) *logBatcher {
+	return &logBatcher{
+		app:      app,
+		streamID: streamID,
+		pending:  make([]string, 0, logBatchSize),
+	}
+}
+
+func (b *logBatcher) add(line string) {
+	b.pending = append(b.pending, line)
+	if len(b.pending) >= logBatchSize {
+		b.flush()
+	}
+}
+
+func (b *logBatcher) flush() {
+	if len(b.pending) == 0 {
+		return
+	}
+
+	// A fresh slice rather than a reslice of the same array: the batch just
+	// handed over is serialised by the runtime on its own schedule, and
+	// appending into the array behind it would rewrite lines already in
+	// flight.
+	batch := b.pending
+	b.pending = make([]string, 0, logBatchSize)
+
+	b.app.emit("log:lines", LogLinesEvent{
+		StreamID: b.streamID,
+		Lines:    batch,
+	})
 }
 
 // StopLogStream cancels a log stream.

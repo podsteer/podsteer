@@ -1,7 +1,7 @@
 <!--
   LogViewer streams and displays pod logs.
 
-  It subscribes to log:line events from the backend and renders them in a
+  It subscribes to log:lines events from the backend and renders them in a
   scrollable container. The operator can select which container to view (for
   multi-container pods), toggle follow mode, and search within the logs.
 
@@ -30,16 +30,16 @@
   import { ArrowDownToLine, Check, Copy, Eraser, ListFilter, Radio } from '@lucide/svelte'
 
   /**
-   * Shapes of the `log:line` / `log:end` event payloads.
+   * Shapes of the `log:lines` / `log:end` event payloads.
    *
    * Wails only generates TS types for structs that appear in a *bound
    * method's* signature — these are emitted ad hoc via app.emit() instead,
    * so wailsjs/go/models has no corresponding export. Typed here to match
-   * the JSON app/adapters/wails/dto.go actually sends (`streamId`, `line`).
+   * the JSON app/adapters/wails/dto.go actually sends (`streamId`, `lines`).
    */
-  interface LogLineEvent {
+  interface LogLinesEvent {
     streamId: string
-    line: string
+    lines: string[]
   }
   interface LogEndEvent {
     streamId: string
@@ -242,8 +242,21 @@
     return Array.from(containerSet).sort()
   })
 
+  /**
+   * Which start is the current one.
+   *
+   * Starting is asynchronous — one awaited call per pod — so two starts can
+   * be in flight at once, which is exactly what changing the dropdown twice
+   * in quick succession does. Without this the older call would carry on
+   * after the newer had cleared the map, registering its streams on top and
+   * leaving two tails of different lengths writing into the same view, with
+   * the loser's stream never stopped.
+   */
+  let streamGeneration = 0
+
   // Start streaming logs from all active pods
   async function startStream() {
+    const generation = ++streamGeneration
     if (activePods.length === 0) return
 
     // Stop any existing streams
@@ -261,6 +274,12 @@
 
       try {
         const streamId = await StreamLogs(clusterId, namespace, pod.name, container, follow, tailLines)
+        if (generation !== streamGeneration) {
+          // Superseded while this call was in flight. Close what we opened
+          // rather than adding it to a view that has moved on.
+          await StopLogStream(streamId)
+          return
+        }
         streamIds.set(pod.name, streamId)
       } catch (error) {
         console.error(`Failed to start log stream for pod ${pod.name}:`, error)
@@ -270,6 +289,9 @@
 
   // Stop all streams
   async function stopStream() {
+    // Invalidates any start still in flight, so it cannot register a stream
+    // into a viewer that has just been told to stop.
+    streamGeneration++
     for (const streamId of streamIds.values()) {
       await StopLogStream(streamId)
     }
@@ -277,9 +299,23 @@
     isStreaming = false
   }
 
-  // Handle incoming log lines
-  function handleLogLine(event: LogLineEvent) {
-    // Find which pod this log line belongs to
+  /** The most lines held before the oldest are dropped. */
+  const MAX_LINES = 10_000
+
+  /**
+   * Appends a batch of lines.
+   *
+   * `push` into the reactive array rather than `logs = [...logs, line]`. The
+   * spread copied the WHOLE array for every line that arrived, so the cost of
+   * a tail was quadratic in its length: 5000 lines meant about twelve million
+   * element copies, each one also re-deriving every row and re-diffing the
+   * rendered list. That is what made the 5000-line setting hang the
+   * application rather than merely be slow.
+   *
+   * Trimming uses splice for the same reason — `slice(-10_000)` allocated a
+   * second ten-thousand-element array every time the cap was reached.
+   */
+  function handleLogLines(event: LogLinesEvent) {
     let podName = ''
     for (const [name, id] of streamIds.entries()) {
       if (id === event.streamId) {
@@ -288,36 +324,50 @@
       }
     }
 
-    logs = [...logs, { podName, line: event.line }]
+    for (const line of event.lines) {
+      logs.push({ podName, line })
+    }
 
-    // Keep only the last 10000 lines to prevent memory issues
-    if (logs.length > 10000) {
-      logs = logs.slice(-10000)
+    if (logs.length > MAX_LINES) {
+      logs.splice(0, logs.length - MAX_LINES)
     }
 
     // Auto-scroll to bottom if enabled — but never while a search is active.
     // Somebody who has just jumped to a match is reading it, and a stream that
     // yanks the view back to the newest line every time a pod says something
     // makes the match impossible to read.
-    if (autoScroll && !searchQuery && logContainer) {
+    if (autoScroll && !searchQuery) {
       requestAnimationFrame(() => {
-        logContainer.scrollTop = logContainer.scrollHeight
+        // Re-checked inside the frame: the drawer can close between the batch
+        // arriving and the frame running, and reading scrollHeight off a
+        // detached container throws.
+        if (logContainer) logContainer.scrollTop = logContainer.scrollHeight
       })
     }
   }
 
   // Handle stream end
+  /**
+   * Marks a stream finished — but only one we were actually tracking.
+   *
+   * The emptiness check used to run for EVERY log:end, including one from a
+   * stream that had already been replaced. Restarting is not atomic: the map
+   * is cleared and the new ids are set after an await, so a late end event
+   * landing in that window found an empty map and reported the whole viewer
+   * stopped while its replacement was still opening. That is what showed as
+   * "Stopped" over a stream the backend was still happily writing to.
+   */
   function handleLogEnd(event: LogEndEvent) {
-    // Remove the stream ID for the ended stream
+    let wasOurs = false
     for (const [name, id] of streamIds.entries()) {
       if (id === event.streamId) {
         streamIds.delete(name)
+        wasOurs = true
         break
       }
     }
-    
-    // If all streams have ended, update state
-    if (streamIds.size === 0) {
+
+    if (wasOurs && streamIds.size === 0) {
       isStreaming = false
     }
   }
@@ -350,20 +400,28 @@
     logs = []
   }
 
-  // Restart stream with new settings
+  /**
+   * Restarts with the current settings.
+   *
+   * Just `startStream`, which already closes whatever is open before it opens
+   * anything. Calling `stopStream()` first and NOT awaiting it — as this did
+   * — let the two interleave: start would set `isStreaming = true`, then
+   * stop's continuation would run after its own await and set it back to
+   * false, leaving the pane reporting "Stopped" over a stream the backend was
+   * still writing to. The status was wrong, not the stream.
+   */
   function restartStream() {
-    stopStream()
-    startStream()
+    void startStream()
   }
 
   onMount(() => {
-    EventsOn('log:line', handleLogLine)
+    EventsOn('log:lines', handleLogLines)
     EventsOn('log:end', handleLogEnd)
     startStream()
   })
 
   onDestroy(() => {
-    EventsOff('log:line')
+    EventsOff('log:lines')
     EventsOff('log:end')
     stopStream()
   })
