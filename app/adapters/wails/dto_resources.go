@@ -157,14 +157,22 @@ type Workload struct {
 	Schedule      string            `json:"schedule"`
 	LastScheduled string            `json:"lastScheduled"`
 	Labels        map[string]string `json:"labels"`
-	CreatedAt     string            `json:"createdAt"`
-	AgeSeconds    int64             `json:"ageSeconds"`
+	// Annotations carries only the GitOps keys — see gitOpsAnnotations in the
+	// k8s mapper for why it is not the whole set.
+	Annotations map[string]string `json:"annotations"`
+	CreatedAt   string            `json:"createdAt"`
+	AgeSeconds  int64             `json:"ageSeconds"`
 }
 
 func toWorkload(workload domain.Workload, now time.Time) Workload {
 	labels := workload.Labels()
 	if labels == nil {
 		labels = map[string]string{}
+	}
+
+	annotations := workload.Annotations()
+	if annotations == nil {
+		annotations = map[string]string{}
 	}
 
 	images := workload.Images()
@@ -191,6 +199,7 @@ func toWorkload(workload domain.Workload, now time.Time) Workload {
 		Schedule:      workload.Schedule(),
 		LastScheduled: formatTime(workload.LastScheduled()),
 		Labels:        labels,
+		Annotations:   annotations,
 		CreatedAt:     formatTime(workload.CreatedAt()),
 		AgeSeconds:    int64(workload.Age(now).Seconds()),
 	}

@@ -1198,6 +1198,7 @@ export namespace wails {
 	    schedule: string;
 	    lastScheduled: string;
 	    labels: Record<string, string>;
+	    annotations: Record<string, string>;
 	    createdAt: string;
 	    ageSeconds: number;
 	
@@ -1225,6 +1226,7 @@ export namespace wails {
 	        this.schedule = source["schedule"];
 	        this.lastScheduled = source["lastScheduled"];
 	        this.labels = source["labels"];
+	        this.annotations = source["annotations"];
 	        this.createdAt = source["createdAt"];
 	        this.ageSeconds = source["ageSeconds"];
 	    }

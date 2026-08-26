@@ -63,6 +63,14 @@ type WorkloadSpec struct {
 	Selector map[string]string
 	// Labels are the controller's own labels.
 	Labels map[string]string
+	// Annotations are the controller's annotations.
+	//
+	// Adapters are expected to pass only the ones a consumer needs rather
+	// than everything: a real deployment's annotations are dominated by
+	// kubectl's last-applied-configuration, which on this project's own test
+	// cluster is 239 KiB across sixty-one deployments and would be re-sent on
+	// every refresh to serve one column.
+	Annotations map[string]string
 	// Owner is the controlling owner, e.g. the Deployment behind a ReplicaSet.
 	Owner OwnerReference
 	// Suspended reports whether a Job or CronJob is suspended.
@@ -90,6 +98,7 @@ type Workload struct {
 	images        []string
 	selector      map[string]string
 	labels        map[string]string
+	annotations   map[string]string
 	owner         OwnerReference
 	suspended     bool
 	schedule      string
@@ -128,6 +137,7 @@ func NewWorkload(spec WorkloadSpec) (Workload, error) {
 		images:        slices.Clone(spec.Images),
 		selector:      maps.Clone(spec.Selector),
 		labels:        maps.Clone(spec.Labels),
+		annotations:   maps.Clone(spec.Annotations),
 		owner:         spec.Owner,
 		suspended:     spec.Suspended,
 		schedule:      spec.Schedule,
@@ -185,6 +195,10 @@ func (w Workload) Selector() map[string]string { return maps.Clone(w.selector) }
 
 // Labels returns a copy of the controller's labels.
 func (w Workload) Labels() map[string]string { return maps.Clone(w.labels) }
+
+// Annotations returns a copy of the controller's annotations, which adapters
+// populate selectively. See WorkloadSpec.Annotations.
+func (w Workload) Annotations() map[string]string { return maps.Clone(w.annotations) }
 
 // Owner returns the controlling owner, if any.
 func (w Workload) Owner() OwnerReference { return w.owner }

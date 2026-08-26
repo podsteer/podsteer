@@ -383,6 +383,7 @@ func mapCronJob(clusterID domain.ClusterID, item *batchv1.CronJob) (domain.Workl
 		Current:       int32(len(item.Status.Active)),
 		Images:        podTemplateImages(item.Spec.JobTemplate.Spec.Template),
 		Labels:        item.Labels,
+		Annotations:   gitOpsAnnotations(item.Annotations),
 		Owner:         domain.Controller(mapOwnerReferences(item.OwnerReferences)),
 		Suspended:     derefBool(item.Spec.Suspend),
 		Schedule:      item.Spec.Schedule,
@@ -414,22 +415,56 @@ func newWorkload(
 	}
 
 	return domain.NewWorkload(domain.WorkloadSpec{
-		Kind:      kind,
-		Name:      meta.Name,
-		Namespace: namespace,
-		ClusterID: clusterID,
-		Desired:   counts.Desired,
-		Ready:     counts.Ready,
-		Current:   counts.Current,
-		Updated:   counts.Updated,
-		Available: counts.Available,
-		Failed:    counts.Failed,
-		Images:    images,
-		Selector:  selector,
-		Labels:    meta.Labels,
-		Owner:     domain.Controller(mapOwnerReferences(meta.OwnerReferences)),
-		CreatedAt: meta.CreationTimestamp.Time,
+		Kind:        kind,
+		Name:        meta.Name,
+		Namespace:   namespace,
+		ClusterID:   clusterID,
+		Desired:     counts.Desired,
+		Ready:       counts.Ready,
+		Current:     counts.Current,
+		Updated:     counts.Updated,
+		Available:   counts.Available,
+		Failed:      counts.Failed,
+		Images:      images,
+		Selector:    selector,
+		Labels:      meta.Labels,
+		Annotations: gitOpsAnnotations(meta.Annotations),
+		Owner:       domain.Controller(mapOwnerReferences(meta.OwnerReferences)),
+		CreatedAt:   meta.CreationTimestamp.Time,
 	})
+}
+
+// gitOpsAnnotationPrefixes are the annotation keys worth carrying to the UI.
+//
+// An allowlist rather than the whole map, because the whole map is dominated
+// by kubectl's last-applied-configuration — 239 KiB across sixty-one
+// deployments on this project's test cluster, which would be re-sent on every
+// refresh so that one column could read one key.
+var gitOpsAnnotationPrefixes = []string{
+	"argocd.argoproj.io/",
+	"kustomize.toolkit.fluxcd.io/",
+	"helm.toolkit.fluxcd.io/",
+}
+
+// gitOpsAnnotations copies only the annotations a GitOps controller sets.
+func gitOpsAnnotations(all map[string]string) map[string]string {
+	if len(all) == 0 {
+		return nil
+	}
+
+	var kept map[string]string
+	for key, value := range all {
+		for _, prefix := range gitOpsAnnotationPrefixes {
+			if strings.HasPrefix(key, prefix) {
+				if kept == nil {
+					kept = make(map[string]string, 2)
+				}
+				kept[key] = value
+				break
+			}
+		}
+	}
+	return kept
 }
 
 // rebuildWithSuspension returns a copy of the workload marked as suspended.

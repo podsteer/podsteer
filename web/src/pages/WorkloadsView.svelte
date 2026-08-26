@@ -15,6 +15,8 @@
   import type { Workload } from '$lib/api/client'
   import { Container, CircleDot } from '@lucide/svelte'
   import { iconForKind } from '$lib/kindIcons'
+  import { gitOpsOwner } from '$lib/gitops'
+  import GitOpsBadge from '$lib/components/GitOpsBadge.svelte'
 
   interface Props {
     session: ClusterSession
@@ -39,6 +41,11 @@
           { id: 'available', label: 'Available', width: 110, numeric: true, defaultHidden: true },
         ]),
     { id: 'images', label: 'Images', width: 300 },
+    // Hidden until asked for. A cluster with no GitOps controller would
+    // otherwise carry an always-empty column, and one with a controller
+    // everywhere would carry a column reading the same word on every row —
+    // useful when you go looking for it, noise the rest of the time.
+    { id: 'gitops', label: 'GitOps', width: 150, defaultHidden: true },
     { id: 'controlledBy', label: 'Controlled By', width: 200, defaultHidden: true },
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ])
@@ -123,6 +130,18 @@
               <Container class="size-3.5 shrink-0 text-on-surface-variant/40" strokeWidth={1.5} />
               <span class="truncate">{workload.images.join(', ') || '—'}</span>
             </span>
+          </td>
+        {/if}
+        {#if isVisible('gitops')}
+          {@const owner = gitOpsOwner({
+            metadata: { labels: workload.labels, annotations: workload.annotations },
+          })}
+          <td class="truncate px-3 py-1.5">
+            {#if owner}
+              <GitOpsBadge {owner} />
+            {:else}
+              <span class="text-on-surface-variant/40">—</span>
+            {/if}
           </td>
         {/if}
         {#if isVisible('controlledBy')}
