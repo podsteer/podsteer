@@ -131,4 +131,10 @@ and Windows SmartScreen will warn.
 
 Signing needs an Apple Developer ID certificate and a Windows code-signing
 certificate held as repository secrets, plus a notarisation step for macOS.
+
+[SIGNING.md](SIGNING.md) is the runbook: what to obtain, from whom, what it
+costs and in what order. The short version is that the work is a couple of
+hours and the waiting is weeks, so the identity checks — a D-U-N-S number for
+the Apple enrolment, and Microsoft's validation for Azure Trusted Signing —
+should be started well before anything else.
 That is a prerequisite for distributing to anyone outside the team.
