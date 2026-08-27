@@ -326,7 +326,8 @@ jobs:
           # omission: WKWebView runs JavaScriptCore out-of-process inside
           # Apple's own signed WebContent, so the allow-jit and
           # allow-unsigned-executable-memory entitlements an Electron
-          # application needs do not apply here. See docs/SIGNING.md.
+          # application needs do not apply here — WKWebView runs it inside
+          # Apple's own signed WebContent process, not in ours.
           codesign --force --timestamp --options runtime \
             --sign "$APPLE_SIGNING_IDENTITY" \
             build/bin/PodSteer.app
@@ -385,7 +386,9 @@ jobs:
       #
       # Azure Trusted Signing rather than a certificate from a CA: since June
       # 2023 code-signing keys must live on FIPS-certified hardware, and a USB
-      # token cannot be plugged into a hosted runner. See docs/SIGNING.md.
+      # token cannot be plugged into a hosted runner. The vendor comparison
+      # behind that choice is in podsteer/business-docs (private); what matters
+      # here is that the signing happens over an API rather than from a device.
       - name: Authenticate To Azure
         if: runner.os == 'Windows' && env.AZURE_CLIENT_ID != ''
         uses: azure/login@v2
