@@ -169,6 +169,19 @@ jobs:
     name: Package (${{ matrix.name }})
     needs: quality
     runs-on: ${{ matrix.runner }}
+    # OIDC, so Azure signing needs no long-lived credential in this repository.
+    # `contents: read` is spelled out because naming any permission drops the
+    # rest to none, and the default token would otherwise stay read-write.
+    permissions:
+      contents: read
+      id-token: write
+    # HOISTED TO THE JOB deliberately. A step's own `env:` block is not visible
+    # to that same step's `if:`, so the "skip when unconfigured" conditions
+    # below would silently evaluate against an empty string and every signing
+    # step would be skipped forever — including after the secrets were added.
+    env:
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
     strategy:
       # One platform's toolchain breaking should not hide whether the others
       # still package; the release job's `needs` still blocks on all of them.
@@ -243,6 +256,158 @@ jobs:
       - name: Build Application (Linux)
         if: runner.os == 'Linux'
         run: wails build -clean -trimpath -s -tags ${{ env.LINUX_TAGS }}
+
+      # --- macOS signing and notarisation -----------------------------------
+      #
+      # SKIPPED ENTIRELY UNTIL THE SECRETS EXIST, so this can be merged before
+      # the Apple enrolment completes and a build on an unconfigured fork still
+      # produces an (unsigned) artefact rather than failing.
+      #
+      # Gatekeeper needs BOTH a Developer ID signature and a notarisation
+      # ticket. A signature alone still warns, which is the usual reason
+      # somebody concludes signing "did not work".
+      - name: Import The Signing Certificate
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
+        env:
+          CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          # A DEDICATED, THROWAWAY KEYCHAIN, not the login one. The runner is
+          # ephemeral so it hardly matters here, but it keeps the private key
+          # out of any keychain a later step might unlock for another reason,
+          # and makes the cleanup below a single delete.
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(uuidgen)"
+
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 900 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+
+          echo "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" \
+            -k "$keychain" -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/certificate.p12"
+
+          # Without this, codesign blocks on a GUI prompt that nothing on a
+          # runner can answer, and the job hangs until it times out rather
+          # than failing.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+
+          # PREPENDED to the search list rather than replacing it: replacing it
+          # removes the system roots, and the certificate chain then fails to
+          # validate against an authority the machine can no longer see.
+          #
+          # The unquoted substitution is REQUIRED, not an oversight — each
+          # existing keychain has to arrive as its own argument, and quoting it
+          # passes the whole list as one path that does not exist. Hence the
+          # disable rather than the fix shellcheck suggests.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+      - name: Sign The macOS Bundle
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
+        run: |
+          set -euo pipefail
+
+          # --options runtime is the hardened runtime and is REQUIRED: the
+          # notary service rejects anything without it. --timestamp attaches a
+          # trusted countersignature, so the signature outlives the
+          # certificate instead of expiring with it.
+          #
+          # No --deep, which Apple has discouraged for years and which signs
+          # nested content with the wrong identity as often as the right one.
+          # A Wails bundle has one executable, so there is nothing nested to
+          # need it.
+          #
+          # No --entitlements either, and that is deliberate rather than an
+          # omission: WKWebView runs JavaScriptCore out-of-process inside
+          # Apple's own signed WebContent, so the allow-jit and
+          # allow-unsigned-executable-memory entitlements an Electron
+          # application needs do not apply here. See docs/SIGNING.md.
+          codesign --force --timestamp --options runtime \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            build/bin/PodSteer.app
+
+          codesign --verify --strict --verbose=2 build/bin/PodSteer.app
+
+      - name: Notarise The macOS Bundle
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
+        env:
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+
+          echo "$API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/api-key.p8"
+
+          # ditto, NOT zip: the notary service expects this container format,
+          # and a plain zip of a bundle loses the symlinks that make the .app
+          # openable on the other side.
+          ditto -c -k --keepParent build/bin/PodSteer.app "$RUNNER_TEMP/notarize.zip"
+
+          # --wait blocks until Apple has a verdict, so a rejection fails this
+          # job rather than shipping an unnotarised build that passes every
+          # other check.
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --key "$RUNNER_TEMP/api-key.p8" \
+            --key-id "$API_KEY_ID" \
+            --issuer "$API_ISSUER_ID" \
+            --wait
+
+          rm -f "$RUNNER_TEMP/api-key.p8" "$RUNNER_TEMP/notarize.zip"
+
+          # STAPLES THE TICKET INTO THE BUNDLE. Without it the application
+          # still passes Gatekeeper — but only with a working network, because
+          # the ticket is fetched from Apple on first launch. A first launch on
+          # a plane, or behind a proxy that blocks Apple, then fails.
+          xcrun stapler staple build/bin/PodSteer.app
+
+          # THE GATE, and the only check here that tests what a user's Mac
+          # actually does. Everything above can succeed and still produce a
+          # bundle Gatekeeper refuses.
+          # --type execute, NOT install. `install` is the assessment for an
+          # installer package; run against a .app it does not test what
+          # Gatekeeper does when somebody double-clicks the application.
+          spctl --assess --verbose=4 --type execute build/bin/PodSteer.app
+
+      - name: Remove The Signing Keychain
+        # `always()` so the key does not survive a failed signing step. The
+        # runner is ephemeral, but a job that leaves secrets behind on the
+        # unhappy path is a habit worth not forming.
+        if: always() && runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+
+      # --- Windows signing ---------------------------------------------------
+      #
+      # Azure Trusted Signing rather than a certificate from a CA: since June
+      # 2023 code-signing keys must live on FIPS-certified hardware, and a USB
+      # token cannot be plugged into a hosted runner. See docs/SIGNING.md.
+      - name: Authenticate To Azure
+        if: runner.os == 'Windows' && env.AZURE_CLIENT_ID != ''
+        uses: azure/login@v2
+        with:
+          # OIDC federated credentials — GitHub mints a short-lived token per
+          # run, so there is no client secret stored in this repository at all.
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign The Windows Executable
+        if: runner.os == 'Windows' && env.AZURE_CLIENT_ID != ''
+        uses: azure/trusted-signing-action@v0
+        with:
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: build/bin
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
 
       # Compress before upload so the macOS .app keeps its bundle structure and
       # its executable bit; actions/upload-artifact would otherwise flatten it

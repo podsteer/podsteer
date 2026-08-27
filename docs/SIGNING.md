@@ -5,12 +5,21 @@ warning, what it costs, and in what order to do it.
 
 **The ordering matters more than the effort does.** Almost none of this is work;
 most of it is waiting for other organisations to verify who we are. Both
-identity checks below can run in parallel and both should be started before any
-of the CI work, which is a couple of hours whenever the credentials exist.
+identity checks below can run in parallel, and both should be started before any
+of the CI work — which is already written and waiting behind the secrets it
+needs.
 
-Status as of August 2026: **not started.** Builds are unsigned, macOS reports
-"PodSteer is damaged", and the cask ships an `xattr -dr com.apple.quarantine`
-caveat.
+Status as of 2026-08-27:
+
+| | State |
+| :--- | :--- |
+| D-U-N-S for Cloudresty Ltd | **Held.** Confirmed via Apple's lookup. |
+| Apple Developer Program | Not enrolled. Nothing blocks starting it. |
+| Azure identity validation | Not started. **Now the critical path**, at 1–20 business days. |
+| Signing in CI | Written, inert until the secrets exist. |
+
+Builds are still unsigned, so macOS reports "PodSteer is damaged" and the cask
+ships an `xattr -dr com.apple.quarantine` caveat.
 
 ## What the warning actually is, on each platform
 
@@ -31,16 +40,20 @@ warning resetting on every release.
 
 ## macOS — Apple Developer Program
 
-### 1. D-U-N-S number for Cloudresty Ltd — **start this first**
+### 1. D-U-N-S number for Cloudresty Ltd — **already held**
 
 Apple requires a D-U-N-S number for every organisation enrolment (only
-government entities are exempt), and this is the longest pole in the whole
-process. Many UK limited companies already have one.
+government entities are exempt), and this was expected to be the longest pole
+in the whole process — a request to Dun & Bradstreet can take weeks.
 
-- Look it up or request it free through Apple's own form:
-  <https://developer.apple.com/enroll/duns-lookup/>
-- Use the exact registered name and address from Companies House. A mismatch
-  here is the usual cause of a rejected enrolment weeks later.
+**It is not.** CLOUDRESTY LIMITED already has one, confirmed through
+[Apple's own lookup](https://developer.apple.com/enroll/duns-lookup/) on
+2026-08-27. Enrolment can start immediately, and Microsoft's identity
+validation is now the critical path instead.
+
+The number is deliberately not recorded here. It is retrievable from that
+lookup in seconds by anyone who needs it, and a business identifier that
+appears in a public repository is one more thing to keep accurate.
 
 Enrol as **Cloudresty Ltd**, not as an individual. The trademark sits with
 Cloudresty Ltd, and the certificate's subject is what every macOS user sees in
@@ -105,8 +118,10 @@ xcrun notarytool submit notarize.zip \
 # launch on a plane fails.
 xcrun stapler staple build/bin/PodSteer.app
 
-# The gate. This is what a user's Mac will do.
-spctl -a -vvv -t install build/bin/PodSteer.app
+# The gate. This is what a user's Mac will do when the app is double-clicked.
+# -t execute, not -t install: `install` assesses an installer package, and
+# against a .app it does not test the thing Gatekeeper actually does.
+spctl -a -vvv -t execute build/bin/PodSteer.app
 ```
 
 `--options runtime` is the hardened runtime and is **required** — the notary
