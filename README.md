@@ -4,11 +4,18 @@
 [![Production](https://img.shields.io/badge/Production-Not%20Released-lightgrey)](https://github.com/podsteer/podsteer/tags)
 [![Staging](https://img.shields.io/badge/Staging-No%20Candidate-lightgrey)](https://github.com/podsteer/podsteer/tags)
 [![Development](https://img.shields.io/badge/Development-No%20Dev%20Release-lightgrey)](https://github.com/podsteer/podsteer/tags)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/podsteer/podsteer/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/podsteer/podsteer/blob/HEAD/LICENSE)
 
 A fast, native desktop client for Kubernetes.
 
-PodSteer is built on [Wails](https://wails.io) v2: a Go backend talking to the
+**[podsteer.com](https://podsteer.com)** · [What it does](https://podsteer.com/#what-it-does) · [Compared to k9s, Lens and others](https://podsteer.com/compare/) · [FAQ](https://podsteer.com/#faq)
+
+Every other Kubernetes client hands you a pod list and leaves you to work out
+what is wrong. PodSteer reads the cluster and tells you — findings ranked and
+grouped, capacity measured against what pods actually reserved, and every custom
+resource your operators install browsable without an update here.
+
+It is built on [Wails](https://wails.io) v2: a Go backend talking to the
 operating system's own webview, rather than a bundled Chromium. There is no
 second browser engine in the process tree, which is where most of an
 Electron-based client's memory and startup time go.
@@ -29,6 +36,10 @@ interactive shell, scaling, restarting, editing manifests and deleting objects.
 Capacity is sampled every 30 seconds while the application is open and kept
 locally, which is the only way to have a trend at all — Kubernetes reports only
 the present — and is deliberately presented as the narrow window it is.
+
+[podsteer.com/download](https://podsteer.com/download/) is where the release will
+appear, and what it will ship as; watching this repository is the other way to
+hear when the first one lands.
 
 ## Requirements
 
