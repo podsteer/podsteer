@@ -87,7 +87,7 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.13.1
 
       # Inside the gate rather than in a job of its own, deliberately. A
       # separate job would need `needs: quality` and could be skipped

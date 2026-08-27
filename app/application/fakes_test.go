@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -191,9 +192,7 @@ func (f *fakeKubernetes) requestedKinds() map[domain.WorkloadKind]bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	kinds := make(map[domain.WorkloadKind]bool, len(f.requestedKind))
-	for kind, seen := range f.requestedKind {
-		kinds[kind] = seen
-	}
+	maps.Copy(kinds, f.requestedKind)
 	return kinds
 }
 

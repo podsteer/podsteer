@@ -245,13 +245,11 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 	}
 
 	run := func(source string, read func() error) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := read(); err != nil {
 				degrade(source, err)
 			}
-		}()
+		})
 	}
 
 	run("version", func() error {

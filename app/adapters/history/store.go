@@ -19,7 +19,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -69,17 +69,17 @@ func DefaultDir() (string, error) {
 // format, so nothing outside this package depends on the abbreviations.
 type wireSample struct {
 	T  int64 `json:"t"`
-	CU int64 `json:"cu,omitempty"`
-	CR int64 `json:"cr,omitempty"`
-	CA int64 `json:"ca,omitempty"`
-	MU int64 `json:"mu,omitempty"`
-	MR int64 `json:"mr,omitempty"`
-	MA int64 `json:"ma,omitempty"`
-	P  int   `json:"p,omitempty"`
-	PN int   `json:"pn,omitempty"`
-	NR int   `json:"nr,omitempty"`
-	NT int   `json:"nt,omitempty"`
-	M  bool  `json:"m,omitempty"`
+	CU int64 `json:"cu,omitzero"`
+	CR int64 `json:"cr,omitzero"`
+	CA int64 `json:"ca,omitzero"`
+	MU int64 `json:"mu,omitzero"`
+	MR int64 `json:"mr,omitzero"`
+	MA int64 `json:"ma,omitzero"`
+	P  int   `json:"p,omitzero"`
+	PN int   `json:"pn,omitzero"`
+	NR int   `json:"nr,omitzero"`
+	NT int   `json:"nt,omitzero"`
+	M  bool  `json:"m,omitzero"`
 }
 
 func toWire(sample domain.Sample) wireSample {
@@ -263,9 +263,9 @@ func readFile(path string, cutoff time.Time) (domain.Series, error) {
 		// Newest first within the chunk, so `passed` means "older than the
 		// window" rather than "not there yet".
 		passed := false
-		for i := len(lines) - 1; i >= 0; i-- {
+		for _, line := range slices.Backward(lines) {
 			var wire wireSample
-			if err := json.Unmarshal(lines[i], &wire); err != nil || wire.T == 0 {
+			if err := json.Unmarshal(line, &wire); err != nil || wire.T == 0 {
 				continue
 			}
 			sample := wire.toDomain()

@@ -64,18 +64,15 @@ func isTransportFailure(err error) bool {
 	// context.DeadlineExceeded satisfies net.Error, so it is caught below and
 	// correctly reported as unreachable: from the operator's point of view a
 	// cluster that did not answer in time is a cluster that did not answer.
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if _, ok := errors.AsType[net.Error](err); ok {
 		return true
 	}
 
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
+	if _, ok := errors.AsType[*net.DNSError](err); ok {
 		return true
 	}
 
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) {
+	if _, ok := errors.AsType[*url.Error](err); ok {
 		return true
 	}
 

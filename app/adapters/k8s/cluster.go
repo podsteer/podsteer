@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -176,12 +177,7 @@ func isKubernetesGroup(group string) bool {
 // that cannot — SubjectAccessReview, TokenReview and friends exist only to be
 // created — must not appear in a browser.
 func supportsList(verbs metav1.Verbs) bool {
-	for _, verb := range verbs {
-		if verb == "list" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(verbs, "list")
 }
 
 // ListPersistentVolumes returns the cluster's provisioned volumes.

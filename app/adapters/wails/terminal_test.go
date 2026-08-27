@@ -55,24 +55,19 @@ func TestSizeQueueConcurrentSendAndClose(t *testing.T) {
 		q := newTerminalSizeQueue()
 
 		var wg sync.WaitGroup
-		wg.Add(3)
 
 		// Two senders, because xterm.js emits resizes continuously during a
 		// drag rather than one at a time.
 		for range 2 {
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for range 20 {
 					q.send(ports.TerminalSize{Width: 80, Height: 24})
 				}
-			}()
+			})
 		}
 
 		// The exec goroutine's cleanup, racing them.
-		go func() {
-			defer wg.Done()
-			q.close()
-		}()
+		wg.Go(q.close)
 
 		wg.Wait()
 	}

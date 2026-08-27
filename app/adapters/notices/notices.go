@@ -16,6 +16,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -111,8 +112,6 @@ func Texts() (map[string]string, error) {
 		return nil, err
 	}
 	texts := make(map[string]string, len(data.Texts))
-	for id, text := range data.Texts {
-		texts[id] = text
-	}
+	maps.Copy(texts, data.Texts)
 	return texts, nil
 }

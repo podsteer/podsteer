@@ -142,10 +142,8 @@ func (a *Adapter) NodeFilesystems(ctx context.Context, id domain.ClusterID) (map
 
 	for i := range nodes {
 		name := nodes[i]
-		wg.Add(1)
 
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			gate <- struct{}{}
 			defer func() { <-gate }()
 
@@ -161,7 +159,7 @@ func (a *Adapter) NodeFilesystems(ctx context.Context, id domain.ClusterID) (map
 				return
 			}
 			result[name] = filesystems
-		}()
+		})
 	}
 	wg.Wait()
 

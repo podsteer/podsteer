@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/podsteer/podsteer/app/application"
@@ -152,25 +153,40 @@ func TestSamplerRecordsImmediatelyOnStart(t *testing.T) {
 func TestSamplerWritesNothingWhenRecordingIsOff(t *testing.T) {
 	t.Parallel()
 
-	store := newRecordingHistory()
-	service := newHistoryService(t, store, "")
-	if err := service.SetRetention(context.Background(), domain.NewRetention(0)); err != nil {
-		t.Fatalf("SetRetention() error = %v", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		store := newRecordingHistory()
+		service := newHistoryService(t, store, "")
+		if err := service.SetRetention(context.Background(), domain.NewRetention(0)); err != nil {
+			t.Fatalf("SetRetention() error = %v", err)
+		}
 
-	service.Start(context.Background())
+		service.Start(context.Background())
+		defer service.Close()
 
-	select {
-	case <-store.written:
-		t.Fatal("a sample was written while recording was turned off")
-	case <-time.After(250 * time.Millisecond):
-		// Nothing written, which is the point.
-	}
+		// A fake clock, so this costs no wall-clock time and — far more
+		// importantly — actually reaches a tick. The old form waited 250ms, but
+		// the cadence floor is ten seconds, so it never covered a single one: it
+		// proved only that nothing was written AT STARTUP, and a sampler that
+		// ignored the setting on every subsequent tick would have passed it.
+		// An hour here is many ticks at any supported cadence.
+		time.Sleep(time.Hour)
 
-	service.Close()
-	if store.count() != 0 {
-		t.Errorf("appended = %d samples, want 0", store.count())
-	}
+		// Wait until every goroutine in the bubble is durably blocked, so "nothing
+		// was written" is a settled fact rather than a race the test happened to
+		// win.
+		synctest.Wait()
+
+		select {
+		case <-store.written:
+			t.Fatal("a sample was written while recording was turned off")
+		default:
+		}
+
+		if store.count() != 0 {
+			t.Errorf("appended = %d samples, want 0", store.count())
+		}
+
+	})
 }
 
 func TestSamplingIntervalIsClamped(t *testing.T) {

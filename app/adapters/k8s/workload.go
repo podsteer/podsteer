@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -302,11 +303,8 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 		for _, pod := range podList.Items {
 			for _, owner := range pod.OwnerReferences {
 				if owner.Kind == "ReplicaSet" {
-					for _, rsName := range ownedRSNames {
-						if owner.Name == rsName {
-							filteredPods = append(filteredPods, pod)
-							break
-						}
+					if slices.Contains(ownedRSNames, owner.Name) {
+						filteredPods = append(filteredPods, pod)
 					}
 				}
 			}

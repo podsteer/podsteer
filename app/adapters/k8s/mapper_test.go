@@ -18,13 +18,11 @@ func TestMapPodTranslatesIdentityAndStatus(t *testing.T) {
 
 	created := time.Date(2026, 8, 17, 8, 0, 0, 0, time.UTC)
 	source := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			UID:               "1f2e3d",
-			Name:              "api-7d9f",
-			Namespace:         "platform",
-			Labels:            map[string]string{"app": "api"},
-			CreationTimestamp: metav1.NewTime(created),
-		},
+		UID:               "1f2e3d",
+		Name:              "api-7d9f",
+		Namespace:         "platform",
+		Labels:            map[string]string{"app": "api"},
+		CreationTimestamp: metav1.NewTime(created),
 		Spec: corev1.PodSpec{
 			NodeName: "node-1",
 			Containers: []corev1.Container{
@@ -87,12 +85,10 @@ func TestMapPodReportsDeletionAsTerminating(t *testing.T) {
 
 	deleted := metav1.NewTime(time.Now())
 	source := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:              "api-7d9f",
-			Namespace:         "default",
-			DeletionTimestamp: &deleted,
-		},
-		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		Name:              "api-7d9f",
+		Namespace:         "default",
+		DeletionTimestamp: &deleted,
+		Status:            corev1.PodStatus{Phase: corev1.PodRunning},
 	}
 
 	pod, err := mapPod("dev", source)
@@ -111,7 +107,7 @@ func TestMapContainersIncludesContainersWithoutStatus(t *testing.T) {
 	t.Parallel()
 
 	source := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "api-7d9f", Namespace: "default"},
+		Name: "api-7d9f", Namespace: "default",
 		Spec: corev1.PodSpec{Containers: []corev1.Container{
 			{Name: "app", Image: "nginx:1.27"},
 			{Name: "sidecar", Image: "envoy:1.31"},
@@ -208,8 +204,8 @@ func TestMapNamespace(t *testing.T) {
 
 	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	namespace, err := mapNamespace(&corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: "argocd", CreationTimestamp: metav1.NewTime(created)},
-		Status:     corev1.NamespaceStatus{Phase: corev1.NamespaceActive},
+		Name: "argocd", CreationTimestamp: metav1.NewTime(created),
+		Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive},
 	})
 	if err != nil {
 		t.Fatalf("mapNamespace() error = %v", err)

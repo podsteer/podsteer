@@ -190,10 +190,7 @@ func (s Series) Downsample(limit int) Series {
 
 	for i := range limit {
 		start := int(float64(i) * size)
-		end := int(float64(i+1) * size)
-		if end > len(s) {
-			end = len(s)
-		}
+		end := min(int(float64(i+1)*size), len(s))
 		if start >= end {
 			continue
 		}

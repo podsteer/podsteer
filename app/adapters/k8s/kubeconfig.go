@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -181,15 +182,9 @@ func (a *Adapter) Merge(ctx context.Context, raw string) (domain.KubeconfigMerge
 			ports.ErrKubeconfigConflict, strings.Join(merge.Conflicts, ", "))
 	}
 
-	for name, cluster := range incoming.Clusters {
-		existing.Clusters[name] = cluster
-	}
-	for name, authInfo := range incoming.AuthInfos {
-		existing.AuthInfos[name] = authInfo
-	}
-	for name, kubeContext := range incoming.Contexts {
-		existing.Contexts[name] = kubeContext
-	}
+	maps.Copy(existing.Clusters, incoming.Clusters)
+	maps.Copy(existing.AuthInfos, incoming.AuthInfos)
+	maps.Copy(existing.Contexts, incoming.Contexts)
 	// The current context is left alone. Adding a cluster is not a request to
 	// switch to it, and kubectl in another terminal should not change target
 	// because somebody pasted a config here.

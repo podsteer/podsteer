@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -414,5 +415,53 @@ func TestForgetIsIdempotent(t *testing.T) {
 	store := history.New(t.TempDir())
 	if err := store.Forget(context.Background(), "never-connected"); err != nil {
 		t.Errorf("Forget() error = %v, want nil", err)
+	}
+}
+
+// The on-disk line omits every field the sample left at zero.
+//
+// This guards the file format against a silent doubling in size. The store
+// encodes with encoding/json/v2, where `omitempty` means "omit empty JSON
+// values" — `""`, `{}`, `[]`, `null` — and NOT "omit the zero value", which is
+// what it meant under v1 and what this format relies on. A numeric field
+// tagged `omitempty` would therefore still be written as `0` under v2, and
+// every test above would keep passing while a 90-day retention file grew by
+// roughly half again. `omitzero` is the spelling that means what this format
+// needs, and this test is what notices if it is ever changed back.
+func TestZeroFieldsAreOmittedFromTheLine(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := history.New(dir)
+
+	// Only two fields are non-zero, so only those two plus the timestamp may
+	// appear on the line.
+	at := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	err := store.Append(context.Background(), "solo", domain.Sample{
+		At:            at,
+		CPUUsageMilli: 3040,
+		Measured:      true,
+	})
+	if err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading the history directory: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("wrote %d files, want 1", len(entries))
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("reading the sample file: %v", err)
+	}
+
+	got := strings.TrimSpace(string(raw))
+	want := `{"t":1772366400,"cu":3040,"m":true}`
+	if got != want {
+		t.Errorf("on-disk line = %s, want %s", got, want)
 	}
 }

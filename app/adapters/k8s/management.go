@@ -290,10 +290,10 @@ func (a *Adapter) RestartRollout(ctx context.Context, id domain.ClusterID, kind 
 	restartedAt := time.Now().Format(time.RFC3339)
 
 	// Patch the pod template annotation to trigger a rollout.
-	patch := map[string]interface{}{
-		"spec": map[string]interface{}{
-			"template": map[string]interface{}{
-				"metadata": map[string]interface{}{
+	patch := map[string]any{
+		"spec": map[string]any{
+			"template": map[string]any{
+				"metadata": map[string]any{
 					"annotations": map[string]string{
 						"kubectl.kubernetes.io/restartedAt": restartedAt,
 					},
