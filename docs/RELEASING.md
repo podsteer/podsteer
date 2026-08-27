@@ -132,9 +132,15 @@ and Windows SmartScreen will warn.
 Signing needs an Apple Developer ID certificate and a Windows code-signing
 certificate held as repository secrets, plus a notarisation step for macOS.
 
-[SIGNING.md](SIGNING.md) is the runbook: what to obtain, from whom, what it
-costs and in what order. The short version is that the work is a couple of
-hours and the waiting is weeks, so the identity checks — a D-U-N-S number for
-the Apple enrolment, and Microsoft's validation for Azure Trusted Signing —
-should be started well before anything else.
+HOW the artefacts get signed is documented where it happens: the signing steps
+in `.github/workflows/ci-cd.yaml` carry the reasoning behind every flag inline —
+why the hardened runtime is required, why `ditto` rather than `zip`, why the
+ticket is stapled, and why no entitlements are needed for a Wails application.
+Read those before changing any of it.
+
+WHICH certificates to obtain, from whom and at what cost is a procurement
+question rather than an engineering one, and lives in the private
+`podsteer/business-docs` repository. It used to be `docs/SIGNING.md` here; it
+was moved on 2026-08-27 because vendor costs, lead times and a running list of
+controls not yet in place are not a contributor's business.
 That is a prerequisite for distributing to anyone outside the team.
