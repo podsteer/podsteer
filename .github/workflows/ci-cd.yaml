@@ -364,11 +364,25 @@ jobs:
           # --wait blocks until Apple has a verdict, so a rejection fails this
           # job rather than shipping an unnotarised build that passes every
           # other check.
+          #
+          # --timeout IS NOT OPTIONAL. Apple's notary service is usually a few
+          # minutes, but it queues: on 2026-08-28 three separate submissions sat
+          # "In Progress" for over ten hours while Apple's own status page
+          # reported the service Available. Without a timeout, --wait would hold
+          # a macOS runner until GitHub's six-hour job limit killed it — and
+          # macOS minutes bill at ten times the Linux rate, so an Apple backlog
+          # would quietly cost hours of runner time per release attempt and
+          # report as a timeout with no explanation.
+          #
+          # 30m is comfortably beyond a normal turnaround, so hitting it means
+          # something is genuinely wrong rather than merely slow. The job then
+          # fails quickly and legibly, and the release can be retried when
+          # Apple's queue drains.
           xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
             --key "$RUNNER_TEMP/api-key.p8" \
             --key-id "$API_KEY_ID" \
             --issuer "$API_ISSUER_ID" \
-            --wait
+            --wait --timeout 30m
 
           rm -f "$RUNNER_TEMP/api-key.p8" "$RUNNER_TEMP/notarize.zip"
 
