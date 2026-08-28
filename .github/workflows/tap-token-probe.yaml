@@ -39,13 +39,25 @@ jobs:
           echo "--- current Casks/ contents ---"
           gh api repos/podsteer/homebrew-tap/contents/Casks --jq '.[].name' 2>&1 || echo "(empty or missing)"
           echo
-          echo "--- can it reach the APPLICATION repo? (it must NOT) ---"
-          if gh api repos/podsteer/podsteer --silent 2>/dev/null; then
-            echo "::error::the token can read podsteer/podsteer — scope is too broad"
+          # THE SCOPE ASSERTION, done against the installation's own repository
+          # list rather than by probing another repo.
+          #
+          # The first version of this check asked whether the token could READ
+          # podsteer/podsteer and failed when it could — which proved nothing,
+          # because that repository is public and every valid token can read a
+          # public repository regardless of what it is scoped to. A negative
+          # test that cannot fail for the right reason is worse than no test.
+          #
+          # `installation/repositories` is what the installation actually
+          # grants, so asserting on it is exact.
+          echo "--- scope assertion ---"
+          granted=$(gh api installation/repositories --jq '.repositories[].full_name' | sort | tr '\n' ' ')
+          echo "granted: $granted"
+          if [ "$granted" != "podsteer/homebrew-tap " ]; then
+            echo "::error::installation grants more than the tap: $granted"
             exit 1
-          else
-            echo "correctly denied"
           fi
+          echo "correctly scoped to the tap alone"
 
       - name: Prove It Can Actually Push
         env:
