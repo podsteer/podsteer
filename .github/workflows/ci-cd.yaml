@@ -179,9 +179,20 @@ jobs:
     # to that same step's `if:`, so the "skip when unconfigured" conditions
     # below would silently evaluate against an empty string and every signing
     # step would be skipped forever — including after the secrets were added.
+    #
+    # NOTE THE `vars.` CONTEXT, NOT `secrets.`. The signing identity, key id and
+    # issuer id are IDENTIFIERS, not credentials — they are printed inside the
+    # certificate itself and are useless without the private key. Holding them
+    # as secrets would mask them in the logs as `***`, which makes reading
+    # codesign and notarytool output substantially harder for no security gain.
+    # Only the .p12, its password and the .p8 are secrets.
+    #
+    # The GitHub-side names carry the PDS__ prefix; the job-local names do not,
+    # because inside this workflow there is nothing to disambiguate from and the
+    # shell below reads better without it.
     env:
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      APPLE_SIGNING_IDENTITY: ${{ vars.PDS__APPLE_SIGNING_IDENTITY }}
+      AZURE_CLIENT_ID: ${{ secrets.PDS__AZURE_CLIENT_ID }}
     strategy:
       # One platform's toolchain breaking should not hide whether the others
       # still package; the release job's `needs` still blocks on all of them.
@@ -269,8 +280,8 @@ jobs:
       - name: Import The Signing Certificate
         if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
         env:
-          CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          CERTIFICATE_P12: ${{ secrets.PDS__APPLE_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.PDS__APPLE_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -337,9 +348,9 @@ jobs:
       - name: Notarise The macOS Bundle
         if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
         env:
-          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          API_KEY_P8: ${{ secrets.PDS__APPLE_API_KEY_P8 }}
+          API_KEY_ID: ${{ vars.PDS__APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ vars.PDS__APPLE_API_ISSUER_ID }}
         run: |
           set -euo pipefail
 
@@ -395,17 +406,17 @@ jobs:
         with:
           # OIDC federated credentials — GitHub mints a short-lived token per
           # run, so there is no client secret stored in this repository at all.
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.PDS__AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.PDS__AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.PDS__AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign The Windows Executable
         if: runner.os == 'Windows' && env.AZURE_CLIENT_ID != ''
         uses: azure/trusted-signing-action@v0
         with:
-          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          endpoint: ${{ secrets.PDS__AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.PDS__AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.PDS__AZURE_SIGNING_PROFILE }}
           files-folder: build/bin
           files-folder-filter: exe
           file-digest: SHA256
