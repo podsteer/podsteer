@@ -157,6 +157,26 @@ type Pod struct {
 	Memory string `json:"memory"`
 	// HasMetrics distinguishes a measured zero from no metrics-server.
 	HasMetrics bool `json:"hasMetrics"`
+	// CPUPercent and MemoryPercent are usage against what the pod REQUESTED,
+	// for the meters — a node's meters divide by allocatable, which a pod has
+	// no equivalent of. They may exceed 100: a request is a reservation, not
+	// a ceiling. See domain.Pod.CPUPercent.
+	CPUPercent    float64 `json:"cpuPercent"`
+	MemoryPercent float64 `json:"memoryPercent"`
+	// CPURequest and MemoryRequest are the reservation itself, formatted, so
+	// a meter can name the number it is a proportion OF instead of leaving a
+	// bare percentage to be taken on trust.
+	CPURequest    string `json:"cpuRequest"`
+	MemoryRequest string `json:"memoryRequest"`
+	// HasCPURequest and HasMemoryRequest say whether there is a denominator
+	// at all. Separate flags because the two are declared independently: a
+	// pod may reserve memory and leave CPU unbounded, which is a common and
+	// deliberate shape rather than an oversight.
+	//
+	// A zero percentage cannot stand in for these. An idle pod that DID
+	// reserve CPU also reads 0%, and the two must not draw the same thing.
+	HasCPURequest    bool `json:"hasCpuRequest"`
+	HasMemoryRequest bool `json:"hasMemoryRequest"`
 	// Containers are the pod's containers.
 	Containers []Container `json:"containers"`
 	// Labels are the pod's labels.
@@ -187,6 +207,8 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 		labels = map[string]string{}
 	}
 
+	requests := pod.Requests()
+
 	return Pod{
 		UID:             pod.UID(),
 		Name:            pod.Name(),
@@ -206,10 +228,17 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 		CPU:             formatCores(pod.Usage()),
 		Memory:          formatMemory(pod.Usage()),
 		HasMetrics:      !pod.Usage().IsZero(),
-		Containers:      containers,
-		Labels:          labels,
-		CreatedAt:       formatTime(pod.CreatedAt()),
-		AgeSeconds:      int64(pod.Age(now).Seconds()),
+
+		CPUPercent:       pod.CPUPercent(),
+		MemoryPercent:    pod.MemoryPercent(),
+		CPURequest:       formatMilliCores(requests.CPUMilli),
+		MemoryRequest:    formatBytes(requests.MemoryBytes),
+		HasCPURequest:    requests.CPUMilli > 0,
+		HasMemoryRequest: requests.MemoryBytes > 0,
+		Containers:       containers,
+		Labels:           labels,
+		CreatedAt:        formatTime(pod.CreatedAt()),
+		AgeSeconds:       int64(pod.Age(now).Seconds()),
 	}
 }
 

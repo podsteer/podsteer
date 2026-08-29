@@ -81,14 +81,35 @@
             {/if}
           </td>
         {/if}
+        <!--
+          An unmeasured node prints the dash dimmed and explains itself in the
+          tooltip, rather than spelling "no metrics" out on every row. Fifteen
+          rows each saying it is noise, and the explanation of WHY belongs
+          once, in the notice above the table — the same treatment the pod
+          list already used, now that both lists draw the same meter.
+        -->
         {#if isVisible('cpu')}
           <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
-            <MeterBar percent={node.cpuPercent} label={node.cpu} measured={node.hasMetrics} />
+            <MeterBar
+              label={node.cpu}
+              percent={node.cpuPercent}
+              measured={node.hasMetrics}
+              title={node.hasMetrics
+                ? `${node.cpu} of ${node.allocatableCpu} allocatable`
+                : 'Not measured — this cluster has no metrics source'}
+            />
           </td>
         {/if}
         {#if isVisible('memory')}
           <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
-            <MeterBar percent={node.memoryPercent} label={node.memory} measured={node.hasMetrics} />
+            <MeterBar
+              label={node.memory}
+              percent={node.memoryPercent}
+              measured={node.hasMetrics}
+              title={node.hasMetrics
+                ? `${node.memory} of ${node.allocatableMemory} allocatable`
+                : 'Not measured — this cluster has no metrics source'}
+            />
           </td>
         {/if}
         {#if isVisible('version')}

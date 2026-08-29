@@ -944,6 +944,12 @@ export namespace wails {
 	    cpu: string;
 	    memory: string;
 	    hasMetrics: boolean;
+	    cpuPercent: number;
+	    memoryPercent: number;
+	    cpuRequest: string;
+	    memoryRequest: string;
+	    hasCpuRequest: boolean;
+	    hasMemoryRequest: boolean;
 	    containers: Container[];
 	    labels: Record<string, string>;
 	    createdAt: string;
@@ -973,6 +979,12 @@ export namespace wails {
 	        this.cpu = source["cpu"];
 	        this.memory = source["memory"];
 	        this.hasMetrics = source["hasMetrics"];
+	        this.cpuPercent = source["cpuPercent"];
+	        this.memoryPercent = source["memoryPercent"];
+	        this.cpuRequest = source["cpuRequest"];
+	        this.memoryRequest = source["memoryRequest"];
+	        this.hasCpuRequest = source["hasCpuRequest"];
+	        this.hasMemoryRequest = source["hasMemoryRequest"];
 	        this.containers = this.convertValues(source["containers"], Container);
 	        this.labels = source["labels"];
 	        this.createdAt = source["createdAt"];

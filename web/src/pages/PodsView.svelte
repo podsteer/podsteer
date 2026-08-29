@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import MeterBar from '$lib/components/MeterBar.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { formatAge, podStatusLabel, podTone } from '$lib/format'
@@ -23,8 +24,8 @@
     { id: 'status', label: 'Status', width: 44, icon: CircleDot },
     { id: 'name', label: 'Name', width: 320, pinned: true },
     { id: 'namespace', label: 'Namespace', width: 150 },
-    { id: 'cpu', label: 'CPU', width: 80, numeric: true },
-    { id: 'memory', label: 'Memory', width: 90, numeric: true },
+    { id: 'cpu', label: 'CPU', width: 200 },
+    { id: 'memory', label: 'Memory', width: 200 },
     { id: 'ready', label: 'Ready', width: 80, numeric: true },
     { id: 'restarts', label: 'Restarts', width: 90, numeric: true },
     { id: 'controlledBy', label: 'Controlled By', width: 200 },
@@ -33,6 +34,26 @@
     { id: 'ip', label: 'IP', width: 120, defaultHidden: true },
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
+
+  /**
+   * Spells out what the bar is a proportion of.
+   *
+   * A bare percentage in a pod list is not self-explanatory — an operator
+   * has no way to tell whether 85% is 85% of a request, a limit or a node,
+   * and those mean three different things. The tooltip names the denominator
+   * and the number, so the meter never has to be taken on trust.
+   */
+  function meterTitle(
+    measured: boolean,
+    value: string,
+    hasRequest: boolean,
+    request: string,
+    percent: number,
+  ): string {
+    if (!measured) return 'Not measured — this cluster has no metrics source'
+    if (!hasRequest) return `${value} used — no request declared, so there is nothing to measure it against`
+    return `${value} of ${request} requested (${Math.round(percent)}%)`
+  }
 </script>
 
 <DataTable
@@ -92,22 +113,35 @@
           The tooltip carries the distinction rather than the cell: fifteen rows
           each saying "no metrics" is noise, and the explanation of WHY belongs
           once, in the notice above the table.
+
+          THE METER DIVIDES BY THE POD'S REQUEST, not by its limit and not by
+          its node. It is the question the rest of PodSteer is built around —
+          how much of what you reserved you are actually using — and it is the
+          one a pod list can answer that `kubectl top` cannot. A pod declaring
+          no request has no denominator, so it shows the value alone rather
+          than a bar measured against something invented for it.
         -->
         {#if isVisible('cpu')}
-          <td
-            class="truncate px-3 py-1.5 text-right tabular-nums {pod.hasMetrics
-              ? 'text-on-surface-variant'
-              : 'text-on-surface-variant/40'}"
-            title={pod.hasMetrics ? undefined : 'Not measured — this cluster has no metrics source'}
-          >{pod.cpu}</td>
+          <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
+            <MeterBar
+              label={pod.cpu}
+              percent={pod.hasCpuRequest ? pod.cpuPercent : null}
+              measured={pod.hasMetrics}
+              thresholds={false}
+              title={meterTitle(pod.hasMetrics, pod.cpu, pod.hasCpuRequest, pod.cpuRequest, pod.cpuPercent)}
+            />
+          </td>
         {/if}
         {#if isVisible('memory')}
-          <td
-            class="truncate px-3 py-1.5 text-right tabular-nums {pod.hasMetrics
-              ? 'text-on-surface-variant'
-              : 'text-on-surface-variant/40'}"
-            title={pod.hasMetrics ? undefined : 'Not measured — this cluster has no metrics source'}
-          >{pod.memory}</td>
+          <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
+            <MeterBar
+              label={pod.memory}
+              percent={pod.hasMemoryRequest ? pod.memoryPercent : null}
+              measured={pod.hasMetrics}
+              thresholds={false}
+              title={meterTitle(pod.hasMetrics, pod.memory, pod.hasMemoryRequest, pod.memoryRequest, pod.memoryPercent)}
+            />
+          </td>
         {/if}
         {#if isVisible('ready')}
           <td

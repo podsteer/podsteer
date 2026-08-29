@@ -1,40 +1,104 @@
 <!--
-  A compact usage meter.
+  A compact usage meter: the measured value, a bar, and the proportion.
 
-  Colour crosses to warning at 75% and error at 90% — the thresholds at which
-  an operator should start caring about a node, chosen so that a healthy
-  cluster's meters are uniformly calm and any colour at all means something.
+  Used by both the node list and the pod list, which divide by different
+  things — a node's usage is a share of its allocatable capacity, a pod's is a
+  share of what it requested. The component is deliberately ignorant of which:
+  it is handed a percentage and prints it. What it does need to know is
+  whether that percentage is one where a high reading is BAD, which is what
+  `thresholds` says, because the two denominators disagree about that
+  completely. See the prop.
 -->
 <script lang="ts">
   interface Props {
-    /** Percentage 0–100. */
-    percent: number
-    /** The value to print alongside, already formatted. */
+    /** The measured value, already formatted, e.g. "0.012" or "18.4 MiB". */
     label: string
-    /** False when nothing was measured, e.g. no metrics-server. */
+    /**
+     * The proportion, 0–100 and occasionally beyond.
+     *
+     * Null means there is no denominator to be a proportion OF — a pod that
+     * declares no request — and draws the value alone. That is a different
+     * state from 0, which is a real measurement of an idle workload, and the
+     * two must not render alike.
+     */
+    percent: number | null
+    /** False when nothing measured it: no metrics-server, or a pod it did not reach. */
     measured?: boolean
+    /**
+     * Whether a high reading is a problem.
+     *
+     * TRUE for a node, where the denominator is allocatable capacity: 90% of
+     * a node's memory is genuinely worth somebody's attention, and the colour
+     * is how they notice it without reading every row.
+     *
+     * FALSE for a pod against its own request, where it emphatically is not.
+     * A request is a reservation, not a ceiling; a pod sitting at 95% of what
+     * it asked for is a pod that was sized correctly, and one above 100% is
+     * a Burstable pod doing exactly what Burstable means. Colouring those
+     * amber and red would light up most of a healthy pod list, which is how a
+     * signal stops being read.
+     */
+    thresholds?: boolean
+    /** Tooltip for the whole meter, naming what the proportion is of. */
+    title?: string
     class?: string
   }
 
-  let { percent, label, measured = true, class: className = '' }: Props = $props()
+  let {
+    label,
+    percent,
+    measured = true,
+    thresholds = true,
+    title,
+    class: className = '',
+  }: Props = $props()
 
-  const clamped = $derived(Math.max(0, Math.min(100, percent)))
-  const tone = $derived(clamped >= 90 ? 'bg-error' : clamped >= 75 ? 'bg-warning' : 'bg-primary')
+  /**
+   * The bar's width, which IS capped at 100 — a bar cannot draw past its own
+   * track. The printed figure below is not capped, so a pod at three times
+   * its request reads as 300% beside a full bar rather than being quietly
+   * rounded down to a comfortable-looking 100%.
+   */
+  const width = $derived(Math.max(0, Math.min(100, percent ?? 0)))
+
+  const tone = $derived(
+    !thresholds
+      ? 'bg-primary'
+      : width >= 90
+        ? 'bg-error'
+        : width >= 75
+          ? 'bg-warning'
+          : 'bg-primary',
+  )
 </script>
 
-<div class="flex items-center gap-2 {className}">
-  <span class="w-14 shrink-0 text-right text-body-small tabular-nums">{label}</span>
-  {#if measured}
-    <span class="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-surface-container-highest">
+<!--
+  The value keeps the table's own text size and colour rather than shrinking
+  to a caption. It is the number being reported; the bar and the percentage
+  are the annotation, and they are the parts that are set smaller and dimmer.
+
+  Fixed widths on all three parts so that the numbers line up down the column.
+  Ragged decimal points are surprisingly hard to scan, and scanning is the
+  whole job of this column.
+-->
+<div class="flex items-center gap-2 {className}" {title}>
+  <span
+    class="w-20 shrink-0 truncate text-right tabular-nums {measured
+      ? ''
+      : 'text-on-surface-variant/40'}"
+  >
+    {label}
+  </span>
+
+  {#if measured && percent !== null}
+    <span class="h-1.5 w-10 shrink-0 overflow-hidden rounded-full bg-surface-container-highest">
       <span
         class="block h-full rounded-full transition-all duration-300 ease-standard {tone}"
-        style="width: {clamped}%"
+        style="width: {width}%"
       ></span>
     </span>
-    <span class="w-8 shrink-0 text-right text-[11px] tabular-nums text-on-surface-variant/70">
-      {Math.round(clamped)}%
+    <span class="w-9 shrink-0 text-right text-[11px] tabular-nums text-on-surface-variant/70">
+      {Math.round(percent)}%
     </span>
-  {:else}
-    <span class="text-body-small italic text-on-surface-variant/50">no metrics</span>
   {/if}
 </div>

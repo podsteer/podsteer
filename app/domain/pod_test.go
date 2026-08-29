@@ -263,3 +263,108 @@ func TestPodAgeUsesInjectedReferenceTime(t *testing.T) {
 		t.Errorf("Age() with no timestamp = %v, want 0", got)
 	}
 }
+
+func TestPodPercentagesMeasureUsageAgainstRequests(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		containers []domain.Container
+		usage      domain.Metrics
+		wantCPU    float64
+		wantMemory float64
+	}{
+		{
+			name: "usage as a share of what was reserved",
+			containers: []domain.Container{
+				{Name: "app", Requests: domain.Resources{CPUMilli: 200, MemoryBytes: 512 << 20}},
+			},
+			usage:      domain.NewMetrics(50, 128<<20),
+			wantCPU:    25,
+			wantMemory: 25,
+		},
+		{
+			// Requests are summed across containers, so a sidecar's
+			// reservation counts towards the pod's denominator. Dividing by
+			// the first container's request alone would overstate every
+			// multi-container pod, which on a service-mesh cluster is all of
+			// them.
+			name: "requests are summed across containers",
+			containers: []domain.Container{
+				{Name: "app", Requests: domain.Resources{CPUMilli: 300, MemoryBytes: 256 << 20}},
+				{Name: "proxy", Requests: domain.Resources{CPUMilli: 100, MemoryBytes: 256 << 20}},
+			},
+			usage:      domain.NewMetrics(200, 256<<20),
+			wantCPU:    50,
+			wantMemory: 50,
+		},
+		{
+			// A REQUEST IS NOT A CEILING. A Burstable pod is entitled to climb
+			// above what it reserved, so the figure must be allowed past 100
+			// rather than being clamped into looking comfortable.
+			name: "bursting above the reservation exceeds 100",
+			containers: []domain.Container{
+				{Name: "app", Requests: domain.Resources{CPUMilli: 100, MemoryBytes: 100 << 20}},
+			},
+			usage:      domain.NewMetrics(350, 200<<20),
+			wantCPU:    350,
+			wantMemory: 200,
+		},
+		{
+			// BestEffort: nothing was reserved, so there is no denominator.
+			// Zero here means "no proportion exists", and callers are expected
+			// to test the request rather than read this as idleness.
+			name: "no requests declared yields zero",
+			containers: []domain.Container{
+				{Name: "app"},
+			},
+			usage:      domain.NewMetrics(50, 128<<20),
+			wantCPU:    0,
+			wantMemory: 0,
+		},
+		{
+			// The other zero: a reservation exists but nothing measured the
+			// pod. Reporting a proportion here would invent one.
+			name: "unmeasured usage yields zero",
+			containers: []domain.Container{
+				{Name: "app", Requests: domain.Resources{CPUMilli: 200, MemoryBytes: 512 << 20}},
+			},
+			usage:      domain.Metrics{},
+			wantCPU:    0,
+			wantMemory: 0,
+		},
+		{
+			// A measured zero is a real reading and must survive: an idle pod
+			// that did reserve capacity is at 0% of it, which is worth seeing.
+			name: "measured zero is a real zero",
+			containers: []domain.Container{
+				{Name: "app", Requests: domain.Resources{CPUMilli: 200, MemoryBytes: 512 << 20}},
+			},
+			usage:      domain.NewMetrics(0, 0),
+			wantCPU:    0,
+			wantMemory: 0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			spec := newPodSpec()
+			spec.Containers = test.containers
+
+			pod, err := domain.NewPod(spec)
+			if err != nil {
+				t.Fatalf("NewPod() error = %v", err)
+			}
+			pod = pod.WithUsage(test.usage)
+
+			if got := pod.CPUPercent(); got != test.wantCPU {
+				t.Errorf("CPUPercent() = %v, want %v", got, test.wantCPU)
+			}
+			if got := pod.MemoryPercent(); got != test.wantMemory {
+				t.Errorf("MemoryPercent() = %v, want %v", got, test.wantMemory)
+			}
+		})
+	}
+}

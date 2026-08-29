@@ -127,6 +127,31 @@ type Resources struct {
 // IsZero reports whether nothing was declared.
 func (r Resources) IsZero() bool { return r == Resources{} }
 
+// CPUPercent returns usage as a percentage of this declaration, or 0 when
+// nothing was declared or nothing was measured.
+//
+// THE RESULT IS NOT CAPPED AT 100, and that is the point. A percentage of a
+// *capacity* cannot exceed it; a percentage of a *request* routinely does,
+// because a request is a reservation rather than a ceiling and a Burstable
+// pod is entitled to climb above its own. Clamping here would quietly report
+// a pod running at three times its reservation as sitting neatly at 100%,
+// which is the one reading that would make anybody stop looking.
+func (r Resources) CPUPercent(usage Metrics) float64 {
+	if r.CPUMilli <= 0 || !usage.Measured {
+		return 0
+	}
+	return float64(usage.CPUMilli) / float64(r.CPUMilli) * 100
+}
+
+// MemoryPercent returns usage as a percentage of this declaration. See
+// CPUPercent for why it is not capped.
+func (r Resources) MemoryPercent(usage Metrics) float64 {
+	if r.MemoryBytes <= 0 || !usage.Measured {
+		return 0
+	}
+	return float64(usage.MemoryBytes) / float64(r.MemoryBytes) * 100
+}
+
 // Add returns the sum of two declarations.
 func (r Resources) Add(other Resources) Resources {
 	return Resources{
@@ -323,6 +348,26 @@ func (p Pod) Requests() Resources {
 	}
 	return total
 }
+
+// CPUPercent returns measured CPU usage as a percentage of what this pod
+// RESERVED — not of what it is capped at, and not of its node.
+//
+// Requests are the denominator because they are the number the rest of
+// PodSteer is built around: they decide whether a pod schedules, and "how
+// much of what you reserved are you actually using" is the question a pod
+// list can answer that `kubectl top` cannot. Limits were the alternative and
+// answer a different question — how close this pod is to being throttled —
+// but they are left unset on most clusters, so a limit-based column would be
+// blank for the majority of rows.
+//
+// Zero when the pod declares no CPU request; callers must test HasRequests
+// rather than reading zero as "idle". A BestEffort pod has no reservation to
+// be a proportion of, which is worth showing as absent rather than as 0%.
+func (p Pod) CPUPercent() float64 { return p.Requests().CPUPercent(p.usage) }
+
+// MemoryPercent returns measured memory usage against the pod's memory
+// request. See CPUPercent.
+func (p Pod) MemoryPercent() float64 { return p.Requests().MemoryPercent(p.usage) }
 
 // Limits returns the sum of every container's limits.
 func (p Pod) Limits() Resources {
