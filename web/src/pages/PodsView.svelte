@@ -118,8 +118,9 @@
           its node. It is the question the rest of PodSteer is built around —
           how much of what you reserved you are actually using — and it is the
           one a pod list can answer that `kubectl top` cannot. A pod declaring
-          no request has no denominator, so it shows the value alone rather
-          than a bar measured against something invented for it.
+          no request has no denominator, so it SAYS SO where the bar would be
+          rather than being metered against something invented for it. See
+          docs/decisions/0002-pod-meters-name-the-absent-denominator.md.
         -->
         {#if isVisible('cpu')}
           <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
@@ -128,6 +129,7 @@
               percent={pod.hasCpuRequest ? pod.cpuPercent : null}
               measured={pod.hasMetrics}
               thresholds={false}
+              absent="no request"
               title={meterTitle(pod.hasMetrics, pod.cpu, pod.hasCpuRequest, pod.cpuRequest, pod.cpuPercent)}
             />
           </td>
@@ -139,6 +141,7 @@
               percent={pod.hasMemoryRequest ? pod.memoryPercent : null}
               measured={pod.hasMetrics}
               thresholds={false}
+              absent="no request"
               title={meterTitle(pod.hasMetrics, pod.memory, pod.hasMemoryRequest, pod.memoryRequest, pod.memoryPercent)}
             />
           </td>

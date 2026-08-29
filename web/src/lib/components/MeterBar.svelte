@@ -17,11 +17,30 @@
      * The proportion, 0–100 and occasionally beyond.
      *
      * Null means there is no denominator to be a proportion OF — a pod that
-     * declares no request — and draws the value alone. That is a different
-     * state from 0, which is a real measurement of an idle workload, and the
-     * two must not render alike.
+     * declares no request — and draws `absent` in the track instead of a bar.
+     * That is a different state from 0, which is a real measurement of an
+     * idle workload, and the two must not render alike.
      */
     percent: number | null
+    /**
+     * What to say where the bar would be when there is no denominator.
+     *
+     * An EMPTY CELL IS NOT A STATEMENT. Leaving the track blank was accurate
+     * and still read as an omission — as though the meter had failed rather
+     * than as though there was nothing to meter — and the explanation was
+     * reachable only by hovering, which nobody does to a cell that looks
+     * broken. Naming the absence turns it into the finding it actually is: a
+     * pod with no reservation is a pod the scheduler is free to place
+     * anywhere and the kubelet is free to evict first.
+     *
+     * Deliberately words rather than a bar of some substitute denominator.
+     * The obvious substitute is the node's allocatable capacity, and it fails
+     * twice over: a pod is typically a fraction of one percent of its node,
+     * so the bar would be an invisible sliver, and a column whose denominator
+     * changes from row to row cannot be compared down its own length. See
+     * docs/decisions/0002-pod-meters-name-the-absent-denominator.md.
+     */
+    absent?: string
     /** False when nothing measured it: no metrics-server, or a pod it did not reach. */
     measured?: boolean
     /**
@@ -50,6 +69,7 @@
     measured = true,
     thresholds = true,
     title,
+    absent = '',
     class: className = '',
   }: Props = $props()
 
@@ -105,5 +125,13 @@
     <span class="w-12 shrink-0 text-right tabular-nums text-on-surface-variant/70">
       {Math.round(percent)}%
     </span>
+  {:else if measured && absent}
+    <!--
+      Set in the muted colour and given no track of its own, so it reads as a
+      note about the row rather than as a meter reading nothing. It must not
+      be mistaken for a measurement: there is no bar, no percentage, and no
+      colour that appears anywhere else in this column.
+    -->
+    <span class="flex-1 truncate text-on-surface-variant/50">{absent}</span>
   {/if}
 </div>
