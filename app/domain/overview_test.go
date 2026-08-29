@@ -1507,3 +1507,98 @@ func titles(findings []domain.Finding) []string {
 	}
 	return names
 }
+
+// A cluster nobody could read is not a healthy cluster.
+//
+// This is the bug that motivated HealthUnknown: with the VPN disconnected every
+// source failed, so there were no findings, and an empty findings slice graded
+// Healthy. The dashboard showed a green tick reading "No problems found" over
+// 0 nodes, 0 pods and every figure zero — telling the operator the opposite of
+// the truth at the exact moment it mattered.
+func TestUnreadableLoadBearingSourcesAreNotHealthy(t *testing.T) {
+	t.Parallel()
+
+	for _, unavailable := range [][]string{
+		{"nodes"},
+		{"pods"},
+		{"nodes", "pods"},
+		{"version", "nodes", "pods", "events", "metrics", "namespaces"},
+	} {
+		overview := domain.NewOverview(domain.OverviewInput{
+			ClusterID:   domain.ClusterID("test"),
+			Unavailable: unavailable,
+			Now:         time.Now(),
+		})
+
+		if overview.Health == domain.HealthHealthy {
+			t.Errorf("unavailable %v graded healthy; nothing was read to justify it", unavailable)
+		}
+		if overview.Health != domain.HealthUnknown {
+			t.Errorf("unavailable %v graded %q, want unknown", unavailable, overview.Health)
+		}
+	}
+}
+
+// Sources whose absence the assessment genuinely survives must NOT cost the
+// verdict. A cluster with no metrics-server is completely assessable, and
+// degrading rather than failing on it is the entire point of Unavailable —
+// this is the check that the new rule did not swallow that.
+func TestDegradableSourcesStillGradeHealthy(t *testing.T) {
+	t.Parallel()
+
+	for _, unavailable := range [][]string{
+		{"metrics"},
+		{"events"},
+		{"volumes", "claims"},
+		{"metrics", "events", "namespaces", "version"},
+	} {
+		overview := domain.NewOverview(domain.OverviewInput{
+			ClusterID:   domain.ClusterID("test"),
+			Unavailable: unavailable,
+			Now:         time.Now(),
+		})
+
+		if overview.Health != domain.HealthHealthy {
+			t.Errorf("unavailable %v graded %q; these are survivable and should stay healthy",
+				unavailable, overview.Health)
+		}
+	}
+}
+
+// Ignorance about one thing does not erase knowledge of another: a real finding
+// still outranks the unknown, so an unready node is reported as such even when
+// pods could not be listed.
+func TestAFindingOutranksTheUnknown(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID:   domain.ClusterID("test"),
+		Unavailable: []string{"pods"},
+		Nodes:       []domain.Node{unreadyNode(t)},
+		Now:         time.Now(),
+	})
+
+	if overview.Health == domain.HealthUnknown {
+		t.Error("a real finding was demoted to unknown; the assessment did see something")
+	}
+	if len(overview.Findings) == 0 {
+		t.Fatal("expected the unready node to raise a finding")
+	}
+}
+
+// unreadyNode builds one node that is not Ready, for tests that need a finding
+// to exist without caring how it arose.
+func unreadyNode(t *testing.T) domain.Node {
+	t.Helper()
+
+	node, err := domain.NewNode(domain.NodeSpec{
+		Name: "node-1", ClusterID: "dev", Ready: false, KubeletVersion: "v1.32.7",
+		Capacity:    domain.Capacity{CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110},
+		Allocatable: domain.Capacity{CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110},
+		CreatedAt:   time.Now().Add(-24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("building node: %v", err)
+	}
+	return node
+}

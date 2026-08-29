@@ -29,6 +29,7 @@
     CheckCircle2,
     AlertOctagon,
     AlertTriangle,
+    HelpCircle,
     Boxes,
     Server,
     Layers,
@@ -298,6 +299,16 @@
       icon: AlertOctagon,
       title: 'Needs attention',
       classes: 'bg-error-container/40 text-on-error-container border-error/40',
+    },
+    // NOT a fourth severity — the absence of a verdict rather than a worse
+    // one. Reached when a source the assessment depends on could not be read,
+    // and deliberately neutral rather than alarming: nothing is known to be
+    // wrong, but nothing has been checked either. The line beneath names what
+    // was missing, which is the actionable part.
+    unknown: {
+      icon: HelpCircle,
+      title: 'Cannot assess this cluster',
+      classes: 'bg-surface-container-high text-on-surface-variant border-outline-variant',
     },
   } as const
 

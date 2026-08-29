@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
@@ -180,7 +181,7 @@ func (s *OverviewService) OverviewWithin(
 	s.inflight[id] = call
 	s.mu.Unlock()
 
-	call.overview, call.err = s.assess(ctx, id)
+	call.overview, call.err = s.assessWithRetry(ctx, id)
 
 	s.mu.Lock()
 	delete(s.inflight, id)
@@ -203,6 +204,73 @@ func (s *OverviewService) forget(id domain.ClusterID) {
 	delete(s.cache, id)
 }
 
+// assessAttempts is how many times an unreachable cluster is re-read before
+// the assessment gives up and says so.
+//
+// Three, because the failure this guards against is a blip — a wifi handover, a
+// VPN renegotiating, a laptop waking — and one missed packet should not empty
+// the dashboard and alarm somebody. Three is also cheap precisely when it is
+// used: an unreachable host fails on connection refused or DNS in milliseconds,
+// so the retries cost nothing in the case that triggers them. A reachable
+// cluster never retries at all.
+const assessAttempts = 3
+
+// assessBackoff is the pause between those attempts.
+//
+// Short deliberately. This runs inside a refresh the operator is waiting on, so
+// the whole retry budget has to stay well under one refresh interval; the point
+// is to ride out a blip, not to wait out an outage.
+const assessBackoff = 400 * time.Millisecond
+
+// assessWithRetry assesses, re-attempting only when the cluster was unreachable.
+//
+// ONLY that error is retried. A permission failure, a bad kubeconfig or a
+// cancelled request are all answers — repeating them wastes the operator's time
+// and, for ErrForbidden, hammers an API server that has already said no. The
+// transport failure is the one that is plausibly transient.
+func (s *OverviewService) assessWithRetry(ctx context.Context, id domain.ClusterID) (domain.Overview, error) {
+	var err error
+
+	for attempt := 1; attempt <= assessAttempts; attempt++ {
+		var overview domain.Overview
+		overview, err = s.assess(ctx, id)
+		if err == nil {
+			if attempt > 1 {
+				s.logger.InfoContext(ctx, "cluster answered on retry",
+					slog.String("cluster", string(id)),
+					slog.Int("attempt", attempt))
+			}
+			return overview, nil
+		}
+		if !errors.Is(err, ports.ErrUnreachable) {
+			return domain.Overview{}, err
+		}
+
+		if attempt < assessAttempts {
+			s.logger.DebugContext(ctx, "cluster unreachable; retrying",
+				slog.String("cluster", string(id)),
+				slog.Int("attempt", attempt),
+				slog.Int("of", assessAttempts))
+
+			select {
+			case <-ctx.Done():
+				return domain.Overview{}, ctx.Err()
+			case <-time.After(assessBackoff):
+			}
+		}
+	}
+
+	// Give up, and say so at a level somebody will see. The caller surfaces
+	// this as a disconnected cluster; the alternative — which this replaced —
+	// was a confident green tick over an empty dashboard.
+	s.logger.WarnContext(ctx, "cluster unreachable; giving up",
+		slog.String("cluster", string(id)),
+		slog.Int("attempts", assessAttempts),
+		slog.String("error", err.Error()))
+
+	return domain.Overview{}, err
+}
+
 // assess performs the assessment itself, unconditionally.
 func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (domain.Overview, error) {
 
@@ -210,6 +278,11 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 		mu          sync.Mutex
 		wg          sync.WaitGroup
 		unavailable []string
+		// attempted and unreachable count sources rather than naming them: the
+		// question they answer is "did EVERY read fail because we could not
+		// reach the cluster", which is a ratio, not a list.
+		attempted   int
+		unreachable int
 
 		// Optimistic, and corrected by the node-metrics read if it fails.
 		// Node metrics decides it rather than pod metrics because `measured`
@@ -251,9 +324,26 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 	}
 
 	run := func(source string, read func() error) {
+		mu.Lock()
+		attempted++
+		mu.Unlock()
+
 		wg.Go(func() {
-			if err := read(); err != nil {
-				degrade(source, err)
+			err := read()
+			if err == nil {
+				return
+			}
+			degrade(source, err)
+
+			// ErrUnreachable is the transport-level failure — VPN dropped,
+			// laptop asleep, port-forward closed — as classified in
+			// adapters/k8s/errors.go. Counting it separately is what lets the
+			// caller tell "this cluster has no metrics-server" from "this
+			// cluster is not there".
+			if errors.Is(err, ports.ErrUnreachable) {
+				mu.Lock()
+				unreachable++
+				mu.Unlock()
 			}
 		})
 	}
@@ -351,6 +441,19 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 	}
 
 	wg.Wait()
+
+	// EVERY READ FAILED, AND ALL OF THEM ON TRANSPORT. That is not a degraded
+	// assessment, it is the absence of one, and returning it as an overview is
+	// what produced a green "No problems found" on a cluster the laptop could
+	// no longer reach.
+	//
+	// The ratio matters rather than any single call: one source failing this
+	// way is a flaky endpoint, and the assessment should still degrade around
+	// it as it always has. All of them failing this way is the cluster being
+	// gone.
+	if attempted > 0 && unreachable == attempted {
+		return domain.Overview{}, fmt.Errorf("assessing %q: %w", id, ports.ErrUnreachable)
+	}
 
 	// Metrics arrive keyed separately from the objects they describe, so they
 	// are joined here rather than in the domain: the domain should not know
