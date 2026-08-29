@@ -446,9 +446,18 @@ export class ClusterSession {
    * something: quietening the only warning on a cluster should leave it
    * reading as healthy, not as degraded by something deliberately deferred.
    */
-  readonly health = $derived.by((): 'healthy' | 'degraded' | 'critical' => {
+  readonly health = $derived.by((): 'healthy' | 'degraded' | 'critical' | 'unknown' => {
     if (this.activeIssues.some((finding) => finding.severity === 'critical')) return 'critical'
     if (this.activeIssues.length > 0) return 'degraded'
+
+    // SNOOZING CANNOT TURN "NOT READ" INTO "NOTHING WRONG". Re-grading over the
+    // outstanding findings is right for everything else, but the backend
+    // reports `unknown` when a source the verdict depends on could not be read
+    // — and no amount of quietening findings makes unread data read. Falling
+    // through to 'healthy' here is how this view kept saying "No problems
+    // found" over a cluster it could not reach.
+    if (this.overview?.health === 'unknown') return 'unknown'
+
     return 'healthy'
   })
 

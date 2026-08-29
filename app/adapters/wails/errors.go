@@ -80,28 +80,50 @@ func apiError(logger *slog.Logger, op string, err error) error {
 func classifyError(err error) (ErrorCode, string) {
 	switch {
 	case errors.Is(err, domain.ErrNoActiveCluster):
-		return CodeNoActiveCluster, "no cluster is connected yet"
+		return CodeNoActiveCluster, "No cluster is connected yet"
 
 	case errors.Is(err, domain.ErrClusterNotFound):
-		return CodeClusterNotFound, "that cluster is not in your kubeconfig any more"
+		return CodeClusterNotFound, "That cluster is not in your kubeconfig any more"
 
 	case errors.Is(err, ports.ErrUnauthenticated):
-		return CodeUnauthenticated, "your credentials were rejected — they may have expired"
+		return CodeUnauthenticated, "Your credentials were rejected — they may have expired"
 
 	case errors.Is(err, ports.ErrForbidden):
-		return CodeForbidden, "your account is not allowed to perform this operation"
+		return CodeForbidden, "Your account is not allowed to perform this operation"
 
 	case errors.Is(err, ports.ErrNotFound):
-		return CodeNotFound, "the requested resource no longer exists"
+		return CodeNotFound, "The requested resource no longer exists"
+
+	// The three transport failures are ONE code and three messages. The code is
+	// the category the UI branches on — including whether to offer Retry — and
+	// splitting it would have meant changing that logic to say the same thing.
+	// The message is where the diagnosis belongs.
+	//
+	// None of them tells the operator to "check your network". That advice fits
+	// every one of these situations and helps in none of them, and it implies
+	// they did something wrong when the commonest cause here is a cluster that
+	// went away. Each message says what was observed and what it usually means,
+	// and lets them draw the conclusion.
+	case errors.Is(err, ports.ErrNameNotResolved):
+		return CodeUnreachable, "The cluster's address could not be looked up — this machine may not be on a network that knows that name"
+
+	case errors.Is(err, ports.ErrConnectionRefused):
+		// Deliberately NOT a network suggestion. The packets arrived; routing
+		// is fine. Sending somebody to check their connection here is sending
+		// them to the one place the problem is not.
+		return CodeUnreachable, "The cluster refused the connection — the API server may be stopped, or listening on a different port"
+
+	case errors.Is(err, ports.ErrNoResponse):
+		return CodeUnreachable, "The cluster did not respond — it may be offline, or reachable only from a network this machine is not on"
 
 	case errors.Is(err, ports.ErrUnreachable):
-		return CodeUnreachable, "the cluster did not respond — check your network or VPN"
+		return CodeUnreachable, "The cluster could not be contacted"
 
 	case errors.Is(err, ports.ErrKubeconfigUnavailable):
-		return CodeKubeconfig, "your kubeconfig could not be read"
+		return CodeKubeconfig, "Your kubeconfig could not be read"
 
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return CodeCancelled, "the request was cancelled or timed out"
+		return CodeCancelled, "The request was cancelled or timed out"
 
 	case errors.Is(err, domain.ErrEmptyClusterID),
 		errors.Is(err, domain.ErrInvalidNamespaceName),
@@ -111,9 +133,9 @@ func classifyError(err error) (ErrorCode, string) {
 		return CodeInvalidInput, err.Error()
 
 	case errors.Is(err, domain.ErrClusterNotConnected):
-		return CodeNoActiveCluster, "that cluster is no longer connected"
+		return CodeNoActiveCluster, "That cluster is no longer connected"
 
 	default:
-		return CodeInternal, "an unexpected error occurred"
+		return CodeInternal, "An unexpected error occurred"
 	}
 }

@@ -45,41 +45,68 @@ func classify(op string, err error) error {
 		return fmt.Errorf("%s: %w: %w", op, ports.ErrNotFound, err)
 	case apierrors.IsTimeout(err),
 		apierrors.IsServerTimeout(err),
-		apierrors.IsServiceUnavailable(err),
-		apierrors.IsInternalError(err),
-		isTransportFailure(err):
+		apierrors.IsServiceUnavailable(err):
+		// The API server answered, just not usefully. There is no transport
+		// diagnosis to add.
+		return fmt.Errorf("%s: %w: %w: %w", op, ports.ErrUnreachable, ports.ErrNoResponse, err)
+	case apierrors.IsInternalError(err):
 		return fmt.Errorf("%s: %w: %w", op, ports.ErrUnreachable, err)
 	default:
+		// Transport failures carry a second sentinel naming WHICH one, because
+		// they imply different actions. Both are wrapped, so callers that only
+		// care that the cluster was unreachable are unaffected.
+		if kind := transportFailure(err); kind != nil {
+			return fmt.Errorf("%s: %w: %w: %w", op, ports.ErrUnreachable, kind, err)
+		}
 		return fmt.Errorf("%s: %w", op, err)
 	}
 }
 
-// isTransportFailure reports whether err is a network-level failure rather
-// than a response from the API server.
+// transportFailure names the network-level failure behind err, or nil when it
+// is not one.
 //
 // These are the everyday failures for a desktop client — laptop asleep, VPN
 // down, port-forward closed, cluster deleted — and they arrive as plain Go
 // network errors that carry no HTTP status for apierrors to inspect.
-func isTransportFailure(err error) bool {
-	// context.DeadlineExceeded satisfies net.Error, so it is caught below and
-	// correctly reported as unreachable: from the operator's point of view a
+//
+// ORDER IS LOAD-BEARING. *net.DNSError satisfies net.Error, so testing the
+// interface first would swallow every DNS failure into the generic case and
+// the operator would be told nothing answered when in fact the name never
+// resolved — which sends them to check a route to an address that was never
+// looked up.
+func transportFailure(err error) error {
+	if _, ok := errors.AsType[*net.DNSError](err); ok {
+		return ports.ErrNameNotResolved
+	}
+
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return ports.ErrConnectionRefused
+	}
+
+	// Reset is grouped with refused rather than with silence: in both, the
+	// packets arrived and something on the other end declined to serve them.
+	if errors.Is(err, syscall.ECONNRESET) {
+		return ports.ErrConnectionRefused
+	}
+
+	if errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
+		return ports.ErrNoResponse
+	}
+
+	// context.DeadlineExceeded satisfies net.Error, so it is caught here and
+	// correctly reported as no response: from the operator's point of view a
 	// cluster that did not answer in time is a cluster that did not answer.
 	if _, ok := errors.AsType[net.Error](err); ok {
-		return true
+		return ports.ErrNoResponse
 	}
 
-	if _, ok := errors.AsType[*net.DNSError](err); ok {
-		return true
-	}
-
+	// *url.Error wraps whatever the transport actually hit, so it is tested
+	// last — by now anything more specific has already matched through it.
 	if _, ok := errors.AsType[*url.Error](err); ok {
-		return true
+		return ports.ErrNoResponse
 	}
 
-	return errors.Is(err, syscall.ECONNREFUSED) ||
-		errors.Is(err, syscall.ECONNRESET) ||
-		errors.Is(err, syscall.EHOSTUNREACH) ||
-		errors.Is(err, syscall.ENETUNREACH)
+	return nil
 }
 
 // kubeconfigPermissionHint explains a kubeconfig that exists but may not be

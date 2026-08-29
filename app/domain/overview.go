@@ -61,7 +61,23 @@ const (
 	HealthDegraded HealthGrade = "degraded"
 	// HealthCritical means at least one critical finding was raised.
 	HealthCritical HealthGrade = "critical"
+	// HealthUnknown means too little was read to judge.
+	//
+	// NOT a fourth severity — it is the absence of a verdict rather than a
+	// worse one. An assessment that could not list pods or nodes has not found
+	// that the cluster is well; it has failed to look. Reporting that as
+	// "healthy" is the most dangerous thing this type can do, because the
+	// operator's takeaway is the opposite of the truth.
+	HealthUnknown HealthGrade = "unknown"
 )
+
+// loadBearingSources are the reads without which "healthy" is unearned.
+//
+// Not every source: a cluster with no metrics-server is perfectly assessable
+// and saying so is the whole point of degrading rather than failing. These two
+// are different — between them they carry almost every finding the assessment
+// can raise, so their absence is not a gap in the picture, it is the picture.
+var loadBearingSources = []string{"nodes", "pods"}
 
 // FindingCategory groups findings by what an operator would do about them.
 type FindingCategory string
@@ -897,7 +913,7 @@ func NewOverview(input OverviewInput) Overview {
 		ClusterID:   input.ClusterID,
 		Version:     input.Version,
 		GeneratedAt: now,
-		Health:      grade(findings),
+		Health:      grade(findings, input.Unavailable),
 		Storage:     summariseStorage(input.Volumes, input.Claims),
 		Findings:    findings,
 		Capacity:    capacity,
@@ -914,7 +930,18 @@ func NewOverview(input OverviewInput) Overview {
 }
 
 // grade reduces the findings to one verdict.
-func grade(findings []Finding) HealthGrade {
+//
+// unavailable is consulted for one reason: findings alone cannot distinguish
+// "nothing is wrong" from "nothing was read". Both produce an empty slice, and
+// on an unreachable cluster the second one produced a green tick reading "No
+// problems found" — every figure zero, every source missing, and the operator
+// told everything was fine. Whatever the assessment could not see, it must not
+// certify.
+//
+// A finding still outranks the unknown: if pods could not be listed but a node
+// is unready, the honest verdict is that a node is unready. Ignorance about one
+// thing does not erase knowledge of another.
+func grade(findings []Finding, unavailable []string) HealthGrade {
 	worst := HealthHealthy
 	for _, finding := range findings {
 		switch finding.Severity {
@@ -924,7 +951,22 @@ func grade(findings []Finding) HealthGrade {
 			worst = HealthDegraded
 		}
 	}
+
+	if worst == HealthHealthy && missingLoadBearing(unavailable) {
+		return HealthUnknown
+	}
 	return worst
+}
+
+// missingLoadBearing reports whether a source the verdict depends on was
+// unreadable.
+func missingLoadBearing(unavailable []string) bool {
+	for _, source := range loadBearingSources {
+		if slices.Contains(unavailable, source) {
+			return true
+		}
+	}
+	return false
 }
 
 // rankFindings orders findings by how much they deserve the operator's

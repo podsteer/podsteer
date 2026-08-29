@@ -21,6 +21,17 @@
   let { error, onretry, ondismiss, class: className = '' }: Props = $props()
 
   const showRetry = $derived(Boolean(onretry && error?.isRetryable))
+
+  /**
+   * Whether to show the raw code beneath the message.
+   *
+   * Only when the message cannot stand on its own. "The cluster refused the
+   * connection" followed by "unreachable" tells the reader nothing they did
+   * not just read, in vocabulary they did not ask for — but when all we can
+   * say is "An unexpected error occurred", the code is the only thing anybody
+   * can act on or quote in a bug report.
+   */
+  const showCode = $derived(error?.code === 'internal' || error?.code === 'unknown')
 </script>
 
 {#if error}
@@ -33,7 +44,9 @@
 
     <div class="min-w-0 flex-1">
       <p class="text-body-medium font-medium" data-selectable>{error.message}</p>
-      <p class="mt-0.5 text-body-small opacity-60">{error.code}</p>
+      {#if showCode}
+        <p class="mt-0.5 text-body-small opacity-60" data-selectable>{error.code}</p>
+      {/if}
     </div>
 
     <div class="flex shrink-0 items-center gap-1">

@@ -18,6 +18,30 @@ var (
 	// DNS failure, refused connection, timeout, or a dead tunnel.
 	ErrUnreachable = errors.New("cluster unreachable")
 
+	// The three transport failures worth telling apart. Each is wrapped
+	// ALONGSIDE ErrUnreachable, never instead of it, so every existing
+	// errors.Is(err, ErrUnreachable) — including the assessment's retry
+	// decision — keeps working unchanged.
+	//
+	// They exist because they imply OPPOSITE actions and were being reported
+	// with identical text. "Nothing answered" and "something answered and
+	// refused" are different diagnoses, and telling an operator to check their
+	// network when the API server actively refused them sends them to look in
+	// the wrong place entirely.
+
+	// ErrNameNotResolved means the server's hostname did not resolve. The
+	// machine is not on a network that knows that name — or the name is wrong.
+	ErrNameNotResolved = errors.New("name not resolved")
+
+	// ErrConnectionRefused means something at that address answered and
+	// declined the connection. The route works; the API server is not
+	// listening — wrong port, or the cluster is down.
+	ErrConnectionRefused = errors.New("connection refused")
+
+	// ErrNoResponse means nothing answered at all: a timeout, or no route to
+	// the host. The usual cause is being off the network that reaches it.
+	ErrNoResponse = errors.New("no response")
+
 	// ErrUnauthenticated means the credentials were rejected (HTTP 401),
 	// typically an expired token or a stale exec-plugin cache.
 	ErrUnauthenticated = errors.New("not authenticated")
