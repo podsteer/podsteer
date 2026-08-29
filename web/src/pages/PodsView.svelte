@@ -82,11 +82,32 @@
             </span>
           </td>
         {/if}
+        <!--
+          THE DASH IS AMBIGUOUS WITHOUT hasMetrics, and the flag was already
+          here. `pod.cpu` formats to "—" both when nothing measured the pod and
+          when the pod genuinely used no measurable CPU — so an unmeasured
+          cluster and an idle one looked identical, which is what made a fresh
+          cluster read as a broken application.
+
+          The tooltip carries the distinction rather than the cell: fifteen rows
+          each saying "no metrics" is noise, and the explanation of WHY belongs
+          once, in the notice above the table.
+        -->
         {#if isVisible('cpu')}
-          <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">{pod.cpu}</td>
+          <td
+            class="truncate px-3 py-1.5 text-right tabular-nums {pod.hasMetrics
+              ? 'text-on-surface-variant'
+              : 'text-on-surface-variant/40'}"
+            title={pod.hasMetrics ? undefined : 'Not measured — this cluster has no metrics source'}
+          >{pod.cpu}</td>
         {/if}
         {#if isVisible('memory')}
-          <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">{pod.memory}</td>
+          <td
+            class="truncate px-3 py-1.5 text-right tabular-nums {pod.hasMetrics
+              ? 'text-on-surface-variant'
+              : 'text-on-surface-variant/40'}"
+            title={pod.hasMetrics ? undefined : 'Not measured — this cluster has no metrics source'}
+          >{pod.memory}</td>
         {/if}
         {#if isVisible('ready')}
           <td

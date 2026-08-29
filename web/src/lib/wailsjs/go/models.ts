@@ -872,6 +872,7 @@ export namespace wails {
 	    namespaces: NamespaceLoad[];
 	    restarts: RestartHotspot[];
 	    unavailable: string[];
+	    metrics: string;
 	    criticalCount: number;
 	    warningCount: number;
 	    infoCount: number;
@@ -899,6 +900,7 @@ export namespace wails {
 	        this.namespaces = this.convertValues(source["namespaces"], NamespaceLoad);
 	        this.restarts = this.convertValues(source["restarts"], RestartHotspot);
 	        this.unavailable = source["unavailable"];
+	        this.metrics = source["metrics"];
 	        this.criticalCount = source["criticalCount"];
 	        this.warningCount = source["warningCount"];
 	        this.infoCount = source["infoCount"];

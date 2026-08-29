@@ -69,6 +69,7 @@ type fakeKubernetes struct {
 
 	podUsage        map[string]domain.Metrics
 	nodeUsage       map[string]domain.Metrics
+	metricsErr      error
 	nodeFilesystems map[string]domain.NodeFilesystems
 	volumes         []domain.PersistentVolume
 	claims          []domain.PersistentVolumeClaim
@@ -149,6 +150,12 @@ func (f *fakeKubernetes) PodMetrics(_ context.Context, _ domain.ClusterID, _ dom
 }
 
 func (f *fakeKubernetes) NodeMetrics(_ context.Context, _ domain.ClusterID) (map[string]domain.Metrics, error) {
+	// metricsErr lets a test choose WHICH failure, which is what the metrics
+	// status derives from. Absent it, the historical default stands: no usage
+	// configured means no metrics API, the commonest real case.
+	if f.metricsErr != nil {
+		return nil, f.metricsErr
+	}
 	if f.nodeUsage == nil {
 		return nil, ports.ErrMetricsUnavailable
 	}

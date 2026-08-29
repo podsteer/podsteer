@@ -211,6 +211,12 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 		wg          sync.WaitGroup
 		unavailable []string
 
+		// Optimistic, and corrected by the node-metrics read if it fails.
+		// Node metrics decides it rather than pod metrics because `measured`
+		// is already gated on the same call — two sources of truth for one
+		// fact is how they come to disagree.
+		metricsStatus = domain.MetricsMeasuredOK
+
 		version    domain.ServerVersion
 		nodes      []domain.Node
 		pods       []domain.Pod
@@ -299,6 +305,13 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 	run("metrics", func() error {
 		result, err := s.metrics.NodeMetrics(ctx, id)
 		if err != nil {
+			// The sentinel already carries the reason; this only records it
+			// where the UI can reach it. Without this the operator is told
+			// "no metrics" whether metrics-server is absent or merely
+			// unreadable, and those need opposite advice.
+			mu.Lock()
+			metricsStatus = metricsStatusFor(err)
+			mu.Unlock()
 			return err
 		}
 		nodeUsage = result
@@ -358,6 +371,7 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 		Claims:          claims,
 		Unavailable:     unavailable,
 		MetricsMeasured: measured,
+		Metrics:         metricsStatus,
 		Now:             time.Now().UTC(),
 	})
 
@@ -424,4 +438,21 @@ func attachPodUsage(pods []domain.Pod, usage map[string]domain.Metrics) []domain
 		enriched = append(enriched, pod)
 	}
 	return enriched
+}
+
+// metricsStatusFor maps a failed metrics read onto what to tell the operator.
+//
+// The adapter has already done the hard part: classifyMetrics turns 404 and
+// 503 into ErrMetricsUnavailable, and everything else through the general
+// classifier — so a 403 arrives as ErrForbidden and a dead cluster as
+// ErrUnreachable. This only chooses which sentence those deserve.
+func metricsStatusFor(err error) domain.MetricsStatus {
+	switch {
+	case errors.Is(err, ports.ErrMetricsUnavailable):
+		return domain.MetricsNotInstalled
+	case errors.Is(err, ports.ErrForbidden):
+		return domain.MetricsForbidden
+	default:
+		return domain.MetricsFailed
+	}
 }

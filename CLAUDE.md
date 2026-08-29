@@ -86,6 +86,19 @@ utilisation figure that is quietly wrong.
 Metrics are optional by design: `ports.ErrMetricsUnavailable` is an ordinary
 condition, not a fault, and every list must render without metrics-server.
 
+**And the UI must say WHY they are absent.** `domain.MetricsStatus` on the
+overview separates "no metrics-server installed" (404/503) from "not permitted
+to read it" (403) from a transient failure, because those need opposite advice
+— telling somebody to install metrics-server when it is already running and
+merely unreadable sends them to argue with an administrator. Reading a dash and
+being unable to tell an unconfigured cluster from a broken application is the
+bug that put this here.
+
+A kubelet fallback for CPU and memory was considered and **deliberately not
+built**, even though `filesystems.go` already proves the mechanism works. See
+[docs/decisions/0001-no-kubelet-metrics-fallback.md](docs/decisions/0001-no-kubelet-metrics-fallback.md)
+for what would reverse that.
+
 Two sources beyond metrics-server behave the same way and are worth knowing
 about before adding a third:
 

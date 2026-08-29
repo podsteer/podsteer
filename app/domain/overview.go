@@ -63,6 +63,35 @@ const (
 	HealthCritical HealthGrade = "critical"
 )
 
+// MetricsStatus says WHY usage figures are absent, when they are.
+//
+// One field on the overview rather than a state threaded through every list
+// and every DTO. The distinction already exists in the port sentinels; this is
+// only where it becomes something a person can read, and that is the sole
+// place it is needed until there is a second source of usage to attribute.
+//
+// It exists because "no metrics" is not one situation. A cluster with no
+// metrics-server needs a different sentence from one where the operator is
+// simply not permitted to read the metrics that are already there — and
+// telling the second person to install metrics-server sends them to argue with
+// an administrator about software that is running perfectly well.
+type MetricsStatus string
+
+const (
+	// MetricsMeasuredOK means the metrics API answered.
+	MetricsMeasuredOK MetricsStatus = "measured"
+	// MetricsNotInstalled means the cluster serves no metrics API at all:
+	// metrics-server is not installed. HTTP 404, or 503 from the aggregation
+	// layer when the APIService exists with no backend.
+	MetricsNotInstalled MetricsStatus = "not-installed"
+	// MetricsForbidden means the metrics API exists but this account may not
+	// read it. HTTP 403 — an RBAC question, not an installation one.
+	MetricsForbidden MetricsStatus = "forbidden"
+	// MetricsFailed means the read failed for some other reason, including
+	// the cluster being unreachable.
+	MetricsFailed MetricsStatus = "failed"
+)
+
 // FindingCategory groups findings by what an operator would do about them.
 type FindingCategory string
 
@@ -832,6 +861,9 @@ type OverviewInput struct {
 	// being zero is not evidence either way: a genuinely idle pod measures
 	// zero too.
 	MetricsMeasured bool
+	// Metrics says WHY, when MetricsMeasured is false. The boolean gates the
+	// arithmetic; this is what a person can be told.
+	Metrics MetricsStatus
 	// Now is the reference time. Passed rather than read so the rules are
 	// testable, the same reason every Age method takes it.
 	Now time.Time
@@ -857,6 +889,10 @@ type Overview struct {
 	// Unavailable names the data sources that could not be read, so the UI can
 	// say "no metrics" instead of quietly showing zeroes.
 	Unavailable []string
+	// Metrics says why usage figures are absent, when they are — so the UI can
+	// name metrics-server rather than saying "metrics" at somebody who has
+	// never heard of it.
+	Metrics MetricsStatus
 }
 
 // NewOverview assesses a cluster snapshot.
@@ -910,6 +946,7 @@ func NewOverview(input OverviewInput) Overview {
 		Support:     support,
 		NodeLoads:   nodeLoads(input.Nodes, input.Pods),
 		Unavailable: slices.Clone(input.Unavailable),
+		Metrics:     input.Metrics,
 	}
 }
 

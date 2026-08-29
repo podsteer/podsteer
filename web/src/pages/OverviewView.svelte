@@ -261,6 +261,25 @@
     ]
   })
 
+  /**
+   * Why CPU and memory columns are empty, in words an operator can act on.
+   *
+   * Deliberately not shown when metrics ARE measured: a banner that appears on
+   * every healthy cluster is a banner nobody reads on the one where it matters.
+   */
+  const metricsNotice = $derived.by((): string | null => {
+    switch (session.overview?.metrics) {
+      case 'not-installed':
+        return 'No CPU or memory figures: this cluster has no metrics-server. It is an optional add-on that every Kubernetes distribution can install, and PodSteer works without it — everything except usage.'
+      case 'forbidden':
+        return 'No CPU or memory figures: this account is not allowed to read the metrics API. metrics-server is running; the permission to query it is missing.'
+      case 'failed':
+        return 'No CPU or memory figures: the metrics API could not be read this time. The next refresh will try again.'
+      default:
+        return null
+    }
+  })
+
   const criticalCount = $derived(issues.filter((finding) => finding.severity === 'critical').length)
   const warningCount = $derived(issues.length - criticalCount)
 
@@ -498,6 +517,29 @@
         >
           <CircleSlash class="size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
           Assessed without {overview.unavailable.join(', ')} — those figures are missing rather than zero.
+        </p>
+      {/if}
+
+      <!--
+        The metrics explanation, separate from the list above.
+
+        "Assessed without metrics" is accurate and useless to somebody meeting
+        Kubernetes usage APIs for the first time: it names an internal source,
+        not the thing they would install. Naming metrics-server turns a
+        statement into an action.
+
+        Three sentences, not one, because the causes need opposite advice —
+        telling somebody to install metrics-server when it is already running
+        and merely unreadable sends them to argue with an administrator about
+        software that is working.
+      -->
+      {#if metricsNotice}
+        <p
+          class="flex items-start gap-2 rounded-sm border border-outline-variant/30 bg-surface-container-low
+                 px-3 py-2 text-body-small text-on-surface-variant"
+        >
+          <Gauge class="mt-0.5 size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
+          <span>{metricsNotice}</span>
         </p>
       {/if}
 

@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/podsteer/podsteer/app/application"
@@ -164,4 +165,84 @@ func countSource(sources []string, want string) int {
 		}
 	}
 	return count
+}
+
+// "No metrics" is not one situation, and the two causes need opposite advice.
+//
+// Telling somebody to install metrics-server when it is already running and
+// merely unreadable sends them to argue with an administrator about software
+// that is working perfectly well. The adapter already distinguishes these; this
+// is the check that the distinction survives into something the UI can render.
+func TestMetricsStatusExplainsWhyUsageIsAbsent(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name string
+		err  error
+		want domain.MetricsStatus
+	}{
+		{
+			name: "no metrics-server installed",
+			err:  fmt.Errorf("listing node metrics: %w", ports.ErrMetricsUnavailable),
+			want: domain.MetricsNotInstalled,
+		},
+		{
+			name: "metrics API exists but RBAC forbids it",
+			err:  fmt.Errorf("listing node metrics: %w", ports.ErrForbidden),
+			want: domain.MetricsForbidden,
+		},
+		{
+			name: "cluster unreachable",
+			err:  fmt.Errorf("listing node metrics: %w", ports.ErrUnreachable),
+			want: domain.MetricsFailed,
+		},
+		{
+			name: "anything else",
+			err:  errors.New("decoding response"),
+			want: domain.MetricsFailed,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			kubernetes := &fakeKubernetes{
+				version:    domain.ServerVersion{Major: "1", Minor: "32"},
+				metricsErr: testCase.err,
+			}
+			service, registry := newOverviewService(t, kubernetes, &fakeEvents{})
+			registry.Open(mustCluster(t, "dev", true))
+
+			overview, err := service.Overview(context.Background(), "dev")
+			if err != nil {
+				t.Fatalf("Overview() error = %v; a metrics failure must never fail the assessment", err)
+			}
+
+			if overview.Metrics != testCase.want {
+				t.Errorf("metrics status = %q, want %q", overview.Metrics, testCase.want)
+			}
+		})
+	}
+}
+
+// A cluster that does serve metrics must not be told anything about them: a
+// notice shown on every healthy cluster is one nobody reads on the cluster
+// where it matters.
+func TestMeasuredMetricsCarryNoExplanation(t *testing.T) {
+	t.Parallel()
+
+	kubernetes := &fakeKubernetes{
+		version:   domain.ServerVersion{Major: "1", Minor: "32"},
+		nodeUsage: map[string]domain.Metrics{"node-1": {CPUMilli: 100, MemoryBytes: 1 << 30}},
+	}
+	service, registry := newOverviewService(t, kubernetes, &fakeEvents{})
+	registry.Open(mustCluster(t, "dev", true))
+
+	overview, err := service.Overview(context.Background(), "dev")
+	if err != nil {
+		t.Fatalf("Overview() error = %v", err)
+	}
+
+	if overview.Metrics != domain.MetricsMeasuredOK {
+		t.Errorf("metrics status = %q, want measured", overview.Metrics)
+	}
 }
