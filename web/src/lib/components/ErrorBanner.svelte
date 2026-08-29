@@ -7,7 +7,7 @@
 <script lang="ts">
   import type { ApiError } from '$lib/api/errors'
   import Button from './Button.svelte'
-  import { AlertCircle } from '@lucide/svelte'
+  import { AlertCircle, Info } from '@lucide/svelte'
 
   interface Props {
     error: ApiError | null
@@ -32,15 +32,36 @@
    * can act on or quote in a bug report.
    */
   const showCode = $derived(error?.code === 'internal' || error?.code === 'unknown')
+
+  /**
+   * Not every failure is an alarm, and colouring them all alike wears the
+   * alarm out.
+   *
+   * A cluster that is no longer in the kubeconfig is not broken — it is a
+   * state change the operator very likely caused, by deleting a context or
+   * rebuilding a cluster. Announcing that in the same full red as a crashed
+   * request teaches people to dismiss red banners, which is exactly the habit
+   * you do not want when a real one arrives.
+   *
+   * The distinction is severity, not importance: the informational tone is
+   * still a banner, still says the same words, still cannot be missed.
+   */
+  const INFORMATIONAL = new Set(['cluster_not_found', 'no_active_cluster'])
+  const isAlarm = $derived(!error || !INFORMATIONAL.has(error.code))
 </script>
 
 {#if error}
   <div
-    role="alert"
-    class="flex items-start gap-3 rounded-sm border border-error/20 bg-error-container/80 px-4 py-3
-           text-on-error-container {className}"
+    role={isAlarm ? 'alert' : 'status'}
+    class="flex items-start gap-3 rounded-sm border px-4 py-3 {isAlarm
+      ? 'border-error/20 bg-error-container/80 text-on-error-container'
+      : 'border-outline-variant/40 bg-surface-container-high text-on-surface'} {className}"
   >
-    <AlertCircle class="mt-0.5 size-5 shrink-0 text-error" strokeWidth={2} />
+    {#if isAlarm}
+      <AlertCircle class="mt-0.5 size-5 shrink-0 text-error" strokeWidth={2} />
+    {:else}
+      <Info class="mt-0.5 size-5 shrink-0 text-on-surface-variant" strokeWidth={2} />
+    {/if}
 
     <div class="min-w-0 flex-1">
       <p class="text-body-medium font-medium" data-selectable>{error.message}</p>
@@ -51,10 +72,10 @@
 
     <div class="flex shrink-0 items-center gap-1">
       {#if showRetry}
-        <Button variant="text" class="text-on-error-container" onclick={onretry}>Retry</Button>
+        <Button variant="text" class={isAlarm ? 'text-on-error-container' : ''} onclick={onretry}>Retry</Button>
       {/if}
       {#if ondismiss}
-        <Button variant="text" class="text-on-error-container" onclick={ondismiss} label="Dismiss">
+        <Button variant="text" class={isAlarm ? 'text-on-error-container' : ''} onclick={ondismiss} label="Dismiss">
           Dismiss
         </Button>
       {/if}

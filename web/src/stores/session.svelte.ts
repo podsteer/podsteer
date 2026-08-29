@@ -239,6 +239,15 @@ export class ClusterSession {
   #request = 0
   #timer: ReturnType<typeof setInterval> | null = null
 
+  /**
+   * Invoked when this cluster turns out to be gone from the kubeconfig.
+   *
+   * A callback rather than the session reaching for the workspace, which would
+   * make the two mutually dependent for one edge case. The workspace owns tab
+   * lifecycle; the session only reports what it observed.
+   */
+  onVanished?: (reason: ApiError) => void
+
   constructor(cluster: Cluster) {
     this.cluster = cluster
     // The operator's own last choice for this cluster wins over kubeconfig's
@@ -478,7 +487,7 @@ export class ClusterSession {
     try {
       this.kinds = await listKinds(this.cluster.id)
     } catch (cause) {
-      this.error = toApiError(cause)
+      this.#fail(cause)
     }
   }
 
@@ -580,6 +589,22 @@ export class ClusterSession {
     return rows.slice(start, start + preferences.pageSize)
   }
 
+  /**
+   * Records an error, and reports the one that means this tab should not exist.
+   *
+   * A cluster removed from the kubeconfig is not a failure to retry — it is
+   * gone, and every subsequent refresh will fail identically. Leaving the tab
+   * open shows an operator stale data from a cluster that no longer exists,
+   * which is how a rebuilt cluster came to be displayed as healthy with zero
+   * nodes.
+   */
+  #fail(cause: unknown): ApiError {
+    const error = toApiError(cause)
+    this.error = error
+    if (error.code === 'cluster_not_found') this.onVanished?.(error)
+    return error
+  }
+
   /** Reloads whichever view is active. */
   refresh = async (): Promise<void> => {
     const request = ++this.#request
@@ -596,7 +621,7 @@ export class ClusterSession {
     } catch (cause) {
       if (request !== this.#request) return
       this.status = 'error'
-      this.error = toApiError(cause)
+      this.#fail(cause)
     }
   }
 
@@ -746,7 +771,7 @@ export class ClusterSession {
       this.manifestStatus = 'ready'
     } catch (cause) {
       this.manifestStatus = 'error'
-      this.error = toApiError(cause)
+      this.#fail(cause)
     }
   }
 
@@ -802,7 +827,7 @@ export class ClusterSession {
     try {
       await scaleWorkload(this.cluster.id, kind, namespace, name, replicas)
     } catch (cause) {
-      this.error = toApiError(cause)
+      this.#fail(cause)
     }
   }
 
@@ -811,7 +836,7 @@ export class ClusterSession {
     try {
       await updateResource(this.cluster.id, manifest)
     } catch (cause) {
-      this.error = toApiError(cause)
+      this.#fail(cause)
     }
   }
 }

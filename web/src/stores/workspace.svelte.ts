@@ -201,6 +201,18 @@ class Workspace {
     if (existing) return existing
 
     const session = new ClusterSession(cluster)
+
+    // A cluster deleted from the kubeconfig cannot be refreshed, retried or
+    // reconnected — it is gone. Closing the tab is the honest response, and it
+    // returns the operator to the cluster list where they can see what IS
+    // there. Leaving it open would show stale data from a cluster that no
+    // longer exists.
+    session.onVanished = (reason) => {
+      void this.close(cluster.id)
+      // Raised at the workspace rather than on the session, because the
+      // session is about to stop existing and its error would go with it.
+      this.error = reason
+    }
     this.sessions = [...this.sessions, session]
     return session
   }
