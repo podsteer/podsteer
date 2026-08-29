@@ -30,14 +30,36 @@
 
   let { session }: Props = $props()
 
-  const namespaceOptions = $derived([
-    { value: ALL_NAMESPACES, label: 'All namespaces' },
-    ...session.namespaces.map((namespace) => ({
-      value: namespace.name,
-      label: namespace.name,
-      hint: namespace.isActive ? undefined : namespace.phase.toLowerCase(),
-    })),
-  ])
+  const namespaceOptions = $derived.by(() => {
+    const options = [
+      { value: ALL_NAMESPACES, label: 'All namespaces' },
+      ...session.namespaces.map((namespace) => ({
+        value: namespace.name,
+        label: namespace.name,
+        hint: namespace.isActive ? undefined : namespace.phase.toLowerCase(),
+      })),
+    ]
+
+    // KEEP A FILTER THAT NO LONGER MATCHES ANYTHING VISIBLE.
+    //
+    // The list refreshes now (session.refreshNamespaces), so the namespace
+    // being filtered on can disappear from under the selection — deleted
+    // while the tab was open, or still named by a preference remembered from
+    // before it was. A Select whose value is absent from its options falls
+    // back to the placeholder, so the trigger would read as EMPTY while the
+    // whole tree below it was still scoped to that namespace: an operator
+    // looking at nothing, with nothing on screen saying why.
+    //
+    // The same case covers RBAC that permits listing objects in one namespace
+    // but not listing namespaces at all, where this is the only entry there
+    // will ever be.
+    const selected = session.namespace
+    if (selected !== ALL_NAMESPACES && !options.some((option) => option.value === selected)) {
+      options.push({ value: selected, label: selected, hint: 'not found' })
+    }
+
+    return options
+  })
 
   const onOverview = $derived(session.selectedKindId === OVERVIEW_KIND_ID)
 
@@ -109,6 +131,7 @@
       value={session.namespace}
       options={namespaceOptions}
       onchange={(value) => session.selectNamespace(value)}
+      onopen={() => void session.refreshNamespaces()}
       class="w-full"
     />
   </div>

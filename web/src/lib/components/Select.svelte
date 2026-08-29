@@ -22,7 +22,7 @@
 -->
 <script lang="ts">
   import { ChevronDown } from '@lucide/svelte'
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
 
   interface Option {
     value: string
@@ -66,6 +66,20 @@
     placeholder?: string
     /** Called with the newly chosen value. */
     onchange?: (value: string) => void
+    /**
+     * Called as the panel opens, for options that can go stale.
+     *
+     * A list read once when a screen loaded is wrong by the time somebody
+     * looks at it, and opening the panel is exactly that moment — so this is
+     * where a caller re-reads it, instead of polling to keep fresh a list
+     * nobody is looking at.
+     *
+     * Fired without being awaited: the panel opens NOW, on the click, showing
+     * what is already known. Whatever arrives lands in `options` and Svelte
+     * re-renders the panel around it. Blocking the open on a network round
+     * trip would trade a stale entry for a dropdown that feels broken.
+     */
+    onopen?: () => void
     class?: string
   }
 
@@ -78,6 +92,7 @@
     compact = false,
     placeholder = '',
     onchange,
+    onopen,
     class: className = '',
   }: Props = $props()
 
@@ -85,11 +100,48 @@
   let anchor = $state<DOMRect | null>(null)
   /** Which option the keyboard is on, which is not always the chosen one. */
   let active = $state(-1)
+  /**
+   * The VALUE that index points at, kept alongside it.
+   *
+   * `active` is an index into a list that a caller's `onopen` can replace a
+   * moment after the panel opened — a namespace created since the tab
+   * connected arrives in sorted position and shifts everything after it down
+   * one. The index alone would keep pointing at the same slot, so the
+   * highlight would slide onto a neighbour and Enter would choose it. The
+   * value is what survives the list being rebuilt.
+   *
+   * Plain, not `$state`: it is only ever read to re-find a row, and making it
+   * reactive would re-run the effect below that maintains it.
+   */
+  let activeValue = ''
   let trigger = $state<HTMLButtonElement | null>(null)
   let panel = $state<HTMLDivElement | null>(null)
 
   const selected = $derived(options.find((option) => option.value === value))
   const selectedIndex = $derived(options.findIndex((option) => option.value === value))
+
+  /** Moves the keyboard's position, remembering WHICH option it landed on. */
+  function setActive(index: number): void {
+    active = index
+    activeValue = options[index]?.value ?? ''
+  }
+
+  /**
+   * Re-finds the highlighted option after the list is replaced beneath it.
+   *
+   * Only while the panel is open, and only by value — an option that has gone
+   * away entirely leaves the highlight where it was rather than jumping it
+   * somewhere arbitrary.
+   */
+  $effect(() => {
+    const list = options
+    if (!open || activeValue === '') return
+
+    untrack(() => {
+      const index = list.findIndex((option) => option.value === activeValue)
+      if (index >= 0 && index !== active) active = index
+    })
+  })
 
   /** Type-ahead buffer, cleared when typing pauses. */
   let typed = ''
@@ -98,8 +150,13 @@
   async function show(): Promise<void> {
     if (disabled) return
     anchor = trigger?.getBoundingClientRect() ?? null
-    active = selectedIndex >= 0 ? selectedIndex : 0
+    setActive(selectedIndex >= 0 ? selectedIndex : 0)
     open = true
+
+    // Deliberately not awaited — see the prop's own note. The panel is already
+    // opening with what is known; a fresher list arrives into it.
+    onopen?.()
+
     await tick()
     scrollActiveIntoView()
   }
@@ -119,8 +176,7 @@
 
   function move(delta: number): void {
     if (options.length === 0) return
-    const next = Math.min(options.length - 1, Math.max(0, active + delta))
-    active = next
+    setActive(Math.min(options.length - 1, Math.max(0, active + delta)))
     scrollActiveIntoView()
   }
 
@@ -138,7 +194,7 @@
     for (let step = 0; step < options.length; step += 1) {
       const index = (from + step) % options.length
       if (options[index].label.toLowerCase().startsWith(typed.toLowerCase())) {
-        active = index
+        setActive(index)
         scrollActiveIntoView()
         return
       }
@@ -165,12 +221,12 @@
         break
       case 'Home':
         event.preventDefault()
-        active = 0
+        setActive(0)
         scrollActiveIntoView()
         break
       case 'End':
         event.preventDefault()
-        active = options.length - 1
+        setActive(options.length - 1)
         scrollActiveIntoView()
         break
       case 'Enter':

@@ -52,6 +52,23 @@ export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 export const DEFAULT_REFRESH_INTERVAL_MS = 10_000
 
 /**
+ * How stale the browsable-kind list may get before it is re-read.
+ *
+ * Its own cadence rather than the row poll's, because the two cost wildly
+ * different amounts. Listing pods is one request; enumerating kinds is a
+ * discovery walk — ServerPreferredResources issues a request per API group,
+ * which is dozens on a cluster carrying a few operators. Running that every
+ * couple of seconds to catch a CRD installed once a month is not a trade
+ * worth making.
+ *
+ * Five minutes is chosen against what it is watching for: a CRD appears when
+ * somebody installs an operator, and somebody who has just done that will
+ * wait a few minutes for it to show up far more readily than they would
+ * reconnect a tab to find out it worked.
+ */
+const KINDS_REFRESH_INTERVAL_MS = 5 * 60_000
+
+/**
  * The cluster dashboard's navigation id.
  *
  * Not a Kubernetes kind and deliberately not in the backend catalog: the
@@ -238,6 +255,15 @@ export class ClusterSession {
    */
   #request = 0
   #timer: ReturnType<typeof setInterval> | null = null
+
+  /**
+   * When the kind list was last read, as a timestamp.
+   *
+   * Zero means "never successfully read", which is what makes a discovery
+   * that failed at connect retry on the first poll instead of leaving the
+   * navigator empty for five minutes.
+   */
+  #kindsReadAt = 0
 
   /**
    * Invoked when this cluster turns out to be gone from the kubeconfig.
@@ -486,6 +512,7 @@ export class ClusterSession {
   loadKinds = async (): Promise<void> => {
     try {
       this.kinds = await listKinds(this.cluster.id)
+      this.#kindsReadAt = Date.now()
     } catch (cause) {
       this.#fail(cause)
     }
@@ -501,6 +528,35 @@ export class ClusterSession {
       const error = toApiError(cause)
       this.namespaces = []
       if (error.code !== 'forbidden') this.error = error
+    }
+  }
+
+  /**
+   * Re-reads the namespace list, for the moment somebody opens the filter.
+   *
+   * Namespaces are created and deleted while a tab sits open, and this list
+   * was read once at connect and never again — so a namespace created a
+   * minute ago stayed missing from the filter until the cluster was
+   * reconnected, on a screen that was meanwhile listing that namespace's own
+   * objects quite happily.
+   *
+   * Refreshed on OPEN rather than folded into the poll, because the filter is
+   * the only thing that reads this list. Polling it would re-list namespaces
+   * every few seconds on every connected cluster to keep fresh a list nobody
+   * is looking at; opening the dropdown is the one moment its freshness can
+   * possibly matter, and it costs a single request.
+   *
+   * Failure is silent and leaves the list alone — the difference from
+   * loadNamespaces, which is populating an empty filter and for which empty
+   * is the honest answer. Here there is a working list on screen under the
+   * operator's cursor, and a momentary blip must neither empty it nor throw a
+   * banner over a control that is still perfectly usable.
+   */
+  refreshNamespaces = async (): Promise<void> => {
+    try {
+      this.namespaces = await listNamespaces(this.cluster.id)
+    } catch {
+      // Keep what is displayed. The next open tries again.
     }
   }
 
@@ -610,6 +666,12 @@ export class ClusterSession {
     const request = ++this.#request
     this.status = 'loading'
 
+    // Hung off refresh rather than off the poll timer, so it also happens for
+    // somebody who turned auto-refresh off in Settings and drives the app with
+    // the refresh button. It rate-limits itself, so the mutation handlers that
+    // call refresh() to reload a list tick past it for free.
+    void this.#refreshKinds()
+
     try {
       const rows = await this.#fetch()
       if (request !== this.#request) return
@@ -622,6 +684,39 @@ export class ClusterSession {
       if (request !== this.#request) return
       this.status = 'error'
       this.#fail(cause)
+    }
+  }
+
+  /**
+   * Re-reads the navigator's kinds once they are old enough to be worth it.
+   *
+   * The same staleness the namespace filter had, in the place it cannot be
+   * fixed the same way: the tree is on screen the whole time, so there is no
+   * "moment of use" to hang a refresh on the way the dropdown has. It is
+   * therefore polled, but on its own slow clock — see
+   * KINDS_REFRESH_INTERVAL_MS for what discovery costs.
+   *
+   * Without this, a CRD installed while a tab was open never appeared in it,
+   * which quietly contradicted the thing the tree exists to do: render
+   * whatever the API server serves rather than a list compiled into the
+   * frontend.
+   */
+  async #refreshKinds(): Promise<void> {
+    if (Date.now() - this.#kindsReadAt < KINDS_REFRESH_INTERVAL_MS) return
+
+    // Stamped BEFORE the call, not after it. Stamping on success alone means
+    // a cluster whose discovery is failing gets retried on every single poll
+    // — every two seconds, at the fastest interval — instead of once per
+    // window, which is the opposite of what a slow clock is for.
+    this.#kindsReadAt = Date.now()
+
+    try {
+      this.kinds = await listKinds(this.cluster.id)
+    } catch {
+      // Keep the tree that is on screen. This is a background top-up of
+      // something already displayed and usable, so it must not blank the
+      // navigator or raise an error over the list the operator is reading —
+      // the same reasoning as #refreshAssessment below.
     }
   }
 
