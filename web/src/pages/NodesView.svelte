@@ -92,6 +92,7 @@
           <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
             <MeterBar
               label={node.cpu}
+              valueWidth="7ch"
               percent={node.cpuPercent}
               measured={node.hasMetrics}
               title={node.hasMetrics

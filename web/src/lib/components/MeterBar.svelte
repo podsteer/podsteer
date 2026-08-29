@@ -60,6 +60,25 @@
     thresholds?: boolean
     /** Tooltip for the whole meter, naming what the proportion is of. */
     title?: string
+    /**
+     * How much room to reserve for the value, as a CSS length.
+     *
+     * Fixed per COLUMN, because that is what keeps the bars on a common left
+     * edge — a box that hugged each row's own text would start every bar at a
+     * different x and there would be nothing to compare down the column.
+     *
+     * But fixed per column, NOT one width for all of them. A single figure
+     * shared by CPU and memory has to be sized for the longer of the two, and
+     * the shorter column then carries the difference as dead space on its
+     * left for every row it will ever draw: `0.015` in a box cut for
+     * `1023.9MiB` is a third of the cell reserved for characters that cannot
+     * appear in it.
+     *
+     * Expressed in `ch` so it tracks the font rather than a pixel guess about
+     * it. With `tabular-nums` every digit is exactly 1ch, so the width can be
+     * counted off the widest string the formatter can actually produce.
+     */
+    valueWidth?: string
     class?: string
   }
 
@@ -70,6 +89,7 @@
     thresholds = true,
     title,
     absent = '',
+    valueWidth = '9ch',
     class: className = '',
   }: Props = $props()
 
@@ -106,9 +126,10 @@
 -->
 <div class="flex items-center gap-2 {className}" {title}>
   <span
-    class="w-20 shrink-0 truncate text-right tabular-nums {measured
+    class="shrink-0 truncate text-right tabular-nums {measured
       ? ''
       : 'text-on-surface-variant/40'}"
+    style="width: {valueWidth}"
   >
     {label}
   </span>

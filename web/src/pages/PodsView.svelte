@@ -126,6 +126,7 @@
           <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
             <MeterBar
               label={pod.cpu}
+              valueWidth="7ch"
               percent={pod.hasCpuRequest ? pod.cpuPercent : null}
               measured={pod.hasMetrics}
               thresholds={false}
