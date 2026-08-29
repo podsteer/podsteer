@@ -99,6 +99,63 @@ If it is reversed, the shape is already clear: extend the existing
 TTL, and label the figures as kubelet-sourced rather than passing them off as
 `kubectl top` equivalents.
 
+## The wider question: replacing metrics-server entirely
+
+Asked and answered on 2026-08-29, because "we rely on metrics-server rather a
+lot" is the natural next thought and deserves recording rather than
+rediscovering.
+
+**Every comparable tool depends on the same API.** k9s, Headlamp, Aptakube and
+`kubectl top` all read `metrics.k8s.io` and show nothing without it. Lens is
+the only one that does more, and it goes the OPPOSITE way — offering to install
+Prometheus into the cluster rather than collecting anything itself. Nobody
+scrapes kubelets from the client. That unanimity is evidence, not inertia.
+
+**The reason is architectural, not effort.** metrics-server scrapes each
+kubelet's Summary API *directly*, from inside the cluster, deliberately
+bypassing the API server so that metric collection adds no control-plane load.
+A desktop client cannot do that: it is outside the cluster, so every kubelet
+read must be proxied through the API server — the exact path metrics-server was
+designed to avoid.
+
+The cost also scales the wrong way. One request per node per refresh, at ten
+seconds, is 3,000 proxied requests a minute on a 500-node cluster — **per
+user**. Ten engineers with PodSteer open makes it 30,000. metrics-server does
+that work once, for everybody, without touching the control plane. Building it
+in means building a per-user, out-of-cluster metrics-server whose cost scales
+with nodes × users instead of nodes.
+
+Two further costs are permanent rather than one-off: `/stats/summary` is a
+kubelet implementation detail rather than a versioned API — metrics-server
+tracks its changes on our behalf, and the CRI-stats migration is what that
+looks like — and any figure we compute ourselves becomes ours to defend when it
+disagrees with `kubectl top`.
+
+**Conclusion: the dependency stays.** It is the correct dependency, held for
+the same reasons every peer holds it. The thing worth being better at is the
+experience of not having it, which is what this decision built.
+
+### The one piece worth reconsidering
+
+NODE-level usage, as distinct from per-pod. `node.cpu.usageNanoCores` and
+`node.memory.workingSetBytes` are already in the `/stats/summary` response that
+`filesystems.go` fetches and parses today — so node usage would add no requests
+we do not already make. Per-pod is where the cost lives; per-node is where a
+good share of the value is. That is a small, self-contained assessment of its
+own and has not been done.
+
+### And what is explicitly NOT this decision
+
+An IN-CLUSTER collector operated by PodSteer. Every argument above turns on the
+client being outside the cluster; something running inside has none of those
+problems. That is a different product with a different deployment model — and
+it is the shape the planned server-side tier already has (see CLAUDE.md), where
+it would also solve the thing metrics-server genuinely cannot: history beyond
+the few seconds it retains, which is why the trend chart currently has to
+caveat itself as covering only the time the application was open.
+
+Filed under a different heading, not rejected.
+
 ## Uncertainties, recorded rather than resolved
 
 - Which metrics-server version moved from `stats/summary` to
