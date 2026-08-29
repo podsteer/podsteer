@@ -73,13 +73,16 @@
 </script>
 
 <!--
-  The value keeps the table's own text size and colour rather than shrinking
-  to a caption. It is the number being reported; the bar and the percentage
-  are the annotation, and they are the parts that are set smaller and dimmer.
+  The value and the percentage both keep the table's own text size. Only the
+  colour separates them: the measurement is stated in the body colour, the
+  proportion in the muted one, so the pair reads as a figure with a qualifier
+  rather than a figure with a footnote.
 
-  Fixed widths on all three parts so that the numbers line up down the column.
-  Ragged decimal points are surprisingly hard to scan, and scanning is the
-  whole job of this column.
+  The two TEXT parts are fixed-width and the BAR is what flexes. Widening the
+  column has to make the bar longer, because the bar is the only part of the
+  cell that gets more useful with more room — the numbers are the same eight
+  characters at any width, and letting them stretch would only unpick the
+  decimal alignment that makes the column scannable in the first place.
 -->
 <div class="flex items-center gap-2 {className}" {title}>
   <span
@@ -91,13 +94,15 @@
   </span>
 
   {#if measured && percent !== null}
-    <span class="h-1.5 w-10 shrink-0 overflow-hidden rounded-full bg-surface-container-highest">
+    <span
+      class="h-1.5 min-w-6 flex-1 overflow-hidden rounded-full bg-surface-container-highest"
+    >
       <span
         class="block h-full rounded-full transition-all duration-300 ease-standard {tone}"
         style="width: {width}%"
       ></span>
     </span>
-    <span class="w-9 shrink-0 text-right text-[11px] tabular-nums text-on-surface-variant/70">
+    <span class="w-12 shrink-0 text-right tabular-nums text-on-surface-variant/70">
       {Math.round(percent)}%
     </span>
   {/if}

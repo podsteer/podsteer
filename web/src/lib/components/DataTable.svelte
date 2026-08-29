@@ -22,6 +22,19 @@
     label: string
     /** Default width in pixels, before any user resize. */
     width: number
+    /**
+     * Narrowest this column may be dragged, when the shared floor is too
+     * generous for what the cell has to fit.
+     *
+     * The floor exists because most cells degrade gracefully — a truncated
+     * name is still a name, and an operator who narrows that column has
+     * decided they can live with it. A cell built from several fixed-width
+     * parts does not degrade, it collapses: the meter columns hold a value, a
+     * bar and a percentage, and below their combined width the bar is what
+     * silently disappears, which is the one part that cannot be inferred from
+     * anything else on the row.
+     */
+    minWidth?: number
     /** Right-aligns the cells, for numeric values. */
     numeric?: boolean
     /** Cannot be hidden. The name column, essentially. */
@@ -229,7 +242,14 @@
    */
   function widthOf(column: Column): number {
     if (dragging?.id === column.id) return dragging.width
-    return preferences.columnWidth(kindId, column.id) ?? column.width
+
+    // The stored width is clamped on the way OUT, not just on the way in. A
+    // preference is persisted per kind and outlives the code that produced
+    // it, so a column that was narrow before it grew a minimum — or before
+    // its cell was rebuilt to hold more — would otherwise stay at a width
+    // nothing can render in, with no way to discover why except dragging it.
+    const stored = preferences.columnWidth(kindId, column.id)
+    return Math.max(minWidthOf(column), stored ?? column.width)
   }
 
   // --- Resizing -------------------------------------------------------------
@@ -241,6 +261,11 @@
 
   /** Narrower than this and a column shows nothing useful, only an ellipsis. */
   const MIN_WIDTH = 56
+
+  /** The floor for one column: its own, when it declares one. */
+  function minWidthOf(column: Column): number {
+    return column.minWidth ?? MIN_WIDTH
+  }
 
   function startResize(event: PointerEvent, column: Column): void {
     // Stop the pointerdown reaching the header, which would otherwise be
@@ -255,7 +280,9 @@
 
   function onResizeMove(event: PointerEvent): void {
     if (!dragging) return
-    const width = Math.max(MIN_WIDTH, dragging.startWidth + (event.clientX - dragging.startX))
+    const column = columns.find((candidate) => candidate.id === dragging?.id)
+    const floor = column ? minWidthOf(column) : MIN_WIDTH
+    const width = Math.max(floor, dragging.startWidth + (event.clientX - dragging.startX))
     dragging = { ...dragging, width }
   }
 
