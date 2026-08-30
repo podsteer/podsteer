@@ -157,6 +157,18 @@ type ResourcePort interface {
 
 	// GetManifest returns one object serialised as YAML, for the detail view.
 	GetManifest(ctx context.Context, ref domain.ResourceRef) (string, error)
+
+	// RevealSecretKey returns the decoded value of ONE key of one Secret.
+	//
+	// One key, never the whole Secret, and never as a side effect of anything
+	// else — this is only ever called because somebody clicked to reveal that
+	// key. Reading Secrets is an audited action that Kubernetes' own
+	// good-practices page tells cluster operators to alert on, and Falco
+	// ships an enabled rule for; a client that resolves every referenced
+	// Secret when a pane opens generates exactly that signature on somebody
+	// else's dashboard. Narrowing the call to a deliberate act keeps each
+	// audit entry meaningful.
+	RevealSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string) (string, error)
 }
 
 // TerminalSize represents a terminal window size.

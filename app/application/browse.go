@@ -228,3 +228,28 @@ func (s *BrowseService) GetManifest(ctx context.Context, id domain.ClusterID, ki
 
 	return manifest, nil
 }
+
+// RevealSecretKey returns one decoded Secret value, on explicit request.
+//
+// Deliberately not part of GetManifest, ListPods or anything else that runs
+// on a timer or when a pane opens. Every call to this is a person clicking
+// "reveal" on one key, which is what makes the resulting audit entry
+// interpretable by whoever reads the cluster's audit log.
+func (s *BrowseService) RevealSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string) (string, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return "", fmt.Errorf("revealing secret key: %w", err)
+	}
+	if name == "" || key == "" {
+		return "", fmt.Errorf("revealing secret key: %w", domain.ErrEmptyResourceName)
+	}
+
+	value, err := s.resources.RevealSecretKey(ctx, id, namespace, name, key)
+	if err != nil {
+		// The value is never in the error, and the key name is the most that
+		// is logged. An RBAC denial here is ordinary — plenty of engineers
+		// deliberately hold no `get secrets` — so this is not warned about.
+		return "", fmt.Errorf("revealing key %q of secret %q: %w", key, name, err)
+	}
+
+	return value, nil
+}

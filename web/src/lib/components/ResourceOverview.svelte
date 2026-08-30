@@ -241,7 +241,12 @@
         <DetailSection level="h3" title="Containers ({containers.length})">
           <div class="flex flex-col gap-3">
             {#each containers as container (container.name)}
-              <ContainerDetail spec={container} status={statusFor(container.name)} />
+              <ContainerDetail
+                spec={container}
+                status={statusFor(container.name)}
+                clusterId={selectedPod?.clusterId ?? ''}
+                namespace={metadata.namespace ?? ''}
+              />
             {/each}
           </div>
         </DetailSection>
@@ -254,7 +259,12 @@
         <DetailSection level="h3" title="Init containers ({initContainers.length})">
           <div class="flex flex-col gap-3">
             {#each initContainers as container (container.name)}
-              <ContainerDetail spec={container} status={statusFor(container.name)} />
+              <ContainerDetail
+                spec={container}
+                status={statusFor(container.name)}
+                clusterId={selectedPod?.clusterId ?? ''}
+                namespace={metadata.namespace ?? ''}
+              />
             {/each}
           </div>
         </DetailSection>

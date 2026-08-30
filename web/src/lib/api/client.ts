@@ -23,6 +23,7 @@ import {
 } from '$lib/wailsjs/go/wails/ClusterAPI'
 import {
   GetManifest as bindGetManifest,
+  RevealSecretKey as bindRevealSecretKey,
   ListEvents as bindListEvents,
   ListEventsForResource as bindListEventsForResource,
   ListKinds as bindListKinds,
@@ -332,6 +333,28 @@ export function getManifest(
   name: string,
 ): Promise<string> {
   return call(() => bindGetManifest(clusterId, kindId, namespace, name))
+}
+
+/**
+ * Returns one decoded Secret value, for a reveal the operator asked for.
+ *
+ * NEVER call this speculatively — not on mount, not on a timer, not to warm
+ * anything. Reading a Secret is an audited action, and Kubernetes' own
+ * good-practices page tells cluster operators to alert on several being read
+ * at once; a pane that resolved every reference on open would produce that
+ * signature on somebody else's security dashboard. One call, one key, one
+ * deliberate click.
+ *
+ * The result is a plaintext credential. Hold it in component-local state that
+ * is cleared, never in a store, and never write it anywhere that persists.
+ */
+export function revealSecretKey(
+  clusterId: string,
+  namespace: string,
+  name: string,
+  key: string,
+): Promise<string> {
+  return call(() => bindRevealSecretKey(clusterId, namespace, name, key))
 }
 
 // --- System -----------------------------------------------------------------

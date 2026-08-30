@@ -168,3 +168,37 @@ func (b *BrowseAPI) GetManifest(clusterID, kindID, namespace, name string) (stri
 
 	return manifest, nil
 }
+
+// RevealSecretKey returns one decoded Secret value, for a deliberate reveal.
+//
+// Bound as its own narrow method rather than folded into anything the UI
+// calls on its own. Nothing in PodSteer reaches this except a person clicking
+// to reveal one key, which is what keeps each entry in a cluster's audit log
+// interpretable — a client that resolved every referenced Secret when a pane
+// opened would produce the exact burst pattern Kubernetes' Secret
+// good-practices page tells operators to alert on.
+//
+// The returned value is never logged, never cached and never written to a
+// crash report: apiError below records the operation and the error, and the
+// error from the layers underneath carries the key name at most.
+func (b *BrowseAPI) RevealSecretKey(clusterID, namespace, name, key string) (string, error) {
+	ctx, cancel := b.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return "", apiError(b.logger, "RevealSecretKey", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return "", apiError(b.logger, "RevealSecretKey", err)
+	}
+
+	value, err := b.resources.RevealSecretKey(ctx, id, ns, name, key)
+	if err != nil {
+		return "", apiError(b.logger, "RevealSecretKey", err)
+	}
+
+	return value, nil
+}

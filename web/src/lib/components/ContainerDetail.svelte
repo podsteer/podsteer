@@ -14,6 +14,7 @@
   import DetailList, { type DetailRow } from './DetailList.svelte'
   import { formatEnvValue, formatMount, formatPorts, formatProbe, isFromSecret, looksSensitive } from '$lib/container'
   import type { Container } from '$lib/api/client'
+  import SecretReveal from './SecretReveal.svelte'
   import { EyeOff } from '@lucide/svelte'
 
   interface Props {
@@ -21,9 +22,12 @@
     spec: Record<string, any>
     /** Its live status from the pod DTO, when the names match. */
     status?: Container
+    /** Identifies the pod, so a Secret key can be read on request. */
+    clusterId: string
+    namespace: string
   }
 
-  let { spec, status }: Props = $props()
+  let { spec, status, clusterId, namespace }: Props = $props()
 
   /**
    * The identity rows: what is running, and whether it is up.
@@ -96,21 +100,43 @@
       resolved here.
     -->
     <p class="mt-3 mb-1 text-body-medium text-on-surface">Environment ({env.length})</p>
-    <DetailList
-      rows={env.map((variable) => ({
-        label: variable.name,
-        value: looksSensitive(variable as never)
-          ? '••••••••  (looks like a credential — check the manifest if you meant this)'
-          : formatEnvValue(variable as never),
-        truncate: true,
-      }))}
-    />
+    <dl class="grid grid-cols-[25%_1fr] gap-x-4 gap-y-2">
+      {#each env as variable (variable.name)}
+        {@const ref = (variable.valueFrom as { secretKeyRef?: { name?: string; key?: string } })
+          ?.secretKeyRef}
+        <dt class="min-w-0 break-words text-body-medium text-on-surface" data-selectable>
+          {variable.name}
+        </dt>
+        <dd class="min-w-0 text-body-medium text-on-surface-variant">
+          {#if ref?.name && ref?.key}
+            <!-- Read on request only, never on render. -->
+            <SecretReveal {clusterId} {namespace} secret={ref.name} secretKey={ref.key} />
+          {:else if looksSensitive(variable as never)}
+            <!--
+              A literal that looks like a credential. There is nothing to
+              reveal — it is right there in the manifest tab — so this is not
+              a lock, it is a note that the pod spec is carrying a secret in
+              the clear where anyone with `get pod` can read it.
+            -->
+            <span class="inline-flex items-baseline gap-2">
+              <span class="font-mono">••••••••</span>
+              <span class="text-body-small text-gauge-warn">
+                literal credential in the pod spec
+              </span>
+            </span>
+          {:else}
+            <span class="break-words" data-selectable>{formatEnvValue(variable as never)}</span>
+          {/if}
+        </dd>
+      {/each}
+    </dl>
     {#if env.some((variable) => isFromSecret(variable as never)) || env.some((variable) => looksSensitive(variable as never))}
       <p class="mt-1.5 flex items-start gap-1.5 text-body-small text-on-surface-variant/70">
         <EyeOff class="mt-0.5 size-3.5 shrink-0" strokeWidth={1.8} />
         <span>
-          Secret values are not read. What a Secret holds now is not necessarily what this
-          container was started with — environment is injected once, at start.
+          Secret values are read only when you ask, and hide again shortly after. What a
+          Secret holds now is not necessarily what this container was started with —
+          environment is injected once, at start, and never updated.
         </span>
       </p>
     {/if}

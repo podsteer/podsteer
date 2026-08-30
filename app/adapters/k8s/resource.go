@@ -218,3 +218,39 @@ func renderCell(cell any) string {
 		return fmt.Sprint(value)
 	}
 }
+
+// RevealSecretKey returns one decoded value from one Secret.
+//
+// The typed client is used rather than the dynamic one deliberately:
+// corev1.Secret.Data is []byte already base64-decoded by client-go, so
+// nothing here does its own decoding and there is no encoded copy of the
+// value in this process to leak into a log line or an error string.
+//
+// ONE KEY LEAVES THIS FUNCTION. The Secret is fetched whole because the API
+// offers no narrower read, but everything except the requested key is
+// discarded here, at the boundary, rather than travelling up through the
+// application and across the Wails bridge where each layer is another place a
+// value can be logged, cached or serialised into a crash report.
+func (a *Adapter) RevealSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string) (string, error) {
+	op := fmt.Sprintf("reading key %q of secret %q in %q", key, name, namespace)
+
+	set, err := a.factory.clientsFor(id)
+	if err != nil {
+		return "", err
+	}
+
+	secret, err := set.typed.CoreV1().Secrets(namespace.String()).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", classify(op, err)
+	}
+
+	value, ok := secret.Data[key]
+	if !ok {
+		// A key named by a pod that the Secret does not have. The pod is
+		// misconfigured — or the Secret changed under it — and saying so is
+		// more useful than an empty string that reads like an empty value.
+		return "", fmt.Errorf("%s: %w", op, domain.ErrSecretKeyNotFound)
+	}
+
+	return string(value), nil
+}

@@ -46,4 +46,13 @@ var (
 	// ErrClusterNotConnected reports that an operation was attempted against a
 	// cluster PodSteer has not connected to.
 	ErrClusterNotConnected = errors.New("cluster not connected")
+
+	// ErrSecretKeyNotFound reports that a Secret exists but does not hold the
+	// key that was asked for.
+	//
+	// Distinct from an empty value on purpose: a pod naming a key its Secret
+	// does not have is misconfigured, or the Secret changed underneath it,
+	// and either is worth saying rather than rendering nothing and letting it
+	// read as "this variable is blank".
+	ErrSecretKeyNotFound = errors.New("secret key not found")
 )

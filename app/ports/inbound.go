@@ -127,4 +127,7 @@ type ResourceService interface {
 
 	// GetManifest returns one object as YAML.
 	GetManifest(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, name string) (string, error)
+
+	// RevealSecretKey returns one decoded Secret value, on explicit request.
+	RevealSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string) (string, error)
 }
