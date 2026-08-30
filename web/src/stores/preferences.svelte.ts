@@ -122,9 +122,26 @@ export type ThresholdScope = 'overview' | 'nodes' | 'pods'
  * request-denominated bar there is nowhere honest to put them, so they are
  * left off and the colour alone carries the warning.
  *
- * Requests by default, because that is the reading the rest of PodSteer is
- * built around and because most pods declare a request more often than a
- * limit — a limits-first default would show a lot of empty cells.
+ * LIMITS by default. A request-denominated bar cannot warn anybody about
+ * anything: it is a right-sizing instrument, and right-sizing is a thing done
+ * occasionally and deliberately, not the question somebody has open while an
+ * application is misbehaving. Reading 130% of a request tells you a pod is
+ * bursting, which is normal; the first real signal that it was in trouble is
+ * then the OOMKill. Against the limit, the same pod is visibly at 90% of its
+ * ceiling with time to act.
+ *
+ * This defaulted to requests for one build, on the grounds that more pods
+ * declare a request than a limit so a limits-first default shows emptier
+ * cells. That is an argument about how much of the column is painted, and it
+ * was allowed to outrank an argument about what the paint means. A pod with
+ * no limit is not a gap in the data either — an unbounded container is one
+ * that can take a node down with it, and saying so is worth more than a bar
+ * measuring it against a reservation it is already past.
+ *
+ * It is also the only mode in which the threshold ticks can be drawn, because
+ * it is the only one where the bar and the lines count the same thing. A
+ * default that cannot show the lines the operator set in Settings is the
+ * wrong default.
  */
 export type PodMeasure = 'requests' | 'limits'
 
@@ -295,7 +312,7 @@ const DEFAULTS: PersistedShape = {
   // serious case can turn the first one off, but a default that says nothing
   // until something is already critical is a default that arrives too late.
   thresholds: defaultThresholdsByScope(),
-  podMeasure: 'requests',
+  podMeasure: 'limits',
   // Off. An application that starts making noise nobody asked for is one
   // people mute at the operating system, taking the alarm they DID want with
   // it. Whoever wants this turns it on, and hears the sound as they choose it.
