@@ -22,6 +22,7 @@
     THEME_LABELS,
     THRESHOLD_SCOPES,
     type PageSize,
+    type PodMeasure,
     type ThresholdScope,
   } from '$stores/preferences.svelte'
 
@@ -47,7 +48,7 @@
     pods: {
       name: 'Pods',
       detail:
-        'CPU and memory in the pod list, measured against each pod’s limits — how close it is to being throttled, or to being OOMKilled. Pods that declare no limit have no ceiling to be near, and stay uncoloured.',
+        'CPU and memory in the pod list. Amber and red always come from how close a pod is to its limits — to being throttled, or OOMKilled — and a pod that declares no limit has no ceiling to be near.',
     },
   }
   import {
@@ -144,6 +145,41 @@
   <div>
     <h4 class="text-title-small text-on-surface">{meta.name}</h4>
     <p class="mt-0.5 text-body-small text-on-surface-variant">{meta.detail}</p>
+
+    <!--
+      Only the pod list has two honest denominators to choose between, so only
+      it gets this control. A node's bar divides by allocatable and there is
+      nothing else it could divide by.
+    -->
+    {#if scope === 'pods'}
+      <div class="mt-4 rounded-xs border border-outline-variant/60 p-3">
+        <p class="text-body-medium text-on-surface">What the bars measure</p>
+        <p class="mt-0.5 text-body-small text-on-surface-variant">
+          Requests answer "did I reserve about the right amount", where a full bar is a success.
+          Limits answer "how much headroom is left", where a full bar is the problem — and only
+          that mode can mark the two lines on the track, because only then do the bar and the
+          thresholds count the same thing. Either way the tooltip states both numbers.
+        </p>
+
+        <div class="mt-3 flex">
+          {#each [{ id: 'requests', label: 'Requests' }, { id: 'limits', label: 'Limits' }] as mode (mode.id)}
+            <button
+              type="button"
+              onclick={() => preferences.setPodMeasure(mode.id as PodMeasure)}
+              aria-pressed={preferences.podMeasure === mode.id}
+              class="state-layer h-9 flex-1 border text-label-large transition-colors
+                     duration-150 ease-standard
+                     {mode.id === 'requests' ? 'rounded-l-xs' : '-ml-px rounded-r-xs'}
+                     {preferences.podMeasure === mode.id
+                       ? 'border-transparent bg-secondary-container text-on-secondary-container'
+                       : 'border-outline text-on-surface-variant'}"
+            >
+              {mode.label}
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
 
     <!-- Each line switches off on its own. Somebody who only wants to know
          about the serious case turns the first one off and gets blue all the

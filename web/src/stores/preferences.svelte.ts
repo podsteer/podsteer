@@ -107,6 +107,27 @@ function clampThreshold(value: number): number {
  */
 export type ThresholdScope = 'overview' | 'nodes' | 'pods'
 
+/**
+ * Which denominator the pod list's bars divide by.
+ *
+ * The one measurement in the application that genuinely has two right
+ * answers, because it is asked by two different people. Somebody sizing
+ * workloads wants usage against the REQUEST — did I reserve about the right
+ * amount — where a full bar is a success. Somebody chasing a slow job wants
+ * usage against the LIMIT — how much headroom is left before the kernel
+ * throttles or kills it — where a full bar is the problem.
+ *
+ * It also decides whether the threshold ticks can be drawn at all. A tick
+ * marks a position on the track, and the thresholds belong to the limit: on a
+ * request-denominated bar there is nowhere honest to put them, so they are
+ * left off and the colour alone carries the warning.
+ *
+ * Requests by default, because that is the reading the rest of PodSteer is
+ * built around and because most pods declare a request more often than a
+ * limit — a limits-first default would show a lot of empty cells.
+ */
+export type PodMeasure = 'requests' | 'limits'
+
 /** The scopes, in the order Settings lists them. */
 export const THRESHOLD_SCOPES: ThresholdScope[] = ['overview', 'nodes', 'pods']
 
@@ -226,6 +247,8 @@ interface PersistedShape {
   snoozes: Record<string, Record<string, number>>
   /** Per-surface threshold lines. */
   thresholds: Record<ThresholdScope, ThresholdSet>
+  /** Which denominator the pod list's bars use. */
+  podMeasure: PodMeasure
   /**
    * The single pair every surface shared before the setting grew scopes.
    *
@@ -272,6 +295,7 @@ const DEFAULTS: PersistedShape = {
   // serious case can turn the first one off, but a default that says nothing
   // until something is already critical is a default that arrives too late.
   thresholds: defaultThresholdsByScope(),
+  podMeasure: 'requests',
   // Off. An application that starts making noise nobody asked for is one
   // people mute at the operating system, taking the alarm they DID want with
   // it. Whoever wants this turns it on, and hears the sound as they choose it.
@@ -346,6 +370,9 @@ class Preferences {
    * they are not using is still there when they switch it back on.
    */
   thresholds = $state<Record<ThresholdScope, ThresholdSet>>(defaultThresholdsByScope())
+
+  /** What the pod list's bars are a proportion of. */
+  podMeasure = $state<PodMeasure>(DEFAULTS.podMeasure)
 
   /** Whether a newly raised warning or critical finding makes a sound. */
   alertSoundsEnabled = $state<boolean>(DEFAULTS.alertSoundsEnabled)
@@ -505,6 +532,12 @@ class Preferences {
     // Replaced rather than mutated, so one assignment invalidates the derived
     // values that read it instead of each field doing so separately.
     this.thresholds = { ...this.thresholds, [scope]: set }
+    this.#save()
+  }
+
+  /** Chooses what the pod list's bars measure against. */
+  setPodMeasure = (measure: PodMeasure): void => {
+    this.podMeasure = measure
     this.#save()
   }
 
@@ -714,6 +747,10 @@ class Preferences {
         warnEnabled: stored.warnEnabled,
         criticalEnabled: stored.criticalEnabled,
       })
+      if (stored.podMeasure === 'requests' || stored.podMeasure === 'limits') {
+        this.podMeasure = stored.podMeasure
+      }
+
       const scoped = (stored.thresholds ?? {}) as Partial<Record<ThresholdScope, unknown>>
 
       this.thresholds = {
@@ -764,6 +801,7 @@ class Preferences {
         namespaceByCluster: this.namespaceByCluster,
         snoozes: this.#pruneSnoozes(),
         thresholds: this.thresholds,
+        podMeasure: this.podMeasure,
         alertSoundsEnabled: this.alertSoundsEnabled,
         alertSounds: this.alertSounds,
         columns: this.columns,

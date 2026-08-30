@@ -11,6 +11,7 @@
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { formatAge, podStatusLabel, podTone } from '$lib/format'
+  import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import { Box, CircleDot } from '@lucide/svelte'
 
@@ -34,6 +35,52 @@
     { id: 'ip', label: 'IP', width: 120, defaultHidden: true },
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
+
+  /**
+   * Whether the bars divide by limits rather than requests.
+   *
+   * When they do, the bar and the operator's thresholds share one denominator
+   * at last, so the meter can be drawn as a proper gauge — segmented, with
+   * the two lines marked on the track exactly as the node list draws them.
+   * When they do not, the fill answers a question the thresholds are not
+   * about, so the lines are left unmarked and only the colour carries them.
+   */
+  const byLimit = $derived(preferences.podMeasure === 'limits')
+
+  /**
+   * Everything one meter cell needs, resolved for whichever mode is on.
+   *
+   * Gathered in one place rather than spread across eight attributes per
+   * cell: the mode changes four things at once — what fills the bar, what
+   * colours it, what the empty state says, and whether ticks are drawn — and
+   * they have to change together or the cell starts contradicting itself.
+   */
+  function meter(
+    hasRequest: boolean,
+    requestPercent: number,
+    hasLimit: boolean,
+    limitPercent: number,
+  ) {
+    if (byLimit) {
+      return {
+        // Null when nothing was declared, which draws `absent` instead of a
+        // bar measured against a ceiling this pod does not have.
+        percent: hasLimit ? limitPercent : null,
+        // No separate colour source: the fill IS the limit ratio here, so
+        // GaugeTrack colours and marks it from the same number.
+        severity: null,
+        thresholds: true,
+        absent: 'no limit',
+      }
+    }
+
+    return {
+      percent: hasRequest ? requestPercent : null,
+      severity: hasLimit ? limitPercent : null,
+      thresholds: false,
+      absent: 'no request',
+    }
+  }
 
   /**
    * Spells out what the bar is a proportion of, and what it is heading for.
@@ -139,17 +186,23 @@
           docs/decisions/0002-pod-meters-name-the-absent-denominator.md.
         -->
         {#if isVisible('cpu')}
+          {@const cpu = meter(
+            pod.hasCpuRequest,
+            pod.cpuPercent,
+            pod.hasCpuLimit,
+            pod.cpuLimitPercent,
+          )}
           <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
             <MeterBar
               label={pod.cpu}
               scope="pods"
               name="CPU"
               valueWidth="7ch"
-              percent={pod.hasCpuRequest ? pod.cpuPercent : null}
+              percent={cpu.percent}
               measured={pod.hasMetrics}
-              thresholds={false}
-              absent="no request"
-              severity={pod.hasCpuLimit ? pod.cpuLimitPercent : null}
+              thresholds={cpu.thresholds}
+              absent={cpu.absent}
+              severity={cpu.severity}
               title={meterTitle(
                 pod.hasMetrics,
                 pod.cpu,
@@ -164,16 +217,22 @@
           </td>
         {/if}
         {#if isVisible('memory')}
+          {@const memory = meter(
+            pod.hasMemoryRequest,
+            pod.memoryPercent,
+            pod.hasMemoryLimit,
+            pod.memoryLimitPercent,
+          )}
           <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
             <MeterBar
               label={pod.memory}
               scope="pods"
               name="Memory"
-              percent={pod.hasMemoryRequest ? pod.memoryPercent : null}
+              percent={memory.percent}
               measured={pod.hasMetrics}
-              thresholds={false}
-              absent="no request"
-              severity={pod.hasMemoryLimit ? pod.memoryLimitPercent : null}
+              thresholds={memory.thresholds}
+              absent={memory.absent}
+              severity={memory.severity}
               title={meterTitle(
                 pod.hasMetrics,
                 pod.memory,
