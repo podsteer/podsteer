@@ -975,6 +975,24 @@ export namespace wails {
 		}
 	}
 	
+	export class PodFinding {
+	    severity: string;
+	    title: string;
+	    detail: string;
+	    advice: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PodFinding(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.severity = source["severity"];
+	        this.title = source["title"];
+	        this.detail = source["detail"];
+	        this.advice = source["advice"];
+	    }
+	}
 	export class Pod {
 	    uid: string;
 	    name: string;
@@ -1007,6 +1025,7 @@ export namespace wails {
 	    hasCpuLimit: boolean;
 	    hasMemoryLimit: boolean;
 	    containers: Container[];
+	    findings: PodFinding[];
 	    labels: Record<string, string>;
 	    createdAt: string;
 	    ageSeconds: number;
@@ -1048,6 +1067,7 @@ export namespace wails {
 	        this.hasCpuLimit = source["hasCpuLimit"];
 	        this.hasMemoryLimit = source["hasMemoryLimit"];
 	        this.containers = this.convertValues(source["containers"], Container);
+	        this.findings = this.convertValues(source["findings"], PodFinding);
 	        this.labels = source["labels"];
 	        this.createdAt = source["createdAt"];
 	        this.ageSeconds = source["ageSeconds"];
@@ -1071,6 +1091,7 @@ export namespace wails {
 		    return a;
 		}
 	}
+	
 	
 	
 	

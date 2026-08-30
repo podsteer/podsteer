@@ -110,6 +110,58 @@ type Container struct {
 	// LastTermination is how this container's previous life ended, when there
 	// was one. See Termination — it is the only record of it that exists.
 	LastTermination Termination
+	// StartedAt is when the CURRENT life began, empty when it is not running.
+	// The difference between it and now is how long this container has been
+	// up, which at the start of a life is how long it took to come up.
+	StartedAt time.Time
+	// Liveness and Startup are the probes whose timings decide whether a slow
+	// container gets killed for being slow. Readiness is deliberately absent:
+	// failing it takes a pod out of a Service, which is a different and
+	// non-fatal problem, and nothing here reasons about it yet.
+	Liveness Probe
+	Startup  Probe
+}
+
+// Probe is a container health check, reduced to the timings that matter.
+//
+// Only the numbers, not the handler: whether it is an HTTP GET or an exec is
+// a presentation detail the frontend renders from the manifest, while the
+// arithmetic below is a judgement about whether the configuration will kill a
+// container that was merely slow.
+type Probe struct {
+	InitialDelaySeconds int32
+	PeriodSeconds       int32
+	TimeoutSeconds      int32
+	FailureThreshold    int32
+}
+
+// IsZero reports whether no probe is configured.
+func (p Probe) IsZero() bool { return p == Probe{} }
+
+// KillsAfter is how long a container has to become healthy before this probe
+// starts restarting it.
+//
+// initialDelay plus one full run of the failure threshold — the probe waits,
+// then has to fail that many times in a row, each a period apart. This is the
+// number nobody computes and everybody is surprised by: a 30s delay with the
+// default threshold of 3 and period of 10 is not a 30-second grace, it is a
+// minute.
+func (p Probe) KillsAfter() time.Duration {
+	if p.IsZero() {
+		return 0
+	}
+
+	period := p.PeriodSeconds
+	if period <= 0 {
+		period = 10 // The API server's default.
+	}
+	threshold := p.FailureThreshold
+	if threshold <= 0 {
+		threshold = 3 // Likewise.
+	}
+
+	return time.Duration(p.InitialDelaySeconds)*time.Second +
+		time.Duration(period*threshold)*time.Second
 }
 
 // Resources is a container's declared CPU and memory, in the same units as

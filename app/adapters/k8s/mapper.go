@@ -131,6 +131,8 @@ func mapContainers(pod *corev1.Pod) []domain.Container {
 			State:    domain.ContainerStateWaiting,
 			Requests: mapResources(spec.Resources.Requests),
 			Limits:   mapResources(spec.Resources.Limits),
+			Liveness: mapProbe(spec.LivenessProbe),
+			Startup:  mapProbe(spec.StartupProbe),
 		}
 
 		if status, ok := statuses[spec.Name]; ok {
@@ -147,6 +149,10 @@ func mapContainers(pod *corev1.Pod) []domain.Container {
 
 			if status.Started != nil {
 				container.Started = *status.Started
+			}
+
+			if running := status.State.Running; running != nil {
+				container.StartedAt = running.StartedAt.UTC()
 			}
 
 			// The previous life, when the API server recorded one. Only the
@@ -698,4 +704,22 @@ func mapPersistentVolumeClaim(clusterID domain.ClusterID, item *corev1.Persisten
 		VolumeName:     item.Spec.VolumeName,
 		CreatedAt:      item.CreationTimestamp.Time,
 	})
+}
+
+// mapProbe reduces a probe to the timings the domain reasons about.
+//
+// The handler — HTTP, exec, TCP, gRPC — is deliberately dropped: it is
+// rendered from the manifest the pane already has, and nothing in the domain
+// draws a conclusion from which kind of check it is. Only the arithmetic
+// crosses this boundary.
+func mapProbe(probe *corev1.Probe) domain.Probe {
+	if probe == nil {
+		return domain.Probe{}
+	}
+	return domain.Probe{
+		InitialDelaySeconds: probe.InitialDelaySeconds,
+		PeriodSeconds:       probe.PeriodSeconds,
+		TimeoutSeconds:      probe.TimeoutSeconds,
+		FailureThreshold:    probe.FailureThreshold,
+	}
 }

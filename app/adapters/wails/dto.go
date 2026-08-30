@@ -237,6 +237,10 @@ type Pod struct {
 	HasMemoryLimit     bool    `json:"hasMemoryLimit"`
 	// Containers are the pod's containers.
 	Containers []Container `json:"containers"`
+	// Findings are what is wrong with this pod, or about to be — each with
+	// what to do about it. See domain.AssessPod. Empty for a pod with nothing
+	// worth saying about it, which is most of them.
+	Findings []PodFinding `json:"findings"`
 	// Labels are the pod's labels.
 	Labels map[string]string `json:"labels"`
 	// CreatedAt is the creation timestamp in RFC 3339, empty if unknown.
@@ -306,10 +310,33 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 		HasCPULimit:        limits.CPUMilli > 0,
 		HasMemoryLimit:     limits.MemoryBytes > 0,
 		Containers:         containers,
+		Findings:           toPodFindings(domain.AssessPod(pod, now)),
 		Labels:             labels,
 		CreatedAt:          formatTime(pod.CreatedAt()),
 		AgeSeconds:         int64(pod.Age(now).Seconds()),
 	}
+}
+
+// PodFinding is one thing worth telling an operator about a pod.
+type PodFinding struct {
+	Severity string `json:"severity"`
+	Title    string `json:"title"`
+	Detail   string `json:"detail"`
+	Advice   string `json:"advice"`
+}
+
+// toPodFindings converts the domain's assessment of one pod.
+func toPodFindings(findings []domain.PodFinding) []PodFinding {
+	out := make([]PodFinding, 0, len(findings))
+	for _, finding := range findings {
+		out = append(out, PodFinding{
+			Severity: string(finding.Severity),
+			Title:    finding.Title,
+			Detail:   finding.Detail,
+			Advice:   finding.Advice,
+		})
+	}
+	return out
 }
 
 // toPods converts a slice of domain pods.

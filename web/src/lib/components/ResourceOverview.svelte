@@ -175,6 +175,43 @@
       <DetailList rows={basicRows} />
     </DetailSection>
 
+    <!--
+      WHAT IS WRONG, OR ABOUT TO BE — first, because a pane that opens on
+      "Basic Information" makes somebody read a property list to find out what
+      they came for.
+
+      Every other client in this category shows the fields and leaves the
+      conclusions to the reader: Headlamp's diagnostics section classifies a
+      non-zero exit code as the colour red and reports "Pod has node selector
+      constraints" without ever evaluating that constraint against the node.
+      These are computed in the Go domain — see AssessPod — so each rule is
+      argued with in a test rather than only observed against a real cluster.
+    -->
+    {#if selectedPod?.findings?.length}
+      <DetailSection level="h3" title="Worth knowing">
+        <div class="flex flex-col gap-2">
+          {#each selectedPod.findings as finding (finding.title)}
+            <div
+              class="rounded-sm border p-3 {finding.severity === 'critical'
+                ? 'border-error/40 bg-error-container/20'
+                : finding.severity === 'warning'
+                  ? 'border-gauge-warn/40 bg-gauge-warn/10'
+                  : 'border-outline-variant bg-surface-container-low'}"
+            >
+              <p class="text-body-medium font-medium text-on-surface">{finding.title}</p>
+              <p class="mt-1 text-body-medium leading-relaxed text-on-surface-variant" data-selectable>
+                {finding.detail}
+              </p>
+              <!-- The advice is the half that makes it a finding rather than
+                   an observation, and is set apart so it reads as the answer
+                   rather than as more description. -->
+              <p class="mt-1.5 text-body-medium leading-relaxed text-on-surface">{finding.advice}</p>
+            </div>
+          {/each}
+        </div>
+      </DetailSection>
+    {/if}
+
     <!-- Pod-specific sections -->
     {#if kind === 'Pod' || selectedPod}
       <!-- Status -->
