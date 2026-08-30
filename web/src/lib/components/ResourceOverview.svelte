@@ -94,6 +94,28 @@
       : [{ label: 'Type', value: strategy }],
   )
 
+  /**
+   * Containers that have died at least once and left a record of how.
+   *
+   * From the LIVE pod, not the manifest: the manifest tab shows the same
+   * `lastState` block, but as raw YAML somebody has to know to look for and
+   * an exit code they have to decode themselves. This is the pod's own
+   * account of what happened, which is the thing an operator opened the pane
+   * to find.
+   */
+  const deaths = $derived(
+    (selectedPod?.containers ?? []).filter((container) => container.lastTermination),
+  )
+
+  /** How long a container survived before it died, in words. */
+  function survived(seconds: number): string {
+    if (seconds <= 0) return ''
+    if (seconds < 60) return `ran for ${Math.round(seconds)}s`
+    if (seconds < 3600) return `ran for ${Math.round(seconds / 60)}m`
+    if (seconds < 86400) return `ran for ${Math.round(seconds / 3600)}h`
+    return `ran for ${Math.round(seconds / 86400)}d`
+  }
+
   /** Turns a metadata map into rows, for labels and annotations. */
   function pairRows(pairs: [string, unknown][], truncate = false): DetailRow[] {
     return pairs.map(([key, value]) => ({ label: key, value: String(value), truncate }))
@@ -145,6 +167,60 @@
       <DetailSection level="h3" title="Status">
         <DetailList rows={statusRows} />
       </DetailSection>
+
+      <!--
+        WHY IT RESTARTED — placed above the container list because when it
+        applies it is the reason the pane was opened.
+
+        Every other client shows a restart COUNT. A count says a container
+        died seventeen times; it does not say whether the kernel took it for
+        memory, whether a rollout stopped it cleanly, or whether the process
+        exited on its own — three problems with nothing in common but the
+        number reporting them. The sentence comes from the domain, because
+        deciding that a 137 WITHOUT an OOMKilled reason is a grace-period
+        expiry rather than a memory limit is a judgement, not a lookup.
+
+        Kubernetes keeps ONE prior termination per container, so a container
+        with seventeen restarts has sixteen deaths that no longer exist
+        anywhere. The heading says "last time" rather than implying a history
+        this cannot show.
+      -->
+      {#if deaths.length > 0}
+        <DetailSection level="h3" title="Why it restarted, last time">
+          <div class="flex flex-col gap-2">
+            {#each deaths as container (container.name)}
+              {@const death = container.lastTermination!}
+              <div
+                class="rounded-sm border p-3 {death.alarming
+                  ? 'border-error/40 bg-error-container/20'
+                  : 'border-outline-variant bg-surface-container-low'}"
+              >
+                <p class="flex flex-wrap items-baseline gap-x-2 text-body-medium">
+                  <span class="font-medium text-on-surface" data-selectable>{container.name}</span>
+                  <span class="text-on-surface-variant">
+                    {death.reason || 'Terminated'} · exit {death.exitCode}{death.signal
+                      ? ` · signal ${death.signal}`
+                      : ''}
+                  </span>
+                  {#if death.lifetimeSeconds > 0}
+                    <span class="text-on-surface-variant/70">{survived(death.lifetimeSeconds)}</span>
+                  {/if}
+                  {#if container.restartCount > 1}
+                    <!-- Named so the single record is not mistaken for the
+                         whole story. -->
+                    <span class="text-on-surface-variant/70">
+                      · {container.restartCount} restarts in total
+                    </span>
+                  {/if}
+                </p>
+                <p class="mt-1 text-body-medium leading-relaxed text-on-surface-variant" data-selectable>
+                  {death.diagnosis}
+                </p>
+              </div>
+            {/each}
+          </div>
+        </DetailSection>
+      {/if}
 
       <!-- Containers -->
       {#if containers.length > 0}

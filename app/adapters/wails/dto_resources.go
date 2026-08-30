@@ -2,6 +2,7 @@ package wails
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/podsteer/podsteer/app/domain"
@@ -387,4 +388,26 @@ func formatBytes(bytes int64) string {
 		return fmt.Sprintf("%dB", bytes)
 	}
 	return fmt.Sprintf("%.1f%s", value, binaryUnits[unit])
+}
+
+// formatResources renders a container's declared CPU and memory the way
+// kubectl describe does — "cpu: 100m, memory: 256Mi" — or empty when nothing
+// was declared.
+//
+// Empty rather than an em dash, because the caller distinguishes "declared
+// nothing" from "declared something" and an em dash would have to be parsed
+// back out to do it.
+func formatResources(resources domain.Resources) string {
+	if resources.IsZero() {
+		return ""
+	}
+
+	parts := make([]string, 0, 2)
+	if resources.CPUMilli > 0 {
+		parts = append(parts, "cpu: "+formatMilliCores(resources.CPUMilli))
+	}
+	if resources.MemoryBytes > 0 {
+		parts = append(parts, "memory: "+formatBytes(resources.MemoryBytes))
+	}
+	return strings.Join(parts, ", ")
 }

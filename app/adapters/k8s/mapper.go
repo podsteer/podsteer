@@ -144,6 +144,25 @@ func mapContainers(pod *corev1.Pod) []domain.Container {
 			if status.Image != "" {
 				container.Image = status.Image
 			}
+
+			if status.Started != nil {
+				container.Started = *status.Started
+			}
+
+			// The previous life, when the API server recorded one. Only the
+			// TERMINATED variant carries anything: a container whose last
+			// state was Waiting has nothing to explain, which is why kubectl
+			// omits the whole block in that case too.
+			if last := status.LastTerminationState.Terminated; last != nil {
+				container.LastTermination = domain.Termination{
+					ExitCode:   last.ExitCode,
+					Signal:     last.Signal,
+					Reason:     last.Reason,
+					Message:    last.Message,
+					StartedAt:  last.StartedAt.UTC(),
+					FinishedAt: last.FinishedAt.UTC(),
+				}
+			}
 		}
 
 		containers = append(containers, container)

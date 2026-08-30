@@ -109,6 +109,53 @@ type Container struct {
 	State string `json:"state"`
 	// Reason explains the state, e.g. "CrashLoopBackOff". May be empty.
 	Reason string `json:"reason"`
+	// Started reports whether the startup probe has passed. Distinct from
+	// Ready: started with not-ready is a readiness problem, not-started is a
+	// startup problem, and they are looked into in different places.
+	Started bool `json:"started"`
+	// Requests and Limits, formatted for display. Empty when undeclared.
+	Requests string `json:"requests"`
+	Limits   string `json:"limits"`
+	// LastTermination explains how this container's previous life ended, and
+	// is absent when it has not restarted. See domain.Termination: this is
+	// the ONLY record of it Kubernetes keeps, and only of the most recent one.
+	LastTermination *Termination `json:"lastTermination,omitempty"`
+}
+
+// Termination is a container's previous death, explained.
+type Termination struct {
+	ExitCode int32 `json:"exitCode"`
+	Signal   int32 `json:"signal"`
+	// Reason is the kubelet's word — "OOMKilled", "Error", "Completed".
+	Reason string `json:"reason"`
+	// Diagnosis is the sentence to show. Written in the domain, because
+	// deciding that a 137 without an OOMKilled reason is a grace-period
+	// expiry rather than a memory limit is a judgement, not a lookup.
+	Diagnosis string `json:"diagnosis"`
+	// Alarming says whether to colour it. A clean SIGTERM during a rollout
+	// is how every deployment stops a container and is not a fault.
+	Alarming bool `json:"alarming"`
+	// FinishedAt is RFC 3339, empty if unknown; LifetimeSeconds is how long
+	// it ran before dying, zero when the timestamps do not allow the sum.
+	FinishedAt      string `json:"finishedAt"`
+	LifetimeSeconds int64  `json:"lifetimeSeconds"`
+}
+
+// toTermination converts a domain termination, or nil when there was none.
+func toTermination(termination domain.Termination) *Termination {
+	if termination.IsZero() {
+		return nil
+	}
+
+	return &Termination{
+		ExitCode:        termination.ExitCode,
+		Signal:          termination.Signal,
+		Reason:          termination.Reason,
+		Diagnosis:       termination.Diagnosis(),
+		Alarming:        termination.Alarming(),
+		FinishedAt:      formatTime(termination.FinishedAt),
+		LifetimeSeconds: int64(termination.Lifetime().Seconds()),
+	}
 }
 
 // Pod is a pod as presented to the UI.
@@ -204,12 +251,16 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 	containers := make([]Container, 0, len(domainContainers))
 	for _, container := range domainContainers {
 		containers = append(containers, Container{
-			Name:         container.Name,
-			Image:        container.Image,
-			Ready:        container.Ready,
-			RestartCount: container.RestartCount,
-			State:        string(container.State),
-			Reason:       container.Reason,
+			Name:            container.Name,
+			Image:           container.Image,
+			Ready:           container.Ready,
+			RestartCount:    container.RestartCount,
+			State:           string(container.State),
+			Reason:          container.Reason,
+			Started:         container.Started,
+			Requests:        formatResources(container.Requests),
+			Limits:          formatResources(container.Limits),
+			LastTermination: toTermination(container.LastTermination),
 		})
 	}
 

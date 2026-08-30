@@ -214,6 +214,30 @@ export namespace wails {
 	        this.percent = source["percent"];
 	    }
 	}
+	export class Termination {
+	    exitCode: number;
+	    signal: number;
+	    reason: string;
+	    diagnosis: string;
+	    alarming: boolean;
+	    finishedAt: string;
+	    lifetimeSeconds: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Termination(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.exitCode = source["exitCode"];
+	        this.signal = source["signal"];
+	        this.reason = source["reason"];
+	        this.diagnosis = source["diagnosis"];
+	        this.alarming = source["alarming"];
+	        this.finishedAt = source["finishedAt"];
+	        this.lifetimeSeconds = source["lifetimeSeconds"];
+	    }
+	}
 	export class Container {
 	    name: string;
 	    image: string;
@@ -221,6 +245,10 @@ export namespace wails {
 	    restartCount: number;
 	    state: string;
 	    reason: string;
+	    started: boolean;
+	    requests: string;
+	    limits: string;
+	    lastTermination?: Termination;
 	
 	    static createFrom(source: any = {}) {
 	        return new Container(source);
@@ -234,7 +262,29 @@ export namespace wails {
 	        this.restartCount = source["restartCount"];
 	        this.state = source["state"];
 	        this.reason = source["reason"];
+	        this.started = source["started"];
+	        this.requests = source["requests"];
+	        this.limits = source["limits"];
+	        this.lastTermination = this.convertValues(source["lastTermination"], Termination);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class Credit {
 	    name: string;
@@ -1198,6 +1248,7 @@ export namespace wails {
 		    return a;
 		}
 	}
+	
 	
 	
 	

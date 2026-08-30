@@ -102,6 +102,14 @@ type Container struct {
 	Requests Resources
 	// Limits is the ceiling the kubelet enforces.
 	Limits Resources
+	// Started distinguishes a container the startup probe has passed from one
+	// still starting. Separate from Ready deliberately: started=true with
+	// ready=false is a readiness problem, started=false is a startup problem,
+	// and they are investigated in different places.
+	Started bool
+	// LastTermination is how this container's previous life ended, when there
+	// was one. See Termination — it is the only record of it that exists.
+	LastTermination Termination
 }
 
 // Resources is a container's declared CPU and memory, in the same units as
