@@ -9,6 +9,7 @@
   import { parse } from 'yaml'
   import type { Pod, Workload } from '$lib/api/client'
   import DetailSection from './DetailSection.svelte'
+  import DetailList, { type DetailRow } from './DetailList.svelte'
 
   interface Props {
     manifest: string | null
@@ -47,6 +48,57 @@
   const replicas = $derived(spec.replicas ?? 0)
   const strategy = $derived(spec.strategy?.type ?? 'RollingUpdate')
 
+  // --- Rows -----------------------------------------------------------------
+  //
+  // Built here rather than spelt out in the markup, so each section is one
+  // list rather than four hand-written label/value pairs whose classes have to
+  // agree with each other and with every other pane. The em dash for a missing
+  // value is applied at this boundary: what "absent" means is per-field
+  // knowledge, and DetailList has none of it.
+
+  const basicRows = $derived<DetailRow[]>([
+    { label: 'Name', value: metadata.name ?? '—' },
+    { label: 'Namespace', value: metadata.namespace ?? '—' },
+    { label: 'Created', value: formatAge(metadata.creationTimestamp) },
+    // Truncated: a UID's length is noise, and nobody reads one — they copy it.
+    { label: 'UID', value: metadata.uid ?? '—', truncate: true },
+  ])
+
+  const statusRows = $derived<DetailRow[]>([
+    { label: 'Phase', value: status.phase ?? '—' },
+    { label: 'Pod IP', value: status.podIP ?? '—' },
+    { label: 'Node', value: spec.nodeName ?? '—' },
+    { label: 'QoS Class', value: status.qosClass ?? '—' },
+  ])
+
+  const replicaRows = $derived<DetailRow[]>([
+    { label: 'Desired', value: String(status.replicas ?? replicas) },
+    { label: 'Ready', value: String(status.readyReplicas ?? 0) },
+    { label: 'Available', value: String(status.availableReplicas ?? 0) },
+    { label: 'Updated', value: String(status.updatedReplicas ?? 0) },
+  ])
+
+  // The rolling-update numbers only exist for a rolling update; on a Recreate
+  // strategy they are not zero, they are inapplicable, so the rows are absent
+  // rather than showing defaults the cluster is not using.
+  const strategyRows = $derived<DetailRow[]>(
+    strategy === 'RollingUpdate' && spec.strategy?.rollingUpdate
+      ? [
+          { label: 'Type', value: strategy },
+          { label: 'Max Surge', value: String(spec.strategy.rollingUpdate.maxSurge ?? '25%') },
+          {
+            label: 'Max Unavailable',
+            value: String(spec.strategy.rollingUpdate.maxUnavailable ?? '25%'),
+          },
+        ]
+      : [{ label: 'Type', value: strategy }],
+  )
+
+  /** Turns a metadata map into rows, for labels and annotations. */
+  function pairRows(pairs: [string, unknown][], truncate = false): DetailRow[] {
+    return pairs.map(([key, value]) => ({ label: key, value: String(value), truncate }))
+  }
+
   function formatAge(timestamp: string): string {
     if (!timestamp) return '—'
     const date = new Date(timestamp)
@@ -84,48 +136,14 @@
   {:else}
     <!-- Basic Information -->
     <DetailSection level="h3" title="Basic Information">
-      <div class="grid grid-cols-2 gap-4">
-        <div>
-          <p class="text-body-small text-on-surface-variant">Name</p>
-          <p class="text-body-medium text-on-surface" data-selectable>{metadata.name ?? '—'}</p>
-        </div>
-        <div>
-          <p class="text-body-small text-on-surface-variant">Namespace</p>
-          <p class="text-body-medium text-on-surface" data-selectable>{metadata.namespace ?? '—'}</p>
-        </div>
-        <div>
-          <p class="text-body-small text-on-surface-variant">Created</p>
-          <p class="text-body-medium text-on-surface">{formatAge(metadata.creationTimestamp)}</p>
-        </div>
-        <div>
-          <p class="text-body-small text-on-surface-variant">UID</p>
-          <p class="truncate text-body-medium text-on-surface" data-selectable>{metadata.uid ?? '—'}</p>
-        </div>
-      </div>
+      <DetailList rows={basicRows} />
     </DetailSection>
 
     <!-- Pod-specific sections -->
     {#if kind === 'Pod' || selectedPod}
       <!-- Status -->
       <DetailSection level="h3" title="Status">
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <p class="text-body-small text-on-surface-variant">Phase</p>
-            <p class="text-body-medium text-on-surface">{status.phase ?? '—'}</p>
-          </div>
-          <div>
-            <p class="text-body-small text-on-surface-variant">Pod IP</p>
-            <p class="text-body-medium text-on-surface" data-selectable>{status.podIP ?? '—'}</p>
-          </div>
-          <div>
-            <p class="text-body-small text-on-surface-variant">Node</p>
-            <p class="text-body-medium text-on-surface" data-selectable>{spec.nodeName ?? '—'}</p>
-          </div>
-          <div>
-            <p class="text-body-small text-on-surface-variant">QoS Class</p>
-            <p class="text-body-medium text-on-surface">{status.qosClass ?? '—'}</p>
-          </div>
-        </div>
+        <DetailList rows={statusRows} />
       </DetailSection>
 
       <!-- Containers -->
@@ -227,45 +245,13 @@
     {#if selectedWorkload && (kind === 'Deployment' || kind === 'StatefulSet' || kind === 'DaemonSet')}
       <!-- Replicas -->
       <DetailSection level="h3" title="Replicas">
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <p class="text-body-small text-on-surface-variant">Desired</p>
-            <p class="text-body-medium text-on-surface">{status.replicas ?? replicas}</p>
-          </div>
-          <div>
-            <p class="text-body-small text-on-surface-variant">Ready</p>
-            <p class="text-body-medium text-on-surface">{status.readyReplicas ?? 0}</p>
-          </div>
-          <div>
-            <p class="text-body-small text-on-surface-variant">Available</p>
-            <p class="text-body-medium text-on-surface">{status.availableReplicas ?? 0}</p>
-          </div>
-          <div>
-            <p class="text-body-small text-on-surface-variant">Updated</p>
-            <p class="text-body-medium text-on-surface">{status.updatedReplicas ?? 0}</p>
-          </div>
-        </div>
+        <DetailList rows={replicaRows} />
       </DetailSection>
 
       <!-- Strategy -->
       {#if kind === 'Deployment'}
         <DetailSection level="h3" title="Update Strategy">
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <p class="text-body-small text-on-surface-variant">Type</p>
-              <p class="text-body-medium text-on-surface">{strategy}</p>
-            </div>
-            {#if strategy === 'RollingUpdate' && spec.strategy?.rollingUpdate}
-              <div>
-                <p class="text-body-small text-on-surface-variant">Max Surge</p>
-                <p class="text-body-medium text-on-surface">{spec.strategy.rollingUpdate.maxSurge ?? '25%'}</p>
-              </div>
-              <div>
-                <p class="text-body-small text-on-surface-variant">Max Unavailable</p>
-                <p class="text-body-medium text-on-surface">{spec.strategy.rollingUpdate.maxUnavailable ?? '25%'}</p>
-              </div>
-            {/if}
-          </div>
+          <DetailList rows={strategyRows} />
         </DetailSection>
       {/if}
     {/if}
@@ -302,28 +288,17 @@
     <!-- Labels -->
     {#if labels.length > 0}
       <DetailSection level="h3" title="Labels ({labels.length})">
-        <div class="space-y-1">
-          {#each labels as [key, value], i (i)}
-            <div class="flex gap-2 text-body-small">
-              <span class="font-medium text-on-surface" data-selectable>{key}:</span>
-              <span class="text-on-surface-variant" data-selectable>{value}</span>
-            </div>
-          {/each}
-        </div>
+        <DetailList rows={pairRows(labels)} />
       </DetailSection>
     {/if}
 
     <!-- Annotations -->
     {#if annotations.length > 0}
+      <!-- Truncated, unlike labels: an annotation routinely holds an entire
+           serialised manifest, and letting one wrap turns the pane into a
+           page of JSON. It is still selectable, so copying it works. -->
       <DetailSection level="h3" title="Annotations ({annotations.length})">
-        <div class="space-y-1">
-          {#each annotations as [key, value], i (i)}
-            <div class="flex gap-2 text-body-small">
-              <span class="font-medium text-on-surface" data-selectable>{key}:</span>
-              <span class="truncate text-on-surface-variant" data-selectable>{value}</span>
-            </div>
-          {/each}
-        </div>
+        <DetailList rows={pairRows(annotations, true)} />
       </DetailSection>
     {/if}
   {/if}
