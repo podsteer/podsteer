@@ -76,7 +76,7 @@
   import type { Component, Snippet } from 'svelte'
   import type { SortState } from '$lib/sort'
   import { preferences } from '$stores/preferences.svelte'
-  import ColumnMenu from './ColumnMenu.svelte'
+  import { activeTable } from '$stores/activeTable.svelte'
   import { ChevronUp, ChevronDown, ChevronsUpDown } from '@lucide/svelte'
 
   interface Props {
@@ -226,6 +226,23 @@
   function isVisible(columnId: string): boolean {
     return visibleIds.has(columnId)
   }
+
+  /**
+   * Publishes this table's columns for the toolbar's column chooser.
+   *
+   * The chooser used to sit in the header's trailing cell, which put it off
+   * screen the moment a wide table was scrolled sideways — and the tables it
+   * matters most on are precisely the wide ones. It now lives in the toolbar
+   * beside the pager, where it cannot be scrolled away from, so the columns
+   * have to reach a component that is not an ancestor of this one.
+   *
+   * Re-runs when `columns` changes, which is what keeps the menu correct for
+   * a generic table whose columns are whatever the API server just described.
+   */
+  $effect(() => {
+    const token = activeTable.claim(kindId, columns)
+    return () => activeTable.release(token)
+  })
 
   /**
    * Effective width: the column being dragged, else the operator's, else the
@@ -381,10 +398,6 @@
                 ></span>
               </th>
             {/each}
-
-            <th scope="col" class="relative w-10 px-2 py-2.5 text-right">
-              <ColumnMenu {kindId} {columns} />
-            </th>
           </tr>
         </thead>
 

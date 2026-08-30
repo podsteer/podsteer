@@ -1,9 +1,13 @@
 <!--
   The per-table column chooser.
 
-  Lives in the header's trailing cell so it stays reachable however far the
-  table is scrolled sideways. Pinned columns are listed but not toggleable —
-  hiding the name column would leave rows nothing can identify them by.
+  Lives in the toolbar, after the pager. It was in the header's trailing cell,
+  which was reachable only until somebody scrolled a wide table sideways — and
+  a wide table is exactly when an operator goes looking for it. In the toolbar
+  it sits still, in the row where every other per-view control already is.
+
+  Pinned columns are listed but not toggleable — hiding the name column would
+  leave rows nothing can identify them by.
 -->
 <script lang="ts">
   import { preferences } from '$stores/preferences.svelte'
@@ -45,10 +49,13 @@
     aria-expanded={open}
     aria-label="Choose columns"
     title="Choose columns"
-    class="state-layer grid size-6 place-items-center rounded-full text-on-surface-variant
-           transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+    class="state-layer grid size-8 shrink-0 place-items-center rounded-full text-on-surface-variant
+           transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
+           {open ? 'bg-surface-container text-on-surface' : ''}"
   >
-    <Columns3 class="size-3.5" strokeWidth={1.8} />
+    <!-- Sized to the pager's buttons rather than the header cell's, since
+         that is what it now sits beside. -->
+    <Columns3 class="size-4" strokeWidth={1.8} />
   </button>
 
   {#if open}

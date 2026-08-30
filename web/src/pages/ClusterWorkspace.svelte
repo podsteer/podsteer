@@ -12,6 +12,8 @@
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
   import Navigator from '$lib/components/Navigator.svelte'
   import Pagination from '$lib/components/Pagination.svelte'
+  import ColumnMenu from '$lib/components/ColumnMenu.svelte'
+  import { activeTable } from '$stores/activeTable.svelte'
   import { focusFirstRow } from '$lib/components/DataTable.svelte'
   import SearchField from '$lib/components/SearchField.svelte'
   import { preferences } from '$stores/preferences.svelte'
@@ -140,6 +142,21 @@
           pageCount={session.pageCount}
           onpage={session.goToPage}
         />
+
+        <!-- The column chooser, moved out of the table header's trailing cell.
+             There it scrolled away with a wide table, which is the one case it
+             is wanted in. Behind its own divider because it is not part of the
+             pager: everything left of the rule moves you through the rows,
+             this changes what a row shows.
+
+             Conditional on a table having registered, so it does not appear
+             over the overview — which is an assessment, not a list, and has no
+             columns to choose between. -->
+        {#if activeTable.present}
+          <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+
+          <ColumnMenu kindId={activeTable.kindId} columns={activeTable.columns} />
+        {/if}
       {/if}
     </div>
 
