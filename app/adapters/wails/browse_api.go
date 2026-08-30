@@ -147,7 +147,13 @@ func (b *BrowseAPI) ListTable(clusterID, kindID, namespace string) (ResourceTabl
 }
 
 // GetManifest returns one object as YAML, for the detail view.
-func (b *BrowseAPI) GetManifest(clusterID, kindID, namespace, name string) (string, error) {
+//
+// revealSecrets applies to core/v1 Secrets and nothing else: false replaces
+// their values with the decoded SIZE, the way `kubectl describe secret` does.
+// The default is false at every call site, and the true path exists only
+// behind a deliberate click — reading a Secret is an audited action, and the
+// YAML tab would otherwise perform one every time somebody browsed past.
+func (b *BrowseAPI) GetManifest(clusterID, kindID, namespace, name string, revealSecrets bool) (string, error) {
 	ctx, cancel := b.app.requestContext()
 	defer cancel()
 
@@ -161,7 +167,7 @@ func (b *BrowseAPI) GetManifest(clusterID, kindID, namespace, name string) (stri
 		return "", apiError(b.logger, "GetManifest", err)
 	}
 
-	manifest, err := b.resources.GetManifest(ctx, id, kindID, ns, name)
+	manifest, err := b.resources.GetManifest(ctx, id, kindID, ns, name, revealSecrets)
 	if err != nil {
 		return "", apiError(b.logger, "GetManifest", err)
 	}

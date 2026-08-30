@@ -325,14 +325,24 @@ export function listTable(
   return call(() => bindListTable(clusterId, kindId, namespace))
 }
 
-/** Returns one object as YAML, for the detail view. */
+/**
+ * Returns one object as YAML, for the detail view.
+ *
+ * `revealSecrets` applies to core/v1 Secrets and nothing else. Left false,
+ * their values arrive as their decoded SIZE — the form `kubectl describe
+ * secret` prints — and the material never crosses the bridge at all. Pass
+ * true only from a deliberate click: reading a Secret is an audited action,
+ * and the YAML tab would otherwise perform one every time somebody browsed
+ * past a Secret in a list.
+ */
 export function getManifest(
   clusterId: string,
   kindId: string,
   namespace: string,
   name: string,
+  revealSecrets = false,
 ): Promise<string> {
-  return call(() => bindGetManifest(clusterId, kindId, namespace, name))
+  return call(() => bindGetManifest(clusterId, kindId, namespace, name, revealSecrets))
 }
 
 /**

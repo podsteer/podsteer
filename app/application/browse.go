@@ -200,7 +200,7 @@ func (s *BrowseService) ListTable(ctx context.Context, id domain.ClusterID, kind
 }
 
 // GetManifest returns one object serialised as YAML.
-func (s *BrowseService) GetManifest(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, name string) (string, error) {
+func (s *BrowseService) GetManifest(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, name string, revealSecrets bool) (string, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return "", fmt.Errorf("reading manifest: %w", err)
 	}
@@ -221,7 +221,7 @@ func (s *BrowseService) GetManifest(ctx context.Context, id domain.ClusterID, ki
 		Kind:      kind,
 		Namespace: namespace,
 		Name:      name,
-	})
+	}, revealSecrets)
 	if err != nil {
 		return "", fmt.Errorf("reading manifest of %s/%s: %w", kind.Kind, name, err)
 	}

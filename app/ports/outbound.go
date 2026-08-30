@@ -156,7 +156,7 @@ type ResourcePort interface {
 	ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName) (domain.ResourceTable, error)
 
 	// GetManifest returns one object serialised as YAML, for the detail view.
-	GetManifest(ctx context.Context, ref domain.ResourceRef) (string, error)
+	GetManifest(ctx context.Context, ref domain.ResourceRef, revealSecrets bool) (string, error)
 
 	// RevealSecretKey returns the decoded value of ONE key of one Secret.
 	//

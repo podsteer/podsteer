@@ -847,6 +847,16 @@ export class ClusterSession {
 
   // --- Detail drawer --------------------------------------------------------
 
+  /**
+   * Whether the manifest on screen has had a Secret's values hidden.
+   *
+   * Tracked rather than inferred from the text, because the pane has to do
+   * two things with it: say so, and refuse to let the manifest be saved.
+   * Editing a masked Secret would write the placeholders back over the real
+   * values, which is data loss dressed up as an edit.
+   */
+  secretsRevealed = $state(false)
+
   /** Opens the detail drawer for one object and loads its manifest. */
   openDetail = async (name: string, namespace: string, pod?: Pod, workload?: Workload): Promise<void> => {
     this.selectedName = name
@@ -855,13 +865,35 @@ export class ClusterSession {
     this.selectedWorkload = workload ?? null
     this.manifest = null
     this.manifestStatus = 'loading'
+    // Every open starts hidden. A reveal is a decision about one object, and
+    // carrying it to the next one is how Freelens ends up showing a value
+    // somebody unmasked in private on the pod they open in a meeting.
+    this.secretsRevealed = false
 
+    await this.#loadManifest(name, namespace)
+  }
+
+  /**
+   * Re-reads the manifest with the Secret values in it.
+   *
+   * A separate call rather than a flag on the first one: this is the audited
+   * read, and it happens because somebody asked for it.
+   */
+  revealManifestSecrets = async (): Promise<void> => {
+    if (!this.selectedName) return
+    this.secretsRevealed = true
+    await this.#loadManifest(this.selectedName, this.selectedNamespace)
+  }
+
+  async #loadManifest(name: string, namespace: string): Promise<void> {
+    this.manifestStatus = 'loading'
     try {
       this.manifest = await getManifest(
         this.cluster.id,
         this.selectedKindId,
         namespace,
         name,
+        this.secretsRevealed,
       )
       this.manifestStatus = 'ready'
     } catch (cause) {

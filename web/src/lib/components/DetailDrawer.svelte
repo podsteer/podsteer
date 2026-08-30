@@ -47,6 +47,7 @@
     Trash2,
     Maximize2,
     TriangleAlert,
+    Eye,
   } from '@lucide/svelte'
 
   interface Props {
@@ -128,14 +129,28 @@
     }
   })
 
-  const canEdit = $derived(!!session.manifest && !isEvent)
+  /**
+   * Whether this object is a Secret whose values are currently hidden.
+   *
+   * The manifest on screen has `<hidden, 24 bytes>` where the data was, so
+   * saving it would write those placeholders over the real values — data
+   * loss wearing the costume of an edit. Editing is therefore blocked until
+   * the values are deliberately revealed.
+   */
+  const secretsHidden = $derived(
+    session.selectedKindId === 'core/v1/secrets' && !session.secretsRevealed && !!session.manifest,
+  )
+
+  const canEdit = $derived(!!session.manifest && !isEvent && !secretsHidden)
 
   const editHint = $derived(
     isEvent
       ? 'An event is a record of something that happened — there is nothing to change'
-      : session.manifest
-        ? 'Edit YAML'
-        : 'Nothing loaded yet',
+      : secretsHidden
+        ? 'Reveal the values first — saving now would overwrite them with their placeholders'
+        : session.manifest
+          ? 'Edit YAML'
+          : 'Nothing loaded yet',
   )
 
   /**
@@ -446,6 +461,21 @@
     managedFieldsDisabledReason="Can’t change while there are unsaved edits"
   >
     {#snippet actions()}
+      <!--
+        Reveal, for a Secret whose values are hidden. Its own control rather
+        than something the Edit button does implicitly: this performs an
+        audited read of the Secret, and an audit entry ought to correspond to
+        somebody deciding to look, not to somebody clicking towards a
+        different intention.
+      -->
+      {#if secretsHidden}
+        <ToolbarButton
+          icon={Eye}
+          label="Reveal values"
+          title="Read this Secret's values. This is an audited read."
+          onclick={() => session.revealManifestSecrets()}
+        />
+      {/if}
       <ToolbarToggle
         icon={Pencil}
         label="Edit"
