@@ -149,6 +149,7 @@
               measured={pod.hasMetrics}
               thresholds={false}
               absent="no request"
+              severity={pod.hasCpuLimit ? pod.cpuLimitPercent : null}
               title={meterTitle(
                 pod.hasMetrics,
                 pod.cpu,

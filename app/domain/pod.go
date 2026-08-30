@@ -381,13 +381,17 @@ func (p Pod) Limits() Resources {
 // CPULimitPercent returns measured CPU usage as a percentage of the pod's
 // CPU limit — how close it is to being THROTTLED.
 //
-// Not the same kind of number as MemoryLimitPercent, and the difference is
-// not a nuance. Exceeding a CPU limit is enforced pre-emptively by the
-// kernel: the container is throttled and keeps running. Exceeding a memory
-// limit is enforced reactively by the OOM killer: the container dies. So a
-// pod at 99% of its CPU limit is slow, and a pod at 99% of its memory limit
-// is about to be killed, and nothing should present those as the same
-// severity of thing.
+// Throttling is not a lesser problem than being killed, only a different one,
+// and it is the one nothing else in Kubernetes will tell you about. A pod
+// pinned at its CPU limit does not fail, restart or raise an event: it simply
+// takes three times as long, and a job that used to finish in ten minutes
+// takes half an hour with every probe still green. That is worth colouring.
+//
+// It is still not the SAME kind of number as MemoryLimitPercent, which is why
+// only the memory one raises a finding. Exceeding a CPU limit is enforced
+// pre-emptively by the kernel and the container keeps running; exceeding a
+// memory limit is enforced reactively by the OOM killer and it dies. Both are
+// worth seeing on a row; only one is worth interrupting somebody over.
 //
 // Zero when no CPU limit is declared, which is the majority case — leaving
 // CPU unbounded is deliberate practice, not an oversight. Callers must test

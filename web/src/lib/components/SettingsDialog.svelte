@@ -47,7 +47,7 @@
     pods: {
       name: 'Pods',
       detail:
-        'Memory in the pod list, measured against each pod’s limit — how close it is to being OOMKilled. CPU is not coloured: exceeding a CPU limit throttles a container, it does not kill it.',
+        'CPU and memory in the pod list, measured against each pod’s limits — how close it is to being throttled, or to being OOMKilled. Pods that declare no limit have no ceiling to be near, and stay uncoloured.',
     },
   }
   import {
