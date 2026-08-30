@@ -942,6 +942,7 @@ func NewOverview(input OverviewInput) Overview {
 	findings = append(findings, capacityFindings(capacity)...)
 	findings = append(findings, restartFindings(input.Pods, now)...)
 	findings = append(findings, configurationFindings(input.Pods, pods)...)
+	findings = append(findings, memoryLimitFindings(input.Pods, input.MetricsMeasured)...)
 	findings = append(findings, eventFindings(input.Events, findings, now)...)
 	rankFindings(findings)
 
@@ -2233,6 +2234,95 @@ func configurationFindings(pods []Pod, summary PodSummary) []Finding {
 			"scheduler cannot reserve anything for them.",
 		Subjects: subjects,
 		Count:    summary.BestEffort,
+		KindID:   podKindID,
+	}}
+}
+
+// memoryLimitApproaching is where a pod is close enough to its memory limit
+// to be worth naming before the kernel does it for us.
+//
+// A FIXED NUMBER, not the operator's gauge thresholds from Settings. Those
+// live in the frontend and colour bars; this is a rule in a pure function
+// that the history sampler also runs, headlessly, with no operator in scope.
+// The finding states its own number in its advice, so nothing is hidden by
+// the two not matching.
+//
+// 90 rather than 80 because this is a finding, not a shade of amber: it
+// competes for space with crash loops and unschedulable pods, and a pod
+// steady at 85% of a limit somebody chose is not news. The widely copied
+// cAdvisor rule uses 80% held for two minutes; without a sustain of our own,
+// a higher line is the honest substitute.
+const memoryLimitApproaching = 90.0
+
+// memoryLimitFindings reports pods about to be OOMKilled.
+//
+// The predictive half of a finding PodSteer already has: OOMKilled is
+// reported once the kernel has acted, by which time the container has been
+// restarted and whatever it was holding is gone. This is the same event an
+// hour earlier, while somebody can still raise the limit or find the leak.
+//
+// MEMORY ONLY, deliberately. The CPU equivalent means the container is being
+// throttled — slower, still running, and often exactly what a CPU limit was
+// set to do. Raising a finding for it would put "this is a bit slow" beside
+// "this is about to be killed" under one heading. See Pod.CPULimitPercent.
+func memoryLimitFindings(pods []Pod, measured bool) []Finding {
+	// Without metrics every usage figure is zero, and zero against a limit is
+	// 0% — silence rather than a false all-clear, which is what the caller
+	// already says elsewhere via Unavailable.
+	if !measured {
+		return nil
+	}
+
+	subjects := make([]Subject, 0, maxSubjects)
+	count := 0
+	var worst float64
+
+	for _, pod := range pods {
+		// Terminal pods hold nothing: a Succeeded pod's containers are gone,
+		// and its last measurement is not a prediction about anything.
+		if !pod.OccupiesNode() {
+			continue
+		}
+		if pod.Limits().MemoryBytes <= 0 || !pod.Usage().Measured {
+			continue
+		}
+
+		percent := pod.MemoryLimitPercent()
+		if percent < memoryLimitApproaching {
+			continue
+		}
+
+		count++
+		if percent > worst {
+			worst = percent
+		}
+		if len(subjects) < maxSubjects {
+			subjects = append(subjects, Subject{
+				Kind:      "Pod",
+				Namespace: pod.Namespace(),
+				Name:      pod.Name(),
+				Detail:    fmt.Sprintf("%.0f%% of its memory limit", percent),
+			})
+		}
+	}
+
+	if count == 0 {
+		return nil
+	}
+
+	return []Finding{{
+		ID:       "config:memorylimit",
+		Severity: SeverityWarning,
+		Category: CategoryFindingWorkload,
+		Title:    "Pods near their memory limit",
+		Summary: fmt.Sprintf("%s within reach of being OOMKilled, the worst at %.0f%%",
+			plural(count, "pod is", "pods are"), worst),
+		Advice: fmt.Sprintf("At %.0f%% of its memory limit a container is one allocation from being "+
+			"killed by the kernel, and it restarts with no record beyond a counter. Raise the limit "+
+			"if the workload genuinely needs the memory, or find what is holding it if it does not.",
+			memoryLimitApproaching),
+		Subjects: subjects,
+		Count:    count,
 		KindID:   podKindID,
 	}}
 }

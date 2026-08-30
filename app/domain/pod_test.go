@@ -368,3 +368,78 @@ func TestPodPercentagesMeasureUsageAgainstRequests(t *testing.T) {
 		})
 	}
 }
+
+func TestPodLimitPercentagesMeasureUsageAgainstLimits(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		containers []domain.Container
+		usage      domain.Metrics
+		wantCPU    float64
+		wantMemory float64
+	}{
+		{
+			name: "usage as a share of the ceiling",
+			containers: []domain.Container{
+				{Name: "app", Limits: domain.Resources{CPUMilli: 500, MemoryBytes: 512 << 20}},
+			},
+			usage:      domain.NewMetrics(250, 384<<20),
+			wantCPU:    50,
+			wantMemory: 75,
+		},
+		{
+			// The common real shape: a memory limit set, CPU left unbounded
+			// on purpose. The two must be independent, or a pod with one of
+			// them would report a ratio against a ceiling it does not have.
+			name: "memory limited, CPU unbounded",
+			containers: []domain.Container{
+				{Name: "app", Limits: domain.Resources{MemoryBytes: 200 << 20}},
+			},
+			usage:      domain.NewMetrics(300, 180<<20),
+			wantCPU:    0,
+			wantMemory: 90,
+		},
+		{
+			name: "limits are summed across containers",
+			containers: []domain.Container{
+				{Name: "app", Limits: domain.Resources{CPUMilli: 400, MemoryBytes: 300 << 20}},
+				{Name: "proxy", Limits: domain.Resources{CPUMilli: 100, MemoryBytes: 100 << 20}},
+			},
+			usage:      domain.NewMetrics(250, 200<<20),
+			wantCPU:    50,
+			wantMemory: 50,
+		},
+		{
+			name: "unmeasured usage yields zero",
+			containers: []domain.Container{
+				{Name: "app", Limits: domain.Resources{CPUMilli: 500, MemoryBytes: 512 << 20}},
+			},
+			usage:      domain.Metrics{},
+			wantCPU:    0,
+			wantMemory: 0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			spec := newPodSpec()
+			spec.Containers = test.containers
+
+			pod, err := domain.NewPod(spec)
+			if err != nil {
+				t.Fatalf("NewPod() error = %v", err)
+			}
+			pod = pod.WithUsage(test.usage)
+
+			if got := pod.CPULimitPercent(); got != test.wantCPU {
+				t.Errorf("CPULimitPercent() = %v, want %v", got, test.wantCPU)
+			}
+			if got := pod.MemoryLimitPercent(); got != test.wantMemory {
+				t.Errorf("MemoryLimitPercent() = %v, want %v", got, test.wantMemory)
+			}
+		})
+	}
+}

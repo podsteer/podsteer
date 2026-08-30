@@ -1602,3 +1602,133 @@ func unreadyNode(t *testing.T) domain.Node {
 	}
 	return node
 }
+
+// nearLimitPod builds a running pod with a memory limit and a measurement
+// against it, which is the only shape memoryLimitFindings looks at.
+func nearLimitPod(t *testing.T, name string, limitBytes, usedBytes int64) domain.Pod {
+	t.Helper()
+
+	pod := podFixture(t, domain.PodSpec{
+		Name: name, Namespace: "default", NodeName: "node-1",
+		Phase:     domain.PodPhaseRunning,
+		CreatedAt: overviewNow.Add(-time.Hour),
+		Containers: []domain.Container{{
+			Name:   "app",
+			State:  domain.ContainerStateRunning,
+			Limits: domain.Resources{MemoryBytes: limitBytes},
+		}},
+	})
+	return pod.WithUsage(domain.NewMetrics(10, usedBytes))
+}
+
+func TestMemoryLimitFindingWarnsBeforeTheKernelKills(t *testing.T) {
+	t.Parallel()
+
+	const limit = 100 << 20
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID:       "dev",
+		MetricsMeasured: true,
+		Now:             overviewNow,
+		Pods: []domain.Pod{
+			nearLimitPod(t, "leaky", limit, 96<<20),   // 96% — reported
+			nearLimitPod(t, "hottest", limit, 99<<20), // 99% — reported, and the worst
+			nearLimitPod(t, "roomy", limit, 40<<20),   // 40% — not news
+			nearLimitPod(t, "exactly", limit, 90<<20), // 90% — the boundary is inclusive
+		},
+	})
+
+	finding, ok := findingByTitle(overview.Findings, "Pods near their memory limit")
+	if !ok {
+		t.Fatalf("expected a memory-limit finding; got %v", titles(overview.Findings))
+	}
+	if finding.Count != 3 {
+		t.Errorf("count = %d, want the three at or above the line", finding.Count)
+	}
+	if finding.Severity != domain.SeverityWarning {
+		t.Errorf("severity = %q, want warning: nothing has died yet", finding.Severity)
+	}
+	// The worst offender has to reach the summary — the whole point is to say
+	// how close the closest one is.
+	if !strings.Contains(finding.Summary, "99%") {
+		t.Errorf("summary = %q, want the worst percentage named", finding.Summary)
+	}
+
+	names := make(map[string]bool, len(finding.Subjects))
+	for _, subject := range finding.Subjects {
+		names[subject.Name] = true
+	}
+	if names["roomy"] {
+		t.Error("a pod at 40%% of its limit was reported as near it")
+	}
+}
+
+func TestMemoryLimitFindingStaysQuietWithoutGrounds(t *testing.T) {
+	t.Parallel()
+
+	const limit = 100 << 20
+
+	tests := []struct {
+		name  string
+		input domain.OverviewInput
+	}{
+		{
+			// Without metrics every usage is zero, so every ratio is 0% —
+			// which must read as "nothing measured", not "nothing wrong".
+			name: "no metrics source",
+			input: domain.OverviewInput{
+				MetricsMeasured: false,
+				Pods:            []domain.Pod{nearLimitPod(t, "leaky", limit, 99<<20)},
+			},
+		},
+		{
+			// No ceiling declared means no proximity to one. This is the
+			// majority of real pods and must never be inferred into a finding.
+			name: "no limit declared",
+			input: domain.OverviewInput{
+				MetricsMeasured: true,
+				Pods: []domain.Pod{func() domain.Pod {
+					pod := podFixture(t, domain.PodSpec{
+						Name: "unbounded", Namespace: "default", NodeName: "node-1",
+						Phase:      domain.PodPhaseRunning,
+						Containers: []domain.Container{{Name: "app", State: domain.ContainerStateRunning}},
+					})
+					return pod.WithUsage(domain.NewMetrics(10, 4<<30))
+				}()},
+			},
+		},
+		{
+			// A Succeeded pod's containers are gone. Its last measurement
+			// predicts nothing, and the kernel will not be killing it.
+			name: "terminal pod",
+			input: domain.OverviewInput{
+				MetricsMeasured: true,
+				Pods: []domain.Pod{func() domain.Pod {
+					pod := podFixture(t, domain.PodSpec{
+						Name: "finished", Namespace: "batch", NodeName: "node-1",
+						Phase: domain.PodPhaseSucceeded,
+						Containers: []domain.Container{{
+							Name:   "app",
+							Limits: domain.Resources{MemoryBytes: limit},
+						}},
+					})
+					return pod.WithUsage(domain.NewMetrics(10, 99<<20))
+				}()},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			input := test.input
+			input.ClusterID = "dev"
+			input.Now = overviewNow
+
+			if _, ok := findingByTitle(domain.NewOverview(input).Findings, "Pods near their memory limit"); ok {
+				t.Error("reported a pod as near its memory limit on no evidence")
+			}
+		})
+	}
+}

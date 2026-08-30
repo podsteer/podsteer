@@ -378,6 +378,30 @@ func (p Pod) Limits() Resources {
 	return total
 }
 
+// CPULimitPercent returns measured CPU usage as a percentage of the pod's
+// CPU limit — how close it is to being THROTTLED.
+//
+// Not the same kind of number as MemoryLimitPercent, and the difference is
+// not a nuance. Exceeding a CPU limit is enforced pre-emptively by the
+// kernel: the container is throttled and keeps running. Exceeding a memory
+// limit is enforced reactively by the OOM killer: the container dies. So a
+// pod at 99% of its CPU limit is slow, and a pod at 99% of its memory limit
+// is about to be killed, and nothing should present those as the same
+// severity of thing.
+//
+// Zero when no CPU limit is declared, which is the majority case — leaving
+// CPU unbounded is deliberate practice, not an oversight. Callers must test
+// for the limit rather than reading zero as "idle".
+func (p Pod) CPULimitPercent() float64 { return p.Limits().CPUPercent(p.usage) }
+
+// MemoryLimitPercent returns measured memory usage as a percentage of the
+// pod's memory limit — how close it is to being OOMKilled.
+//
+// This is the one pod-level ratio that predicts a hard failure, which is why
+// it is the one the overview raises a finding on. See CPULimitPercent for why
+// its CPU twin is not treated the same way.
+func (p Pod) MemoryLimitPercent() float64 { return p.Limits().MemoryPercent(p.usage) }
+
 // IsScheduled reports whether the pod has been placed on a node.
 func (p Pod) IsScheduled() bool { return p.nodeName != "" }
 

@@ -11,6 +11,7 @@
 -->
 <script lang="ts">
   import GaugeTrack from './GaugeTrack.svelte'
+  import { preferences } from '$stores/preferences.svelte'
 
   interface Props {
     /** The measured value, already formatted, e.g. "0.012" or "18.4 MiB". */
@@ -72,6 +73,31 @@
      * signal stops being read. That bar stays one flat colour.
      */
     thresholds?: boolean
+    /**
+     * A SECOND percentage, which decides the colour when `thresholds` is off.
+     *
+     * For a pod the bar's length and the bar's colour answer different
+     * questions, and both are worth asking. The length is usage against the
+     * REQUEST — am I sized right — where a full bar is a success. The colour
+     * is usage against the LIMIT — am I about to be stopped — where a high
+     * reading is the warning it looks like.
+     *
+     * The two cannot contradict each other, because Kubernetes requires
+     * request ≤ limit: anything near its limit is at least as near its
+     * request, so a coloured bar is always an already-full one. Amber on a
+     * full bar therefore reads exactly as it should — "using more than you
+     * reserved, AND close to your ceiling" — while a full blue bar is the
+     * common, harmless case of a Burstable pod using its headroom.
+     *
+     * Null leaves the bar the plain fill colour, which is what a pod with no
+     * limit declared gets: there is no ceiling, so there is no proximity to
+     * one, and inventing a colour for it would be inventing a denominator.
+     *
+     * No marker ticks are drawn for this, unlike a node's. A tick shows WHERE
+     * on the track a threshold falls, and these thresholds do not fall
+     * anywhere on this track — they belong to the other denominator.
+     */
+    severity?: number | null
     /** Tooltip for the whole meter, naming what the proportion is of. */
     title?: string
     /**
@@ -104,6 +130,7 @@
     thresholds = true,
     title,
     absent = '',
+    severity = null,
     valueWidth = '9ch',
     class: className = '',
   }: Props = $props()
@@ -117,6 +144,25 @@
    * Only the thresholds={false} branch needs this; GaugeTrack clamps its own.
    */
   const width = $derived(Math.max(0, Math.min(100, percent ?? 0)))
+
+  /**
+   * The flat bar's colour, from `severity` and the operator's own lines.
+   *
+   * Read from Settings rather than fixed here, so a team running deliberately
+   * tight limits and a team running generous ones each get a bar that agrees
+   * with the number they chose. A threshold switched off simply never fires,
+   * the same as everywhere else.
+   */
+  const flatTone = $derived.by(() => {
+    if (severity === null) return 'bg-primary'
+    if (preferences.criticalEnabled && severity >= preferences.criticalThreshold) {
+      return 'bg-gauge-critical'
+    }
+    if (preferences.warnEnabled && severity >= preferences.warnThreshold) {
+      return 'bg-gauge-warn'
+    }
+    return 'bg-primary'
+  })
 </script>
 
 <!--
@@ -156,7 +202,7 @@
     {:else}
       <span class="h-1.5 min-w-6 flex-1 overflow-hidden rounded-full bg-surface-container-highest">
         <span
-          class="block h-full rounded-full bg-primary transition-all duration-300 ease-standard"
+          class="block h-full rounded-full transition-all duration-300 ease-standard {flatTone}"
           style="width: {width}%"
         ></span>
       </span>

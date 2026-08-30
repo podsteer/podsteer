@@ -177,6 +177,17 @@ type Pod struct {
 	// reserve CPU also reads 0%, and the two must not draw the same thing.
 	HasCPURequest    bool `json:"hasCpuRequest"`
 	HasMemoryRequest bool `json:"hasMemoryRequest"`
+	// The same four figures against the pod's LIMITS, which is a different
+	// question: the request is what it reserved, the limit is what it will be
+	// stopped at. Only this one can predict a failure — see
+	// domain.Pod.MemoryLimitPercent, and note that its CPU twin predicts
+	// throttling rather than death.
+	CPULimitPercent    float64 `json:"cpuLimitPercent"`
+	MemoryLimitPercent float64 `json:"memoryLimitPercent"`
+	CPULimit           string  `json:"cpuLimit"`
+	MemoryLimit        string  `json:"memoryLimit"`
+	HasCPULimit        bool    `json:"hasCpuLimit"`
+	HasMemoryLimit     bool    `json:"hasMemoryLimit"`
 	// Containers are the pod's containers.
 	Containers []Container `json:"containers"`
 	// Labels are the pod's labels.
@@ -208,6 +219,7 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 	}
 
 	requests := pod.Requests()
+	limits := pod.Limits()
 
 	return Pod{
 		UID:             pod.UID(),
@@ -235,10 +247,17 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 		MemoryRequest:    formatBytes(requests.MemoryBytes),
 		HasCPURequest:    requests.CPUMilli > 0,
 		HasMemoryRequest: requests.MemoryBytes > 0,
-		Containers:       containers,
-		Labels:           labels,
-		CreatedAt:        formatTime(pod.CreatedAt()),
-		AgeSeconds:       int64(pod.Age(now).Seconds()),
+
+		CPULimitPercent:    pod.CPULimitPercent(),
+		MemoryLimitPercent: pod.MemoryLimitPercent(),
+		CPULimit:           formatMilliCores(limits.CPUMilli),
+		MemoryLimit:        formatBytes(limits.MemoryBytes),
+		HasCPULimit:        limits.CPUMilli > 0,
+		HasMemoryLimit:     limits.MemoryBytes > 0,
+		Containers:         containers,
+		Labels:             labels,
+		CreatedAt:          formatTime(pod.CreatedAt()),
+		AgeSeconds:         int64(pod.Age(now).Seconds()),
 	}
 }
 

@@ -36,12 +36,17 @@
   ]
 
   /**
-   * Spells out what the bar is a proportion of.
+   * Spells out what the bar is a proportion of, and what it is heading for.
    *
    * A bare percentage in a pod list is not self-explanatory — an operator
    * has no way to tell whether 85% is 85% of a request, a limit or a node,
    * and those mean three different things. The tooltip names the denominator
    * and the number, so the meter never has to be taken on trust.
+   *
+   * Both ratios are stated when both exist, because the bar can only draw
+   * one. The limit clause is what explains a coloured memory bar, and saying
+   * "no limit" out loud is worth as much: an unbounded container is not an
+   * omission the reader should have to infer from an absence.
    */
   function meterTitle(
     measured: boolean,
@@ -49,10 +54,21 @@
     hasRequest: boolean,
     request: string,
     percent: number,
+    hasLimit: boolean,
+    limit: string,
+    limitPercent: number,
   ): string {
     if (!measured) return 'Not measured — this cluster has no metrics source'
-    if (!hasRequest) return `${value} used — no request declared, so there is nothing to measure it against`
-    return `${value} of ${request} requested (${Math.round(percent)}%)`
+
+    const against = hasRequest
+      ? `${value} of ${request} requested (${Math.round(percent)}%)`
+      : `${value} used — no request declared, so there is nothing to measure it against`
+
+    const ceiling = hasLimit
+      ? `${Math.round(limitPercent)}% of its ${limit} limit`
+      : 'no limit set'
+
+    return `${against} · ${ceiling}`
   }
 </script>
 
@@ -132,7 +148,16 @@
               measured={pod.hasMetrics}
               thresholds={false}
               absent="no request"
-              title={meterTitle(pod.hasMetrics, pod.cpu, pod.hasCpuRequest, pod.cpuRequest, pod.cpuPercent)}
+              title={meterTitle(
+                pod.hasMetrics,
+                pod.cpu,
+                pod.hasCpuRequest,
+                pod.cpuRequest,
+                pod.cpuPercent,
+                pod.hasCpuLimit,
+                pod.cpuLimit,
+                pod.cpuLimitPercent,
+              )}
             />
           </td>
         {/if}
@@ -145,7 +170,17 @@
               measured={pod.hasMetrics}
               thresholds={false}
               absent="no request"
-              title={meterTitle(pod.hasMetrics, pod.memory, pod.hasMemoryRequest, pod.memoryRequest, pod.memoryPercent)}
+              severity={pod.hasMemoryLimit ? pod.memoryLimitPercent : null}
+              title={meterTitle(
+                pod.hasMetrics,
+                pod.memory,
+                pod.hasMemoryRequest,
+                pod.memoryRequest,
+                pod.memoryPercent,
+                pod.hasMemoryLimit,
+                pod.memoryLimit,
+                pod.memoryLimitPercent,
+              )}
             />
           </td>
         {/if}
