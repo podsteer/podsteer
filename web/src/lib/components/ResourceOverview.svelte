@@ -10,6 +10,7 @@
   import type { Pod, Workload } from '$lib/api/client'
   import DetailSection from './DetailSection.svelte'
   import DetailList, { type DetailRow } from './DetailList.svelte'
+  import ContainerDetail from './ContainerDetail.svelte'
 
   interface Props {
     manifest: string | null
@@ -106,6 +107,19 @@
   const deaths = $derived(
     (selectedPod?.containers ?? []).filter((container) => container.lastTermination),
   )
+
+  /**
+   * The live status for a container named in the spec.
+   *
+   * Joined by name because the two halves come from different places: the
+   * spec is parsed from the manifest, the status arrives on the pod DTO
+   * already derived in Go. A container present in the spec with no status yet
+   * is normal — it is a pod that has not started — and returns undefined
+   * rather than an empty shape that would render as "not ready".
+   */
+  function statusFor(name: string) {
+    return selectedPod?.containers?.find((container) => container.name === name)
+  }
 
   /** How long a container survived before it died, in words. */
   function survived(seconds: number): string {
@@ -225,64 +239,22 @@
       <!-- Containers -->
       {#if containers.length > 0}
         <DetailSection level="h3" title="Containers ({containers.length})">
-          <div class="space-y-3">
-            {#each containers as container, i (i)}
-              <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
-                <p class="mb-2 text-body-medium font-medium text-on-surface" data-selectable>{container.name}</p>
-                <div class="grid grid-cols-2 gap-2 text-body-small">
-                  <div>
-                    <span class="text-on-surface-variant">Image:</span>
-                    <span class="ml-2 text-on-surface" data-selectable>{container.image ?? '—'}</span>
-                  </div>
-                  {#if container.ports}
-                    <div>
-                      <span class="text-on-surface-variant">Ports:</span>
-                      <span class="ml-2 text-on-surface">
-                        {container.ports
-                          .map((p: { containerPort: number; protocol?: string }) => `${p.containerPort}/${p.protocol ?? 'TCP'}`)
-                          .join(', ')}
-                      </span>
-                    </div>
-                  {/if}
-                  {#if container.resources?.requests}
-                    <div>
-                      <span class="text-on-surface-variant">Requests:</span>
-                      <span class="ml-2 text-on-surface">
-                        CPU: {container.resources.requests.cpu ?? '—'},
-                        Memory: {container.resources.requests.memory ?? '—'}
-                      </span>
-                    </div>
-                  {/if}
-                  {#if container.resources?.limits}
-                    <div>
-                      <span class="text-on-surface-variant">Limits:</span>
-                      <span class="ml-2 text-on-surface">
-                        CPU: {container.resources.limits.cpu ?? '—'},
-                        Memory: {container.resources.limits.memory ?? '—'}
-                      </span>
-                    </div>
-                  {/if}
-                </div>
-              </div>
+          <div class="flex flex-col gap-3">
+            {#each containers as container (container.name)}
+              <ContainerDetail spec={container} status={statusFor(container.name)} />
             {/each}
           </div>
         </DetailSection>
       {/if}
 
-      <!-- Init Containers -->
+      <!-- Init containers, kept separate. They have already exited on a
+           running pod, so mixing them in makes a healthy pod look like it has
+           four containers of which two are dead. -->
       {#if initContainers.length > 0}
-        <DetailSection level="h3" title="Init Containers ({initContainers.length})">
-          <div class="space-y-3">
-            {#each initContainers as container, i (i)}
-              <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
-                <p class="mb-2 text-body-medium font-medium text-on-surface" data-selectable>{container.name}</p>
-                <div class="grid grid-cols-2 gap-2 text-body-small">
-                  <div>
-                    <span class="text-on-surface-variant">Image:</span>
-                    <span class="ml-2 text-on-surface" data-selectable>{container.image ?? '—'}</span>
-                  </div>
-                </div>
-              </div>
+        <DetailSection level="h3" title="Init containers ({initContainers.length})">
+          <div class="flex flex-col gap-3">
+            {#each initContainers as container (container.name)}
+              <ContainerDetail spec={container} status={statusFor(container.name)} />
             {/each}
           </div>
         </DetailSection>
