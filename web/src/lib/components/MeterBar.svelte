@@ -11,7 +11,7 @@
 -->
 <script lang="ts">
   import GaugeTrack from './GaugeTrack.svelte'
-  import { preferences } from '$stores/preferences.svelte'
+  import { preferences, type ThresholdScope } from '$stores/preferences.svelte'
 
   interface Props {
     /** The measured value, already formatted, e.g. "0.012" or "18.4 MiB". */
@@ -100,6 +100,8 @@
     severity?: number | null
     /** Tooltip for the whole meter, naming what the proportion is of. */
     title?: string
+    /** Which surface's threshold lines apply — the list this cell is in. */
+    scope: ThresholdScope
     /**
      * How much room to reserve for the value, as a CSS length.
      *
@@ -131,6 +133,7 @@
     title,
     absent = '',
     severity = null,
+    scope,
     valueWidth = '9ch',
     class: className = '',
   }: Props = $props()
@@ -155,12 +158,10 @@
    */
   const flatTone = $derived.by(() => {
     if (severity === null) return 'bg-primary'
-    if (preferences.criticalEnabled && severity >= preferences.criticalThreshold) {
-      return 'bg-gauge-critical'
-    }
-    if (preferences.warnEnabled && severity >= preferences.warnThreshold) {
-      return 'bg-gauge-warn'
-    }
+
+    const lines = preferences.thresholdsFor(scope)
+    if (lines.criticalEnabled && severity >= lines.critical) return 'bg-gauge-critical'
+    if (lines.warnEnabled && severity >= lines.warn) return 'bg-gauge-warn'
     return 'bg-primary'
   })
 </script>
@@ -198,7 +199,7 @@
         design GaugeTrack's own notes record as tried and rejected because it
         makes 81% and 99% look identical.
       -->
-      <GaugeTrack value={percent} height="h-1.5" width="min-w-6 flex-1" label={name} />
+      <GaugeTrack value={percent} height="h-1.5" width="min-w-6 flex-1" label={name} {scope} />
     {:else}
       <span class="h-1.5 min-w-6 flex-1 overflow-hidden rounded-full bg-surface-container-highest">
         <span

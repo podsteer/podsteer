@@ -20,8 +20,36 @@
     PAGE_SIZES,
     THEME_PREFERENCES,
     THEME_LABELS,
+    THRESHOLD_SCOPES,
     type PageSize,
+    type ThresholdScope,
   } from '$stores/preferences.svelte'
+
+  /**
+   * What each scope governs, in the operator's terms.
+   *
+   * Named after the SCREEN rather than after what is measured, because that
+   * is the promise being made: the section called Nodes changes the node
+   * list, and nothing else. The node load bars on the overview belong to the
+   * overview, which is where somebody adjusting "Overview" would look for the
+   * effect of what they just changed.
+   */
+  const SCOPE_META: Record<ThresholdScope, { name: string; detail: string }> = {
+    overview: {
+      name: 'Overview',
+      detail:
+        'Cluster capacity, node load and pod slots on the cluster dashboard — the bars you glance at to decide whether anything needs attention.',
+    },
+    nodes: {
+      name: 'Nodes',
+      detail: 'CPU and memory in the node list, measured against each node’s allocatable capacity.',
+    },
+    pods: {
+      name: 'Pods',
+      detail:
+        'Memory in the pod list, measured against each pod’s limit — how close it is to being OOMKilled. CPU is not coloured: exceeding a CPU limit throttles a container, it does not kill it.',
+    },
+  }
   import {
     historySettings,
     RETENTION_OPTIONS,
@@ -101,6 +129,90 @@
   }
 
 </script>
+
+<!--
+  One screen's pair of lines, with a preview of what they do.
+
+  A snippet rather than three copies of the same forty lines: the scopes
+  differ only in which record they read and write, and three hand-maintained
+  copies is how one of them quietly stops matching the others.
+-->
+{#snippet thresholdGroup(scope: ThresholdScope)}
+  {@const lines = preferences.thresholdsFor(scope)}
+  {@const meta = SCOPE_META[scope]}
+
+  <div>
+    <h4 class="text-title-small text-on-surface">{meta.name}</h4>
+    <p class="mt-0.5 text-body-small text-on-surface-variant">{meta.detail}</p>
+
+    <!-- Each line switches off on its own. Somebody who only wants to know
+         about the serious case turns the first one off and gets blue all the
+         way to the second, at whatever value they chose for it. -->
+    <ul class="mt-4 flex flex-col gap-3">
+      {#each [{ id: 'warn', name: 'Amber', swatch: 'bg-gauge-warn', on: lines.warnEnabled, value: lines.warn }, { id: 'critical', name: 'Red', swatch: 'bg-gauge-critical', on: lines.criticalEnabled, value: lines.critical }] as line (line.id)}
+        <li class="flex items-center gap-3">
+          <span
+            class="flex w-20 shrink-0 items-center gap-2 text-body-medium
+                   {line.on ? 'text-on-surface' : 'text-on-surface-variant/50'}"
+          >
+            <span class="size-3 shrink-0 rounded-full {line.swatch} {line.on ? '' : 'opacity-30'}"
+            ></span>
+            {line.name}
+          </span>
+
+          <div class="flex shrink-0">
+            {#each [true, false] as choice (choice)}
+              <button
+                type="button"
+                onclick={() =>
+                  preferences.setThresholdEnabled(scope, line.id as 'warn' | 'critical', choice)}
+                aria-pressed={line.on === choice}
+                aria-label="{meta.name} {line.name} threshold {choice ? 'on' : 'off'}"
+                class="state-layer h-9 w-14 border text-label-large transition-colors
+                       duration-150 ease-standard
+                       {choice ? 'rounded-l-xs' : '-ml-px rounded-r-xs'}
+                       {line.on === choice
+                         ? 'border-transparent bg-secondary-container text-on-secondary-container'
+                         : 'border-outline text-on-surface-variant'}"
+              >
+                {choice ? 'On' : 'Off'}
+              </button>
+            {/each}
+          </div>
+
+          <!-- Still adjustable while off, so a line can be set up before it is
+               switched on rather than after. -->
+          <div class="flex-1 {line.on ? '' : 'opacity-50'}">
+            <Select
+              label="{line.name} threshold"
+              accessibleName="{meta.name} {line.name} threshold"
+              value={String(line.value)}
+              options={THRESHOLD_OPTIONS}
+              class="w-full"
+              onchange={(value) =>
+                preferences.setThreshold(scope, line.id as 'warn' | 'critical', Number(value))}
+            />
+          </div>
+        </li>
+      {/each}
+    </ul>
+
+    <!-- Shown rather than described. Somebody choosing a number wants to see
+         where it lands, and each scope previews its own. -->
+    <div class="mt-4 flex flex-col gap-1.5">
+      {#each [Math.max(5, lines.warn - 20), Math.round((lines.warn + lines.critical) / 2), Math.min(100, lines.critical + 5)] as sample (sample)}
+        <div class="flex items-center gap-3">
+          <GaugeTrack {scope} value={sample} label="{meta.name} example at {sample} per cent" />
+          <span
+            class="w-[4.5ch] shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant"
+          >
+            {sample}%
+          </span>
+        </div>
+      {/each}
+    </div>
+  </div>
+{/snippet}
 
 <svelte:window onkeydown={onKeydown} />
 
@@ -272,92 +384,32 @@
             </div>
           </section>
         {:else if section === 'thresholds'}
-          <section class="flex flex-col gap-6">
+          <section class="flex flex-col gap-8">
             <div>
               <h3 class="text-title-medium text-on-surface">When a bar changes colour</h3>
               <p class="mt-0.5 text-body-small text-on-surface-variant">
-                Every bar that measures how full something is uses these two lines: blue below the
+                Every bar that measures how full something is uses two lines: blue below the
                 first, amber between them, red past the second. Both are marked on the track, so
                 the colour is never the only way to read it.
               </p>
-
-              <!-- Each line switches off on its own. Somebody who only wants
-                   to know about the serious case turns the first one off and
-                   gets blue all the way to the second, at whatever value they
-                   chose for it. -->
-              <ul class="mt-4 flex flex-col gap-3">
-                {#each [{ id: 'warn', name: 'Amber', swatch: 'bg-gauge-warn', on: preferences.warnEnabled, value: preferences.warnThreshold, setOn: preferences.setWarnEnabled, setValue: preferences.setWarnThreshold }, { id: 'critical', name: 'Red', swatch: 'bg-gauge-critical', on: preferences.criticalEnabled, value: preferences.criticalThreshold, setOn: preferences.setCriticalEnabled, setValue: preferences.setCriticalThreshold }] as line (line.id)}
-                  <li class="flex items-center gap-3">
-                    <span
-                      class="flex w-20 shrink-0 items-center gap-2 text-body-medium
-                             {line.on ? 'text-on-surface' : 'text-on-surface-variant/50'}"
-                    >
-                      <span
-                        class="size-3 shrink-0 rounded-full {line.swatch} {line.on
-                          ? ''
-                          : 'opacity-30'}"
-                      ></span>
-                      {line.name}
-                    </span>
-
-                    <div class="flex shrink-0">
-                      {#each [true, false] as choice (choice)}
-                        <button
-                          type="button"
-                          onclick={() => line.setOn(choice)}
-                          aria-pressed={line.on === choice}
-                          aria-label="{line.name} threshold {choice ? 'on' : 'off'}"
-                          class="state-layer h-9 w-14 border text-label-large transition-colors
-                                 duration-150 ease-standard
-                                 {choice ? 'rounded-l-xs' : '-ml-px rounded-r-xs'}
-                                 {line.on === choice
-                                   ? 'border-transparent bg-secondary-container text-on-secondary-container'
-                                   : 'border-outline text-on-surface-variant'}"
-                        >
-                          {choice ? 'On' : 'Off'}
-                        </button>
-                      {/each}
-                    </div>
-
-                    <!-- Still adjustable while off, so a line can be set up
-                         before it is switched on rather than after. -->
-                    <div class="flex-1 {line.on ? '' : 'opacity-50'}">
-                      <Select
-                        label="{line.name} threshold"
-                        value={String(line.value)}
-                        options={THRESHOLD_OPTIONS}
-                        class="w-full"
-                        onchange={(value) => line.setValue(Number(value))}
-                      />
-                    </div>
-                  </li>
-                {/each}
-              </ul>
-
-              <!-- Shown rather than described. Somebody choosing a number
-                   wants to see where it lands. -->
-              <div class="mt-4 flex flex-col gap-1.5">
-                <p class="text-label-small uppercase tracking-wider text-on-surface-variant">
-                  Preview
-                </p>
-                {#each [Math.max(5, preferences.warnThreshold - 20), Math.round((preferences.warnThreshold + preferences.criticalThreshold) / 2), Math.min(100, preferences.criticalThreshold + 5)] as sample (sample)}
-                  <div class="flex items-center gap-3">
-                    <GaugeTrack value={sample} label="Example at {sample} per cent" />
-                    <span class="w-[4.5ch] shrink-0 text-right text-body-medium tabular-nums text-on-surface-variant">
-                      {sample}%
-                    </span>
-                  </div>
-                {/each}
-              </div>
-
-              <p class="mt-3 text-body-small text-on-surface-variant/70">
-                The two cannot cross: moving one past the other pushes it along rather than
-                leaving a range that could never be coloured. With both off, every bar stays
-                blue however full it gets.
+              <p class="mt-2 text-body-small text-on-surface-variant">
+                Each screen keeps its own pair. A number that is a useful early warning on a
+                dashboard you glance at can be a distraction on a list you work in all day, and
+                nothing here decides which of those you are doing. Set them all the same if that
+                is what you want.
               </p>
             </div>
-          </section>
 
+            {#each THRESHOLD_SCOPES as scope (scope)}
+              {@render thresholdGroup(scope)}
+            {/each}
+
+            <p class="text-body-small text-on-surface-variant/70">
+              The two lines cannot cross: moving one past the other pushes it along rather than
+              leaving a range that could never be coloured. With both off, every bar on that
+              screen stays blue however full it gets.
+            </p>
+          </section>
         {:else if section === 'notifications'}
           <section class="flex flex-col gap-6">
             <div>
