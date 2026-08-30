@@ -8,6 +8,7 @@
 <script lang="ts">
   import { parse } from 'yaml'
   import type { Pod, Workload } from '$lib/api/client'
+  import DetailSection from './DetailSection.svelte'
 
   interface Props {
     manifest: string | null
@@ -71,13 +72,18 @@
   }
 </script>
 
-<div class="overflow-auto p-4">
+<!--
+  Sections are spaced by the container, not by a margin each one carries.
+  `{#if}` adds no element, so every section below is a direct child of this
+  flex column however deeply the conditionals nest — which is what lets one
+  gap govern the lot instead of ten margins that can disagree.
+-->
+<div class="flex flex-col gap-6 overflow-auto p-4">
   {#if !parsedManifest}
     <p class="text-body-medium text-on-surface-variant">No manifest available</p>
   {:else}
     <!-- Basic Information -->
-    <section class="mb-6">
-      <h3 class="mb-3 text-title-medium text-on-surface">Basic Information</h3>
+    <DetailSection level="h3" title="Basic Information">
       <div class="grid grid-cols-2 gap-4">
         <div>
           <p class="text-body-small text-on-surface-variant">Name</p>
@@ -96,13 +102,12 @@
           <p class="truncate text-body-medium text-on-surface" data-selectable>{metadata.uid ?? '—'}</p>
         </div>
       </div>
-    </section>
+    </DetailSection>
 
     <!-- Pod-specific sections -->
     {#if kind === 'Pod' || selectedPod}
       <!-- Status -->
-      <section class="mb-6">
-        <h3 class="mb-3 text-title-medium text-on-surface">Status</h3>
+      <DetailSection level="h3" title="Status">
         <div class="grid grid-cols-2 gap-4">
           <div>
             <p class="text-body-small text-on-surface-variant">Phase</p>
@@ -121,12 +126,11 @@
             <p class="text-body-medium text-on-surface">{status.qosClass ?? '—'}</p>
           </div>
         </div>
-      </section>
+      </DetailSection>
 
       <!-- Containers -->
       {#if containers.length > 0}
-        <section class="mb-6">
-          <h3 class="mb-3 text-title-medium text-on-surface">Containers ({containers.length})</h3>
+        <DetailSection level="h3" title="Containers ({containers.length})">
           <div class="space-y-3">
             {#each containers as container, i (i)}
               <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
@@ -168,13 +172,12 @@
               </div>
             {/each}
           </div>
-        </section>
+        </DetailSection>
       {/if}
 
       <!-- Init Containers -->
       {#if initContainers.length > 0}
-        <section class="mb-6">
-          <h3 class="mb-3 text-title-medium text-on-surface">Init Containers ({initContainers.length})</h3>
+        <DetailSection level="h3" title="Init Containers ({initContainers.length})">
           <div class="space-y-3">
             {#each initContainers as container, i (i)}
               <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
@@ -188,13 +191,12 @@
               </div>
             {/each}
           </div>
-        </section>
+        </DetailSection>
       {/if}
 
       <!-- Volumes -->
       {#if volumes.length > 0}
-        <section class="mb-6">
-          <h3 class="mb-3 text-title-medium text-on-surface">Volumes ({volumes.length})</h3>
+        <DetailSection level="h3" title="Volumes ({volumes.length})">
           <div class="space-y-2">
             {#each volumes as volume, i (i)}
               <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
@@ -217,15 +219,14 @@
               </div>
             {/each}
           </div>
-        </section>
+        </DetailSection>
       {/if}
     {/if}
 
     <!-- Deployment/StatefulSet-specific sections -->
     {#if selectedWorkload && (kind === 'Deployment' || kind === 'StatefulSet' || kind === 'DaemonSet')}
       <!-- Replicas -->
-      <section class="mb-6">
-        <h3 class="mb-3 text-title-medium text-on-surface">Replicas</h3>
+      <DetailSection level="h3" title="Replicas">
         <div class="grid grid-cols-2 gap-4">
           <div>
             <p class="text-body-small text-on-surface-variant">Desired</p>
@@ -244,12 +245,11 @@
             <p class="text-body-medium text-on-surface">{status.updatedReplicas ?? 0}</p>
           </div>
         </div>
-      </section>
+      </DetailSection>
 
       <!-- Strategy -->
       {#if kind === 'Deployment'}
-        <section class="mb-6">
-          <h3 class="mb-3 text-title-medium text-on-surface">Update Strategy</h3>
+        <DetailSection level="h3" title="Update Strategy">
           <div class="grid grid-cols-2 gap-4">
             <div>
               <p class="text-body-small text-on-surface-variant">Type</p>
@@ -266,14 +266,13 @@
               </div>
             {/if}
           </div>
-        </section>
+        </DetailSection>
       {/if}
     {/if}
 
     <!-- Conditions -->
     {#if conditions.length > 0}
-      <section class="mb-6">
-        <h3 class="mb-3 text-title-medium text-on-surface">Conditions</h3>
+      <DetailSection level="h3" title="Conditions">
         <div class="space-y-2">
           {#each conditions as condition, i (i)}
             <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
@@ -297,13 +296,12 @@
             </div>
           {/each}
         </div>
-      </section>
+      </DetailSection>
     {/if}
 
     <!-- Labels -->
     {#if labels.length > 0}
-      <section class="mb-6">
-        <h3 class="mb-3 text-title-medium text-on-surface">Labels ({labels.length})</h3>
+      <DetailSection level="h3" title="Labels ({labels.length})">
         <div class="space-y-1">
           {#each labels as [key, value], i (i)}
             <div class="flex gap-2 text-body-small">
@@ -312,13 +310,12 @@
             </div>
           {/each}
         </div>
-      </section>
+      </DetailSection>
     {/if}
 
     <!-- Annotations -->
     {#if annotations.length > 0}
-      <section class="mb-6">
-        <h3 class="mb-3 text-title-medium text-on-surface">Annotations ({annotations.length})</h3>
+      <DetailSection level="h3" title="Annotations ({annotations.length})">
         <div class="space-y-1">
           {#each annotations as [key, value], i (i)}
             <div class="flex gap-2 text-body-small">
@@ -327,7 +324,7 @@
             </div>
           {/each}
         </div>
-      </section>
+      </DetailSection>
     {/if}
   {/if}
 </div>

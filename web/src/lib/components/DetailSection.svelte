@@ -17,17 +17,40 @@
   interface Props {
     /** Names what the section holds. */
     title: string
+    /**
+     * The heading level, for the document outline rather than for the look.
+     *
+     * Every section renders identically whichever this is — the style is the
+     * component's, the level is the caller's, because only the caller knows
+     * what it is nested inside. A pane whose own title is an h3 needs h4
+     * here; one whose sections sit directly under the drawer's h2 needs h3,
+     * and hard-coding either would make one of them skip a level for anybody
+     * navigating by headings.
+     */
+    level?: 'h3' | 'h4'
     children: Snippet
   }
 
-  let { title, children }: Props = $props()
+  let { title, level = 'h4', children }: Props = $props()
 </script>
 
 <section class="flex flex-col gap-2.5">
-  <h4
-    class="border-b border-outline-variant/40 pb-1.5 text-body-medium font-semibold text-on-surface"
+  <!--
+    Sized to match the pane's own title rather than set a step below it.
+
+    These were body-sized and read as captions: the eye went to the values
+    and never registered that the pane was divided at all. A heading that has
+    to be looked for is not doing the job of a heading, and a detail pane is
+    read by scanning for the section you came for.
+
+    The rule is what keeps the outline legible even though the sizes now
+    match — it, not a size step, is what separates one section from the next.
+  -->
+  <svelte:element
+    this={level}
+    class="border-b border-outline-variant/40 pb-1.5 text-title-medium font-semibold text-on-surface"
   >
     {title}
-  </h4>
+  </svelte:element>
   {@render children()}
 </section>
