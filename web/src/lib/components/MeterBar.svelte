@@ -10,9 +10,19 @@
   completely. See the prop.
 -->
 <script lang="ts">
+  import GaugeTrack from './GaugeTrack.svelte'
+
   interface Props {
     /** The measured value, already formatted, e.g. "0.012" or "18.4 MiB". */
     label: string
+    /**
+     * What is being measured — "CPU", "Memory" — for the screen reader.
+     *
+     * The column heading says it once for sighted readers, so the cell does
+     * not repeat it visually; anyone arriving at a single cell out of context
+     * still needs to be told which of the two they landed on.
+     */
+    name: string
     /**
      * The proportion, 0–100 and occasionally beyond.
      *
@@ -44,18 +54,22 @@
     /** False when nothing measured it: no metrics-server, or a pod it did not reach. */
     measured?: boolean
     /**
-     * Whether a high reading is a problem.
+     * Whether the denominator is a CAPACITY, so that a high reading is a
+     * problem and the operator's gauge thresholds apply.
      *
-     * TRUE for a node, where the denominator is allocatable capacity: 90% of
-     * a node's memory is genuinely worth somebody's attention, and the colour
-     * is how they notice it without reading every row.
+     * TRUE for a node, where usage is divided by allocatable: 90% of a node's
+     * memory is genuinely worth somebody's attention, and the colour is how
+     * they notice it without reading every row. Such a bar is drawn by
+     * GaugeTrack, so it carries the thresholds set in Settings — and the
+     * marker ticks that say where they fall — exactly as the same reading
+     * does on the overview.
      *
      * FALSE for a pod against its own request, where it emphatically is not.
      * A request is a reservation, not a ceiling; a pod sitting at 95% of what
      * it asked for is a pod that was sized correctly, and one above 100% is
      * a Burstable pod doing exactly what Burstable means. Colouring those
      * amber and red would light up most of a healthy pod list, which is how a
-     * signal stops being read.
+     * signal stops being read. That bar stays one flat colour.
      */
     thresholds?: boolean
     /** Tooltip for the whole meter, naming what the proportion is of. */
@@ -84,6 +98,7 @@
 
   let {
     label,
+    name,
     percent,
     measured = true,
     thresholds = true,
@@ -94,22 +109,14 @@
   }: Props = $props()
 
   /**
-   * The bar's width, which IS capped at 100 — a bar cannot draw past its own
-   * track. The printed figure below is not capped, so a pod at three times
-   * its request reads as 300% beside a full bar rather than being quietly
-   * rounded down to a comfortable-looking 100%.
+   * The flat bar's width, which IS capped at 100 — a bar cannot draw past its
+   * own track. The printed figure below is not capped, so a pod at three
+   * times its request reads as 300% beside a full bar rather than being
+   * quietly rounded down to a comfortable-looking 100%.
+   *
+   * Only the thresholds={false} branch needs this; GaugeTrack clamps its own.
    */
   const width = $derived(Math.max(0, Math.min(100, percent ?? 0)))
-
-  const tone = $derived(
-    !thresholds
-      ? 'bg-primary'
-      : width >= 90
-        ? 'bg-error'
-        : width >= 75
-          ? 'bg-warning'
-          : 'bg-primary',
-  )
 </script>
 
 <!--
@@ -135,14 +142,25 @@
   </span>
 
   {#if measured && percent !== null}
-    <span
-      class="h-1.5 min-w-6 flex-1 overflow-hidden rounded-full bg-surface-container-highest"
-    >
-      <span
-        class="block h-full rounded-full transition-all duration-300 ease-standard {tone}"
-        style="width: {width}%"
-      ></span>
-    </span>
+    {#if thresholds}
+      <!--
+        Delegated, rather than a second bar with its own opinion. This used to
+        hard-code amber at 75 and red at 90 and tint the whole length — three
+        disagreements with the rest of the application at once: an operator
+        who set 95/99 for a deliberately hot cluster still got amber at 75, a
+        switched-off threshold was drawn anyway, and whole-bar tinting is the
+        design GaugeTrack's own notes record as tried and rejected because it
+        makes 81% and 99% look identical.
+      -->
+      <GaugeTrack value={percent} height="h-1.5" width="min-w-6 flex-1" label={name} />
+    {:else}
+      <span class="h-1.5 min-w-6 flex-1 overflow-hidden rounded-full bg-surface-container-highest">
+        <span
+          class="block h-full rounded-full bg-primary transition-all duration-300 ease-standard"
+          style="width: {width}%"
+        ></span>
+      </span>
+    {/if}
     <span class="w-12 shrink-0 text-right tabular-nums text-on-surface-variant/70">
       {Math.round(percent)}%
     </span>

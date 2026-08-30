@@ -92,6 +92,7 @@
           <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
             <MeterBar
               label={node.cpu}
+              name="CPU"
               valueWidth="7ch"
               percent={node.cpuPercent}
               measured={node.hasMetrics}
@@ -105,6 +106,7 @@
           <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
             <MeterBar
               label={node.memory}
+              name="Memory"
               percent={node.memoryPercent}
               measured={node.hasMetrics}
               title={node.hasMetrics

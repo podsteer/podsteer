@@ -126,6 +126,7 @@
           <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
             <MeterBar
               label={pod.cpu}
+              name="CPU"
               valueWidth="7ch"
               percent={pod.hasCpuRequest ? pod.cpuPercent : null}
               measured={pod.hasMetrics}
@@ -139,6 +140,7 @@
           <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
             <MeterBar
               label={pod.memory}
+              name="Memory"
               percent={pod.hasMemoryRequest ? pod.memoryPercent : null}
               measured={pod.hasMetrics}
               thresholds={false}
