@@ -362,17 +362,22 @@ type PortForward struct {
 	RemotePort int    `json:"remotePort"`
 	// Address is where to point a browser, scheme included.
 	Address string `json:"address"`
+	// Reconnecting reports that the pod behind this forward went away and a
+	// replacement is being sought. The local port stays bound throughout, so
+	// whatever is pointed at it keeps its address and simply stalls.
+	Reconnecting bool `json:"reconnecting"`
 }
 
 func toPortForward(forward domain.Forward) PortForward {
 	return PortForward{
-		ID:         forward.ID,
-		ClusterID:  forward.ClusterID.String(),
-		Namespace:  forward.Namespace.String(),
-		Pod:        forward.Pod,
-		LocalPort:  forward.LocalPort,
-		RemotePort: forward.RemotePort,
-		Address:    forward.Address(),
+		ID:           forward.ID,
+		ClusterID:    forward.ClusterID.String(),
+		Namespace:    forward.Namespace.String(),
+		Pod:          forward.Pod,
+		LocalPort:    forward.LocalPort,
+		RemotePort:   forward.RemotePort,
+		Address:      forward.Address(),
+		Reconnecting: forward.Reconnecting,
 	}
 }
 
@@ -382,7 +387,7 @@ func toPortForward(forward domain.Forward) PortForward {
 // returned forward carries what it chose. That is the honest default: asking
 // somebody to pick a free port is asking them to guess, and a collision is
 // reported as a failure to start rather than silently moved somewhere else.
-func (m *ManagementAPI) StartPortForward(clusterID, namespace, pod, podUID string, localPort, remotePort int, portName, protocol string) (PortForward, error) {
+func (m *ManagementAPI) StartPortForward(clusterID, namespace, pod, podUID string, localPort, remotePort int, portName, protocol string, selector map[string]string) (PortForward, error) {
 	ctx, cancel := m.app.requestContext()
 	defer cancel()
 
@@ -396,7 +401,7 @@ func (m *ManagementAPI) StartPortForward(clusterID, namespace, pod, podUID strin
 		return PortForward{}, apiError(m.logger, "StartPortForward", err)
 	}
 
-	forward, err := m.forwards.StartPortForward(ctx, id, ns, pod, podUID, localPort, remotePort, portName, protocol)
+	forward, err := m.forwards.StartPortForward(ctx, id, ns, pod, podUID, localPort, remotePort, portName, protocol, selector)
 	if err != nil {
 		return PortForward{}, apiError(m.logger, "StartPortForward", err)
 	}

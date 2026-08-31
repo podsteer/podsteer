@@ -391,6 +391,7 @@ export function startPortForward(
   remotePort: number,
   portName: string,
   protocol: string,
+  selector: Record<string, string>,
 ): Promise<PortForward> {
   return call(() =>
     bindStartPortForward(
@@ -402,6 +403,7 @@ export function startPortForward(
       remotePort,
       portName,
       protocol,
+      selector,
     ),
   )
 }

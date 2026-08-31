@@ -1114,6 +1114,7 @@ export namespace wails {
 	    localPort: number;
 	    remotePort: number;
 	    address: string;
+	    reconnecting: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new PortForward(source);
@@ -1128,6 +1129,7 @@ export namespace wails {
 	        this.localPort = source["localPort"];
 	        this.remotePort = source["remotePort"];
 	        this.address = source["address"];
+	        this.reconnecting = source["reconnecting"];
 	    }
 	}
 	

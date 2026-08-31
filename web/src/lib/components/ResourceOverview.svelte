@@ -446,6 +446,7 @@
                 namespace={metadata.namespace ?? ''}
                 podName={metadata.name ?? ''}
                 podUID={metadata.uid ?? ''}
+                labels={metadata.labels ?? {}}
               />
             {/each}
           </div>
@@ -469,6 +470,7 @@
                 namespace={metadata.namespace ?? ''}
                 podName={metadata.name ?? ''}
                 podUID={metadata.uid ?? ''}
+                labels={metadata.labels ?? {}}
               />
             {/each}
           </div>
@@ -489,6 +491,7 @@
                 namespace={metadata.namespace ?? ''}
                 podName={metadata.name ?? ''}
                 podUID={metadata.uid ?? ''}
+                labels={metadata.labels ?? {}}
               />
             {/each}
           </div>

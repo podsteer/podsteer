@@ -30,9 +30,19 @@
     /** Identifies the pod, so a Secret key can be read on request. */
     clusterId: string
     namespace: string
+    /** The pod's labels, so a forward can find a replacement pod if it dies. */
+    labels?: Record<string, string>
   }
 
-  let { spec, status, clusterId, namespace, podName = '', podUID = '' }: Props = $props()
+  let {
+    spec,
+    status,
+    clusterId,
+    namespace,
+    podName = '',
+    podUID = '',
+    labels = {},
+  }: Props = $props()
 
   /**
    * The ports that can actually be forwarded.
@@ -139,7 +149,19 @@
             {port.name ? `${port.name} ` : ''}{port.containerPort}/{port.protocol ?? 'TCP'}
           </span>
 
-          {#if open}
+          {#if open?.reconnecting}
+            <!--
+              The pod died and a replacement is being sought. Said out loud
+              rather than shown as still-connected, because the address is
+              still bound and still correct — whatever is pointed at it is
+              stalling, not broken, and that is a different thing to tell
+              somebody than "the forward is fine".
+            -->
+            <span class="inline-flex items-center gap-1.5 text-body-medium text-gauge-warn">
+              <Loader class="size-3.5 animate-spin" strokeWidth={2} />
+              pod went away — holding {open.address} while a replacement is found
+            </span>
+          {:else if open}
             <!-- The address is opened in the real browser, not the webview:
                  this is a link to something on the operator's machine, and
                  loading it inside the application would replace PodSteer. -->
@@ -168,6 +190,7 @@
                     port.containerPort,
                     port.name ?? '',
                     port.protocol ?? 'TCP',
+                    labels,
                   )}
             class="state-layer ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm
                    border border-outline-variant px-2 text-label-large

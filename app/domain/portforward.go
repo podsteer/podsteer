@@ -31,6 +31,19 @@ type Forward struct {
 	// Scheme is what a browser should be sent to, guessed from the port's
 	// name. Only ever "http" or "https".
 	Scheme string
+	// Selector is the pod's own labels, used to find a replacement when the
+	// pod behind this forward goes away.
+	//
+	// The pod's labels rather than its controller's, deliberately: a
+	// ReplicaSet's pods carry pod-template-hash, so selecting on them finds
+	// siblings of the SAME REVISION. Reconnecting to a pod of a different
+	// revision would silently move a forward onto different code, which is
+	// the sort of helpfulness nobody asked for.
+	Selector map[string]string
+	// Reconnecting reports that the pod died and a replacement is being
+	// sought. The local port stays bound throughout, so whatever is pointed
+	// at it keeps its address.
+	Reconnecting bool
 }
 
 // Address is where to point a browser.

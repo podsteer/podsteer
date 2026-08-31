@@ -41,6 +41,21 @@ class Forwards {
     )
   }
 
+  /**
+   * Re-reads the list on a slow tick while anything is forwarded.
+   *
+   * A forward can change underneath the UI without anything here asking: its
+   * pod dies and the supervisor starts looking for a replacement, or gives up
+   * and removes it. Polling is how that reaches the screen — and only while
+   * something is open, so an application with no forwards does no work.
+   */
+  watch(): () => void {
+    const timer = setInterval(() => {
+      if (this.active.length > 0) void this.refresh()
+    }, 3000)
+    return () => clearInterval(timer)
+  }
+
   async refresh(): Promise<void> {
     try {
       this.active = await listPortForwards()
@@ -59,6 +74,8 @@ class Forwards {
     remotePort: number,
     portName: string,
     protocol: string,
+    /** The pod's own labels, so a replacement can be found if it dies. */
+    selector: Record<string, string>,
   ): Promise<void> {
     const key = `${namespace}/${pod}/${remotePort}`
     this.#setBusy(key, true)
@@ -68,7 +85,17 @@ class Forwards {
       // Local port zero: the operating system chooses. Asking somebody to
       // pick a free port is asking them to guess, and the forward reports
       // back which one it actually bound.
-      await startPortForward(clusterId, namespace, pod, podUID, 0, remotePort, portName, protocol)
+      await startPortForward(
+        clusterId,
+        namespace,
+        pod,
+        podUID,
+        0,
+        remotePort,
+        portName,
+        protocol,
+        selector,
+      )
       await this.refresh()
     } catch (cause) {
       this.error = toApiError(cause).message

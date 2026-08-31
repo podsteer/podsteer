@@ -35,6 +35,7 @@
     // window reopened over a running backend, or a hot reload in development,
     // would otherwise show a Forward button for a port that is already open.
     void forwards.refresh()
+    const unwatchForwards = forwards.watch()
     // Audio output is only allowed to start from a user gesture, and a context
     // created before one exists stays suspended for the life of the process.
     // Arming here means the first click or keypress of the session wakes it,
@@ -44,7 +45,10 @@
     void Promise.all([workspace.initialise(), minimum]).then(() => {
       booted = true
     })
-    return () => workspace.dispose()
+    return () => {
+      unwatchForwards()
+      workspace.dispose()
+    }
   })
 
   /**
