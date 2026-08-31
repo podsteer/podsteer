@@ -89,9 +89,19 @@ type Node struct {
 	InternalIP     string `json:"internalIp"`
 	AllocatableCPU string `json:"allocatableCpu"`
 	AllocatableMem string `json:"allocatableMemory"`
-	MaxPods        int64  `json:"maxPods"`
-	CreatedAt      string `json:"createdAt"`
-	AgeSeconds     int64  `json:"ageSeconds"`
+	// Disk is the FULLEST of the node's filesystems — whichever of nodefs and
+	// imagefs is closer to full, because that is the one that decides whether
+	// the kubelet starts evicting. Reporting the average, or only nodefs,
+	// would hide a full image filesystem on a node that shares neither.
+	Disk        string  `json:"disk"`
+	DiskPercent float64 `json:"diskPercent"`
+	// HasDisk distinguishes a node that reported an empty disk from one never
+	// asked. Disk occupancy needs nodes/proxy, which plenty of clusters do
+	// not grant, so absent is the ordinary case rather than a fault.
+	HasDisk    bool   `json:"hasDisk"`
+	MaxPods    int64  `json:"maxPods"`
+	CreatedAt  string `json:"createdAt"`
+	AgeSeconds int64  `json:"ageSeconds"`
 }
 
 func toNode(node domain.Node, now time.Time) Node {
@@ -115,6 +125,9 @@ func toNode(node domain.Node, now time.Time) Node {
 		OSImage:        node.OSImage(),
 		Architecture:   node.Architecture(),
 		InternalIP:     node.InternalIP(),
+		Disk:           formatDisk(node.Filesystems()),
+		DiskPercent:    node.Filesystems().Fullest().Percent(),
+		HasDisk:        node.Filesystems().Measured,
 		AllocatableCPU: formatMilliCores(allocatable.CPUMilli),
 		AllocatableMem: formatBytes(allocatable.MemoryBytes),
 		MaxPods:        allocatable.Pods,
@@ -410,4 +423,21 @@ func formatResources(resources domain.Resources) string {
 		parts = append(parts, "memory: "+formatBytes(resources.MemoryBytes))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// formatDisk renders a node's fullest filesystem as "used of capacity".
+//
+// Both halves, because a percentage alone cannot be acted on: 85% of 40GiB
+// and 85% of 2TiB call for different responses, and the second is not
+// urgent at all.
+func formatDisk(filesystems domain.NodeFilesystems) string {
+	if !filesystems.Measured {
+		return "—"
+	}
+
+	fullest := filesystems.Fullest()
+	if fullest.CapacityBytes <= 0 {
+		return "—"
+	}
+	return formatBytes(fullest.UsedBytes) + " of " + formatBytes(fullest.CapacityBytes)
 }

@@ -170,6 +170,10 @@ const NODE_SORT: SortAccessors<Node> = {
   roles: (node) => (node.roles.length ? node.roles.join(', ') : 'worker'),
   cpu: (node) => (node.hasMetrics ? node.cpuPercent : null),
   memory: (node) => (node.hasMetrics ? node.memoryPercent : null),
+  // Sorted by how FULL it is, not by bytes used. A 900GiB disk with 100GiB
+  // free sorts above a 20GiB disk with 1GiB free by volume and below it by
+  // urgency, and urgency is what somebody scanning this column wants.
+  disk: (node) => (node.hasDisk ? node.diskPercent : null),
   version: (node) => node.version,
   ip: (node) => node.internalIp,
   os: (node) => node.osImage,

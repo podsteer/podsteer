@@ -547,6 +547,9 @@ export namespace wails {
 	    internalIp: string;
 	    allocatableCpu: string;
 	    allocatableMemory: string;
+	    disk: string;
+	    diskPercent: number;
+	    hasDisk: boolean;
 	    maxPods: number;
 	    createdAt: string;
 	    ageSeconds: number;
@@ -575,6 +578,9 @@ export namespace wails {
 	        this.internalIp = source["internalIp"];
 	        this.allocatableCpu = source["allocatableCpu"];
 	        this.allocatableMemory = source["allocatableMemory"];
+	        this.disk = source["disk"];
+	        this.diskPercent = source["diskPercent"];
+	        this.hasDisk = source["hasDisk"];
 	        this.maxPods = source["maxPods"];
 	        this.createdAt = source["createdAt"];
 	        this.ageSeconds = source["ageSeconds"];
