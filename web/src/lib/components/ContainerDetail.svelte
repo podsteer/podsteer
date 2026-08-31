@@ -49,6 +49,13 @@
     if (status?.requests) out.push({ label: 'Requests', value: status.requests })
     if (status?.limits) out.push({ label: 'Limits', value: status.limits })
 
+    // What THIS container is using. The pod's total was always on screen and
+    // never said which container it came from — on a pod with a sidecar, half
+    // the time the answer is the sidecar, and nothing showed that.
+    if (status?.hasMetrics) {
+      out.push({ label: 'Using', value: `cpu: ${status.cpu}, memory: ${status.memory}` })
+    }
+
     // ALL THREE PROBES. A probe missing from a pane reads as a container
     // without one, which is a different and much calmer fact than the truth.
     const probes: [string, unknown][] = [

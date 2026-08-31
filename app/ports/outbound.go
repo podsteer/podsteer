@@ -103,8 +103,9 @@ type EventPort interface {
 // is the whole reason this is a port of its own — so the workload use case can
 // degrade instead of failing.
 type MetricsPort interface {
-	// PodMetrics returns usage keyed by "namespace/name".
-	PodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (map[string]domain.Metrics, error)
+	// PodMetrics returns usage keyed by "namespace/name", each carrying both
+	// the pod total and the per-container breakdown behind it.
+	PodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (map[string]domain.PodUsage, error)
 
 	// NodeMetrics returns usage keyed by node name.
 	NodeMetrics(ctx context.Context, id domain.ClusterID) (map[string]domain.Metrics, error)

@@ -16,8 +16,12 @@ import (
 // PodMetrics returns pod usage keyed by "namespace/name".
 //
 // A pod's usage is the sum of its containers': the metrics API reports per
-// container, but the number an operator reads in a pod list is the total.
-func (a *Adapter) PodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (map[string]domain.Metrics, error) {
+// container, and the number an operator reads in a list is the total. THE
+// BREAKDOWN IS KEPT AS WELL, because it costs nothing — this loop already
+// visits every container to add it up — and because the total alone cannot
+// answer the question the total provokes, which is which container is doing
+// it.
+func (a *Adapter) PodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (map[string]domain.PodUsage, error) {
 	op := fmt.Sprintf("reading pod metrics in %q of %q", namespace, id)
 
 	set, err := a.factory.clientsFor(id)
@@ -32,16 +36,19 @@ func (a *Adapter) PodMetrics(ctx context.Context, id domain.ClusterID, namespace
 		return nil, classifyMetrics(op, err)
 	}
 
-	usage := make(map[string]domain.Metrics, len(list.Items))
+	usage := make(map[string]domain.PodUsage, len(list.Items))
 	for i := range list.Items {
 		item := &list.Items[i]
 
 		var total domain.Metrics
+		containers := make(map[string]domain.Metrics, len(item.Containers))
 		for _, container := range item.Containers {
-			total = total.Add(containerUsage(container))
+			measured := containerUsage(container)
+			containers[container.Name] = measured
+			total = total.Add(measured)
 		}
 
-		usage[item.Namespace+"/"+item.Name] = total
+		usage[item.Namespace+"/"+item.Name] = domain.PodUsage{Total: total, Containers: containers}
 	}
 
 	return usage, nil

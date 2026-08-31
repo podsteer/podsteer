@@ -443,3 +443,76 @@ func TestPodLimitPercentagesMeasureUsageAgainstLimits(t *testing.T) {
 		})
 	}
 }
+
+func TestWithPodUsageKeepsTheBreakdownBehindTheTotal(t *testing.T) {
+	t.Parallel()
+
+	spec := newPodSpec()
+	spec.Containers = []domain.Container{
+		{Name: "app"},
+		{Name: "sidecar"},
+		// A container the metrics API did not report, which is normal for one
+		// that has not started.
+		{Name: "not-started"},
+	}
+
+	pod, err := domain.NewPod(spec)
+	if err != nil {
+		t.Fatalf("NewPod() error = %v", err)
+	}
+
+	pod = pod.WithPodUsage(domain.PodUsage{
+		Total: domain.NewMetrics(150, 300<<20),
+		Containers: map[string]domain.Metrics{
+			"app":     domain.NewMetrics(100, 250<<20),
+			"sidecar": domain.NewMetrics(50, 50<<20),
+		},
+	})
+
+	if got := pod.Usage(); got.CPUMilli != 150 {
+		t.Errorf("pod total = %+v, want the total it was given", got)
+	}
+
+	byName := make(map[string]domain.Metrics)
+	for _, container := range pod.Containers() {
+		byName[container.Name] = container.Usage
+	}
+
+	// The half that answers the question the total provokes: a pod using
+	// 300MiB says nothing about which container is holding it.
+	if byName["app"].MemoryBytes != 250<<20 {
+		t.Errorf("app = %+v, want its own share", byName["app"])
+	}
+	if byName["sidecar"].MemoryBytes != 50<<20 {
+		t.Errorf("sidecar = %+v, want its own share", byName["sidecar"])
+	}
+
+	// Unreported stays unmeasured rather than becoming a measured zero, which
+	// would render as "using nothing" for a container that has not started.
+	if !byName["not-started"].IsZero() {
+		t.Errorf("not-started = %+v, want it left unmeasured", byName["not-started"])
+	}
+}
+
+func TestWithPodUsageDoesNotMutateTheOriginal(t *testing.T) {
+	t.Parallel()
+
+	spec := newPodSpec()
+	spec.Containers = []domain.Container{{Name: "app"}}
+
+	original, err := domain.NewPod(spec)
+	if err != nil {
+		t.Fatalf("NewPod() error = %v", err)
+	}
+
+	_ = original.WithPodUsage(domain.PodUsage{
+		Total:      domain.NewMetrics(100, 100<<20),
+		Containers: map[string]domain.Metrics{"app": domain.NewMetrics(100, 100<<20)},
+	})
+
+	// The container slice is copied before it is written to. Without that the
+	// enrichment would reach back into whatever the adapter still holds.
+	if !original.Containers()[0].Usage.IsZero() {
+		t.Error("WithPodUsage wrote through to the pod it was called on")
+	}
+}

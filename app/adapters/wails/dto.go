@@ -116,6 +116,12 @@ type Container struct {
 	// Requests and Limits, formatted for display. Empty when undeclared.
 	Requests string `json:"requests"`
 	Limits   string `json:"limits"`
+	// CPU and Memory are what THIS container is using, when anything measured
+	// it — the half of a pod's total that says where the total came from. An
+	// em dash when unmeasured, the same as the pod's own figures.
+	CPU        string `json:"cpu"`
+	Memory     string `json:"memory"`
+	HasMetrics bool   `json:"hasMetrics"`
 	// LastTermination explains how this container's previous life ended, and
 	// is absent when it has not restarted. See domain.Termination: this is
 	// the ONLY record of it Kubernetes keeps, and only of the most recent one.
@@ -264,6 +270,9 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 			Started:         container.Started,
 			Requests:        formatResources(container.Requests),
 			Limits:          formatResources(container.Limits),
+			CPU:             formatCores(container.Usage),
+			Memory:          formatMemory(container.Usage),
+			HasMetrics:      !container.Usage.IsZero(),
 			LastTermination: toTermination(container.LastTermination),
 		})
 	}

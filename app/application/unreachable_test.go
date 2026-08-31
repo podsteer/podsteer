@@ -93,7 +93,7 @@ func (g *goneCluster) ListEventsForResource(context.Context, domain.ClusterID, d
 	return nil, g.err(false)
 }
 
-func (g *goneCluster) PodMetrics(context.Context, domain.ClusterID, domain.NamespaceName) (map[string]domain.Metrics, error) {
+func (g *goneCluster) PodMetrics(context.Context, domain.ClusterID, domain.NamespaceName) (map[string]domain.PodUsage, error) {
 	return nil, g.err(false)
 }
 

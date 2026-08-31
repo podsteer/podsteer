@@ -248,6 +248,9 @@ export namespace wails {
 	    started: boolean;
 	    requests: string;
 	    limits: string;
+	    cpu: string;
+	    memory: string;
+	    hasMetrics: boolean;
 	    lastTermination?: Termination;
 	
 	    static createFrom(source: any = {}) {
@@ -265,6 +268,9 @@ export namespace wails {
 	        this.started = source["started"];
 	        this.requests = source["requests"];
 	        this.limits = source["limits"];
+	        this.cpu = source["cpu"];
+	        this.memory = source["memory"];
+	        this.hasMetrics = source["hasMetrics"];
 	        this.lastTermination = this.convertValues(source["lastTermination"], Termination);
 	    }
 	

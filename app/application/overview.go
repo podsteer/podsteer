@@ -298,7 +298,7 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 		namespaces []domain.Namespace
 
 		nodeUsage map[string]domain.Metrics
-		podUsage  map[string]domain.Metrics
+		podUsage  map[string]domain.PodUsage
 		nodeDisks map[string]domain.NodeFilesystems
 		volumes   []domain.PersistentVolume
 		claims    []domain.PersistentVolumeClaim
@@ -528,7 +528,7 @@ func attachNodeFilesystems(
 }
 
 // attachPodUsage returns the pods carrying their measured usage.
-func attachPodUsage(pods []domain.Pod, usage map[string]domain.Metrics) []domain.Pod {
+func attachPodUsage(pods []domain.Pod, usage map[string]domain.PodUsage) []domain.Pod {
 	if len(usage) == 0 {
 		return pods
 	}
@@ -536,7 +536,7 @@ func attachPodUsage(pods []domain.Pod, usage map[string]domain.Metrics) []domain
 	enriched := make([]domain.Pod, 0, len(pods))
 	for _, pod := range pods {
 		if measured, ok := usage[pod.Namespace().String()+"/"+pod.Name()]; ok {
-			pod = pod.WithUsage(measured)
+			pod = pod.WithPodUsage(measured)
 		}
 		enriched = append(enriched, pod)
 	}

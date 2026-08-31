@@ -43,6 +43,20 @@ func (m Metrics) Add(other Metrics) Metrics {
 	}
 }
 
+// PodUsage is one pod's measured consumption, and its containers'.
+//
+// The total was all that ever left the adapter, which threw the breakdown
+// away immediately after computing it — so a pod at 90% of its memory limit
+// gave no clue WHICH of its three containers was responsible, and the answer
+// had already been in memory and been discarded.
+//
+// Containers is keyed by container name and may be absent for a container the
+// metrics API did not report, which is normal for one that has not started.
+type PodUsage struct {
+	Total      Metrics
+	Containers map[string]Metrics
+}
+
 // Filesystem is how full one of a node's disks is.
 //
 // This is the number no other part of the Kubernetes API carries. Capacity and

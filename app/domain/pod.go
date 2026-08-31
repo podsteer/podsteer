@@ -110,6 +110,10 @@ type Container struct {
 	// LastTermination is how this container's previous life ended, when there
 	// was one. See Termination — it is the only record of it that exists.
 	LastTermination Termination
+	// Usage is what this container is measuring right now, when anything
+	// measured it. The pod's total is the sum of these, and this is the half
+	// that says which container the total came from.
+	Usage Metrics
 	// StartedAt is when the CURRENT life began, empty when it is not running.
 	// The difference between it and now is how long this container has been
 	// up, which at the start of a life is how long it took to come up.
@@ -381,6 +385,33 @@ func (p Pod) QoSClass() QoSClass { return p.qosClass }
 
 // Usage returns the pod's measured resource consumption.
 func (p Pod) Usage() Metrics { return p.usage }
+
+// WithPodUsage returns a copy carrying the pod's total AND each container's.
+//
+// Both halves together, because they are read together: a pod near its memory
+// limit is a question, and which container is holding the memory is the
+// answer. Splitting this into two calls would let the two drift apart on a
+// pod whose containers changed between them.
+//
+// A container the metrics API did not report keeps whatever it had, which is
+// nothing — normal for one that has not started, and not something to
+// represent as a measured zero.
+func (p Pod) WithPodUsage(usage PodUsage) Pod {
+	p.usage = usage.Total
+
+	if len(usage.Containers) > 0 {
+		containers := make([]Container, len(p.containers))
+		copy(containers, p.containers)
+		for i := range containers {
+			if measured, ok := usage.Containers[containers[i].Name]; ok {
+				containers[i].Usage = measured
+			}
+		}
+		p.containers = containers
+	}
+
+	return p
+}
 
 // WithUsage returns a copy of the pod carrying the given measurement.
 //

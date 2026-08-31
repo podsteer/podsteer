@@ -67,7 +67,7 @@ type fakeKubernetes struct {
 	workloads    []domain.Workload
 	workloadsErr error
 
-	podUsage        map[string]domain.Metrics
+	podUsage        map[string]domain.PodUsage
 	nodeUsage       map[string]domain.Metrics
 	metricsErr      error
 	nodeFilesystems map[string]domain.NodeFilesystems
@@ -142,7 +142,7 @@ func (f *fakeKubernetes) ListPodsForWorkload(_ context.Context, id domain.Cluste
 
 // The fake reports no metrics API, which is the configuration the services
 // have to keep working under — so every test exercises that path by default.
-func (f *fakeKubernetes) PodMetrics(_ context.Context, _ domain.ClusterID, _ domain.NamespaceName) (map[string]domain.Metrics, error) {
+func (f *fakeKubernetes) PodMetrics(_ context.Context, _ domain.ClusterID, _ domain.NamespaceName) (map[string]domain.PodUsage, error) {
 	if f.podUsage == nil {
 		return nil, ports.ErrMetricsUnavailable
 	}
