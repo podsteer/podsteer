@@ -3,7 +3,7 @@
 [![CI/CD Pipeline](https://github.com/podsteer/podsteer/actions/workflows/ci-cd.yaml/badge.svg)](https://github.com/podsteer/podsteer/actions/workflows/ci-cd.yaml)
 [![Production](https://img.shields.io/badge/Production-Not%20Released-lightgrey)](https://github.com/podsteer/podsteer/tags)
 [![Staging](https://img.shields.io/badge/Staging-No%20Candidate-lightgrey)](https://github.com/podsteer/podsteer/tags)
-[![Development](https://img.shields.io/badge/Development-No%20Dev%20Release-lightgrey)](https://github.com/podsteer/podsteer/tags)
+[![Development](https://img.shields.io/badge/Development-v0.1.0--dev--1-blue)](https://github.com/podsteer/podsteer/tags)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/podsteer/podsteer/blob/HEAD/LICENSE)
 
 A fast, native desktop client for Kubernetes.
