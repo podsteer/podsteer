@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -45,6 +46,19 @@ func AssessPod(pod Pod, now time.Time) []PodFinding {
 	findings = append(findings, qosFinding(pod)...)
 	findings = append(findings, mutableTagFindings(pod)...)
 	findings = append(findings, bareFinding(pod)...)
+
+	// Ranked, not left in the order the rules happen to run in. There are
+	// enough of these now that a pod which is crash-looping AND running a
+	// mutable tag would otherwise lead with the tag, because that rule is
+	// further down this function — which is an implementation detail deciding
+	// what somebody reads first.
+	//
+	// Stable within a severity, so the order above still breaks ties: it runs
+	// roughly outermost-first, and "nothing will schedule this" belongs above
+	// "a probe is misconfigured" on a pod suffering both.
+	sort.SliceStable(findings, func(i, j int) bool {
+		return findings[i].Severity.rank() > findings[j].Severity.rank()
+	})
 
 	return findings
 }

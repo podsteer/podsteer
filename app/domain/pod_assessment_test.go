@@ -447,3 +447,42 @@ func TestAssessPodExplainsTheCrashLoopWaitWithoutInventingACountdown(t *testing.
 		t.Errorf("advice = %q, want the reset rule named", finding.Advice)
 	}
 }
+
+func TestAssessPodLeadsWithTheWorstThing(t *testing.T) {
+	t.Parallel()
+
+	// A pod that is crash-looping AND running a mutable tag AND bare. Without
+	// ranking, the order the rules happen to run in decides what somebody
+	// reads first, which is an implementation detail making a product
+	// decision.
+	spec := newPodSpec()
+	spec.NodeName = "node-1"
+	spec.Containers = []domain.Container{{
+		Name:   "app",
+		Image:  "registry/app:latest",
+		State:  domain.ContainerStateWaiting,
+		Reason: "CrashLoopBackOff",
+	}}
+
+	pod, err := domain.NewPod(spec)
+	if err != nil {
+		t.Fatalf("NewPod() error = %v", err)
+	}
+
+	findings := domain.AssessPod(pod, assessNow)
+	if len(findings) < 2 {
+		t.Fatalf("expected several findings, got %d", len(findings))
+	}
+	if findings[0].Severity != domain.SeverityCritical {
+		t.Errorf("first finding = %q (%s), want the critical one first",
+			findings[0].Title, findings[0].Severity)
+	}
+
+	// And severity must never increase as the list goes down.
+	for i := 1; i < len(findings); i++ {
+		if findings[i-1].Severity == domain.SeverityInfo && findings[i].Severity != domain.SeverityInfo {
+			t.Errorf("finding %d (%s) outranks the one above it (%s)",
+				i, findings[i].Severity, findings[i-1].Severity)
+		}
+	}
+}
