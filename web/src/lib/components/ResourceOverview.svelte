@@ -70,6 +70,7 @@
 
   // Pod-specific information
   const containers = $derived(spec.containers ?? [])
+  const ephemeralContainers = $derived(spec.ephemeralContainers ?? [])
   const initContainers = $derived(spec.initContainers ?? [])
   const volumes = $derived(spec.volumes ?? [])
   const conditions = $derived(status.conditions ?? [])
@@ -435,6 +436,27 @@
         <DetailSection level="h3" title="Containers ({containers.length})">
           <div class="flex flex-col gap-3">
             {#each containers as container (container.name)}
+              <ContainerDetail
+                spec={container}
+                status={statusFor(container.name)}
+                clusterId={selectedPod?.clusterId ?? ''}
+                namespace={metadata.namespace ?? ''}
+              />
+            {/each}
+          </div>
+        </DetailSection>
+      {/if}
+
+      <!--
+        Ephemeral containers — the ones `kubectl debug` injects. Freelens
+        requests them as a feature and Aptakube has an open issue for them;
+        somebody who has attached a debug container is mid-investigation and
+        needs to see that it is there, and to reach its logs and shell.
+      -->
+      {#if ephemeralContainers.length > 0}
+        <DetailSection level="h3" title="Debug containers ({ephemeralContainers.length})">
+          <div class="flex flex-col gap-3">
+            {#each ephemeralContainers as container (container.name)}
               <ContainerDetail
                 spec={container}
                 status={statusFor(container.name)}

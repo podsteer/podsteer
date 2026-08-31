@@ -292,3 +292,76 @@ func TestAssessPodIsPatientWithANormalDeletion(t *testing.T) {
 		t.Error("a pod five seconds into a normal shutdown was reported as stuck")
 	}
 }
+
+func TestAssessPodSeparatesASandboxProblemFromAnImageProblem(t *testing.T) {
+	t.Parallel()
+
+	// The container says "Waiting" with an image reason, which sends people
+	// to check a registry that is working perfectly. The real problem is
+	// below the containers: the CNI has not attached the pod.
+	spec := newPodSpec()
+	spec.NodeName = "node-1"
+	spec.Conditions = []domain.PodCondition{
+		{Type: "PodReadyToStartContainers", Status: "False", Message: "network is not ready: cni plugin not initialized"},
+	}
+	spec.Containers = []domain.Container{
+		{Name: "app", State: domain.ContainerStateWaiting, Reason: "ImagePullBackOff"},
+	}
+
+	pod, err := domain.NewPod(spec)
+	if err != nil {
+		t.Fatalf("NewPod() error = %v", err)
+	}
+
+	finding, ok := findingTitled(domain.AssessPod(pod, assessNow), "before the containers")
+	if !ok {
+		t.Fatal("a pod blocked below its containers was not distinguished")
+	}
+	if !strings.Contains(finding.Advice, "registry") {
+		t.Errorf("advice = %q, want it to say the registry is not the problem", finding.Advice)
+	}
+}
+
+func TestAssessPodTellsInfeasibleResizesFromDeferredOnes(t *testing.T) {
+	t.Parallel()
+
+	// The two need OPPOSITE responses: one means change the request, the
+	// other means wait. Reporting them the same way is worse than silence.
+	tests := []struct {
+		name     string
+		reason   string
+		wantSaid string
+		want     domain.Severity
+	}{
+		{"infeasible", "Infeasible", "will not help", domain.SeverityWarning},
+		{"deferred", "Deferred", "frees up", domain.SeverityInfo},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			spec := newPodSpec()
+			spec.NodeName = "node-1"
+			spec.Conditions = []domain.PodCondition{
+				{Type: "PodResizePending", Status: "False", Reason: test.reason},
+			}
+
+			pod, err := domain.NewPod(spec)
+			if err != nil {
+				t.Fatalf("NewPod() error = %v", err)
+			}
+
+			finding, ok := findingTitled(domain.AssessPod(pod, assessNow), "has not been applied")
+			if !ok {
+				t.Fatalf("a pending resize (%s) was not reported", test.reason)
+			}
+			if !strings.Contains(finding.Advice, test.wantSaid) {
+				t.Errorf("advice = %q, want it to mention %q", finding.Advice, test.wantSaid)
+			}
+			if finding.Severity != test.want {
+				t.Errorf("severity = %q, want %q", finding.Severity, test.want)
+			}
+		})
+	}
+}

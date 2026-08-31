@@ -43,6 +43,7 @@ func mapPod(clusterID domain.ClusterID, pod *corev1.Pod) (domain.Pod, error) {
 		CreatedAt:  pod.CreationTimestamp.Time,
 		DeletedAt:  deletionTime(pod),
 		Finalizers: pod.Finalizers,
+		Conditions: mapConditions(pod.Status.Conditions),
 	})
 }
 
@@ -733,4 +734,18 @@ func deletionTime(pod *corev1.Pod) time.Time {
 		return time.Time{}
 	}
 	return pod.DeletionTimestamp.UTC()
+}
+
+// mapConditions carries a pod's conditions across with their reasons.
+func mapConditions(conditions []corev1.PodCondition) []domain.PodCondition {
+	out := make([]domain.PodCondition, 0, len(conditions))
+	for _, condition := range conditions {
+		out = append(out, domain.PodCondition{
+			Type:    string(condition.Type),
+			Status:  string(condition.Status),
+			Reason:  condition.Reason,
+			Message: condition.Message,
+		})
+	}
+	return out
 }

@@ -281,7 +281,26 @@ type PodSpec struct {
 	// Finalizers are the names still registered against the deletion. Empty
 	// on a healthy pod, and the whole explanation on a stuck one.
 	Finalizers []string
+	// Conditions are the pod's own status conditions, with their reasons.
+	Conditions []PodCondition
 }
+
+// PodCondition is one of a pod's status conditions.
+//
+// Carried with its Reason and Message, which `kubectl describe` discards — it
+// prints Conditions as Type and Status only. That loses the half that
+// explains anything: PodScheduled=False is a fact, and its Reason and Message
+// are the scheduler's account of WHY, which is the longest and least
+// truncated explanation the API offers.
+type PodCondition struct {
+	Type    string
+	Status  string
+	Reason  string
+	Message string
+}
+
+// True reports whether the condition is satisfied.
+func (c PodCondition) True() bool { return c.Status == "True" }
 
 // Pod is a Kubernetes pod as observed in a cluster at a point in time.
 //
@@ -306,6 +325,7 @@ type Pod struct {
 	createdAt  time.Time
 	deletedAt  time.Time
 	finalizers []string
+	conditions []PodCondition
 }
 
 // NewPod validates spec and returns the corresponding Pod.
@@ -357,6 +377,7 @@ func NewPod(spec PodSpec) (Pod, error) {
 		createdAt:  spec.CreatedAt.UTC(),
 		deletedAt:  spec.DeletedAt.UTC(),
 		finalizers: slices.Clone(spec.Finalizers),
+		conditions: slices.Clone(spec.Conditions),
 	}, nil
 }
 
@@ -448,6 +469,19 @@ func (p Pod) WithUsage(usage Metrics) Pod {
 // controller that registered a finalizer and has not removed it, is right
 // there in the object everybody is already looking at.
 func (p Pod) Finalizers() []string { return slices.Clone(p.finalizers) }
+
+// Condition returns the named status condition, and whether it was reported.
+func (p Pod) Condition(name string) (PodCondition, bool) {
+	for _, condition := range p.conditions {
+		if condition.Type == name {
+			return condition, true
+		}
+	}
+	return PodCondition{}, false
+}
+
+// Conditions returns a copy of the pod's status conditions.
+func (p Pod) Conditions() []PodCondition { return slices.Clone(p.conditions) }
 
 // Terminating reports whether deletion has been requested.
 func (p Pod) Terminating() bool { return !p.deletedAt.IsZero() }

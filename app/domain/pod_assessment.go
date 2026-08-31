@@ -38,6 +38,8 @@ func AssessPod(pod Pod, now time.Time) []PodFinding {
 
 	findings = append(findings, stuckTerminatingFinding(pod, now)...)
 	findings = append(findings, unschedulableFinding(pod)...)
+	findings = append(findings, sandboxFinding(pod)...)
+	findings = append(findings, resizeFindings(pod)...)
 	findings = append(findings, probeFindings(pod, now)...)
 	findings = append(findings, qosFinding(pod)...)
 	findings = append(findings, mutableTagFindings(pod)...)
@@ -335,4 +337,97 @@ func roundDuration(d time.Duration) string {
 	default:
 		return d.Round(time.Hour).String()
 	}
+}
+
+// sandboxFinding reports a pod stuck before its containers were ever started.
+//
+// PodReadyToStartContainers covers the sandbox, the network and the volumes —
+// everything that has to exist before an image is even pulled. When it is
+// False the problem is CNI or volume attachment, and the container's own
+// state says "Waiting" with a reason about the image, which sends people to
+// investigate a registry that is working perfectly.
+//
+// That distinction saves the wrong investigation entirely, and no client
+// surfaces the condition at all.
+func sandboxFinding(pod Pod) []PodFinding {
+	condition, ok := pod.Condition("PodReadyToStartContainers")
+	if !ok || condition.True() {
+		return nil
+	}
+	// A pod that has not been scheduled has nowhere to build a sandbox, and
+	// the unschedulable finding already explains that better.
+	if !pod.IsScheduled() {
+		return nil
+	}
+
+	detail := "The sandbox, its network or its volumes are not ready yet."
+	if condition.Message != "" {
+		detail = condition.Message
+	}
+
+	return []PodFinding{{
+		Severity: SeverityWarning,
+		Title:    "Stuck before the containers could start",
+		Detail:   detail,
+		Advice: "This is below the containers: the network plugin has not attached the pod, or a " +
+			"volume has not mounted. Whatever the container states say about images is downstream of " +
+			"it — check the CNI and the volume attachments on this node rather than the registry.",
+	}}
+}
+
+// resizeFindings reports an in-place resource change that did not take.
+//
+// In-place vertical scaling went stable in 1.35 and brought a new, silent
+// failure: the spec says four CPUs, the container is running on one, and
+// nothing in any existing UI shows the divergence. The two conditions need
+// OPPOSITE responses — Infeasible means this node can never satisfy it and
+// the request must change; Deferred means it might, once something frees up.
+func resizeFindings(pod Pod) []PodFinding {
+	if pending, ok := pod.Condition("PodResizePending"); ok && !pending.True() {
+		infeasible := pending.Reason == "Infeasible"
+
+		advice := "The node may be able to satisfy this later, once something frees up. It will be " +
+			"applied without a restart when that happens."
+		if infeasible {
+			advice = "This node can never satisfy the new size, so waiting will not help. Lower the " +
+				"request, or move the pod to a node that can."
+		}
+
+		detail := fmt.Sprintf("A resize is pending (%s).", strings.ToLower(pending.Reason))
+		if pending.Message != "" {
+			detail = pending.Message
+		}
+
+		return []PodFinding{{
+			Severity: severityIf(infeasible, SeverityWarning, SeverityInfo),
+			Title:    "Resource change has not been applied",
+			Detail:   detail,
+			Advice:   advice,
+		}}
+	}
+
+	if progress, ok := pod.Condition("PodResizeInProgress"); ok && progress.Reason == "Error" {
+		detail := "A resize was accepted but failed while being applied."
+		if progress.Message != "" {
+			detail = progress.Message
+		}
+
+		return []PodFinding{{
+			Severity: SeverityWarning,
+			Title:    "Resource change failed while applying",
+			Detail:   detail,
+			Advice: "The pod is running on neither the old size nor the new one reliably. Check the " +
+				"kubelet on this node; the spec and the container's actual limits have diverged.",
+		}}
+	}
+
+	return nil
+}
+
+// severityIf picks between two severities.
+func severityIf(condition bool, whenTrue, whenFalse Severity) Severity {
+	if condition {
+		return whenTrue
+	}
+	return whenFalse
 }
