@@ -11,7 +11,8 @@
   import DetailSection from './DetailSection.svelte'
   import DetailList, { type DetailRow } from './DetailList.svelte'
   import ContainerDetail from './ContainerDetail.svelte'
-  import UsageSparkline from './UsageSparkline.svelte'
+  import UsageChart from './UsageChart.svelte'
+  import { parseQuantity } from '$lib/sort'
   import type { UsageSample } from '$stores/session.svelte'
 
   interface Props {
@@ -194,6 +195,45 @@
     return selectedPod?.containers?.find((container) => container.name === name)
   }
 
+  /**
+   * The pod's declared request or limit, in the units the samples use.
+   *
+   * Parsed back out of the strings Go formatted, so the chart's reference
+   * lines and its series are measured the same way. Zero when undeclared,
+   * which draws no line — a line at zero would read as "the limit is
+   * nothing", the opposite of what an absent limit means.
+   */
+  function declared(metric: 'cpu' | 'memory', kind: 'request' | 'limit'): number {
+    if (!selectedPod) return 0
+
+    const value =
+      metric === 'cpu'
+        ? kind === 'request'
+          ? selectedPod.hasCpuRequest && selectedPod.cpuRequest
+          : selectedPod.hasCpuLimit && selectedPod.cpuLimit
+        : kind === 'request'
+          ? selectedPod.hasMemoryRequest && selectedPod.memoryRequest
+          : selectedPod.hasMemoryLimit && selectedPod.memoryLimit
+
+    return typeof value === 'string' ? (parseQuantity(value) ?? 0) : 0
+  }
+
+  /** Axis formatters, matching how Go prints the same quantities. */
+  function formatCores(value: number): string {
+    return value.toFixed(3)
+  }
+
+  function formatBytes(value: number): string {
+    const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+    let size = value
+    let unit = 0
+    while (size >= 1024 && unit < units.length - 1) {
+      size /= 1024
+      unit += 1
+    }
+    return `${size.toFixed(1)}${units[unit]}`
+  }
+
   /** How long a container survived before it died, in words. */
   function survived(seconds: number): string {
     if (seconds <= 0) return ''
@@ -278,14 +318,6 @@
     if (minutes > 0) return `${minutes}m`
     return `${seconds}s`
   }
-
-  function formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'Ki', 'Mi', 'Gi', 'Ti']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return `${(bytes / Math.pow(k, i)).toFixed(1)}${sizes[i]}`
-  }
 </script>
 
 <!--
@@ -298,11 +330,6 @@
   {#if !parsedManifest}
     <p class="text-body-medium text-on-surface-variant">No manifest available</p>
   {:else}
-    <!-- Basic Information -->
-    <DetailSection level="h3" title="Basic Information">
-      <DetailList rows={basicRows} />
-    </DetailSection>
-
     <!--
       WHAT IS WRONG, OR ABOUT TO BE — first, because a pane that opens on
       "Basic Information" makes somebody read a property list to find out what
@@ -316,7 +343,7 @@
       argued with in a test rather than only observed against a real cluster.
     -->
     {#if selectedPod?.findings?.length}
-      <DetailSection level="h3" title="Worth knowing">
+      <DetailSection level="h3" id="findings" title="Worth knowing" hint={String(selectedPod?.findings?.length ?? 0)}>
         <div class="flex flex-col gap-2">
           <!-- By position, for the same reason as DetailList: titles are
                written by rules that can legitimately produce two alike, and a
@@ -345,30 +372,6 @@
 
     <!-- Pod-specific sections -->
     {#if kind === 'Pod' || selectedPod}
-      <!-- Status -->
-      <DetailSection level="h3" title="Status">
-        <DetailList rows={statusRows} />
-      </DetailSection>
-
-      <!--
-        Usage, only once something measured it. A pod on a cluster with no
-        metrics source would otherwise get a section whose entire content is
-        an apology, which the notice above the table already covers once.
-      -->
-      {#if selectedPod?.hasMetrics}
-        <DetailSection level="h3" title="Usage while you have been watching">
-          <div class="flex flex-col gap-2">
-            <UsageSparkline samples={usage} metric="cpu" label="CPU" current={selectedPod.cpu} />
-            <UsageSparkline
-              samples={usage}
-              metric="memory"
-              label="Memory"
-              current={selectedPod.memory}
-            />
-          </div>
-        </DetailSection>
-      {/if}
-
       <!--
         WHY IT RESTARTED — placed above the container list because when it
         applies it is the reason the pane was opened.
@@ -387,7 +390,7 @@
         this cannot show.
       -->
       {#if deaths.length > 0}
-        <DetailSection level="h3" title="Why it restarted, last time">
+        <DetailSection level="h3" id="restarts" title="Why it restarted, last time">
           <div class="flex flex-col gap-2">
             {#each deaths as container (container.name)}
               {@const death = container.lastTermination!}
@@ -423,20 +426,59 @@
         </DetailSection>
       {/if}
 
+      <!-- Status -->
+      <DetailSection level="h3" id="status" title="Status" hint={status.phase ?? ''}>
+        <DetailList rows={statusRows} />
+      </DetailSection>
+
+      <!--
+        Usage, only once something measured it. A pod on a cluster with no
+        metrics source would otherwise get a section whose entire content is
+        an apology, which the notice above the table already covers once.
+      -->
+      {#if selectedPod?.hasMetrics}
+        <DetailSection
+          level="h3"
+          id="usage"
+          title="Usage"
+          hint="cpu {selectedPod.cpu} · memory {selectedPod.memory}"
+        >
+          <div class="flex flex-col gap-4">
+            {#each [{ metric: 'cpu' as const, label: 'CPU' }, { metric: 'memory' as const, label: 'Memory' }] as track (track.metric)}
+              <div class="flex flex-col gap-1">
+                <p class="flex items-baseline justify-between text-body-small text-on-surface-variant">
+                  <span>{track.label}</span>
+                  <span class="tabular-nums">
+                    {track.metric === 'cpu' ? selectedPod.cpu : selectedPod.memory}
+                  </span>
+                </p>
+                <UsageChart
+                  samples={usage}
+                  metric={track.metric}
+                  request={declared(track.metric, 'request')}
+                  limit={declared(track.metric, 'limit')}
+                  format={track.metric === 'cpu' ? formatCores : formatBytes}
+                />
+              </div>
+            {/each}
+          </div>
+        </DetailSection>
+      {/if}
+
       <!--
         Scheduling, when anything constrains it. A pod with no selector, no
         toleration and no spread rule has an empty section, and an empty
         section that says "no constraints" is a row of nothing.
       -->
       {#if schedulingRows.length > 0}
-        <DetailSection level="h3" title="Scheduling">
+        <DetailSection level="h3" id="scheduling" title="Scheduling" defaultOpen={false} hint={String(schedulingRows.length)}>
           <DetailList rows={schedulingRows} />
         </DetailSection>
       {/if}
 
       <!-- Containers -->
       {#if containers.length > 0}
-        <DetailSection level="h3" title="Containers ({containers.length})">
+        <DetailSection level="h3" id="containers" title="Containers" hint={String(containers.length)}>
           <div class="flex flex-col gap-3">
             {#each containers as container (container.name)}
               <ContainerDetail
@@ -460,7 +502,7 @@
         needs to see that it is there, and to reach its logs and shell.
       -->
       {#if ephemeralContainers.length > 0}
-        <DetailSection level="h3" title="Debug containers ({ephemeralContainers.length})">
+        <DetailSection level="h3" id="debug-containers" title="Debug containers" hint={String(ephemeralContainers.length)}>
           <div class="flex flex-col gap-3">
             {#each ephemeralContainers as container (container.name)}
               <ContainerDetail
@@ -481,7 +523,7 @@
            running pod, so mixing them in makes a healthy pod look like it has
            four containers of which two are dead. -->
       {#if initContainers.length > 0}
-        <DetailSection level="h3" title="Init containers ({initContainers.length})">
+        <DetailSection level="h3" id="init-containers" title="Init containers" defaultOpen={false} hint={String(initContainers.length)}>
           <div class="flex flex-col gap-3">
             {#each initContainers as container (container.name)}
               <ContainerDetail
@@ -500,7 +542,7 @@
 
       <!-- Volumes -->
       {#if volumes.length > 0}
-        <DetailSection level="h3" title="Volumes ({volumes.length})">
+        <DetailSection level="h3" id="volumes" title="Volumes" defaultOpen={false} hint={String(volumes.length)}>
           <div class="space-y-2">
             {#each volumes as volume, i (i)}
               <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
@@ -530,13 +572,13 @@
     <!-- Deployment/StatefulSet-specific sections -->
     {#if selectedWorkload && (kind === 'Deployment' || kind === 'StatefulSet' || kind === 'DaemonSet')}
       <!-- Replicas -->
-      <DetailSection level="h3" title="Replicas">
+      <DetailSection level="h3" id="replicas" title="Replicas">
         <DetailList rows={replicaRows} />
       </DetailSection>
 
       <!-- Strategy -->
       {#if kind === 'Deployment'}
-        <DetailSection level="h3" title="Update Strategy">
+        <DetailSection level="h3" id="strategy" title="Update strategy" defaultOpen={false}>
           <DetailList rows={strategyRows} />
         </DetailSection>
       {/if}
@@ -544,7 +586,7 @@
 
     <!-- Conditions -->
     {#if conditions.length > 0}
-      <DetailSection level="h3" title="Conditions">
+      <DetailSection level="h3" id="conditions" title="Conditions" defaultOpen={false} hint={String(conditions.length)}>
         <div class="space-y-2">
           {#each conditions as condition, i (i)}
             <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
@@ -571,10 +613,20 @@
       </DetailSection>
     {/if}
 
+    <!--
+      Identity last but one, and closed by default. The name and namespace are
+      already in the drawer's own header, so the only fields here that are not
+      a repeat are Created and the UID — reference material somebody looks up,
+      not something to read past on the way to what is wrong.
+    -->
+    <DetailSection level="h3" id="identity" title="Identity" defaultOpen={false}>
+      <DetailList rows={basicRows} />
+    </DetailSection>
+
     <!-- Labels -->
     {#if labels.length > 0}
-      <DetailSection level="h3" title="Labels ({labels.length})">
-        <DetailList rows={pairRows(labels)} />
+      <DetailSection level="h3" id="labels" title="Labels" defaultOpen={false} hint={String(labels.length)}>
+        <DetailList rows={pairRows(labels)} wideLabels />
       </DetailSection>
     {/if}
 
@@ -583,8 +635,8 @@
       <!-- Truncated, unlike labels: an annotation routinely holds an entire
            serialised manifest, and letting one wrap turns the pane into a
            page of JSON. It is still selectable, so copying it works. -->
-      <DetailSection level="h3" title="Annotations ({annotations.length})">
-        <DetailList rows={pairRows(annotations, true)} />
+      <DetailSection level="h3" id="annotations" title="Annotations" defaultOpen={false} hint={String(annotations.length)}>
+        <DetailList rows={pairRows(annotations, true)} wideLabels />
       </DetailSection>
     {/if}
   {/if}

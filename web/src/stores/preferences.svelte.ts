@@ -267,6 +267,15 @@ interface PersistedShape {
   /** Which denominator the pod list's bars use. */
   podMeasure: PodMeasure
   /**
+   * Detail-pane sections the operator has opened or closed, by id.
+   *
+   * Only DEVIATIONS are stored, never the whole set. Each section declares
+   * its own default, so a section added later opens or closes as its author
+   * intended rather than inheriting whatever an old preferences blob happened
+   * to record — and somebody who has never touched this has no entries at all.
+   */
+  sections: Record<string, boolean>
+  /**
    * The single pair every surface shared before the setting grew scopes.
    *
    * Read once, to seed all three, and never written again. Somebody who had
@@ -313,6 +322,7 @@ const DEFAULTS: PersistedShape = {
   // until something is already critical is a default that arrives too late.
   thresholds: defaultThresholdsByScope(),
   podMeasure: 'limits',
+  sections: {},
   // Off. An application that starts making noise nobody asked for is one
   // people mute at the operating system, taking the alarm they DID want with
   // it. Whoever wants this turns it on, and hears the sound as they choose it.
@@ -390,6 +400,9 @@ class Preferences {
 
   /** What the pod list's bars are a proportion of. */
   podMeasure = $state<PodMeasure>(DEFAULTS.podMeasure)
+
+  /** Detail-pane sections the operator has opened or closed, by id. */
+  sections = $state<Record<string, boolean>>({})
 
   /** Whether a newly raised warning or critical finding makes a sound. */
   alertSoundsEnabled = $state<boolean>(DEFAULTS.alertSoundsEnabled)
@@ -549,6 +562,15 @@ class Preferences {
     // Replaced rather than mutated, so one assignment invalidates the derived
     // values that read it instead of each field doing so separately.
     this.thresholds = { ...this.thresholds, [scope]: set }
+    this.#save()
+  }
+
+  /** Whether a detail-pane section is open, falling back to its own default. */
+  sectionOpen = (id: string, fallback: boolean): boolean => this.sections[id] ?? fallback
+
+  /** Records that a section was opened or closed. */
+  setSectionOpen = (id: string, open: boolean): void => {
+    this.sections = { ...this.sections, [id]: open }
     this.#save()
   }
 
@@ -767,6 +789,9 @@ class Preferences {
       if (stored.podMeasure === 'requests' || stored.podMeasure === 'limits') {
         this.podMeasure = stored.podMeasure
       }
+      if (stored.sections && typeof stored.sections === 'object') {
+        this.sections = stored.sections
+      }
 
       const scoped = (stored.thresholds ?? {}) as Partial<Record<ThresholdScope, unknown>>
 
@@ -819,6 +844,7 @@ class Preferences {
         snoozes: this.#pruneSnoozes(),
         thresholds: this.thresholds,
         podMeasure: this.podMeasure,
+        sections: this.sections,
         alertSoundsEnabled: this.alertSoundsEnabled,
         alertSounds: this.alertSounds,
         columns: this.columns,

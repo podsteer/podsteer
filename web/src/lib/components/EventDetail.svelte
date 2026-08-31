@@ -144,7 +144,7 @@
          the message read as an unlabelled quotation above an unlabelled
          list. -->
     {#if message}
-      <DetailSection title="Message">
+      <DetailSection id="event-message" title="Message">
         <!-- In full, selectable, and unboxed. It is the one field somebody
              came to read, and the list could only ever show a truncated line
              of it — but a border around it made a sentence look like an
@@ -156,7 +156,7 @@
     {/if}
 
     <!-- The layout this pane established, now shared: see DetailList. -->
-    <DetailSection title="Details">
+    <DetailSection id="event-details" title="Details">
       <DetailList {rows} />
     </DetailSection>
   </div>

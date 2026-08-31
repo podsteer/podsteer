@@ -48,12 +48,22 @@
 
   interface Props {
     rows: DetailRow[]
+    /**
+     * A wider label column, for lists whose labels are identifiers.
+     *
+     * A quarter suits "Liveness" and "Service account". It does not suit
+     * PLT__MONGODB_USERNAME or kubectl.kubernetes.io/last-applied-configuration,
+     * which wrap mid-word into two unreadable halves — the column is not
+     * narrow because the value needs the room, it is narrow because most
+     * labels are short. Lists whose labels are names ask for more.
+     */
+    wideLabels?: boolean
   }
 
-  let { rows }: Props = $props()
+  let { rows, wideLabels = false }: Props = $props()
 </script>
 
-<dl class="grid grid-cols-[25%_1fr] gap-x-4 gap-y-2">
+<dl class="grid {wideLabels ? 'grid-cols-[40%_1fr]' : 'grid-cols-[25%_1fr]'} gap-x-4 gap-y-2">
   <!--
     KEYED BY POSITION, NOT BY LABEL. A label is not unique and was never going
     to be: kubectl prints several "Mounts:" lines for one container and several
@@ -75,7 +85,19 @@
       Selectable too: for labels and annotations the key is half of what
       somebody came to copy.
     -->
-    <dt class="min-w-0 break-words text-body-medium text-on-surface" data-selectable>
+    <!--
+      break-all rather than break-words on a wide-label list. An identifier
+      has no word boundaries to break at — PLT__MONGODB_USERNAME is one
+      "word" — so break-words leaves it overflowing while break-all wraps it
+      where it must. On ordinary labels break-all would hyphenate English
+      mid-word, which is why it is not the default.
+    -->
+    <dt
+      class="min-w-0 text-body-medium text-on-surface {wideLabels
+        ? 'break-all'
+        : 'break-words'}"
+      data-selectable
+    >
       {row.label}
     </dt>
     <dd
