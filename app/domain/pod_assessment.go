@@ -41,6 +41,7 @@ func AssessPod(pod Pod, now time.Time) []PodFinding {
 	findings = append(findings, sandboxFinding(pod)...)
 	findings = append(findings, resizeFindings(pod)...)
 	findings = append(findings, probeFindings(pod, now)...)
+	findings = append(findings, crashLoopFindings(pod)...)
 	findings = append(findings, qosFinding(pod)...)
 	findings = append(findings, mutableTagFindings(pod)...)
 	findings = append(findings, bareFinding(pod)...)
@@ -142,6 +143,25 @@ func probeFindings(pod Pod, now time.Time) []PodFinding {
 						"approximate — and it does not have to be guessed.",
 				})
 			}
+		}
+
+		// THE TRAP THAT TURNS A SLOW DEPENDENCY INTO A RESTART LOOP. When
+		// liveness and readiness check the same endpoint, and that endpoint
+		// reports on a dependency — a database, a queue — then the dependency
+		// going away does not merely take the pod out of the Service, which
+		// is what readiness is for and is harmless. It also fails liveness,
+		// so the kubelet restarts a process that was working, repeatedly,
+		// while the thing that is actually broken is somewhere else entirely.
+		if probe.Target != "" && probe.Target == container.Readiness.Target {
+			findings = append(findings, PodFinding{
+				Severity: SeverityWarning,
+				Title:    "Liveness and readiness check the same thing on " + container.Name,
+				Detail:   "Both probes target " + probe.Target + ".",
+				Advice: "They are meant to answer different questions: readiness asks whether to send " +
+					"traffic, liveness asks whether to restart. Pointed at one endpoint, anything that " +
+					"fails the first also restarts the container — so a dependency going down " +
+					"restarts a process that was fine. Give liveness a check of the process itself.",
+			})
 		}
 
 		if probe.TimeoutSeconds >= probe.PeriodSeconds && probe.PeriodSeconds > 0 {
@@ -430,4 +450,46 @@ func severityIf(condition bool, whenTrue, whenFalse Severity) Severity {
 		return whenTrue
 	}
 	return whenFalse
+}
+
+// crashLoopFindings explains the wait an operator is looking at.
+//
+// CrashLoopBackOff is the most-seen and least-understood status in
+// Kubernetes. It is not an error state — nothing is broken about the backoff
+// itself — it is the kubelet deliberately waiting before trying again, and
+// the wait DOUBLES: ten seconds, twenty, forty, up to a five-minute cap. Two
+// consequences nobody is told, and both change what somebody does next.
+//
+// First, a pod that has been crash-looping for an hour is being retried every
+// five minutes, so a fix will appear to do nothing for up to five minutes
+// after it lands. People conclude the fix did not work and change something
+// else. Second, the counter resets only after the container has run cleanly
+// for ten minutes — restarting the pod resets it immediately, which is the
+// legitimate reason to do that and is otherwise cargo-culted.
+//
+// The exact time of the next attempt is NOT computed. It depends on how many
+// consecutive failures preceded the current one, which the API does not
+// report, and inventing a countdown that was wrong would be worse than
+// explaining the rule that governs it.
+func crashLoopFindings(pod Pod) []PodFinding {
+	looping := make([]string, 0, 2)
+	for _, container := range pod.Containers() {
+		if container.State == ContainerStateWaiting && container.Reason == "CrashLoopBackOff" {
+			looping = append(looping, container.Name)
+		}
+	}
+	if len(looping) == 0 {
+		return nil
+	}
+
+	return []PodFinding{{
+		Severity: SeverityCritical,
+		Title:    "Backing off before trying again",
+		Detail: fmt.Sprintf("%s %s crash-looping, so the kubelet is waiting between attempts.",
+			strings.Join(looping, ", "), agrees(len(looping), "is", "are")),
+		Advice: "The wait doubles each time — ten seconds, twenty, forty, up to five minutes — so a " +
+			"fix can take that long to be tried and will look like it did nothing. The counter only " +
+			"resets after ten minutes of clean running, which is why deleting the pod after a fix " +
+			"gets you an answer sooner. The previous exit above says why it is dying.",
+	}}
 }

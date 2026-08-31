@@ -365,3 +365,85 @@ func TestAssessPodTellsInfeasibleResizesFromDeferredOnes(t *testing.T) {
 		})
 	}
 }
+
+func TestAssessPodCatchesLivenessAndReadinessSharingAnEndpoint(t *testing.T) {
+	t.Parallel()
+
+	// The trap: when both probes check the same endpoint and that endpoint
+	// reports on a dependency, the dependency going down does not merely take
+	// the pod out of the Service — it restarts a process that was working.
+	spec := newPodSpec()
+	spec.NodeName = "node-1"
+	spec.Containers = []domain.Container{{
+		Name:      "app",
+		State:     domain.ContainerStateRunning,
+		Liveness:  domain.Probe{Target: "http :8080/health", PeriodSeconds: 10, TimeoutSeconds: 1},
+		Readiness: domain.Probe{Target: "http :8080/health", PeriodSeconds: 5, TimeoutSeconds: 1},
+	}}
+
+	pod, err := domain.NewPod(spec)
+	if err != nil {
+		t.Fatalf("NewPod() error = %v", err)
+	}
+
+	finding, ok := findingTitled(domain.AssessPod(pod, assessNow), "same thing")
+	if !ok {
+		t.Fatal("two probes on one endpoint were not flagged")
+	}
+	if !strings.Contains(finding.Advice, "different questions") {
+		t.Errorf("advice = %q, want it to explain what each probe is for", finding.Advice)
+	}
+}
+
+func TestAssessPodAllowsProbesOnDifferentEndpoints(t *testing.T) {
+	t.Parallel()
+
+	// Different endpoints is the correct configuration and must be silent —
+	// the timings differing is not what matters.
+	spec := newPodSpec()
+	spec.NodeName = "node-1"
+	spec.Containers = []domain.Container{{
+		Name:      "app",
+		State:     domain.ContainerStateRunning,
+		Liveness:  domain.Probe{Target: "http :8080/live", PeriodSeconds: 10, TimeoutSeconds: 1},
+		Readiness: domain.Probe{Target: "http :8080/ready", PeriodSeconds: 5, TimeoutSeconds: 1},
+	}}
+
+	pod, err := domain.NewPod(spec)
+	if err != nil {
+		t.Fatalf("NewPod() error = %v", err)
+	}
+
+	if _, ok := findingTitled(domain.AssessPod(pod, assessNow), "same thing"); ok {
+		t.Error("correctly separated probes were flagged")
+	}
+}
+
+func TestAssessPodExplainsTheCrashLoopWaitWithoutInventingACountdown(t *testing.T) {
+	t.Parallel()
+
+	spec := newPodSpec()
+	spec.NodeName = "node-1"
+	spec.Containers = []domain.Container{
+		{Name: "app", State: domain.ContainerStateWaiting, Reason: "CrashLoopBackOff"},
+	}
+
+	pod, err := domain.NewPod(spec)
+	if err != nil {
+		t.Fatalf("NewPod() error = %v", err)
+	}
+
+	finding, ok := findingTitled(domain.AssessPod(pod, assessNow), "Backing off")
+	if !ok {
+		t.Fatal("a crash-looping container was not explained")
+	}
+	// The two consequences nobody is told, both of which change what somebody
+	// does next: the wait grows to five minutes, and it resets after ten
+	// minutes of clean running.
+	if !strings.Contains(finding.Advice, "five minutes") {
+		t.Errorf("advice = %q, want the cap named", finding.Advice)
+	}
+	if !strings.Contains(finding.Advice, "ten minutes") {
+		t.Errorf("advice = %q, want the reset rule named", finding.Advice)
+	}
+}

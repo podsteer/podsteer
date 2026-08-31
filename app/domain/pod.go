@@ -123,12 +123,12 @@ type Container struct {
 	// The difference between it and now is how long this container has been
 	// up, which at the start of a life is how long it took to come up.
 	StartedAt time.Time
-	// Liveness and Startup are the probes whose timings decide whether a slow
-	// container gets killed for being slow. Readiness is deliberately absent:
-	// failing it takes a pod out of a Service, which is a different and
-	// non-fatal problem, and nothing here reasons about it yet.
-	Liveness Probe
-	Startup  Probe
+	// The three probes. Readiness is carried not for its own timings but to
+	// be COMPARED against liveness — see livenessMatchesReadiness, which is
+	// the trap that turns a slow dependency into a restart loop.
+	Liveness  Probe
+	Readiness Probe
+	Startup   Probe
 }
 
 // Probe is a container health check, reduced to the timings that matter.
@@ -142,6 +142,12 @@ type Probe struct {
 	PeriodSeconds       int32
 	TimeoutSeconds      int32
 	FailureThreshold    int32
+	// Target identifies WHAT is being checked, normalised — "http-get
+	// :8080/healthz", "exec [pg_isready]". Not for display, which the pane
+	// renders from the manifest, but so two probes can be compared: a
+	// liveness and a readiness probe pointing at the same endpoint is a
+	// specific and very common mistake.
+	Target string
 }
 
 // IsZero reports whether no probe is configured.

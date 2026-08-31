@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -129,13 +130,14 @@ func mapContainers(pod *corev1.Pod) []domain.Container {
 	containers := make([]domain.Container, 0, len(specs))
 	for _, spec := range specs {
 		container := domain.Container{
-			Name:     spec.Name,
-			Image:    spec.Image,
-			State:    domain.ContainerStateWaiting,
-			Requests: mapResources(spec.Resources.Requests),
-			Limits:   mapResources(spec.Resources.Limits),
-			Liveness: mapProbe(spec.LivenessProbe),
-			Startup:  mapProbe(spec.StartupProbe),
+			Name:      spec.Name,
+			Image:     spec.Image,
+			State:     domain.ContainerStateWaiting,
+			Requests:  mapResources(spec.Resources.Requests),
+			Limits:    mapResources(spec.Resources.Limits),
+			Liveness:  mapProbe(spec.LivenessProbe),
+			Readiness: mapProbe(spec.ReadinessProbe),
+			Startup:   mapProbe(spec.StartupProbe),
 		}
 
 		if status, ok := statuses[spec.Name]; ok {
@@ -725,6 +727,32 @@ func mapProbe(probe *corev1.Probe) domain.Probe {
 		PeriodSeconds:       probe.PeriodSeconds,
 		TimeoutSeconds:      probe.TimeoutSeconds,
 		FailureThreshold:    probe.FailureThreshold,
+		Target:              probeTarget(probe),
+	}
+}
+
+// probeTarget normalises what a probe checks, so two can be compared.
+//
+// Only the destination, never the timings: two probes hitting the same
+// endpoint at different intervals are still hitting the same endpoint, and
+// that is the thing worth noticing.
+func probeTarget(probe *corev1.Probe) string {
+	switch {
+	case probe.HTTPGet != nil:
+		return fmt.Sprintf("http %s:%s%s",
+			probe.HTTPGet.Host, probe.HTTPGet.Port.String(), probe.HTTPGet.Path)
+	case probe.Exec != nil:
+		return "exec " + strings.Join(probe.Exec.Command, " ")
+	case probe.TCPSocket != nil:
+		return fmt.Sprintf("tcp %s:%s", probe.TCPSocket.Host, probe.TCPSocket.Port.String())
+	case probe.GRPC != nil:
+		service := ""
+		if probe.GRPC.Service != nil {
+			service = *probe.GRPC.Service
+		}
+		return fmt.Sprintf("grpc :%d %s", probe.GRPC.Port, service)
+	default:
+		return ""
 	}
 }
 
