@@ -59,7 +59,38 @@ type summaryResponse struct {
 		NodeName string        `json:"nodeName"`
 		Fs       *summaryFs    `json:"fs"`
 		Runtime  *summaryRtime `json:"runtime"`
+		// PSI, present from Kubernetes 1.36 on a cgroup v2 host. Absent
+		// everywhere else, which is why every level of this is a pointer:
+		// a missing section must read as "not reported", never as zero
+		// stall, which would be an all-clear nobody gave.
+		CPU    *summaryPSIHolder `json:"cpu"`
+		Memory *summaryPSIHolder `json:"memory"`
+		IO     *summaryPSIHolder `json:"io"`
 	} `json:"node"`
+}
+
+type summaryPSIHolder struct {
+	PSI *summaryPSI `json:"psi"`
+}
+
+type summaryPSI struct {
+	// Some: at least one task stalled. The early signal, and the one worth
+	// reporting — Full means every task was stalled, by which point the node
+	// is in trouble on every other measure too.
+	Some *summaryPSIStats `json:"some"`
+}
+
+type summaryPSIStats struct {
+	// Avg10 is the proportion of the last ten seconds spent stalled, 0-100.
+	Avg10 *float64 `json:"avg10"`
+}
+
+// stall reads one dimension's ten-second average, and whether it was reported.
+func (h *summaryPSIHolder) stall() (float64, bool) {
+	if h == nil || h.PSI == nil || h.PSI.Some == nil || h.PSI.Some.Avg10 == nil {
+		return 0, false
+	}
+	return *h.PSI.Some.Avg10, true
 }
 
 type summaryFs struct {
@@ -289,7 +320,23 @@ func (a *Adapter) nodeSummary(
 		return domain.NodeFilesystems{}, fmt.Errorf("node %q reported no filesystem sizes", name)
 	}
 
-	return domain.NodeFilesystems{Nodefs: nodefs, Imagefs: imagefs, Measured: true}, nil
+	// Pressure is optional in a way the filesystems are not: a kubelet older
+	// than 1.36, or a cgroup v1 host, reports none of it and is not faulty.
+	// Any one dimension being present is enough to call it measured.
+	var pressure domain.Pressure
+	cpu, hasCPU := summary.Node.CPU.stall()
+	memory, hasMemory := summary.Node.Memory.stall()
+	io, hasIO := summary.Node.IO.stall()
+	if hasCPU || hasMemory || hasIO {
+		pressure = domain.Pressure{CPU: cpu, Memory: memory, IO: io, Measured: true}
+	}
+
+	return domain.NodeFilesystems{
+		Pressure: pressure,
+		Nodefs:   nodefs,
+		Imagefs:  imagefs,
+		Measured: true,
+	}, nil
 }
 
 // get returns a cached sweep, or a cached refusal, while it is still fresh.

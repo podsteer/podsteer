@@ -937,6 +937,7 @@ func NewOverview(input OverviewInput) Overview {
 	findings = append(findings, workloadFindings(input.Workloads, findings, now)...)
 	findings = append(findings, nodeFindings(input.Nodes, nodes)...)
 	findings = append(findings, filesystemFindings(input.Nodes)...)
+	findings = append(findings, pressureFindings(input.Nodes)...)
 	findings = append(findings, storageFindings(input.Volumes, input.Claims, now)...)
 	findings = append(findings, releaseFindings(input.Version, support)...)
 	findings = append(findings, capacityFindings(capacity)...)
@@ -2683,4 +2684,88 @@ func imageDigest(imageID string) string {
 		return ""
 	}
 	return digest
+}
+
+// Stall thresholds, as a proportion of the last ten seconds.
+//
+// Deliberately conservative, because PSI has no established operational
+// convention yet — it only became generally available in Kubernetes 1.36, and
+// no other client surfaces it at all, so there is no body of practice to
+// borrow numbers from the way there is for CPU and memory utilisation.
+//
+// Twenty per cent means work spent a fifth of its time waiting rather than
+// running, which is enough to be felt in a latency graph and is well clear of
+// the noise a busy-but-healthy node produces. Memory is judged more harshly:
+// a memory stall is the kernel reclaiming or swapping, which is far more
+// expensive per unit than waiting for a CPU slice.
+const (
+	stallWarning       = 20.0
+	memoryStallWarning = 10.0
+)
+
+// pressureFindings reports nodes where work is WAITING rather than running.
+//
+// The distinction utilisation cannot make, and the reason this is worth
+// having at all: a node at 100% CPU may be doing exactly what it should,
+// while a node whose tasks spend a fifth of their time stalled is a node
+// where everything is slow — and those two are indistinguishable on every
+// gauge this application had until now.
+//
+// Silent on any cluster that does not report it, which for a while yet is
+// most of them: pressure stall information needs Kubernetes 1.36 and a
+// cgroup v2 host, and unmeasured must never read as calm.
+func pressureFindings(nodes []Node) []Finding {
+	subjects := make([]Subject, 0, maxSubjects)
+	count := 0
+
+	for _, node := range nodes {
+		pressure := node.Filesystems().Pressure
+		if !pressure.Measured {
+			continue
+		}
+
+		reasons := make([]string, 0, 3)
+		if pressure.CPU >= stallWarning {
+			reasons = append(reasons, fmt.Sprintf("cpu %.0f%%", pressure.CPU))
+		}
+		if pressure.Memory >= memoryStallWarning {
+			reasons = append(reasons, fmt.Sprintf("memory %.0f%%", pressure.Memory))
+		}
+		if pressure.IO >= stallWarning {
+			reasons = append(reasons, fmt.Sprintf("io %.0f%%", pressure.IO))
+		}
+		if len(reasons) == 0 {
+			continue
+		}
+
+		count++
+		if len(subjects) < maxSubjects {
+			subjects = append(subjects, Subject{
+				Kind:   "Node",
+				Name:   node.Name(),
+				Detail: "stalled " + strings.Join(reasons, ", "),
+			})
+		}
+	}
+
+	if count == 0 {
+		return nil
+	}
+
+	return []Finding{{
+		ID:       "node:pressure",
+		Severity: SeverityWarning,
+		Category: CategoryFindingNode,
+		Title:    "Work is waiting, not running",
+		Summary: fmt.Sprintf("%s where tasks spend significant time stalled",
+			plural(count, "node", "nodes")),
+		Advice: "This is saturation, not utilisation, and no usage gauge shows it: a node can be at " +
+			"100% CPU and perfectly healthy, or at 40% and stalling because everything is queued " +
+			"behind something. The percentage is how much of the last ten seconds at least one task " +
+			"spent waiting rather than working. Look for a workload without limits, or a disk that " +
+			"cannot keep up.",
+		Subjects: subjects,
+		Count:    count,
+		KindID:   nodeKindID,
+	}}
 }

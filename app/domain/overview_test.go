@@ -1837,3 +1837,86 @@ func TestImageDriftIgnoresPodsWithNoResolvedDigest(t *testing.T) {
 		t.Error("an unstarted pod was counted as a second build")
 	}
 }
+
+// pressuredNode builds a node reporting stall, which needs the filesystem
+// block too: PSI rides the same kubelet response.
+func pressuredNode(t *testing.T, name string, cpu, memory, io float64) domain.Node {
+	t.Helper()
+
+	node := nodeFixture(t, name, 4000, 8<<30, 110)
+	return node.WithFilesystems(domain.NodeFilesystems{
+		Measured: true,
+		Nodefs:   domain.Filesystem{CapacityBytes: 100 << 30, UsedBytes: 10 << 30},
+		Pressure: domain.Pressure{CPU: cpu, Memory: memory, IO: io, Measured: true},
+	})
+}
+
+func TestPressureFindingReportsSaturationNotUtilisation(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Nodes: []domain.Node{
+			// A quarter of the time waiting for CPU. Nothing on a utilisation
+			// gauge distinguishes this from a node doing useful work.
+			pressuredNode(t, "node-busy", 25, 0, 0),
+			// Calm, and must not be reported.
+			pressuredNode(t, "node-calm", 2, 1, 0),
+		},
+	})
+
+	finding, ok := findingByTitle(overview.Findings, "Work is waiting, not running")
+	if !ok {
+		t.Fatalf("a stalling node was not reported; got %v", titles(overview.Findings))
+	}
+	if finding.Count != 1 || finding.Subjects[0].Name != "node-busy" {
+		t.Errorf("finding = %+v, want only the stalling node", finding)
+	}
+}
+
+func TestPressureFindingJudgesMemoryMoreHarshlyThanCPU(t *testing.T) {
+	t.Parallel()
+
+	// 12% memory stall is reported while 12% CPU stall is not: a memory stall
+	// is the kernel reclaiming or swapping, far more expensive per unit than
+	// waiting for a CPU slice.
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Nodes:     []domain.Node{pressuredNode(t, "node-1", 12, 0, 0)},
+	})
+	if _, ok := findingByTitle(overview.Findings, "Work is waiting, not running"); ok {
+		t.Error("12% CPU stall was reported; the CPU line is 20%")
+	}
+
+	memory := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Nodes:     []domain.Node{pressuredNode(t, "node-1", 0, 12, 0)},
+	})
+	if _, ok := findingByTitle(memory.Findings, "Work is waiting, not running"); !ok {
+		t.Error("12% memory stall was not reported; the memory line is 10%")
+	}
+}
+
+func TestPressureFindingIsSilentWhereNothingReportsIt(t *testing.T) {
+	t.Parallel()
+
+	// Pressure stall information needs Kubernetes 1.36 and cgroup v2, which
+	// for a while yet is a minority. Unmeasured must never read as calm, and
+	// must never produce a finding either.
+	node := nodeFixture(t, "node-1", 4000, 8<<30, 110)
+	node = node.WithFilesystems(domain.NodeFilesystems{
+		Measured: true,
+		Nodefs:   domain.Filesystem{CapacityBytes: 100 << 30, UsedBytes: 10 << 30},
+	})
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev", Now: overviewNow, Nodes: []domain.Node{node},
+	})
+
+	if _, ok := findingByTitle(overview.Findings, "Work is waiting, not running"); ok {
+		t.Error("a node that reports no pressure at all produced a pressure finding")
+	}
+}
