@@ -278,6 +278,19 @@ function importedPackages(webRoot) {
       }
       if (!/\.(svelte|ts|js|mjs)$/.test(entry.name)) continue
 
+      // TEST FILES ARE NOT SHIPPED SOURCE. They sit beside the components
+      // they exercise, which is where component tests belong, but nothing in
+      // the application imports them: the bundle is built from what the entry
+      // point reaches, and a test file is reached by vitest and by nothing
+      // else. Counting them made vitest and @testing-library look like
+      // runtime dependencies and demanded they move to "dependencies", which
+      // would ship a test runner to every user.
+      //
+      // Narrow on purpose, in keeping with the rest of this file: only the
+      // one suffix, matched exactly, so a source file cannot accidentally
+      // excuse itself from the check by being named suggestively.
+      if (/\.test\.(ts|js|mjs)$/.test(entry.name)) continue
+
       const source = readFileSync(path, 'utf8')
       for (const match of source.matchAll(pattern)) {
         const specifier = match[1]
