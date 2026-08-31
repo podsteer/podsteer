@@ -298,6 +298,64 @@
     return rows
   })
 
+  /**
+   * A volume as one line: what it is, then what it points at.
+   *
+   * The kind first because that is what decides whether it matters — an
+   * emptyDir is scratch that dies with the pod, a PVC is data that outlives
+   * it, and a projected service-account token is present on every pod and
+   * interesting on none.
+   */
+  const volumeRows = $derived<DetailRow[]>(
+    (volumes as Record<string, any>[]).map((volume) => {
+      let detail = 'Unknown'
+      if (volume.emptyDir) {
+        detail = volume.emptyDir.sizeLimit ? `EmptyDir · limit ${volume.emptyDir.sizeLimit}` : 'EmptyDir'
+      } else if (volume.configMap) {
+        detail = `ConfigMap · ${volume.configMap.name}`
+      } else if (volume.secret) {
+        detail = `Secret · ${volume.secret.secretName}`
+      } else if (volume.persistentVolumeClaim) {
+        const claim = volume.persistentVolumeClaim
+        detail = `PVC · ${claim.claimName}${claim.readOnly ? ' (ro)' : ''}`
+      } else if (volume.hostPath) {
+        // Called out: a hostPath mount reaches out of the container onto the
+        // node's own filesystem, which is worth noticing among a list of
+        // volumes that cannot.
+        detail = `HostPath · ${volume.hostPath.path}`
+      } else if (volume.projected) {
+        const sources = (volume.projected.sources ?? []).length
+        detail = `Projected · ${sources} ${sources === 1 ? 'source' : 'sources'}`
+      } else {
+        detail = Object.keys(volume).filter((key) => key !== 'name')[0] ?? 'Unknown'
+      }
+      return { label: volume.name, value: detail }
+    }),
+  )
+
+  /**
+   * A condition as one line, with the reason kubectl throws away.
+   *
+   * `kubectl describe` prints conditions as Type and Status only, which
+   * discards the half that explains anything: PodScheduled=False is a fact,
+   * and its reason and message are the scheduler's own account of why.
+   *
+   * Coloured only when False, because for a pod's conditions True is the
+   * satisfied state throughout — Ready, Initialized, PodScheduled,
+   * ContainersReady, PodReadyToStartContainers. Colouring both would leave a
+   * list where every row is coloured and none of them stands out.
+   */
+  const conditionRows = $derived<DetailRow[]>(
+    (conditions as Record<string, string>[]).map((condition) => {
+      const explanation = [condition.reason, condition.message].filter(Boolean).join(' — ')
+      return {
+        label: condition.type,
+        value: explanation ? `${condition.status} · ${explanation}` : condition.status,
+        tone: condition.status === 'False' ? ('warn' as const) : undefined,
+      }
+    }),
+  )
+
   /** Turns a metadata map into rows, for labels and annotations. */
   function pairRows(pairs: [string, unknown][], truncate = false): DetailRow[] {
     return pairs.map(([key, value]) => ({ label: key, value: String(value), truncate }))
@@ -543,28 +601,7 @@
       <!-- Volumes -->
       {#if volumes.length > 0}
         <DetailSection level="h3" id="volumes" title="Volumes" defaultOpen={false} hint={String(volumes.length)}>
-          <div class="space-y-2">
-            {#each volumes as volume, i (i)}
-              <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
-                <p class="text-body-medium font-medium text-on-surface" data-selectable>{volume.name}</p>
-                <p class="mt-1 text-body-small text-on-surface-variant">
-                  {#if volume.emptyDir}
-                    EmptyDir
-                  {:else if volume.configMap}
-                    ConfigMap: {volume.configMap.name}
-                  {:else if volume.secret}
-                    Secret: {volume.secret.secretName}
-                  {:else if volume.persistentVolumeClaim}
-                    PVC: {volume.persistentVolumeClaim.claimName}
-                  {:else if volume.hostPath}
-                    HostPath: {volume.hostPath.path}
-                  {:else}
-                    {Object.keys(volume).filter(k => k !== 'name')[0] ?? 'Unknown'}
-                  {/if}
-                </p>
-              </div>
-            {/each}
-          </div>
+          <DetailList rows={volumeRows} />
         </DetailSection>
       {/if}
     {/if}
@@ -587,29 +624,7 @@
     <!-- Conditions -->
     {#if conditions.length > 0}
       <DetailSection level="h3" id="conditions" title="Conditions" defaultOpen={false} hint={String(conditions.length)}>
-        <div class="space-y-2">
-          {#each conditions as condition, i (i)}
-            <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
-              <div class="flex items-center justify-between">
-                <p class="text-body-medium font-medium text-on-surface">{condition.type}</p>
-                <span
-                  class="rounded-full px-2 py-0.5 text-body-small
-                         {condition.status === 'True' ? 'bg-success-container text-on-success-container' :
-                          condition.status === 'False' ? 'bg-error-container text-on-error-container' :
-                          'bg-surface-container-high text-on-surface-variant'}"
-                >
-                  {condition.status}
-                </span>
-              </div>
-              {#if condition.reason}
-                <p class="mt-1 text-body-small text-on-surface-variant">{condition.reason}</p>
-              {/if}
-              {#if condition.message}
-                <p class="mt-1 text-body-small text-on-surface-variant">{condition.message}</p>
-              {/if}
-            </div>
-          {/each}
-        </div>
+        <DetailList rows={conditionRows} wideLabels />
       </DetailSection>
     {/if}
 

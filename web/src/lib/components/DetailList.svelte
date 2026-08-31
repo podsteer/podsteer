@@ -44,6 +44,16 @@
      * caller decides, because only it knows whether there is anywhere to go.
      */
     onclick?: () => void
+    /**
+     * Colours the value when it carries a verdict rather than a fact.
+     *
+     * A pod condition is the case this exists for: PodScheduled=False is not
+     * the same kind of statement as Node=node-1, and a list that renders them
+     * identically loses the only thing anybody scans a condition list for.
+     * Left off for everything else, because a list where most rows are
+     * coloured is a list where none of them are.
+     */
+    tone?: 'warn' | 'critical'
   }
 
   interface Props {
@@ -101,9 +111,11 @@
       {row.label}
     </dt>
     <dd
-      class="min-w-0 text-body-medium text-on-surface-variant {row.truncate
-        ? 'truncate'
-        : 'break-words'}"
+      class="min-w-0 text-body-medium {row.tone === 'critical'
+        ? 'text-error'
+        : row.tone === 'warn'
+          ? 'text-gauge-warn'
+          : 'text-on-surface-variant'} {row.truncate ? 'truncate' : 'break-words'}"
       data-selectable
     >
       {#if row.onclick}

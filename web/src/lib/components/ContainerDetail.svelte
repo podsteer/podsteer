@@ -144,8 +144,15 @@
       {#each forwardable as port, index (index)}
         {@const open = forwards.forPort(namespace, podName, port.containerPort)}
         {@const busy = forwards.isBusy(namespace, podName, port.containerPort)}
-        <div class="flex items-center gap-2 text-body-medium">
-          <span class="w-32 shrink-0 text-on-surface-variant">
+        <!--
+          A GRID, not a flex row with a margin pushing the button right. With
+          `ml-auto` the button's position depended on how long the address
+          beside it was, so a forwarded port and an unforwarded one put their
+          controls in different places and the column read as ragged. Three
+          columns line them up regardless of what is in the middle.
+        -->
+        <div class="grid grid-cols-[10rem_1fr_auto] items-center gap-2 text-body-medium">
+          <span class="min-w-0 truncate text-on-surface-variant">
             {port.name ? `${port.name} ` : ''}{port.containerPort}/{port.protocol ?? 'TCP'}
           </span>
 
@@ -157,9 +164,9 @@
               stalling, not broken, and that is a different thing to tell
               somebody than "the forward is fine".
             -->
-            <span class="inline-flex items-center gap-1.5 text-body-medium text-gauge-warn">
-              <Loader class="size-3.5 animate-spin" strokeWidth={2} />
-              pod went away — holding {open.address} while a replacement is found
+            <span class="flex min-w-0 items-center gap-1.5 text-body-medium text-gauge-warn">
+              <Loader class="size-3.5 shrink-0 animate-spin" strokeWidth={2} />
+              <span class="truncate">holding {open.address} — finding a replacement pod</span>
             </span>
           {:else if open}
             <!-- The address is opened in the real browser, not the webview:
@@ -168,12 +175,16 @@
             <button
               type="button"
               onclick={() => BrowserOpenURL(open.address)}
-              class="resource-link inline-flex items-center gap-1.5 truncate"
+              class="resource-link flex min-w-0 items-center gap-1.5 text-left"
               title="Open {open.address}"
             >
-              {open.address}
+              <span class="truncate">{open.address}</span>
               <ExternalLink class="size-3.5 shrink-0" strokeWidth={1.8} />
             </button>
+          {:else}
+            <!-- An empty cell holds the column open, so the buttons below and
+                 above this row stay in line. -->
+            <span></span>
           {/if}
 
           <button
@@ -192,7 +203,7 @@
                     port.protocol ?? 'TCP',
                     labels,
                   )}
-            class="state-layer ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm
+            class="state-layer inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm
                    border border-outline-variant px-2 text-label-large
                    text-on-surface-variant transition-colors duration-100
                    hover:bg-surface-container hover:text-on-surface disabled:opacity-50"
