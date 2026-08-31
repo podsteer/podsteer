@@ -318,7 +318,10 @@
     {#if selectedPod?.findings?.length}
       <DetailSection level="h3" title="Worth knowing">
         <div class="flex flex-col gap-2">
-          {#each selectedPod.findings as finding (finding.title)}
+          <!-- By position, for the same reason as DetailList: titles are
+               written by rules that can legitimately produce two alike, and a
+               duplicate key throws rather than degrading. -->
+          {#each selectedPod.findings as finding, index (index)}
             <div
               class="rounded-sm border p-3 {finding.severity === 'critical'
                 ? 'border-error/40 bg-error-container/20'

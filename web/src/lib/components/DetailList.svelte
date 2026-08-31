@@ -54,7 +54,17 @@
 </script>
 
 <dl class="grid grid-cols-[25%_1fr] gap-x-4 gap-y-2">
-  {#each rows as row (row.label)}
+  <!--
+    KEYED BY POSITION, NOT BY LABEL. A label is not unique and was never going
+    to be: kubectl prints several "Mounts:" lines for one container and several
+    "Tolerations:" for one pod, and this list renders them the same way. Keying
+    by label made Svelte throw on the first pod with two volume mounts — which
+    is every pod, because the service-account token is one of them.
+
+    Position is the right key here anyway. `rows` is derived and rebuilt whole
+    on each change, so there is no row identity to preserve across renders.
+  -->
+  {#each rows as row, index (index)}
     <!--
       break-words on the LABEL as well, because these are not always the short
       words the events pane's are. A label column also holds annotation keys

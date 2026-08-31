@@ -108,7 +108,10 @@
     -->
     <p class="mt-3 mb-1 text-body-medium text-on-surface">Environment ({env.length})</p>
     <dl class="grid grid-cols-[25%_1fr] gap-x-4 gap-y-2">
-      {#each env as variable (variable.name)}
+      <!-- By position too. Kubernetes does NOT enforce unique environment
+           variable names — a duplicate is legal and the last one wins — so
+           keying by name is the same latent crash DetailList had. -->
+      {#each env as variable, index (index)}
         {@const ref = (variable.valueFrom as { secretKeyRef?: { name?: string; key?: string } })
           ?.secretKeyRef}
         <dt class="min-w-0 break-words text-body-medium text-on-surface" data-selectable>
