@@ -11,15 +11,19 @@
   import DetailSection from './DetailSection.svelte'
   import DetailList, { type DetailRow } from './DetailList.svelte'
   import ContainerDetail from './ContainerDetail.svelte'
+  import UsageSparkline from './UsageSparkline.svelte'
+  import type { UsageSample } from '$stores/session.svelte'
 
   interface Props {
     manifest: string | null
     selectedPod?: Pod | null
     selectedWorkload?: Workload | null
     kind?: string
+    /** The open pod's recent usage, accumulated while the drawer is open. */
+    usage?: UsageSample[]
   }
 
-  let { manifest, selectedPod, selectedWorkload, kind }: Props = $props()
+  let { manifest, selectedPod, selectedWorkload, kind, usage = [] }: Props = $props()
 
   let parsedManifest = $derived.by(() => {
     if (!manifest) return null
@@ -218,6 +222,25 @@
       <DetailSection level="h3" title="Status">
         <DetailList rows={statusRows} />
       </DetailSection>
+
+      <!--
+        Usage, only once something measured it. A pod on a cluster with no
+        metrics source would otherwise get a section whose entire content is
+        an apology, which the notice above the table already covers once.
+      -->
+      {#if selectedPod?.hasMetrics}
+        <DetailSection level="h3" title="Usage while you have been watching">
+          <div class="flex flex-col gap-2">
+            <UsageSparkline samples={usage} metric="cpu" label="CPU" current={selectedPod.cpu} />
+            <UsageSparkline
+              samples={usage}
+              metric="memory"
+              label="Memory"
+              current={selectedPod.memory}
+            />
+          </div>
+        </DetailSection>
+      {/if}
 
       <!--
         WHY IT RESTARTED — placed above the container list because when it

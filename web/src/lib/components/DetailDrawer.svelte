@@ -669,6 +669,7 @@
           selectedPod={selectedPod}
           selectedWorkload={selectedWorkload}
           kind={session.selectedKind?.kind}
+          usage={session.usage}
         />
       {:else if activeTab === 'logs'}
         {#if maximized === 'logs'}

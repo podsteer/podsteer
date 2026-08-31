@@ -48,6 +48,31 @@ import { preferences } from './preferences.svelte'
 /** Lifecycle of an asynchronous read. */
 export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
+/** One measurement of the open pod, taken from a refresh that already happened. */
+export interface UsageSample {
+  /** Epoch milliseconds, from the client — these are points on a local clock,
+      spaced by the refresh interval, not timestamps the cluster asserted. */
+  at: number
+  /**
+   * CPU in CORES and memory in BYTES, parsed back out of the strings Go
+   * formatted. Both are only ever used to draw a shape scaled to its own
+   * peak, so the units matter less than their consistency across samples —
+   * which is why they are parsed from one formatter's output rather than
+   * mixed with a second source.
+   */
+  cpuCores: number
+  memoryBytes: number
+}
+
+/**
+ * How many samples the open drawer keeps.
+ *
+ * Two hundred is a little over half an hour at the default ten-second
+ * refresh, and about forty kilobytes. Long enough to show a shape; short
+ * enough that nobody has to think about it.
+ */
+const MAX_USAGE_SAMPLES = 200
+
 /** How often the current view re-fetches while auto-refresh is on. */
 export const DEFAULT_REFRESH_INTERVAL_MS = 10_000
 
@@ -843,6 +868,78 @@ export class ClusterSession {
       default:
         this.table = rows as ResourceTable
     }
+
+    this.#refreshSelection()
+  }
+
+  /**
+   * Re-points the open drawer at the freshly fetched row.
+   *
+   * The drawer used to hold the object it was opened with and nothing ever
+   * replaced it, so a pane left open showed the pod as it was at the moment
+   * of the click: the CPU from then, the restart count from then, the
+   * container states from then. Watching a pod crash-loop in it showed a
+   * frozen healthy pod, which is worse than showing nothing.
+   *
+   * Matched by name and namespace rather than by identity, because every
+   * refresh builds new objects. A pod that has GONE — deleted, or evicted —
+   * leaves the last known copy on screen rather than blanking the pane
+   * underneath somebody: the detail is stale but it is what they were
+   * reading, and the list behind them already shows it is no longer there.
+   */
+  #refreshSelection(): void {
+    if (!this.selectedName) return
+
+    if (this.selectedPod) {
+      const fresh = this.pods.find(
+        (pod) => pod.name === this.selectedName && pod.namespace === this.selectedNamespace,
+      )
+      if (fresh) {
+        this.selectedPod = fresh
+        this.#recordUsage(fresh)
+      }
+      return
+    }
+
+    if (this.selectedWorkload) {
+      const fresh = this.workloads.find(
+        (workload) =>
+          workload.name === this.selectedName && workload.namespace === this.selectedNamespace,
+      )
+      if (fresh) this.selectedWorkload = fresh
+    }
+  }
+
+  /**
+   * The open pod's recent usage, kept only while the drawer is open.
+   *
+   * IN MEMORY, FOR THIS ONE POD, AND NOT ON DISK. The history subsystem
+   * samples whole clusters and its samples deliberately carry no object names
+   * at all; retaining per-pod series would reverse that privacy property and
+   * cost roughly a gigabyte per cluster per week to do it. What a chart in a
+   * drawer actually needs is the last few minutes of the pod in front of you,
+   * which the poll already fetches — so this costs no extra request, no
+   * goroutine and no file.
+   *
+   * Closing the drawer discards it. That is the honest trade: the chart
+   * starts empty and fills as you watch, rather than pretending to a history
+   * nothing recorded.
+   */
+  usage = $state.raw<UsageSample[]>([])
+
+  #recordUsage(pod: Pod): void {
+    if (!pod.hasMetrics) return
+
+    const sample: UsageSample = {
+      at: Date.now(),
+      cpuCores: parseQuantity(pod.cpu) ?? 0,
+      memoryBytes: parseQuantity(pod.memory) ?? 0,
+    }
+
+    // Replaced rather than pushed: `$state.raw` does not track mutation, and
+    // a chart that never redrew would be a subtle and very confusing bug.
+    const next = [...this.usage, sample]
+    this.usage = next.length > MAX_USAGE_SAMPLES ? next.slice(-MAX_USAGE_SAMPLES) : next
   }
 
   // --- Detail drawer --------------------------------------------------------
@@ -865,6 +962,9 @@ export class ClusterSession {
     this.selectedWorkload = workload ?? null
     this.manifest = null
     this.manifestStatus = 'loading'
+    // A new object means a new series. Carrying the previous pod's samples
+    // over would draw its usage under this one's name.
+    this.usage = []
     // Every open starts hidden. A reveal is a decision about one object, and
     // carrying it to the next one is how Freelens ends up showing a value
     // somebody unmasked in private on the pod they open in a meeting.
@@ -910,6 +1010,7 @@ export class ClusterSession {
     this.selectedWorkload = null
     this.manifest = null
     this.manifestStatus = 'idle'
+    this.usage = []
   }
 
   // --- Auto-refresh ---------------------------------------------------------
