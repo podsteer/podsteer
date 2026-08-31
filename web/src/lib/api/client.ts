@@ -41,6 +41,9 @@ import {
   RestartRollout as bindRestartRollout,
   StreamLogs as bindStreamLogs,
   StopLogStream as bindStopLogStream,
+  StartPortForward as bindStartPortForward,
+  StopPortForward as bindStopPortForward,
+  ListPortForwards as bindListPortForwards,
 } from '$lib/wailsjs/go/wails/ManagementAPI'
 import { GetOverview as bindGetOverview } from '$lib/wailsjs/go/wails/OverviewAPI'
 import {
@@ -69,6 +72,8 @@ export type Namespace = wails.Namespace
 export type Pod = wails.Pod
 /** One container within a pod. */
 export type Container = wails.Container
+/** One live port-forward, as the backend is actually holding it. */
+export type PortForward = wails.PortForward
 /** A cluster node. */
 export type Node = wails.Node
 /** A pod-managing controller. */
@@ -365,6 +370,50 @@ export function revealSecretKey(
   key: string,
 ): Promise<string> {
   return call(() => bindRevealSecretKey(clusterId, namespace, name, key))
+}
+
+// --- Port forwards ----------------------------------------------------------
+
+/**
+ * Opens a local port onto a container port.
+ *
+ * `localPort` of 0 lets the operating system choose, and the returned forward
+ * carries whichever port it actually bound — which is the only truthful
+ * answer, since there is an unavoidable race between finding a free port and
+ * binding it.
+ */
+export function startPortForward(
+  clusterId: string,
+  namespace: string,
+  pod: string,
+  podUID: string,
+  localPort: number,
+  remotePort: number,
+  portName: string,
+  protocol: string,
+): Promise<PortForward> {
+  return call(() =>
+    bindStartPortForward(
+      clusterId,
+      namespace,
+      pod,
+      podUID,
+      localPort,
+      remotePort,
+      portName,
+      protocol,
+    ),
+  )
+}
+
+/** Closes one forward, waiting for its local port to be released. */
+export function stopPortForward(forwardId: string): Promise<void> {
+  return call(() => bindStopPortForward(forwardId))
+}
+
+/** Reports what is forwarded right now — the live registry, not intent. */
+export function listPortForwards(): Promise<PortForward[]> {
+  return call(() => bindListPortForwards())
 }
 
 // --- System -----------------------------------------------------------------

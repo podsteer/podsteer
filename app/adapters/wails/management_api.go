@@ -12,6 +12,7 @@ import (
 
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // generateStreamID creates a unique identifier for a log stream.
@@ -24,8 +25,13 @@ func generateStreamID() string {
 // ManagementAPI exposes management operations to the frontend.
 type ManagementAPI struct {
 	management *application.ManagementService
-	app        *App
-	logger     *slog.Logger
+	// forwards is the port-forward transport, used directly rather than
+	// through a service: there is no policy to apply between the UI's "open
+	// this port" and the adapter's, and inserting a layer that only forwards
+	// arguments would be a place for the record and the goroutine to drift.
+	forwards ports.PortForwardPort
+	app      *App
+	logger   *slog.Logger
 
 	// Active log streams, keyed by stream ID, with their cancel function.
 	streamsMu sync.Mutex
@@ -33,10 +39,12 @@ type ManagementAPI struct {
 }
 
 // NewManagementAPI returns a new management API.
-func NewManagementAPI(management *application.ManagementService, app *App, logger *slog.Logger) (*ManagementAPI, error) {
+func NewManagementAPI(management *application.ManagementService, forwards ports.PortForwardPort, app *App, logger *slog.Logger) (*ManagementAPI, error) {
 	switch {
 	case management == nil:
 		return nil, errors.New("wails: ManagementAPI requires a ManagementService")
+	case forwards == nil:
+		return nil, errors.New("wails: ManagementAPI requires a PortForwardPort")
 	case app == nil:
 		return nil, errors.New("wails: ManagementAPI requires an App")
 	}
@@ -47,6 +55,7 @@ func NewManagementAPI(management *application.ManagementService, app *App, logge
 
 	return &ManagementAPI{
 		management: management,
+		forwards:   forwards,
 		app:        app,
 		logger:     logger.With(slog.String("api", "management")),
 		streams:    make(map[string]context.CancelFunc),
@@ -341,4 +350,87 @@ func (m *ManagementAPI) ExecInPod(clusterID, namespace, podName, containerName s
 	}
 
 	return stdout.String(), nil
+}
+
+// PortForward is one live forward, as the UI shows it.
+type PortForward struct {
+	ID         string `json:"id"`
+	ClusterID  string `json:"clusterId"`
+	Namespace  string `json:"namespace"`
+	Pod        string `json:"pod"`
+	LocalPort  int    `json:"localPort"`
+	RemotePort int    `json:"remotePort"`
+	// Address is where to point a browser, scheme included.
+	Address string `json:"address"`
+}
+
+func toPortForward(forward domain.Forward) PortForward {
+	return PortForward{
+		ID:         forward.ID,
+		ClusterID:  forward.ClusterID.String(),
+		Namespace:  forward.Namespace.String(),
+		Pod:        forward.Pod,
+		LocalPort:  forward.LocalPort,
+		RemotePort: forward.RemotePort,
+		Address:    forward.Address(),
+	}
+}
+
+// StartPortForward opens a local port onto a container port.
+//
+// localPort may be zero, in which case the operating system chooses and the
+// returned forward carries what it chose. That is the honest default: asking
+// somebody to pick a free port is asking them to guess, and a collision is
+// reported as a failure to start rather than silently moved somewhere else.
+func (m *ManagementAPI) StartPortForward(clusterID, namespace, pod, podUID string, localPort, remotePort int, portName, protocol string) (PortForward, error) {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return PortForward{}, apiError(m.logger, "StartPortForward", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return PortForward{}, apiError(m.logger, "StartPortForward", err)
+	}
+
+	forward, err := m.forwards.StartPortForward(ctx, id, ns, pod, podUID, localPort, remotePort, portName, protocol)
+	if err != nil {
+		return PortForward{}, apiError(m.logger, "StartPortForward", err)
+	}
+
+	m.logger.Info("port forward started",
+		slog.String("cluster", clusterID),
+		slog.String("pod", pod),
+		slog.Int("local", forward.LocalPort),
+		slog.Int("remote", remotePort))
+
+	return toPortForward(forward), nil
+}
+
+// StopPortForward closes one forward.
+func (m *ManagementAPI) StopPortForward(forwardID string) error {
+	if err := m.forwards.StopPortForward(forwardID); err != nil {
+		return apiError(m.logger, "StopPortForward", err)
+	}
+	return nil
+}
+
+// ListPortForwards reports what is forwarded right now.
+//
+// The list is the live registry, not a record of intent. A forward appears
+// here because a goroutine is holding its socket — which is the difference
+// between this and the clients where a forward shows as active after its
+// connection died, and the stop button does nothing because there is nothing
+// left to stop.
+func (m *ManagementAPI) ListPortForwards() ([]PortForward, error) {
+	forwards := m.forwards.ListPortForwards()
+
+	out := make([]PortForward, 0, len(forwards))
+	for _, forward := range forwards {
+		out = append(out, toPortForward(forward))
+	}
+	return out, nil
 }

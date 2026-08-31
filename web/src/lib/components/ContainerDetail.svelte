@@ -15,9 +15,14 @@
   import { formatEnvValue, formatMount, formatPorts, formatProbe, isFromSecret, looksSensitive } from '$lib/container'
   import type { Container } from '$lib/api/client'
   import SecretReveal from './SecretReveal.svelte'
-  import { EyeOff } from '@lucide/svelte'
+  import { forwards } from '$stores/forwards.svelte'
+  import { BrowserOpenURL } from '$lib/wailsjs/runtime/runtime'
+  import { EyeOff, ExternalLink, Loader, Plug, Unplug } from '@lucide/svelte'
 
   interface Props {
+    /** The pod this container belongs to, for forwarding its ports. */
+    podName?: string
+    podUID?: string
     /** The container's spec, from the parsed manifest. */
     spec: Record<string, any>
     /** Its live status from the pod DTO, when the names match. */
@@ -27,7 +32,21 @@
     namespace: string
   }
 
-  let { spec, status, clusterId, namespace }: Props = $props()
+  let { spec, status, clusterId, namespace, podName = '', podUID = '' }: Props = $props()
+
+  /**
+   * The ports that can actually be forwarded.
+   *
+   * TCP only. Kubernetes port-forward does not carry UDP, and a button that
+   * offers it produces a forward that appears to establish and drops every
+   * packet. The backend refuses it too — this is so the button is not there
+   * to be pressed.
+   */
+  const forwardable = $derived(
+    ((spec.ports ?? []) as { containerPort: number; name?: string; protocol?: string }[]).filter(
+      (port) => !port.protocol || port.protocol.toUpperCase() === 'TCP',
+    ),
+  )
 
   /**
    * The identity rows: what is running, and whether it is up.
@@ -41,8 +60,8 @@
 
     if (spec.imagePullPolicy) out.push({ label: 'Pull policy', value: spec.imagePullPolicy })
 
-    const ports = formatPorts(spec.ports)
-    if (ports) out.push({ label: 'Ports', value: ports })
+    // Ports are rendered below rather than as a row, because each one carries
+    // a control.
 
     // Requests and limits come from the DTO, already formatted in Go, so the
     // quantity strings are parsed in exactly one place in the codebase.
@@ -99,6 +118,75 @@
   </p>
 
   <DetailList {rows} />
+
+  {#if forwardable.length > 0 && podName}
+    <!--
+      One control per port, next to the port it opens.
+
+      The state comes from the backend's live registry rather than from what
+      this component asked for — so a forward that died is not shown as
+      running, which is the failure every competing client has an open issue
+      about, with a stop button that does nothing because there is nothing
+      left to stop.
+    -->
+    <p class="mt-3 mb-1 text-body-medium text-on-surface">Ports</p>
+    <div class="flex flex-col gap-1.5">
+      {#each forwardable as port, index (index)}
+        {@const open = forwards.forPort(namespace, podName, port.containerPort)}
+        {@const busy = forwards.isBusy(namespace, podName, port.containerPort)}
+        <div class="flex items-center gap-2 text-body-medium">
+          <span class="w-32 shrink-0 text-on-surface-variant">
+            {port.name ? `${port.name} ` : ''}{port.containerPort}/{port.protocol ?? 'TCP'}
+          </span>
+
+          {#if open}
+            <!-- The address is opened in the real browser, not the webview:
+                 this is a link to something on the operator's machine, and
+                 loading it inside the application would replace PodSteer. -->
+            <button
+              type="button"
+              onclick={() => BrowserOpenURL(open.address)}
+              class="resource-link inline-flex items-center gap-1.5 truncate"
+              title="Open {open.address}"
+            >
+              {open.address}
+              <ExternalLink class="size-3.5 shrink-0" strokeWidth={1.8} />
+            </button>
+          {/if}
+
+          <button
+            type="button"
+            disabled={busy}
+            onclick={() =>
+              open
+                ? forwards.stop(open)
+                : forwards.start(
+                    clusterId,
+                    namespace,
+                    podName,
+                    podUID,
+                    port.containerPort,
+                    port.name ?? '',
+                    port.protocol ?? 'TCP',
+                  )}
+            class="state-layer ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm
+                   border border-outline-variant px-2 text-label-large
+                   text-on-surface-variant transition-colors duration-100
+                   hover:bg-surface-container hover:text-on-surface disabled:opacity-50"
+          >
+            {#if busy}
+              <Loader class="size-3.5 animate-spin" strokeWidth={2} />
+            {:else if open}
+              <Unplug class="size-3.5" strokeWidth={1.8} />
+            {:else}
+              <Plug class="size-3.5" strokeWidth={1.8} />
+            {/if}
+            {open ? 'Stop' : 'Forward'}
+          </button>
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   {#if env.length > 0}
     <!--

@@ -172,6 +172,28 @@ type ResourcePort interface {
 	RevealSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string) (string, error)
 }
 
+// PortForwardPort opens local ports onto container ports.
+//
+// Deliberately narrow. There is no "restart", no "reconnect" and no
+// persistence here, because each of those is a policy decision that belongs
+// above the transport — and because every leak in the competing clients comes
+// from the record of a forward and the goroutine running it being managed
+// separately. Start hands back a forward that is already running; Stop waits
+// for it to actually stop.
+type PortForwardPort interface {
+	// StartPortForward binds localPort onto the pod's remotePort. A localPort
+	// of zero lets the operating system choose, and the returned Forward
+	// carries whichever port was actually bound.
+	StartPortForward(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, pod, podUID string, localPort, remotePort int, portName, protocol string) (domain.Forward, error)
+	// StopPortForward closes a forward and WAITS for its port to be released,
+	// so a caller may immediately rebind it.
+	StopPortForward(id string) error
+	// ListPortForwards reports what is forwarded right now.
+	ListPortForwards() []domain.Forward
+	// StopAllPortForwards tears everything down, for shutdown.
+	StopAllPortForwards()
+}
+
 // TerminalSize represents a terminal window size.
 type TerminalSize struct {
 	Width  uint16

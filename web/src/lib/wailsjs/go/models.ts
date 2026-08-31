@@ -1100,6 +1100,30 @@ export namespace wails {
 	
 	
 	
+	export class PortForward {
+	    id: string;
+	    clusterId: string;
+	    namespace: string;
+	    pod: string;
+	    localPort: number;
+	    remotePort: number;
+	    address: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PortForward(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.clusterId = source["clusterId"];
+	        this.namespace = source["namespace"];
+	        this.pod = source["pod"];
+	        this.localPort = source["localPort"];
+	        this.remotePort = source["remotePort"];
+	        this.address = source["address"];
+	    }
+	}
 	
 	export class ResourceKind {
 	    id: string;

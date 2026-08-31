@@ -10,6 +10,10 @@ export function ExecInPod(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['wails']['ManagementAPI']['ExecInPod'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function ListPortForwards() {
+  return window['go']['wails']['ManagementAPI']['ListPortForwards']();
+}
+
 export function RestartRollout(arg1, arg2, arg3, arg4) {
   return window['go']['wails']['ManagementAPI']['RestartRollout'](arg1, arg2, arg3, arg4);
 }
@@ -18,8 +22,16 @@ export function ScaleWorkload(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['wails']['ManagementAPI']['ScaleWorkload'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function StartPortForward(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['wails']['ManagementAPI']['StartPortForward'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+}
+
 export function StopLogStream(arg1) {
   return window['go']['wails']['ManagementAPI']['StopLogStream'](arg1);
+}
+
+export function StopPortForward(arg1) {
+  return window['go']['wails']['ManagementAPI']['StopPortForward'](arg1);
 }
 
 export function StreamLogs(arg1, arg2, arg3, arg4, arg5, arg6) {

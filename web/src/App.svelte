@@ -14,6 +14,7 @@
   import { workspace } from '$stores/workspace.svelte'
   import { loadAppInfo } from '$stores/system.svelte'
   import { alertPlayer } from '$stores/alerts.svelte'
+  import { forwards } from '$stores/forwards.svelte'
 
   /**
    * The shortest time the splash stays up. Initialisation is faster than this
@@ -29,6 +30,11 @@
   // timer and the event subscription when it goes away.
   $effect(() => {
     void loadAppInfo()
+    // Ask what is already forwarded. Nothing survives a restart of the
+    // application — every forward is a goroutine in this process — but a
+    // window reopened over a running backend, or a hot reload in development,
+    // would otherwise show a Forward button for a port that is already open.
+    void forwards.refresh()
     // Audio output is only allowed to start from a user gesture, and a context
     // created before one exists stays suspended for the life of the process.
     // Arming here means the first click or keypress of the session wakes it,

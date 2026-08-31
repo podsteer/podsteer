@@ -444,6 +444,8 @@
                 status={statusFor(container.name)}
                 clusterId={selectedPod?.clusterId ?? ''}
                 namespace={metadata.namespace ?? ''}
+                podName={metadata.name ?? ''}
+                podUID={metadata.uid ?? ''}
               />
             {/each}
           </div>
@@ -465,6 +467,8 @@
                 status={statusFor(container.name)}
                 clusterId={selectedPod?.clusterId ?? ''}
                 namespace={metadata.namespace ?? ''}
+                podName={metadata.name ?? ''}
+                podUID={metadata.uid ?? ''}
               />
             {/each}
           </div>
@@ -483,6 +487,8 @@
                 status={statusFor(container.name)}
                 clusterId={selectedPod?.clusterId ?? ''}
                 namespace={metadata.namespace ?? ''}
+                podName={metadata.name ?? ''}
+                podUID={metadata.uid ?? ''}
               />
             {/each}
           </div>
