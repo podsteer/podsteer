@@ -415,7 +415,7 @@ tag-rc-inner: fetch ensure-branch ensure-notices ensure-clean
 	fi; \
 	NEW_TAG="$$BASE_VER-rc-$$NEXT_RC"; \
 	echo -e "Cutting candidate ${GREEN}$$NEW_TAG${NC} from ${YELLOW}$$LAST_DEV${NC}"; \
-	git tag $$NEW_TAG || exit 1; \
+	git tag $$NEW_TAG "$$LAST_DEV^{}" || exit 1; \
 	if ! git push origin $$NEW_TAG; then \
 		echo -e "${RED}Tag push FAILED. Delete the local tag with 'git tag -d $$NEW_TAG' before retrying.${NC}"; \
 		exit 1; \
@@ -430,6 +430,21 @@ tag-rc-inner: fetch ensure-branch ensure-notices ensure-clean
 # check is what stops a production tag being cut at a commit that never went
 # through review.
 tag-main-inner: fetch ensure-branch ensure-notices ensure-clean
+	@# BOTH PROMOTION PATHS TAG THE COMMIT THAT WAS BUILT, not the head of the
+	@# branch they run on. They already SAID they promoted $$LAST_DEV; they
+	@# tagged HEAD, which is not the same commit and routinely not even close.
+	@#
+	@# CI pushes "Update version badges [skip ci]" to develop and main after
+	@# every build, so once a dev tag has been through the pipeline that badge
+	@# commit is the head. Tagging it produced a tag GitHub then REFUSED to
+	@# build: a push whose head commit message contains [skip ci] is skipped,
+	@# and that includes a tag push. So the production release could never be
+	@# cut — deterministically, and silently. The tag appeared, and no workflow
+	@# ever started.
+	@#
+	@# Tagging the dev tag's own commit is also what promotion MEANS: the
+	@# artefacts that were built, signed and notarised are the ones released,
+	@# rather than a superset nobody tested.
 	@echo -e "${BLUE}Checking if develop is merged into main...${NC}"
 	@if ! git merge-base --is-ancestor origin/develop HEAD; then \
 		echo -e "${RED}Error: 'develop' is not merged into 'main'.${NC}"; \
@@ -452,7 +467,7 @@ tag-main-inner: fetch ensure-branch ensure-notices ensure-clean
 	fi; \
 	echo -e "Promoting ${YELLOW}$$LAST_DEV${NC} to production: ${GREEN}$$NEW_TAG${NC}"; \
 	echo ""; \
-	git tag $$NEW_TAG || exit 1; \
+	git tag $$NEW_TAG "$$LAST_DEV^{}" || exit 1; \
 	echo -e "${YELLOW}Pushing tag to origin...${NC}"; \
 	if ! git push origin $$NEW_TAG; then \
 		echo -e "${RED}Tag push FAILED. Delete the local tag with 'git tag -d $$NEW_TAG' before retrying.${NC}"; \
