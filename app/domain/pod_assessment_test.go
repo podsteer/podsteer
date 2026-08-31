@@ -221,3 +221,74 @@ func TestAssessPodStaysQuietOnAHealthyPod(t *testing.T) {
 		t.Errorf("a correctly configured pod produced %d findings, want none: %+v", len(findings), findings)
 	}
 }
+
+func TestAssessPodNamesWhatIsHoldingADeletionOpen(t *testing.T) {
+	t.Parallel()
+
+	spec := newPodSpec()
+	spec.NodeName = "node-1"
+	spec.DeletedAt = assessNow.Add(-3 * time.Hour)
+	spec.Finalizers = []string{"kubernetes.io/pvc-protection", "example.com/drain"}
+
+	pod, err := domain.NewPod(spec)
+	if err != nil {
+		t.Fatalf("NewPod() error = %v", err)
+	}
+
+	finding, ok := findingTitled(domain.AssessPod(pod, assessNow), "held open")
+	if !ok {
+		t.Fatal("a pod stuck terminating for three hours was not flagged")
+	}
+	// The field kubectl describe never prints, which is the whole point.
+	if !strings.Contains(finding.Detail, "example.com/drain") {
+		t.Errorf("detail = %q, want the finalizers named", finding.Detail)
+	}
+	if !strings.Contains(finding.Advice, "will not help") {
+		t.Errorf("advice = %q, want it to say deleting again is not the fix", finding.Advice)
+	}
+}
+
+func TestAssessPodDistinguishesAnUnconfirmedDeletionFromAHeldOne(t *testing.T) {
+	t.Parallel()
+
+	// Deleted, past its grace, and nothing registered. Not a finalizer
+	// problem: the kubelet has not confirmed the containers are gone, which
+	// usually means its node stopped reporting. Opposite investigation.
+	spec := newPodSpec()
+	spec.NodeName = "node-1"
+	spec.DeletedAt = assessNow.Add(-10 * time.Minute)
+
+	pod, err := domain.NewPod(spec)
+	if err != nil {
+		t.Fatalf("NewPod() error = %v", err)
+	}
+
+	finding, ok := findingTitled(domain.AssessPod(pod, assessNow), "nothing holding it")
+	if !ok {
+		t.Fatal("a deletion with no finalizer was not distinguished")
+	}
+	if !strings.Contains(finding.Advice, "node") {
+		t.Errorf("advice = %q, want it to point at the node", finding.Advice)
+	}
+}
+
+func TestAssessPodIsPatientWithANormalDeletion(t *testing.T) {
+	t.Parallel()
+
+	// The default grace period is thirty seconds. A pod shutting down now is
+	// not a problem, and flagging every terminating pod would make the whole
+	// section noise during any rollout.
+	spec := newPodSpec()
+	spec.NodeName = "node-1"
+	spec.DeletedAt = assessNow.Add(-5 * time.Second)
+	spec.Finalizers = []string{"kubernetes.io/pvc-protection"}
+
+	pod, err := domain.NewPod(spec)
+	if err != nil {
+		t.Fatalf("NewPod() error = %v", err)
+	}
+
+	if _, ok := findingTitled(domain.AssessPod(pod, assessNow), "held open"); ok {
+		t.Error("a pod five seconds into a normal shutdown was reported as stuck")
+	}
+}

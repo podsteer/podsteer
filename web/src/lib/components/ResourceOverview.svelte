@@ -202,6 +202,61 @@
     return `ran for ${Math.round(seconds / 86400)}d`
   }
 
+  /**
+   * Why this pod can go where it goes.
+   *
+   * Every one of these is a constraint on scheduling, and together they are
+   * the answer to "why is this Pending" and "why did it land there" — which
+   * is why they belong in one section rather than scattered through Status.
+   *
+   * Topology spread constraints are here because NO GUI CLIENT SURVEYED SHOWS
+   * THEM AT ALL — not Lens, not Headlamp, not Octant, not the Dashboard.
+   * `kubectl describe` prints them, so a pane without them is one an operator
+   * has to leave.
+   */
+  const schedulingRows = $derived.by<DetailRow[]>(() => {
+    const rows: DetailRow[] = []
+
+    const selectors = Object.entries(spec.nodeSelector ?? {})
+    if (selectors.length > 0) {
+      rows.push({
+        label: 'Node selector',
+        value: selectors.map(([key, value]) => `${key}=${value}`).join(', '),
+      })
+    }
+
+    // Rendered the way kubectl does, including the toleration seconds that
+    // several clients drop — "for 300s" is the difference between a pod that
+    // rides out a brief node problem and one that is evicted immediately.
+    for (const toleration of (spec.tolerations ?? []) as Record<string, unknown>[]) {
+      const key = (toleration.key as string) ?? ''
+      const effect = toleration.effect ? `:${toleration.effect}` : ''
+      const op = toleration.operator === 'Exists' ? 'op=Exists' : `=${toleration.value ?? ''}`
+      const seconds =
+        toleration.tolerationSeconds !== undefined && toleration.tolerationSeconds !== null
+          ? ` for ${toleration.tolerationSeconds}s`
+          : ''
+      rows.push({ label: 'Toleration', value: `${key}${effect} ${op}${seconds}`.trim() })
+    }
+
+    for (const constraint of (spec.topologySpreadConstraints ?? []) as Record<string, unknown>[]) {
+      rows.push({
+        label: 'Spread',
+        value: `max skew ${constraint.maxSkew} across ${constraint.topologyKey}, ` +
+          `${constraint.whenUnsatisfiable === 'DoNotSchedule' ? 'or do not schedule' : 'best effort'}`,
+      })
+    }
+
+    if (spec.priorityClassName) {
+      rows.push({ label: 'Priority class', value: String(spec.priorityClassName) })
+    }
+    // Only when set: hostNetwork is unusual enough that its presence is the
+    // information, and a "false" row on every pod would bury that.
+    if (spec.hostNetwork) rows.push({ label: 'Host network', value: 'yes — binds the node’s interfaces' })
+
+    return rows
+  })
+
   /** Turns a metadata map into rows, for labels and annotations. */
   function pairRows(pairs: [string, unknown][], truncate = false): DetailRow[] {
     return pairs.map(([key, value]) => ({ label: key, value: String(value), truncate }))
@@ -361,6 +416,17 @@
               </div>
             {/each}
           </div>
+        </DetailSection>
+      {/if}
+
+      <!--
+        Scheduling, when anything constrains it. A pod with no selector, no
+        toleration and no spread rule has an empty section, and an empty
+        section that says "no constraints" is a row of nothing.
+      -->
+      {#if schedulingRows.length > 0}
+        <DetailSection level="h3" title="Scheduling">
+          <DetailList rows={schedulingRows} />
         </DetailSection>
       {/if}
 

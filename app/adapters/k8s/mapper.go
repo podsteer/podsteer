@@ -41,6 +41,8 @@ func mapPod(clusterID domain.ClusterID, pod *corev1.Pod) (domain.Pod, error) {
 		Reason:     podReason(pod),
 		Message:    podMessage(pod),
 		CreatedAt:  pod.CreationTimestamp.Time,
+		DeletedAt:  deletionTime(pod),
+		Finalizers: pod.Finalizers,
 	})
 }
 
@@ -723,4 +725,12 @@ func mapProbe(probe *corev1.Probe) domain.Probe {
 		TimeoutSeconds:      probe.TimeoutSeconds,
 		FailureThreshold:    probe.FailureThreshold,
 	}
+}
+
+// deletionTime returns when deletion was requested, or the zero time.
+func deletionTime(pod *corev1.Pod) time.Time {
+	if pod.DeletionTimestamp == nil {
+		return time.Time{}
+	}
+	return pod.DeletionTimestamp.UTC()
 }

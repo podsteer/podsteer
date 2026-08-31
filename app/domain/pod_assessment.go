@@ -36,6 +36,7 @@ type PodFinding struct {
 func AssessPod(pod Pod, now time.Time) []PodFinding {
 	findings := make([]PodFinding, 0, 4)
 
+	findings = append(findings, stuckTerminatingFinding(pod, now)...)
 	findings = append(findings, unschedulableFinding(pod)...)
 	findings = append(findings, probeFindings(pod, now)...)
 	findings = append(findings, qosFinding(pod)...)
@@ -263,4 +264,75 @@ func agrees(count int, singular, plural string) string {
 		return singular
 	}
 	return plural
+}
+
+// stuckDeletionAfter is how long a deletion may take before it is a problem.
+//
+// The default grace period is thirty seconds, and a pod that has honoured it
+// is gone before anybody opens a pane to look. Two minutes is comfortably
+// past a long but legitimate shutdown while still catching the case this rule
+// exists for, where the answer is minutes-to-forever rather than a slow
+// SIGTERM.
+const stuckDeletionAfter = 2 * time.Minute
+
+// stuckTerminatingFinding names what is holding a deletion open.
+//
+// THE CHEAPEST HIGH-VALUE FINDING AVAILABLE, because `kubectl describe`
+// prints "Terminating (lasts 30s)" and then never prints the finalizers — so
+// the one field that explains why thirty seconds became three hours is absent
+// from the baseline everybody falls back to. It is right there in the object.
+//
+// A finalizer is a controller saying "not until I have cleaned up". When that
+// controller is gone, or wedged, or never existed, the pod stays forever and
+// no amount of deleting it again helps, because the delete already happened —
+// what is outstanding is somebody else's promise to finish.
+func stuckTerminatingFinding(pod Pod, now time.Time) []PodFinding {
+	if !pod.Terminating() {
+		return nil
+	}
+
+	elapsed := pod.DeletingFor(now)
+	if elapsed < stuckDeletionAfter {
+		return nil
+	}
+
+	holders := pod.Finalizers()
+	if len(holders) == 0 {
+		// Deleted, past its grace period, and nothing registered against it.
+		// The pod object outliving its own deletion with no finalizer is a
+		// kubelet that cannot confirm the containers are gone — commonly a
+		// node that stopped reporting.
+		return []PodFinding{{
+			Severity: SeverityWarning,
+			Title:    "Deleting, with nothing holding it",
+			Detail: fmt.Sprintf("Deletion was requested %s ago and no finalizer is registered.",
+				roundDuration(elapsed)),
+			Advice: "Nothing is waiting to clean up, so the kubelet has not confirmed the containers " +
+				"are gone. Check whether its node is still reporting — a pod on an unreachable node " +
+				"stays like this until the node returns or is removed.",
+		}}
+	}
+
+	return []PodFinding{{
+		Severity: SeverityWarning,
+		Title:    "Deletion is being held open",
+		Detail: fmt.Sprintf("Requested %s ago, and still registered: %s.",
+			roundDuration(elapsed), strings.Join(holders, ", ")),
+		Advice: "A finalizer is a controller saying it is not finished cleaning up. Deleting the pod " +
+			"again will not help — the delete already happened, and what is outstanding is that " +
+			"promise. Find whether the controller behind that name is still running; removing the " +
+			"finalizer by hand abandons whatever it was going to tidy.",
+	}}
+}
+
+// roundDuration renders an elapsed time at a resolution worth reading.
+func roundDuration(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return d.Round(time.Second).String()
+	case d < time.Hour:
+		return d.Round(time.Minute).String()
+	default:
+		return d.Round(time.Hour).String()
+	}
 }

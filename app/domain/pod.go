@@ -274,6 +274,13 @@ type PodSpec struct {
 	Message string
 	// CreatedAt is the object creation timestamp.
 	CreatedAt time.Time
+	// DeletedAt is when deletion was REQUESTED, not when it happened. A pod
+	// with this set is Terminating; how long ago it was set is how long
+	// something has been refusing to let go.
+	DeletedAt time.Time
+	// Finalizers are the names still registered against the deletion. Empty
+	// on a healthy pod, and the whole explanation on a stuck one.
+	Finalizers []string
 }
 
 // Pod is a Kubernetes pod as observed in a cluster at a point in time.
@@ -297,6 +304,8 @@ type Pod struct {
 	reason     string
 	message    string
 	createdAt  time.Time
+	deletedAt  time.Time
+	finalizers []string
 }
 
 // NewPod validates spec and returns the corresponding Pod.
@@ -346,6 +355,8 @@ func NewPod(spec PodSpec) (Pod, error) {
 		reason:     strings.TrimSpace(spec.Reason),
 		message:    strings.TrimSpace(spec.Message),
 		createdAt:  spec.CreatedAt.UTC(),
+		deletedAt:  spec.DeletedAt.UTC(),
+		finalizers: slices.Clone(spec.Finalizers),
 	}, nil
 }
 
@@ -427,6 +438,29 @@ func (p Pod) WithPodUsage(usage PodUsage) Pod {
 func (p Pod) WithUsage(usage Metrics) Pod {
 	p.usage = usage
 	return p
+}
+
+// Finalizers returns the names still registered against this pod's deletion.
+//
+// THE FIELD THAT EXPLAINS A STUCK TERMINATING POD, and `kubectl describe`
+// never prints it. It shows "Terminating (lasts 30s)" and then says nothing
+// about why thirty seconds became three hours — while the answer, a
+// controller that registered a finalizer and has not removed it, is right
+// there in the object everybody is already looking at.
+func (p Pod) Finalizers() []string { return slices.Clone(p.finalizers) }
+
+// Terminating reports whether deletion has been requested.
+func (p Pod) Terminating() bool { return !p.deletedAt.IsZero() }
+
+// DeletingFor is how long deletion has been pending.
+func (p Pod) DeletingFor(now time.Time) time.Duration {
+	if p.deletedAt.IsZero() {
+		return 0
+	}
+	if elapsed := now.Sub(p.deletedAt); elapsed > 0 {
+		return elapsed
+	}
+	return 0
 }
 
 // Reason returns the pod-level reason, empty when the API server gives none.
