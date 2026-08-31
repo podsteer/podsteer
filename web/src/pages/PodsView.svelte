@@ -13,7 +13,8 @@
   import { formatAge, podStatusLabel, podTone } from '$lib/format'
   import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
-  import { Box, CircleDot } from '@lucide/svelte'
+  import type { Pod } from '$lib/api/client'
+  import { Box, CircleDot, TriangleAlert } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -35,6 +36,17 @@
     { id: 'ip', label: 'IP', width: 120, defaultHidden: true },
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
+
+  /**
+   * The findings worth marking a row for.
+   *
+   * Computed in Go and merely filtered here: severity is the domain's
+   * judgement, and this only decides which of those judgements earns a glyph
+   * in a dense list.
+   */
+  function alarming(pod: Pod) {
+    return (pod.findings ?? []).filter((finding) => finding.severity !== 'info')
+  }
 
   /**
    * Whether the bars divide by limits rather than requests.
@@ -157,6 +169,25 @@
         <td class="px-3 py-1.5" title={pod.name}>
           <span class="flex items-center gap-2">
             <span class="truncate font-medium text-on-surface">{pod.name}</span>
+            <!--
+              A mark for a pod the assessment has something to say about, so
+              the findings are reachable without opening every row to check.
+
+              INFO FINDINGS ARE EXCLUDED. A mutable tag or a Burstable QoS is
+              worth reading once you are looking at a pod and is not worth a
+              mark on a list — half a real cluster would carry one, and a mark
+              most rows have is not a mark. What survives is the class this
+              column cannot already show: a pod that looks fine and is not,
+              like one whose probes will restart it or whose deletion is
+              wedged.
+            -->
+            {#if alarming(pod).length > 0}
+              <TriangleAlert
+                class="size-3.5 shrink-0 text-gauge-warn"
+                strokeWidth={2.2}
+                aria-label="{alarming(pod).length} findings"
+              />
+            {/if}
           </span>
         </td>
         {#if isVisible('namespace')}
