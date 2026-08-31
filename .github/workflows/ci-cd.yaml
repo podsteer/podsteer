@@ -72,6 +72,12 @@ jobs:
       - name: Type-check Frontend
         run: npm --prefix web run check
 
+      # Separate from the type check because they catch different things: the
+      # type check has never once caught a component that throws when mounted,
+      # which is the failure that reached a user.
+      - name: Test Frontend
+        run: npm --prefix web run test
+
       - name: Build
         run: go build ./...
 
