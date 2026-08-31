@@ -16,6 +16,7 @@
   import EventDetail from './EventDetail.svelte'
   import { iconForKind } from '$lib/kindIcons'
   import { parse } from 'yaml'
+  import { forwards } from '$stores/forwards.svelte'
   import YamlPane from './YamlPane.svelte'
   import Button from './Button.svelte'
   import ToolbarButton from './ToolbarButton.svelte'
@@ -48,6 +49,8 @@
     Maximize2,
     TriangleAlert,
     Eye,
+    Plug,
+    Loader,
   } from '@lucide/svelte'
 
   interface Props {
@@ -564,8 +567,30 @@
       {/if}
 
       <div class="min-w-0 flex-1">
-        <h2 class="truncate text-title-medium font-semibold text-on-surface" data-selectable>
-          {session.selectedName}
+        <h2 class="flex min-w-0 items-center gap-2">
+          <span class="truncate text-title-medium font-semibold text-on-surface" data-selectable>
+            {session.selectedName}
+          </span>
+
+          <!--
+            Repeated from the list, because a forward moves between pods when
+            one is replaced and this pane is where somebody arrives to check
+            whether THIS is the pod holding it.
+          -->
+          {#each forwards.forPod(session.selectedNamespace, session.selectedName ?? '') as forward (forward.id)}
+            <span
+              class="inline-flex shrink-0 items-center gap-1 rounded bg-primary/12 px-1.5
+                     text-body-small text-primary"
+              title="{forward.address} → container port {forward.remotePort}"
+            >
+              {#if forward.reconnecting}
+                <Loader class="size-3 animate-spin" strokeWidth={2} />
+              {:else}
+                <Plug class="size-3" strokeWidth={2} />
+              {/if}
+              {forward.localPort}
+            </span>
+          {/each}
         </h2>
 
         <!-- Kind, then namespace, which is where it lives. The namespace is a

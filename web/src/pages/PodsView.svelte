@@ -14,7 +14,8 @@
   import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import type { Pod } from '$lib/api/client'
-  import { Box, CircleDot, TriangleAlert } from '@lucide/svelte'
+  import { Box, CircleDot, TriangleAlert, Plug, Loader } from '@lucide/svelte'
+  import { forwards } from '$stores/forwards.svelte'
 
   interface Props {
     session: ClusterSession
@@ -181,6 +182,31 @@
               like one whose probes will restart it or whose deletion is
               wedged.
             -->
+            <!--
+              WHICH POD HOLDS THE FORWARD. Not decoration: a forward survives
+              its pod being deleted by moving to a replacement, so the row
+              holding it afterwards is not the row it was started from — and
+              with several replicas of one workload there was nothing at all
+              to tell them apart.
+
+              The port is in the mark rather than only in a tooltip, because
+              the question being asked is "which of these is on 59595".
+            -->
+            {#each forwards.forPod(pod.namespace, pod.name) as forward (forward.id)}
+              <span
+                class="inline-flex shrink-0 items-center gap-1 rounded bg-primary/12 px-1.5
+                       text-body-small text-primary"
+                title="{forward.address} → container port {forward.remotePort}"
+              >
+                {#if forward.reconnecting}
+                  <Loader class="size-3 animate-spin" strokeWidth={2} />
+                {:else}
+                  <Plug class="size-3" strokeWidth={2} />
+                {/if}
+                {forward.localPort}
+              </span>
+            {/each}
+
             {#if alarming(pod).length > 0}
               <TriangleAlert
                 class="size-3.5 shrink-0 text-gauge-warn"

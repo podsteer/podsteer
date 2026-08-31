@@ -56,6 +56,20 @@ class Forwards {
     return () => clearInterval(timer)
   }
 
+  /**
+   * Everything forwarded from one pod.
+   *
+   * Asked by the pod LIST rather than by a port row, and it is the question a
+   * reconnect makes urgent: the forward moves to a replacement pod, so the
+   * row holding it is not the row it was started from, and with several
+   * replicas of one workload there is otherwise nothing to tell them apart.
+   */
+  forPod(namespace: string, pod: string): PortForward[] {
+    return this.active.filter(
+      (forward) => forward.namespace === namespace && forward.pod === pod,
+    )
+  }
+
   async refresh(): Promise<void> {
     try {
       this.active = await listPortForwards()
