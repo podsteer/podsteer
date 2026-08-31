@@ -1507,3 +1507,416 @@ func titles(findings []domain.Finding) []string {
 	}
 	return names
 }
+
+// A cluster nobody could read is not a healthy cluster.
+//
+// This is the bug that motivated HealthUnknown: with the VPN disconnected every
+// source failed, so there were no findings, and an empty findings slice graded
+// Healthy. The dashboard showed a green tick reading "No problems found" over
+// 0 nodes, 0 pods and every figure zero — telling the operator the opposite of
+// the truth at the exact moment it mattered.
+func TestUnreadableLoadBearingSourcesAreNotHealthy(t *testing.T) {
+	t.Parallel()
+
+	for _, unavailable := range [][]string{
+		{"nodes"},
+		{"pods"},
+		{"nodes", "pods"},
+		{"version", "nodes", "pods", "events", "metrics", "namespaces"},
+	} {
+		overview := domain.NewOverview(domain.OverviewInput{
+			ClusterID:   domain.ClusterID("test"),
+			Unavailable: unavailable,
+			Now:         time.Now(),
+		})
+
+		if overview.Health == domain.HealthHealthy {
+			t.Errorf("unavailable %v graded healthy; nothing was read to justify it", unavailable)
+		}
+		if overview.Health != domain.HealthUnknown {
+			t.Errorf("unavailable %v graded %q, want unknown", unavailable, overview.Health)
+		}
+	}
+}
+
+// Sources whose absence the assessment genuinely survives must NOT cost the
+// verdict. A cluster with no metrics-server is completely assessable, and
+// degrading rather than failing on it is the entire point of Unavailable —
+// this is the check that the new rule did not swallow that.
+func TestDegradableSourcesStillGradeHealthy(t *testing.T) {
+	t.Parallel()
+
+	for _, unavailable := range [][]string{
+		{"metrics"},
+		{"events"},
+		{"volumes", "claims"},
+		{"metrics", "events", "namespaces", "version"},
+	} {
+		overview := domain.NewOverview(domain.OverviewInput{
+			ClusterID:   domain.ClusterID("test"),
+			Unavailable: unavailable,
+			Now:         time.Now(),
+		})
+
+		if overview.Health != domain.HealthHealthy {
+			t.Errorf("unavailable %v graded %q; these are survivable and should stay healthy",
+				unavailable, overview.Health)
+		}
+	}
+}
+
+// Ignorance about one thing does not erase knowledge of another: a real finding
+// still outranks the unknown, so an unready node is reported as such even when
+// pods could not be listed.
+func TestAFindingOutranksTheUnknown(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID:   domain.ClusterID("test"),
+		Unavailable: []string{"pods"},
+		Nodes:       []domain.Node{unreadyNode(t)},
+		Now:         time.Now(),
+	})
+
+	if overview.Health == domain.HealthUnknown {
+		t.Error("a real finding was demoted to unknown; the assessment did see something")
+	}
+	if len(overview.Findings) == 0 {
+		t.Fatal("expected the unready node to raise a finding")
+	}
+}
+
+// unreadyNode builds one node that is not Ready, for tests that need a finding
+// to exist without caring how it arose.
+func unreadyNode(t *testing.T) domain.Node {
+	t.Helper()
+
+	node, err := domain.NewNode(domain.NodeSpec{
+		Name: "node-1", ClusterID: "dev", Ready: false, KubeletVersion: "v1.32.7",
+		Capacity:    domain.Capacity{CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110},
+		Allocatable: domain.Capacity{CPUMilli: 4000, MemoryBytes: 8 << 30, Pods: 110},
+		CreatedAt:   time.Now().Add(-24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("building node: %v", err)
+	}
+	return node
+}
+
+// nearLimitPod builds a running pod with a memory limit and a measurement
+// against it, which is the only shape memoryLimitFindings looks at.
+func nearLimitPod(t *testing.T, name string, limitBytes, usedBytes int64) domain.Pod {
+	t.Helper()
+
+	pod := podFixture(t, domain.PodSpec{
+		Name: name, Namespace: "default", NodeName: "node-1",
+		Phase:     domain.PodPhaseRunning,
+		CreatedAt: overviewNow.Add(-time.Hour),
+		Containers: []domain.Container{{
+			Name:   "app",
+			State:  domain.ContainerStateRunning,
+			Limits: domain.Resources{MemoryBytes: limitBytes},
+		}},
+	})
+	return pod.WithUsage(domain.NewMetrics(10, usedBytes))
+}
+
+func TestMemoryLimitFindingWarnsBeforeTheKernelKills(t *testing.T) {
+	t.Parallel()
+
+	const limit = 100 << 20
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID:       "dev",
+		MetricsMeasured: true,
+		Now:             overviewNow,
+		Pods: []domain.Pod{
+			nearLimitPod(t, "leaky", limit, 96<<20),   // 96% — reported
+			nearLimitPod(t, "hottest", limit, 99<<20), // 99% — reported, and the worst
+			nearLimitPod(t, "roomy", limit, 40<<20),   // 40% — not news
+			nearLimitPod(t, "exactly", limit, 90<<20), // 90% — the boundary is inclusive
+		},
+	})
+
+	finding, ok := findingByTitle(overview.Findings, "Pods near their memory limit")
+	if !ok {
+		t.Fatalf("expected a memory-limit finding; got %v", titles(overview.Findings))
+	}
+	if finding.Count != 3 {
+		t.Errorf("count = %d, want the three at or above the line", finding.Count)
+	}
+	if finding.Severity != domain.SeverityWarning {
+		t.Errorf("severity = %q, want warning: nothing has died yet", finding.Severity)
+	}
+	// The worst offender has to reach the summary — the whole point is to say
+	// how close the closest one is.
+	if !strings.Contains(finding.Summary, "99%") {
+		t.Errorf("summary = %q, want the worst percentage named", finding.Summary)
+	}
+
+	names := make(map[string]bool, len(finding.Subjects))
+	for _, subject := range finding.Subjects {
+		names[subject.Name] = true
+	}
+	if names["roomy"] {
+		t.Error("a pod at 40%% of its limit was reported as near it")
+	}
+}
+
+func TestMemoryLimitFindingStaysQuietWithoutGrounds(t *testing.T) {
+	t.Parallel()
+
+	const limit = 100 << 20
+
+	tests := []struct {
+		name  string
+		input domain.OverviewInput
+	}{
+		{
+			// Without metrics every usage is zero, so every ratio is 0% —
+			// which must read as "nothing measured", not "nothing wrong".
+			name: "no metrics source",
+			input: domain.OverviewInput{
+				MetricsMeasured: false,
+				Pods:            []domain.Pod{nearLimitPod(t, "leaky", limit, 99<<20)},
+			},
+		},
+		{
+			// No ceiling declared means no proximity to one. This is the
+			// majority of real pods and must never be inferred into a finding.
+			name: "no limit declared",
+			input: domain.OverviewInput{
+				MetricsMeasured: true,
+				Pods: []domain.Pod{func() domain.Pod {
+					pod := podFixture(t, domain.PodSpec{
+						Name: "unbounded", Namespace: "default", NodeName: "node-1",
+						Phase:      domain.PodPhaseRunning,
+						Containers: []domain.Container{{Name: "app", State: domain.ContainerStateRunning}},
+					})
+					return pod.WithUsage(domain.NewMetrics(10, 4<<30))
+				}()},
+			},
+		},
+		{
+			// A Succeeded pod's containers are gone. Its last measurement
+			// predicts nothing, and the kernel will not be killing it.
+			name: "terminal pod",
+			input: domain.OverviewInput{
+				MetricsMeasured: true,
+				Pods: []domain.Pod{func() domain.Pod {
+					pod := podFixture(t, domain.PodSpec{
+						Name: "finished", Namespace: "batch", NodeName: "node-1",
+						Phase: domain.PodPhaseSucceeded,
+						Containers: []domain.Container{{
+							Name:   "app",
+							Limits: domain.Resources{MemoryBytes: limit},
+						}},
+					})
+					return pod.WithUsage(domain.NewMetrics(10, 99<<20))
+				}()},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			input := test.input
+			input.ClusterID = "dev"
+			input.Now = overviewNow
+
+			if _, ok := findingByTitle(domain.NewOverview(input).Findings, "Pods near their memory limit"); ok {
+				t.Error("reported a pod as near its memory limit on no evidence")
+			}
+		})
+	}
+}
+
+// replicaPod builds a running pod owned by a named ReplicaSet, with one
+// container resolved to a given digest.
+func replicaPod(t *testing.T, name, replicaSet, imageID string) domain.Pod {
+	t.Helper()
+
+	return podFixture(t, domain.PodSpec{
+		Name: name, Namespace: "default", NodeName: "node-1",
+		Phase:     domain.PodPhaseRunning,
+		CreatedAt: overviewNow.Add(-time.Hour),
+		Owners: []domain.OwnerReference{
+			{Kind: "ReplicaSet", Name: replicaSet, Controller: true},
+		},
+		Containers: []domain.Container{{
+			Name:    "app",
+			Image:   "registry/app:v1",
+			ImageID: imageID,
+			State:   domain.ContainerStateRunning,
+		}},
+	})
+}
+
+func TestImageDriftFindsReplicasRunningDifferentBuilds(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Pods: []domain.Pod{
+			// Same ReplicaSet, same tag, two different digests. The template
+			// is fixed within a ReplicaSet, so this can only be the tag having
+			// moved after some pods started.
+			replicaPod(t, "app-1", "app-7d9f", "docker-pullable://registry/app@sha256:aaa"),
+			replicaPod(t, "app-2", "app-7d9f", "docker-pullable://registry/app@sha256:bbb"),
+		},
+	})
+
+	finding, ok := findingByTitle(overview.Findings, "Replicas are running different builds")
+	if !ok {
+		t.Fatalf("drift between replicas was not reported; got %v", titles(overview.Findings))
+	}
+	if finding.Subjects[0].Name != "app-7d9f" {
+		t.Errorf("subject = %q, want the ReplicaSet the pods share", finding.Subjects[0].Name)
+	}
+}
+
+func TestImageDriftDoesNotReportARollout(t *testing.T) {
+	t.Parallel()
+
+	// THE FALSE POSITIVE THIS RULE EXISTS TO AVOID. A Deployment mid-rollout
+	// is supposed to have two digests running — that is what a rollout is —
+	// and those pods belong to two different ReplicaSets, one per revision.
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Pods: []domain.Pod{
+			replicaPod(t, "app-old", "app-7d9f", "docker-pullable://registry/app@sha256:aaa"),
+			replicaPod(t, "app-new", "app-8e2a", "docker-pullable://registry/app@sha256:bbb"),
+		},
+	})
+
+	if _, ok := findingByTitle(overview.Findings, "Replicas are running different builds"); ok {
+		t.Error("a normal rollout was reported as image drift")
+	}
+}
+
+func TestImageDriftComparesDigestsNotReferences(t *testing.T) {
+	t.Parallel()
+
+	// Runtimes write the resolved reference differently — containerd omits
+	// the docker-pullable prefix that dockershim used. Comparing the whole
+	// string would report drift between two nodes running different runtimes,
+	// which is not drift at all.
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Pods: []domain.Pod{
+			replicaPod(t, "app-1", "app-7d9f", "docker-pullable://registry/app@sha256:aaa"),
+			replicaPod(t, "app-2", "app-7d9f", "registry/app@sha256:aaa"),
+		},
+	})
+
+	if _, ok := findingByTitle(overview.Findings, "Replicas are running different builds"); ok {
+		t.Error("the same digest written two ways was reported as drift")
+	}
+}
+
+func TestImageDriftIgnoresPodsWithNoResolvedDigest(t *testing.T) {
+	t.Parallel()
+
+	// A pod whose containers have not started yet has no imageID. Treating
+	// absence as a distinct value would flag every workload mid-restart.
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Pods: []domain.Pod{
+			replicaPod(t, "app-1", "app-7d9f", "docker-pullable://registry/app@sha256:aaa"),
+			replicaPod(t, "app-2", "app-7d9f", ""),
+		},
+	})
+
+	if _, ok := findingByTitle(overview.Findings, "Replicas are running different builds"); ok {
+		t.Error("an unstarted pod was counted as a second build")
+	}
+}
+
+// pressuredNode builds a node reporting stall, which needs the filesystem
+// block too: PSI rides the same kubelet response.
+func pressuredNode(t *testing.T, name string, cpu, memory, io float64) domain.Node {
+	t.Helper()
+
+	node := nodeFixture(t, name, 4000, 8<<30, 110)
+	return node.WithFilesystems(domain.NodeFilesystems{
+		Measured: true,
+		Nodefs:   domain.Filesystem{CapacityBytes: 100 << 30, UsedBytes: 10 << 30},
+		Pressure: domain.Pressure{CPU: cpu, Memory: memory, IO: io, Measured: true},
+	})
+}
+
+func TestPressureFindingReportsSaturationNotUtilisation(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Nodes: []domain.Node{
+			// A quarter of the time waiting for CPU. Nothing on a utilisation
+			// gauge distinguishes this from a node doing useful work.
+			pressuredNode(t, "node-busy", 25, 0, 0),
+			// Calm, and must not be reported.
+			pressuredNode(t, "node-calm", 2, 1, 0),
+		},
+	})
+
+	finding, ok := findingByTitle(overview.Findings, "Work is waiting, not running")
+	if !ok {
+		t.Fatalf("a stalling node was not reported; got %v", titles(overview.Findings))
+	}
+	if finding.Count != 1 || finding.Subjects[0].Name != "node-busy" {
+		t.Errorf("finding = %+v, want only the stalling node", finding)
+	}
+}
+
+func TestPressureFindingJudgesMemoryMoreHarshlyThanCPU(t *testing.T) {
+	t.Parallel()
+
+	// 12% memory stall is reported while 12% CPU stall is not: a memory stall
+	// is the kernel reclaiming or swapping, far more expensive per unit than
+	// waiting for a CPU slice.
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Nodes:     []domain.Node{pressuredNode(t, "node-1", 12, 0, 0)},
+	})
+	if _, ok := findingByTitle(overview.Findings, "Work is waiting, not running"); ok {
+		t.Error("12% CPU stall was reported; the CPU line is 20%")
+	}
+
+	memory := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Nodes:     []domain.Node{pressuredNode(t, "node-1", 0, 12, 0)},
+	})
+	if _, ok := findingByTitle(memory.Findings, "Work is waiting, not running"); !ok {
+		t.Error("12% memory stall was not reported; the memory line is 10%")
+	}
+}
+
+func TestPressureFindingIsSilentWhereNothingReportsIt(t *testing.T) {
+	t.Parallel()
+
+	// Pressure stall information needs Kubernetes 1.36 and cgroup v2, which
+	// for a while yet is a minority. Unmeasured must never read as calm, and
+	// must never produce a finding either.
+	node := nodeFixture(t, "node-1", 4000, 8<<30, 110)
+	node = node.WithFilesystems(domain.NodeFilesystems{
+		Measured: true,
+		Nodefs:   domain.Filesystem{CapacityBytes: 100 << 30, UsedBytes: 10 << 30},
+	})
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev", Now: overviewNow, Nodes: []domain.Node{node},
+	})
+
+	if _, ok := findingByTitle(overview.Findings, "Work is waiting, not running"); ok {
+		t.Error("a node that reports no pressure at all produced a pressure finding")
+	}
+}

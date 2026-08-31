@@ -248,6 +248,8 @@ check:
 	@golangci-lint run ./...
 	@echo -e "${BLUE}svelte-check${NC}"
 	@$(NPM) --prefix web run check
+	@echo -e "${BLUE}vitest${NC}"
+	@$(NPM) --prefix web run test
 	@echo ""
 	@echo -e "${GREEN}All checks passed.${NC}"
 

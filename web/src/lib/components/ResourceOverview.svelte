@@ -8,15 +8,48 @@
 <script lang="ts">
   import { parse } from 'yaml'
   import type { Pod, Workload } from '$lib/api/client'
+  import DetailSection from './DetailSection.svelte'
+  import DetailList, { type DetailRow } from './DetailList.svelte'
+  import ContainerDetail from './ContainerDetail.svelte'
+  import UsageChart from './UsageChart.svelte'
+  import { parseQuantity } from '$lib/sort'
+  import type { UsageSample } from '$stores/session.svelte'
 
   interface Props {
     manifest: string | null
     selectedPod?: Pod | null
     selectedWorkload?: Workload | null
     kind?: string
+    /** The open pod's recent usage, accumulated while the drawer is open. */
+    usage?: UsageSample[]
+    /** Whether this cluster serves a kind, so a link is only offered when
+        there is somewhere for it to go. */
+    canOpen?: (kindName: string) => string | null
+    /** Follows a reference to the object it names. */
+    onopen?: (kindName: string, name: string, namespace: string) => void
   }
 
-  let { manifest, selectedPod, selectedWorkload, kind }: Props = $props()
+  let {
+    manifest,
+    selectedPod,
+    selectedWorkload,
+    kind,
+    usage = [],
+    canOpen,
+    onopen,
+  }: Props = $props()
+
+  /**
+   * Builds the click handler for a reference, or leaves it undefined.
+   *
+   * Undefined is the important half: a Node row on a cluster whose nodes this
+   * account cannot list must render as plain text, not as a link that fails
+   * when followed. Offering a dead link is worse than offering none.
+   */
+  function follow(kindName: string, name: string, namespace = ''): (() => void) | undefined {
+    if (!name || !onopen || !canOpen?.(kindName)) return undefined
+    return () => onopen(kindName, name, namespace)
+  }
 
   let parsedManifest = $derived.by(() => {
     if (!manifest) return null
@@ -38,6 +71,7 @@
 
   // Pod-specific information
   const containers = $derived(spec.containers ?? [])
+  const ephemeralContainers = $derived(spec.ephemeralContainers ?? [])
   const initContainers = $derived(spec.initContainers ?? [])
   const volumes = $derived(spec.volumes ?? [])
   const conditions = $derived(status.conditions ?? [])
@@ -45,6 +79,287 @@
   // Deployment-specific information
   const replicas = $derived(spec.replicas ?? 0)
   const strategy = $derived(spec.strategy?.type ?? 'RollingUpdate')
+
+  // --- Rows -----------------------------------------------------------------
+  //
+  // Built here rather than spelt out in the markup, so each section is one
+  // list rather than four hand-written label/value pairs whose classes have to
+  // agree with each other and with every other pane. The em dash for a missing
+  // value is applied at this boundary: what "absent" means is per-field
+  // knowledge, and DetailList has none of it.
+
+  const basicRows = $derived<DetailRow[]>([
+    { label: 'Name', value: metadata.name ?? '—' },
+    { label: 'Namespace', value: metadata.namespace ?? '—' },
+    { label: 'Created', value: formatAge(metadata.creationTimestamp) },
+    // Truncated: a UID's length is noise, and nobody reads one — they copy it.
+    { label: 'UID', value: metadata.uid ?? '—', truncate: true },
+  ])
+
+  /**
+   * The pod's controller, as kubectl prints it.
+   *
+   * Only the CONTROLLING owner. A pod can carry several ownerReferences and
+   * exactly one of them is the controller — the object that will recreate it —
+   * and the others are bookkeeping nobody navigates to.
+   */
+  const controller = $derived.by(() => {
+    const owners = (metadata.ownerReferences ?? []) as { kind: string; name: string; controller?: boolean }[]
+    return owners.find((owner) => owner.controller) ?? null
+  })
+
+  const statusRows = $derived.by<DetailRow[]>(() => {
+    const rows: DetailRow[] = [
+      { label: 'Phase', value: status.phase ?? '—' },
+      { label: 'Pod IP', value: status.podIP ?? '—' },
+    ]
+
+    // Every pod IP, not only the first. A dual-stack pod has two and the
+    // singular field carries whichever the cluster's primary family is,
+    // which is exactly the one somebody debugging the OTHER family does not
+    // want.
+    const ips = ((status.podIPs ?? []) as { ip: string }[]).map((entry) => entry.ip)
+    if (ips.length > 1) rows.push({ label: 'Pod IPs', value: ips.join(', ') })
+
+    rows.push({
+      label: 'Node',
+      value: spec.nodeName ?? '—',
+      onclick: follow('Node', spec.nodeName),
+    })
+
+    if (controller) {
+      rows.push({
+        label: 'Controlled by',
+        value: `${controller.kind}/${controller.name}`,
+        onclick: follow(controller.kind, controller.name, metadata.namespace ?? ''),
+      })
+    } else {
+      // Said out loud, because it is a finding rather than a blank: nothing
+      // will recreate this pod. The assessment says so too; this is the
+      // field somebody looks at to check.
+      rows.push({ label: 'Controlled by', value: 'nothing — this is a bare pod' })
+    }
+
+    rows.push({ label: 'Service account', value: spec.serviceAccountName ?? 'default' })
+    rows.push({ label: 'QoS Class', value: status.qosClass ?? '—' })
+
+    return rows
+  })
+
+  const replicaRows = $derived<DetailRow[]>([
+    { label: 'Desired', value: String(status.replicas ?? replicas) },
+    { label: 'Ready', value: String(status.readyReplicas ?? 0) },
+    { label: 'Available', value: String(status.availableReplicas ?? 0) },
+    { label: 'Updated', value: String(status.updatedReplicas ?? 0) },
+  ])
+
+  // The rolling-update numbers only exist for a rolling update; on a Recreate
+  // strategy they are not zero, they are inapplicable, so the rows are absent
+  // rather than showing defaults the cluster is not using.
+  const strategyRows = $derived<DetailRow[]>(
+    strategy === 'RollingUpdate' && spec.strategy?.rollingUpdate
+      ? [
+          { label: 'Type', value: strategy },
+          { label: 'Max Surge', value: String(spec.strategy.rollingUpdate.maxSurge ?? '25%') },
+          {
+            label: 'Max Unavailable',
+            value: String(spec.strategy.rollingUpdate.maxUnavailable ?? '25%'),
+          },
+        ]
+      : [{ label: 'Type', value: strategy }],
+  )
+
+  /**
+   * Containers that have died at least once and left a record of how.
+   *
+   * From the LIVE pod, not the manifest: the manifest tab shows the same
+   * `lastState` block, but as raw YAML somebody has to know to look for and
+   * an exit code they have to decode themselves. This is the pod's own
+   * account of what happened, which is the thing an operator opened the pane
+   * to find.
+   */
+  const deaths = $derived(
+    (selectedPod?.containers ?? []).filter((container) => container.lastTermination),
+  )
+
+  /**
+   * The live status for a container named in the spec.
+   *
+   * Joined by name because the two halves come from different places: the
+   * spec is parsed from the manifest, the status arrives on the pod DTO
+   * already derived in Go. A container present in the spec with no status yet
+   * is normal — it is a pod that has not started — and returns undefined
+   * rather than an empty shape that would render as "not ready".
+   */
+  function statusFor(name: string) {
+    return selectedPod?.containers?.find((container) => container.name === name)
+  }
+
+  /**
+   * The pod's declared request or limit, in the units the samples use.
+   *
+   * Parsed back out of the strings Go formatted, so the chart's reference
+   * lines and its series are measured the same way. Zero when undeclared,
+   * which draws no line — a line at zero would read as "the limit is
+   * nothing", the opposite of what an absent limit means.
+   */
+  function declared(metric: 'cpu' | 'memory', kind: 'request' | 'limit'): number {
+    if (!selectedPod) return 0
+
+    const value =
+      metric === 'cpu'
+        ? kind === 'request'
+          ? selectedPod.hasCpuRequest && selectedPod.cpuRequest
+          : selectedPod.hasCpuLimit && selectedPod.cpuLimit
+        : kind === 'request'
+          ? selectedPod.hasMemoryRequest && selectedPod.memoryRequest
+          : selectedPod.hasMemoryLimit && selectedPod.memoryLimit
+
+    return typeof value === 'string' ? (parseQuantity(value) ?? 0) : 0
+  }
+
+  /** Axis formatters, matching how Go prints the same quantities. */
+  function formatCores(value: number): string {
+    return value.toFixed(3)
+  }
+
+  function formatBytes(value: number): string {
+    const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+    let size = value
+    let unit = 0
+    while (size >= 1024 && unit < units.length - 1) {
+      size /= 1024
+      unit += 1
+    }
+    return `${size.toFixed(1)}${units[unit]}`
+  }
+
+  /** How long a container survived before it died, in words. */
+  function survived(seconds: number): string {
+    if (seconds <= 0) return ''
+    if (seconds < 60) return `ran for ${Math.round(seconds)}s`
+    if (seconds < 3600) return `ran for ${Math.round(seconds / 60)}m`
+    if (seconds < 86400) return `ran for ${Math.round(seconds / 3600)}h`
+    return `ran for ${Math.round(seconds / 86400)}d`
+  }
+
+  /**
+   * Why this pod can go where it goes.
+   *
+   * Every one of these is a constraint on scheduling, and together they are
+   * the answer to "why is this Pending" and "why did it land there" — which
+   * is why they belong in one section rather than scattered through Status.
+   *
+   * Topology spread constraints are here because NO GUI CLIENT SURVEYED SHOWS
+   * THEM AT ALL — not Lens, not Headlamp, not Octant, not the Dashboard.
+   * `kubectl describe` prints them, so a pane without them is one an operator
+   * has to leave.
+   */
+  const schedulingRows = $derived.by<DetailRow[]>(() => {
+    const rows: DetailRow[] = []
+
+    const selectors = Object.entries(spec.nodeSelector ?? {})
+    if (selectors.length > 0) {
+      rows.push({
+        label: 'Node selector',
+        value: selectors.map(([key, value]) => `${key}=${value}`).join(', '),
+      })
+    }
+
+    // Rendered the way kubectl does, including the toleration seconds that
+    // several clients drop — "for 300s" is the difference between a pod that
+    // rides out a brief node problem and one that is evicted immediately.
+    for (const toleration of (spec.tolerations ?? []) as Record<string, unknown>[]) {
+      const key = (toleration.key as string) ?? ''
+      const effect = toleration.effect ? `:${toleration.effect}` : ''
+      const op = toleration.operator === 'Exists' ? 'op=Exists' : `=${toleration.value ?? ''}`
+      const seconds =
+        toleration.tolerationSeconds !== undefined && toleration.tolerationSeconds !== null
+          ? ` for ${toleration.tolerationSeconds}s`
+          : ''
+      rows.push({ label: 'Toleration', value: `${key}${effect} ${op}${seconds}`.trim() })
+    }
+
+    for (const constraint of (spec.topologySpreadConstraints ?? []) as Record<string, unknown>[]) {
+      rows.push({
+        label: 'Spread',
+        value: `max skew ${constraint.maxSkew} across ${constraint.topologyKey}, ` +
+          `${constraint.whenUnsatisfiable === 'DoNotSchedule' ? 'or do not schedule' : 'best effort'}`,
+      })
+    }
+
+    if (spec.priorityClassName) {
+      rows.push({ label: 'Priority class', value: String(spec.priorityClassName) })
+    }
+    // Only when set: hostNetwork is unusual enough that its presence is the
+    // information, and a "false" row on every pod would bury that.
+    if (spec.hostNetwork) rows.push({ label: 'Host network', value: 'yes — binds the node’s interfaces' })
+
+    return rows
+  })
+
+  /**
+   * A volume as one line: what it is, then what it points at.
+   *
+   * The kind first because that is what decides whether it matters — an
+   * emptyDir is scratch that dies with the pod, a PVC is data that outlives
+   * it, and a projected service-account token is present on every pod and
+   * interesting on none.
+   */
+  const volumeRows = $derived<DetailRow[]>(
+    (volumes as Record<string, any>[]).map((volume) => {
+      let detail = 'Unknown'
+      if (volume.emptyDir) {
+        detail = volume.emptyDir.sizeLimit ? `EmptyDir · limit ${volume.emptyDir.sizeLimit}` : 'EmptyDir'
+      } else if (volume.configMap) {
+        detail = `ConfigMap · ${volume.configMap.name}`
+      } else if (volume.secret) {
+        detail = `Secret · ${volume.secret.secretName}`
+      } else if (volume.persistentVolumeClaim) {
+        const claim = volume.persistentVolumeClaim
+        detail = `PVC · ${claim.claimName}${claim.readOnly ? ' (ro)' : ''}`
+      } else if (volume.hostPath) {
+        // Called out: a hostPath mount reaches out of the container onto the
+        // node's own filesystem, which is worth noticing among a list of
+        // volumes that cannot.
+        detail = `HostPath · ${volume.hostPath.path}`
+      } else if (volume.projected) {
+        const sources = (volume.projected.sources ?? []).length
+        detail = `Projected · ${sources} ${sources === 1 ? 'source' : 'sources'}`
+      } else {
+        detail = Object.keys(volume).filter((key) => key !== 'name')[0] ?? 'Unknown'
+      }
+      return { label: volume.name, value: detail }
+    }),
+  )
+
+  /**
+   * A condition as one line, with the reason kubectl throws away.
+   *
+   * `kubectl describe` prints conditions as Type and Status only, which
+   * discards the half that explains anything: PodScheduled=False is a fact,
+   * and its reason and message are the scheduler's own account of why.
+   *
+   * Coloured only when False, because for a pod's conditions True is the
+   * satisfied state throughout — Ready, Initialized, PodScheduled,
+   * ContainersReady, PodReadyToStartContainers. Colouring both would leave a
+   * list where every row is coloured and none of them stands out.
+   */
+  const conditionRows = $derived<DetailRow[]>(
+    (conditions as Record<string, string>[]).map((condition) => {
+      const explanation = [condition.reason, condition.message].filter(Boolean).join(' — ')
+      return {
+        label: condition.type,
+        value: explanation ? `${condition.status} · ${explanation}` : condition.status,
+        tone: condition.status === 'False' ? ('warn' as const) : undefined,
+      }
+    }),
+  )
+
+  /** Turns a metadata map into rows, for labels and annotations. */
+  function pairRows(pairs: [string, unknown][], truncate = false): DetailRow[] {
+    return pairs.map(([key, value]) => ({ label: key, value: String(value), truncate }))
+  }
 
   function formatAge(timestamp: string): string {
     if (!timestamp) return '—'
@@ -61,273 +376,283 @@
     if (minutes > 0) return `${minutes}m`
     return `${seconds}s`
   }
-
-  function formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'Ki', 'Mi', 'Gi', 'Ti']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return `${(bytes / Math.pow(k, i)).toFixed(1)}${sizes[i]}`
-  }
 </script>
 
-<div class="overflow-auto p-4">
+<!--
+  Sections are spaced by the container, not by a margin each one carries.
+  `{#if}` adds no element, so every section below is a direct child of this
+  flex column however deeply the conditionals nest — which is what lets one
+  gap govern the lot instead of ten margins that can disagree.
+-->
+<div class="flex flex-col gap-6 overflow-auto p-4">
   {#if !parsedManifest}
     <p class="text-body-medium text-on-surface-variant">No manifest available</p>
   {:else}
-    <!-- Basic Information -->
-    <section class="mb-6">
-      <h3 class="mb-3 text-title-medium text-on-surface">Basic Information</h3>
-      <div class="grid grid-cols-2 gap-4">
-        <div>
-          <p class="text-body-small text-on-surface-variant">Name</p>
-          <p class="text-body-medium text-on-surface" data-selectable>{metadata.name ?? '—'}</p>
+    <!--
+      WHAT IS WRONG, OR ABOUT TO BE — first, because a pane that opens on
+      "Basic Information" makes somebody read a property list to find out what
+      they came for.
+
+      Every other client in this category shows the fields and leaves the
+      conclusions to the reader: Headlamp's diagnostics section classifies a
+      non-zero exit code as the colour red and reports "Pod has node selector
+      constraints" without ever evaluating that constraint against the node.
+      These are computed in the Go domain — see AssessPod — so each rule is
+      argued with in a test rather than only observed against a real cluster.
+    -->
+    {#if selectedPod?.findings?.length}
+      <DetailSection level="h3" id="findings" title="Worth knowing" hint={String(selectedPod?.findings?.length ?? 0)}>
+        <div class="flex flex-col gap-2">
+          <!-- By position, for the same reason as DetailList: titles are
+               written by rules that can legitimately produce two alike, and a
+               duplicate key throws rather than degrading. -->
+          {#each selectedPod.findings as finding, index (index)}
+            <div
+              class="rounded-sm border p-3 {finding.severity === 'critical'
+                ? 'border-error/40 bg-error-container/20'
+                : finding.severity === 'warning'
+                  ? 'border-gauge-warn/40 bg-gauge-warn/10'
+                  : 'border-outline-variant bg-surface-container-low'}"
+            >
+              <p class="text-body-medium font-medium text-on-surface">{finding.title}</p>
+              <p class="mt-1 text-body-medium leading-relaxed text-on-surface-variant" data-selectable>
+                {finding.detail}
+              </p>
+              <!-- The advice is the half that makes it a finding rather than
+                   an observation, and is set apart so it reads as the answer
+                   rather than as more description. -->
+              <p class="mt-1.5 text-body-medium leading-relaxed text-on-surface">{finding.advice}</p>
+            </div>
+          {/each}
         </div>
-        <div>
-          <p class="text-body-small text-on-surface-variant">Namespace</p>
-          <p class="text-body-medium text-on-surface" data-selectable>{metadata.namespace ?? '—'}</p>
-        </div>
-        <div>
-          <p class="text-body-small text-on-surface-variant">Created</p>
-          <p class="text-body-medium text-on-surface">{formatAge(metadata.creationTimestamp)}</p>
-        </div>
-        <div>
-          <p class="text-body-small text-on-surface-variant">UID</p>
-          <p class="truncate text-body-medium text-on-surface" data-selectable>{metadata.uid ?? '—'}</p>
-        </div>
-      </div>
-    </section>
+      </DetailSection>
+    {/if}
 
     <!-- Pod-specific sections -->
     {#if kind === 'Pod' || selectedPod}
-      <!-- Status -->
-      <section class="mb-6">
-        <h3 class="mb-3 text-title-medium text-on-surface">Status</h3>
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <p class="text-body-small text-on-surface-variant">Phase</p>
-            <p class="text-body-medium text-on-surface">{status.phase ?? '—'}</p>
-          </div>
-          <div>
-            <p class="text-body-small text-on-surface-variant">Pod IP</p>
-            <p class="text-body-medium text-on-surface" data-selectable>{status.podIP ?? '—'}</p>
-          </div>
-          <div>
-            <p class="text-body-small text-on-surface-variant">Node</p>
-            <p class="text-body-medium text-on-surface" data-selectable>{spec.nodeName ?? '—'}</p>
-          </div>
-          <div>
-            <p class="text-body-small text-on-surface-variant">QoS Class</p>
-            <p class="text-body-medium text-on-surface">{status.qosClass ?? '—'}</p>
-          </div>
-        </div>
-      </section>
+      <!--
+        WHY IT RESTARTED — placed above the container list because when it
+        applies it is the reason the pane was opened.
 
-      <!-- Containers -->
-      {#if containers.length > 0}
-        <section class="mb-6">
-          <h3 class="mb-3 text-title-medium text-on-surface">Containers ({containers.length})</h3>
-          <div class="space-y-3">
-            {#each containers as container, i (i)}
-              <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
-                <p class="mb-2 text-body-medium font-medium text-on-surface" data-selectable>{container.name}</p>
-                <div class="grid grid-cols-2 gap-2 text-body-small">
-                  <div>
-                    <span class="text-on-surface-variant">Image:</span>
-                    <span class="ml-2 text-on-surface" data-selectable>{container.image ?? '—'}</span>
-                  </div>
-                  {#if container.ports}
-                    <div>
-                      <span class="text-on-surface-variant">Ports:</span>
-                      <span class="ml-2 text-on-surface">
-                        {container.ports
-                          .map((p: { containerPort: number; protocol?: string }) => `${p.containerPort}/${p.protocol ?? 'TCP'}`)
-                          .join(', ')}
-                      </span>
-                    </div>
-                  {/if}
-                  {#if container.resources?.requests}
-                    <div>
-                      <span class="text-on-surface-variant">Requests:</span>
-                      <span class="ml-2 text-on-surface">
-                        CPU: {container.resources.requests.cpu ?? '—'},
-                        Memory: {container.resources.requests.memory ?? '—'}
-                      </span>
-                    </div>
-                  {/if}
-                  {#if container.resources?.limits}
-                    <div>
-                      <span class="text-on-surface-variant">Limits:</span>
-                      <span class="ml-2 text-on-surface">
-                        CPU: {container.resources.limits.cpu ?? '—'},
-                        Memory: {container.resources.limits.memory ?? '—'}
-                      </span>
-                    </div>
-                  {/if}
-                </div>
-              </div>
-            {/each}
-          </div>
-        </section>
-      {/if}
+        Every other client shows a restart COUNT. A count says a container
+        died seventeen times; it does not say whether the kernel took it for
+        memory, whether a rollout stopped it cleanly, or whether the process
+        exited on its own — three problems with nothing in common but the
+        number reporting them. The sentence comes from the domain, because
+        deciding that a 137 WITHOUT an OOMKilled reason is a grace-period
+        expiry rather than a memory limit is a judgement, not a lookup.
 
-      <!-- Init Containers -->
-      {#if initContainers.length > 0}
-        <section class="mb-6">
-          <h3 class="mb-3 text-title-medium text-on-surface">Init Containers ({initContainers.length})</h3>
-          <div class="space-y-3">
-            {#each initContainers as container, i (i)}
-              <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
-                <p class="mb-2 text-body-medium font-medium text-on-surface" data-selectable>{container.name}</p>
-                <div class="grid grid-cols-2 gap-2 text-body-small">
-                  <div>
-                    <span class="text-on-surface-variant">Image:</span>
-                    <span class="ml-2 text-on-surface" data-selectable>{container.image ?? '—'}</span>
-                  </div>
-                </div>
-              </div>
-            {/each}
-          </div>
-        </section>
-      {/if}
-
-      <!-- Volumes -->
-      {#if volumes.length > 0}
-        <section class="mb-6">
-          <h3 class="mb-3 text-title-medium text-on-surface">Volumes ({volumes.length})</h3>
-          <div class="space-y-2">
-            {#each volumes as volume, i (i)}
-              <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
-                <p class="text-body-medium font-medium text-on-surface" data-selectable>{volume.name}</p>
-                <p class="mt-1 text-body-small text-on-surface-variant">
-                  {#if volume.emptyDir}
-                    EmptyDir
-                  {:else if volume.configMap}
-                    ConfigMap: {volume.configMap.name}
-                  {:else if volume.secret}
-                    Secret: {volume.secret.secretName}
-                  {:else if volume.persistentVolumeClaim}
-                    PVC: {volume.persistentVolumeClaim.claimName}
-                  {:else if volume.hostPath}
-                    HostPath: {volume.hostPath.path}
-                  {:else}
-                    {Object.keys(volume).filter(k => k !== 'name')[0] ?? 'Unknown'}
+        Kubernetes keeps ONE prior termination per container, so a container
+        with seventeen restarts has sixteen deaths that no longer exist
+        anywhere. The heading says "last time" rather than implying a history
+        this cannot show.
+      -->
+      {#if deaths.length > 0}
+        <DetailSection level="h3" id="restarts" title="Why it restarted, last time">
+          <div class="flex flex-col gap-2">
+            {#each deaths as container (container.name)}
+              {@const death = container.lastTermination!}
+              <div
+                class="rounded-sm border p-3 {death.alarming
+                  ? 'border-error/40 bg-error-container/20'
+                  : 'border-outline-variant bg-surface-container-low'}"
+              >
+                <p class="flex flex-wrap items-baseline gap-x-2 text-body-medium">
+                  <span class="font-medium text-on-surface" data-selectable>{container.name}</span>
+                  <span class="text-on-surface-variant">
+                    {death.reason || 'Terminated'} · exit {death.exitCode}{death.signal
+                      ? ` · signal ${death.signal}`
+                      : ''}
+                  </span>
+                  {#if death.lifetimeSeconds > 0}
+                    <span class="text-on-surface-variant/70">{survived(death.lifetimeSeconds)}</span>
                   {/if}
+                  {#if container.restartCount > 1}
+                    <!-- Named so the single record is not mistaken for the
+                         whole story. -->
+                    <span class="text-on-surface-variant/70">
+                      · {container.restartCount} restarts in total
+                    </span>
+                  {/if}
+                </p>
+                <p class="mt-1 text-body-medium leading-relaxed text-on-surface-variant" data-selectable>
+                  {death.diagnosis}
                 </p>
               </div>
             {/each}
           </div>
-        </section>
+        </DetailSection>
+      {/if}
+
+      <!-- Status -->
+      <DetailSection level="h3" id="status" title="Status" hint={status.phase ?? ''}>
+        <DetailList rows={statusRows} />
+      </DetailSection>
+
+      <!--
+        Usage, only once something measured it. A pod on a cluster with no
+        metrics source would otherwise get a section whose entire content is
+        an apology, which the notice above the table already covers once.
+      -->
+      {#if selectedPod?.hasMetrics}
+        <DetailSection
+          level="h3"
+          id="usage"
+          title="Usage"
+          hint="cpu {selectedPod.cpu} · memory {selectedPod.memory}"
+        >
+          <div class="flex flex-col gap-4">
+            {#each [{ metric: 'cpu' as const, label: 'CPU' }, { metric: 'memory' as const, label: 'Memory' }] as track (track.metric)}
+              <div class="flex flex-col gap-1">
+                <p class="flex items-baseline justify-between text-body-small text-on-surface-variant">
+                  <span>{track.label}</span>
+                  <span class="tabular-nums">
+                    {track.metric === 'cpu' ? selectedPod.cpu : selectedPod.memory}
+                  </span>
+                </p>
+                <UsageChart
+                  samples={usage}
+                  metric={track.metric}
+                  request={declared(track.metric, 'request')}
+                  limit={declared(track.metric, 'limit')}
+                  format={track.metric === 'cpu' ? formatCores : formatBytes}
+                />
+              </div>
+            {/each}
+          </div>
+        </DetailSection>
+      {/if}
+
+      <!--
+        Scheduling, when anything constrains it. A pod with no selector, no
+        toleration and no spread rule has an empty section, and an empty
+        section that says "no constraints" is a row of nothing.
+      -->
+      {#if schedulingRows.length > 0}
+        <DetailSection level="h3" id="scheduling" title="Scheduling" defaultOpen={false} hint={String(schedulingRows.length)}>
+          <DetailList rows={schedulingRows} />
+        </DetailSection>
+      {/if}
+
+      <!-- Containers -->
+      {#if containers.length > 0}
+        <DetailSection level="h3" id="containers" title="Containers" hint={String(containers.length)}>
+          <div class="flex flex-col gap-3">
+            {#each containers as container (container.name)}
+              <ContainerDetail
+                spec={container}
+                status={statusFor(container.name)}
+                clusterId={selectedPod?.clusterId ?? ''}
+                namespace={metadata.namespace ?? ''}
+                podName={metadata.name ?? ''}
+                podUID={metadata.uid ?? ''}
+                labels={metadata.labels ?? {}}
+              />
+            {/each}
+          </div>
+        </DetailSection>
+      {/if}
+
+      <!--
+        Ephemeral containers — the ones `kubectl debug` injects. Freelens
+        requests them as a feature and Aptakube has an open issue for them;
+        somebody who has attached a debug container is mid-investigation and
+        needs to see that it is there, and to reach its logs and shell.
+      -->
+      {#if ephemeralContainers.length > 0}
+        <DetailSection level="h3" id="debug-containers" title="Debug containers" hint={String(ephemeralContainers.length)}>
+          <div class="flex flex-col gap-3">
+            {#each ephemeralContainers as container (container.name)}
+              <ContainerDetail
+                spec={container}
+                status={statusFor(container.name)}
+                clusterId={selectedPod?.clusterId ?? ''}
+                namespace={metadata.namespace ?? ''}
+                podName={metadata.name ?? ''}
+                podUID={metadata.uid ?? ''}
+                labels={metadata.labels ?? {}}
+              />
+            {/each}
+          </div>
+        </DetailSection>
+      {/if}
+
+      <!-- Init containers, kept separate. They have already exited on a
+           running pod, so mixing them in makes a healthy pod look like it has
+           four containers of which two are dead. -->
+      {#if initContainers.length > 0}
+        <DetailSection level="h3" id="init-containers" title="Init containers" defaultOpen={false} hint={String(initContainers.length)}>
+          <div class="flex flex-col gap-3">
+            {#each initContainers as container (container.name)}
+              <ContainerDetail
+                spec={container}
+                status={statusFor(container.name)}
+                clusterId={selectedPod?.clusterId ?? ''}
+                namespace={metadata.namespace ?? ''}
+                podName={metadata.name ?? ''}
+                podUID={metadata.uid ?? ''}
+                labels={metadata.labels ?? {}}
+              />
+            {/each}
+          </div>
+        </DetailSection>
+      {/if}
+
+      <!-- Volumes -->
+      {#if volumes.length > 0}
+        <DetailSection level="h3" id="volumes" title="Volumes" defaultOpen={false} hint={String(volumes.length)}>
+          <DetailList rows={volumeRows} />
+        </DetailSection>
       {/if}
     {/if}
 
     <!-- Deployment/StatefulSet-specific sections -->
     {#if selectedWorkload && (kind === 'Deployment' || kind === 'StatefulSet' || kind === 'DaemonSet')}
       <!-- Replicas -->
-      <section class="mb-6">
-        <h3 class="mb-3 text-title-medium text-on-surface">Replicas</h3>
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <p class="text-body-small text-on-surface-variant">Desired</p>
-            <p class="text-body-medium text-on-surface">{status.replicas ?? replicas}</p>
-          </div>
-          <div>
-            <p class="text-body-small text-on-surface-variant">Ready</p>
-            <p class="text-body-medium text-on-surface">{status.readyReplicas ?? 0}</p>
-          </div>
-          <div>
-            <p class="text-body-small text-on-surface-variant">Available</p>
-            <p class="text-body-medium text-on-surface">{status.availableReplicas ?? 0}</p>
-          </div>
-          <div>
-            <p class="text-body-small text-on-surface-variant">Updated</p>
-            <p class="text-body-medium text-on-surface">{status.updatedReplicas ?? 0}</p>
-          </div>
-        </div>
-      </section>
+      <DetailSection level="h3" id="replicas" title="Replicas">
+        <DetailList rows={replicaRows} />
+      </DetailSection>
 
       <!-- Strategy -->
       {#if kind === 'Deployment'}
-        <section class="mb-6">
-          <h3 class="mb-3 text-title-medium text-on-surface">Update Strategy</h3>
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <p class="text-body-small text-on-surface-variant">Type</p>
-              <p class="text-body-medium text-on-surface">{strategy}</p>
-            </div>
-            {#if strategy === 'RollingUpdate' && spec.strategy?.rollingUpdate}
-              <div>
-                <p class="text-body-small text-on-surface-variant">Max Surge</p>
-                <p class="text-body-medium text-on-surface">{spec.strategy.rollingUpdate.maxSurge ?? '25%'}</p>
-              </div>
-              <div>
-                <p class="text-body-small text-on-surface-variant">Max Unavailable</p>
-                <p class="text-body-medium text-on-surface">{spec.strategy.rollingUpdate.maxUnavailable ?? '25%'}</p>
-              </div>
-            {/if}
-          </div>
-        </section>
+        <DetailSection level="h3" id="strategy" title="Update strategy" defaultOpen={false}>
+          <DetailList rows={strategyRows} />
+        </DetailSection>
       {/if}
     {/if}
 
     <!-- Conditions -->
     {#if conditions.length > 0}
-      <section class="mb-6">
-        <h3 class="mb-3 text-title-medium text-on-surface">Conditions</h3>
-        <div class="space-y-2">
-          {#each conditions as condition, i (i)}
-            <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
-              <div class="flex items-center justify-between">
-                <p class="text-body-medium font-medium text-on-surface">{condition.type}</p>
-                <span
-                  class="rounded-full px-2 py-0.5 text-body-small
-                         {condition.status === 'True' ? 'bg-success-container text-on-success-container' :
-                          condition.status === 'False' ? 'bg-error-container text-on-error-container' :
-                          'bg-surface-container-high text-on-surface-variant'}"
-                >
-                  {condition.status}
-                </span>
-              </div>
-              {#if condition.reason}
-                <p class="mt-1 text-body-small text-on-surface-variant">{condition.reason}</p>
-              {/if}
-              {#if condition.message}
-                <p class="mt-1 text-body-small text-on-surface-variant">{condition.message}</p>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      </section>
+      <DetailSection level="h3" id="conditions" title="Conditions" defaultOpen={false} hint={String(conditions.length)}>
+        <DetailList rows={conditionRows} wideLabels />
+      </DetailSection>
     {/if}
+
+    <!--
+      Identity last but one, and closed by default. The name and namespace are
+      already in the drawer's own header, so the only fields here that are not
+      a repeat are Created and the UID — reference material somebody looks up,
+      not something to read past on the way to what is wrong.
+    -->
+    <DetailSection level="h3" id="identity" title="Identity" defaultOpen={false}>
+      <DetailList rows={basicRows} />
+    </DetailSection>
 
     <!-- Labels -->
     {#if labels.length > 0}
-      <section class="mb-6">
-        <h3 class="mb-3 text-title-medium text-on-surface">Labels ({labels.length})</h3>
-        <div class="space-y-1">
-          {#each labels as [key, value], i (i)}
-            <div class="flex gap-2 text-body-small">
-              <span class="font-medium text-on-surface" data-selectable>{key}:</span>
-              <span class="text-on-surface-variant" data-selectable>{value}</span>
-            </div>
-          {/each}
-        </div>
-      </section>
+      <DetailSection level="h3" id="labels" title="Labels" defaultOpen={false} hint={String(labels.length)}>
+        <DetailList rows={pairRows(labels)} wideLabels />
+      </DetailSection>
     {/if}
 
     <!-- Annotations -->
     {#if annotations.length > 0}
-      <section class="mb-6">
-        <h3 class="mb-3 text-title-medium text-on-surface">Annotations ({annotations.length})</h3>
-        <div class="space-y-1">
-          {#each annotations as [key, value], i (i)}
-            <div class="flex gap-2 text-body-small">
-              <span class="font-medium text-on-surface" data-selectable>{key}:</span>
-              <span class="truncate text-on-surface-variant" data-selectable>{value}</span>
-            </div>
-          {/each}
-        </div>
-      </section>
+      <!-- Truncated, unlike labels: an annotation routinely holds an entire
+           serialised manifest, and letting one wrap turns the pane into a
+           page of JSON. It is still selectable, so copying it works. -->
+      <DetailSection level="h3" id="annotations" title="Annotations" defaultOpen={false} hint={String(annotations.length)}>
+        <DetailList rows={pairRows(annotations, true)} wideLabels />
+      </DetailSection>
     {/if}
   {/if}
 </div>

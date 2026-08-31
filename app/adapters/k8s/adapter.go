@@ -43,17 +43,22 @@ type Adapter struct {
 	// nodeList caches the node names the sweep fans out over, so it does not
 	// re-LIST the set the assessment that triggered it just listed.
 	nodeList nodeNameCache
+	// forwards are the live port-forwards. Owned here rather than by a
+	// service, because each one is a goroutine holding a socket and the thing
+	// that must not happen is the record and the goroutine parting company.
+	forwards portForwards
 }
 
 // Compile-time proof that the adapter satisfies every outbound port it claims.
 var (
-	_ ports.KubeconfigPort = (*Adapter)(nil)
-	_ ports.ClusterPort    = (*Adapter)(nil)
-	_ ports.WorkloadPort   = (*Adapter)(nil)
-	_ ports.EventPort      = (*Adapter)(nil)
-	_ ports.MetricsPort    = (*Adapter)(nil)
-	_ ports.ResourcePort   = (*Adapter)(nil)
-	_ ports.ManagementPort = (*Adapter)(nil)
+	_ ports.KubeconfigPort  = (*Adapter)(nil)
+	_ ports.ClusterPort     = (*Adapter)(nil)
+	_ ports.WorkloadPort    = (*Adapter)(nil)
+	_ ports.EventPort       = (*Adapter)(nil)
+	_ ports.MetricsPort     = (*Adapter)(nil)
+	_ ports.ResourcePort    = (*Adapter)(nil)
+	_ ports.ManagementPort  = (*Adapter)(nil)
+	_ ports.PortForwardPort = (*Adapter)(nil)
 )
 
 // New returns a Kubernetes adapter configured by cfg.
@@ -66,8 +71,9 @@ func New(cfg Config, logger *slog.Logger) *Adapter {
 		logger = slog.Default()
 	}
 	return &Adapter{
-		factory: newClientFactory(cfg),
-		logger:  logger.With(slog.String("adapter", "k8s")),
+		factory:  newClientFactory(cfg),
+		logger:   logger.With(slog.String("adapter", "k8s")),
+		forwards: portForwards{byID: make(map[string]*forwarder)},
 	}
 }
 

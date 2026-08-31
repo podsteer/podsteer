@@ -86,6 +86,19 @@ utilisation figure that is quietly wrong.
 Metrics are optional by design: `ports.ErrMetricsUnavailable` is an ordinary
 condition, not a fault, and every list must render without metrics-server.
 
+**And the UI must say WHY they are absent.** `domain.MetricsStatus` on the
+overview separates "no metrics-server installed" (404/503) from "not permitted
+to read it" (403) from a transient failure, because those need opposite advice
+— telling somebody to install metrics-server when it is already running and
+merely unreadable sends them to argue with an administrator. Reading a dash and
+being unable to tell an unconfigured cluster from a broken application is the
+bug that put this here.
+
+A kubelet fallback for CPU and memory was considered and **deliberately not
+built**, even though `filesystems.go` already proves the mechanism works. See
+[docs/decisions/0001-no-kubelet-metrics-fallback.md](docs/decisions/0001-no-kubelet-metrics-fallback.md)
+for what would reverse that.
+
 Two sources beyond metrics-server behave the same way and are worth knowing
 about before adding a third:
 
@@ -103,6 +116,46 @@ about before adding a third:
 Dependencies point inward. `app/domain` and `app/ports` import nothing outside
 the standard library; if either ever needs `client-go`, something has been
 wired backwards.
+
+## The pod pane assesses too, and there is a rule for where logic lives
+
+`app/domain/pod_assessment.go` is the same idea at pod scope: a pure function
+of one pod and a clock, returning ranked findings with advice. Its rules are
+the differentiator — every other client in this category shows the fields and
+leaves the conclusions to the reader.
+
+**The line is quotation versus verdict, and it decides where code goes.** The
+pod detail pane parses the manifest client-side, which is allowed for anything
+that is a QUOTATION of what is already on screen in the YAML tab: a port
+number, a mount path, a probe rendered into kubectl's own string. Anything
+involving a comparison, a threshold or a conclusion goes through the domain,
+where it can be argued with in a test. "Liveness delay is 30s" is frontend;
+"this delay is shorter than the container's observed startup, which is why it
+restarts" is domain.
+
+Three rules there have subtleties worth not re-deriving:
+
+- **The reason disambiguates an exit code, not the other way round.** 137 is
+  SIGKILL and means OOMKilled only when the kubelet also said so; without that
+  reason it is a grace period expiring. `domain/termination.go` has a test
+  asserting we never send somebody to raise a memory limit for the second.
+- **Image drift is grouped by ReplicaSet, never by Deployment.** A rollout is
+  supposed to have two digests running, and those pods are in two ReplicaSets.
+  Within one ReplicaSet the template is fixed, so two digests can only be a
+  moved tag. StatefulSets and DaemonSets are excluded because they update in
+  place.
+- **A correctly configured pod produces no findings**, and a test asserts it. A
+  panel that always has something to say is one people stop reading.
+
+## Secrets are read on request, never on render
+
+See `docs/decisions/0003-secrets-are-read-on-request-only.md` before touching
+anything that displays a Secret. The short version: nothing resolves a Secret
+when a pane opens, because Kubernetes' own guidance tells cluster operators to
+alert on exactly that pattern; `RevealSecretKey` returns one key and discards
+the rest in the adapter; and a Secret's values in the YAML tab are replaced
+with their decoded size before the object is serialised, because base64 is an
+encoding and not a cipher.
 
 ## Two structural facts that look like mistakes
 

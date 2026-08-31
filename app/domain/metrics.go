@@ -43,6 +43,20 @@ func (m Metrics) Add(other Metrics) Metrics {
 	}
 }
 
+// PodUsage is one pod's measured consumption, and its containers'.
+//
+// The total was all that ever left the adapter, which threw the breakdown
+// away immediately after computing it — so a pod at 90% of its memory limit
+// gave no clue WHICH of its three containers was responsible, and the answer
+// had already been in memory and been discarded.
+//
+// Containers is keyed by container name and may be absent for a container the
+// metrics API did not report, which is normal for one that has not started.
+type PodUsage struct {
+	Total      Metrics
+	Containers map[string]Metrics
+}
+
 // Filesystem is how full one of a node's disks is.
 //
 // This is the number no other part of the Kubernetes API carries. Capacity and
@@ -78,6 +92,10 @@ func (f Filesystem) IsZero() bool { return f == Filesystem{} }
 // not — which is why the kubelet reports them separately and why guessing
 // would be wrong.
 type NodeFilesystems struct {
+	// Pressure rides along because it comes from the same kubelet response.
+	// Structurally it has nothing to do with filesystems; practically,
+	// splitting them would mean asking every kubelet twice for one payload.
+	Pressure Pressure
 	// Nodefs is the kubelet's working filesystem.
 	Nodefs Filesystem
 	// Imagefs holds container images. Equal to Nodefs when they share a disk.
@@ -94,6 +112,44 @@ func (n NodeFilesystems) Fullest() Filesystem {
 		return n.Imagefs
 	}
 	return n.Nodefs
+}
+
+// Pressure is how much time a node spent with work STALLED, waiting for a
+// resource rather than using it.
+//
+// The signal utilisation cannot give you. A node at 100% CPU may be running
+// exactly as intended; a node where tasks spend a fifth of their time waiting
+// for CPU is a node where everything is slow, and those two look identical on
+// a utilisation gauge. Brendan Gregg's USE method makes the same point: any
+// degree of saturation is a problem, while utilisation has to be interpreted.
+//
+// From the kernel's pressure stall information, which Kubernetes exposes
+// through the kubelet summary from 1.36. Values are the proportion of the
+// last ten seconds during which at least one task was stalled, 0 to 100.
+//
+// SOME, not FULL. "Some" means at least one task was waiting, which is the
+// early signal; "full" means every task was, which is a node already in
+// trouble by every other measure too.
+type Pressure struct {
+	CPU    float64
+	Memory float64
+	IO     float64
+	// Measured distinguishes a node reporting no stall from a kernel or
+	// Kubernetes version that does not report stall at all. Most clusters
+	// will be the second for a while yet.
+	Measured bool
+}
+
+// Worst returns the highest of the three, which is the one worth a glance.
+func (p Pressure) Worst() float64 {
+	worst := p.CPU
+	if p.Memory > worst {
+		worst = p.Memory
+	}
+	if p.IO > worst {
+		worst = p.IO
+	}
+	return worst
 }
 
 // Capacity is a node's resource capacity or allocatable amount.

@@ -211,7 +211,7 @@ func run() error {
 		return fmt.Errorf("wiring overview API: %w", err)
 	}
 
-	managementAPI, err := wailsadapter.NewManagementAPI(managementService, desktop, logger)
+	managementAPI, err := wailsadapter.NewManagementAPI(managementService, kubernetes, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring management API: %w", err)
 	}
@@ -263,6 +263,12 @@ func run() error {
 			historyService.Start(ctx)
 		},
 		OnShutdown: func(ctx context.Context) {
+			// Forwards first: each one holds a local socket, and a process
+			// that exits without releasing them leaves ports bound until the
+			// operating system reaps them. That is the orphaned-port
+			// complaint every competing client has an issue open about, and
+			// the fix is to close them rather than to hope.
+			kubernetes.StopAllPortForwards()
 			historyService.Close()
 			desktop.OnShutdown(ctx)
 		},

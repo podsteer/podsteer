@@ -23,6 +23,7 @@ import {
 } from '$lib/wailsjs/go/wails/ClusterAPI'
 import {
   GetManifest as bindGetManifest,
+  RevealSecretKey as bindRevealSecretKey,
   ListEvents as bindListEvents,
   ListEventsForResource as bindListEventsForResource,
   ListKinds as bindListKinds,
@@ -40,6 +41,9 @@ import {
   RestartRollout as bindRestartRollout,
   StreamLogs as bindStreamLogs,
   StopLogStream as bindStopLogStream,
+  StartPortForward as bindStartPortForward,
+  StopPortForward as bindStopPortForward,
+  ListPortForwards as bindListPortForwards,
 } from '$lib/wailsjs/go/wails/ManagementAPI'
 import { GetOverview as bindGetOverview } from '$lib/wailsjs/go/wails/OverviewAPI'
 import {
@@ -68,6 +72,8 @@ export type Namespace = wails.Namespace
 export type Pod = wails.Pod
 /** One container within a pod. */
 export type Container = wails.Container
+/** One live port-forward, as the backend is actually holding it. */
+export type PortForward = wails.PortForward
 /** A cluster node. */
 export type Node = wails.Node
 /** A pod-managing controller. */
@@ -324,14 +330,92 @@ export function listTable(
   return call(() => bindListTable(clusterId, kindId, namespace))
 }
 
-/** Returns one object as YAML, for the detail view. */
+/**
+ * Returns one object as YAML, for the detail view.
+ *
+ * `revealSecrets` applies to core/v1 Secrets and nothing else. Left false,
+ * their values arrive as their decoded SIZE — the form `kubectl describe
+ * secret` prints — and the material never crosses the bridge at all. Pass
+ * true only from a deliberate click: reading a Secret is an audited action,
+ * and the YAML tab would otherwise perform one every time somebody browsed
+ * past a Secret in a list.
+ */
 export function getManifest(
   clusterId: string,
   kindId: string,
   namespace: string,
   name: string,
+  revealSecrets = false,
 ): Promise<string> {
-  return call(() => bindGetManifest(clusterId, kindId, namespace, name))
+  return call(() => bindGetManifest(clusterId, kindId, namespace, name, revealSecrets))
+}
+
+/**
+ * Returns one decoded Secret value, for a reveal the operator asked for.
+ *
+ * NEVER call this speculatively — not on mount, not on a timer, not to warm
+ * anything. Reading a Secret is an audited action, and Kubernetes' own
+ * good-practices page tells cluster operators to alert on several being read
+ * at once; a pane that resolved every reference on open would produce that
+ * signature on somebody else's security dashboard. One call, one key, one
+ * deliberate click.
+ *
+ * The result is a plaintext credential. Hold it in component-local state that
+ * is cleared, never in a store, and never write it anywhere that persists.
+ */
+export function revealSecretKey(
+  clusterId: string,
+  namespace: string,
+  name: string,
+  key: string,
+): Promise<string> {
+  return call(() => bindRevealSecretKey(clusterId, namespace, name, key))
+}
+
+// --- Port forwards ----------------------------------------------------------
+
+/**
+ * Opens a local port onto a container port.
+ *
+ * `localPort` of 0 lets the operating system choose, and the returned forward
+ * carries whichever port it actually bound — which is the only truthful
+ * answer, since there is an unavoidable race between finding a free port and
+ * binding it.
+ */
+export function startPortForward(
+  clusterId: string,
+  namespace: string,
+  pod: string,
+  podUID: string,
+  localPort: number,
+  remotePort: number,
+  portName: string,
+  protocol: string,
+  selector: Record<string, string>,
+): Promise<PortForward> {
+  return call(() =>
+    bindStartPortForward(
+      clusterId,
+      namespace,
+      pod,
+      podUID,
+      localPort,
+      remotePort,
+      portName,
+      protocol,
+      selector,
+    ),
+  )
+}
+
+/** Closes one forward, waiting for its local port to be released. */
+export function stopPortForward(forwardId: string): Promise<void> {
+  return call(() => bindStopPortForward(forwardId))
+}
+
+/** Reports what is forwarded right now — the live registry, not intent. */
+export function listPortForwards(): Promise<PortForward[]> {
+  return call(() => bindListPortForwards())
 }
 
 // --- System -----------------------------------------------------------------

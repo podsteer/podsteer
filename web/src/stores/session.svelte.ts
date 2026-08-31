@@ -48,8 +48,50 @@ import { preferences } from './preferences.svelte'
 /** Lifecycle of an asynchronous read. */
 export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
+/** One measurement of the open pod, taken from a refresh that already happened. */
+export interface UsageSample {
+  /** Epoch milliseconds, from the client — these are points on a local clock,
+      spaced by the refresh interval, not timestamps the cluster asserted. */
+  at: number
+  /**
+   * CPU in CORES and memory in BYTES, parsed back out of the strings Go
+   * formatted. Both are only ever used to draw a shape scaled to its own
+   * peak, so the units matter less than their consistency across samples —
+   * which is why they are parsed from one formatter's output rather than
+   * mixed with a second source.
+   */
+  cpuCores: number
+  memoryBytes: number
+}
+
+/**
+ * How many samples the open drawer keeps.
+ *
+ * Two hundred is a little over half an hour at the default ten-second
+ * refresh, and about forty kilobytes. Long enough to show a shape; short
+ * enough that nobody has to think about it.
+ */
+const MAX_USAGE_SAMPLES = 200
+
 /** How often the current view re-fetches while auto-refresh is on. */
 export const DEFAULT_REFRESH_INTERVAL_MS = 10_000
+
+/**
+ * How stale the browsable-kind list may get before it is re-read.
+ *
+ * Its own cadence rather than the row poll's, because the two cost wildly
+ * different amounts. Listing pods is one request; enumerating kinds is a
+ * discovery walk — ServerPreferredResources issues a request per API group,
+ * which is dozens on a cluster carrying a few operators. Running that every
+ * couple of seconds to catch a CRD installed once a month is not a trade
+ * worth making.
+ *
+ * Five minutes is chosen against what it is watching for: a CRD appears when
+ * somebody installs an operator, and somebody who has just done that will
+ * wait a few minutes for it to show up far more readily than they would
+ * reconnect a tab to find out it worked.
+ */
+const KINDS_REFRESH_INTERVAL_MS = 5 * 60_000
 
 /**
  * The cluster dashboard's navigation id.
@@ -128,6 +170,10 @@ const NODE_SORT: SortAccessors<Node> = {
   roles: (node) => (node.roles.length ? node.roles.join(', ') : 'worker'),
   cpu: (node) => (node.hasMetrics ? node.cpuPercent : null),
   memory: (node) => (node.hasMetrics ? node.memoryPercent : null),
+  // Sorted by how FULL it is, not by bytes used. A 900GiB disk with 100GiB
+  // free sorts above a 20GiB disk with 1GiB free by volume and below it by
+  // urgency, and urgency is what somebody scanning this column wants.
+  disk: (node) => (node.hasDisk ? node.diskPercent : null),
   version: (node) => node.version,
   ip: (node) => node.internalIp,
   os: (node) => node.osImage,
@@ -238,6 +284,24 @@ export class ClusterSession {
    */
   #request = 0
   #timer: ReturnType<typeof setInterval> | null = null
+
+  /**
+   * When the kind list was last read, as a timestamp.
+   *
+   * Zero means "never successfully read", which is what makes a discovery
+   * that failed at connect retry on the first poll instead of leaving the
+   * navigator empty for five minutes.
+   */
+  #kindsReadAt = 0
+
+  /**
+   * Invoked when this cluster turns out to be gone from the kubeconfig.
+   *
+   * A callback rather than the session reaching for the workspace, which would
+   * make the two mutually dependent for one edge case. The workspace owns tab
+   * lifecycle; the session only reports what it observed.
+   */
+  onVanished?: (reason: ApiError) => void
 
   constructor(cluster: Cluster) {
     this.cluster = cluster
@@ -446,9 +510,18 @@ export class ClusterSession {
    * something: quietening the only warning on a cluster should leave it
    * reading as healthy, not as degraded by something deliberately deferred.
    */
-  readonly health = $derived.by((): 'healthy' | 'degraded' | 'critical' => {
+  readonly health = $derived.by((): 'healthy' | 'degraded' | 'critical' | 'unknown' => {
     if (this.activeIssues.some((finding) => finding.severity === 'critical')) return 'critical'
     if (this.activeIssues.length > 0) return 'degraded'
+
+    // SNOOZING CANNOT TURN "NOT READ" INTO "NOTHING WRONG". Re-grading over the
+    // outstanding findings is right for everything else, but the backend
+    // reports `unknown` when a source the verdict depends on could not be read
+    // — and no amount of quietening findings makes unread data read. Falling
+    // through to 'healthy' here is how this view kept saying "No problems
+    // found" over a cluster it could not reach.
+    if (this.overview?.health === 'unknown') return 'unknown'
+
     return 'healthy'
   })
 
@@ -468,8 +541,9 @@ export class ClusterSession {
   loadKinds = async (): Promise<void> => {
     try {
       this.kinds = await listKinds(this.cluster.id)
+      this.#kindsReadAt = Date.now()
     } catch (cause) {
-      this.error = toApiError(cause)
+      this.#fail(cause)
     }
   }
 
@@ -483,6 +557,35 @@ export class ClusterSession {
       const error = toApiError(cause)
       this.namespaces = []
       if (error.code !== 'forbidden') this.error = error
+    }
+  }
+
+  /**
+   * Re-reads the namespace list, for the moment somebody opens the filter.
+   *
+   * Namespaces are created and deleted while a tab sits open, and this list
+   * was read once at connect and never again — so a namespace created a
+   * minute ago stayed missing from the filter until the cluster was
+   * reconnected, on a screen that was meanwhile listing that namespace's own
+   * objects quite happily.
+   *
+   * Refreshed on OPEN rather than folded into the poll, because the filter is
+   * the only thing that reads this list. Polling it would re-list namespaces
+   * every few seconds on every connected cluster to keep fresh a list nobody
+   * is looking at; opening the dropdown is the one moment its freshness can
+   * possibly matter, and it costs a single request.
+   *
+   * Failure is silent and leaves the list alone — the difference from
+   * loadNamespaces, which is populating an empty filter and for which empty
+   * is the honest answer. Here there is a working list on screen under the
+   * operator's cursor, and a momentary blip must neither empty it nor throw a
+   * banner over a control that is still perfectly usable.
+   */
+  refreshNamespaces = async (): Promise<void> => {
+    try {
+      this.namespaces = await listNamespaces(this.cluster.id)
+    } catch {
+      // Keep what is displayed. The next open tries again.
     }
   }
 
@@ -571,10 +674,32 @@ export class ClusterSession {
     return rows.slice(start, start + preferences.pageSize)
   }
 
+  /**
+   * Records an error, and reports the one that means this tab should not exist.
+   *
+   * A cluster removed from the kubeconfig is not a failure to retry — it is
+   * gone, and every subsequent refresh will fail identically. Leaving the tab
+   * open shows an operator stale data from a cluster that no longer exists,
+   * which is how a rebuilt cluster came to be displayed as healthy with zero
+   * nodes.
+   */
+  #fail(cause: unknown): ApiError {
+    const error = toApiError(cause)
+    this.error = error
+    if (error.code === 'cluster_not_found') this.onVanished?.(error)
+    return error
+  }
+
   /** Reloads whichever view is active. */
   refresh = async (): Promise<void> => {
     const request = ++this.#request
     this.status = 'loading'
+
+    // Hung off refresh rather than off the poll timer, so it also happens for
+    // somebody who turned auto-refresh off in Settings and drives the app with
+    // the refresh button. It rate-limits itself, so the mutation handlers that
+    // call refresh() to reload a list tick past it for free.
+    void this.#refreshKinds()
 
     try {
       const rows = await this.#fetch()
@@ -587,7 +712,40 @@ export class ClusterSession {
     } catch (cause) {
       if (request !== this.#request) return
       this.status = 'error'
-      this.error = toApiError(cause)
+      this.#fail(cause)
+    }
+  }
+
+  /**
+   * Re-reads the navigator's kinds once they are old enough to be worth it.
+   *
+   * The same staleness the namespace filter had, in the place it cannot be
+   * fixed the same way: the tree is on screen the whole time, so there is no
+   * "moment of use" to hang a refresh on the way the dropdown has. It is
+   * therefore polled, but on its own slow clock — see
+   * KINDS_REFRESH_INTERVAL_MS for what discovery costs.
+   *
+   * Without this, a CRD installed while a tab was open never appeared in it,
+   * which quietly contradicted the thing the tree exists to do: render
+   * whatever the API server serves rather than a list compiled into the
+   * frontend.
+   */
+  async #refreshKinds(): Promise<void> {
+    if (Date.now() - this.#kindsReadAt < KINDS_REFRESH_INTERVAL_MS) return
+
+    // Stamped BEFORE the call, not after it. Stamping on success alone means
+    // a cluster whose discovery is failing gets retried on every single poll
+    // — every two seconds, at the fastest interval — instead of once per
+    // window, which is the opposite of what a slow clock is for.
+    this.#kindsReadAt = Date.now()
+
+    try {
+      this.kinds = await listKinds(this.cluster.id)
+    } catch {
+      // Keep the tree that is on screen. This is a background top-up of
+      // something already displayed and usable, so it must not blank the
+      // navigator or raise an error over the list the operator is reading —
+      // the same reasoning as #refreshAssessment below.
     }
   }
 
@@ -714,9 +872,91 @@ export class ClusterSession {
       default:
         this.table = rows as ResourceTable
     }
+
+    this.#refreshSelection()
+  }
+
+  /**
+   * Re-points the open drawer at the freshly fetched row.
+   *
+   * The drawer used to hold the object it was opened with and nothing ever
+   * replaced it, so a pane left open showed the pod as it was at the moment
+   * of the click: the CPU from then, the restart count from then, the
+   * container states from then. Watching a pod crash-loop in it showed a
+   * frozen healthy pod, which is worse than showing nothing.
+   *
+   * Matched by name and namespace rather than by identity, because every
+   * refresh builds new objects. A pod that has GONE — deleted, or evicted —
+   * leaves the last known copy on screen rather than blanking the pane
+   * underneath somebody: the detail is stale but it is what they were
+   * reading, and the list behind them already shows it is no longer there.
+   */
+  #refreshSelection(): void {
+    if (!this.selectedName) return
+
+    if (this.selectedPod) {
+      const fresh = this.pods.find(
+        (pod) => pod.name === this.selectedName && pod.namespace === this.selectedNamespace,
+      )
+      if (fresh) {
+        this.selectedPod = fresh
+        this.#recordUsage(fresh)
+      }
+      return
+    }
+
+    if (this.selectedWorkload) {
+      const fresh = this.workloads.find(
+        (workload) =>
+          workload.name === this.selectedName && workload.namespace === this.selectedNamespace,
+      )
+      if (fresh) this.selectedWorkload = fresh
+    }
+  }
+
+  /**
+   * The open pod's recent usage, kept only while the drawer is open.
+   *
+   * IN MEMORY, FOR THIS ONE POD, AND NOT ON DISK. The history subsystem
+   * samples whole clusters and its samples deliberately carry no object names
+   * at all; retaining per-pod series would reverse that privacy property and
+   * cost roughly a gigabyte per cluster per week to do it. What a chart in a
+   * drawer actually needs is the last few minutes of the pod in front of you,
+   * which the poll already fetches — so this costs no extra request, no
+   * goroutine and no file.
+   *
+   * Closing the drawer discards it. That is the honest trade: the chart
+   * starts empty and fills as you watch, rather than pretending to a history
+   * nothing recorded.
+   */
+  usage = $state.raw<UsageSample[]>([])
+
+  #recordUsage(pod: Pod): void {
+    if (!pod.hasMetrics) return
+
+    const sample: UsageSample = {
+      at: Date.now(),
+      cpuCores: parseQuantity(pod.cpu) ?? 0,
+      memoryBytes: parseQuantity(pod.memory) ?? 0,
+    }
+
+    // Replaced rather than pushed: `$state.raw` does not track mutation, and
+    // a chart that never redrew would be a subtle and very confusing bug.
+    const next = [...this.usage, sample]
+    this.usage = next.length > MAX_USAGE_SAMPLES ? next.slice(-MAX_USAGE_SAMPLES) : next
   }
 
   // --- Detail drawer --------------------------------------------------------
+
+  /**
+   * Whether the manifest on screen has had a Secret's values hidden.
+   *
+   * Tracked rather than inferred from the text, because the pane has to do
+   * two things with it: say so, and refuse to let the manifest be saved.
+   * Editing a masked Secret would write the placeholders back over the real
+   * values, which is data loss dressed up as an edit.
+   */
+  secretsRevealed = $state(false)
 
   /** Opens the detail drawer for one object and loads its manifest. */
   openDetail = async (name: string, namespace: string, pod?: Pod, workload?: Workload): Promise<void> => {
@@ -726,18 +966,43 @@ export class ClusterSession {
     this.selectedWorkload = workload ?? null
     this.manifest = null
     this.manifestStatus = 'loading'
+    // A new object means a new series. Carrying the previous pod's samples
+    // over would draw its usage under this one's name.
+    this.usage = []
+    // Every open starts hidden. A reveal is a decision about one object, and
+    // carrying it to the next one is how Freelens ends up showing a value
+    // somebody unmasked in private on the pod they open in a meeting.
+    this.secretsRevealed = false
 
+    await this.#loadManifest(name, namespace)
+  }
+
+  /**
+   * Re-reads the manifest with the Secret values in it.
+   *
+   * A separate call rather than a flag on the first one: this is the audited
+   * read, and it happens because somebody asked for it.
+   */
+  revealManifestSecrets = async (): Promise<void> => {
+    if (!this.selectedName) return
+    this.secretsRevealed = true
+    await this.#loadManifest(this.selectedName, this.selectedNamespace)
+  }
+
+  async #loadManifest(name: string, namespace: string): Promise<void> {
+    this.manifestStatus = 'loading'
     try {
       this.manifest = await getManifest(
         this.cluster.id,
         this.selectedKindId,
         namespace,
         name,
+        this.secretsRevealed,
       )
       this.manifestStatus = 'ready'
     } catch (cause) {
       this.manifestStatus = 'error'
-      this.error = toApiError(cause)
+      this.#fail(cause)
     }
   }
 
@@ -749,6 +1014,7 @@ export class ClusterSession {
     this.selectedWorkload = null
     this.manifest = null
     this.manifestStatus = 'idle'
+    this.usage = []
   }
 
   // --- Auto-refresh ---------------------------------------------------------
@@ -793,7 +1059,7 @@ export class ClusterSession {
     try {
       await scaleWorkload(this.cluster.id, kind, namespace, name, replicas)
     } catch (cause) {
-      this.error = toApiError(cause)
+      this.#fail(cause)
     }
   }
 
@@ -802,7 +1068,7 @@ export class ClusterSession {
     try {
       await updateResource(this.cluster.id, manifest)
     } catch (cause) {
-      this.error = toApiError(cause)
+      this.#fail(cause)
     }
   }
 }

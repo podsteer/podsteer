@@ -339,6 +339,24 @@
   }
 
   /**
+   * Whether the operator is holding a selection inside the log pane.
+   *
+   * Scoped to THIS pane, not the document: a selection made in the manifest
+   * tab, or in another cluster's drawer, is no reason for these logs to stop
+   * following. `commonAncestorContainer` is the deepest node containing the
+   * whole range, so a selection spanning several log lines still resolves to
+   * something inside the container.
+   */
+  function hasSelectionInLogs(): boolean {
+    if (!logContainer) return false
+
+    const selection = window.getSelection()
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false
+
+    return logContainer.contains(selection.getRangeAt(0).commonAncestorContainer)
+  }
+
+  /**
    * Keeps the viewport height current without waiting for a scroll.
    *
    * It has to be known before the first scroll or the window would be sized
@@ -524,7 +542,15 @@
     // Somebody who has just jumped to a match is reading it, and a stream that
     // yanks the view back to the newest line every time a pod says something
     // makes the match impossible to read.
-    if (autoScroll && !searchQuery) {
+    //
+    // And never while something is selected, for a sharper version of the same
+    // reason. Selecting text in a following stream was not merely awkward, it
+    // was impossible: every batch scrolled to the bottom, the rows the
+    // selection was anchored in were unmounted by the windowing, and the
+    // selection collapsed before anybody could reach Cmd+C. Following resumes
+    // by itself the moment the selection is cleared, which a click anywhere
+    // does.
+    if (autoScroll && !searchQuery && !hasSelectionInLogs()) {
       requestAnimationFrame(() => {
         // Re-checked inside the frame: the drawer can close between the batch
         // arriving and the frame running, and reading scrollHeight off a
@@ -753,9 +779,22 @@
 
   <!-- Log output -->
   <div class="relative min-h-0 flex-1">
+  <!--
+    data-selectable, because the application sets `user-select: none` on the
+    body: it is desktop chrome, not a web page, and dragging across a toolbar
+    should not paint it blue. Log output is the clearest possible exception —
+    an operator reading a stack trace wants three lines of it in a ticket, and
+    the copy button in the toolbar takes the WHOLE stream, which is not the
+    same thing at all.
+
+    It goes on the scroll container rather than the rows so the text cursor
+    covers the pane's padding too; a log surface that only turns into an
+    I-beam over the glyphs themselves feels like it is refusing.
+  -->
   <div
     bind:this={logContainer}
     onscroll={onScroll}
+    data-selectable
     class="relative h-full overflow-auto bg-surface-container-lowest p-3 font-mono text-xs leading-relaxed"
   >
     {#if logs.length === 0}

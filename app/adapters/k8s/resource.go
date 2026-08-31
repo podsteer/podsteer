@@ -2,11 +2,13 @@ package k8s
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	unstructuredv1 "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 
@@ -63,7 +65,7 @@ func (a *Adapter) ListTable(ctx context.Context, id domain.ClusterID, kind domai
 }
 
 // GetManifest returns one object serialised as YAML.
-func (a *Adapter) GetManifest(ctx context.Context, ref domain.ResourceRef) (string, error) {
+func (a *Adapter) GetManifest(ctx context.Context, ref domain.ResourceRef, revealSecrets bool) (string, error) {
 	op := fmt.Sprintf("reading manifest of %s in %q", ref, ref.ClusterID)
 
 	set, err := a.factory.clientsFor(ref.ClusterID)
@@ -86,6 +88,14 @@ func (a *Adapter) GetManifest(ctx context.Context, ref domain.ResourceRef) (stri
 	}()
 	if err != nil {
 		return "", classify(op, err)
+	}
+
+	// A Secret's values are replaced BEFORE anything is serialised, so the
+	// material never reaches the caller — let alone the frontend — unless it
+	// was deliberately asked for. Masking after the fact, or in the UI, would
+	// mean the credential had already crossed every boundary in between.
+	if !revealSecrets {
+		maskSecretData(object)
 	}
 
 	// Marshal through JSON: unstructured objects are map[string]any, and
@@ -216,5 +226,94 @@ func renderCell(cell any) string {
 		return fmt.Sprintf("%t", value)
 	default:
 		return fmt.Sprint(value)
+	}
+}
+
+// RevealSecretKey returns one decoded value from one Secret.
+//
+// The typed client is used rather than the dynamic one deliberately:
+// corev1.Secret.Data is []byte already base64-decoded by client-go, so
+// nothing here does its own decoding and there is no encoded copy of the
+// value in this process to leak into a log line or an error string.
+//
+// ONE KEY LEAVES THIS FUNCTION. The Secret is fetched whole because the API
+// offers no narrower read, but everything except the requested key is
+// discarded here, at the boundary, rather than travelling up through the
+// application and across the Wails bridge where each layer is another place a
+// value can be logged, cached or serialised into a crash report.
+func (a *Adapter) RevealSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string) (string, error) {
+	op := fmt.Sprintf("reading key %q of secret %q in %q", key, name, namespace)
+
+	set, err := a.factory.clientsFor(id)
+	if err != nil {
+		return "", err
+	}
+
+	secret, err := set.typed.CoreV1().Secrets(namespace.String()).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", classify(op, err)
+	}
+
+	value, ok := secret.Data[key]
+	if !ok {
+		// A key named by a pod that the Secret does not have. The pod is
+		// misconfigured — or the Secret changed under it — and saying so is
+		// more useful than an empty string that reads like an empty value.
+		return "", fmt.Errorf("%s: %w", op, domain.ErrSecretKeyNotFound)
+	}
+
+	return string(value), nil
+}
+
+// maskSecretData replaces a Secret's values with their decoded size.
+//
+// BASE64 IS NOT MASKING, and treating it as though it were is the single most
+// exploitable habit in this category of tool: a screenshot of a pane showing
+// `cGFzc3dvcmQ=` has leaked the password to anybody who can type `base64 -d`.
+// So the encoded form is not shown either — what is left is the shape of the
+// value and nothing of its content, which is exactly what
+// `kubectl describe secret` prints and for the same reason.
+//
+// Applied to `data` and `stringData` on core/v1 Secrets only. Everything
+// else — a ConfigMap, a CRD holding something sensitive by convention — is
+// returned untouched, because guessing at which fields of an arbitrary kind
+// are secret would mask things arbitrarily and still miss the ones that
+// matter.
+func maskSecretData(object any) {
+	unstructured, ok := object.(*unstructuredv1.Unstructured)
+	if !ok {
+		return
+	}
+	if unstructured.GetKind() != "Secret" || unstructured.GetAPIVersion() != "v1" {
+		return
+	}
+
+	for _, field := range []string{"data", "stringData"} {
+		values, found, err := unstructuredv1.NestedMap(unstructured.Object, field)
+		if err != nil || !found {
+			continue
+		}
+
+		for key, value := range values {
+			encoded, isString := value.(string)
+			if !isString {
+				continue
+			}
+
+			// The decoded length, so the placeholder says something true
+			// about the value. A key that fails to decode is reported as
+			// present rather than guessed at.
+			size := "unreadable"
+			if decoded, err := base64.StdEncoding.DecodeString(encoded); err == nil {
+				size = fmt.Sprintf("%d bytes", len(decoded))
+			} else if field == "stringData" {
+				size = fmt.Sprintf("%d bytes", len(encoded))
+			}
+			values[key] = fmt.Sprintf("<hidden, %s>", size)
+		}
+
+		// Errors here would mean the object is not shaped like a Secret at
+		// all, in which case there is nothing to mask and nothing to fix.
+		_ = unstructuredv1.SetNestedMap(unstructured.Object, values, field)
 	}
 }

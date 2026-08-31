@@ -61,6 +61,51 @@ const (
 	HealthDegraded HealthGrade = "degraded"
 	// HealthCritical means at least one critical finding was raised.
 	HealthCritical HealthGrade = "critical"
+	// HealthUnknown means too little was read to judge.
+	//
+	// NOT a fourth severity — it is the absence of a verdict rather than a
+	// worse one. An assessment that could not list pods or nodes has not found
+	// that the cluster is well; it has failed to look. Reporting that as
+	// "healthy" is the most dangerous thing this type can do, because the
+	// operator's takeaway is the opposite of the truth.
+	HealthUnknown HealthGrade = "unknown"
+)
+
+// loadBearingSources are the reads without which "healthy" is unearned.
+//
+// Not every source: a cluster with no metrics-server is perfectly assessable
+// and saying so is the whole point of degrading rather than failing. These two
+// are different — between them they carry almost every finding the assessment
+// can raise, so their absence is not a gap in the picture, it is the picture.
+var loadBearingSources = []string{"nodes", "pods"}
+
+// MetricsStatus says WHY usage figures are absent, when they are.
+//
+// One field on the overview rather than a state threaded through every list
+// and every DTO. The distinction already exists in the port sentinels; this is
+// only where it becomes something a person can read, and that is the sole
+// place it is needed until there is a second source of usage to attribute.
+//
+// It exists because "no metrics" is not one situation. A cluster with no
+// metrics-server needs a different sentence from one where the operator is
+// simply not permitted to read the metrics that are already there — and
+// telling the second person to install metrics-server sends them to argue with
+// an administrator about software that is running perfectly well.
+type MetricsStatus string
+
+const (
+	// MetricsMeasuredOK means the metrics API answered.
+	MetricsMeasuredOK MetricsStatus = "measured"
+	// MetricsNotInstalled means the cluster serves no metrics API at all:
+	// metrics-server is not installed. HTTP 404, or 503 from the aggregation
+	// layer when the APIService exists with no backend.
+	MetricsNotInstalled MetricsStatus = "not-installed"
+	// MetricsForbidden means the metrics API exists but this account may not
+	// read it. HTTP 403 — an RBAC question, not an installation one.
+	MetricsForbidden MetricsStatus = "forbidden"
+	// MetricsFailed means the read failed for some other reason, including
+	// the cluster being unreachable.
+	MetricsFailed MetricsStatus = "failed"
 )
 
 // FindingCategory groups findings by what an operator would do about them.
@@ -832,6 +877,9 @@ type OverviewInput struct {
 	// being zero is not evidence either way: a genuinely idle pod measures
 	// zero too.
 	MetricsMeasured bool
+	// Metrics says WHY, when MetricsMeasured is false. The boolean gates the
+	// arithmetic; this is what a person can be told.
+	Metrics MetricsStatus
 	// Now is the reference time. Passed rather than read so the rules are
 	// testable, the same reason every Age method takes it.
 	Now time.Time
@@ -857,6 +905,10 @@ type Overview struct {
 	// Unavailable names the data sources that could not be read, so the UI can
 	// say "no metrics" instead of quietly showing zeroes.
 	Unavailable []string
+	// Metrics says why usage figures are absent, when they are — so the UI can
+	// name metrics-server rather than saying "metrics" at somebody who has
+	// never heard of it.
+	Metrics MetricsStatus
 }
 
 // NewOverview assesses a cluster snapshot.
@@ -885,11 +937,14 @@ func NewOverview(input OverviewInput) Overview {
 	findings = append(findings, workloadFindings(input.Workloads, findings, now)...)
 	findings = append(findings, nodeFindings(input.Nodes, nodes)...)
 	findings = append(findings, filesystemFindings(input.Nodes)...)
+	findings = append(findings, pressureFindings(input.Nodes)...)
 	findings = append(findings, storageFindings(input.Volumes, input.Claims, now)...)
 	findings = append(findings, releaseFindings(input.Version, support)...)
 	findings = append(findings, capacityFindings(capacity)...)
 	findings = append(findings, restartFindings(input.Pods, now)...)
 	findings = append(findings, configurationFindings(input.Pods, pods)...)
+	findings = append(findings, memoryLimitFindings(input.Pods, input.MetricsMeasured)...)
+	findings = append(findings, imageDriftFindings(input.Pods)...)
 	findings = append(findings, eventFindings(input.Events, findings, now)...)
 	rankFindings(findings)
 
@@ -897,7 +952,7 @@ func NewOverview(input OverviewInput) Overview {
 		ClusterID:   input.ClusterID,
 		Version:     input.Version,
 		GeneratedAt: now,
-		Health:      grade(findings),
+		Health:      grade(findings, input.Unavailable),
 		Storage:     summariseStorage(input.Volumes, input.Claims),
 		Findings:    findings,
 		Capacity:    capacity,
@@ -910,11 +965,23 @@ func NewOverview(input OverviewInput) Overview {
 		Support:     support,
 		NodeLoads:   nodeLoads(input.Nodes, input.Pods),
 		Unavailable: slices.Clone(input.Unavailable),
+		Metrics:     input.Metrics,
 	}
 }
 
 // grade reduces the findings to one verdict.
-func grade(findings []Finding) HealthGrade {
+//
+// unavailable is consulted for one reason: findings alone cannot distinguish
+// "nothing is wrong" from "nothing was read". Both produce an empty slice, and
+// on an unreachable cluster the second one produced a green tick reading "No
+// problems found" — every figure zero, every source missing, and the operator
+// told everything was fine. Whatever the assessment could not see, it must not
+// certify.
+//
+// A finding still outranks the unknown: if pods could not be listed but a node
+// is unready, the honest verdict is that a node is unready. Ignorance about one
+// thing does not erase knowledge of another.
+func grade(findings []Finding, unavailable []string) HealthGrade {
 	worst := HealthHealthy
 	for _, finding := range findings {
 		switch finding.Severity {
@@ -924,7 +991,22 @@ func grade(findings []Finding) HealthGrade {
 			worst = HealthDegraded
 		}
 	}
+
+	if worst == HealthHealthy && missingLoadBearing(unavailable) {
+		return HealthUnknown
+	}
 	return worst
+}
+
+// missingLoadBearing reports whether a source the verdict depends on was
+// unreadable.
+func missingLoadBearing(unavailable []string) bool {
+	for _, source := range loadBearingSources {
+		if slices.Contains(unavailable, source) {
+			return true
+		}
+	}
+	return false
 }
 
 // rankFindings orders findings by how much they deserve the operator's
@@ -2158,6 +2240,95 @@ func configurationFindings(pods []Pod, summary PodSummary) []Finding {
 	}}
 }
 
+// memoryLimitApproaching is where a pod is close enough to its memory limit
+// to be worth naming before the kernel does it for us.
+//
+// A FIXED NUMBER, not the operator's gauge thresholds from Settings. Those
+// live in the frontend and colour bars; this is a rule in a pure function
+// that the history sampler also runs, headlessly, with no operator in scope.
+// The finding states its own number in its advice, so nothing is hidden by
+// the two not matching.
+//
+// 90 rather than 80 because this is a finding, not a shade of amber: it
+// competes for space with crash loops and unschedulable pods, and a pod
+// steady at 85% of a limit somebody chose is not news. The widely copied
+// cAdvisor rule uses 80% held for two minutes; without a sustain of our own,
+// a higher line is the honest substitute.
+const memoryLimitApproaching = 90.0
+
+// memoryLimitFindings reports pods about to be OOMKilled.
+//
+// The predictive half of a finding PodSteer already has: OOMKilled is
+// reported once the kernel has acted, by which time the container has been
+// restarted and whatever it was holding is gone. This is the same event an
+// hour earlier, while somebody can still raise the limit or find the leak.
+//
+// MEMORY ONLY, deliberately. The CPU equivalent means the container is being
+// throttled — slower, still running, and often exactly what a CPU limit was
+// set to do. Raising a finding for it would put "this is a bit slow" beside
+// "this is about to be killed" under one heading. See Pod.CPULimitPercent.
+func memoryLimitFindings(pods []Pod, measured bool) []Finding {
+	// Without metrics every usage figure is zero, and zero against a limit is
+	// 0% — silence rather than a false all-clear, which is what the caller
+	// already says elsewhere via Unavailable.
+	if !measured {
+		return nil
+	}
+
+	subjects := make([]Subject, 0, maxSubjects)
+	count := 0
+	var worst float64
+
+	for _, pod := range pods {
+		// Terminal pods hold nothing: a Succeeded pod's containers are gone,
+		// and its last measurement is not a prediction about anything.
+		if !pod.OccupiesNode() {
+			continue
+		}
+		if pod.Limits().MemoryBytes <= 0 || !pod.Usage().Measured {
+			continue
+		}
+
+		percent := pod.MemoryLimitPercent()
+		if percent < memoryLimitApproaching {
+			continue
+		}
+
+		count++
+		if percent > worst {
+			worst = percent
+		}
+		if len(subjects) < maxSubjects {
+			subjects = append(subjects, Subject{
+				Kind:      "Pod",
+				Namespace: pod.Namespace(),
+				Name:      pod.Name(),
+				Detail:    fmt.Sprintf("%.0f%% of its memory limit", percent),
+			})
+		}
+	}
+
+	if count == 0 {
+		return nil
+	}
+
+	return []Finding{{
+		ID:       "config:memorylimit",
+		Severity: SeverityWarning,
+		Category: CategoryFindingWorkload,
+		Title:    "Pods near their memory limit",
+		Summary: fmt.Sprintf("%s within reach of being OOMKilled, the worst at %.0f%%",
+			plural(count, "pod is", "pods are"), worst),
+		Advice: fmt.Sprintf("At %.0f%% of its memory limit a container is one allocation from being "+
+			"killed by the kernel, and it restarts with no record beyond a counter. Raise the limit "+
+			"if the workload genuinely needs the memory, or find what is holding it if it does not.",
+			memoryLimitApproaching),
+		Subjects: subjects,
+		Count:    count,
+		KindID:   podKindID,
+	}}
+}
+
 // restartFindings reports pods that are up now but keep dying.
 //
 // Nothing else in PodSteer surfaces these: the pod is Running, its containers
@@ -2402,4 +2573,199 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f%ciB", float64(bytes)/float64(div), "KMGTP"[exp])
+}
+
+// imageDriftFindings reports replicas of one workload running different code.
+//
+// A tag is a pointer somebody can move. When it moves while a ReplicaSet is
+// scaling — or when a pod restarts and pulls again — the replicas of a single
+// ReplicaSet end up on different digests while every field an operator can
+// see still reads the same tag. `kubectl get pods` shows them identical.
+// Nothing in any client surfaces it, and the failure it produces is the worst
+// kind: half the requests behave one way and half the other, reproducibly
+// irreproducible.
+//
+// GROUPED BY REPLICASET, NOT BY DEPLOYMENT, and that is what makes the rule
+// safe rather than noisy. A Deployment rolling out is SUPPOSED to have two
+// digests running at once — that is what a rollout is — but those pods belong
+// to two different ReplicaSets, one per revision. Within a single ReplicaSet
+// the pod template is fixed, so two digests there cannot be explained by a
+// rollout and are always the tag having moved underneath.
+//
+// Restricted to ReplicaSet-owned pods for the same reason. A StatefulSet or
+// DaemonSet updates its template in place, so mid-rollout its pods legitimately
+// differ and the revision is carried in a label rather than in the owner. Those
+// would need the revision compared instead, and reporting them here would be a
+// false positive on a normal deployment.
+func imageDriftFindings(pods []Pod) []Finding {
+	// (namespace/replicaset/container) -> the distinct digests seen.
+	type key struct{ owner, container string }
+	digests := make(map[key]map[string]struct{})
+	order := make([]key, 0, 8)
+
+	for _, pod := range pods {
+		if !pod.OccupiesNode() {
+			continue
+		}
+		controller := pod.Controller()
+		if controller.Kind != "ReplicaSet" || controller.Name == "" {
+			continue
+		}
+
+		owner := pod.Namespace().String() + "/" + controller.Name
+		for _, container := range pod.Containers() {
+			digest := imageDigest(container.ImageID)
+			if digest == "" {
+				continue
+			}
+
+			id := key{owner: owner, container: container.Name}
+			seen, ok := digests[id]
+			if !ok {
+				seen = make(map[string]struct{}, 2)
+				digests[id] = seen
+				order = append(order, id)
+			}
+			seen[digest] = struct{}{}
+		}
+	}
+
+	findings := make([]Finding, 0, 1)
+	subjects := make([]Subject, 0, maxSubjects)
+	count := 0
+
+	for _, id := range order {
+		if len(digests[id]) < 2 {
+			continue
+		}
+		count++
+		if len(subjects) < maxSubjects {
+			namespace, name, _ := strings.Cut(id.owner, "/")
+			subjects = append(subjects, Subject{
+				Kind:      "ReplicaSet",
+				Namespace: NamespaceName(namespace),
+				Name:      name,
+				Detail: fmt.Sprintf("%s is running %d different builds",
+					id.container, len(digests[id])),
+			})
+		}
+	}
+
+	if count == 0 {
+		return nil
+	}
+
+	return append(findings, Finding{
+		ID:       "config:imagedrift",
+		Severity: SeverityWarning,
+		Category: CategoryFindingConfiguration,
+		Title:    "Replicas are running different builds",
+		Summary: fmt.Sprintf("%s where pods of one ReplicaSet resolved to different image digests",
+			plural(count, "container", "containers")),
+		Advice: "Every pod of a ReplicaSet is built from the same template, so this means the tag " +
+			"moved after some of them started. Half your traffic is being served by code you are not " +
+			"looking at. Pin a digest, or roll the workload to bring them back into agreement.",
+		Subjects: subjects,
+		Count:    count,
+		KindID:   podKindID,
+	})
+}
+
+// imageDigest extracts the sha256 digest from a resolved image reference.
+//
+// The runtime writes these inconsistently — "docker-pullable://repo@sha256:…",
+// "repo@sha256:…", and on some runtimes the bare digest — so the digest itself
+// is what is compared rather than the whole string. Comparing the references
+// would report drift between two nodes running different container runtimes,
+// which is not drift at all.
+func imageDigest(imageID string) string {
+	_, digest, found := strings.Cut(imageID, "@")
+	if !found {
+		return ""
+	}
+	return digest
+}
+
+// Stall thresholds, as a proportion of the last ten seconds.
+//
+// Deliberately conservative, because PSI has no established operational
+// convention yet — it only became generally available in Kubernetes 1.36, and
+// no other client surfaces it at all, so there is no body of practice to
+// borrow numbers from the way there is for CPU and memory utilisation.
+//
+// Twenty per cent means work spent a fifth of its time waiting rather than
+// running, which is enough to be felt in a latency graph and is well clear of
+// the noise a busy-but-healthy node produces. Memory is judged more harshly:
+// a memory stall is the kernel reclaiming or swapping, which is far more
+// expensive per unit than waiting for a CPU slice.
+const (
+	stallWarning       = 20.0
+	memoryStallWarning = 10.0
+)
+
+// pressureFindings reports nodes where work is WAITING rather than running.
+//
+// The distinction utilisation cannot make, and the reason this is worth
+// having at all: a node at 100% CPU may be doing exactly what it should,
+// while a node whose tasks spend a fifth of their time stalled is a node
+// where everything is slow — and those two are indistinguishable on every
+// gauge this application had until now.
+//
+// Silent on any cluster that does not report it, which for a while yet is
+// most of them: pressure stall information needs Kubernetes 1.36 and a
+// cgroup v2 host, and unmeasured must never read as calm.
+func pressureFindings(nodes []Node) []Finding {
+	subjects := make([]Subject, 0, maxSubjects)
+	count := 0
+
+	for _, node := range nodes {
+		pressure := node.Filesystems().Pressure
+		if !pressure.Measured {
+			continue
+		}
+
+		reasons := make([]string, 0, 3)
+		if pressure.CPU >= stallWarning {
+			reasons = append(reasons, fmt.Sprintf("cpu %.0f%%", pressure.CPU))
+		}
+		if pressure.Memory >= memoryStallWarning {
+			reasons = append(reasons, fmt.Sprintf("memory %.0f%%", pressure.Memory))
+		}
+		if pressure.IO >= stallWarning {
+			reasons = append(reasons, fmt.Sprintf("io %.0f%%", pressure.IO))
+		}
+		if len(reasons) == 0 {
+			continue
+		}
+
+		count++
+		if len(subjects) < maxSubjects {
+			subjects = append(subjects, Subject{
+				Kind:   "Node",
+				Name:   node.Name(),
+				Detail: "stalled " + strings.Join(reasons, ", "),
+			})
+		}
+	}
+
+	if count == 0 {
+		return nil
+	}
+
+	return []Finding{{
+		ID:       "node:pressure",
+		Severity: SeverityWarning,
+		Category: CategoryFindingNode,
+		Title:    "Work is waiting, not running",
+		Summary: fmt.Sprintf("%s where tasks spend significant time stalled",
+			plural(count, "node", "nodes")),
+		Advice: "This is saturation, not utilisation, and no usage gauge shows it: a node can be at " +
+			"100% CPU and perfectly healthy, or at 40% and stalling because everything is queued " +
+			"behind something. The percentage is how much of the last ten seconds at least one task " +
+			"spent waiting rather than working. Look for a workload without limits, or a disk that " +
+			"cannot keep up.",
+		Subjects: subjects,
+		Count:    count,
+		KindID:   nodeKindID,
+	}}
 }

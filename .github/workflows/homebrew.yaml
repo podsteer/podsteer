@@ -63,15 +63,41 @@ jobs:
             echo "sha256=$sha256"
           } >> "$GITHUB_OUTPUT"
 
+      # A GITHUB APP RATHER THAN A PERSONAL ACCESS TOKEN, and the reason is the
+      # failure mode rather than the threat model.
+      #
+      # GITHUB_TOKEN is scoped to THIS repository and cannot push to another
+      # one — which is the usual reason a workflow like this silently does
+      # nothing — so some second credential is required. A fine-grained PAT
+      # would work and takes five minutes, but it EXPIRES: a year from now a
+      # release would publish, this job would fail to check out the tap, and
+      # `brew install --cask podsteer` would quietly keep serving the previous
+      # version until a user complained. That is exactly the shape of silent
+      # breakage the rest of this pipeline is built to avoid.
+      #
+      # An App installation has no expiry. The token minted below lives one
+      # hour, is scoped to the single repository the App is installed on, and
+      # belongs to the organisation rather than to a person — so it survives
+      # anyone leaving, and there is no long-lived credential at rest.
+      - name: Mint A Tap Token
+        id: tap-token
+        if: steps.release.outputs.skip == 'false'
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.PDS__TAP_APP_ID }}
+          private-key: ${{ secrets.PDS__TAP_APP_PRIVATE_KEY }}
+          owner: podsteer
+          repositories: homebrew-tap
+
       - name: Check Out The Tap
         if: steps.release.outputs.skip == 'false'
         uses: actions/checkout@v7
         with:
           repository: podsteer/homebrew-tap
-          # A PAT with `contents: write` on the tap. GITHUB_TOKEN is scoped to
-          # THIS repository and cannot push to another one, which is the usual
-          # reason a workflow like this silently does nothing.
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # actions/checkout leaves this token in the checkout's credential
+          # helper, which is what lets the `git push` at the end of this job
+          # authenticate without handling it again.
+          token: ${{ steps.tap-token.outputs.token }}
           path: tap
 
       - name: Rewrite The Cask

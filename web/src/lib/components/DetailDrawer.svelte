@@ -16,6 +16,7 @@
   import EventDetail from './EventDetail.svelte'
   import { iconForKind } from '$lib/kindIcons'
   import { parse } from 'yaml'
+  import { forwards } from '$stores/forwards.svelte'
   import YamlPane from './YamlPane.svelte'
   import Button from './Button.svelte'
   import ToolbarButton from './ToolbarButton.svelte'
@@ -47,6 +48,9 @@
     Trash2,
     Maximize2,
     TriangleAlert,
+    Eye,
+    Plug,
+    Loader,
   } from '@lucide/svelte'
 
   interface Props {
@@ -128,14 +132,28 @@
     }
   })
 
-  const canEdit = $derived(!!session.manifest && !isEvent)
+  /**
+   * Whether this object is a Secret whose values are currently hidden.
+   *
+   * The manifest on screen has `<hidden, 24 bytes>` where the data was, so
+   * saving it would write those placeholders over the real values — data
+   * loss wearing the costume of an edit. Editing is therefore blocked until
+   * the values are deliberately revealed.
+   */
+  const secretsHidden = $derived(
+    session.selectedKindId === 'core/v1/secrets' && !session.secretsRevealed && !!session.manifest,
+  )
+
+  const canEdit = $derived(!!session.manifest && !isEvent && !secretsHidden)
 
   const editHint = $derived(
     isEvent
       ? 'An event is a record of something that happened — there is nothing to change'
-      : session.manifest
-        ? 'Edit YAML'
-        : 'Nothing loaded yet',
+      : secretsHidden
+        ? 'Reveal the values first — saving now would overwrite them with their placeholders'
+        : session.manifest
+          ? 'Edit YAML'
+          : 'Nothing loaded yet',
   )
 
   /**
@@ -172,6 +190,33 @@
     if (!involvedKindId) return
     await session.selectKind(involvedKindId)
     await session.openDetail(target.name, target.namespace)
+  }
+
+  /**
+   * The navigator id for a kind named by its Kubernetes Kind, or null.
+   *
+   * Resolved against what THIS cluster serves rather than a table compiled in
+   * here, which is what makes a link to a CRD work and a link to a kind the
+   * account cannot list correctly absent.
+   */
+  function kindIdFor(kindName: string): string | null {
+    return session.kinds.find((kind) => kind.kind === kindName)?.id ?? null
+  }
+
+  /**
+   * Follows a reference from the open pane to the object it names.
+   *
+   * The pane is full of names that are really addresses — the node a pod is
+   * on, the ReplicaSet that owns it — and until now every one of them was
+   * text to be copied and pasted into a search box. Following one closes this
+   * drawer and opens that object's, which is the same motion as clicking a
+   * row in the list behind it.
+   */
+  async function openObject(kindName: string, name: string, namespace: string): Promise<void> {
+    const kindId = kindIdFor(kindName)
+    if (!kindId) return
+    await session.selectKind(kindId)
+    await session.openDetail(name, namespace)
   }
 
   const isScalable = $derived(
@@ -446,6 +491,21 @@
     managedFieldsDisabledReason="Can’t change while there are unsaved edits"
   >
     {#snippet actions()}
+      <!--
+        Reveal, for a Secret whose values are hidden. Its own control rather
+        than something the Edit button does implicitly: this performs an
+        audited read of the Secret, and an audit entry ought to correspond to
+        somebody deciding to look, not to somebody clicking towards a
+        different intention.
+      -->
+      {#if secretsHidden}
+        <ToolbarButton
+          icon={Eye}
+          label="Reveal values"
+          title="Read this Secret's values. This is an audited read."
+          onclick={() => session.revealManifestSecrets()}
+        />
+      {/if}
       <ToolbarToggle
         icon={Pencil}
         label="Edit"
@@ -507,8 +567,30 @@
       {/if}
 
       <div class="min-w-0 flex-1">
-        <h2 class="truncate text-title-medium font-semibold text-on-surface" data-selectable>
-          {session.selectedName}
+        <h2 class="flex min-w-0 items-center gap-2">
+          <span class="truncate text-title-medium font-semibold text-on-surface" data-selectable>
+            {session.selectedName}
+          </span>
+
+          <!--
+            Repeated from the list, because a forward moves between pods when
+            one is replaced and this pane is where somebody arrives to check
+            whether THIS is the pod holding it.
+          -->
+          {#each forwards.forPod(session.selectedNamespace, session.selectedName ?? '') as forward (forward.id)}
+            <span
+              class="inline-flex shrink-0 items-center gap-1 rounded bg-primary/12 px-1.5
+                     text-body-small text-primary"
+              title="{forward.address} → container port {forward.remotePort}"
+            >
+              {#if forward.reconnecting}
+                <Loader class="size-3 animate-spin" strokeWidth={2} />
+              {:else}
+                <Plug class="size-3" strokeWidth={2} />
+              {/if}
+              {forward.localPort}
+            </span>
+          {/each}
         </h2>
 
         <!-- Kind, then namespace, which is where it lives. The namespace is a
@@ -639,6 +721,9 @@
           selectedPod={selectedPod}
           selectedWorkload={selectedWorkload}
           kind={session.selectedKind?.kind}
+          usage={session.usage}
+          canOpen={kindIdFor}
+          onopen={openObject}
         />
       {:else if activeTab === 'logs'}
         {#if maximized === 'logs'}

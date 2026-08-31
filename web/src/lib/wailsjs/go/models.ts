@@ -214,6 +214,30 @@ export namespace wails {
 	        this.percent = source["percent"];
 	    }
 	}
+	export class Termination {
+	    exitCode: number;
+	    signal: number;
+	    reason: string;
+	    diagnosis: string;
+	    alarming: boolean;
+	    finishedAt: string;
+	    lifetimeSeconds: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Termination(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.exitCode = source["exitCode"];
+	        this.signal = source["signal"];
+	        this.reason = source["reason"];
+	        this.diagnosis = source["diagnosis"];
+	        this.alarming = source["alarming"];
+	        this.finishedAt = source["finishedAt"];
+	        this.lifetimeSeconds = source["lifetimeSeconds"];
+	    }
+	}
 	export class Container {
 	    name: string;
 	    image: string;
@@ -221,6 +245,13 @@ export namespace wails {
 	    restartCount: number;
 	    state: string;
 	    reason: string;
+	    started: boolean;
+	    requests: string;
+	    limits: string;
+	    cpu: string;
+	    memory: string;
+	    hasMetrics: boolean;
+	    lastTermination?: Termination;
 	
 	    static createFrom(source: any = {}) {
 	        return new Container(source);
@@ -234,7 +265,32 @@ export namespace wails {
 	        this.restartCount = source["restartCount"];
 	        this.state = source["state"];
 	        this.reason = source["reason"];
+	        this.started = source["started"];
+	        this.requests = source["requests"];
+	        this.limits = source["limits"];
+	        this.cpu = source["cpu"];
+	        this.memory = source["memory"];
+	        this.hasMetrics = source["hasMetrics"];
+	        this.lastTermination = this.convertValues(source["lastTermination"], Termination);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class Credit {
 	    name: string;
@@ -491,6 +547,9 @@ export namespace wails {
 	    internalIp: string;
 	    allocatableCpu: string;
 	    allocatableMemory: string;
+	    disk: string;
+	    diskPercent: number;
+	    hasDisk: boolean;
 	    maxPods: number;
 	    createdAt: string;
 	    ageSeconds: number;
@@ -519,6 +578,9 @@ export namespace wails {
 	        this.internalIp = source["internalIp"];
 	        this.allocatableCpu = source["allocatableCpu"];
 	        this.allocatableMemory = source["allocatableMemory"];
+	        this.disk = source["disk"];
+	        this.diskPercent = source["diskPercent"];
+	        this.hasDisk = source["hasDisk"];
 	        this.maxPods = source["maxPods"];
 	        this.createdAt = source["createdAt"];
 	        this.ageSeconds = source["ageSeconds"];
@@ -872,6 +934,7 @@ export namespace wails {
 	    namespaces: NamespaceLoad[];
 	    restarts: RestartHotspot[];
 	    unavailable: string[];
+	    metrics: string;
 	    criticalCount: number;
 	    warningCount: number;
 	    infoCount: number;
@@ -899,6 +962,7 @@ export namespace wails {
 	        this.namespaces = this.convertValues(source["namespaces"], NamespaceLoad);
 	        this.restarts = this.convertValues(source["restarts"], RestartHotspot);
 	        this.unavailable = source["unavailable"];
+	        this.metrics = source["metrics"];
 	        this.criticalCount = source["criticalCount"];
 	        this.warningCount = source["warningCount"];
 	        this.infoCount = source["infoCount"];
@@ -923,6 +987,24 @@ export namespace wails {
 		}
 	}
 	
+	export class PodFinding {
+	    severity: string;
+	    title: string;
+	    detail: string;
+	    advice: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PodFinding(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.severity = source["severity"];
+	        this.title = source["title"];
+	        this.detail = source["detail"];
+	        this.advice = source["advice"];
+	    }
+	}
 	export class Pod {
 	    uid: string;
 	    name: string;
@@ -942,7 +1024,20 @@ export namespace wails {
 	    cpu: string;
 	    memory: string;
 	    hasMetrics: boolean;
+	    cpuPercent: number;
+	    memoryPercent: number;
+	    cpuRequest: string;
+	    memoryRequest: string;
+	    hasCpuRequest: boolean;
+	    hasMemoryRequest: boolean;
+	    cpuLimitPercent: number;
+	    memoryLimitPercent: number;
+	    cpuLimit: string;
+	    memoryLimit: string;
+	    hasCpuLimit: boolean;
+	    hasMemoryLimit: boolean;
 	    containers: Container[];
+	    findings: PodFinding[];
 	    labels: Record<string, string>;
 	    createdAt: string;
 	    ageSeconds: number;
@@ -971,7 +1066,20 @@ export namespace wails {
 	        this.cpu = source["cpu"];
 	        this.memory = source["memory"];
 	        this.hasMetrics = source["hasMetrics"];
+	        this.cpuPercent = source["cpuPercent"];
+	        this.memoryPercent = source["memoryPercent"];
+	        this.cpuRequest = source["cpuRequest"];
+	        this.memoryRequest = source["memoryRequest"];
+	        this.hasCpuRequest = source["hasCpuRequest"];
+	        this.hasMemoryRequest = source["hasMemoryRequest"];
+	        this.cpuLimitPercent = source["cpuLimitPercent"];
+	        this.memoryLimitPercent = source["memoryLimitPercent"];
+	        this.cpuLimit = source["cpuLimit"];
+	        this.memoryLimit = source["memoryLimit"];
+	        this.hasCpuLimit = source["hasCpuLimit"];
+	        this.hasMemoryLimit = source["hasMemoryLimit"];
 	        this.containers = this.convertValues(source["containers"], Container);
+	        this.findings = this.convertValues(source["findings"], PodFinding);
 	        this.labels = source["labels"];
 	        this.createdAt = source["createdAt"];
 	        this.ageSeconds = source["ageSeconds"];
@@ -997,6 +1105,33 @@ export namespace wails {
 	}
 	
 	
+	
+	export class PortForward {
+	    id: string;
+	    clusterId: string;
+	    namespace: string;
+	    pod: string;
+	    localPort: number;
+	    remotePort: number;
+	    address: string;
+	    reconnecting: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new PortForward(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.clusterId = source["clusterId"];
+	        this.namespace = source["namespace"];
+	        this.pod = source["pod"];
+	        this.localPort = source["localPort"];
+	        this.remotePort = source["remotePort"];
+	        this.address = source["address"];
+	        this.reconnecting = source["reconnecting"];
+	    }
+	}
 	
 	export class ResourceKind {
 	    id: string;
@@ -1172,6 +1307,7 @@ export namespace wails {
 		    return a;
 		}
 	}
+	
 	
 	
 	

@@ -277,6 +277,7 @@ func (s *ClusterService) ListNodes(ctx context.Context, id domain.ClusterID) ([]
 	}
 
 	nodes = s.withNodeMetrics(ctx, id, nodes)
+	nodes = s.withNodeFilesystems(ctx, id, nodes)
 
 	slices.SortStableFunc(nodes, func(a, b domain.Node) int {
 		if a.IsControlPlane() != b.IsControlPlane() {
@@ -289,6 +290,43 @@ func (s *ClusterService) ListNodes(ctx context.Context, id domain.ClusterID) ([]
 	})
 
 	return nodes, nil
+}
+
+// withNodeFilesystems attaches disk occupancy, when the kubelets will say.
+//
+// SILENT ON FAILURE, and more readily than the others. This is the only read
+// in the node list that needs `nodes/proxy` — no aggregated API carries disk
+// occupancy, metrics-server included — and plenty of clusters deliberately do
+// not grant it. A node list that failed, or warned, because a permission
+// nobody expected to have is missing would be worse than a node list with an
+// empty column.
+//
+// The adapter caches this: it is one request per node and answers a question
+// whose value moves in hours, so a refresh every ten seconds does not become
+// a sweep of every kubelet every ten seconds.
+func (s *ClusterService) withNodeFilesystems(ctx context.Context, id domain.ClusterID, nodes []domain.Node) []domain.Node {
+	if len(nodes) == 0 {
+		return nodes
+	}
+
+	disks, err := s.metrics.NodeFilesystems(ctx, id)
+	if err != nil {
+		if !errors.Is(err, ports.ErrMetricsUnavailable) {
+			s.logger.DebugContext(ctx, "node filesystems unavailable",
+				slog.String("cluster", id.String()),
+				slog.String("error", err.Error()))
+		}
+		return nodes
+	}
+
+	enriched := make([]domain.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if measured, ok := disks[node.Name()]; ok {
+			node = node.WithFilesystems(measured)
+		}
+		enriched = append(enriched, node)
+	}
+	return enriched
 }
 
 // withNodeMetrics attaches usage to nodes, degrading silently when the cluster

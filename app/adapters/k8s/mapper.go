@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -41,6 +42,9 @@ func mapPod(clusterID domain.ClusterID, pod *corev1.Pod) (domain.Pod, error) {
 		Reason:     podReason(pod),
 		Message:    podMessage(pod),
 		CreatedAt:  pod.CreationTimestamp.Time,
+		DeletedAt:  deletionTime(pod),
+		Finalizers: pod.Finalizers,
+		Conditions: mapConditions(pod.Status.Conditions),
 	})
 }
 
@@ -126,11 +130,14 @@ func mapContainers(pod *corev1.Pod) []domain.Container {
 	containers := make([]domain.Container, 0, len(specs))
 	for _, spec := range specs {
 		container := domain.Container{
-			Name:     spec.Name,
-			Image:    spec.Image,
-			State:    domain.ContainerStateWaiting,
-			Requests: mapResources(spec.Resources.Requests),
-			Limits:   mapResources(spec.Resources.Limits),
+			Name:      spec.Name,
+			Image:     spec.Image,
+			State:     domain.ContainerStateWaiting,
+			Requests:  mapResources(spec.Resources.Requests),
+			Limits:    mapResources(spec.Resources.Limits),
+			Liveness:  mapProbe(spec.LivenessProbe),
+			Readiness: mapProbe(spec.ReadinessProbe),
+			Startup:   mapProbe(spec.StartupProbe),
 		}
 
 		if status, ok := statuses[spec.Name]; ok {
@@ -143,6 +150,30 @@ func mapContainers(pod *corev1.Pod) []domain.Container {
 			// re-pushed. Prefer it: it answers "what is running right now".
 			if status.Image != "" {
 				container.Image = status.Image
+			}
+			container.ImageID = status.ImageID
+
+			if status.Started != nil {
+				container.Started = *status.Started
+			}
+
+			if running := status.State.Running; running != nil {
+				container.StartedAt = running.StartedAt.UTC()
+			}
+
+			// The previous life, when the API server recorded one. Only the
+			// TERMINATED variant carries anything: a container whose last
+			// state was Waiting has nothing to explain, which is why kubectl
+			// omits the whole block in that case too.
+			if last := status.LastTerminationState.Terminated; last != nil {
+				container.LastTermination = domain.Termination{
+					ExitCode:   last.ExitCode,
+					Signal:     last.Signal,
+					Reason:     last.Reason,
+					Message:    last.Message,
+					StartedAt:  last.StartedAt.UTC(),
+					FinishedAt: last.FinishedAt.UTC(),
+				}
 			}
 		}
 
@@ -679,4 +710,70 @@ func mapPersistentVolumeClaim(clusterID domain.ClusterID, item *corev1.Persisten
 		VolumeName:     item.Spec.VolumeName,
 		CreatedAt:      item.CreationTimestamp.Time,
 	})
+}
+
+// mapProbe reduces a probe to the timings the domain reasons about.
+//
+// The handler — HTTP, exec, TCP, gRPC — is deliberately dropped: it is
+// rendered from the manifest the pane already has, and nothing in the domain
+// draws a conclusion from which kind of check it is. Only the arithmetic
+// crosses this boundary.
+func mapProbe(probe *corev1.Probe) domain.Probe {
+	if probe == nil {
+		return domain.Probe{}
+	}
+	return domain.Probe{
+		InitialDelaySeconds: probe.InitialDelaySeconds,
+		PeriodSeconds:       probe.PeriodSeconds,
+		TimeoutSeconds:      probe.TimeoutSeconds,
+		FailureThreshold:    probe.FailureThreshold,
+		Target:              probeTarget(probe),
+	}
+}
+
+// probeTarget normalises what a probe checks, so two can be compared.
+//
+// Only the destination, never the timings: two probes hitting the same
+// endpoint at different intervals are still hitting the same endpoint, and
+// that is the thing worth noticing.
+func probeTarget(probe *corev1.Probe) string {
+	switch {
+	case probe.HTTPGet != nil:
+		return fmt.Sprintf("http %s:%s%s",
+			probe.HTTPGet.Host, probe.HTTPGet.Port.String(), probe.HTTPGet.Path)
+	case probe.Exec != nil:
+		return "exec " + strings.Join(probe.Exec.Command, " ")
+	case probe.TCPSocket != nil:
+		return fmt.Sprintf("tcp %s:%s", probe.TCPSocket.Host, probe.TCPSocket.Port.String())
+	case probe.GRPC != nil:
+		service := ""
+		if probe.GRPC.Service != nil {
+			service = *probe.GRPC.Service
+		}
+		return fmt.Sprintf("grpc :%d %s", probe.GRPC.Port, service)
+	default:
+		return ""
+	}
+}
+
+// deletionTime returns when deletion was requested, or the zero time.
+func deletionTime(pod *corev1.Pod) time.Time {
+	if pod.DeletionTimestamp == nil {
+		return time.Time{}
+	}
+	return pod.DeletionTimestamp.UTC()
+}
+
+// mapConditions carries a pod's conditions across with their reasons.
+func mapConditions(conditions []corev1.PodCondition) []domain.PodCondition {
+	out := make([]domain.PodCondition, 0, len(conditions))
+	for _, condition := range conditions {
+		out = append(out, domain.PodCondition{
+			Type:    string(condition.Type),
+			Status:  string(condition.Status),
+			Reason:  condition.Reason,
+			Message: condition.Message,
+		})
+	}
+	return out
 }

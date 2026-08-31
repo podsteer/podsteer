@@ -109,6 +109,59 @@ type Container struct {
 	State string `json:"state"`
 	// Reason explains the state, e.g. "CrashLoopBackOff". May be empty.
 	Reason string `json:"reason"`
+	// Started reports whether the startup probe has passed. Distinct from
+	// Ready: started with not-ready is a readiness problem, not-started is a
+	// startup problem, and they are looked into in different places.
+	Started bool `json:"started"`
+	// Requests and Limits, formatted for display. Empty when undeclared.
+	Requests string `json:"requests"`
+	Limits   string `json:"limits"`
+	// CPU and Memory are what THIS container is using, when anything measured
+	// it — the half of a pod's total that says where the total came from. An
+	// em dash when unmeasured, the same as the pod's own figures.
+	CPU        string `json:"cpu"`
+	Memory     string `json:"memory"`
+	HasMetrics bool   `json:"hasMetrics"`
+	// LastTermination explains how this container's previous life ended, and
+	// is absent when it has not restarted. See domain.Termination: this is
+	// the ONLY record of it Kubernetes keeps, and only of the most recent one.
+	LastTermination *Termination `json:"lastTermination,omitempty"`
+}
+
+// Termination is a container's previous death, explained.
+type Termination struct {
+	ExitCode int32 `json:"exitCode"`
+	Signal   int32 `json:"signal"`
+	// Reason is the kubelet's word — "OOMKilled", "Error", "Completed".
+	Reason string `json:"reason"`
+	// Diagnosis is the sentence to show. Written in the domain, because
+	// deciding that a 137 without an OOMKilled reason is a grace-period
+	// expiry rather than a memory limit is a judgement, not a lookup.
+	Diagnosis string `json:"diagnosis"`
+	// Alarming says whether to colour it. A clean SIGTERM during a rollout
+	// is how every deployment stops a container and is not a fault.
+	Alarming bool `json:"alarming"`
+	// FinishedAt is RFC 3339, empty if unknown; LifetimeSeconds is how long
+	// it ran before dying, zero when the timestamps do not allow the sum.
+	FinishedAt      string `json:"finishedAt"`
+	LifetimeSeconds int64  `json:"lifetimeSeconds"`
+}
+
+// toTermination converts a domain termination, or nil when there was none.
+func toTermination(termination domain.Termination) *Termination {
+	if termination.IsZero() {
+		return nil
+	}
+
+	return &Termination{
+		ExitCode:        termination.ExitCode,
+		Signal:          termination.Signal,
+		Reason:          termination.Reason,
+		Diagnosis:       termination.Diagnosis(),
+		Alarming:        termination.Alarming(),
+		FinishedAt:      formatTime(termination.FinishedAt),
+		LifetimeSeconds: int64(termination.Lifetime().Seconds()),
+	}
 }
 
 // Pod is a pod as presented to the UI.
@@ -157,8 +210,43 @@ type Pod struct {
 	Memory string `json:"memory"`
 	// HasMetrics distinguishes a measured zero from no metrics-server.
 	HasMetrics bool `json:"hasMetrics"`
+	// CPUPercent and MemoryPercent are usage against what the pod REQUESTED,
+	// for the meters — a node's meters divide by allocatable, which a pod has
+	// no equivalent of. They may exceed 100: a request is a reservation, not
+	// a ceiling. See domain.Pod.CPUPercent.
+	CPUPercent    float64 `json:"cpuPercent"`
+	MemoryPercent float64 `json:"memoryPercent"`
+	// CPURequest and MemoryRequest are the reservation itself, formatted, so
+	// a meter can name the number it is a proportion OF instead of leaving a
+	// bare percentage to be taken on trust.
+	CPURequest    string `json:"cpuRequest"`
+	MemoryRequest string `json:"memoryRequest"`
+	// HasCPURequest and HasMemoryRequest say whether there is a denominator
+	// at all. Separate flags because the two are declared independently: a
+	// pod may reserve memory and leave CPU unbounded, which is a common and
+	// deliberate shape rather than an oversight.
+	//
+	// A zero percentage cannot stand in for these. An idle pod that DID
+	// reserve CPU also reads 0%, and the two must not draw the same thing.
+	HasCPURequest    bool `json:"hasCpuRequest"`
+	HasMemoryRequest bool `json:"hasMemoryRequest"`
+	// The same four figures against the pod's LIMITS, which is a different
+	// question: the request is what it reserved, the limit is what it will be
+	// stopped at. Only this one can predict a failure — see
+	// domain.Pod.MemoryLimitPercent, and note that its CPU twin predicts
+	// throttling rather than death.
+	CPULimitPercent    float64 `json:"cpuLimitPercent"`
+	MemoryLimitPercent float64 `json:"memoryLimitPercent"`
+	CPULimit           string  `json:"cpuLimit"`
+	MemoryLimit        string  `json:"memoryLimit"`
+	HasCPULimit        bool    `json:"hasCpuLimit"`
+	HasMemoryLimit     bool    `json:"hasMemoryLimit"`
 	// Containers are the pod's containers.
 	Containers []Container `json:"containers"`
+	// Findings are what is wrong with this pod, or about to be — each with
+	// what to do about it. See domain.AssessPod. Empty for a pod with nothing
+	// worth saying about it, which is most of them.
+	Findings []PodFinding `json:"findings"`
 	// Labels are the pod's labels.
 	Labels map[string]string `json:"labels"`
 	// CreatedAt is the creation timestamp in RFC 3339, empty if unknown.
@@ -173,12 +261,19 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 	containers := make([]Container, 0, len(domainContainers))
 	for _, container := range domainContainers {
 		containers = append(containers, Container{
-			Name:         container.Name,
-			Image:        container.Image,
-			Ready:        container.Ready,
-			RestartCount: container.RestartCount,
-			State:        string(container.State),
-			Reason:       container.Reason,
+			Name:            container.Name,
+			Image:           container.Image,
+			Ready:           container.Ready,
+			RestartCount:    container.RestartCount,
+			State:           string(container.State),
+			Reason:          container.Reason,
+			Started:         container.Started,
+			Requests:        formatResources(container.Requests),
+			Limits:          formatResources(container.Limits),
+			CPU:             formatCores(container.Usage),
+			Memory:          formatMemory(container.Usage),
+			HasMetrics:      !container.Usage.IsZero(),
+			LastTermination: toTermination(container.LastTermination),
 		})
 	}
 
@@ -186,6 +281,9 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 	if labels == nil {
 		labels = map[string]string{}
 	}
+
+	requests := pod.Requests()
+	limits := pod.Limits()
 
 	return Pod{
 		UID:             pod.UID(),
@@ -206,11 +304,48 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 		CPU:             formatCores(pod.Usage()),
 		Memory:          formatMemory(pod.Usage()),
 		HasMetrics:      !pod.Usage().IsZero(),
-		Containers:      containers,
-		Labels:          labels,
-		CreatedAt:       formatTime(pod.CreatedAt()),
-		AgeSeconds:      int64(pod.Age(now).Seconds()),
+
+		CPUPercent:       pod.CPUPercent(),
+		MemoryPercent:    pod.MemoryPercent(),
+		CPURequest:       formatMilliCores(requests.CPUMilli),
+		MemoryRequest:    formatBytes(requests.MemoryBytes),
+		HasCPURequest:    requests.CPUMilli > 0,
+		HasMemoryRequest: requests.MemoryBytes > 0,
+
+		CPULimitPercent:    pod.CPULimitPercent(),
+		MemoryLimitPercent: pod.MemoryLimitPercent(),
+		CPULimit:           formatMilliCores(limits.CPUMilli),
+		MemoryLimit:        formatBytes(limits.MemoryBytes),
+		HasCPULimit:        limits.CPUMilli > 0,
+		HasMemoryLimit:     limits.MemoryBytes > 0,
+		Containers:         containers,
+		Findings:           toPodFindings(domain.AssessPod(pod, now)),
+		Labels:             labels,
+		CreatedAt:          formatTime(pod.CreatedAt()),
+		AgeSeconds:         int64(pod.Age(now).Seconds()),
 	}
+}
+
+// PodFinding is one thing worth telling an operator about a pod.
+type PodFinding struct {
+	Severity string `json:"severity"`
+	Title    string `json:"title"`
+	Detail   string `json:"detail"`
+	Advice   string `json:"advice"`
+}
+
+// toPodFindings converts the domain's assessment of one pod.
+func toPodFindings(findings []domain.PodFinding) []PodFinding {
+	out := make([]PodFinding, 0, len(findings))
+	for _, finding := range findings {
+		out = append(out, PodFinding{
+			Severity: string(finding.Severity),
+			Title:    finding.Title,
+			Detail:   finding.Detail,
+			Advice:   finding.Advice,
+		})
+	}
+	return out
 }
 
 // toPods converts a slice of domain pods.

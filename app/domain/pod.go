@@ -102,6 +102,81 @@ type Container struct {
 	Requests Resources
 	// Limits is the ceiling the kubelet enforces.
 	Limits Resources
+	// Started distinguishes a container the startup probe has passed from one
+	// still starting. Separate from Ready deliberately: started=true with
+	// ready=false is a readiness problem, started=false is a startup problem,
+	// and they are investigated in different places.
+	Started bool
+	// LastTermination is how this container's previous life ended, when there
+	// was one. See Termination — it is the only record of it that exists.
+	LastTermination Termination
+	// ImageID is the reference the runtime actually resolved, digest and all
+	// — "…/app@sha256:abc…" — as distinct from Image, which is the reference
+	// somebody wrote. Two pods can name the same tag and hold different
+	// digests, and this is the only field that says so.
+	ImageID string
+	// Usage is what this container is measuring right now, when anything
+	// measured it. The pod's total is the sum of these, and this is the half
+	// that says which container the total came from.
+	Usage Metrics
+	// StartedAt is when the CURRENT life began, empty when it is not running.
+	// The difference between it and now is how long this container has been
+	// up, which at the start of a life is how long it took to come up.
+	StartedAt time.Time
+	// The three probes. Readiness is carried not for its own timings but to
+	// be COMPARED against liveness — see livenessMatchesReadiness, which is
+	// the trap that turns a slow dependency into a restart loop.
+	Liveness  Probe
+	Readiness Probe
+	Startup   Probe
+}
+
+// Probe is a container health check, reduced to the timings that matter.
+//
+// Only the numbers, not the handler: whether it is an HTTP GET or an exec is
+// a presentation detail the frontend renders from the manifest, while the
+// arithmetic below is a judgement about whether the configuration will kill a
+// container that was merely slow.
+type Probe struct {
+	InitialDelaySeconds int32
+	PeriodSeconds       int32
+	TimeoutSeconds      int32
+	FailureThreshold    int32
+	// Target identifies WHAT is being checked, normalised — "http-get
+	// :8080/healthz", "exec [pg_isready]". Not for display, which the pane
+	// renders from the manifest, but so two probes can be compared: a
+	// liveness and a readiness probe pointing at the same endpoint is a
+	// specific and very common mistake.
+	Target string
+}
+
+// IsZero reports whether no probe is configured.
+func (p Probe) IsZero() bool { return p == Probe{} }
+
+// KillsAfter is how long a container has to become healthy before this probe
+// starts restarting it.
+//
+// initialDelay plus one full run of the failure threshold — the probe waits,
+// then has to fail that many times in a row, each a period apart. This is the
+// number nobody computes and everybody is surprised by: a 30s delay with the
+// default threshold of 3 and period of 10 is not a 30-second grace, it is a
+// minute.
+func (p Probe) KillsAfter() time.Duration {
+	if p.IsZero() {
+		return 0
+	}
+
+	period := p.PeriodSeconds
+	if period <= 0 {
+		period = 10 // The API server's default.
+	}
+	threshold := p.FailureThreshold
+	if threshold <= 0 {
+		threshold = 3 // Likewise.
+	}
+
+	return time.Duration(p.InitialDelaySeconds)*time.Second +
+		time.Duration(period*threshold)*time.Second
 }
 
 // Resources is a container's declared CPU and memory, in the same units as
@@ -126,6 +201,31 @@ type Resources struct {
 
 // IsZero reports whether nothing was declared.
 func (r Resources) IsZero() bool { return r == Resources{} }
+
+// CPUPercent returns usage as a percentage of this declaration, or 0 when
+// nothing was declared or nothing was measured.
+//
+// THE RESULT IS NOT CAPPED AT 100, and that is the point. A percentage of a
+// *capacity* cannot exceed it; a percentage of a *request* routinely does,
+// because a request is a reservation rather than a ceiling and a Burstable
+// pod is entitled to climb above its own. Clamping here would quietly report
+// a pod running at three times its reservation as sitting neatly at 100%,
+// which is the one reading that would make anybody stop looking.
+func (r Resources) CPUPercent(usage Metrics) float64 {
+	if r.CPUMilli <= 0 || !usage.Measured {
+		return 0
+	}
+	return float64(usage.CPUMilli) / float64(r.CPUMilli) * 100
+}
+
+// MemoryPercent returns usage as a percentage of this declaration. See
+// CPUPercent for why it is not capped.
+func (r Resources) MemoryPercent(usage Metrics) float64 {
+	if r.MemoryBytes <= 0 || !usage.Measured {
+		return 0
+	}
+	return float64(usage.MemoryBytes) / float64(r.MemoryBytes) * 100
+}
 
 // Add returns the sum of two declarations.
 func (r Resources) Add(other Resources) Resources {
@@ -180,7 +280,33 @@ type PodSpec struct {
 	Message string
 	// CreatedAt is the object creation timestamp.
 	CreatedAt time.Time
+	// DeletedAt is when deletion was REQUESTED, not when it happened. A pod
+	// with this set is Terminating; how long ago it was set is how long
+	// something has been refusing to let go.
+	DeletedAt time.Time
+	// Finalizers are the names still registered against the deletion. Empty
+	// on a healthy pod, and the whole explanation on a stuck one.
+	Finalizers []string
+	// Conditions are the pod's own status conditions, with their reasons.
+	Conditions []PodCondition
 }
+
+// PodCondition is one of a pod's status conditions.
+//
+// Carried with its Reason and Message, which `kubectl describe` discards — it
+// prints Conditions as Type and Status only. That loses the half that
+// explains anything: PodScheduled=False is a fact, and its Reason and Message
+// are the scheduler's account of WHY, which is the longest and least
+// truncated explanation the API offers.
+type PodCondition struct {
+	Type    string
+	Status  string
+	Reason  string
+	Message string
+}
+
+// True reports whether the condition is satisfied.
+func (c PodCondition) True() bool { return c.Status == "True" }
 
 // Pod is a Kubernetes pod as observed in a cluster at a point in time.
 //
@@ -203,6 +329,9 @@ type Pod struct {
 	reason     string
 	message    string
 	createdAt  time.Time
+	deletedAt  time.Time
+	finalizers []string
+	conditions []PodCondition
 }
 
 // NewPod validates spec and returns the corresponding Pod.
@@ -252,6 +381,9 @@ func NewPod(spec PodSpec) (Pod, error) {
 		reason:     strings.TrimSpace(spec.Reason),
 		message:    strings.TrimSpace(spec.Message),
 		createdAt:  spec.CreatedAt.UTC(),
+		deletedAt:  spec.DeletedAt.UTC(),
+		finalizers: slices.Clone(spec.Finalizers),
+		conditions: slices.Clone(spec.Conditions),
 	}, nil
 }
 
@@ -297,6 +429,33 @@ func (p Pod) QoSClass() QoSClass { return p.qosClass }
 // Usage returns the pod's measured resource consumption.
 func (p Pod) Usage() Metrics { return p.usage }
 
+// WithPodUsage returns a copy carrying the pod's total AND each container's.
+//
+// Both halves together, because they are read together: a pod near its memory
+// limit is a question, and which container is holding the memory is the
+// answer. Splitting this into two calls would let the two drift apart on a
+// pod whose containers changed between them.
+//
+// A container the metrics API did not report keeps whatever it had, which is
+// nothing — normal for one that has not started, and not something to
+// represent as a measured zero.
+func (p Pod) WithPodUsage(usage PodUsage) Pod {
+	p.usage = usage.Total
+
+	if len(usage.Containers) > 0 {
+		containers := make([]Container, len(p.containers))
+		copy(containers, p.containers)
+		for i := range containers {
+			if measured, ok := usage.Containers[containers[i].Name]; ok {
+				containers[i].Usage = measured
+			}
+		}
+		p.containers = containers
+	}
+
+	return p
+}
+
 // WithUsage returns a copy of the pod carrying the given measurement.
 //
 // Usage arrives from a different API than the pod does, so it cannot be part
@@ -306,6 +465,42 @@ func (p Pod) Usage() Metrics { return p.usage }
 func (p Pod) WithUsage(usage Metrics) Pod {
 	p.usage = usage
 	return p
+}
+
+// Finalizers returns the names still registered against this pod's deletion.
+//
+// THE FIELD THAT EXPLAINS A STUCK TERMINATING POD, and `kubectl describe`
+// never prints it. It shows "Terminating (lasts 30s)" and then says nothing
+// about why thirty seconds became three hours — while the answer, a
+// controller that registered a finalizer and has not removed it, is right
+// there in the object everybody is already looking at.
+func (p Pod) Finalizers() []string { return slices.Clone(p.finalizers) }
+
+// Condition returns the named status condition, and whether it was reported.
+func (p Pod) Condition(name string) (PodCondition, bool) {
+	for _, condition := range p.conditions {
+		if condition.Type == name {
+			return condition, true
+		}
+	}
+	return PodCondition{}, false
+}
+
+// Conditions returns a copy of the pod's status conditions.
+func (p Pod) Conditions() []PodCondition { return slices.Clone(p.conditions) }
+
+// Terminating reports whether deletion has been requested.
+func (p Pod) Terminating() bool { return !p.deletedAt.IsZero() }
+
+// DeletingFor is how long deletion has been pending.
+func (p Pod) DeletingFor(now time.Time) time.Duration {
+	if p.deletedAt.IsZero() {
+		return 0
+	}
+	if elapsed := now.Sub(p.deletedAt); elapsed > 0 {
+		return elapsed
+	}
+	return 0
 }
 
 // Reason returns the pod-level reason, empty when the API server gives none.
@@ -324,6 +519,26 @@ func (p Pod) Requests() Resources {
 	return total
 }
 
+// CPUPercent returns measured CPU usage as a percentage of what this pod
+// RESERVED — not of what it is capped at, and not of its node.
+//
+// Requests are the denominator because they are the number the rest of
+// PodSteer is built around: they decide whether a pod schedules, and "how
+// much of what you reserved are you actually using" is the question a pod
+// list can answer that `kubectl top` cannot. Limits were the alternative and
+// answer a different question — how close this pod is to being throttled —
+// but they are left unset on most clusters, so a limit-based column would be
+// blank for the majority of rows.
+//
+// Zero when the pod declares no CPU request; callers must test HasRequests
+// rather than reading zero as "idle". A BestEffort pod has no reservation to
+// be a proportion of, which is worth showing as absent rather than as 0%.
+func (p Pod) CPUPercent() float64 { return p.Requests().CPUPercent(p.usage) }
+
+// MemoryPercent returns measured memory usage against the pod's memory
+// request. See CPUPercent.
+func (p Pod) MemoryPercent() float64 { return p.Requests().MemoryPercent(p.usage) }
+
 // Limits returns the sum of every container's limits.
 func (p Pod) Limits() Resources {
 	var total Resources
@@ -332,6 +547,34 @@ func (p Pod) Limits() Resources {
 	}
 	return total
 }
+
+// CPULimitPercent returns measured CPU usage as a percentage of the pod's
+// CPU limit — how close it is to being THROTTLED.
+//
+// Throttling is not a lesser problem than being killed, only a different one,
+// and it is the one nothing else in Kubernetes will tell you about. A pod
+// pinned at its CPU limit does not fail, restart or raise an event: it simply
+// takes three times as long, and a job that used to finish in ten minutes
+// takes half an hour with every probe still green. That is worth colouring.
+//
+// It is still not the SAME kind of number as MemoryLimitPercent, which is why
+// only the memory one raises a finding. Exceeding a CPU limit is enforced
+// pre-emptively by the kernel and the container keeps running; exceeding a
+// memory limit is enforced reactively by the OOM killer and it dies. Both are
+// worth seeing on a row; only one is worth interrupting somebody over.
+//
+// Zero when no CPU limit is declared, which is the majority case — leaving
+// CPU unbounded is deliberate practice, not an oversight. Callers must test
+// for the limit rather than reading zero as "idle".
+func (p Pod) CPULimitPercent() float64 { return p.Limits().CPUPercent(p.usage) }
+
+// MemoryLimitPercent returns measured memory usage as a percentage of the
+// pod's memory limit — how close it is to being OOMKilled.
+//
+// This is the one pod-level ratio that predicts a hard failure, which is why
+// it is the one the overview raises a finding on. See CPULimitPercent for why
+// its CPU twin is not treated the same way.
+func (p Pod) MemoryLimitPercent() float64 { return p.Limits().MemoryPercent(p.usage) }
 
 // IsScheduled reports whether the pod has been placed on a node.
 func (p Pod) IsScheduled() bool { return p.nodeName != "" }

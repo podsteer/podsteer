@@ -92,6 +92,114 @@ function clampThreshold(value: number): number {
 }
 
 /**
+ * Which surface a pair of threshold lines governs.
+ *
+ * Scoped by SURFACE rather than one pair for the whole application, because
+ * the surfaces are read differently. The overview is glanced at to decide
+ * whether anything needs attention, and wants its warning early. The lists are
+ * stared at for an hour while working, and a colour that fires early there is
+ * a colour that stops being read. An operator who wants them identical sets
+ * them identical; one who does not now can say so.
+ *
+ * Scoped by the PAGE, not by what is measured — "Nodes" is the node list, and
+ * the node load bars on the overview are the overview's. That is what makes it
+ * predictable: the section named after the screen changes that screen.
+ */
+export type ThresholdScope = 'overview' | 'nodes' | 'pods'
+
+/**
+ * Which denominator the pod list's bars divide by.
+ *
+ * The one measurement in the application that genuinely has two right
+ * answers, because it is asked by two different people. Somebody sizing
+ * workloads wants usage against the REQUEST — did I reserve about the right
+ * amount — where a full bar is a success. Somebody chasing a slow job wants
+ * usage against the LIMIT — how much headroom is left before the kernel
+ * throttles or kills it — where a full bar is the problem.
+ *
+ * It also decides whether the threshold ticks can be drawn at all. A tick
+ * marks a position on the track, and the thresholds belong to the limit: on a
+ * request-denominated bar there is nowhere honest to put them, so they are
+ * left off and the colour alone carries the warning.
+ *
+ * LIMITS by default. A request-denominated bar cannot warn anybody about
+ * anything: it is a right-sizing instrument, and right-sizing is a thing done
+ * occasionally and deliberately, not the question somebody has open while an
+ * application is misbehaving. Reading 130% of a request tells you a pod is
+ * bursting, which is normal; the first real signal that it was in trouble is
+ * then the OOMKill. Against the limit, the same pod is visibly at 90% of its
+ * ceiling with time to act.
+ *
+ * This defaulted to requests for one build, on the grounds that more pods
+ * declare a request than a limit so a limits-first default shows emptier
+ * cells. That is an argument about how much of the column is painted, and it
+ * was allowed to outrank an argument about what the paint means. A pod with
+ * no limit is not a gap in the data either — an unbounded container is one
+ * that can take a node down with it, and saying so is worth more than a bar
+ * measuring it against a reservation it is already past.
+ *
+ * It is also the only mode in which the threshold ticks can be drawn, because
+ * it is the only one where the bar and the lines count the same thing. A
+ * default that cannot show the lines the operator set in Settings is the
+ * wrong default.
+ */
+export type PodMeasure = 'requests' | 'limits'
+
+/** The scopes, in the order Settings lists them. */
+export const THRESHOLD_SCOPES: ThresholdScope[] = ['overview', 'nodes', 'pods']
+
+/** Where one surface's bars turn amber and red, and whether they do at all. */
+export interface ThresholdSet {
+  warn: number
+  critical: number
+  warnEnabled: boolean
+  criticalEnabled: boolean
+}
+
+/**
+ * The default pair, applied to every scope.
+ *
+ * 80 and 90 because they are where Kubernetes itself starts to behave
+ * differently — the kubelet's default eviction threshold leaves 10% free —
+ * and because they are the numbers most operators already run alerts on.
+ * They are a starting point, not a claim: every scope is adjustable, which is
+ * the point of there being scopes.
+ */
+function defaultThresholds(): ThresholdSet {
+  return { warn: 80, critical: 90, warnEnabled: true, criticalEnabled: true }
+}
+
+function defaultThresholdsByScope(): Record<ThresholdScope, ThresholdSet> {
+  return {
+    overview: defaultThresholds(),
+    nodes: defaultThresholds(),
+    pods: defaultThresholds(),
+  }
+}
+
+/**
+ * Reads one persisted set, repairing anything storage handed back wrong.
+ *
+ * Storage outlives the code that wrote it, so nothing here trusts its input:
+ * a missing field falls back to the default, and a crossed pair is separated
+ * rather than kept — a warning line above the critical one would colour
+ * nothing at all, and silently rendering that is worse than adjusting it.
+ */
+function readThresholdSet(raw: unknown): ThresholdSet {
+  const set = defaultThresholds()
+  if (!raw || typeof raw !== 'object') return set
+
+  const stored = raw as Partial<ThresholdSet>
+  if (typeof stored.warn === 'number') set.warn = clampThreshold(stored.warn)
+  if (typeof stored.critical === 'number') set.critical = clampThreshold(stored.critical)
+  if (typeof stored.warnEnabled === 'boolean') set.warnEnabled = stored.warnEnabled
+  if (typeof stored.criticalEnabled === 'boolean') set.criticalEnabled = stored.criticalEnabled
+
+  if (set.critical <= set.warn) set.critical = clampThreshold(set.warn + 5)
+  return set
+}
+
+/**
  * Identifies one snoozed object within one finding.
  *
  * JSON rather than a joined string: every part is free text a cluster decides
@@ -154,12 +262,30 @@ interface PersistedShape {
   namespaceByCluster: Record<string, string>
   /** clusterId -> snoozeKey() -> epoch milliseconds when the snooze lapses. */
   snoozes: Record<string, Record<string, number>>
-  /** Where a utilisation bar turns amber, and where it turns red. */
-  warnThreshold: number
-  criticalThreshold: number
-  /** Whether each line is drawn at all. */
-  warnEnabled: boolean
-  criticalEnabled: boolean
+  /** Per-surface threshold lines. */
+  thresholds: Record<ThresholdScope, ThresholdSet>
+  /** Which denominator the pod list's bars use. */
+  podMeasure: PodMeasure
+  /**
+   * Detail-pane sections the operator has opened or closed, by id.
+   *
+   * Only DEVIATIONS are stored, never the whole set. Each section declares
+   * its own default, so a section added later opens or closes as its author
+   * intended rather than inheriting whatever an old preferences blob happened
+   * to record — and somebody who has never touched this has no entries at all.
+   */
+  sections: Record<string, boolean>
+  /**
+   * The single pair every surface shared before the setting grew scopes.
+   *
+   * Read once, to seed all three, and never written again. Somebody who had
+   * already moved these to 90/95 for a cluster that runs hot must not have
+   * that silently revert to 80/90 because the setting was reorganised.
+   */
+  warnThreshold?: number
+  criticalThreshold?: number
+  warnEnabled?: boolean
+  criticalEnabled?: boolean
   /** Whether a newly raised finding makes a sound at all. */
   alertSoundsEnabled: boolean
   /** severity -> the id of the motif it plays, or SILENT. */
@@ -191,16 +317,12 @@ const DEFAULTS: PersistedShape = {
   showManagedFields: false,
   namespaceByCluster: {},
   snoozes: {},
-  // 80 and 90 because they are where Kubernetes itself starts to behave
-  // differently — the kubelet's default eviction threshold leaves 10% free —
-  // and because they are the numbers most operators already run alerts on.
-  warnThreshold: 80,
-  criticalThreshold: 90,
-  // Both on. An operator who only wants to hear about the serious case can
-  // turn the first one off, but a default that says nothing until something
-  // is already critical is a default that arrives too late.
-  warnEnabled: true,
-  criticalEnabled: true,
+  // Both lines on, everywhere. An operator who only wants to hear about the
+  // serious case can turn the first one off, but a default that says nothing
+  // until something is already critical is a default that arrives too late.
+  thresholds: defaultThresholdsByScope(),
+  podMeasure: 'limits',
+  sections: {},
   // Off. An application that starts making noise nobody asked for is one
   // people mute at the operating system, taking the alarm they DID want with
   // it. Whoever wants this turns it on, and hears the sound as they choose it.
@@ -268,24 +390,19 @@ class Preferences {
   snoozes = $state<Record<string, Record<string, number>>>({})
 
   /**
-   * Where a utilisation bar stops being comfortable.
+   * Where a utilisation bar stops being comfortable, per surface.
    *
-   * One pair for the whole application. A cluster does not have one meaning
-   * of "nearly full" per card, and an operator who moves the line because
-   * their own nodes run hot means it everywhere.
+   * Turning a line off does not move it: somebody who wants only the critical
+   * line gets blue all the way to it, and their chosen position for the one
+   * they are not using is still there when they switch it back on.
    */
-  warnThreshold = $state<number>(DEFAULTS.warnThreshold)
-  criticalThreshold = $state<number>(DEFAULTS.criticalThreshold)
+  thresholds = $state<Record<ThresholdScope, ThresholdSet>>(defaultThresholdsByScope())
 
-  /**
-   * Whether each line is drawn.
-   *
-   * Turning one off does not move the other: somebody who wants only the
-   * critical line gets blue all the way to it, and their choice of where it
-   * sits is untouched by the one they are not using.
-   */
-  warnEnabled = $state<boolean>(DEFAULTS.warnEnabled)
-  criticalEnabled = $state<boolean>(DEFAULTS.criticalEnabled)
+  /** What the pod list's bars are a proportion of. */
+  podMeasure = $state<PodMeasure>(DEFAULTS.podMeasure)
+
+  /** Detail-pane sections the operator has opened or closed, by id. */
+  sections = $state<Record<string, boolean>>({})
 
   /** Whether a newly raised warning or critical finding makes a sound. */
   alertSoundsEnabled = $state<boolean>(DEFAULTS.alertSoundsEnabled)
@@ -419,37 +536,61 @@ class Preferences {
 
   // --- Thresholds -----------------------------------------------------------
 
+  /** The pair governing one surface. */
+  thresholdsFor = (scope: ThresholdScope): ThresholdSet => this.thresholds[scope]
+
   /**
-   * Moves the amber line, pushing the red one ahead of it if it has to.
+   * Moves one line, pushing the other out of the way if it has to.
    *
    * The two cannot cross: a warning that fires after the critical would
    * colour nothing, and silently accepting that is worse than adjusting the
-   * other end where the operator can see it happen.
+   * other end where the operator can see it happen. Which one gives way
+   * depends on which was grabbed — the line being dragged is the one the
+   * operator is thinking about, so it keeps the value they asked for.
    */
-  setWarnThreshold = (value: number): void => {
-    this.warnThreshold = clampThreshold(value)
-    if (this.criticalThreshold <= this.warnThreshold) {
-      this.criticalThreshold = clampThreshold(this.warnThreshold + 5)
+  setThreshold = (scope: ThresholdScope, line: 'warn' | 'critical', value: number): void => {
+    const set = { ...this.thresholds[scope] }
+
+    if (line === 'warn') {
+      set.warn = clampThreshold(value)
+      if (set.critical <= set.warn) set.critical = clampThreshold(set.warn + 5)
+    } else {
+      set.critical = clampThreshold(value)
+      if (set.warn >= set.critical) set.warn = clampThreshold(set.critical - 5)
     }
+
+    // Replaced rather than mutated, so one assignment invalidates the derived
+    // values that read it instead of each field doing so separately.
+    this.thresholds = { ...this.thresholds, [scope]: set }
     this.#save()
   }
 
-  setWarnEnabled = (enabled: boolean): void => {
-    this.warnEnabled = enabled
+  /** Whether a detail-pane section is open, falling back to its own default. */
+  sectionOpen = (id: string, fallback: boolean): boolean => this.sections[id] ?? fallback
+
+  /** Records that a section was opened or closed. */
+  setSectionOpen = (id: string, open: boolean): void => {
+    this.sections = { ...this.sections, [id]: open }
     this.#save()
   }
 
-  setCriticalEnabled = (enabled: boolean): void => {
-    this.criticalEnabled = enabled
+  /** Chooses what the pod list's bars measure against. */
+  setPodMeasure = (measure: PodMeasure): void => {
+    this.podMeasure = measure
     this.#save()
   }
 
-  /** Moves the red line, pulling the amber one back if it has to. */
-  setCriticalThreshold = (value: number): void => {
-    this.criticalThreshold = clampThreshold(value)
-    if (this.warnThreshold >= this.criticalThreshold) {
-      this.warnThreshold = clampThreshold(this.criticalThreshold - 5)
-    }
+  /** Switches one line on or off, leaving where it sits untouched. */
+  setThresholdEnabled = (
+    scope: ThresholdScope,
+    line: 'warn' | 'critical',
+    enabled: boolean,
+  ): void => {
+    const set = { ...this.thresholds[scope] }
+    if (line === 'warn') set.warnEnabled = enabled
+    else set.criticalEnabled = enabled
+
+    this.thresholds = { ...this.thresholds, [scope]: set }
     this.#save()
   }
 
@@ -631,20 +772,33 @@ class Preferences {
       if (stored.snoozes && typeof stored.snoozes === 'object') {
         this.snoozes = stored.snoozes
       }
-      // Validated and re-ordered on the way in, because storage outlives the
+      // Thresholds, per scope, validated on the way in — storage outlives the
       // code that wrote it and a pair read back crossed would colour nothing.
-      if (typeof stored.warnThreshold === 'number') {
-        this.warnThreshold = clampThreshold(stored.warnThreshold)
+      //
+      // MIGRATION. Before this setting had scopes there was one pair for the
+      // whole application. When only that is present it seeds all three, so
+      // an operator who had already moved the lines to 90/95 for a cluster
+      // that runs hot keeps them everywhere rather than silently reverting to
+      // the defaults because the setting was reorganised.
+      const legacy = readThresholdSet({
+        warn: stored.warnThreshold,
+        critical: stored.criticalThreshold,
+        warnEnabled: stored.warnEnabled,
+        criticalEnabled: stored.criticalEnabled,
+      })
+      if (stored.podMeasure === 'requests' || stored.podMeasure === 'limits') {
+        this.podMeasure = stored.podMeasure
       }
-      if (typeof stored.criticalThreshold === 'number') {
-        this.criticalThreshold = clampThreshold(stored.criticalThreshold)
+      if (stored.sections && typeof stored.sections === 'object') {
+        this.sections = stored.sections
       }
-      if (this.criticalThreshold <= this.warnThreshold) {
-        this.criticalThreshold = clampThreshold(this.warnThreshold + 5)
-      }
-      if (typeof stored.warnEnabled === 'boolean') this.warnEnabled = stored.warnEnabled
-      if (typeof stored.criticalEnabled === 'boolean') {
-        this.criticalEnabled = stored.criticalEnabled
+
+      const scoped = (stored.thresholds ?? {}) as Partial<Record<ThresholdScope, unknown>>
+
+      this.thresholds = {
+        overview: scoped.overview ? readThresholdSet(scoped.overview) : legacy,
+        nodes: scoped.nodes ? readThresholdSet(scoped.nodes) : legacy,
+        pods: scoped.pods ? readThresholdSet(scoped.pods) : legacy,
       }
       if (typeof stored.alertSoundsEnabled === 'boolean') {
         this.alertSoundsEnabled = stored.alertSoundsEnabled
@@ -688,10 +842,9 @@ class Preferences {
         showManagedFields: this.showManagedFields,
         namespaceByCluster: this.namespaceByCluster,
         snoozes: this.#pruneSnoozes(),
-        warnThreshold: this.warnThreshold,
-        criticalThreshold: this.criticalThreshold,
-        warnEnabled: this.warnEnabled,
-        criticalEnabled: this.criticalEnabled,
+        thresholds: this.thresholds,
+        podMeasure: this.podMeasure,
+        sections: this.sections,
         alertSoundsEnabled: this.alertSoundsEnabled,
         alertSounds: this.alertSounds,
         columns: this.columns,

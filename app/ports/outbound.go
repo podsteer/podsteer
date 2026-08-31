@@ -103,8 +103,9 @@ type EventPort interface {
 // is the whole reason this is a port of its own — so the workload use case can
 // degrade instead of failing.
 type MetricsPort interface {
-	// PodMetrics returns usage keyed by "namespace/name".
-	PodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (map[string]domain.Metrics, error)
+	// PodMetrics returns usage keyed by "namespace/name", each carrying both
+	// the pod total and the per-container breakdown behind it.
+	PodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (map[string]domain.PodUsage, error)
 
 	// NodeMetrics returns usage keyed by node name.
 	NodeMetrics(ctx context.Context, id domain.ClusterID) (map[string]domain.Metrics, error)
@@ -156,7 +157,44 @@ type ResourcePort interface {
 	ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName) (domain.ResourceTable, error)
 
 	// GetManifest returns one object serialised as YAML, for the detail view.
-	GetManifest(ctx context.Context, ref domain.ResourceRef) (string, error)
+	GetManifest(ctx context.Context, ref domain.ResourceRef, revealSecrets bool) (string, error)
+
+	// RevealSecretKey returns the decoded value of ONE key of one Secret.
+	//
+	// One key, never the whole Secret, and never as a side effect of anything
+	// else — this is only ever called because somebody clicked to reveal that
+	// key. Reading Secrets is an audited action that Kubernetes' own
+	// good-practices page tells cluster operators to alert on, and Falco
+	// ships an enabled rule for; a client that resolves every referenced
+	// Secret when a pane opens generates exactly that signature on somebody
+	// else's dashboard. Narrowing the call to a deliberate act keeps each
+	// audit entry meaningful.
+	RevealSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string) (string, error)
+}
+
+// PortForwardPort opens local ports onto container ports.
+//
+// Deliberately narrow. There is no "restart", no "reconnect" and no
+// persistence here, because each of those is a policy decision that belongs
+// above the transport — and because every leak in the competing clients comes
+// from the record of a forward and the goroutine running it being managed
+// separately. Start hands back a forward that is already running; Stop waits
+// for it to actually stop.
+type PortForwardPort interface {
+	// StartPortForward binds localPort onto the pod's remotePort. A localPort
+	// of zero lets the operating system choose, and the returned Forward
+	// carries whichever port was actually bound.
+	//
+	// selector is the pod's own labels, kept so a replacement can be found
+	// when the pod goes away. Empty disables reconnection.
+	StartPortForward(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, pod, podUID string, localPort, remotePort int, portName, protocol string, selector map[string]string) (domain.Forward, error)
+	// StopPortForward closes a forward and WAITS for its port to be released,
+	// so a caller may immediately rebind it.
+	StopPortForward(id string) error
+	// ListPortForwards reports what is forwarded right now.
+	ListPortForwards() []domain.Forward
+	// StopAllPortForwards tears everything down, for shutdown.
+	StopAllPortForwards()
 }
 
 // TerminalSize represents a terminal window size.

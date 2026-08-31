@@ -24,8 +24,9 @@
     { id: 'status', label: 'Status', width: 44, icon: CircleDot },
     { id: 'name', label: 'Name', width: 300, pinned: true },
     { id: 'roles', label: 'Roles', width: 140 },
-    { id: 'cpu', label: 'CPU', width: 200 },
-    { id: 'memory', label: 'Memory', width: 200 },
+    { id: 'cpu', label: 'CPU', width: 220, minWidth: 200 },
+    { id: 'memory', label: 'Memory', width: 220, minWidth: 200 },
+    { id: 'disk', label: 'Disk', width: 220, minWidth: 200 },
     { id: 'version', label: 'Version', width: 110 },
     { id: 'ip', label: 'Internal IP', width: 130, defaultHidden: true },
     { id: 'os', label: 'OS', width: 180, defaultHidden: true },
@@ -81,14 +82,69 @@
             {/if}
           </td>
         {/if}
+        <!--
+          An unmeasured node prints the dash dimmed and explains itself in the
+          tooltip, rather than spelling "no metrics" out on every row. Fifteen
+          rows each saying it is noise, and the explanation of WHY belongs
+          once, in the notice above the table — the same treatment the pod
+          list already used, now that both lists draw the same meter.
+        -->
         {#if isVisible('cpu')}
           <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
-            <MeterBar percent={node.cpuPercent} label={node.cpu} measured={node.hasMetrics} />
+            <MeterBar
+              label={node.cpu}
+              scope="nodes"
+              name="CPU"
+              valueWidth="7ch"
+              percent={node.cpuPercent}
+              measured={node.hasMetrics}
+              title={node.hasMetrics
+                ? `${node.cpu} of ${node.allocatableCpu} allocatable`
+                : 'Not measured — this cluster has no metrics source'}
+            />
           </td>
         {/if}
         {#if isVisible('memory')}
           <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
-            <MeterBar percent={node.memoryPercent} label={node.memory} measured={node.hasMetrics} />
+            <MeterBar
+              label={node.memory}
+              scope="nodes"
+              name="Memory"
+              percent={node.memoryPercent}
+              measured={node.hasMetrics}
+              title={node.hasMetrics
+                ? `${node.memory} of ${node.allocatableMemory} allocatable`
+                : 'Not measured — this cluster has no metrics source'}
+            />
+          </td>
+        {/if}
+        <!--
+          The FULLEST filesystem, not the average and not only nodefs.
+          Whichever of nodefs and imagefs is closer to full is the one that
+          decides whether the kubelet starts evicting, and a node whose image
+          filesystem is full while its root disk is empty is in trouble that
+          an average would hide.
+
+          Its own thresholds are the node ones, because that is what this is:
+          a share of a node's finite capacity, where high is bad. Unlike CPU
+          and memory, though, the kubelet's real line here is a percentage —
+          it evicts at 10% free by default — so these thresholds correspond to
+          something the cluster actually does.
+        -->
+        {#if isVisible('disk')}
+          <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
+            <MeterBar
+              label={node.disk}
+              scope="nodes"
+              name="Disk"
+              valueWidth="17ch"
+              percent={node.hasDisk ? node.diskPercent : null}
+              measured={node.hasDisk}
+              absent="not readable"
+              title={node.hasDisk
+                ? `${node.disk} on the fullest of this node's filesystems`
+                : 'Disk occupancy needs the nodes/proxy permission, which this account does not have'}
+            />
           </td>
         {/if}
         {#if isVisible('version')}

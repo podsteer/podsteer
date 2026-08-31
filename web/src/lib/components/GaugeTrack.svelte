@@ -23,7 +23,7 @@
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import { preferences } from '$stores/preferences.svelte'
+  import { preferences, type ThresholdScope } from '$stores/preferences.svelte'
 
   interface Props {
     /** Percentage full. Negative means nothing could be measured. */
@@ -44,6 +44,15 @@
     /** Names the reading for anyone who cannot see it. */
     label: string
     /**
+     * Which surface's threshold lines to draw.
+     *
+     * Defaults to the overview's, because that is where most of these bars
+     * live and because it is the pair that existed before the setting had
+     * scopes at all — so a caller that has not thought about it gets the
+     * behaviour it had before.
+     */
+    scope?: ThresholdScope
+    /**
      * Drawn inside the track, above the fill.
      *
      * For the one caller that has more to say on the same line: the capacity
@@ -53,7 +62,16 @@
     children?: Snippet
   }
 
-  let { value, height = 'h-2', width = 'w-full', label, children }: Props = $props()
+  let {
+    value,
+    height = 'h-2',
+    width = 'w-full',
+    label,
+    scope = 'overview',
+    children,
+  }: Props = $props()
+
+  const lines = $derived(preferences.thresholdsFor(scope))
 
   /**
    * Where each band begins, or null when the operator has turned it off.
@@ -64,8 +82,8 @@
    * which is a legitimate way to read a cluster somebody already knows is
    * busy.
    */
-  const warn = $derived(preferences.warnEnabled ? preferences.warnThreshold : null)
-  const critical = $derived(preferences.criticalEnabled ? preferences.criticalThreshold : null)
+  const warn = $derived(lines.warnEnabled ? lines.warn : null)
+  const critical = $derived(lines.criticalEnabled ? lines.critical : null)
 
   const filled = $derived(Math.max(0, Math.min(100, value)))
 

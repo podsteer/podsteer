@@ -17,6 +17,7 @@
   import { Activity } from '@lucide/svelte'
   import { iconForKind } from '$lib/kindIcons'
   import DetailSection from './DetailSection.svelte'
+  import DetailList from './DetailList.svelte'
 
   interface InvolvedObject {
     kind: string
@@ -143,7 +144,7 @@
          the message read as an unlabelled quotation above an unlabelled
          list. -->
     {#if message}
-      <DetailSection title="Message">
+      <DetailSection id="event-message" title="Message">
         <!-- In full, selectable, and unboxed. It is the one field somebody
              came to read, and the list could only ever show a truncated line
              of it — but a border around it made a sentence look like an
@@ -154,24 +155,9 @@
       </DetailSection>
     {/if}
 
-    <DetailSection title="Details">
-      <!-- A quarter for the labels and the rest for the values, both aligned
-           left. Values here are of wildly different lengths — "Warning"
-           beside a sixty-character event name — and right-aligning them
-           against a ragged left edge left nothing to read down. -->
-      <dl class="grid grid-cols-[25%_1fr] gap-x-4 gap-y-2">
-        <!-- The label carries the emphasis and the value recedes, as on the
-             capacity card and for the same reason: the labels are the same on
-             every event, so they are what the eye navigates by, and somebody
-             looking for "Reported by" should find the words before the name
-             beside them. -->
-        {#each rows as row (row.label)}
-          <dt class="text-body-medium text-on-surface">{row.label}</dt>
-          <dd class="min-w-0 text-body-medium break-words text-on-surface-variant" data-selectable>
-            {row.value}
-          </dd>
-        {/each}
-      </dl>
+    <!-- The layout this pane established, now shared: see DetailList. -->
+    <DetailSection id="event-details" title="Details">
+      <DetailList {rows} />
     </DetailSection>
   </div>
 {/if}

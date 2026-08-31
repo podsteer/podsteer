@@ -539,6 +539,11 @@ type Overview struct {
 	// Unavailable names data sources that could not be read, so the UI can
 	// say "no metrics" instead of quietly showing zeroes.
 	Unavailable []string `json:"unavailable"`
+	// Metrics says why usage figures are absent, when they are: "measured",
+	// "not-installed", "forbidden" or "failed". The UI needs the distinction
+	// because "install metrics-server" is the wrong advice for somebody who
+	// is merely not allowed to read the one already running.
+	Metrics string `json:"metrics"`
 	// Counts the findings by severity, so the header does not have to.
 	CriticalCount int `json:"criticalCount"`
 	WarningCount  int `json:"warningCount"`
@@ -568,6 +573,7 @@ func toOverview(overview domain.Overview) Overview {
 		Namespaces:  toNamespaceLoads(overview.Namespaces, overview.Capacity),
 		Restarts:    toRestartHotspots(overview.Restarts),
 		Unavailable: overview.Unavailable,
+		Metrics:     string(overview.Metrics),
 	}
 
 	for _, finding := range overview.Findings {
