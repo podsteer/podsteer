@@ -146,6 +146,7 @@ func mapContainers(pod *corev1.Pod) []domain.Container {
 			if status.Image != "" {
 				container.Image = status.Image
 			}
+			container.ImageID = status.ImageID
 
 			if status.Started != nil {
 				container.Started = *status.Started

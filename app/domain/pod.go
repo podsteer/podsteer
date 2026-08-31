@@ -110,6 +110,11 @@ type Container struct {
 	// LastTermination is how this container's previous life ended, when there
 	// was one. See Termination — it is the only record of it that exists.
 	LastTermination Termination
+	// ImageID is the reference the runtime actually resolved, digest and all
+	// — "…/app@sha256:abc…" — as distinct from Image, which is the reference
+	// somebody wrote. Two pods can name the same tag and hold different
+	// digests, and this is the only field that says so.
+	ImageID string
 	// Usage is what this container is measuring right now, when anything
 	// measured it. The pod's total is the sum of these, and this is the half
 	// that says which container the total came from.

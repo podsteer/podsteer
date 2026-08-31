@@ -943,6 +943,7 @@ func NewOverview(input OverviewInput) Overview {
 	findings = append(findings, restartFindings(input.Pods, now)...)
 	findings = append(findings, configurationFindings(input.Pods, pods)...)
 	findings = append(findings, memoryLimitFindings(input.Pods, input.MetricsMeasured)...)
+	findings = append(findings, imageDriftFindings(input.Pods)...)
 	findings = append(findings, eventFindings(input.Events, findings, now)...)
 	rankFindings(findings)
 
@@ -2571,4 +2572,115 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f%ciB", float64(bytes)/float64(div), "KMGTP"[exp])
+}
+
+// imageDriftFindings reports replicas of one workload running different code.
+//
+// A tag is a pointer somebody can move. When it moves while a ReplicaSet is
+// scaling — or when a pod restarts and pulls again — the replicas of a single
+// ReplicaSet end up on different digests while every field an operator can
+// see still reads the same tag. `kubectl get pods` shows them identical.
+// Nothing in any client surfaces it, and the failure it produces is the worst
+// kind: half the requests behave one way and half the other, reproducibly
+// irreproducible.
+//
+// GROUPED BY REPLICASET, NOT BY DEPLOYMENT, and that is what makes the rule
+// safe rather than noisy. A Deployment rolling out is SUPPOSED to have two
+// digests running at once — that is what a rollout is — but those pods belong
+// to two different ReplicaSets, one per revision. Within a single ReplicaSet
+// the pod template is fixed, so two digests there cannot be explained by a
+// rollout and are always the tag having moved underneath.
+//
+// Restricted to ReplicaSet-owned pods for the same reason. A StatefulSet or
+// DaemonSet updates its template in place, so mid-rollout its pods legitimately
+// differ and the revision is carried in a label rather than in the owner. Those
+// would need the revision compared instead, and reporting them here would be a
+// false positive on a normal deployment.
+func imageDriftFindings(pods []Pod) []Finding {
+	// (namespace/replicaset/container) -> the distinct digests seen.
+	type key struct{ owner, container string }
+	digests := make(map[key]map[string]struct{})
+	order := make([]key, 0, 8)
+
+	for _, pod := range pods {
+		if !pod.OccupiesNode() {
+			continue
+		}
+		controller := pod.Controller()
+		if controller.Kind != "ReplicaSet" || controller.Name == "" {
+			continue
+		}
+
+		owner := pod.Namespace().String() + "/" + controller.Name
+		for _, container := range pod.Containers() {
+			digest := imageDigest(container.ImageID)
+			if digest == "" {
+				continue
+			}
+
+			id := key{owner: owner, container: container.Name}
+			seen, ok := digests[id]
+			if !ok {
+				seen = make(map[string]struct{}, 2)
+				digests[id] = seen
+				order = append(order, id)
+			}
+			seen[digest] = struct{}{}
+		}
+	}
+
+	findings := make([]Finding, 0, 1)
+	subjects := make([]Subject, 0, maxSubjects)
+	count := 0
+
+	for _, id := range order {
+		if len(digests[id]) < 2 {
+			continue
+		}
+		count++
+		if len(subjects) < maxSubjects {
+			namespace, name, _ := strings.Cut(id.owner, "/")
+			subjects = append(subjects, Subject{
+				Kind:      "ReplicaSet",
+				Namespace: NamespaceName(namespace),
+				Name:      name,
+				Detail: fmt.Sprintf("%s is running %d different builds",
+					id.container, len(digests[id])),
+			})
+		}
+	}
+
+	if count == 0 {
+		return nil
+	}
+
+	return append(findings, Finding{
+		ID:       "config:imagedrift",
+		Severity: SeverityWarning,
+		Category: CategoryFindingConfiguration,
+		Title:    "Replicas are running different builds",
+		Summary: fmt.Sprintf("%s where pods of one ReplicaSet resolved to different image digests",
+			plural(count, "container", "containers")),
+		Advice: "Every pod of a ReplicaSet is built from the same template, so this means the tag " +
+			"moved after some of them started. Half your traffic is being served by code you are not " +
+			"looking at. Pin a digest, or roll the workload to bring them back into agreement.",
+		Subjects: subjects,
+		Count:    count,
+		KindID:   podKindID,
+	})
+}
+
+// imageDigest extracts the sha256 digest from a resolved image reference.
+//
+// The runtime writes these inconsistently — "docker-pullable://repo@sha256:…",
+// "repo@sha256:…", and on some runtimes the bare digest — so the digest itself
+// is what is compared rather than the whole string. Comparing the references
+// would report drift between two nodes running different container runtimes,
+// which is not drift at all.
+func imageDigest(imageID string) string {
+	_, digest, found := strings.Cut(imageID, "@")
+	if !found {
+		return ""
+	}
+	return digest
 }

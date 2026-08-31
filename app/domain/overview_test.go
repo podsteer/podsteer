@@ -1732,3 +1732,108 @@ func TestMemoryLimitFindingStaysQuietWithoutGrounds(t *testing.T) {
 		})
 	}
 }
+
+// replicaPod builds a running pod owned by a named ReplicaSet, with one
+// container resolved to a given digest.
+func replicaPod(t *testing.T, name, replicaSet, imageID string) domain.Pod {
+	t.Helper()
+
+	return podFixture(t, domain.PodSpec{
+		Name: name, Namespace: "default", NodeName: "node-1",
+		Phase:     domain.PodPhaseRunning,
+		CreatedAt: overviewNow.Add(-time.Hour),
+		Owners: []domain.OwnerReference{
+			{Kind: "ReplicaSet", Name: replicaSet, Controller: true},
+		},
+		Containers: []domain.Container{{
+			Name:    "app",
+			Image:   "registry/app:v1",
+			ImageID: imageID,
+			State:   domain.ContainerStateRunning,
+		}},
+	})
+}
+
+func TestImageDriftFindsReplicasRunningDifferentBuilds(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Pods: []domain.Pod{
+			// Same ReplicaSet, same tag, two different digests. The template
+			// is fixed within a ReplicaSet, so this can only be the tag having
+			// moved after some pods started.
+			replicaPod(t, "app-1", "app-7d9f", "docker-pullable://registry/app@sha256:aaa"),
+			replicaPod(t, "app-2", "app-7d9f", "docker-pullable://registry/app@sha256:bbb"),
+		},
+	})
+
+	finding, ok := findingByTitle(overview.Findings, "Replicas are running different builds")
+	if !ok {
+		t.Fatalf("drift between replicas was not reported; got %v", titles(overview.Findings))
+	}
+	if finding.Subjects[0].Name != "app-7d9f" {
+		t.Errorf("subject = %q, want the ReplicaSet the pods share", finding.Subjects[0].Name)
+	}
+}
+
+func TestImageDriftDoesNotReportARollout(t *testing.T) {
+	t.Parallel()
+
+	// THE FALSE POSITIVE THIS RULE EXISTS TO AVOID. A Deployment mid-rollout
+	// is supposed to have two digests running — that is what a rollout is —
+	// and those pods belong to two different ReplicaSets, one per revision.
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Pods: []domain.Pod{
+			replicaPod(t, "app-old", "app-7d9f", "docker-pullable://registry/app@sha256:aaa"),
+			replicaPod(t, "app-new", "app-8e2a", "docker-pullable://registry/app@sha256:bbb"),
+		},
+	})
+
+	if _, ok := findingByTitle(overview.Findings, "Replicas are running different builds"); ok {
+		t.Error("a normal rollout was reported as image drift")
+	}
+}
+
+func TestImageDriftComparesDigestsNotReferences(t *testing.T) {
+	t.Parallel()
+
+	// Runtimes write the resolved reference differently — containerd omits
+	// the docker-pullable prefix that dockershim used. Comparing the whole
+	// string would report drift between two nodes running different runtimes,
+	// which is not drift at all.
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Pods: []domain.Pod{
+			replicaPod(t, "app-1", "app-7d9f", "docker-pullable://registry/app@sha256:aaa"),
+			replicaPod(t, "app-2", "app-7d9f", "registry/app@sha256:aaa"),
+		},
+	})
+
+	if _, ok := findingByTitle(overview.Findings, "Replicas are running different builds"); ok {
+		t.Error("the same digest written two ways was reported as drift")
+	}
+}
+
+func TestImageDriftIgnoresPodsWithNoResolvedDigest(t *testing.T) {
+	t.Parallel()
+
+	// A pod whose containers have not started yet has no imageID. Treating
+	// absence as a distinct value would flag every workload mid-restart.
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Now:       overviewNow,
+		Pods: []domain.Pod{
+			replicaPod(t, "app-1", "app-7d9f", "docker-pullable://registry/app@sha256:aaa"),
+			replicaPod(t, "app-2", "app-7d9f", ""),
+		},
+	})
+
+	if _, ok := findingByTitle(overview.Findings, "Replicas are running different builds"); ok {
+		t.Error("an unstarted pod was counted as a second build")
+	}
+}
