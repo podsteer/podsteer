@@ -21,9 +21,34 @@
     kind?: string
     /** The open pod's recent usage, accumulated while the drawer is open. */
     usage?: UsageSample[]
+    /** Whether this cluster serves a kind, so a link is only offered when
+        there is somewhere for it to go. */
+    canOpen?: (kindName: string) => string | null
+    /** Follows a reference to the object it names. */
+    onopen?: (kindName: string, name: string, namespace: string) => void
   }
 
-  let { manifest, selectedPod, selectedWorkload, kind, usage = [] }: Props = $props()
+  let {
+    manifest,
+    selectedPod,
+    selectedWorkload,
+    kind,
+    usage = [],
+    canOpen,
+    onopen,
+  }: Props = $props()
+
+  /**
+   * Builds the click handler for a reference, or leaves it undefined.
+   *
+   * Undefined is the important half: a Node row on a cluster whose nodes this
+   * account cannot list must render as plain text, not as a link that fails
+   * when followed. Offering a dead link is worse than offering none.
+   */
+  function follow(kindName: string, name: string, namespace = ''): (() => void) | undefined {
+    if (!name || !onopen || !canOpen?.(kindName)) return undefined
+    return () => onopen(kindName, name, namespace)
+  }
 
   let parsedManifest = $derived.by(() => {
     if (!manifest) return null
@@ -69,12 +94,55 @@
     { label: 'UID', value: metadata.uid ?? '—', truncate: true },
   ])
 
-  const statusRows = $derived<DetailRow[]>([
-    { label: 'Phase', value: status.phase ?? '—' },
-    { label: 'Pod IP', value: status.podIP ?? '—' },
-    { label: 'Node', value: spec.nodeName ?? '—' },
-    { label: 'QoS Class', value: status.qosClass ?? '—' },
-  ])
+  /**
+   * The pod's controller, as kubectl prints it.
+   *
+   * Only the CONTROLLING owner. A pod can carry several ownerReferences and
+   * exactly one of them is the controller — the object that will recreate it —
+   * and the others are bookkeeping nobody navigates to.
+   */
+  const controller = $derived.by(() => {
+    const owners = (metadata.ownerReferences ?? []) as { kind: string; name: string; controller?: boolean }[]
+    return owners.find((owner) => owner.controller) ?? null
+  })
+
+  const statusRows = $derived.by<DetailRow[]>(() => {
+    const rows: DetailRow[] = [
+      { label: 'Phase', value: status.phase ?? '—' },
+      { label: 'Pod IP', value: status.podIP ?? '—' },
+    ]
+
+    // Every pod IP, not only the first. A dual-stack pod has two and the
+    // singular field carries whichever the cluster's primary family is,
+    // which is exactly the one somebody debugging the OTHER family does not
+    // want.
+    const ips = ((status.podIPs ?? []) as { ip: string }[]).map((entry) => entry.ip)
+    if (ips.length > 1) rows.push({ label: 'Pod IPs', value: ips.join(', ') })
+
+    rows.push({
+      label: 'Node',
+      value: spec.nodeName ?? '—',
+      onclick: follow('Node', spec.nodeName),
+    })
+
+    if (controller) {
+      rows.push({
+        label: 'Controlled by',
+        value: `${controller.kind}/${controller.name}`,
+        onclick: follow(controller.kind, controller.name, metadata.namespace ?? ''),
+      })
+    } else {
+      // Said out loud, because it is a finding rather than a blank: nothing
+      // will recreate this pod. The assessment says so too; this is the
+      // field somebody looks at to check.
+      rows.push({ label: 'Controlled by', value: 'nothing — this is a bare pod' })
+    }
+
+    rows.push({ label: 'Service account', value: spec.serviceAccountName ?? 'default' })
+    rows.push({ label: 'QoS Class', value: status.qosClass ?? '—' })
+
+    return rows
+  })
 
   const replicaRows = $derived<DetailRow[]>([
     { label: 'Desired', value: String(status.replicas ?? replicas) },

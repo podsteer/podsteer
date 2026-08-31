@@ -189,6 +189,33 @@
     await session.openDetail(target.name, target.namespace)
   }
 
+  /**
+   * The navigator id for a kind named by its Kubernetes Kind, or null.
+   *
+   * Resolved against what THIS cluster serves rather than a table compiled in
+   * here, which is what makes a link to a CRD work and a link to a kind the
+   * account cannot list correctly absent.
+   */
+  function kindIdFor(kindName: string): string | null {
+    return session.kinds.find((kind) => kind.kind === kindName)?.id ?? null
+  }
+
+  /**
+   * Follows a reference from the open pane to the object it names.
+   *
+   * The pane is full of names that are really addresses — the node a pod is
+   * on, the ReplicaSet that owns it — and until now every one of them was
+   * text to be copied and pasted into a search box. Following one closes this
+   * drawer and opens that object's, which is the same motion as clicking a
+   * row in the list behind it.
+   */
+  async function openObject(kindName: string, name: string, namespace: string): Promise<void> {
+    const kindId = kindIdFor(kindName)
+    if (!kindId) return
+    await session.selectKind(kindId)
+    await session.openDetail(name, namespace)
+  }
+
   const isScalable = $derived(
     session.selectedKindId === 'apps/v1/deployments' ||
     session.selectedKindId === 'apps/v1/statefulsets'
@@ -670,6 +697,8 @@
           selectedWorkload={selectedWorkload}
           kind={session.selectedKind?.kind}
           usage={session.usage}
+          canOpen={kindIdFor}
+          onopen={openObject}
         />
       {:else if activeTab === 'logs'}
         {#if maximized === 'logs'}

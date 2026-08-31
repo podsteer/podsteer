@@ -36,6 +36,14 @@
      * anyway.
      */
     truncate?: boolean
+    /**
+     * Makes the value a link to the object it names.
+     *
+     * Offered rather than assumed: a Node row is worth following, and the
+     * same row on a cluster whose nodes this account cannot list is not. The
+     * caller decides, because only it knows whether there is anywhere to go.
+     */
+    onclick?: () => void
   }
 
   interface Props {
@@ -66,7 +74,17 @@
         : 'break-words'}"
       data-selectable
     >
-      {row.value}
+      {#if row.onclick}
+        <!-- A button, not an anchor: this navigates within the application
+             and has no address. Styled as a link because that is what it
+             behaves like, and because a value that is followable should look
+             different from one that is not. -->
+        <button type="button" onclick={row.onclick} class="resource-link max-w-full truncate text-left">
+          {row.value}
+        </button>
+      {:else}
+        {row.value}
+      {/if}
     </dd>
   {/each}
 </dl>
