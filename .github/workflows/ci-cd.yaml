@@ -432,7 +432,7 @@ jobs:
 
       - name: Sign The Windows Executable
         if: runner.os == 'Windows' && env.AZURE_CLIENT_ID != ''
-        uses: azure/trusted-signing-action@v0
+        uses: azure/trusted-signing-action@v2
         with:
           endpoint: ${{ secrets.PDS__AZURE_SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ secrets.PDS__AZURE_SIGNING_ACCOUNT }}
