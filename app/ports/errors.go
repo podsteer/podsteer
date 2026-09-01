@@ -66,6 +66,18 @@ var (
 	// working context's credentials is not something to do on a paste.
 	ErrKubeconfigConflict = errors.New("context already exists")
 
+	// ErrCredentialPluginMissing means the kubeconfig authenticates through an
+	// executable that is not on PATH.
+	//
+	// ITS OWN SENTINEL BECAUSE THE ADVICE IS UNRELATED to everything else here.
+	// Every managed cluster authenticates this way — `aws eks get-token` for
+	// EKS, `gke-gcloud-auth-plugin` for GKE, `kubelogin` for AKS — and when the
+	// binary cannot be found the failure surfaces as a cluster that will not
+	// connect. It is neither: the cluster was never contacted, the credentials
+	// are fine, and a program is missing. Reported as unreachable it sends
+	// somebody to check a VPN.
+	ErrCredentialPluginMissing = errors.New("credential plugin not found")
+
 	// ErrMetricsUnavailable means the cluster serves no metrics API.
 	//
 	// This is an ordinary condition, not a fault: metrics-server is an add-on

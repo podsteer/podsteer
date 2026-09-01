@@ -13,8 +13,12 @@
   tooltip, and no way to tell 60% of a request from 60% of a limit. The
   library is already a dependency and already loaded lazily.
 
-  The series is only as long as the drawer has been open — nothing retains
-  per-pod history, and pretending otherwise is what the empty state avoids.
+  The series comes from `usageHistory`, which keeps whatever the list polls
+  already fetched — so a chart opens with a shape rather than a blank frame.
+  It is bounded by the configured window and by what was actually sampled: a
+  node's series is continuous because the assessment runs on every poll, while
+  a pod's pauses whenever the pod list is not the list being polled. Those
+  pauses are DRAWN as breaks rather than joined; see `series` below.
 -->
 <script lang="ts">
   import type { Chart } from '$lib/echarts'
@@ -58,6 +62,65 @@
   )
 
   /**
+   * The series as [timestamp, value] pairs, broken wherever time was lost.
+   *
+   * TWO THINGS HERE, AND BOTH ARE ABOUT NOT LYING WITH THE X AXIS.
+   *
+   * The pairs exist because the axis used to be a `category`: one slot per
+   * sample, evenly spaced, whatever the clock said. A minute with no samples
+   * in it was drawn as a single step identical to a two-second one, so the
+   * chart compressed its own gaps out of existence and the line looked
+   * continuous when it was not.
+   *
+   * The nulls exist because a real gap must LOOK like one. Samples stop
+   * whenever the object is not in the list being polled — walk from the pod
+   * list to the node list and every pod's series pauses — and joining the two
+   * ends draws a straight line through a minute nobody measured, which is
+   * indistinguishable from a minute of steady usage.
+   *
+   * ECharts breaks a line on null by default (`connectNulls` is false), so
+   * the inserted point is the whole mechanism.
+   */
+  const series = $derived.by(() => {
+    const points: [number, number | null][] = []
+
+    for (const [index, sample] of samples.entries()) {
+      const value = metric === 'cpu' ? sample.cpuCores : sample.memoryBytes
+      const previous = samples[index - 1]
+
+      // Three times the typical spacing, rather than a fixed number of
+      // seconds: the poll interval is configurable, so a threshold in seconds
+      // would either break every line on a slow refresh or never break one on
+      // a fast refresh.
+      if (previous && sample.at - previous.at > gapThreshold * 3) {
+        points.push([previous.at + 1, null])
+      }
+      points.push([sample.at, value])
+    }
+
+    return points
+  })
+
+  /**
+   * The typical spacing between samples, in milliseconds.
+   *
+   * The MEDIAN rather than the mean, because the mean is dragged upward by
+   * exactly the gaps this is used to detect — one long pause in a short
+   * series would raise the threshold above itself and the gap would go
+   * undrawn.
+   */
+  const gapThreshold = $derived.by(() => {
+    if (samples.length < 3) return Number.POSITIVE_INFINITY
+
+    const deltas = samples
+      .slice(1)
+      .map((sample, index) => sample.at - samples[index].at)
+      .sort((a, b) => a - b)
+
+    return deltas[Math.floor(deltas.length / 2)]
+  })
+
+  /**
    * Where the top of the chart sits.
    *
    * The limit when there is one and usage is under it, so the bar the pod is
@@ -89,9 +152,20 @@
       // dashboard. The axis labels are the only chrome that earns its space.
       grid: { top: 8, right: 8, bottom: 20, left: 52 },
       xAxis: {
-        type: 'category',
-        data: samples.map((sample) => new Date(sample.at).toLocaleTimeString()),
-        axisLabel: { color: ink, fontSize: 10, showMaxLabel: true },
+        // Time, not category. A category axis spaces samples evenly whatever
+        // the clock said, which drew a pause in sampling as though no time
+        // had passed in it.
+        type: 'time',
+        axisLabel: {
+          color: ink,
+          fontSize: 10,
+          hideOverlap: true,
+          formatter: (value: number) =>
+            new Date(value).toLocaleTimeString(undefined, {
+              hour: '2-digit',
+              minute: '2-digit',
+            }),
+        },
         axisLine: { lineStyle: { color: ink, opacity: 0.2 } },
         splitLine: { show: false },
       },
@@ -104,15 +178,18 @@
       },
       tooltip: {
         trigger: 'axis',
-        formatter: (params: { value: number; name: string }[]) =>
-          `${params[0]?.name}<br/>${format(params[0]?.value ?? 0)}`,
+        formatter: (params: { value: [number, number | null] }[]) => {
+          const point = params[0]?.value
+          if (!point || point[1] === null) return ''
+          return `${new Date(point[0]).toLocaleTimeString()}<br/>${format(point[1])}`
+        },
       },
       series: [
         {
           type: 'line',
           smooth: false,
           showSymbol: false,
-          data: values,
+          data: series,
           lineStyle: { color: line, width: 1.6 },
           areaStyle: { color: line, opacity: 0.12 },
           markLine: marks.length

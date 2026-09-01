@@ -30,6 +30,7 @@ import (
 	historystore "github.com/podsteer/podsteer/app/adapters/history"
 	"github.com/podsteer/podsteer/app/adapters/k8s"
 	"github.com/podsteer/podsteer/app/adapters/macwindow"
+	"github.com/podsteer/podsteer/app/adapters/shellpath"
 	wailsadapter "github.com/podsteer/podsteer/app/adapters/wails"
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/config"
@@ -76,6 +77,25 @@ func run() error {
 		slog.String("version", cfg.App.Version),
 		slog.String("kubeconfig", kubeconfigLabel(cfg.Kubernetes.KubeconfigPath)))
 
+	// A kubeconfig context can name a credential plugin — `aws eks get-token`
+	// for EKS, `gke-gcloud-auth-plugin` for GKE — which client-go resolves
+	// through PATH. A .app launched from Finder or by Homebrew inherits
+	// launchd's environment, which has no Homebrew directory in it, so every
+	// managed cluster failed to connect from an installed build while working
+	// perfectly under `make run`.
+	//
+	// ALONGSIDE THE WINDOW RATHER THAN BEFORE IT. Asking the login shell takes
+	// about a second, and a second of blank window on every launch is a bad
+	// trade for something only the first connection needs. The channel is
+	// handed to the Kubernetes adapter, which waits on it when it builds its
+	// first client — by which time the operator has usually spent longer than
+	// that choosing a cluster.
+	envReady := make(chan struct{})
+	go func() {
+		defer close(envReady)
+		logger.Info("resolved PATH", slog.String("result", shellpath.Resolve(context.Background())))
+	}()
+
 	// --- Driven (outbound) adapters -------------------------------------
 	//
 	// Built first because everything inward depends on them. The Kubernetes
@@ -87,6 +107,7 @@ func run() error {
 		QPS:            cfg.Kubernetes.QPS,
 		Burst:          cfg.Kubernetes.Burst,
 		UserAgent:      fmt.Sprintf("%s/%s", cfg.App.Name, cfg.App.Version),
+		EnvReady:       envReady,
 	}, logger)
 
 	// The Wails lifecycle handler doubles as the outbound event publisher, so

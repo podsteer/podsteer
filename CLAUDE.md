@@ -317,6 +317,38 @@ consequences for code written now:
   to be swappable because the obvious next implementation records outside the
   application entirely.
 
+## A desktop launch has no shell, and managed clusters need one
+
+`app/adapters/shellpath` runs the operator's login shell once and adopts its
+PATH. It exists because a `.app` launched from Finder, the Dock or Homebrew
+inherits **launchd's** environment — on a stock machine `launchctl getenv PATH`
+is empty, so the process gets `/usr/bin:/bin:/usr/sbin:/sbin` and neither
+`/opt/homebrew/bin` nor a Google Cloud SDK in the home directory.
+
+That breaks every managed cluster. EKS authenticates by running
+`aws eks get-token`, GKE runs `gke-gcloud-auth-plugin`, AKS runs `kubelogin`,
+and client-go resolves all of them through `exec.LookPath`. **The same build
+works under `make run`**, because a terminal passes its environment down — which
+is precisely why this went unnoticed for so long. Development and an installed
+launch are not the same launch.
+
+Three things about it are deliberate:
+
+- **It only fires when PATH looks like the bare system default.** An operator
+  who launched from a terminal keeps exactly what they had; overriding it would
+  make behaviour depend on a login shell they were not using.
+- **It runs alongside the window, not before it.** Asking the shell costs about
+  a second. `k8s.Config.EnvReady` is a channel the client factory waits on when
+  it builds its first client, so the cost lands on the first connection rather
+  than on every launch.
+- **Failing is not fatal.** A startup file that hangs is bounded by a timeout
+  and the inherited PATH is kept.
+
+When it is not enough, `ports.ErrCredentialPluginMissing` names the binary.
+That is its own sentinel and its own `ErrorCode` rather than unreachable,
+because the cluster was never contacted: reported as an outage it sends
+somebody to check a VPN, and it is deliberately not retryable.
+
 ## External systems
 
 The local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`) and the API servers

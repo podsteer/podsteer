@@ -788,6 +788,7 @@ export class ClusterSession {
     )
     this.#lastFindingIds = current
     this.overview = overview
+    this.#retainNodeUsage(overview)
 
     if (previous === null) return
 
@@ -903,12 +904,41 @@ export class ClusterSession {
       })
     }
 
-    for (const node of this.nodes) {
-      if (!node.hasMetrics) continue
-      usageHistory.record(usageKey('node', '', node.name), {
+    // Nodes are NOT recorded here. #assign clears every row buffer each poll
+    // and fills only the one the open view reads, so this loop saw nothing
+    // whenever the operator was anywhere but the node list — which is exactly
+    // the case the retention exists for. They come from the assessment
+    // instead, which runs on every poll whatever is on screen.
+  }
+
+  /**
+   * Keeps each node's usage from the assessment, which never stops running.
+   *
+   * WHY NOT FROM THE NODE LIST. The row buffers are mutually exclusive: a
+   * poll on the Pods page fetches pods and leaves `this.nodes` empty, so a
+   * minute spent reading pods put a minute-wide hole in every node's chart
+   * and, past the window, erased it. The assessment is fetched alongside
+   * whatever view is open — it already feeds the navigator badge — so it is
+   * the one source that is always current.
+   *
+   * It carries `usageCpuMilli` rather than the `cpuPercent` beside it because
+   * those are DIFFERENT MEASUREMENTS: the shares on a NodeLoad are requests
+   * against allocatable, what the scheduler decides on, while the chart plots
+   * what metrics-server measured. Feeding the chart the share would draw a
+   * plausible line of the wrong quantity.
+   */
+  #retainNodeUsage(overview: Overview): void {
+    const at = Date.now()
+
+    for (const load of overview.nodeLoads) {
+      // An unmeasured node is skipped rather than recorded as zero: a cluster
+      // with no metrics-server would otherwise accumulate a confident flat
+      // line along the axis.
+      if (!load.usageMeasured) continue
+      usageHistory.record(usageKey('node', '', load.name), {
         at,
-        cpuCores: parseQuantity(node.cpu) ?? 0,
-        memoryBytes: parseQuantity(node.memory) ?? 0,
+        cpuCores: load.usageCpuMilli / 1000,
+        memoryBytes: load.usageMemoryBytes,
       })
     }
   }

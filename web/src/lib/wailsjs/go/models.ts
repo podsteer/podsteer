@@ -619,6 +619,9 @@ export namespace wails {
 	    podPercent: number;
 	    diskPercent: number;
 	    pods: number;
+	    usageCpuMilli: number;
+	    usageMemoryBytes: number;
+	    usageMeasured: boolean;
 	    cpuAmount: string;
 	    memoryAmount: string;
 	    podAmount: string;
@@ -645,6 +648,9 @@ export namespace wails {
 	        this.podPercent = source["podPercent"];
 	        this.diskPercent = source["diskPercent"];
 	        this.pods = source["pods"];
+	        this.usageCpuMilli = source["usageCpuMilli"];
+	        this.usageMemoryBytes = source["usageMemoryBytes"];
+	        this.usageMeasured = source["usageMeasured"];
 	        this.cpuAmount = source["cpuAmount"];
 	        this.memoryAmount = source["memoryAmount"];
 	        this.podAmount = source["podAmount"];

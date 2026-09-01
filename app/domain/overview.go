@@ -708,6 +708,20 @@ type NodeLoad struct {
 	DiskUsedBytes int64
 	// PodCapacity is the node's own cap, the denominator of PodPercent.
 	PodCapacity int64
+	// Usage is what the node is actually CONSUMING, which is a different
+	// measurement from every field above.
+	//
+	// CPUMilli and MemoryPercent are REQUESTS — what pods reserved, which is
+	// what the scheduler decides on and what the load grid draws. This is what
+	// metrics-server measured. The two routinely disagree by a factor of
+	// several, and conflating them is how a cluster reads as calm while it
+	// refuses to schedule anything.
+	//
+	// Carried here so the assessment — which runs on every poll whatever view
+	// is open — can feed a node's usage chart. Without it a chart only
+	// accumulated while somebody was looking at the node list, so walking away
+	// to the pod list for a minute left a hole in it.
+	Usage Metrics
 }
 
 // nodeLoads computes each node's share of what has been requested.
@@ -755,6 +769,7 @@ func nodeLoads(nodes []Node, pods []Pod) []NodeLoad {
 			CPUMilli:     entry.cpu,
 			MemoryBytes:  entry.memory,
 			DiskPercent:  -1,
+			Usage:        node.Usage(),
 		}
 		if allocatable.CPUMilli > 0 {
 			out.CPUPercent = float64(entry.cpu) / float64(allocatable.CPUMilli) * 100
