@@ -26,17 +26,28 @@
     /** Which resource this chart is for. */
     metric: 'cpu' | 'memory'
     /**
-     * The declared request and limit, in the SAME UNIT as the samples —
-     * cores for CPU, bytes for memory. Zero means undeclared, which draws no
-     * line rather than a line at zero.
+     * The lines the usage is judged against, in the SAME UNIT as the samples
+     * — cores for CPU, bytes for memory.
+     *
+     * A list rather than a request and a limit, because what a reading is
+     * measured against depends on what is being measured: a pod has a request
+     * it should be near and a limit it must not reach, while a node has one
+     * ceiling and no notion of either. Encoding the pod's two into the
+     * component would have meant a node passing its allocatable as a "limit",
+     * which is not what allocatable is.
+     *
+     * A value of zero is dropped rather than drawn: a line at zero for an
+     * undeclared limit reads as "the limit is nothing", the opposite of what
+     * an absent one means.
      */
-    request: number
-    limit: number
+    markers?: { value: number; label: string; tone: 'warn' | 'critical' }[]
     /** Formats a value for the axis and the tooltip. */
     format: (value: number) => string
   }
 
-  let { samples, metric, request, limit, format }: Props = $props()
+  let { samples, metric, markers = [], format }: Props = $props()
+
+  const lines = $derived(markers.filter((marker) => marker.value > 0))
 
   let container = $state<HTMLDivElement | null>(null)
   let chart: Chart | null = null
@@ -55,7 +66,7 @@
    * an overshoot must never be drawn off the top of the frame.
    */
   const ceiling = $derived.by(() => {
-    const peak = Math.max(...values, request, limit, 0)
+    const peak = Math.max(...values, ...lines.map((line) => line.value), 0)
     return peak > 0 ? peak * 1.1 : 1
   })
 
@@ -66,16 +77,11 @@
     const warn = theme.getPropertyValue('--gauge-warn').trim() || '#e0a458'
     const critical = theme.getPropertyValue('--gauge-critical').trim() || '#e06c75'
 
-    // Reference lines, drawn only when declared. A line at zero for an
-    // undeclared limit would read as "the limit is nothing", which is the
-    // opposite of what an absent limit means.
-    const marks: Record<string, unknown>[] = []
-    if (request > 0) {
-      marks.push({ yAxis: request, lineStyle: { color: warn, type: 'dashed' }, label: { formatter: 'request', color: ink, position: 'insideEndTop' } })
-    }
-    if (limit > 0) {
-      marks.push({ yAxis: limit, lineStyle: { color: critical, type: 'dashed' }, label: { formatter: 'limit', color: ink, position: 'insideEndTop' } })
-    }
+    const marks = lines.map((line) => ({
+      yAxis: line.value,
+      lineStyle: { color: line.tone === 'critical' ? critical : warn, type: 'dashed' },
+      label: { formatter: line.label, color: ink, position: 'insideEndTop' },
+    }))
 
     return {
       animation: false,
@@ -155,6 +161,7 @@
   // rather than a resize.
   $effect(() => {
     void values
+    void lines
     void preferences.themePreference
     chart?.setOption(buildOption(), true)
   })
@@ -162,16 +169,28 @@
 
 {#if failed}
   <p class="text-body-small text-on-surface-variant/60">The chart could not be loaded.</p>
-{:else if samples.length < 2}
-  <!--
-    Said plainly rather than drawn as an empty frame. The series begins when
-    the drawer opens, because nothing retains per-pod history, and a chart
-    that looked broken for its first thirty seconds would be reported as a bug
-    every time.
-  -->
-  <p class="text-body-small text-on-surface-variant/60">
-    Watching — the shape appears after a few refreshes.
-  </p>
 {:else}
-  <div bind:this={container} class="h-32 w-full"></div>
+  <!--
+    DRAWN IMMEDIATELY, EMPTY. This used to render a line of text until two
+    samples had arrived, so the section appeared to be missing for the first
+    refresh or two and then a chart materialised in its place — which reads as
+    the pane still loading rather than as a series that has not started.
+    Everything jumped when it swapped.
+
+    An empty frame is also not empty: the axis and the request and limit lines
+    are known before any measurement, so what is on screen from the first
+    moment is the shape the usage will be judged against. The caption says why
+    there is no line yet.
+  -->
+  <div class="relative">
+    <div bind:this={container} class="h-32 w-full"></div>
+    {#if samples.length < 2}
+      <p
+        class="pointer-events-none absolute inset-0 flex items-center justify-center
+               text-body-small text-on-surface-variant/60"
+      >
+        Watching — the line appears after a few refreshes.
+      </p>
+    {/if}
+  </div>
 {/if}

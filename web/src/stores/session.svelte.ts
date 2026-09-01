@@ -270,6 +270,8 @@ export class ClusterSession {
   selectedName = $state<string | null>(null)
   selectedNamespace = $state<string>('')
   selectedPod = $state<Pod | null>(null)
+  /** The node the drawer is open on, when it is a node. */
+  selectedNode = $state<Node | null>(null)
   selectedWorkload = $state<Workload | null>(null)
   manifest = $state<string | null>(null)
   manifestStatus = $state<LoadStatus>('idle')
@@ -905,6 +907,15 @@ export class ClusterSession {
       return
     }
 
+    if (this.selectedNode) {
+      const fresh = this.nodes.find((node) => node.name === this.selectedName)
+      if (fresh) {
+        this.selectedNode = fresh
+        this.#recordNodeUsage(fresh)
+      }
+      return
+    }
+
     if (this.selectedWorkload) {
       const fresh = this.workloads.find(
         (workload) =>
@@ -931,15 +942,27 @@ export class ClusterSession {
    */
   usage = $state.raw<UsageSample[]>([])
 
+  /** The open node's usage, on the same terms as a pod's. */
+  #recordNodeUsage(node: Node): void {
+    if (!node.hasMetrics) return
+    this.#append({
+      at: Date.now(),
+      cpuCores: parseQuantity(node.cpu) ?? 0,
+      memoryBytes: parseQuantity(node.memory) ?? 0,
+    })
+  }
+
   #recordUsage(pod: Pod): void {
     if (!pod.hasMetrics) return
 
-    const sample: UsageSample = {
+    this.#append({
       at: Date.now(),
       cpuCores: parseQuantity(pod.cpu) ?? 0,
       memoryBytes: parseQuantity(pod.memory) ?? 0,
-    }
+    })
+  }
 
+  #append(sample: UsageSample): void {
     // Replaced rather than pushed: `$state.raw` does not track mutation, and
     // a chart that never redrew would be a subtle and very confusing bug.
     const next = [...this.usage, sample]
@@ -959,10 +982,17 @@ export class ClusterSession {
   secretsRevealed = $state(false)
 
   /** Opens the detail drawer for one object and loads its manifest. */
-  openDetail = async (name: string, namespace: string, pod?: Pod, workload?: Workload): Promise<void> => {
+  openDetail = async (
+    name: string,
+    namespace: string,
+    pod?: Pod,
+    workload?: Workload,
+    node?: Node,
+  ): Promise<void> => {
     this.selectedName = name
     this.selectedNamespace = namespace
     this.selectedPod = pod ?? null
+    this.selectedNode = node ?? null
     this.selectedWorkload = workload ?? null
     this.manifest = null
     this.manifestStatus = 'loading'
@@ -1011,6 +1041,7 @@ export class ClusterSession {
     this.selectedName = null
     this.selectedNamespace = ''
     this.selectedPod = null
+    this.selectedNode = null
     this.selectedWorkload = null
     this.manifest = null
     this.manifestStatus = 'idle'

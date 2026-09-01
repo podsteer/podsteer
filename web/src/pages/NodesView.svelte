@@ -53,7 +53,7 @@
       <tr
         class="group cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
                {selected ? 'bg-primary/8' : 'hover:bg-surface-container-low'}"
-        onclick={() => session.openDetail(node.name, '')}
+        onclick={() => session.openDetail(node.name, '', undefined, undefined, node)}
       >
         {#if isVisible('status')}
           <td class="overflow-hidden py-1.5 pr-3 pl-5">

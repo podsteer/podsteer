@@ -7,7 +7,7 @@
 -->
 <script lang="ts">
   import { parse } from 'yaml'
-  import type { Pod, Workload } from '$lib/api/client'
+  import type { Node, Pod, Workload } from '$lib/api/client'
   import DetailSection from './DetailSection.svelte'
   import DetailList, { type DetailRow } from './DetailList.svelte'
   import ContainerDetail from './ContainerDetail.svelte'
@@ -20,8 +20,10 @@
     selectedPod?: Pod | null
     selectedWorkload?: Workload | null
     kind?: string
-    /** The open pod's recent usage, accumulated while the drawer is open. */
+    /** The open object's recent usage, accumulated while the drawer is open. */
     usage?: UsageSample[]
+    /** The node the drawer is open on, when it is a node. */
+    selectedNode?: Node | null
     /** Whether this cluster serves a kind, so a link is only offered when
         there is somewhere for it to go. */
     canOpen?: (kindName: string) => string | null
@@ -32,6 +34,7 @@
   let {
     manifest,
     selectedPod,
+    selectedNode,
     selectedWorkload,
     kind,
     usage = [],
@@ -428,100 +431,184 @@
       </DetailSection>
     {/if}
 
+    <!--
+      WHY IT RESTARTED — placed above the container list because when it
+      applies it is the reason the pane was opened.
+
+      Every other client shows a restart COUNT. A count says a container
+      died seventeen times; it does not say whether the kernel took it for
+      memory, whether a rollout stopped it cleanly, or whether the process
+      exited on its own — three problems with nothing in common but the
+      number reporting them. The sentence comes from the domain, because
+      deciding that a 137 WITHOUT an OOMKilled reason is a grace-period
+      expiry rather than a memory limit is a judgement, not a lookup.
+
+      Kubernetes keeps ONE prior termination per container, so a container
+      with seventeen restarts has sixteen deaths that no longer exist
+      anywhere. The heading says "last time" rather than implying a history
+      this cannot show.
+    -->
+    {#if deaths.length > 0}
+      <DetailSection level="h3" id="restarts" title="Why it restarted, last time">
+        <div class="flex flex-col gap-2">
+          {#each deaths as container (container.name)}
+            {@const death = container.lastTermination!}
+            <div
+              class="rounded-sm border p-3 {death.alarming
+                ? 'border-error/40 bg-error-container/20'
+                : 'border-outline-variant bg-surface-container-low'}"
+            >
+              <p class="flex flex-wrap items-baseline gap-x-2 text-body-medium">
+                <span class="font-medium text-on-surface" data-selectable>{container.name}</span>
+                <span class="text-on-surface-variant">
+                  {death.reason || 'Terminated'} · exit {death.exitCode}{death.signal
+                    ? ` · signal ${death.signal}`
+                    : ''}
+                </span>
+                {#if death.lifetimeSeconds > 0}
+                  <span class="text-on-surface-variant/70">{survived(death.lifetimeSeconds)}</span>
+                {/if}
+                {#if container.restartCount > 1}
+                  <!-- Named so the single record is not mistaken for the
+                       whole story. -->
+                  <span class="text-on-surface-variant/70">
+                    · {container.restartCount} restarts in total
+                  </span>
+                {/if}
+              </p>
+              <p class="mt-1 text-body-medium leading-relaxed text-on-surface-variant" data-selectable>
+                {death.diagnosis}
+              </p>
+            </div>
+          {/each}
+        </div>
+      </DetailSection>
+    {/if}
+
+    <!--
+      A NODE'S USAGE, against its allocatable rather than a request and a
+      limit. A node has one ceiling and no notion of either — which is why
+      the chart takes a list of markers rather than the pod's two by name.
+
+      CPU and memory only. Disk is on this node's row in the list and in the
+      overview's findings, but it moves in hours: half an hour of samples
+      would draw a flat line and imply the disk is stable when nobody has
+      watched it long enough to know.
+    -->
+    {#if selectedNode?.hasMetrics}
+      <DetailSection
+        level="h3"
+        id="usage"
+        title="Usage"
+        hint="cpu {selectedNode.cpu} · memory {selectedNode.memory}"
+      >
+        <div class="flex flex-col gap-4">
+          {#each [{ metric: 'cpu' as const, label: 'CPU', allocatable: selectedNode.allocatableCpu }, { metric: 'memory' as const, label: 'Memory', allocatable: selectedNode.allocatableMemory }] as track (track.metric)}
+            <div class="flex flex-col gap-1">
+              <p class="flex items-baseline justify-between text-body-small text-on-surface-variant">
+                <span>{track.label}</span>
+                <span class="tabular-nums">
+                  {track.metric === 'cpu' ? selectedNode.cpu : selectedNode.memory}
+                  of {track.allocatable}
+                </span>
+              </p>
+              <UsageChart
+                samples={usage}
+                metric={track.metric}
+                markers={[
+                  { value: parseQuantity(track.allocatable) ?? 0, label: 'allocatable', tone: 'critical' },
+                ]}
+                format={track.metric === 'cpu' ? formatCores : formatBytes}
+              />
+            </div>
+          {/each}
+        </div>
+      </DetailSection>
+    {/if}
+
+    <!--
+      Usage, only once something measured it. A pod on a cluster with no
+      metrics source would otherwise get a section whose entire content is
+      an apology, which the notice above the table already covers once.
+    -->
+    {#if selectedPod?.hasMetrics}
+      <DetailSection
+        level="h3"
+        id="usage"
+        title="Usage"
+        hint="cpu {selectedPod.cpu} · memory {selectedPod.memory}"
+      >
+        <div class="flex flex-col gap-4">
+          {#each [{ metric: 'cpu' as const, label: 'CPU' }, { metric: 'memory' as const, label: 'Memory' }] as track (track.metric)}
+            <div class="flex flex-col gap-1">
+              <p class="flex items-baseline justify-between text-body-small text-on-surface-variant">
+                <span>{track.label}</span>
+                <span class="tabular-nums">
+                  {track.metric === 'cpu' ? selectedPod.cpu : selectedPod.memory}
+                </span>
+              </p>
+              <UsageChart
+                samples={usage}
+                metric={track.metric}
+                markers={[
+                  { value: declared(track.metric, 'request'), label: 'request', tone: 'warn' },
+                  { value: declared(track.metric, 'limit'), label: 'limit', tone: 'critical' },
+                ]}
+                format={track.metric === 'cpu' ? formatCores : formatBytes}
+              />
+            </div>
+          {/each}
+        </div>
+      </DetailSection>
+    {/if}
+
+    <!--
+      THE CANONICAL ORDER, and it is the same on every pane so that moving
+      between kinds does not mean relearning where anything is:
+
+        what is wrong  ·  usage  ·  identity  ·  labels  ·  annotations
+        ·  then whatever this kind specifically is
+
+      Identity, labels and annotations sat at the very bottom, which is where
+      a property list ends up when sections are added in front of it one at a
+      time. They are what an object IS, and burying them under six sections of
+      what it is doing meant scrolling past everything to answer "which one is
+      this". They are still closed by default — reference material somebody
+      looks up rather than reads — but they are now where somebody looks.
+
+      Findings stay above usage when there are any, which is the one departure
+      from "usage first". A chart is what a healthy object has to say; a pod
+      that is crash-looping has something more urgent, and putting a graph
+      above it would bury the reason the pane was opened.
+    -->
+    <DetailSection level="h3" id="identity" title="Identity" defaultOpen={false}>
+      <DetailList rows={basicRows} />
+    </DetailSection>
+
+    <!-- Labels -->
+    {#if labels.length > 0}
+      <DetailSection level="h3" id="labels" title="Labels" defaultOpen={false} hint={String(labels.length)}>
+        <DetailList rows={pairRows(labels)} wideLabels />
+      </DetailSection>
+    {/if}
+
+    <!-- Annotations -->
+    {#if annotations.length > 0}
+      <!-- Truncated, unlike labels: an annotation routinely holds an entire
+           serialised manifest, and letting one wrap turns the pane into a
+           page of JSON. It is still selectable, so copying it works. -->
+      <DetailSection level="h3" id="annotations" title="Annotations" defaultOpen={false} hint={String(annotations.length)}>
+        <DetailList rows={pairRows(annotations, true)} wideLabels />
+      </DetailSection>
+    {/if}
     <!-- Pod-specific sections -->
     {#if kind === 'Pod' || selectedPod}
-      <!--
-        WHY IT RESTARTED — placed above the container list because when it
-        applies it is the reason the pane was opened.
-
-        Every other client shows a restart COUNT. A count says a container
-        died seventeen times; it does not say whether the kernel took it for
-        memory, whether a rollout stopped it cleanly, or whether the process
-        exited on its own — three problems with nothing in common but the
-        number reporting them. The sentence comes from the domain, because
-        deciding that a 137 WITHOUT an OOMKilled reason is a grace-period
-        expiry rather than a memory limit is a judgement, not a lookup.
-
-        Kubernetes keeps ONE prior termination per container, so a container
-        with seventeen restarts has sixteen deaths that no longer exist
-        anywhere. The heading says "last time" rather than implying a history
-        this cannot show.
-      -->
-      {#if deaths.length > 0}
-        <DetailSection level="h3" id="restarts" title="Why it restarted, last time">
-          <div class="flex flex-col gap-2">
-            {#each deaths as container (container.name)}
-              {@const death = container.lastTermination!}
-              <div
-                class="rounded-sm border p-3 {death.alarming
-                  ? 'border-error/40 bg-error-container/20'
-                  : 'border-outline-variant bg-surface-container-low'}"
-              >
-                <p class="flex flex-wrap items-baseline gap-x-2 text-body-medium">
-                  <span class="font-medium text-on-surface" data-selectable>{container.name}</span>
-                  <span class="text-on-surface-variant">
-                    {death.reason || 'Terminated'} · exit {death.exitCode}{death.signal
-                      ? ` · signal ${death.signal}`
-                      : ''}
-                  </span>
-                  {#if death.lifetimeSeconds > 0}
-                    <span class="text-on-surface-variant/70">{survived(death.lifetimeSeconds)}</span>
-                  {/if}
-                  {#if container.restartCount > 1}
-                    <!-- Named so the single record is not mistaken for the
-                         whole story. -->
-                    <span class="text-on-surface-variant/70">
-                      · {container.restartCount} restarts in total
-                    </span>
-                  {/if}
-                </p>
-                <p class="mt-1 text-body-medium leading-relaxed text-on-surface-variant" data-selectable>
-                  {death.diagnosis}
-                </p>
-              </div>
-            {/each}
-          </div>
-        </DetailSection>
-      {/if}
 
       <!-- Status -->
       <DetailSection level="h3" id="status" title="Status" hint={status.phase ?? ''}>
         <DetailList rows={statusRows} />
       </DetailSection>
 
-      <!--
-        Usage, only once something measured it. A pod on a cluster with no
-        metrics source would otherwise get a section whose entire content is
-        an apology, which the notice above the table already covers once.
-      -->
-      {#if selectedPod?.hasMetrics}
-        <DetailSection
-          level="h3"
-          id="usage"
-          title="Usage"
-          hint="cpu {selectedPod.cpu} · memory {selectedPod.memory}"
-        >
-          <div class="flex flex-col gap-4">
-            {#each [{ metric: 'cpu' as const, label: 'CPU' }, { metric: 'memory' as const, label: 'Memory' }] as track (track.metric)}
-              <div class="flex flex-col gap-1">
-                <p class="flex items-baseline justify-between text-body-small text-on-surface-variant">
-                  <span>{track.label}</span>
-                  <span class="tabular-nums">
-                    {track.metric === 'cpu' ? selectedPod.cpu : selectedPod.memory}
-                  </span>
-                </p>
-                <UsageChart
-                  samples={usage}
-                  metric={track.metric}
-                  request={declared(track.metric, 'request')}
-                  limit={declared(track.metric, 'limit')}
-                  format={track.metric === 'cpu' ? formatCores : formatBytes}
-                />
-              </div>
-            {/each}
-          </div>
-        </DetailSection>
-      {/if}
 
       <!--
         Scheduling, when anything constrains it. A pod with no selector, no
@@ -628,31 +715,5 @@
       </DetailSection>
     {/if}
 
-    <!--
-      Identity last but one, and closed by default. The name and namespace are
-      already in the drawer's own header, so the only fields here that are not
-      a repeat are Created and the UID — reference material somebody looks up,
-      not something to read past on the way to what is wrong.
-    -->
-    <DetailSection level="h3" id="identity" title="Identity" defaultOpen={false}>
-      <DetailList rows={basicRows} />
-    </DetailSection>
-
-    <!-- Labels -->
-    {#if labels.length > 0}
-      <DetailSection level="h3" id="labels" title="Labels" defaultOpen={false} hint={String(labels.length)}>
-        <DetailList rows={pairRows(labels)} wideLabels />
-      </DetailSection>
-    {/if}
-
-    <!-- Annotations -->
-    {#if annotations.length > 0}
-      <!-- Truncated, unlike labels: an annotation routinely holds an entire
-           serialised manifest, and letting one wrap turns the pane into a
-           page of JSON. It is still selectable, so copying it works. -->
-      <DetailSection level="h3" id="annotations" title="Annotations" defaultOpen={false} hint={String(annotations.length)}>
-        <DetailList rows={pairRows(annotations, true)} wideLabels />
-      </DetailSection>
-    {/if}
   {/if}
 </div>
