@@ -105,11 +105,27 @@ jobs:
       # generator asks `go list` what the binary links, across all three
       # release platforms.
       - name: Verify Licence Policy And Notices
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           node build/generate-notices.mjs
           if ! git -c core.fileMode=false diff --quiet -- app/adapters/notices/notices.json; then
             echo "::error::notices.json is out of date. Run 'make notices' and commit the result."
             git -c core.fileMode=false diff --stat -- app/adapters/notices/notices.json
+
+            # DEPENDABOT ALWAYS LANDS HERE, and unlike the DCO check this one
+            # is not exempted — it is the point. A version bump can pull in a
+            # transitive dependency under a licence the policy refuses, and
+            # regenerating the inventory automatically would wave exactly the
+            # change the gate exists to catch straight through. So the failure
+            # stands and a maintainer runs the generator, which enforces the
+            # policy in the same pass.
+            #
+            # The note is here because a check that is red by construction gets
+            # read as broken, and then ignored.
+            if [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
+              echo "::notice::This is expected on a dependency update: Dependabot cannot run the generator. Apply the bump locally, run 'make notices', and check what it says about any new package before committing."
+            fi
             exit 1
           fi
           echo "Licence policy satisfied; notices.json matches the dependency set."
