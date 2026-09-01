@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { iconURI } from './graphIcons'
+import { describe, expect, it, vi } from 'vitest'
+import { iconURI, preloadIcons } from './graphIcons'
 
 describe('dependency map icons', () => {
   it('gives every kind the map draws its own icon', () => {
@@ -47,5 +47,52 @@ describe('dependency map icons', () => {
 
     expect(svg).toContain('viewBox="0 0 24 24"')
     expect(svg).toMatch(/<(path|circle|rect|line)/)
+  })
+})
+
+describe('preloading', () => {
+  it('resolves even when an icon will not decode', async () => {
+    // An icon that fails is a node drawn plainly, not a map that refuses to
+    // appear — so this must never reject.
+    await expect(preloadIcons(['image://data:image/svg+xml;utf8,not-an-svg'])).resolves.toBeUndefined()
+  })
+
+  it('loads each distinct icon once', async () => {
+    // Every node in a tier asks for the same kind and colour, so the list
+    // handed to this is mostly duplicates.
+    const loaded: string[] = []
+    class FakeImage {
+      onload: (() => void) | null = null
+      set src(value: string) {
+        loaded.push(value)
+        queueMicrotask(() => this.onload?.())
+      }
+    }
+    vi.stubGlobal('Image', FakeImage)
+
+    const one = iconURI('pod', '#111')
+    await preloadIcons([one, one, one, iconURI('service', '#111')])
+
+    expect(loaded).toHaveLength(2)
+    vi.unstubAllGlobals()
+  })
+
+  it('strips the echarts scheme before loading', async () => {
+    // `image://` is ECharts' own prefix and is not a URL scheme a browser
+    // knows; left on, every icon fails to load and silently draws nothing.
+    const loaded: string[] = []
+    class FakeImage {
+      onload: (() => void) | null = null
+      set src(value: string) {
+        loaded.push(value)
+        queueMicrotask(() => this.onload?.())
+      }
+    }
+    vi.stubGlobal('Image', FakeImage)
+
+    await preloadIcons([iconURI('pod', '#111')])
+
+    expect(loaded[0].startsWith('data:image/svg+xml')).toBe(true)
+    vi.unstubAllGlobals()
   })
 })

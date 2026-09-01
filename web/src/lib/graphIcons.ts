@@ -70,3 +70,32 @@ export function iconURI(kind: string, colour: string): string {
   cache.set(key, uri)
   return uri
 }
+
+/**
+ * Loads every icon a chart is about to draw, before it draws.
+ *
+ * IMAGE SYMBOLS ARE ASYNCHRONOUS. ECharts hands the URI to an Image and paints
+ * whatever it has — which, on the first frame, is nothing. With animation off
+ * there is no second frame either, so the nodes render as bare marks and stay
+ * that way until something else forces a repaint. It showed up as icons that
+ * were fine on one layout and missing on the next, because only the redraw
+ * after a layout change had a warm cache to work from.
+ *
+ * Resolves rather than rejects on a failed load: an icon that will not decode
+ * is a node drawn plainly, not a map that refuses to appear.
+ */
+export function preloadIcons(uris: string[]): Promise<void> {
+  const sources = [...new Set(uris)].map((uri) => uri.replace(/^image:\/\//, ''))
+
+  return Promise.all(
+    sources.map(
+      (src) =>
+        new Promise<void>((resolve) => {
+          const image = new Image()
+          image.onload = () => resolve()
+          image.onerror = () => resolve()
+          image.src = src
+        }),
+    ),
+  ).then(() => undefined)
+}
