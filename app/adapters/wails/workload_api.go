@@ -91,6 +91,24 @@ func (w *WorkloadAPI) ListWorkloads(clusterID, kind, namespace string) ([]Worklo
 	return toWorkloads(workloads, time.Now()), nil
 }
 
+// ListPodsOnNode returns the pods running on one node, across every namespace.
+func (w *WorkloadAPI) ListPodsOnNode(clusterID, nodeName string) ([]Pod, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(w.logger, "ListPodsOnNode", err)
+	}
+
+	pods, err := w.workloads.ListPodsOnNode(ctx, id, nodeName)
+	if err != nil {
+		return nil, apiError(w.logger, "ListPodsOnNode", err)
+	}
+
+	return toPods(pods, time.Now()), nil
+}
+
 // ListPodsForWorkload returns all pods owned by a specific workload.
 func (w *WorkloadAPI) ListPodsForWorkload(clusterID, namespace, kind, name string) ([]Pod, error) {
 	ctx, cancel := w.app.requestContext()

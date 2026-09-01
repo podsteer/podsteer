@@ -136,6 +136,24 @@ func (s *WorkloadService) withPodMetrics(ctx context.Context, id domain.ClusterI
 	return enriched
 }
 
+// ListPodsOnNode returns the pods the scheduler has placed on one node.
+//
+// NOT ENRICHED WITH METRICS, unlike the workload listing. Usage for these pods
+// is already on the node's own list row, which is where somebody opened this
+// from; fetching PodMetrics for every namespace to decorate a list of names
+// would be a second cluster-wide read for a column the panel does not show.
+func (s *WorkloadService) ListPodsOnNode(ctx context.Context, id domain.ClusterID, nodeName string) ([]domain.Pod, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return nil, fmt.Errorf("listing pods on node: %w", err)
+	}
+
+	pods, err := s.workloads.ListPodsOnNode(ctx, id, nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("listing pods on node %q of %q: %w", nodeName, id, err)
+	}
+	return pods, nil
+}
+
 // ListPodsForWorkload returns all pods owned by a specific workload.
 func (s *WorkloadService) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error) {
 	if _, err := s.registry.Get(id); err != nil {

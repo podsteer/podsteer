@@ -6,4 +6,6 @@ export function ListPods(arg1:string,arg2:string):Promise<Array<wails.Pod>>;
 
 export function ListPodsForWorkload(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Array<wails.Pod>>;
 
+export function ListPodsOnNode(arg1:string,arg2:string):Promise<Array<wails.Pod>>;
+
 export function ListWorkloads(arg1:string,arg2:string,arg3:string):Promise<Array<wails.Workload>>;

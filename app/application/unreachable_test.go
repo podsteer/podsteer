@@ -101,6 +101,10 @@ func (g *goneCluster) NodeMetrics(context.Context, domain.ClusterID) (map[string
 	return nil, g.err(false)
 }
 
+func (g *goneCluster) ListPodsOnNode(context.Context, domain.ClusterID, string) ([]domain.Pod, error) {
+	return nil, g.err(false)
+}
+
 func (g *goneCluster) NodeFilesystems(context.Context, domain.ClusterID) (map[string]domain.NodeFilesystems, error) {
 	return nil, g.err(false)
 }

@@ -33,6 +33,7 @@ import {
   ListPods as bindListPods,
   ListWorkloads as bindListWorkloads,
   ListPodsForWorkload as bindListPodsForWorkload,
+  ListPodsOnNode as bindListPodsOnNode,
 } from '$lib/wailsjs/go/wails/WorkloadAPI'
 import {
   ScaleWorkload as bindScaleWorkload,
@@ -291,6 +292,11 @@ export function listWorkloads(
   namespace: string,
 ): Promise<Workload[]> {
   return call(() => bindListWorkloads(clusterId, kind, namespace))
+}
+
+/** Lists the pods the scheduler has placed on one node, across namespaces. */
+export function listPodsOnNode(clusterId: string, nodeName: string): Promise<Pod[]> {
+  return call(() => bindListPodsOnNode(clusterId, nodeName))
 }
 
 /** Lists all pods owned by a specific workload. */

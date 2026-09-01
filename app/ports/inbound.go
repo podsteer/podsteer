@@ -63,6 +63,11 @@ type WorkloadService interface {
 	// ListWorkloads returns controllers of the given kind.
 	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error)
 
+	// ListPodsOnNode returns the pods the scheduler has placed on one node,
+	// across every namespace — "what is running on this machine" is a question
+	// about the machine, not about a namespace.
+	ListPodsOnNode(ctx context.Context, id domain.ClusterID, nodeName string) ([]domain.Pod, error)
+
 	// ListPodsForWorkload returns all pods owned by a specific workload.
 	ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error)
 }

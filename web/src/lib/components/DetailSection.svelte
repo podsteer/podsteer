@@ -51,12 +51,36 @@
      * what it is nested inside.
      */
     level?: 'h3' | 'h4'
+    /**
+     * Called when the section becomes visible, including on first render if
+     * it is already open.
+     *
+     * For a section whose contents cost a request. Fetching in the caller's
+     * `$effect` instead would read the cluster for every collapsed section on
+     * the panel — on a node list, one cross-namespace query per row nobody
+     * expanded.
+     */
+    onopen?: () => void
     children: Snippet
   }
 
-  let { title, id, defaultOpen = true, hint = '', level = 'h4', children }: Props = $props()
+  let {
+    title,
+    id,
+    defaultOpen = true,
+    hint = '',
+    level = 'h4',
+    onopen,
+    children,
+  }: Props = $props()
 
   const open = $derived(preferences.sectionOpen(id, defaultOpen))
+
+  // Fires on mount too, since a section remembered as open is visible without
+  // anybody clicking it — and its contents have to arrive all the same.
+  $effect(() => {
+    if (open) onopen?.()
+  })
 </script>
 
 <section class="flex flex-col gap-2.5">

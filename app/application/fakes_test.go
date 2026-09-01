@@ -171,6 +171,16 @@ func (f *fakeKubernetes) ListPersistentVolumeClaims(_ context.Context, _ domain.
 	return f.claims, nil
 }
 
+func (f *fakeKubernetes) ListPodsOnNode(_ context.Context, _ domain.ClusterID, node string) ([]domain.Pod, error) {
+	var on []domain.Pod
+	for _, pod := range f.pods {
+		if pod.NodeName() == node {
+			on = append(on, pod)
+		}
+	}
+	return on, nil
+}
+
 func (f *fakeKubernetes) NodeFilesystems(_ context.Context, _ domain.ClusterID) (map[string]domain.NodeFilesystems, error) {
 	if f.nodeFilesystems == nil {
 		return nil, ports.ErrMetricsUnavailable

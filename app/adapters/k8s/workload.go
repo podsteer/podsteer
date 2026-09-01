@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -251,6 +252,55 @@ func selectorForWorkload(
 //
 // For Deployments, this returns pods owned by the deployment's ReplicaSets.
 // For StatefulSets and DaemonSets, this returns pods directly owned by the workload.
+// ListPodsOnNode returns the pods the scheduler has placed on one node.
+//
+// Across every namespace deliberately: "what is running on this machine" is a
+// question about the machine, and an operator draining a node or chasing a
+// noisy neighbour does not care which namespace the answer is in. RBAC decides
+// what comes back — an account scoped to one namespace sees that namespace's
+// pods on the node and no error, which is the correct partial answer rather
+// than a refusal.
+func (a *Adapter) ListPodsOnNode(ctx context.Context, id domain.ClusterID, nodeName string) ([]domain.Pod, error) {
+	op := fmt.Sprintf("listing pods on node %q of %q", nodeName, id)
+
+	if strings.TrimSpace(nodeName) == "" {
+		return nil, fmt.Errorf("%s: no node named", op)
+	}
+
+	client, err := a.factory.clientFor(id)
+	if err != nil {
+		return nil, err
+	}
+
+	// `spec.nodeName` is one of the few fields the API server indexes for
+	// pods, so this is served from that index rather than by listing the
+	// cluster and discarding most of it.
+	list, err := client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector:   fields.OneTermEqualSelector("spec.nodeName", nodeName).String(),
+		ResourceVersion: cachedResourceVersion,
+	})
+	if err != nil {
+		return nil, classify(op, err)
+	}
+
+	pods := make([]domain.Pod, 0, len(list.Items))
+	for i := range list.Items {
+		pod, err := mapPod(id, &list.Items[i])
+		if err != nil {
+			// One object the domain rejects is a mapping bug, not a reason to
+			// tell somebody their node is empty.
+			a.logger.WarnContext(ctx, "skipping unmappable pod",
+				slog.String("cluster", id.String()),
+				slog.String("node", nodeName),
+				slog.String("name", list.Items[i].Name),
+				slog.String("error", err.Error()))
+			continue
+		}
+		pods = append(pods, pod)
+	}
+	return pods, nil
+}
+
 func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error) {
 	client, err := a.factory.clientFor(id)
 	if err != nil {

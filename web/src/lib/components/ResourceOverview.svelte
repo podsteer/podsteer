@@ -13,6 +13,7 @@
   import ContainerDetail from './ContainerDetail.svelte'
   import UsageChart from './UsageChart.svelte'
   import MetricsBackendNote from './MetricsBackendNote.svelte'
+  import NodePods from './NodePods.svelte'
   import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
   import type { UsageSample } from '$stores/session.svelte'
@@ -26,6 +27,15 @@
     usage?: UsageSample[]
     /** The node the drawer is open on, when it is a node. */
     selectedNode?: Node | null
+    /**
+     * The cluster the open object belongs to.
+     *
+     * For the sections that fetch something of their own rather than rendering
+     * what the drawer already has — a node's pods are not in any list the
+     * drawer holds, because that list is scoped to the namespace being browsed
+     * and this question is about the machine.
+     */
+    clusterId?: string
     /**
      * A monitoring system found running in this cluster, if any. Shown under
      * the charts, because the shortness of our own window is exactly where
@@ -47,6 +57,7 @@
     kind,
     usage = [],
     backend,
+    clusterId,
     canOpen,
     onopen,
   }: Props = $props()
@@ -534,6 +545,16 @@
           <MetricsBackendNote {backend} />
         </div>
       </DetailSection>
+    {/if}
+
+    <!--
+      What is on the node, which is the second thing a node panel is opened to
+      answer. Below usage because "how full is it" comes first and this is the
+      detail behind that number; above identity because a machine's labels
+      matter less than its tenants.
+    -->
+    {#if selectedNode && clusterId}
+      <NodePods {clusterId} nodeName={selectedNode.name} {onopen} />
     {/if}
 
     <!--
