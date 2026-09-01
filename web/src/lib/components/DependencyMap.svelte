@@ -7,34 +7,29 @@
   from an Ingress to a container is otherwise four `kubectl describe`s and a
   guess about which Service's selector matches.
 
-  DRAWN IN TIERS, not as a free-floating web. A force layout would let the
-  reader find the shape themselves; laid out from what is outside the cluster
-  down to what actually runs, the picture says which way traffic goes before
-  anybody reads a label. Attached resources — config, secrets, the node — sit
-  at the bottom because they are dependencies but not steps on the path.
+  DRAWN AS SVG RATHER THAN AS A CHART, and that was a correction. ECharts drew
+  this first, and its graph series connects node CENTRES clipped to the symbol
+  — a label is not part of a node, so every line began inside an icon and ran
+  out through the text under it. Routing around that needed invisible waypoint
+  nodes, which made each edge three separate links: hovering lit one segment of
+  a route, overlapping segments composited into a heavier stroke, and corners
+  could not be rounded at all. Each of those is a consequence of using a chart
+  to draw a diagram. The geometry now lives in graphLayout.ts, where it is
+  tested, and this file draws it.
 
   Colour carries one thing only: whether something is worth looking at. A map
   where everything is one colour says where things are; the colour says where
   to start.
 -->
 <script lang="ts">
-  import { onDestroy } from 'svelte'
-  import type { Chart } from '$lib/echarts'
   import { podGraph, type PodGraph } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
-  import { onThemeChange } from '$lib/terminalTheme'
-  import { iconURI, preloadIcons } from '$lib/graphIcons'
+  import { iconGeometry } from '$lib/graphIcons'
+  import { layout, type Layout, type LaidOutNode } from '$lib/graphLayout'
   import { preferences } from '$stores/preferences.svelte'
   import PaneToolbar from './PaneToolbar.svelte'
   import ToolbarButton from './ToolbarButton.svelte'
   import { Maximize2, Columns3, Rows3, ZoomIn, ZoomOut, Crosshair } from '@lucide/svelte'
-
-  /** The little of a graph node a click handler needs. */
-  interface GraphNodeData {
-    apiKind: string
-    name: string
-    namespace: string
-  }
 
   interface Props {
     clusterId: string
@@ -51,24 +46,44 @@
   /**
    * Which way the chain runs.
    *
-   * HORIZONTAL BY DEFAULT, because the labels are wide and the tiers are few:
-   * laid out left to right there is room beside each node for its kind and its
-   * name, where stacked vertically the same labels collide. Vertical is
-   * offered because a pod with many containers is a long row, and turning the
-   * map on its side is the cheapest way to see all of it.
-   *
-   * Remembered like every other display preference, so it does not have to be
-   * set again on the next pod.
+   * HORIZONTAL BY DEFAULT, because a box is wider than it is tall and a wide
+   * box wants a wide gap beside it rather than above it. Vertical is offered
+   * because a pod with many attached resources is a long row, and turning the
+   * map on its side is the cheapest way to see all of it. Remembered like
+   * every other display preference.
    */
   const orientation = $derived(preferences.mapOrientation)
 
-  let container = $state<HTMLDivElement | null>(null)
-  let chart: Chart | null = null
   let graph = $state.raw<PodGraph | null>(null)
   let failure = $state('')
   let loading = $state(false)
   let loadedFor = $state('')
-  let stopWatchingTheme: (() => void) | null = null
+
+  let viewport = $state<HTMLDivElement | null>(null)
+  let paneWidth = $state(0)
+  let paneHeight = $state(0)
+
+  /** Pan and zoom, applied as one transform on the drawing. */
+  let zoom = $state(1)
+  let panX = $state(0)
+  let panY = $state(0)
+  let dragging = $state(false)
+  let dragFrom = { x: 0, y: 0, panX: 0, panY: 0 }
+
+  /** The box the pointer is over, which lights its own lines. */
+  let hovered = $state<string | null>(null)
+
+  const plan = $derived<Layout | null>(
+    graph ? layout(graph, orientation === 'horizontal') : null,
+  )
+
+  /** Edges touching the hovered box, so a whole route lights at once. */
+  const lit = $derived.by(() => {
+    if (!hovered || !plan) return new Set<string>()
+    return new Set(
+      plan.edges.filter((e) => e.from === hovered || e.to === hovered).map((e) => e.id),
+    )
+  })
 
   async function load(): Promise<void> {
     const key = `${clusterId}/${namespace}/${podName}`
@@ -79,6 +94,7 @@
     try {
       graph = await podGraph(clusterId, namespace, podName)
       loadedFor = key
+      fit()
     } catch (error) {
       failure = toApiError(error).message
       graph = null
@@ -87,355 +103,120 @@
     }
   }
 
-  // A different pod invalidates the map. Fetched here rather than on a timer:
-  // a dependency chain changes when somebody changes it, not every ten
-  // seconds, and redrawing a graph under a reader is worse than staleness.
+  // Fetched when the pod changes, not on a timer: a dependency chain changes
+  // when somebody changes it, and redrawing a map under a reader is worse than
+  // it being a few seconds stale.
   $effect(() => {
     const key = `${clusterId}/${namespace}/${podName}`
     if (key !== loadedFor) void load()
   })
 
-  /** Reads a CSS custom property, so the chart follows the application's theme. */
-  function token(name: string, fallback: string): string {
-    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-    return value === '' ? fallback : value
+  /** Sizes the drawing to the pane, which is also the way back from a pan. */
+  function fit(): void {
+    if (!plan || paneWidth === 0 || paneHeight === 0) return
+
+    const scale = Math.min(
+      paneWidth / plan.bounds.width,
+      paneHeight / plan.bounds.height,
+      // NEVER MAGNIFIED PAST LIFE SIZE. A map of three boxes stretched to fill
+      // a wide pane draws its text at a size nothing else in the application
+      // uses, which reads as a different application.
+      1,
+    )
+
+    zoom = scale
+    panX = (paneWidth - plan.bounds.width * scale) / 2 - plan.bounds.x * scale
+    panY = (paneHeight - plan.bounds.height * scale) / 2 - plan.bounds.y * scale
   }
+
+  // Re-fit when the layout or the pane changes. Both happen without anybody
+  // asking — switching orientation, opening the maximise dialog.
+  $effect(() => {
+    void plan
+    void paneWidth
+    void paneHeight
+    fit()
+  })
 
   /**
-   * The gap between tiers and between nodes within one, in chart units.
+   * Zooms about the centre of the pane.
    *
-   * Arbitrary numbers in an arbitrary space — ECharts fits the whole node
-   * bounding box into the pane — so what matters is only their RATIO. The
-   * across-gap is generous because that axis carries the labels.
-   */
-  const TIER_GAP = 260
-  // Wider than it looks like it needs to be, because a tier's spacing has to
-  // clear the LABELS rather than the icons — and a pod name is far wider than
-  // a 24px symbol.
-  const NODE_GAP = 200
-
-  /**
-   * Lays the graph out by tier, and routes every edge as a right angle.
-   *
-   * POSITIONS ARE COMPUTED, not left to a force simulation. A force layout of
-   * twenty nodes settles somewhere different every time it is run, so the same
-   * pod would draw a different picture on each visit and nothing could be
-   * found twice.
-   *
-   * EDGES TURN CORNERS RATHER THAN CUTTING ACROSS. ECharts' graph series has
-   * no orthogonal router, so each edge is drawn as three segments through two
-   * INVISIBLE WAYPOINTS at the midpoint between the tiers. Diagonals were the
-   * real source of the clutter: they crossed each other and passed under the
-   * labels, where right angles share corridors and leave the space between
-   * tiers empty for text.
-   */
-  function positioned(data: PodGraph): { nodes: unknown[]; links: unknown[]; icons: string[] } {
-    const ink = token('--on-surface-variant', '#9aa0a6')
-    const text = token('--on-surface', '#e6e0e9')
-    const line = token('--outline', '#938f99')
-    const good = token('--gauge-normal', '#4f86e8')
-    const bad = token('--gauge-critical', '#d8453c')
-    const accent = token('--primary', '#8ab4f8')
-    const horizontal = orientation === 'horizontal'
-
-    const byTier = new Map<number, typeof data.nodes>()
-    for (const node of data.nodes) {
-      const row = byTier.get(node.tier)
-      if (row) row.push(node)
-      else byTier.set(node.tier, [node])
-    }
-
-    // Only tiers with something in them take space. A pod with no ingress
-    // should not sit under an empty column — the gap reads as a missing thing
-    // rather than an absent one.
-    const present = [...byTier.keys()].sort((a, b) => a - b)
-    const place = new Map(present.map((tier, index) => [tier, index]))
-
-    const at = new Map<string, { x: number; y: number }>()
-    const icons: string[] = []
-
-    const nodes = data.nodes.map((node) => {
-      const row = byTier.get(node.tier)!
-      const index = row.indexOf(node)
-      // Centred within the tier, so a tier of one sits opposite the middle of
-      // a tier of six rather than against its edge.
-      const across = (index - (row.length - 1) / 2) * NODE_GAP
-      const along = (place.get(node.tier) ?? 0) * TIER_GAP
-
-      const x = horizontal ? along : across
-      const y = horizontal ? across : along
-      at.set(node.id, { x, y })
-
-      const colour = node.healthy ? (node.subject ? accent : good) : bad
-      const symbol = iconURI(node.kind, colour)
-      icons.push(symbol)
-
-      return {
-        id: node.id,
-        name: node.name,
-        x,
-        y,
-        symbol,
-        symbolSize: node.subject ? 30 : 24,
-        label: {
-          show: true,
-          // Below the node in both orientations. Beside it, a long pod name
-          // ran straight into whatever was in the next tier — which is what
-          // put "…d64xh" on top of "Container" in the horizontal layout.
-          position: 'bottom',
-          distance: 8,
-          align: 'center',
-          color: text,
-          fontSize: 11,
-          lineHeight: 15,
-          // CAPPED AND TRUNCATED. Kubernetes names run long — a pod carries
-          // its ReplicaSet hash and a generated suffix — and at full length
-          // adjacent labels in the same tier ran into one another and became
-          // unreadable together, which is worse than one being shortened.
-          width: 140,
-          overflow: 'truncate',
-          // Kind in bold above the name. A map of twenty boxes is read by
-          // shape first: the kind says what a thing is, the name says which
-          // one, and that is the order they are needed in.
-          formatter: `{k|${node.apiKind || 'Container'}}\n{n|${node.name}}`,
-          rich: {
-            k: { color: text, fontWeight: 'bold', fontSize: 11, lineHeight: 15 },
-            n: {
-              color: ink,
-              fontSize: 10,
-              lineHeight: 14,
-              width: 140,
-              overflow: 'truncate',
-            },
-          },
-        },
-        emphasis: { label: { show: true } },
-        podsteer: node,
-      }
-    })
-
-    // The waypoints. Invisible, unlabelled, and not clickable — they exist
-    // only so a line can turn a corner.
-    const waypoints: unknown[] = []
-    const links: unknown[] = []
-
-    for (const [index, edge] of data.edges.entries()) {
-      const from = at.get(edge.from)
-      const to = at.get(edge.to)
-      if (!from || !to) continue
-
-      const style = { color: line, opacity: 0.45, width: 1.2, curveness: 0 }
-
-      // Already square: nothing to route around.
-      if (from.x === to.x || from.y === to.y) {
-        links.push({ source: edge.from, target: edge.to, lineStyle: style })
-        continue
-      }
-
-      // THE CORRIDOR SITS IN THE GAP BEFORE THE TARGET, not at the midpoint
-      // of the span. An edge that crosses more than one tier — the pod to its
-      // ConfigMaps, which passes the container tier — had its midpoint land
-      // exactly ON that tier, so the corridor was drawn straight through the
-      // Container node and its label. Placed just short of the destination it
-      // is always in empty space, whatever it crossed to get there.
-      const fromAlong = horizontal ? from.x : from.y
-      const toAlong = horizontal ? to.x : to.y
-      const midAlong = toAlong - Math.sign(toAlong - fromAlong) * TIER_GAP * 0.45
-
-      const a = horizontal ? { x: midAlong, y: from.y } : { x: from.x, y: midAlong }
-      const b = horizontal ? { x: midAlong, y: to.y } : { x: to.x, y: midAlong }
-
-      const first = `bend/${index}/a`
-      const second = `bend/${index}/b`
-      for (const [id, point] of [
-        [first, a],
-        [second, b],
-      ] as const) {
-        waypoints.push({
-          id,
-          name: '',
-          x: point.x,
-          y: point.y,
-          symbol: 'none',
-          symbolSize: 0,
-          label: { show: false },
-          emphasis: { disabled: true },
-          silent: true,
-        })
-      }
-
-      // ONE ARROWHEAD PER EDGE, on the segment that actually arrives. The
-      // series-level edgeSymbol applies to every link, so without this each
-      // bend grew a spurious arrow pointing at empty space.
-      const plain = { symbol: ['none', 'none'] }
-      links.push(
-        { source: edge.from, target: first, lineStyle: style, ...plain },
-        { source: first, target: second, lineStyle: style, ...plain },
-        { source: second, target: edge.to, lineStyle: style },
-      )
-    }
-
-    return { nodes: [...nodes, ...waypoints], links, icons }
-  }
-
-  function option(data: PodGraph): { option: unknown; icons: string[] } {
-    const line = token('--outline', '#938f99')
-    const text = token('--on-surface', '#e6e0e9')
-    const { nodes, links, icons } = positioned(data)
-
-    return {
-      icons,
-      option: {
-        animation: false,
-        // Everything a tooltip would say is on the node already, and a tooltip
-        // on a map somebody is panning is a box that follows the cursor over
-        // what they are looking at.
-        tooltip: { show: false },
-        series: [
-          {
-            type: 'graph',
-            layout: 'none',
-            roam: true,
-            // A FLOOR AND A CEILING ON THE ZOOM. Without a floor the map can
-            // be pinched down to an illegible knot of overlapping labels,
-            // which is easy to do by accident on a trackpad and hard to undo
-            // without a reset.
-            scaleLimit: { min: 0.5, max: 4 },
-            data: nodes,
-            links,
-            edgeSymbol: ['none', 'arrow'],
-            edgeSymbolSize: 8,
-            // Labels off the edges entirely. Six edges reading "environment"
-            // fanning into one tier is the clutter, not the lines — the
-            // relationship is legible from what the two ends are.
-            emphasis: {
-              focus: 'adjacency',
-              scale: false,
-              // The adjacent lines go bright instead of everything else going
-              // dark: the point of hovering is to trace one path, and that
-              // reads better as the path lighting up than as the map
-              // dimming out.
-              lineStyle: { color: text, opacity: 1, width: 2 },
-              itemStyle: { opacity: 1 },
-            },
-            blur: {
-              // GENTLY. At the default the rest of the map disappears, which
-              // loses the context that made hovering worth doing.
-              itemStyle: { opacity: 0.45 },
-              lineStyle: { color: line, opacity: 0.15 },
-              label: { opacity: 0.35 },
-            },
-            // A LAST RESORT AGAINST COLLISION. Truncation handles the common
-            // case; this drops a label outright when the pane is too narrow
-            // for even a shortened one to fit beside its neighbour. Losing a
-            // name is better than two illegible ones on top of each other,
-            // and zooming in brings it back.
-            labelLayout: { hideOverlap: true },
-            left: '6%',
-            right: '6%',
-            top: '10%',
-            bottom: '12%',
-          },
-        ],
-      },
-    }
-  }
-
-  async function draw(): Promise<void> {
-    if (!container || !graph) return
-
-    // NOT INTO A BOX WITH NO SIZE. Switching to this tab, or moving the pane
-    // into the maximise dialog, runs this before layout has given the element
-    // any height — and a chart laid out against a zero box draws every node on
-    // top of every other, which is the knot of overlapping labels it looked
-    // like. The ResizeObserver calls back the moment there is room.
-    const box = container.getBoundingClientRect()
-    if (box.width < 40 || box.height < 40) return
-
-    if (!chart) {
-      const { createChart } = await import('$lib/echarts')
-      if (!container) return
-      chart = createChart(container)
-
-      // FOLLOWING IS THE POINT. A map that shows a failing ConfigMap and
-      // makes somebody go and find it in the navigator has stopped halfway.
-      chart.on('click', (params: unknown) => {
-        const node = (params as { data?: { podsteer?: GraphNodeData } }).data?.podsteer
-        // Containers are not objects and have no panel of their own; the pod
-        // they belong to is already the subject of this map. Waypoints carry
-        // no payload at all.
-        if (!node?.apiKind || !onopen) return
-        onopen(node.apiKind.toLowerCase() + 's', node.name, node.namespace || namespace)
-      })
-    }
-
-    const built = option(graph)
-    // BEFORE setOption, NOT AFTER. ECharts paints an image symbol with
-    // whatever the browser has decoded, and with animation off there is no
-    // second frame to catch up on — so a cold cache renders the nodes bare
-    // and leaves them that way.
-    await preloadIcons(built.icons)
-    if (!chart) return
-
-    chart.setOption(built.option, true)
-    // The pane may have changed size while the pane was hidden — moving into
-    // the maximise dialog is exactly that — and a chart laid out against a
-    // stale box draws everything squeezed into a corner.
-    chart.resize()
-  }
-
-  /**
-   * Steps the zoom, for the toolbar's buttons.
-   *
-   * Anchored at the CENTRE of the pane rather than its origin: zooming from
-   * the corner walks the map off to one side, so three presses of a button
-   * that should have magnified what somebody is looking at leaves them
-   * looking at nothing.
+   * Anchored at the centre rather than the origin: zooming from a corner walks
+   * the map off to one side, so three presses of a button that should have
+   * magnified what somebody is looking at leaves them looking at nothing.
    */
   function zoomBy(factor: number): void {
-    if (!container) return
-    const box = container.getBoundingClientRect()
-    chart?.dispatchAction({
-      type: 'graphRoam',
-      zoom: factor,
-      originX: box.width / 2,
-      originY: box.height / 2,
-    })
+    const next = clamp(zoom * factor)
+    if (next === zoom) return
+
+    const cx = paneWidth / 2
+    const cy = paneHeight / 2
+    panX = cx - ((cx - panX) / zoom) * next
+    panY = cy - ((cy - panY) / zoom) * next
+    zoom = next
   }
 
-  /** Puts the map back where it started, which pan and zoom make necessary. */
-  function resetView(): void {
-    void draw()
+  /** A floor and a ceiling, so the map cannot be pinched into an illegible knot. */
+  function clamp(value: number): number {
+    return Math.min(Math.max(value, 0.3), 3)
   }
 
-  $effect(() => {
-    void graph
-    void orientation
-    void draw()
-  })
+  function onWheel(event: WheelEvent): void {
+    event.preventDefault()
 
-  $effect(() => {
-    if (!container) return
-    const observer = new ResizeObserver(() => {
-      // A chart that was never drawn — because the pane had no size — has
-      // nothing to resize, so this draws instead of resizing when there is
-      // still no series in it.
-      if (chart) chart.resize()
-      else void draw()
-    })
-    observer.observe(container)
+    // About the POINTER, which is what a trackpad gesture means: the thing
+    // under the fingers should stay under them.
+    const next = clamp(zoom * (event.deltaY < 0 ? 1.1 : 1 / 1.1))
+    if (next === zoom) return
 
-    stopWatchingTheme = onThemeChange(() => void draw())
-    return () => {
-      observer.disconnect()
-      stopWatchingTheme?.()
-    }
-  })
+    const box = viewport!.getBoundingClientRect()
+    const px = event.clientX - box.left
+    const py = event.clientY - box.top
 
-  onDestroy(() => {
-    chart?.dispose()
-    chart = null
-  })
+    panX = px - ((px - panX) / zoom) * next
+    panY = py - ((py - panY) / zoom) * next
+    zoom = next
+  }
+
+  function onPointerDown(event: PointerEvent): void {
+    // Only a drag on the background pans; a drag starting on a box would fight
+    // the click that follows it.
+    if ((event.target as Element).closest('[data-node]')) return
+
+    dragging = true
+    dragFrom = { x: event.clientX, y: event.clientY, panX, panY }
+    ;(event.currentTarget as Element).setPointerCapture(event.pointerId)
+  }
+
+  function onPointerMove(event: PointerEvent): void {
+    if (!dragging) return
+    panX = dragFrom.panX + (event.clientX - dragFrom.x)
+    panY = dragFrom.panY + (event.clientY - dragFrom.y)
+  }
+
+  function onPointerUp(event: PointerEvent): void {
+    dragging = false
+    ;(event.currentTarget as Element).releasePointerCapture?.(event.pointerId)
+  }
+
+  /** Follows a node into its own panel. */
+  function open(node: LaidOutNode): void {
+    // Containers are not objects and have no panel of their own; the pod they
+    // belong to is already the subject of this map.
+    if (!node.apiKind || !onopen) return
+    onopen(node.apiKind.toLowerCase() + 's', node.name, node.namespace || namespace)
+  }
+
+  /**
+   * Shortens a name to what the box can hold.
+   *
+   * Measured in characters rather than pixels, which is approximate and good
+   * enough: the alternative is measuring text in the DOM on every redraw for a
+   * label that is truncated either way.
+   */
+  function fitText(value: string, characters: number): string {
+    return value.length <= characters ? value : value.slice(0, characters - 1) + '…'
+  }
 </script>
 
 <div class="flex h-full flex-col">
@@ -449,22 +230,17 @@
     </span>
 
     {#snippet trailing()}
-      <!--
-        One control, two states, rather than two buttons where only one is ever
-        useful. The icon shows what pressing it WILL DO, not the state it is
-        in — a toggle that shows its own state is the commonest way to make
-        somebody press it twice to find out.
-      -->
-      <ToolbarButton icon={ZoomOut} label="Zoom out" title="Zoom out" onclick={() => zoomBy(0.8)} />
+      <ToolbarButton icon={ZoomOut} label="Zoom out" title="Zoom out" onclick={() => zoomBy(1 / 1.25)} />
       <ToolbarButton icon={ZoomIn} label="Zoom in" title="Zoom in" onclick={() => zoomBy(1.25)} />
-      <!--
-        Pan and zoom have no undo of their own, and a map dragged off screen
-        looks like a map that failed to load. This is the way back.
-      -->
-      <ToolbarButton icon={Crosshair} label="Fit to the pane" title="Fit to the pane" onclick={resetView} />
+      <!-- Pan and zoom have no undo of their own, and a map dragged off screen
+           looks like a map that failed to load. This is the way back. -->
+      <ToolbarButton icon={Crosshair} label="Fit to the pane" title="Fit to the pane" onclick={fit} />
 
       <div class="mx-0.5 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
 
+      <!-- One control, two states. The icon shows what pressing it WILL DO,
+           not the state it is in — a toggle that shows its own state is the
+           commonest way to make somebody press it twice to find out. -->
       <ToolbarButton
         icon={orientation === 'horizontal' ? Rows3 : Columns3}
         label={orientation === 'horizontal' ? 'Lay out vertically' : 'Lay out horizontally'}
@@ -485,13 +261,119 @@
   {:else if failure}
     <p class="p-4 text-body-medium text-error">{failure}</p>
   {:else}
-    <!--
-      The chart fills the pane. The tier names that used to run down the side
-      are gone: they only made sense on a vertical layout, and with the kind
-      now written on every node in bold they were labelling what each box
-      already says about itself.
-    -->
-    <div bind:this={container} class="min-h-0 min-w-0 flex-1"></div>
+    <div
+      bind:this={viewport}
+      bind:clientWidth={paneWidth}
+      bind:clientHeight={paneHeight}
+      class="relative min-h-0 flex-1 overflow-hidden {dragging ? 'cursor-grabbing' : 'cursor-grab'}"
+      onwheel={onWheel}
+      onpointerdown={onPointerDown}
+      onpointermove={onPointerMove}
+      onpointerup={onPointerUp}
+      onpointercancel={onPointerUp}
+      role="presentation"
+    >
+      {#if plan}
+        <svg class="size-full select-none" aria-label="Dependency map">
+          <defs>
+            <!-- One marker per state rather than one recoloured: an SVG marker
+                 cannot inherit the stroke of the path that uses it. -->
+            <marker id="dep-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 9 5 L 0 9 z" class="fill-outline" />
+            </marker>
+            <marker id="dep-arrow-lit" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 9 5 L 0 9 z" class="fill-on-surface" />
+            </marker>
+          </defs>
+
+          <g transform="translate({panX} {panY}) scale({zoom})">
+            <!--
+              Lines first, so a box always sits over them. Each route is ONE
+              path, so lighting it lights the whole way from one object to the
+              other — and where two of them overlap nothing composites,
+              because the stroke is opaque and drawn once.
+            -->
+            {#each plan.edges as edge (edge.id)}
+              <path
+                d={edge.path}
+                fill="none"
+                stroke-width="1.25"
+                marker-end="url(#{lit.has(edge.id) ? 'dep-arrow-lit' : 'dep-arrow'})"
+                class={lit.has(edge.id) ? 'stroke-on-surface' : 'stroke-outline'}
+              />
+            {/each}
+
+            {#each plan.nodes as node (node.id)}
+              {@const half = { w: node.width / 2, h: node.height / 2 }}
+              <g
+                data-node
+                transform="translate({node.x} {node.y})"
+                class="cursor-pointer"
+                role="button"
+                tabindex="0"
+                aria-label="{node.apiKind || 'Container'} {node.name}"
+                onmouseenter={() => (hovered = node.id)}
+                onmouseleave={() => (hovered = null)}
+                onfocus={() => (hovered = node.id)}
+                onblur={() => (hovered = null)}
+                onclick={() => open(node)}
+                onkeydown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    open(node)
+                  }
+                }}
+              >
+                <!-- The hit area is the whole object, icon and text together,
+                     which is also what the lines are routed between. -->
+                <rect
+                  x={-half.w} y={-half.h} width={node.width} height={node.height}
+                  rx="8"
+                  class="fill-transparent {hovered === node.id
+                    ? 'fill-surface-container-high/60'
+                    : ''}"
+                />
+
+                <g
+                  transform="translate(-12 {-half.h + 6})"
+                  fill="none"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class={node.healthy
+                    ? node.subject
+                      ? 'stroke-primary'
+                      : 'stroke-gauge-normal'
+                    : 'stroke-gauge-critical'}
+                >
+                  {@html iconGeometry(node.kind)}
+                </g>
+
+                <!-- Kind above name. A map of twenty boxes is read by shape
+                     first: the kind says what a thing is, the name says which
+                     one, and that is the order they are needed in. -->
+                <text
+                  y={-half.h + 44}
+                  text-anchor="middle"
+                  class="fill-on-surface text-[11px] font-semibold"
+                >
+                  {node.apiKind || 'Container'}
+                </text>
+                <text
+                  y={-half.h + 58}
+                  text-anchor="middle"
+                  class="fill-on-surface-variant text-[10px]"
+                >
+                  {fitText(node.name, 26)}
+                </text>
+              </g>
+            {/each}
+          </g>
+        </svg>
+      {/if}
+    </div>
 
     {#if graph && graph.unreadable.length > 0}
       <!--

@@ -17,11 +17,11 @@
  */
 
 import { init, use } from 'echarts/core'
-import { GraphChart, LineChart } from 'echarts/charts'
+import { LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 
-use([LineChart, GraphChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
+use([LineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
 
 /**
  * The minimal surface the charts use.
@@ -32,10 +32,6 @@ use([LineChart, GraphChart, GridComponent, TooltipComponent, LegendComponent, Ca
  */
 export interface Chart {
   setOption(option: unknown, notMerge?: boolean): void
-  /** Subscribes to a chart event — used by the dependency map for clicks. */
-  on(event: string, handler: (params: unknown) => void): void
-  /** Drives the chart from code, for the map's zoom buttons. */
-  dispatchAction(action: Record<string, unknown>): void
   resize(): void
   dispose(): void
 }

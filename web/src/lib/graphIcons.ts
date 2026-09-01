@@ -1,9 +1,9 @@
 /**
  * Resource icons for the dependency map, as raw SVG geometry.
  *
- * WHY NOT THE COMPONENTS IN kindIcons.ts. Those are Svelte components, and
- * ECharts draws its symbols from a path string or an image — it has no way to
- * mount a component inside a node. The geometry here is the SAME Lucide icon
+ * WHY NOT THE COMPONENTS IN kindIcons.ts. Those are Svelte components, and the
+ * map inlines its icons into one SVG document it draws itself — there is no
+ * element to mount a component onto. The geometry here is the SAME Lucide icon
  * each kind gets in the navigator, extracted from the installed package rather
  * than redrawn, so the map and the tree cannot show different icons for the
  * same thing.
@@ -42,66 +42,7 @@ const GEOMETRY: Record<string, string> = {
   serviceaccount: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><path d="M16 3.128a4 4 0 0 1 0 7.744"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/>',
 }
 
-/**
- * An icon as a data URI, ready for an ECharts `symbol: 'image://…'`.
- *
- * Coloured at build time rather than by the chart, because ECharts cannot
- * recolour an image symbol — the stroke is baked in, so a node asks for the
- * colour it wants and gets its own URI. They are cached: the same kind and
- * colour recur across every node in a tier, and building the string is pure
- * work that would otherwise repeat on every redraw.
- */
-const cache = new Map<string, string>()
-
-export function iconURI(kind: string, colour: string): string {
-  const key = `${kind}|${colour}`
-  const hit = cache.get(key)
-  if (hit) return hit
-
-  const geometry = GEOMETRY[kind] ?? GEOMETRY.pod
-  // WIDTH AND HEIGHT, NOT JUST A viewBox. An SVG with only a viewBox has no
-  // intrinsic size, and a browser asked to size such an image falls back to
-  // the CSS default for a replaced element — 300x150. That is 2:1, which is
-  // exactly what the icons looked like: flat bars. It came and went between
-  // layouts because it depends on whether the decode had finished before
-  // ECharts measured, not on the layout itself.
-  const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" ` +
-    `fill="none" stroke="${colour}" stroke-width="2" stroke-linecap="round" ` +
-    `stroke-linejoin="round">${geometry}</svg>`
-
-  // encodeURIComponent rather than base64: it survives the '#' in a colour,
-  // which is what breaks a naively-inlined SVG data URI.
-  const uri = `image://data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
-  cache.set(key, uri)
-  return uri
-}
-
-/**
- * Loads every icon a chart is about to draw, before it draws.
- *
- * IMAGE SYMBOLS ARE ASYNCHRONOUS. ECharts hands the URI to an Image and paints
- * whatever it has — which, on the first frame, is nothing. With animation off
- * there is no second frame either, so the nodes render as bare marks and stay
- * that way until something else forces a repaint. It showed up as icons that
- * were fine on one layout and missing on the next, because only the redraw
- * after a layout change had a warm cache to work from.
- *
- * Resolves rather than rejects on a failed load: an icon that will not decode
- * is a node drawn plainly, not a map that refuses to appear.
- */
-export function preloadIcons(uris: string[]): Promise<void> {
-  const sources = [...new Set(uris)].map((uri) => uri.replace(/^image:\/\//, ''))
-
-  return Promise.all(
-    sources.map(
-      (src) =>
-        new Promise<void>((resolve) => {
-          const image = new Image()
-          image.onload = () => resolve()
-          image.onerror = () => resolve()
-          image.src = src
-        }),
-    ),
-  ).then(() => undefined)
+/** The raw SVG children of a kind's icon, for inlining into a diagram. */
+export function iconGeometry(kind: string): string {
+  return GEOMETRY[kind] ?? GEOMETRY.pod
 }
