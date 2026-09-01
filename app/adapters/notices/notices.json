@@ -679,14 +679,6 @@
    "textId": "ff82c90f84945c60"
   },
   {
-   "name": "@types/trusted-types",
-   "version": "2.0.7",
-   "ecosystem": "npm",
-   "licence": "MIT",
-   "copyright": "Copyright (c) Microsoft Corporation.",
-   "textId": "ff82c90f84945c60"
-  },
-  {
    "name": "@xterm/addon-fit",
    "version": "0.11.0",
    "ecosystem": "npm",
@@ -817,7 +809,7 @@
   },
   {
    "name": "svelte",
-   "version": "5.56.10",
+   "version": "5.57.0",
    "ecosystem": "npm",
    "licence": "MIT",
    "copyright": "Copyright (c) 2016-2025 [Svelte Contributors](https://github.com/sveltejs/svelte/graphs/contributors)",
