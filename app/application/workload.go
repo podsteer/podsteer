@@ -136,6 +136,24 @@ func (s *WorkloadService) withPodMetrics(ctx context.Context, id domain.ClusterI
 	return enriched
 }
 
+// PodGraph returns the dependency chain around one pod.
+//
+// Thin, and correctly so: the reading is the adapter's and the rules are the
+// domain's. What is left here is the registry check every use case does and
+// the join between the two.
+func (s *WorkloadService) PodGraph(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string) (domain.PodGraph, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return domain.PodGraph{}, fmt.Errorf("mapping pod dependencies: %w", err)
+	}
+
+	input, err := s.workloads.PodGraphSources(ctx, id, namespace, podName)
+	if err != nil {
+		return domain.PodGraph{}, fmt.Errorf("reading dependencies for %s/%s in %q: %w",
+			namespace, podName, id, err)
+	}
+	return domain.NewPodGraph(input), nil
+}
+
 // ListPodsOnNode returns the pods the scheduler has placed on one node.
 //
 // NOT ENRICHED WITH METRICS, unlike the workload listing. Usage for these pods

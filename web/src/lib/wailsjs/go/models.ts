@@ -442,6 +442,50 @@ export namespace wails {
 		    return a;
 		}
 	}
+	export class GraphEdge {
+	    from: string;
+	    to: string;
+	    label: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GraphEdge(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.from = source["from"];
+	        this.to = source["to"];
+	        this.label = source["label"];
+	    }
+	}
+	export class GraphNode {
+	    id: string;
+	    kind: string;
+	    apiKind: string;
+	    name: string;
+	    namespace: string;
+	    tier: number;
+	    detail: string;
+	    healthy: boolean;
+	    subject: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new GraphNode(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.kind = source["kind"];
+	        this.apiKind = source["apiKind"];
+	        this.name = source["name"];
+	        this.namespace = source["namespace"];
+	        this.tier = source["tier"];
+	        this.detail = source["detail"];
+	        this.healthy = source["healthy"];
+	        this.subject = source["subject"];
+	    }
+	}
 	export class HistorySettings {
 	    retentionDays: number;
 	    maxDays: number;
@@ -1135,6 +1179,40 @@ export namespace wails {
 	}
 	
 	
+	export class PodGraph {
+	    nodes: GraphNode[];
+	    edges: GraphEdge[];
+	    unreadable: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PodGraph(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.nodes = this.convertValues(source["nodes"], GraphNode);
+	        this.edges = this.convertValues(source["edges"], GraphEdge);
+	        this.unreadable = source["unreadable"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	export class PortForward {
 	    id: string;

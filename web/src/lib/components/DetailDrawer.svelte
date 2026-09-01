@@ -30,6 +30,7 @@
   import ScaleDialog from './ScaleDialog.svelte'
   import RestartDialog from './RestartDialog.svelte'
   import Terminal from './Terminal.svelte'
+  import DependencyMap from './DependencyMap.svelte'
   import { DeleteResource, RestartRollout } from '$lib/wailsjs/go/wails/ManagementAPI'
   import { ListPodsForWorkload } from '$lib/wailsjs/go/wails/WorkloadAPI'
   import type { Pod } from '$lib/api/client'
@@ -38,6 +39,7 @@
     Info,
     ScrollText,
     TerminalSquare,
+    Workflow,
     Activity,
     FileCode,
     RotateCcw,
@@ -59,7 +61,7 @@
 
   let { session }: Props = $props()
 
-  type Tab = 'overview' | 'logs' | 'terminal' | 'events' | 'yaml'
+  type Tab = 'overview' | 'logs' | 'terminal' | 'map' | 'events' | 'yaml'
   let activeTab = $state<Tab>('overview')
   let copied = $state(false)
   let deleteDialogOpen = $state(false)
@@ -419,6 +421,10 @@
     { id: 'overview', label: 'Overview', icon: Info, show: () => true },
     { id: 'logs', label: 'Logs', icon: ScrollText, show: () => isPod || isWorkloadWithLogs },
     { id: 'terminal', label: 'Terminal', icon: TerminalSquare, show: () => isPod || isWorkloadWithLogs },
+    // Pods only. The map is drawn AROUND a pod — what routes to it, what it
+    // runs, what it consumes — and the same picture for a Deployment would be
+    // one of these per replica with nothing to choose between them.
+    { id: 'map', label: 'Map', icon: Workflow, show: () => isPod },
     // An event has no events of its own, and asking for them returns the
     // empty list that means "nothing recent" — which reads as a fault here
     // rather than as the tautology it is.
@@ -796,6 +802,20 @@
           <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
             <TerminalSquare class="size-8" strokeWidth={1.2} />
             <p class="text-body-medium">Terminal is only available for pods and workloads</p>
+          </div>
+        {/if}
+      {:else if activeTab === 'map'}
+        {#if isPod && selectedPod}
+          <DependencyMap
+            clusterId={session.cluster.id}
+            namespace={selectedPod.namespace}
+            podName={selectedPod.name}
+            onopen={openObject}
+          />
+        {:else}
+          <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
+            <Workflow class="size-8" strokeWidth={1.2} />
+            <p class="text-body-medium">The map is drawn around a pod</p>
           </div>
         {/if}
       {:else if activeTab === 'events'}

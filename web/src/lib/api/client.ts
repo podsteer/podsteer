@@ -34,6 +34,7 @@ import {
   ListWorkloads as bindListWorkloads,
   ListPodsForWorkload as bindListPodsForWorkload,
   ListPodsOnNode as bindListPodsOnNode,
+  PodGraph as bindPodGraph,
 } from '$lib/wailsjs/go/wails/WorkloadAPI'
 import {
   ScaleWorkload as bindScaleWorkload,
@@ -102,6 +103,7 @@ export type HistorySettings = wails.HistorySettings
 /** An assessed cluster: what is wrong, what is left, what is running. */
 export type Overview = wails.Overview
 export type MetricsBackend = wails.MetricsBackend
+export type PodGraph = wails.PodGraph
 /** One problem, aggregated across the objects it affects. */
 export type Finding = wails.Finding
 
@@ -292,6 +294,11 @@ export function listWorkloads(
   namespace: string,
 ): Promise<Workload[]> {
   return call(() => bindListWorkloads(clusterId, kind, namespace))
+}
+
+/** The dependency chain around one pod, from what routes to it to what it needs. */
+export function podGraph(clusterId: string, namespace: string, podName: string): Promise<PodGraph> {
+  return call(() => bindPodGraph(clusterId, namespace, podName))
 }
 
 /** Lists the pods the scheduler has placed on one node, across namespaces. */

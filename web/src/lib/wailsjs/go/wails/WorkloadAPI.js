@@ -17,3 +17,7 @@ export function ListPodsOnNode(arg1, arg2) {
 export function ListWorkloads(arg1, arg2, arg3) {
   return window['go']['wails']['WorkloadAPI']['ListWorkloads'](arg1, arg2, arg3);
 }
+
+export function PodGraph(arg1, arg2, arg3) {
+  return window['go']['wails']['WorkloadAPI']['PodGraph'](arg1, arg2, arg3);
+}

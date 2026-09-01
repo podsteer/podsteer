@@ -1,0 +1,369 @@
+package domain
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// GraphKind is what a node in the dependency map represents.
+//
+// Deliberately not the Kubernetes kind: `Workload` covers Deployment,
+// StatefulSet and the rest, because the map is drawn to show a SHAPE and a
+// reader following a request from an Ingress does not need the graph to
+// distinguish a DaemonSet from a Deployment at that moment. The real kind is
+// on the node for the label and for following it.
+type GraphKind string
+
+const (
+	GraphIngress        GraphKind = "ingress"
+	GraphService        GraphKind = "service"
+	GraphWorkload       GraphKind = "workload"
+	GraphReplicaSet     GraphKind = "replicaset"
+	GraphPod            GraphKind = "pod"
+	GraphContainer      GraphKind = "container"
+	GraphHost           GraphKind = "node"
+	GraphConfig         GraphKind = "config"
+	GraphSecret         GraphKind = "secret"
+	GraphClaim          GraphKind = "claim"
+	GraphServiceAccount GraphKind = "serviceaccount"
+)
+
+// GraphTier is how far down the request path a node sits.
+//
+// The layout is the argument. A dependency map drawn as a free-floating web
+// invites the reader to find the shape themselves; drawn in tiers, from what
+// is outside the cluster down to what actually runs, it says which way
+// traffic goes before anybody reads a label.
+type GraphTier int
+
+const (
+	TierIngress   GraphTier = 0
+	TierService   GraphTier = 1
+	TierOwner     GraphTier = 2
+	TierPod       GraphTier = 3
+	TierContainer GraphTier = 4
+	// TierAttached holds what a pod consumes rather than what reaches it —
+	// config, secrets, volumes, the node. Off to one side, because they are
+	// dependencies but not steps in the path.
+	TierAttached GraphTier = 5
+)
+
+// GraphNode is one box on the map.
+type GraphNode struct {
+	// ID is unique within one graph, and stable across refreshes so a chart
+	// can animate rather than rebuild.
+	ID   string
+	Kind GraphKind
+	// APIKind is the Kubernetes kind, for the label and for following the
+	// node into its own panel. Empty for containers, which are not objects.
+	APIKind   string
+	Name      string
+	Namespace string
+	Tier      GraphTier
+	// Detail is a short qualifier — a port, an image tag, a host.
+	Detail string
+	// Healthy is false for anything the reader should look at. A map where
+	// everything is one colour tells them where things are; the colour is what
+	// tells them where to start.
+	Healthy bool
+	// Subject marks the object the map was opened from, so it can be drawn as
+	// the centre rather than as one box among twenty.
+	Subject bool
+}
+
+// GraphEdge is a dependency, drawn from the thing that depends to the thing
+// depended on — the direction a request travels.
+type GraphEdge struct {
+	From string
+	To   string
+	// Label names the relationship where it is not obvious: a port, a mount
+	// path, "selects".
+	Label string
+}
+
+// PodGraph is the dependency chain around one pod.
+type PodGraph struct {
+	Nodes []GraphNode
+	Edges []GraphEdge
+	// Unreadable names the sources that could not be read, so the map can say
+	// it is incomplete rather than implying nothing is there. An account
+	// without ingress permissions gets a map with no ingress tier, and must be
+	// told that is what happened.
+	Unreadable []string
+}
+
+// ServiceRef is the little of a Service the map needs.
+type ServiceRef struct {
+	Name      string
+	Namespace string
+	Selector  map[string]string
+	Type      string
+	Ports     []string
+}
+
+// IngressRef is the little of an Ingress the map needs.
+type IngressRef struct {
+	Name      string
+	Namespace string
+	// Hosts are the rule hosts, for the label.
+	Hosts []string
+	// Backends names the services it routes to.
+	Backends []string
+}
+
+// AttachedRef is something a pod consumes: a ConfigMap, Secret or claim.
+type AttachedRef struct {
+	Kind GraphKind
+	Name string
+	// Via says how it is consumed — a mount path, or "environment".
+	Via string
+}
+
+// GraphInput is everything needed to draw one pod's map.
+type GraphInput struct {
+	Pod Pod
+	// Services in the pod's namespace. Filtered here rather than by the
+	// caller, because "does this selector match this pod" is a rule and
+	// belongs where rules are tested.
+	Services []ServiceRef
+	// Ingresses in the pod's namespace, likewise filtered here.
+	Ingresses []IngressRef
+	// Owner is the controller chain above the pod, nearest first — usually
+	// the ReplicaSet then the Deployment.
+	Owner []OwnerReference
+	// Attached is what the pod mounts or reads.
+	Attached []AttachedRef
+	// Unreadable names sources that failed.
+	Unreadable []string
+}
+
+// NewPodGraph assembles the map.
+//
+// A PURE FUNCTION of what was read, so the rules that decide what connects to
+// what — selector matching above all — are settled in a test rather than
+// observed on somebody's cluster.
+func NewPodGraph(input GraphInput) PodGraph {
+	pod := input.Pod
+	graph := PodGraph{Unreadable: input.Unreadable}
+
+	podID := "pod/" + pod.Name()
+	graph.Nodes = append(graph.Nodes, GraphNode{
+		ID:        podID,
+		Kind:      GraphPod,
+		APIKind:   "Pod",
+		Name:      pod.Name(),
+		Namespace: pod.Namespace().String(),
+		Tier:      TierPod,
+		Detail:    string(pod.Phase()),
+		Healthy:   pod.IsHealthy(),
+		Subject:   true,
+	})
+
+	graph.addOwners(input.Owner, podID, pod.Namespace().String())
+	graph.addServices(input, podID)
+	graph.addContainers(pod, podID)
+	graph.addAttached(input.Attached, podID)
+
+	if node := pod.NodeName(); node != "" {
+		hostID := "node/" + node
+		graph.Nodes = append(graph.Nodes, GraphNode{
+			ID: hostID, Kind: GraphHost, APIKind: "Node", Name: node,
+			Tier: TierAttached, Detail: "scheduled on", Healthy: true,
+		})
+		graph.Edges = append(graph.Edges, GraphEdge{From: podID, To: hostID, Label: "runs on"})
+	}
+
+	graph.sort()
+	return graph
+}
+
+// addOwners walks the controller chain upward from the pod.
+func (g *PodGraph) addOwners(owners []OwnerReference, podID, namespace string) {
+	below := podID
+
+	for _, owner := range owners {
+		kind := GraphWorkload
+		tier := TierOwner
+		if owner.Kind == "ReplicaSet" {
+			kind = GraphReplicaSet
+		}
+
+		id := strings.ToLower(owner.Kind) + "/" + owner.Name
+		g.Nodes = append(g.Nodes, GraphNode{
+			ID: id, Kind: kind, APIKind: owner.Kind, Name: owner.Name,
+			Namespace: namespace, Tier: tier, Healthy: true,
+		})
+		// From the owner DOWN to what it created: the edge follows control,
+		// which for everything above the pod runs the same way as traffic.
+		g.Edges = append(g.Edges, GraphEdge{From: id, To: below, Label: "manages"})
+		below = id
+	}
+}
+
+// addServices connects the services that select this pod, and the ingresses
+// that route to those services.
+func (g *PodGraph) addServices(input GraphInput, podID string) {
+	labels := input.Pod.Labels()
+	routed := make(map[string]string)
+
+	for _, service := range input.Services {
+		if !selectorMatches(service.Selector, labels) {
+			continue
+		}
+
+		id := "service/" + service.Name
+		routed[service.Name] = id
+
+		g.Nodes = append(g.Nodes, GraphNode{
+			ID: id, Kind: GraphService, APIKind: "Service", Name: service.Name,
+			Namespace: service.Namespace, Tier: TierService,
+			Detail:  strings.Join(service.Ports, ", "),
+			Healthy: true,
+		})
+		g.Edges = append(g.Edges, GraphEdge{From: id, To: podID, Label: "selects"})
+	}
+
+	for _, ingress := range input.Ingresses {
+		var reaches []string
+		for _, backend := range ingress.Backends {
+			if id, ok := routed[backend]; ok {
+				reaches = append(reaches, id)
+			}
+		}
+		if len(reaches) == 0 {
+			// An ingress routing only to services that do not select this pod
+			// is not this pod's ingress, and drawing it would imply a path
+			// that does not exist.
+			continue
+		}
+
+		id := "ingress/" + ingress.Name
+		g.Nodes = append(g.Nodes, GraphNode{
+			ID: id, Kind: GraphIngress, APIKind: "Ingress", Name: ingress.Name,
+			Namespace: ingress.Namespace, Tier: TierIngress,
+			Detail:  strings.Join(ingress.Hosts, ", "),
+			Healthy: true,
+		})
+		for _, to := range reaches {
+			g.Edges = append(g.Edges, GraphEdge{From: id, To: to, Label: "routes to"})
+		}
+	}
+}
+
+// addContainers hangs the pod's containers below it.
+func (g *PodGraph) addContainers(pod Pod, podID string) {
+	for _, container := range pod.Containers() {
+		id := "container/" + container.Name
+		g.Nodes = append(g.Nodes, GraphNode{
+			ID: id, Kind: GraphContainer, Name: container.Name,
+			Namespace: pod.Namespace().String(), Tier: TierContainer,
+			Detail: imageTag(container.Image),
+			// A container's health is the reader's starting point: this is the
+			// tier where "something is wrong" usually resolves to a name.
+			Healthy: container.Ready,
+		})
+		g.Edges = append(g.Edges, GraphEdge{From: podID, To: id})
+	}
+}
+
+// addAttached hangs what the pod consumes off to one side.
+func (g *PodGraph) addAttached(attached []AttachedRef, podID string) {
+	seen := make(map[string]bool)
+
+	for _, ref := range attached {
+		id := string(ref.Kind) + "/" + ref.Name
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+
+		g.Nodes = append(g.Nodes, GraphNode{
+			ID: id, Kind: ref.Kind, APIKind: apiKindOf(ref.Kind), Name: ref.Name,
+			Tier: TierAttached, Detail: ref.Via, Healthy: true,
+		})
+		g.Edges = append(g.Edges, GraphEdge{From: podID, To: id, Label: ref.Via})
+	}
+}
+
+// sort puts the graph in a stable order.
+//
+// So a refresh redraws the same picture. Without it the chart reshuffles on
+// every poll — map iteration is unordered — and a map that moves while being
+// read is worse than one that is a few seconds stale.
+func (g *PodGraph) sort() {
+	sort.SliceStable(g.Nodes, func(i, j int) bool {
+		if g.Nodes[i].Tier != g.Nodes[j].Tier {
+			return g.Nodes[i].Tier < g.Nodes[j].Tier
+		}
+		return g.Nodes[i].ID < g.Nodes[j].ID
+	})
+	sort.SliceStable(g.Edges, func(i, j int) bool {
+		if g.Edges[i].From != g.Edges[j].From {
+			return g.Edges[i].From < g.Edges[j].From
+		}
+		return g.Edges[i].To < g.Edges[j].To
+	})
+}
+
+// selectorMatches reports whether a service's selector covers these labels.
+//
+// EVERY KEY MUST MATCH, and an EMPTY SELECTOR MATCHES NOTHING. The second is
+// the one that matters: in the Kubernetes API an empty selector on a Service
+// means the Service has no selector at all — an ExternalName, or one whose
+// Endpoints are managed by hand — and treating it as "matches everything"
+// would draw an edge from it to every pod in the namespace.
+func selectorMatches(selector, labels map[string]string) bool {
+	if len(selector) == 0 {
+		return false
+	}
+	for key, want := range selector {
+		if labels[key] != want {
+			return false
+		}
+	}
+	return true
+}
+
+// imageTag shortens an image reference to what identifies it.
+//
+// A registry path is most of the width of a box and none of the information:
+// two containers differ by their tag or digest, not by the host they were
+// pulled from.
+func imageTag(image string) string {
+	if image == "" {
+		return ""
+	}
+	if at := strings.LastIndex(image, "@"); at >= 0 {
+		digest := image[at+1:]
+		if len(digest) > 19 {
+			digest = digest[:19] + "…"
+		}
+		return digest
+	}
+	if colon := strings.LastIndex(image, ":"); colon > strings.LastIndex(image, "/") {
+		return image[colon+1:]
+	}
+	return "latest"
+}
+
+// apiKindOf maps a graph kind back to the Kubernetes kind, for following.
+func apiKindOf(kind GraphKind) string {
+	switch kind {
+	case GraphConfig:
+		return "ConfigMap"
+	case GraphSecret:
+		return "Secret"
+	case GraphClaim:
+		return "PersistentVolumeClaim"
+	case GraphServiceAccount:
+		return "ServiceAccount"
+	default:
+		return ""
+	}
+}
+
+// String renders a graph for a log line or a test failure.
+func (g PodGraph) String() string {
+	return fmt.Sprintf("%d nodes, %d edges", len(g.Nodes), len(g.Edges))
+}

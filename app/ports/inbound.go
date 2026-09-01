@@ -63,6 +63,10 @@ type WorkloadService interface {
 	// ListWorkloads returns controllers of the given kind.
 	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error)
 
+	// PodGraph returns the dependency chain around one pod, from whatever
+	// routes to it down to its containers and what it consumes.
+	PodGraph(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string) (domain.PodGraph, error)
+
 	// ListPodsOnNode returns the pods the scheduler has placed on one node,
 	// across every namespace — "what is running on this machine" is a question
 	// about the machine, not about a namespace.

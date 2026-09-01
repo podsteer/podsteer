@@ -101,6 +101,10 @@ func (g *goneCluster) NodeMetrics(context.Context, domain.ClusterID) (map[string
 	return nil, g.err(false)
 }
 
+func (g *goneCluster) PodGraphSources(context.Context, domain.ClusterID, domain.NamespaceName, string) (domain.GraphInput, error) {
+	return domain.GraphInput{}, g.err(false)
+}
+
 func (g *goneCluster) ListPodsOnNode(context.Context, domain.ClusterID, string) ([]domain.Pod, error) {
 	return nil, g.err(false)
 }

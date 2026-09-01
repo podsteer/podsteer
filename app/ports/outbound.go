@@ -81,6 +81,16 @@ type WorkloadPort interface {
 	// ListWorkloads returns controllers of the given kind.
 	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error)
 
+	// PodGraphSources reads what one pod's dependency map is drawn from.
+	//
+	// GATHERS RATHER THAN ASSEMBLES. Which service selects which pod is a
+	// rule, and rules belong in the domain where they are tested; this returns
+	// what was read and lets NewPodGraph decide what connects. Individual
+	// sources may fail without failing the call — an account that can list
+	// pods but not ingresses gets a map without an ingress tier, and
+	// GraphInput.Unreadable names what was missing.
+	PodGraphSources(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string) (domain.GraphInput, error)
+
 	// ListPodsOnNode returns the pods the scheduler has placed on one node,
 	// across every namespace.
 	//

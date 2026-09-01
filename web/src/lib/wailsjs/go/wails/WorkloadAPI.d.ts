@@ -9,3 +9,5 @@ export function ListPodsForWorkload(arg1:string,arg2:string,arg3:string,arg4:str
 export function ListPodsOnNode(arg1:string,arg2:string):Promise<Array<wails.Pod>>;
 
 export function ListWorkloads(arg1:string,arg2:string,arg3:string):Promise<Array<wails.Workload>>;
+
+export function PodGraph(arg1:string,arg2:string,arg3:string):Promise<wails.PodGraph>;
