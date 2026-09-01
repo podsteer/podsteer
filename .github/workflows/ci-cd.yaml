@@ -422,7 +422,7 @@ jobs:
       # here is that the signing happens over an API rather than from a device.
       - name: Authenticate To Azure
         if: runner.os == 'Windows' && env.AZURE_CLIENT_ID != ''
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           # OIDC federated credentials — GitHub mints a short-lived token per
           # run, so there is no client secret stored in this repository at all.
@@ -432,7 +432,13 @@ jobs:
 
       - name: Sign The Windows Executable
         if: runner.os == 'Windows' && env.AZURE_CLIENT_ID != ''
-        uses: azure/trusted-signing-action@v0
+        # v2, and the input names were checked against the action's own schema
+        # rather than assumed: this step is gated on AZURE_CLIENT_ID and so
+        # never runs in CI, which means a renamed input would not surface until
+        # the first Windows release actually signs something. v2 did rename one
+        # — `code-signing-account-name` to `signing-account-name` — but not any
+        # of the eight used here.
+        uses: azure/trusted-signing-action@v2
         with:
           endpoint: ${{ secrets.PDS__AZURE_SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ secrets.PDS__AZURE_SIGNING_ACCOUNT }}

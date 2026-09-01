@@ -106,8 +106,13 @@ jobs:
       - name: Mint A Tap Token
         id: tap-token
         if: steps.release.outputs.skip == 'false'
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
+          # `app-id` still works in v3 but is deprecated in favour of
+          # `client-id`, which is a DIFFERENT value from the App ID and would
+          # need a new repository variable. Left as it is deliberately rather
+          # than swapped blind: getting it wrong breaks the tap update, and
+          # that failure is invisible until somebody runs `brew upgrade`.
           app-id: ${{ vars.PDS__TAP_APP_ID }}
           private-key: ${{ secrets.PDS__TAP_APP_PRIVATE_KEY }}
           owner: podsteer
