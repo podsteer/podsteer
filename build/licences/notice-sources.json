@@ -1,0 +1,13 @@
+{
+  "$comment": "Licence notices for packages that publish none in their own artefact. MIT and BSD both require the notice to be REPRODUCED in distributions; a package omitting it from its tarball does not remove that duty, it just means the text has to be fetched from where the project actually keeps it. Each entry names a sibling package, already in the inventory, whose licence file IS the same project's — never a text typed out by hand. `make notices` fails if the sibling is absent or if the package it covers has since started shipping its own.",
+  "sources": [
+    {
+      "package": "@xterm/addon-serialize",
+      "ecosystem": "npm",
+      "inheritsFrom": "@xterm/addon-search",
+      "justification": "Both are packages of the xterm.js monorepo (xtermjs/xterm.js), published together from one repository under one MIT licence held by 'The xterm.js authors'. addon-search ships that licence file in its tarball and addon-serialize omits it; the licence, the holder and the terms are identical, so reproducing the sibling's file discharges the notice requirement for both. Verified by comparing the shipped LICENSE files of the sibling addons, which are byte-identical to each other.",
+      "approvedBy": "sebastian.gogoasa@cloudresty.com",
+      "approvedOn": "2026-09-01"
+    }
+  ]
+}

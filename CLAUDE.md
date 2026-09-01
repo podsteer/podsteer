@@ -250,6 +250,15 @@ Three things about the scope are easy to get wrong and are handled in
   build-scope exception is guarded by a cross-check that fails if its package
   ever enters the shipped tree.
 
+A shipped package that publishes **no licence text** blocks the build too, and
+has two outcomes: the notice genuinely does not exist, which is recorded as an
+exception in `notices_test.go`, or it exists elsewhere in the same project —
+a monorepo where some tarballs carry the file and some do not — in which case
+`build/licences/notice-sources.json` names a **sibling already in the
+inventory** to copy it from. Never prose typed out from memory, and the
+collector fails if the sibling is missing or the package has since started
+shipping its own.
+
 `UNKNOWN` is a blocking tier, not an error — an unclassifiable licence must
 stop a build rather than be omitted from one. A package whose declared licence
 and licence text disagree resolves to `UNKNOWN` too.

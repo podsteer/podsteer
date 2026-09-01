@@ -201,3 +201,43 @@ func TestUnknownTextIsReportedMissing(t *testing.T) {
 		t.Error("an empty text id must not resolve")
 	}
 }
+
+// A notice inherited from a sibling still has to BE there. The mechanism in
+// build/licences/notice-sources.json exists so a package that ships no licence
+// of its own is still credited with one — MIT requires the notice to be
+// distributed, and a tarball omitting the file does not remove that duty.
+//
+// This asserts the outcome rather than the mechanism: whatever the collector
+// did, the inventory that reaches Settings → Credits must carry both the text
+// and a record that it was inherited, so the file never implies the package
+// shipped something it did not.
+func TestInheritedNoticesCarryTextAndProvenance(t *testing.T) {
+	t.Parallel()
+
+	packages, err := notices.Packages()
+	if err != nil {
+		t.Fatalf("Packages() error = %v", err)
+	}
+
+	inherited := 0
+	for _, entry := range packages {
+		if entry.NoticeFrom == "" {
+			continue
+		}
+		inherited++
+
+		if entry.TextID == "" {
+			t.Errorf("%s inherits a notice from %s but carries no text",
+				entry.Name, entry.NoticeFrom)
+		}
+		if entry.Copyright == "" {
+			t.Errorf("%s inherits a notice from %s but carries no copyright line — "+
+				"that is the part MIT and BSD name specifically", entry.Name, entry.NoticeFrom)
+		}
+	}
+
+	// Not a requirement that any exist, but if the mechanism is wired and
+	// silently matching nothing, the entries in notice-sources.json are stale
+	// and the packages they cover are shipping uncredited.
+	t.Logf("%d package(s) carry an inherited notice", inherited)
+}

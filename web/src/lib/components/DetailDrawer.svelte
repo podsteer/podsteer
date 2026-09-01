@@ -80,7 +80,7 @@
   let draftOrigin = $state('')
 
   /** Which pane, if any, has been given the whole window. */
-  let maximized = $state<'yaml' | 'logs' | null>(null)
+  let maximized = $state<'yaml' | 'logs' | 'terminal' | null>(null)
   let restartDialogOpen = $state(false)
   let actionError = $state<string | null>(null)
   let workloadPods = $state<Pod[]>([])
@@ -482,6 +482,28 @@
   {/if}
 {/snippet}
 
+{#snippet terminalSurface()}
+  {#if isPod && selectedPod}
+    <Terminal
+      clusterId={session.cluster.id}
+      namespace={selectedPod.namespace}
+      podName={selectedPod.name}
+      containerName={selectedPod.containers?.[0]?.name ?? ''}
+      containers={selectedPod.containers?.map((c) => c.name) ?? []}
+      onmaximize={maximized === 'terminal' ? undefined : () => (maximized = 'terminal')}
+    />
+  {:else if isWorkloadWithLogs && workloadPods.length > 0}
+    <Terminal
+      clusterId={session.cluster.id}
+      namespace={workloadPods[0].namespace}
+      podName={workloadPods[0].name}
+      containerName={workloadPods[0].containers?.[0]?.name ?? ''}
+      containers={workloadPods[0].containers?.map((c: any) => c.name) ?? []}
+      onmaximize={maximized === 'terminal' ? undefined : () => (maximized = 'terminal')}
+    />
+  {/if}
+{/snippet}
+
 {#snippet yamlSurface()}
   <YamlPane
     content={editing ? (draft ?? '') : (shownManifest ?? '')}
@@ -752,22 +774,18 @@
           </div>
         {/if}
       {:else if activeTab === 'terminal'}
-        {#if isPod && selectedPod}
-          <Terminal
-            clusterId={session.cluster.id}
-            namespace={selectedPod.namespace}
-            podName={selectedPod.name}
-            containerName={selectedPod.containers?.[0]?.name ?? ''}
-            containers={selectedPod.containers?.map(c => c.name) ?? []}
-          />
+        {#if maximized === 'terminal'}
+          <!-- The pane is in the dialog. Saying so beats an empty tab, which
+               reads as a pane that failed to load. -->
+          <div class="flex h-full items-center justify-center p-4">
+            <p class="text-body-medium text-on-surface-variant/70">
+              Showing the terminal in a larger window.
+            </p>
+          </div>
+        {:else if isPod && selectedPod}
+          {@render terminalSurface()}
         {:else if isWorkloadWithLogs && workloadPods.length > 0}
-          <Terminal
-            clusterId={session.cluster.id}
-            namespace={workloadPods[0].namespace}
-            podName={workloadPods[0].name}
-            containerName={workloadPods[0].containers?.[0]?.name ?? ''}
-            containers={workloadPods[0].containers?.map((c: any) => c.name) ?? []}
-          />
+          {@render terminalSurface()}
         {:else if isWorkloadWithLogs}
           <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
             <TerminalSquare class="size-8" strokeWidth={1.2} />
@@ -883,6 +901,17 @@
     onclose={() => (maximized = null)}
   >
     {@render logsSurface()}
+  </PaneDialog>
+
+  <PaneDialog
+    open={maximized === 'terminal'}
+    icon={KindIcon}
+    kind={session.selectedKind?.singular}
+    name={session.selectedName ?? ''}
+    label="Terminal"
+    onclose={() => (maximized = null)}
+  >
+    {@render terminalSurface()}
   </PaneDialog>
 
   {#if selectedWorkload}

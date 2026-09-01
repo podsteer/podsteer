@@ -167,6 +167,40 @@ They were kept rather than eliminated because the alternative is abandoning
 Tailwind v4, and the obligation being avoided is nil. Should they ever become
 shipped, the build fails until somebody re-argues it.
 
+## A package that ships no licence text
+
+MIT and BSD both require the notice to be **reproduced** in distributions. A
+package that omits the file from its published artefact does not thereby remove
+that duty — it only means the text has to come from wherever the project
+actually keeps it.
+
+`app/adapters/notices/notices_test.go` fails the build on any shipped package
+with no licence text, so this cannot pass unnoticed. There are two outcomes:
+
+- **The notice genuinely does not exist.** Some small packages declare a
+  licence in `package.json` and publish no file anywhere. Reproducing a notice
+  that was never written is impossible, and recording that is the honest
+  alternative — those are named in the test.
+- **The notice exists, elsewhere in the same project.** A monorepo publishing
+  a dozen packages under one licence, where some tarballs include the file and
+  some do not. Here the obligation *can* be met, and
+  [`build/licences/notice-sources.json`](../build/licences/notice-sources.json)
+  is how: the entry names a **sibling package already in this inventory** whose
+  licence file is the same project's, and the collector copies it across.
+
+**It is a sibling, never prose somebody typed out.** The point is to reproduce
+a notice we can point at, not to assert from memory what a licence probably
+says. The collector fails rather than fudges if the sibling is absent from the
+tree, if the sibling has no text either, or if the package has **since started
+shipping its own** — that last one so an exception is removed when it stops
+being true rather than quietly shadowing the real file.
+
+Each entry carries a justification, an approver and a date, like any other
+exception. The generated inventory records `noticeFrom`, so
+**Settings → Credits** never implies a package shipped something it did not.
+
+&nbsp;
+
 ## SBOM
 
 `make sbom` emits CycloneDX 1.6 to `build/bin/sbom/podsteer.cdx.json`, and CI
