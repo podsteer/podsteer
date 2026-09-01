@@ -422,7 +422,7 @@ jobs:
       # here is that the signing happens over an API rather than from a device.
       - name: Authenticate To Azure
         if: runner.os == 'Windows' && env.AZURE_CLIENT_ID != ''
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           # OIDC federated credentials — GitHub mints a short-lived token per
           # run, so there is no client secret stored in this repository at all.
