@@ -94,10 +94,37 @@ describe('the dependency map layout', () => {
     expect(result.edges[0].path).not.toContain('Q')
   })
 
+/**
+ * Whether any part of a path passes through a box.
+ *
+ * SEGMENTS, NOT CONTROL POINTS. The first version of this sampled the points a
+ * path visits, which a straight run through the middle of a box walks straight
+ * past — the line entered one side and left the other with no control point in
+ * between, so the test passed while the screenshot showed the line drawn
+ * through the label. Sampling along every run is the only version that catches
+ * what a reader actually sees.
+ */
+function pathCrosses(path: string, box: { x: number; y: number; width: number; height: number }) {
+  const visited = points(path)
+
+  for (let i = 1; i < visited.length; i++) {
+    const a = visited[i - 1]
+    const b = visited[i]
+    const steps = Math.max(2, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 2))
+
+    for (let step = 0; step <= steps; step++) {
+      const t = step / steps
+      const x = a.x + (b.x - a.x) * t
+      const y = a.y + (b.y - a.y) * t
+      if (Math.abs(x - box.x) < box.width / 2 && Math.abs(y - box.y) < box.height / 2) return true
+    }
+  }
+  return false
+}
+
   it('routes a multi-tier edge clear of the boxes it passes', () => {
-    // The pod to its ConfigMaps passes the container tier. Turning at the
-    // midpoint of the span put the corridor exactly ON that tier, and the
-    // line was drawn through the box and its label.
+    // The pod to its ConfigMaps passes the container tier, and the line was
+    // drawn straight through that box and its label.
     const source: GraphSource = {
       nodes: [node('pod', 0), node('middle', 1), node('far', 2)],
       edges: [{ from: 'pod', to: 'far' }],
@@ -105,11 +132,80 @@ describe('the dependency map layout', () => {
     const result = layout(source, true)
     const middle = result.nodes.find((n) => n.id === 'middle')!
 
-    const crosses = points(result.edges[0].path).some(
-      (p) =>
-        Math.abs(p.x - middle.x) < middle.width / 2 && Math.abs(p.y - middle.y) < middle.height / 2,
+    expect(pathCrosses(result.edges[0].path, middle)).toBe(false)
+  })
+
+  it('routes a same-tier edge sideways rather than looping', () => {
+    // A Deployment and its ReplicaSet share the owner tier. Treated like any
+    // other edge the line left the source on the wrong side, dropped below
+    // both boxes and arrived pointing backwards — a loop under two boxes that
+    // sit side by side.
+    const result = layout(
+      {
+        nodes: [node('deploy', 0, { name: 'deploy' }), node('rs', 0, { name: 'rs' })],
+        edges: [{ from: 'deploy', to: 'rs' }],
+      },
+      true,
     )
-    expect(crosses).toBe(false)
+
+    const path = points(result.edges[0].path)
+    const deploy = result.nodes.find((n) => n.id === 'deploy')!
+    const rs = result.nodes.find((n) => n.id === 'rs')!
+
+    // Laid out horizontally, tiers advance along x — so siblings share an x
+    // and stack. The line between them is a straight run across, with no
+    // corner and no excursion past either box.
+    expect(result.edges[0].path).not.toContain('Q')
+    for (const point of path) {
+      expect(point.x).toBeCloseTo(deploy.x, 5)
+      expect(point.y).toBeGreaterThan(Math.min(deploy.y, rs.y))
+      expect(point.y).toBeLessThan(Math.max(deploy.y, rs.y))
+    }
+  })
+
+  it('never draws a line through any box in the graph', () => {
+    // The general form of the fault, over a shape close to a real pod: a
+    // controller pair, a container tier, and several attached resources that
+    // the pod reaches past it.
+    const source: GraphSource = {
+      nodes: [
+        node('ingress', 0),
+        node('service', 1),
+        node('deploy', 2, { name: 'deploy' }),
+        node('rs', 2, { name: 'rs' }),
+        node('pod', 3),
+        node('container', 4),
+        node('cm-a', 5, { name: 'cm-a' }),
+        node('cm-b', 5, { name: 'cm-b' }),
+        node('secret', 5, { name: 'secret' }),
+      ],
+      edges: [
+        { from: 'ingress', to: 'service' },
+        { from: 'service', to: 'pod' },
+        { from: 'deploy', to: 'rs' },
+        { from: 'rs', to: 'pod' },
+        { from: 'pod', to: 'container' },
+        { from: 'pod', to: 'cm-a' },
+        { from: 'pod', to: 'cm-b' },
+        { from: 'pod', to: 'secret' },
+      ],
+    }
+
+    for (const horizontal of [true, false]) {
+      const result = layout(source, horizontal)
+
+      for (const edge of result.edges) {
+        for (const box of result.nodes) {
+          // Its own ends are allowed to touch their boxes; everything else
+          // must be clear.
+          if (box.id === edge.from || box.id === edge.to) continue
+          expect(
+            pathCrosses(edge.path, box),
+            `${edge.from} -> ${edge.to} crosses ${box.id} (horizontal=${horizontal})`,
+          ).toBe(false)
+        }
+      }
+    }
   })
 
   it('centres a tier of one against a tier of many', () => {

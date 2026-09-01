@@ -140,7 +140,7 @@ export function layout(source: GraphSource, horizontal: boolean): Layout {
       id: `${edge.from}->${edge.to}#${index}`,
       from: edge.from,
       to: edge.to,
-      path: route(from, to, horizontal),
+      path: route(from, to, horizontal, nodes),
     })
   }
 
@@ -151,13 +151,47 @@ export function layout(source: GraphSource, horizontal: boolean): Layout {
  * Builds one route between two boxes.
  *
  * FROM THE EDGE OF THE BOX, NOT ITS CENTRE, and set back by EDGE_GAP so the
- * line never touches the text. The turn happens in the corridor between the
- * tiers, which is empty by construction — so an edge crossing several tiers
- * passes cleanly through the gaps rather than over the boxes in between.
+ * line never touches the text.
+ *
+ * Three cases, and the two special ones are special because a screenshot said
+ * so:
+ *
+ *   - SAME TIER. A Deployment and its ReplicaSet sit side by side. Treated
+ *     like any other edge the line left on the wrong axis entirely, dropped
+ *     below both boxes and arrived pointing backwards. Siblings connect
+ *     directly, across.
+ *   - CROSSING A TIER. The pod reaches its ConfigMaps past the container
+ *     tier, and the long run down the middle went straight through that box
+ *     and its label. Two corridors are possible — just after the source, or
+ *     just before the target — so both are tried and the one that clears
+ *     every box wins.
+ *   - Everything else is the ordinary one-tier step.
  */
-function route(from: LaidOutNode, to: LaidOutNode, horizontal: boolean): string {
-  const forward = horizontal ? to.x > from.x : to.y > from.y
-  const sign = forward ? 1 : -1
+function route(
+  from: LaidOutNode,
+  to: LaidOutNode,
+  horizontal: boolean,
+  obstacles: LaidOutNode[],
+): string {
+  const fromAlong = horizontal ? from.x : from.y
+  const toAlong = horizontal ? to.x : to.y
+
+  // Siblings: the tiers are the same, so the whole journey is across.
+  if (fromAlong === toAlong) {
+    const forward = horizontal ? to.y > from.y : to.x > from.x
+    const sign = forward ? 1 : -1
+
+    const start = horizontal
+      ? { x: from.x, y: from.y + sign * (from.height / 2 + EDGE_GAP) }
+      : { x: from.x + sign * (from.width / 2 + EDGE_GAP), y: from.y }
+    const end = horizontal
+      ? { x: to.x, y: to.y - sign * (to.height / 2 + EDGE_GAP) }
+      : { x: to.x - sign * (to.width / 2 + EDGE_GAP), y: to.y }
+
+    return `M ${round(start.x)} ${round(start.y)} L ${round(end.x)} ${round(end.y)}`
+  }
+
+  const sign = toAlong > fromAlong ? 1 : -1
 
   const start = horizontal
     ? { x: from.x + sign * (from.width / 2 + EDGE_GAP), y: from.y }
@@ -167,21 +201,95 @@ function route(from: LaidOutNode, to: LaidOutNode, horizontal: boolean): string 
     ? { x: to.x - sign * (to.width / 2 + EDGE_GAP), y: to.y }
     : { x: to.x, y: to.y - sign * (to.height / 2 + EDGE_GAP) }
 
-  // Already straight: one segment, no corners to round.
-  if (horizontal ? start.y === end.y : start.x === end.x) {
-    return `M ${round(start.x)} ${round(start.y)} L ${round(end.x)} ${round(end.y)}`
+  const others = obstacles.filter((box) => box.id !== from.id && box.id !== to.id)
+
+  // Every way this edge could be drawn, best first. The first one that clears
+  // every other box wins, which is how a route past an intervening tier is
+  // found without hand-placing it.
+  const routes: { x: number; y: number }[][] = []
+
+  // Directly opposite: one straight run, and the nicest answer when the space
+  // between is empty. It frequently is not — a pod and one of its ConfigMaps
+  // are both centred, with the container tier between them — so this is a
+  // candidate rather than a shortcut. Returning it unchecked is what drew a
+  // line through the container box and its label.
+  const opposite = horizontal ? start.y === end.y : start.x === end.x
+  if (opposite) routes.push([start, end])
+
+  if (!opposite) {
+    // Turning just before the target reads better, because the lines converge
+    // as they arrive; turning just after the source is the fallback.
+    routes.push(
+      corridorPoints(start, end, toAlong - sign * (TIER_GAP / 2 - EDGE_GAP), horizontal),
+      corridorPoints(
+        start,
+        end,
+        fromAlong + sign * (TIER_GAP / 2 - EDGE_GAP + (horizontal ? from.width : from.height) / 2),
+        horizontal,
+      ),
+    )
   }
 
-  // The corridor sits just short of the destination, so it is always in the
-  // gap immediately before the target tier however far the edge travelled.
-  const corridor = horizontal
-    ? end.x - sign * (TIER_GAP / 2 - EDGE_GAP)
-    : end.y - sign * (TIER_GAP / 2 - EDGE_GAP)
+  // A LANE BESIDE THE OBSTACLES, for when the direct routes are blocked. It
+  // sits exactly halfway between two rows of the tier it passes, so it is in
+  // the gap by construction rather than by luck. Both sides are offered
+  // because either may be the occupied one.
+  const lane = horizontal ? (NODE_HEIGHT + SIBLING_GAP) / 2 : (NODE_WIDTH + SIBLING_GAP) / 2
+  for (const side of [1, -1]) {
+    const offset = (horizontal ? start.y : start.x) + side * lane
+    routes.push(
+      horizontal
+        ? [start, { x: start.x, y: offset }, { x: end.x, y: offset }, end]
+        : [start, { x: offset, y: start.y }, { x: offset, y: end.y }, end],
+    )
+  }
 
-  const bendA = horizontal ? { x: corridor, y: start.y } : { x: start.x, y: corridor }
-  const bendB = horizontal ? { x: corridor, y: end.y } : { x: end.x, y: corridor }
+  for (const points of routes) {
+    const blocked = points.some((_, i) => i > 0 && crosses(points[i - 1], points[i], others))
+    if (!blocked) return rounded(points)
+  }
 
-  return rounded([start, bendA, bendB, end])
+  // Nothing was clear. The first candidate is still the most readable, and a
+  // line crossing a box is better than no line at all.
+  return rounded(routes[0])
+}
+
+/** The four points of a two-bend route through one corridor. */
+function corridorPoints(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  corridor: number,
+  horizontal: boolean,
+): { x: number; y: number }[] {
+  return horizontal
+    ? [start, { x: corridor, y: start.y }, { x: corridor, y: end.y }, end]
+    : [start, { x: start.x, y: corridor }, { x: end.x, y: corridor }, end]
+}
+
+/**
+ * Whether an axis-aligned run passes through any box.
+ *
+ * Sampled along the run rather than tested at its ends: a line that enters one
+ * side of a box and leaves the other has no endpoint inside it, which is
+ * exactly the case that reached a screenshot.
+ */
+function crosses(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  boxes: LaidOutNode[],
+): boolean {
+  const steps = Math.max(2, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 4))
+
+  for (let step = 0; step <= steps; step++) {
+    const t = step / steps
+    const x = a.x + (b.x - a.x) * t
+    const y = a.y + (b.y - a.y) * t
+
+    for (const box of boxes) {
+      if (Math.abs(x - box.x) < box.width / 2 && Math.abs(y - box.y) < box.height / 2) return true
+    }
+  }
+  return false
 }
 
 /**
