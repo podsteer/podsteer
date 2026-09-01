@@ -99,10 +99,52 @@ Two failure modes are guarded explicitly because they are silent otherwise:
 3. **`package`** — builds and packages on macOS, Windows and Linux.
 4. **`release`** — on `-rc-` and production tags only, publishes a GitHub
    Release with all three archives.
+5. **`tap`** — on production tags only, updates the Homebrew cask. See below.
 
 `.github/workflows/update-version-badges.yaml` rewrites the README badges on
 both branches whenever a tag is pushed. Its commits carry `[skip ci]`, without
 which they would re-trigger the pipeline on a badge URL change.
+
+&nbsp;
+
+## Homebrew is the update channel
+
+For macOS this is how a released version actually reaches somebody, so it is
+part of shipping rather than a nicety: `brew upgrade --cask podsteer` is what an
+installed user runs, and it serves whatever `podsteer/homebrew-tap` says.
+
+**It is automated, and the automation is easy to believe is working when it is
+not.** The `tap` job in `ci-cd.yaml` calls `homebrew.yaml`, which rewrites only
+the `version` and `sha256` lines of `Casks/podsteer.rb` and pushes. Three things
+about it are load-bearing:
+
+- **It is `needs: release`, and a separate job rather than a step.** The
+  checksum is computed by downloading the asset as GitHub serves it, which is
+  only possible once the release job has finished uploading. Folding it into
+  the release job races the upload.
+- **It runs on `workflow_call`, not on the `release: published` event.** That
+  trigger is still declared and still looks sufficient, and is not: the release
+  is created by a workflow using `GITHUB_TOKEN`, and GitHub deliberately does
+  not start workflows from events raised by that token. v0.1.0 shipped with the
+  cask untouched for exactly this reason, and nothing failed to say so.
+- **It authenticates with a GitHub App, not a PAT.** `GITHUB_TOKEN` cannot push
+  to another repository, and a fine-grained PAT expires — a year later a release
+  would publish, this job would fail, and `brew install` would quietly keep
+  serving the previous version until somebody complained.
+
+**Production tags only.** A `-dev-` or `-rc-` build is not something anybody
+should get from `brew install`, and the job exits early on one.
+
+**Homebrew is pull, not push.** There is no daemon: a user who never runs
+`brew upgrade` is never told anything. That is the gap the in-app update check
+addresses, and it is why the cask being current is necessary but not sufficient.
+Linux and Windows have no package-manager channel at all — they are
+download-and-unzip, which is why the release notes and the checksums matter more
+there.
+
+After a production tag, verify rather than assume: the cask's `version` should
+name the new release and its `sha256` should match the published asset. Both are
+one `curl` away, and a silently stale cask is invisible from this repository.
 
 &nbsp;
 
