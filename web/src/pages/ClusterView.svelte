@@ -96,28 +96,18 @@
   let disconnectingId = $state<string | null>(null)
 
   /**
-   * How many clusters make a filter worth showing.
+   * Focuses the filter as soon as there is anything to filter.
    *
-   * Below this, finding one is a glance rather than a task, and a search box
-   * is a control that costs attention and saves nothing. A kubeconfig on a
-   * working machine routinely holds twenty.
-   */
-  const FILTER_THRESHOLD = 8
-
-  /**
-   * Focuses the filter when the page has clusters to filter.
+   * Typing is what somebody arriving here wants to do first — the same
+   * reasoning as the logs and manifest panes: a search field that has to be
+   * clicked before it accepts a keystroke is one people reach for the mouse
+   * to use.
    *
-   * Typing is what somebody arriving here with twenty clusters wants to do
-   * first, and the same reasoning as the logs and manifest panes: a search
-   * field that has to be clicked before it accepts a keystroke is one people
-   * reach for the mouse to use.
-   *
-   * Not focused when the field is not shown, and not focused while a dialog
-   * is open — stealing focus from Add cluster or Organise would put the
-   * keystrokes somewhere the operator is not looking.
+   * Not while a dialog is open. Stealing focus from Add cluster or Organise
+   * would put the keystrokes somewhere the operator is not looking.
    */
   $effect(() => {
-    if (workspace.clusters.length < FILTER_THRESHOLD) return
+    if (workspace.clusters.length === 0) return
     if (addOpen || organiseOpen) return
     searchField?.focus()
   })
@@ -287,11 +277,17 @@
 
     <div class="flex shrink-0 items-center gap-2">
       <!--
-        Shown only once there are enough clusters for finding one to be work.
-        A search box above four cards is a control that costs a glance and
-        saves nothing; above twenty it is the fastest thing on the page.
+        ALWAYS SHOWN, once there is anything to filter.
+        This was gated on a cluster count, on the reasoning that a search box
+        above four cards costs a glance and saves nothing. That was wrong in
+        the way conditional controls usually are: the person who asked for it
+        built the application, opened it on a machine with three contexts, and
+        could not find the feature. A control that appears and disappears
+        depending on how much data you have is one nobody can rely on being
+        there — and the cost it was avoiding is one small field in a header
+        that already carries two buttons.
       -->
-      {#if workspace.clusters.length >= FILTER_THRESHOLD}
+      {#if workspace.clusters.length > 0}
         <SearchField
           bind:this={searchField}
           value={filter}
