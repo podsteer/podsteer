@@ -37,8 +37,38 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Who opened the pull request, as GitHub sees it. Not writable from
+          # inside a commit, which is what makes the exemption below safe.
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           set -euo pipefail
+
+          # DEPENDABOT IS EXEMPT, and the reason is what the DCO is for. It
+          # certifies that a person has the right to submit their work under
+          # the project's licence — a statement about the authorship of a
+          # contribution. Dependabot writes no code: it edits a version
+          # constraint in a manifest this project already owns, on the
+          # maintainers' own instruction. No third-party copyright enters the
+          # tree for anyone to certify.
+          #
+          # It cannot sign off either — there is no flag for it and no identity
+          # to attest — so without this every dependency update arrives red,
+          # and a check that is red by construction stops being read. That is
+          # the real cost: a genuinely unsigned human contribution would sit in
+          # a list of failures nobody looks at any more.
+          #
+          # GATED ON THE PULL REQUEST'S AUTHOR, never on the commit's. A commit
+          # author email is just text in the object and anybody can set it to
+          # Dependabot's; who opened the pull request comes from GitHub and
+          # cannot be written from inside the branch.
+          if [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
+            echo "Opened by dependabot[bot] — no sign-off required."
+            echo
+            echo "The DCO certifies the authorship of a contribution. A version"
+            echo "bump in a manifest this project already owns introduces no"
+            echo "third-party work for anyone to certify."
+            exit 0
+          fi
 
           missing=0
           while IFS= read -r sha; do

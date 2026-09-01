@@ -43,6 +43,7 @@ import {
   type SortState,
 } from '$lib/sort'
 import { alertPlayer } from './alerts.svelte'
+import { usageHistory, usageKey } from './usageHistory.svelte'
 import { preferences } from './preferences.svelte'
 
 /** Lifecycle of an asynchronous read. */
@@ -270,6 +271,8 @@ export class ClusterSession {
   selectedName = $state<string | null>(null)
   selectedNamespace = $state<string>('')
   selectedPod = $state<Pod | null>(null)
+  /** The node the drawer is open on, when it is a node. */
+  selectedNode = $state<Node | null>(null)
   selectedWorkload = $state<Workload | null>(null)
   manifest = $state<string | null>(null)
   manifestStatus = $state<LoadStatus>('idle')
@@ -785,6 +788,7 @@ export class ClusterSession {
     )
     this.#lastFindingIds = current
     this.overview = overview
+    this.#retainNodeUsage(overview)
 
     if (previous === null) return
 
@@ -873,7 +877,70 @@ export class ClusterSession {
         this.table = rows as ResourceTable
     }
 
+    this.#retainUsage()
     this.#refreshSelection()
+  }
+
+  /**
+   * Keeps the usage every refresh already fetched.
+   *
+   * The list response carries a measurement for EVERY row, and until now all
+   * of it except the one being drawn was discarded — so a drawer opened after
+   * five minutes of browsing started from nothing, having thrown away the
+   * five minutes it had been handed. metrics-server cannot be asked for that
+   * history afterwards: a PodMetrics is one point and the API has no range.
+   *
+   * Costs one array push per row per refresh, and nothing on the wire.
+   */
+  #retainUsage(): void {
+    const at = Date.now()
+
+    for (const pod of this.pods) {
+      if (!pod.hasMetrics) continue
+      usageHistory.record(usageKey('pod', pod.namespace, pod.name), {
+        at,
+        cpuCores: parseQuantity(pod.cpu) ?? 0,
+        memoryBytes: parseQuantity(pod.memory) ?? 0,
+      })
+    }
+
+    // Nodes are NOT recorded here. #assign clears every row buffer each poll
+    // and fills only the one the open view reads, so this loop saw nothing
+    // whenever the operator was anywhere but the node list — which is exactly
+    // the case the retention exists for. They come from the assessment
+    // instead, which runs on every poll whatever is on screen.
+  }
+
+  /**
+   * Keeps each node's usage from the assessment, which never stops running.
+   *
+   * WHY NOT FROM THE NODE LIST. The row buffers are mutually exclusive: a
+   * poll on the Pods page fetches pods and leaves `this.nodes` empty, so a
+   * minute spent reading pods put a minute-wide hole in every node's chart
+   * and, past the window, erased it. The assessment is fetched alongside
+   * whatever view is open — it already feeds the navigator badge — so it is
+   * the one source that is always current.
+   *
+   * It carries `usageCpuMilli` rather than the `cpuPercent` beside it because
+   * those are DIFFERENT MEASUREMENTS: the shares on a NodeLoad are requests
+   * against allocatable, what the scheduler decides on, while the chart plots
+   * what metrics-server measured. Feeding the chart the share would draw a
+   * plausible line of the wrong quantity.
+   */
+  #retainNodeUsage(overview: Overview): void {
+    const at = Date.now()
+
+    for (const load of overview.nodeLoads) {
+      // An unmeasured node is skipped rather than recorded as zero: a cluster
+      // with no metrics-server would otherwise accumulate a confident flat
+      // line along the axis.
+      if (!load.usageMeasured) continue
+      usageHistory.record(usageKey('node', '', load.name), {
+        at,
+        cpuCores: load.usageCpuMilli / 1000,
+        memoryBytes: load.usageMemoryBytes,
+      })
+    }
   }
 
   /**
@@ -905,6 +972,15 @@ export class ClusterSession {
       return
     }
 
+    if (this.selectedNode) {
+      const fresh = this.nodes.find((node) => node.name === this.selectedName)
+      if (fresh) {
+        this.selectedNode = fresh
+        this.#recordNodeUsage(fresh)
+      }
+      return
+    }
+
     if (this.selectedWorkload) {
       const fresh = this.workloads.find(
         (workload) =>
@@ -931,15 +1007,27 @@ export class ClusterSession {
    */
   usage = $state.raw<UsageSample[]>([])
 
+  /** The open node's usage, on the same terms as a pod's. */
+  #recordNodeUsage(node: Node): void {
+    if (!node.hasMetrics) return
+    this.#append({
+      at: Date.now(),
+      cpuCores: parseQuantity(node.cpu) ?? 0,
+      memoryBytes: parseQuantity(node.memory) ?? 0,
+    })
+  }
+
   #recordUsage(pod: Pod): void {
     if (!pod.hasMetrics) return
 
-    const sample: UsageSample = {
+    this.#append({
       at: Date.now(),
       cpuCores: parseQuantity(pod.cpu) ?? 0,
       memoryBytes: parseQuantity(pod.memory) ?? 0,
-    }
+    })
+  }
 
+  #append(sample: UsageSample): void {
     // Replaced rather than pushed: `$state.raw` does not track mutation, and
     // a chart that never redrew would be a subtle and very confusing bug.
     const next = [...this.usage, sample]
@@ -959,16 +1047,30 @@ export class ClusterSession {
   secretsRevealed = $state(false)
 
   /** Opens the detail drawer for one object and loads its manifest. */
-  openDetail = async (name: string, namespace: string, pod?: Pod, workload?: Workload): Promise<void> => {
+  openDetail = async (
+    name: string,
+    namespace: string,
+    pod?: Pod,
+    workload?: Workload,
+    node?: Node,
+  ): Promise<void> => {
     this.selectedName = name
     this.selectedNamespace = namespace
     this.selectedPod = pod ?? null
+    this.selectedNode = node ?? null
     this.selectedWorkload = workload ?? null
     this.manifest = null
     this.manifestStatus = 'loading'
-    // A new object means a new series. Carrying the previous pod's samples
-    // over would draw its usage under this one's name.
-    this.usage = []
+    // SEEDED FROM WHAT WAS ALREADY WATCHED, rather than starting empty. The
+    // list has been refreshing since the tab opened and every one of those
+    // responses carried this object's usage; the chart may as well open with
+    // it. Empty when nothing was retained — a window of zero, or an object
+    // whose list has not been visited.
+    this.usage = pod
+      ? usageHistory.since(usageKey('pod', namespace, name))
+      : node
+        ? usageHistory.since(usageKey('node', '', name))
+        : []
     // Every open starts hidden. A reveal is a decision about one object, and
     // carrying it to the next one is how Freelens ends up showing a value
     // somebody unmasked in private on the pod they open in a meeting.
@@ -1011,6 +1113,7 @@ export class ClusterSession {
     this.selectedName = null
     this.selectedNamespace = ''
     this.selectedPod = null
+    this.selectedNode = null
     this.selectedWorkload = null
     this.manifest = null
     this.manifestStatus = 'idle'

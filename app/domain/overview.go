@@ -708,6 +708,20 @@ type NodeLoad struct {
 	DiskUsedBytes int64
 	// PodCapacity is the node's own cap, the denominator of PodPercent.
 	PodCapacity int64
+	// Usage is what the node is actually CONSUMING, which is a different
+	// measurement from every field above.
+	//
+	// CPUMilli and MemoryPercent are REQUESTS — what pods reserved, which is
+	// what the scheduler decides on and what the load grid draws. This is what
+	// metrics-server measured. The two routinely disagree by a factor of
+	// several, and conflating them is how a cluster reads as calm while it
+	// refuses to schedule anything.
+	//
+	// Carried here so the assessment — which runs on every poll whatever view
+	// is open — can feed a node's usage chart. Without it a chart only
+	// accumulated while somebody was looking at the node list, so walking away
+	// to the pod list for a minute left a hole in it.
+	Usage Metrics
 }
 
 // nodeLoads computes each node's share of what has been requested.
@@ -755,6 +769,7 @@ func nodeLoads(nodes []Node, pods []Pod) []NodeLoad {
 			CPUMilli:     entry.cpu,
 			MemoryBytes:  entry.memory,
 			DiskPercent:  -1,
+			Usage:        node.Usage(),
 		}
 		if allocatable.CPUMilli > 0 {
 			out.CPUPercent = float64(entry.cpu) / float64(allocatable.CPUMilli) * 100
@@ -880,6 +895,9 @@ type OverviewInput struct {
 	// Metrics says WHY, when MetricsMeasured is false. The boolean gates the
 	// arithmetic; this is what a person can be told.
 	Metrics MetricsStatus
+	// Backend is a monitoring system found running in the cluster, if any.
+	// Zero means none was found, which is the ordinary case.
+	Backend MetricsBackend
 	// Now is the reference time. Passed rather than read so the rules are
 	// testable, the same reason every Age method takes it.
 	Now time.Time
@@ -909,6 +927,12 @@ type Overview struct {
 	// name metrics-server rather than saying "metrics" at somebody who has
 	// never heard of it.
 	Metrics MetricsStatus
+	// Backend names a monitoring system already running in this cluster, when
+	// one was found. It changes nothing PodSteer measures — it exists so the
+	// UI can point at a system that keeps months of the same figures PodSteer
+	// keeps minutes of, rather than pretending its own window is the whole
+	// picture.
+	Backend MetricsBackend
 }
 
 // NewOverview assesses a cluster snapshot.
@@ -966,6 +990,7 @@ func NewOverview(input OverviewInput) Overview {
 		NodeLoads:   nodeLoads(input.Nodes, input.Pods),
 		Unavailable: slices.Clone(input.Unavailable),
 		Metrics:     input.Metrics,
+		Backend:     input.Backend,
 	}
 }
 

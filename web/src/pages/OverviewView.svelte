@@ -20,6 +20,7 @@
   import SlotsBar from '$lib/components/SlotsBar.svelte'
   import FindingCard from '$lib/components/FindingCard.svelte'
   import NodeLoadGrid from '$lib/components/NodeLoadGrid.svelte'
+  import MetricsBackendNote from '$lib/components/MetricsBackendNote.svelte'
   import TrendChart from '$lib/components/TrendChart.svelte'
   import { formatAge } from '$lib/format'
   import { ClusterHistory, TREND_WINDOWS } from '$stores/history.svelte'
@@ -663,6 +664,16 @@
             cluster — not the cluster's whole history.
           </p>
         {/if}
+
+        <!--
+          Outside the three branches above deliberately: whether history is
+          off, still collecting, or drawn, the fact that this cluster already
+          has a monitoring stack keeping a longer record is worth the same.
+        -->
+        <MetricsBackendNote
+          backend={overview.backend}
+          windowLabel={history.hasTrend ? `the last ${formatAge(history.spanSeconds)}` : undefined}
+        />
       </section>
 
       <div class="grid gap-4 lg:grid-cols-2">

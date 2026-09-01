@@ -105,11 +105,27 @@ jobs:
       # generator asks `go list` what the binary links, across all three
       # release platforms.
       - name: Verify Licence Policy And Notices
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           node build/generate-notices.mjs
           if ! git -c core.fileMode=false diff --quiet -- app/adapters/notices/notices.json; then
             echo "::error::notices.json is out of date. Run 'make notices' and commit the result."
             git -c core.fileMode=false diff --stat -- app/adapters/notices/notices.json
+
+            # DEPENDABOT ALWAYS LANDS HERE, and unlike the DCO check this one
+            # is not exempted — it is the point. A version bump can pull in a
+            # transitive dependency under a licence the policy refuses, and
+            # regenerating the inventory automatically would wave exactly the
+            # change the gate exists to catch straight through. So the failure
+            # stands and a maintainer runs the generator, which enforces the
+            # policy in the same pass.
+            #
+            # The note is here because a check that is red by construction gets
+            # read as broken, and then ignored.
+            if [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
+              echo "::notice::This is expected on a dependency update: Dependabot cannot run the generator. Apply the bump locally, run 'make notices', and check what it says about any new package before committing."
+            fi
             exit 1
           fi
           echo "Licence policy satisfied; notices.json matches the dependency set."
@@ -256,7 +272,7 @@ jobs:
 
       - name: Build Application
         if: runner.os != 'Linux'
-        run: wails build -clean -trimpath -s ${{ matrix.platform && format('-platform {0}', matrix.platform) || '' }}
+        run: wails build -clean -trimpath -s -ldflags "-X github.com/podsteer/podsteer/app/config.version=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}" ${{ matrix.platform && format('-platform {0}', matrix.platform) || '' }}
 
       # The bundle is renamed for the same reason the Makefile renames it: the
       # executable stays lowercase for PATHs, the bundle is what a person sees
@@ -272,7 +288,7 @@ jobs:
 
       - name: Build Application (Linux)
         if: runner.os == 'Linux'
-        run: wails build -clean -trimpath -s -tags ${{ env.LINUX_TAGS }}
+        run: wails build -clean -trimpath -s -ldflags "-X github.com/podsteer/podsteer/app/config.version=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}" -tags ${{ env.LINUX_TAGS }}
 
       # --- macOS signing and notarisation -----------------------------------
       #
@@ -422,7 +438,7 @@ jobs:
       # here is that the signing happens over an API rather than from a device.
       - name: Authenticate To Azure
         if: runner.os == 'Windows' && env.AZURE_CLIENT_ID != ''
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           # OIDC federated credentials — GitHub mints a short-lived token per
           # run, so there is no client secret stored in this repository at all.
@@ -432,7 +448,13 @@ jobs:
 
       - name: Sign The Windows Executable
         if: runner.os == 'Windows' && env.AZURE_CLIENT_ID != ''
-        uses: azure/trusted-signing-action@v0
+        # v2, and the input names were checked against the action's own schema
+        # rather than assumed: this step is gated on AZURE_CLIENT_ID and so
+        # never runs in CI, which means a renamed input would not surface until
+        # the first Windows release actually signs something. v2 did rename one
+        # — `code-signing-account-name` to `signing-account-name` — but not any
+        # of the eight used here.
+        uses: azure/trusted-signing-action@v2
         with:
           endpoint: ${{ secrets.PDS__AZURE_SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ secrets.PDS__AZURE_SIGNING_ACCOUNT }}
@@ -523,3 +545,28 @@ jobs:
             --title "${{ github.ref_name }}" \
             --generate-notes \
             $PRERELEASE
+
+  # THE TAP IS CALLED, NOT LEFT TO REACT.
+  #
+  # homebrew.yaml carries a `release: published` trigger that looks sufficient
+  # and is not: the release above is created with GITHUB_TOKEN, and GitHub does
+  # not start workflows from events raised by that token. The event never
+  # arrives. v0.1.0 published with the cask untouched, silently, and had to be
+  # dispatched by hand — the exact shape of quiet breakage the rest of this
+  # pipeline exists to avoid.
+  #
+  # Calling it keeps the credential situation unchanged: the App token is still
+  # minted inside that workflow and still scoped to the tap repository alone.
+  # Nothing here gains write access to anything it did not already have.
+  #
+  # `needs: release` is what makes the checksum honest. The cask is verified
+  # against the bytes GitHub actually serves, which only exist once the release
+  # job has finished uploading them.
+  tap:
+    name: Update Homebrew Tap
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev-')
+    uses: ./.github/workflows/homebrew.yaml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit

@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -36,6 +38,16 @@ func classify(op string, err error) error {
 		return fmt.Errorf("%s: %w", op, err)
 	}
 
+	// BEFORE THE STATUS CHECKS, because this failure never reached the API
+	// server: client-go runs the credential plugin while building the request,
+	// so a missing binary surfaces as a plain exec error wrapped in whatever
+	// the caller was doing. Left to the default branch it becomes an opaque
+	// "executable file not found in $PATH" attached to an operation name.
+	if binary := missingCredentialPlugin(err); binary != "" {
+		return fmt.Errorf("%s: %w: %q is not on PATH: %w",
+			op, ports.ErrCredentialPluginMissing, binary, err)
+	}
+
 	switch {
 	case apierrors.IsUnauthorized(err):
 		return fmt.Errorf("%s: %w: %w", op, ports.ErrUnauthenticated, err)
@@ -60,6 +72,39 @@ func classify(op string, err error) error {
 		}
 		return fmt.Errorf("%s: %w", op, err)
 	}
+}
+
+// missingCredentialPlugin names the executable a kubeconfig wanted and could
+// not find, or "" when that is not what went wrong.
+//
+// Matched through exec.ErrNotFound rather than on the message text, so it
+// holds whatever wording the standard library uses. The NAME still comes from
+// the error string: exec.Error carries it in a field, but client-go wraps the
+// failure several layers deep and does not always preserve the concrete type,
+// so the typed path is tried first and the string is the fallback.
+func missingCredentialPlugin(err error) string {
+	var execErr *exec.Error
+	if errors.As(err, &execErr) {
+		return execErr.Name
+	}
+
+	if !errors.Is(err, exec.ErrNotFound) {
+		return ""
+	}
+
+	// `exec: "aws": executable file not found in $PATH`
+	message := err.Error()
+	start := strings.Index(message, `exec: "`)
+	if start < 0 {
+		return "the credential plugin"
+	}
+	rest := message[start+len(`exec: "`):]
+
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		return "the credential plugin"
+	}
+	return rest[:end]
 }
 
 // transportFailure names the network-level failure behind err, or nil when it

@@ -105,6 +105,10 @@ func (g *goneCluster) NodeFilesystems(context.Context, domain.ClusterID) (map[st
 	return nil, g.err(false)
 }
 
+func (g *goneCluster) DiscoverMetricsBackend(context.Context, domain.ClusterID) (domain.MetricsBackend, error) {
+	return domain.MetricsBackend{}, g.err(false)
+}
+
 func goneService(t *testing.T, cluster *goneCluster) *application.OverviewService {
 	t.Helper()
 

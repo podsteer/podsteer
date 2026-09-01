@@ -21,6 +21,7 @@
     THEME_PREFERENCES,
     THEME_LABELS,
     THRESHOLD_SCOPES,
+    USAGE_WINDOWS,
     type PageSize,
     type PodMeasure,
     type ThresholdScope,
@@ -439,6 +440,47 @@
             {#each THRESHOLD_SCOPES as scope (scope)}
               {@render thresholdGroup(scope)}
             {/each}
+
+            <!--
+              Retained usage, here rather than under History because it is a
+              different thing from the cluster trend on disk: this is held in
+              memory, dies with the process, and exists only so a chart in a
+              drawer opens with a shape instead of a blank frame.
+            -->
+            <div>
+              <h4 class="text-title-small text-on-surface">Charts</h4>
+              <p class="mt-0.5 text-body-small text-on-surface-variant">
+                A drawer's chart starts with whatever usage the lists have already seen.
+                metrics-server cannot be asked for history — it keeps only the latest reading —
+                but every refresh of a list carries usage for every row in it, and this is how
+                much of that is kept rather than discarded.
+              </p>
+
+              <div class="mt-3 flex">
+                {#each USAGE_WINDOWS as minutes, index (minutes)}
+                  <button
+                    type="button"
+                    onclick={() => preferences.setUsageWindowMinutes(minutes)}
+                    aria-pressed={preferences.usageWindowMinutes === minutes}
+                    class="state-layer h-9 flex-1 border text-label-large transition-colors
+                           duration-150 ease-standard
+                           {index === 0 ? 'rounded-l-xs' : '-ml-px'}
+                           {index === USAGE_WINDOWS.length - 1 ? 'rounded-r-xs' : ''}
+                           {preferences.usageWindowMinutes === minutes
+                             ? 'border-transparent bg-secondary-container text-on-secondary-container'
+                             : 'border-outline text-on-surface-variant'}"
+                  >
+                    {minutes === 0 ? 'Off' : `${minutes} min`}
+                  </button>
+                {/each}
+              </div>
+
+              <p class="mt-1.5 text-body-small text-on-surface-variant/70">
+                Held in memory only, never written to disk — the recorded cluster history
+                deliberately carries no object names, and a file of per-pod series would undo
+                that. Off means every chart starts empty and fills as you watch.
+              </p>
+            </div>
 
             <p class="text-body-small text-on-surface-variant/70">
               The two lines cannot cross: moving one past the other pushes it along rather than

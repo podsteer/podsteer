@@ -20,9 +20,40 @@ operating system's own webview, rather than a bundled Chromium. There is no
 second browser engine in the process tree, which is where most of an
 Electron-based client's memory and startup time go.
 
+## Installing
+
+**macOS** — signed with a Developer ID, notarised by Apple, and the ticket is
+stapled, so it opens without a Gatekeeper warning.
+
+```sh
+brew tap podsteer/tap
+brew trust podsteer/tap
+brew install --cask podsteer
+```
+
+`brew trust` is not a formality and not specific to PodSteer: Homebrew refuses
+to load a cask from a third-party tap until you say you trust it, because a
+cask is code that runs on your machine at install time. Every tap outside
+Homebrew's own needs it. You can read what you are trusting first — it is one
+file, [`Casks/podsteer.rb`](https://github.com/podsteer/homebrew-tap/blob/HEAD/Casks/podsteer.rb).
+
+**Linux and Windows** — download from
+[the latest release](https://github.com/podsteer/podsteer/releases/latest) and
+unzip it. Linux needs `libgtk-3` and `libwebkit2gtk-4.1`.
+
+The Windows build is **not signed**, so SmartScreen will warn on first launch —
+"Windows protected your PC". That is the absence of a certificate, not a
+verdict about the file. Verify the download against the published
+`checksums.txt` if you want to be sure of what you have; a code-signing
+certificate is a cost decision that has not been taken yet, and this note stays
+here until it is.
+
+Every release publishes SHA-256 checksums and a CycloneDX SBOM alongside the
+binaries.
+
 ## Status
 
-Pre-release; no tagged version yet. What works today: several clusters open at
+What works today: several clusters open at
 once, one per tab; an overview that assesses a cluster rather than listing it,
 with ranked findings and capacity measured against requests rather than usage;
 purpose-built views for pods, nodes, events and the six workload controllers,
@@ -37,9 +68,8 @@ Capacity is sampled every 30 seconds while the application is open and kept
 locally, which is the only way to have a trend at all — Kubernetes reports only
 the present — and is deliberately presented as the narrow window it is.
 
-[podsteer.com/download](https://podsteer.com/download/) is where the release will
-appear, and what it will ship as; watching this repository is the other way to
-hear when the first one lands.
+[podsteer.com/download](https://podsteer.com/download/) carries the same
+downloads with a little more context.
 
 ## Requirements
 

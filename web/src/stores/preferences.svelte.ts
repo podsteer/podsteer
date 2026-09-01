@@ -145,6 +145,17 @@ export type ThresholdScope = 'overview' | 'nodes' | 'pods'
  */
 export type PodMeasure = 'requests' | 'limits'
 
+/**
+ * The windows Settings offers for retained usage.
+ *
+ * Zero first because it is a legitimate choice rather than a disabled state:
+ * nothing is held about any object, and every chart starts empty and fills as
+ * you watch. The rest stop at half an hour because the samples are held in
+ * memory and a chart in a drawer is a "what is it doing right now" instrument
+ * — a longer history is the job of the cluster trend, which is on disk.
+ */
+export const USAGE_WINDOWS = [0, 5, 15, 30]
+
 /** The scopes, in the order Settings lists them. */
 export const THRESHOLD_SCOPES: ThresholdScope[] = ['overview', 'nodes', 'pods']
 
@@ -266,6 +277,8 @@ interface PersistedShape {
   thresholds: Record<ThresholdScope, ThresholdSet>
   /** Which denominator the pod list's bars use. */
   podMeasure: PodMeasure
+  /** How much recent usage to keep for the drawer's charts, in minutes. */
+  usageWindowMinutes: number
   /**
    * Detail-pane sections the operator has opened or closed, by id.
    *
@@ -322,6 +335,11 @@ const DEFAULTS: PersistedShape = {
   // until something is already critical is a default that arrives too late.
   thresholds: defaultThresholdsByScope(),
   podMeasure: 'limits',
+  // Five minutes: enough to show a shape the moment a drawer opens, and small
+  // enough that nobody has to think about what it costs. It is bounded by a
+  // per-object sample cap as well, so a fast refresh cannot turn it into
+  // something expensive.
+  usageWindowMinutes: 5,
   sections: {},
   // Off. An application that starts making noise nobody asked for is one
   // people mute at the operating system, taking the alarm they DID want with
@@ -400,6 +418,15 @@ class Preferences {
 
   /** What the pod list's bars are a proportion of. */
   podMeasure = $state<PodMeasure>(DEFAULTS.podMeasure)
+
+  /**
+   * How much recent usage to retain for the drawer's charts, in minutes.
+   *
+   * Zero turns it off entirely, which is a real choice rather than a
+   * degenerate one: it means a chart starts empty when a drawer opens and
+   * fills as you watch, and nothing about any object is held in memory.
+   */
+  usageWindowMinutes = $state<number>(DEFAULTS.usageWindowMinutes)
 
   /** Detail-pane sections the operator has opened or closed, by id. */
   sections = $state<Record<string, boolean>>({})
@@ -571,6 +598,12 @@ class Preferences {
   /** Records that a section was opened or closed. */
   setSectionOpen = (id: string, open: boolean): void => {
     this.sections = { ...this.sections, [id]: open }
+    this.#save()
+  }
+
+  /** Sets how much recent usage the drawer's charts start with. */
+  setUsageWindowMinutes = (minutes: number): void => {
+    this.usageWindowMinutes = USAGE_WINDOWS.includes(minutes) ? minutes : DEFAULTS.usageWindowMinutes
     this.#save()
   }
 
@@ -789,6 +822,9 @@ class Preferences {
       if (stored.podMeasure === 'requests' || stored.podMeasure === 'limits') {
         this.podMeasure = stored.podMeasure
       }
+      if (USAGE_WINDOWS.includes(stored.usageWindowMinutes as number)) {
+        this.usageWindowMinutes = stored.usageWindowMinutes as number
+      }
       if (stored.sections && typeof stored.sections === 'object') {
         this.sections = stored.sections
       }
@@ -844,6 +880,7 @@ class Preferences {
         snoozes: this.#pruneSnoozes(),
         thresholds: this.thresholds,
         podMeasure: this.podMeasure,
+        usageWindowMinutes: this.usageWindowMinutes,
         sections: this.sections,
         alertSoundsEnabled: this.alertSoundsEnabled,
         alertSounds: this.alertSounds,

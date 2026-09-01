@@ -719,9 +719,11 @@
         <ResourceOverview
           manifest={session.manifest}
           selectedPod={selectedPod}
+          selectedNode={session.selectedNode}
           selectedWorkload={selectedWorkload}
           kind={session.selectedKind?.kind}
           usage={session.usage}
+          backend={session.overview?.backend}
           canOpen={kindIdFor}
           onopen={openObject}
         />

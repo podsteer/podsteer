@@ -18,6 +18,7 @@ export const API_ERROR_CODES = [
   'forbidden',
   'not_found',
   'kubeconfig_unavailable',
+  'credential_plugin_missing',
   'cancelled',
   'invalid_input',
   'internal',

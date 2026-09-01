@@ -13,8 +13,12 @@
   tooltip, and no way to tell 60% of a request from 60% of a limit. The
   library is already a dependency and already loaded lazily.
 
-  The series is only as long as the drawer has been open — nothing retains
-  per-pod history, and pretending otherwise is what the empty state avoids.
+  The series comes from `usageHistory`, which keeps whatever the list polls
+  already fetched — so a chart opens with a shape rather than a blank frame.
+  It is bounded by the configured window and by what was actually sampled: a
+  node's series is continuous because the assessment runs on every poll, while
+  a pod's pauses whenever the pod list is not the list being polled. Those
+  pauses are DRAWN as breaks rather than joined; see `series` below.
 -->
 <script lang="ts">
   import type { Chart } from '$lib/echarts'
@@ -26,17 +30,28 @@
     /** Which resource this chart is for. */
     metric: 'cpu' | 'memory'
     /**
-     * The declared request and limit, in the SAME UNIT as the samples —
-     * cores for CPU, bytes for memory. Zero means undeclared, which draws no
-     * line rather than a line at zero.
+     * The lines the usage is judged against, in the SAME UNIT as the samples
+     * — cores for CPU, bytes for memory.
+     *
+     * A list rather than a request and a limit, because what a reading is
+     * measured against depends on what is being measured: a pod has a request
+     * it should be near and a limit it must not reach, while a node has one
+     * ceiling and no notion of either. Encoding the pod's two into the
+     * component would have meant a node passing its allocatable as a "limit",
+     * which is not what allocatable is.
+     *
+     * A value of zero is dropped rather than drawn: a line at zero for an
+     * undeclared limit reads as "the limit is nothing", the opposite of what
+     * an absent one means.
      */
-    request: number
-    limit: number
+    markers?: { value: number; label: string; tone: 'warn' | 'critical' }[]
     /** Formats a value for the axis and the tooltip. */
     format: (value: number) => string
   }
 
-  let { samples, metric, request, limit, format }: Props = $props()
+  let { samples, metric, markers = [], format }: Props = $props()
+
+  const lines = $derived(markers.filter((marker) => marker.value > 0))
 
   let container = $state<HTMLDivElement | null>(null)
   let chart: Chart | null = null
@@ -47,6 +62,65 @@
   )
 
   /**
+   * The series as [timestamp, value] pairs, broken wherever time was lost.
+   *
+   * TWO THINGS HERE, AND BOTH ARE ABOUT NOT LYING WITH THE X AXIS.
+   *
+   * The pairs exist because the axis used to be a `category`: one slot per
+   * sample, evenly spaced, whatever the clock said. A minute with no samples
+   * in it was drawn as a single step identical to a two-second one, so the
+   * chart compressed its own gaps out of existence and the line looked
+   * continuous when it was not.
+   *
+   * The nulls exist because a real gap must LOOK like one. Samples stop
+   * whenever the object is not in the list being polled — walk from the pod
+   * list to the node list and every pod's series pauses — and joining the two
+   * ends draws a straight line through a minute nobody measured, which is
+   * indistinguishable from a minute of steady usage.
+   *
+   * ECharts breaks a line on null by default (`connectNulls` is false), so
+   * the inserted point is the whole mechanism.
+   */
+  const series = $derived.by(() => {
+    const points: [number, number | null][] = []
+
+    for (const [index, sample] of samples.entries()) {
+      const value = metric === 'cpu' ? sample.cpuCores : sample.memoryBytes
+      const previous = samples[index - 1]
+
+      // Three times the typical spacing, rather than a fixed number of
+      // seconds: the poll interval is configurable, so a threshold in seconds
+      // would either break every line on a slow refresh or never break one on
+      // a fast refresh.
+      if (previous && sample.at - previous.at > gapThreshold * 3) {
+        points.push([previous.at + 1, null])
+      }
+      points.push([sample.at, value])
+    }
+
+    return points
+  })
+
+  /**
+   * The typical spacing between samples, in milliseconds.
+   *
+   * The MEDIAN rather than the mean, because the mean is dragged upward by
+   * exactly the gaps this is used to detect — one long pause in a short
+   * series would raise the threshold above itself and the gap would go
+   * undrawn.
+   */
+  const gapThreshold = $derived.by(() => {
+    if (samples.length < 3) return Number.POSITIVE_INFINITY
+
+    const deltas = samples
+      .slice(1)
+      .map((sample, index) => sample.at - samples[index].at)
+      .sort((a, b) => a - b)
+
+    return deltas[Math.floor(deltas.length / 2)]
+  })
+
+  /**
    * Where the top of the chart sits.
    *
    * The limit when there is one and usage is under it, so the bar the pod is
@@ -55,7 +129,7 @@
    * an overshoot must never be drawn off the top of the frame.
    */
   const ceiling = $derived.by(() => {
-    const peak = Math.max(...values, request, limit, 0)
+    const peak = Math.max(...values, ...lines.map((line) => line.value), 0)
     return peak > 0 ? peak * 1.1 : 1
   })
 
@@ -66,16 +140,11 @@
     const warn = theme.getPropertyValue('--gauge-warn').trim() || '#e0a458'
     const critical = theme.getPropertyValue('--gauge-critical').trim() || '#e06c75'
 
-    // Reference lines, drawn only when declared. A line at zero for an
-    // undeclared limit would read as "the limit is nothing", which is the
-    // opposite of what an absent limit means.
-    const marks: Record<string, unknown>[] = []
-    if (request > 0) {
-      marks.push({ yAxis: request, lineStyle: { color: warn, type: 'dashed' }, label: { formatter: 'request', color: ink, position: 'insideEndTop' } })
-    }
-    if (limit > 0) {
-      marks.push({ yAxis: limit, lineStyle: { color: critical, type: 'dashed' }, label: { formatter: 'limit', color: ink, position: 'insideEndTop' } })
-    }
+    const marks = lines.map((line) => ({
+      yAxis: line.value,
+      lineStyle: { color: line.tone === 'critical' ? critical : warn, type: 'dashed' },
+      label: { formatter: line.label, color: ink, position: 'insideEndTop' },
+    }))
 
     return {
       animation: false,
@@ -83,9 +152,20 @@
       // dashboard. The axis labels are the only chrome that earns its space.
       grid: { top: 8, right: 8, bottom: 20, left: 52 },
       xAxis: {
-        type: 'category',
-        data: samples.map((sample) => new Date(sample.at).toLocaleTimeString()),
-        axisLabel: { color: ink, fontSize: 10, showMaxLabel: true },
+        // Time, not category. A category axis spaces samples evenly whatever
+        // the clock said, which drew a pause in sampling as though no time
+        // had passed in it.
+        type: 'time',
+        axisLabel: {
+          color: ink,
+          fontSize: 10,
+          hideOverlap: true,
+          formatter: (value: number) =>
+            new Date(value).toLocaleTimeString(undefined, {
+              hour: '2-digit',
+              minute: '2-digit',
+            }),
+        },
         axisLine: { lineStyle: { color: ink, opacity: 0.2 } },
         splitLine: { show: false },
       },
@@ -98,15 +178,18 @@
       },
       tooltip: {
         trigger: 'axis',
-        formatter: (params: { value: number; name: string }[]) =>
-          `${params[0]?.name}<br/>${format(params[0]?.value ?? 0)}`,
+        formatter: (params: { value: [number, number | null] }[]) => {
+          const point = params[0]?.value
+          if (!point || point[1] === null) return ''
+          return `${new Date(point[0]).toLocaleTimeString()}<br/>${format(point[1])}`
+        },
       },
       series: [
         {
           type: 'line',
           smooth: false,
           showSymbol: false,
-          data: values,
+          data: series,
           lineStyle: { color: line, width: 1.6 },
           areaStyle: { color: line, opacity: 0.12 },
           markLine: marks.length
@@ -155,6 +238,7 @@
   // rather than a resize.
   $effect(() => {
     void values
+    void lines
     void preferences.themePreference
     chart?.setOption(buildOption(), true)
   })
@@ -162,16 +246,28 @@
 
 {#if failed}
   <p class="text-body-small text-on-surface-variant/60">The chart could not be loaded.</p>
-{:else if samples.length < 2}
-  <!--
-    Said plainly rather than drawn as an empty frame. The series begins when
-    the drawer opens, because nothing retains per-pod history, and a chart
-    that looked broken for its first thirty seconds would be reported as a bug
-    every time.
-  -->
-  <p class="text-body-small text-on-surface-variant/60">
-    Watching — the shape appears after a few refreshes.
-  </p>
 {:else}
-  <div bind:this={container} class="h-32 w-full"></div>
+  <!--
+    DRAWN IMMEDIATELY, EMPTY. This used to render a line of text until two
+    samples had arrived, so the section appeared to be missing for the first
+    refresh or two and then a chart materialised in its place — which reads as
+    the pane still loading rather than as a series that has not started.
+    Everything jumped when it swapped.
+
+    An empty frame is also not empty: the axis and the request and limit lines
+    are known before any measurement, so what is on screen from the first
+    moment is the shape the usage will be judged against. The caption says why
+    there is no line yet.
+  -->
+  <div class="relative">
+    <div bind:this={container} class="h-32 w-full"></div>
+    {#if samples.length < 2}
+      <p
+        class="pointer-events-none absolute inset-0 flex items-center justify-center
+               text-body-small text-on-surface-variant/60"
+      >
+        Watching — the line appears after a few refreshes.
+      </p>
+    {/if}
+  </div>
 {/if}

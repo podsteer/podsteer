@@ -64,6 +64,24 @@ type Config struct {
 	// UserAgent identifies PodSteer to the API server. Empty means
 	// defaultUserAgent.
 	UserAgent string
+
+	// EnvReady is closed once the process PATH has been resolved, if it is
+	// being resolved at all. Nil means it is not, and nothing waits.
+	//
+	// WHY BUILDING A CLIENT WAITS ON IT. A kubeconfig context can authenticate
+	// through a credential plugin — `aws eks get-token` for EKS,
+	// `gke-gcloud-auth-plugin` for GKE — which client-go runs by looking the
+	// name up in PATH. A desktop application launched from Finder or by
+	// Homebrew inherits launchd's PATH, which has no Homebrew directory in it,
+	// so those lookups fail. Recovering the operator's real PATH means asking
+	// their login shell, which takes a second or so.
+	//
+	// A CHANNEL RATHER THAN DOING IT AT STARTUP, because a second of blank
+	// window on every launch is a bad trade for something only the first
+	// connection needs. The probe runs alongside the window opening; the first
+	// client to be built waits for whatever is left of it, and by then the
+	// operator has usually spent longer than that choosing a cluster.
+	EnvReady <-chan struct{}
 }
 
 // withDefaults returns a copy of c with unset fields filled in.
@@ -125,6 +143,18 @@ func newClientFactory(cfg Config) *clientFactory {
 		cfg:     cfg.withDefaults(),
 		clients: make(map[domain.ClusterID]*clients),
 	}
+}
+
+// awaitEnv blocks until the process environment is settled.
+//
+// Returns immediately once the channel is closed, which it is for every
+// connection after the first, and immediately when nothing is resolving the
+// environment at all.
+func (f *clientFactory) awaitEnv() {
+	if f.cfg.EnvReady == nil {
+		return
+	}
+	<-f.cfg.EnvReady
 }
 
 // configFlags returns a cli-runtime loader scoped to one kubeconfig context.
@@ -222,6 +252,11 @@ func (f *clientFactory) clientsFor(id domain.ClusterID) (*clients, error) {
 	if ok {
 		return cached, nil
 	}
+
+	// BEFORE THE LOCK, not inside it: this waits on the PATH probe, and
+	// holding the write lock across it would serialise every other cluster
+	// behind the first one to connect.
+	f.awaitEnv()
 
 	f.mu.Lock()
 	defer f.mu.Unlock()

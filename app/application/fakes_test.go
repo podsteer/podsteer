@@ -71,6 +71,7 @@ type fakeKubernetes struct {
 	nodeUsage       map[string]domain.Metrics
 	metricsErr      error
 	nodeFilesystems map[string]domain.NodeFilesystems
+	metricsBackend  domain.MetricsBackend
 	volumes         []domain.PersistentVolume
 	claims          []domain.PersistentVolumeClaim
 
@@ -175,6 +176,10 @@ func (f *fakeKubernetes) NodeFilesystems(_ context.Context, _ domain.ClusterID) 
 		return nil, ports.ErrMetricsUnavailable
 	}
 	return f.nodeFilesystems, nil
+}
+
+func (f *fakeKubernetes) DiscoverMetricsBackend(_ context.Context, _ domain.ClusterID) (domain.MetricsBackend, error) {
+	return f.metricsBackend, nil
 }
 
 func (f *fakeKubernetes) record(id domain.ClusterID, namespace domain.NamespaceName) {

@@ -38,6 +38,7 @@
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
   import AddClusterDialog from '$lib/components/AddClusterDialog.svelte'
   import OrganiseDialog from '$lib/components/OrganiseDialog.svelte'
+  import SearchField from '$lib/components/SearchField.svelte'
   import MoveClusterMenu from '$lib/components/MoveClusterMenu.svelte'
   import { formatConnection, formatConnectionTitle } from '$lib/format'
   import { clusterActivity } from '$stores/activity.svelte'
@@ -95,14 +96,105 @@
   let disconnectingId = $state<string | null>(null)
 
   /**
+   * ⌘K focuses the filter, here as well as in a cluster tab.
+   *
+   * The workspace has its own ⌘K for the resource search and is unmounted on
+   * this page, which is correct — that one acts on the cluster in front. But
+   * it left the picker as the one screen in the application where the
+   * shortcut did nothing, and a shortcut that works everywhere except where
+   * you happen to be is worse than one that does not exist: you press it,
+   * nothing happens, and you have learnt not to trust it.
+   *
+   * Mounted with this page, so there is no contest between the two handlers.
+   */
+  function onKeydown(event: KeyboardEvent): void {
+    if (!(event.metaKey || event.ctrlKey)) return
+    if (event.key.toLowerCase() !== 'k') return
+    // A dialog is a different context with its own fields; pulling focus out
+    // of one to a search box behind it would be the shortcut misfiring.
+    if (addOpen || organiseOpen) return
+
+    event.preventDefault()
+    searchField?.focus()
+  }
+
+  /**
+   * Focuses the filter as soon as there is anything to filter.
+   *
+   * Typing is what somebody arriving here wants to do first — the same
+   * reasoning as the logs and manifest panes: a search field that has to be
+   * clicked before it accepts a keystroke is one people reach for the mouse
+   * to use.
+   *
+   * Not while a dialog is open. Stealing focus from Add cluster or Organise
+   * would put the keystrokes somewhere the operator is not looking.
+   */
+  $effect(() => {
+    if (workspace.clusters.length === 0) return
+    if (addOpen || organiseOpen) return
+    searchField?.focus()
+  })
+
+  /** What has been typed into the filter. */
+  let filter = $state('')
+  let searchField = $state<{ focus: () => void } | undefined>()
+
+  /**
+   * Clusters matching the filter, or all of them.
+   *
+   * Matched against everything ON THE CARD plus where it is filed — the
+   * context name, the user, the API server address, and the project and group
+   * it sits in. A kubeconfig on a working machine holds twenty of these with
+   * names that differ by three characters in the middle, so matching only the
+   * name would mean typing most of one to narrow anything; and somebody who
+   * remembers "the staging one in ParliTrack" is remembering the grouping.
+   */
+  const matches = $derived.by(() => {
+    const term = filter.trim().toLowerCase()
+    if (!term) return workspace.clusters
+
+    return workspace.clusters.filter((cluster) => {
+      const at = organisation.placementOf(cluster.id)
+      const haystack = [
+        cluster.id,
+        cluster.authInfo,
+        cluster.host,
+        organisation.allProjects().find((project) => project.id === at.project)?.name,
+        organisation.groupsIn(at.project).find((group) => group.id === at.group)?.name,
+      ]
+      return haystack.some((field) => field?.toLowerCase().includes(term))
+    })
+  })
+
+  /**
    * Empty projects and groups are shown, not hidden.
    *
    * Hiding them was wrong twice over. Creating one in the organiser changed
    * nothing on screen, so there was no way to tell it had worked; and
    * revealing them only once a drag began moved the layout under the cursor at
    * exactly the moment the operator was aiming at something.
+   *
+   * WHILE FILTERING, THE OPPOSITE. A search that leaves every empty group on
+   * screen has not narrowed anything — the answer is one row among a page of
+   * headings it does not belong to. So empties are included only when the
+   * filter is clear.
    */
-  const sections = $derived(organisation.sections(workspace.clusters, true))
+  const sections = $derived(organisation.sections(matches, filter.trim() === ''))
+
+  /**
+   * Down opens the only match, for somebody who typed enough to be sure.
+   *
+   * ONLY WHEN THERE IS EXACTLY ONE. Opening whichever cluster happened to
+   * sort first on an ambiguous filter is how somebody ends up connected to
+   * production having meant staging — so with two matches this does nothing
+   * and says so by returning false, which leaves the keystroke alone rather
+   * than swallowing it.
+   */
+  function openOnlyMatch(): boolean {
+    if (matches.length !== 1) return false
+    activate(matches[0].id)
+    return true
+  }
 
   function startDrag(event: DragEvent, clusterId: string): void {
     if (armedId !== clusterId || !event.dataTransfer) {
@@ -177,9 +269,20 @@
   }
 </script>
 
-<svelte:window ondragend={endDrag} />
+<svelte:window ondragend={endDrag} onkeydown={onKeydown} />
 
-<div class="mx-auto w-full max-w-4xl px-8 py-10">
+<!--
+  Wide enough for three cards, and no wider.
+  max-w-4xl fitted two and left a third of a 1440-wide window empty, which is
+  the default size this application opens at. 6xl is 1152px: minus the padding
+  and two gaps that is about 350px a card, which is what one needs for a
+  context name that does not truncate.
+
+  Still capped rather than fluid. A cluster card is a fixed amount of
+  information, and letting the grid grow with the window turns three cards
+  into three very wide cards with the same content strung across them.
+-->
+<div class="mx-auto w-full max-w-6xl px-8 py-10">
   <!-- Header -->
   <div class="mb-8 flex items-start justify-between gap-4">
     <div class="flex items-center gap-3">
@@ -189,7 +292,16 @@
       <div>
         <h2 class="text-headline-small font-semibold text-on-surface">Clusters</h2>
         <p class="text-body-medium text-on-surface-variant/70">
-          {workspace.clusters.length} contexts from kubeconfig
+          <!--
+            The COUNT changes while filtering, because a heading that still
+            says "19 contexts" over four visible cards is describing a page
+            that is not on screen.
+          -->
+          {#if filter.trim()}
+            {matches.length} of {workspace.clusters.length} contexts
+          {:else}
+            {workspace.clusters.length} contexts from kubeconfig
+          {/if}
           {#if workspace.sessions.length > 0}
             · {workspace.sessions.length} open
           {/if}
@@ -198,6 +310,27 @@
     </div>
 
     <div class="flex shrink-0 items-center gap-2">
+      <!--
+        ALWAYS SHOWN, once there is anything to filter.
+        This was gated on a cluster count, on the reasoning that a search box
+        above four cards costs a glance and saves nothing. That was wrong in
+        the way conditional controls usually are: the person who asked for it
+        built the application, opened it on a machine with three contexts, and
+        could not find the feature. A control that appears and disappears
+        depending on how much data you have is one nobody can rely on being
+        there — and the cost it was avoiding is one small field in a header
+        that already carries two buttons.
+      -->
+      {#if workspace.clusters.length > 0}
+        <SearchField
+          bind:this={searchField}
+          value={filter}
+          placeholder="Filter clusters…"
+          onchange={(value) => (filter = value)}
+          onnext={openOnlyMatch}
+          class="w-72"
+        />
+      {/if}
       <Button variant="tonal" onclick={() => (organiseOpen = true)}>
         <FolderTree class="size-4" strokeWidth={1.8} />
         Organise
@@ -221,6 +354,16 @@
       <div class="size-10 animate-pulse rounded-full bg-surface-container-high"></div>
       <p class="text-body-medium text-on-surface-variant">Reading kubeconfig…</p>
     </div>
+  {:else if matches.length === 0 && filter.trim()}
+    <!--
+      A filter that hides everything must say it filtered, not that there is
+      nothing. Falling through to "No clusters configured" on a machine with
+      nineteen of them would read as the kubeconfig having gone missing.
+    -->
+    <EmptyState
+      title="No cluster matches “{filter.trim()}”"
+      description="Filtering on the context name, the user, the API server address, and the project and group it is filed under."
+    />
   {:else if workspace.clusters.length === 0}
     <EmptyState
       title="No clusters configured"
@@ -323,10 +466,16 @@
                   {#if !groupCollapsed}
                     <!-- A real list: it is one, and it gives a screen reader
                          the count and per-item navigation a grid would not. -->
+                    <!-- Three columns from xl (1280px) rather than lg. The
+                         window's own minimum is 960, and three cards in 960 is
+                         290px each — narrow enough that the context names
+                         these are mostly made of start truncating, which is
+                         the one thing somebody scanning this page needs to
+                         read. -->
                     <div
                       id="group-{key}"
                       role="list"
-                      class="mt-2 grid gap-3 sm:grid-cols-1 lg:grid-cols-2"
+                      class="mt-2 grid gap-3 sm:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3"
                     >
                       {#each group.clusters as cluster (cluster.id)}
                         {@const open = workspace.openIds.has(cluster.id)}

@@ -100,6 +100,7 @@ export type SeriesResult = wails.SeriesResult
 export type HistorySettings = wails.HistorySettings
 /** An assessed cluster: what is wrong, what is left, what is running. */
 export type Overview = wails.Overview
+export type MetricsBackend = wails.MetricsBackend
 /** One problem, aggregated across the objects it affects. */
 export type Finding = wails.Finding
 

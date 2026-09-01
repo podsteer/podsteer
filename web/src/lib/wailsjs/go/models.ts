@@ -478,6 +478,26 @@ export namespace wails {
 	        this.path = source["path"];
 	    }
 	}
+	export class MetricsBackend {
+	    kind: string;
+	    label: string;
+	    namespace: string;
+	    service: string;
+	    port: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MetricsBackend(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.label = source["label"];
+	        this.namespace = source["namespace"];
+	        this.service = source["service"];
+	        this.port = source["port"];
+	    }
+	}
 	export class Namespace {
 	    name: string;
 	    phase: string;
@@ -548,6 +568,7 @@ export namespace wails {
 	    allocatableCpu: string;
 	    allocatableMemory: string;
 	    disk: string;
+	    diskCapacity: string;
 	    diskPercent: number;
 	    hasDisk: boolean;
 	    maxPods: number;
@@ -579,6 +600,7 @@ export namespace wails {
 	        this.allocatableCpu = source["allocatableCpu"];
 	        this.allocatableMemory = source["allocatableMemory"];
 	        this.disk = source["disk"];
+	        this.diskCapacity = source["diskCapacity"];
 	        this.diskPercent = source["diskPercent"];
 	        this.hasDisk = source["hasDisk"];
 	        this.maxPods = source["maxPods"];
@@ -597,6 +619,9 @@ export namespace wails {
 	    podPercent: number;
 	    diskPercent: number;
 	    pods: number;
+	    usageCpuMilli: number;
+	    usageMemoryBytes: number;
+	    usageMeasured: boolean;
 	    cpuAmount: string;
 	    memoryAmount: string;
 	    podAmount: string;
@@ -623,6 +648,9 @@ export namespace wails {
 	        this.podPercent = source["podPercent"];
 	        this.diskPercent = source["diskPercent"];
 	        this.pods = source["pods"];
+	        this.usageCpuMilli = source["usageCpuMilli"];
+	        this.usageMemoryBytes = source["usageMemoryBytes"];
+	        this.usageMeasured = source["usageMeasured"];
 	        this.cpuAmount = source["cpuAmount"];
 	        this.memoryAmount = source["memoryAmount"];
 	        this.podAmount = source["podAmount"];
@@ -935,6 +963,7 @@ export namespace wails {
 	    restarts: RestartHotspot[];
 	    unavailable: string[];
 	    metrics: string;
+	    backend: MetricsBackend;
 	    criticalCount: number;
 	    warningCount: number;
 	    infoCount: number;
@@ -963,6 +992,7 @@ export namespace wails {
 	        this.restarts = this.convertValues(source["restarts"], RestartHotspot);
 	        this.unavailable = source["unavailable"];
 	        this.metrics = source["metrics"];
+	        this.backend = this.convertValues(source["backend"], MetricsBackend);
 	        this.criticalCount = source["criticalCount"];
 	        this.warningCount = source["warningCount"];
 	        this.infoCount = source["infoCount"];

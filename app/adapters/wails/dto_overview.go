@@ -373,6 +373,16 @@ type NodeLoad struct {
 	// DiskPercent is -1 when no kubelet answered for this node.
 	DiskPercent float64 `json:"diskPercent"`
 	Pods        int     `json:"pods"`
+	// What the node is CONSUMING, as opposed to every share above, which is
+	// what pods reserved. Raw rather than formatted because the only consumer
+	// is the usage chart, which needs numbers to plot.
+	//
+	// UsageMeasured distinguishes a genuinely idle node from one no metrics
+	// API answered for; without it a cluster with no metrics-server would
+	// chart a confident flat zero.
+	UsageCPUMilli    int64 `json:"usageCpuMilli"`
+	UsageMemoryBytes int64 `json:"usageMemoryBytes"`
+	UsageMeasured    bool  `json:"usageMeasured"`
 	// The amounts and the shares, formatted here rather than by the browser,
 	// so a node's row reads the same way a capacity track does: the quantity,
 	// then what proportion of the node it is.
@@ -431,6 +441,10 @@ func toNodeLoads(loads []domain.NodeLoad) []NodeLoad {
 			DiskShare:  diskShare(load.DiskPercent, measured),
 
 			DiskMeasured: measured,
+
+			UsageCPUMilli:    load.Usage.CPUMilli,
+			UsageMemoryBytes: load.Usage.MemoryBytes,
+			UsageMeasured:    load.Usage.Measured,
 		})
 	}
 	return out
@@ -544,10 +558,38 @@ type Overview struct {
 	// because "install metrics-server" is the wrong advice for somebody who
 	// is merely not allowed to read the one already running.
 	Metrics string `json:"metrics"`
+	// Backend names a monitoring system already running in this cluster, when
+	// one was found — empty otherwise, which is the ordinary case.
+	//
+	// It changes nothing PodSteer measures. It is here so the UI can point at
+	// a system that already keeps months of the same figures PodSteer keeps
+	// minutes of, instead of presenting its own window as the whole picture.
+	Backend MetricsBackend `json:"backend"`
 	// Counts the findings by severity, so the header does not have to.
 	CriticalCount int `json:"criticalCount"`
 	WarningCount  int `json:"warningCount"`
 	InfoCount     int `json:"infoCount"`
+}
+
+// MetricsBackend is a monitoring system found running in the cluster.
+type MetricsBackend struct {
+	// Kind is "prometheus", or empty when nothing was found.
+	Kind string `json:"kind"`
+	// Label is what to show a person, e.g. "Prometheus in monitoring".
+	Label     string `json:"label"`
+	Namespace string `json:"namespace"`
+	Service   string `json:"service"`
+	Port      string `json:"port"`
+}
+
+func toMetricsBackend(backend domain.MetricsBackend) MetricsBackend {
+	return MetricsBackend{
+		Kind:      backend.Kind,
+		Label:     backend.Describe(),
+		Namespace: string(backend.Namespace),
+		Service:   backend.Service,
+		Port:      backend.Port,
+	}
 }
 
 func toOverview(overview domain.Overview) Overview {
@@ -574,6 +616,7 @@ func toOverview(overview domain.Overview) Overview {
 		Restarts:    toRestartHotspots(overview.Restarts),
 		Unavailable: overview.Unavailable,
 		Metrics:     string(overview.Metrics),
+		Backend:     toMetricsBackend(overview.Backend),
 	}
 
 	for _, finding := range overview.Findings {
