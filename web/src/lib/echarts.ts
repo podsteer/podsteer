@@ -29,6 +29,8 @@ use([LineChart, GraphChart, GridComponent, TooltipComponent, LegendComponent, Ca
  */
 export interface Chart {
   setOption(option: unknown, notMerge?: boolean): void
+  /** Subscribes to a chart event — used by the dependency map for clicks. */
+  on(event: string, handler: (params: unknown) => void): void
   resize(): void
   dispose(): void
 }

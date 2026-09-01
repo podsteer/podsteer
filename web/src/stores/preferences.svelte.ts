@@ -280,6 +280,8 @@ interface PersistedShape {
   /** How much recent usage to keep for the drawer's charts, in minutes. */
   usageWindowMinutes: number
   /** Whether to ask GitHub about newer releases. See UpdateBadge.svelte. */
+  /** Which way the dependency map lays out its tiers. */
+  mapOrientation: 'horizontal' | 'vertical'
   updateChecksEnabled: boolean
   /** When the last check happened, so a restart does not trigger another. */
   lastUpdateCheck: number
@@ -351,6 +353,7 @@ const DEFAULTS: PersistedShape = {
   // feature exists to prevent. It is one switch away, the switch is in
   // Settings → Notifications, and PODSTEER_UPDATE_CHECK=false overrides it for
   // a whole machine.
+  mapOrientation: 'horizontal',
   updateChecksEnabled: true,
   lastUpdateCheck: 0,
   dismissedUpdate: '',
@@ -441,6 +444,7 @@ class Preferences {
    * fills as you watch, and nothing about any object is held in memory.
    */
   usageWindowMinutes = $state<number>(DEFAULTS.usageWindowMinutes)
+  mapOrientation = $state<'horizontal' | 'vertical'>(DEFAULTS.mapOrientation)
   updateChecksEnabled = $state<boolean>(DEFAULTS.updateChecksEnabled)
   lastUpdateCheck = $state<number>(DEFAULTS.lastUpdateCheck)
   dismissedUpdate = $state<string>(DEFAULTS.dismissedUpdate)
@@ -621,6 +625,18 @@ class Preferences {
   /** Sets how much recent usage the drawer's charts start with. */
   setUsageWindowMinutes = (minutes: number): void => {
     this.usageWindowMinutes = USAGE_WINDOWS.includes(minutes) ? minutes : DEFAULTS.usageWindowMinutes
+  }
+
+  /**
+   * Lays the dependency map out along one axis or the other.
+   *
+   * Remembered rather than reset per pod: somebody who prefers the map on its
+   * side prefers it on its side, and having to turn every map they open is
+   * the setting failing to be one.
+   */
+  setMapOrientation(value: 'horizontal' | 'vertical'): void {
+    this.mapOrientation = value
+    this.#save()
   }
 
   /**
@@ -873,6 +889,9 @@ class Preferences {
       if (USAGE_WINDOWS.includes(stored.usageWindowMinutes as number)) {
         this.usageWindowMinutes = stored.usageWindowMinutes as number
       }
+      if (stored.mapOrientation === 'horizontal' || stored.mapOrientation === 'vertical') {
+        this.mapOrientation = stored.mapOrientation
+      }
       if (typeof stored.updateChecksEnabled === 'boolean') {
         this.updateChecksEnabled = stored.updateChecksEnabled
       }
@@ -938,6 +957,7 @@ class Preferences {
         thresholds: this.thresholds,
         podMeasure: this.podMeasure,
         usageWindowMinutes: this.usageWindowMinutes,
+        mapOrientation: this.mapOrientation,
         updateChecksEnabled: this.updateChecksEnabled,
         lastUpdateCheck: this.lastUpdateCheck,
         dismissedUpdate: this.dismissedUpdate,

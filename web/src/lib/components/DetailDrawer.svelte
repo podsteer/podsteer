@@ -82,7 +82,7 @@
   let draftOrigin = $state('')
 
   /** Which pane, if any, has been given the whole window. */
-  let maximized = $state<'yaml' | 'logs' | 'terminal' | null>(null)
+  let maximized = $state<'yaml' | 'logs' | 'terminal' | 'map' | null>(null)
   let restartDialogOpen = $state(false)
   let actionError = $state<string | null>(null)
   let workloadPods = $state<Pod[]>([])
@@ -488,6 +488,18 @@
   {/if}
 {/snippet}
 
+{#snippet mapSurface()}
+  {#if isPod && selectedPod}
+    <DependencyMap
+      clusterId={session.cluster.id}
+      namespace={selectedPod.namespace}
+      podName={selectedPod.name}
+      onopen={openObject}
+      onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
+    />
+  {/if}
+{/snippet}
+
 {#snippet terminalSurface()}
   {#if isPod && selectedPod}
     <Terminal
@@ -805,13 +817,16 @@
           </div>
         {/if}
       {:else if activeTab === 'map'}
-        {#if isPod && selectedPod}
-          <DependencyMap
-            clusterId={session.cluster.id}
-            namespace={selectedPod.namespace}
-            podName={selectedPod.name}
-            onopen={openObject}
-          />
+        {#if maximized === 'map'}
+          <!-- The pane is in the dialog. Saying so beats an empty tab, which
+               reads as a pane that failed to load. -->
+          <div class="flex h-full items-center justify-center p-4">
+            <p class="text-body-medium text-on-surface-variant/70">
+              Showing the map in a larger window.
+            </p>
+          </div>
+        {:else if isPod && selectedPod}
+          {@render mapSurface()}
         {:else}
           <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
             <Workflow class="size-8" strokeWidth={1.2} />
@@ -933,6 +948,17 @@
     onclose={() => (maximized = null)}
   >
     {@render terminalSurface()}
+  </PaneDialog>
+
+  <PaneDialog
+    open={maximized === 'map'}
+    icon={KindIcon}
+    kind={session.selectedKind?.singular}
+    name={session.selectedName ?? ''}
+    label="Map"
+    onclose={() => (maximized = null)}
+  >
+    {@render mapSurface()}
   </PaneDialog>
 
   {#if selectedWorkload}
