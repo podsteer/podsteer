@@ -30,6 +30,7 @@
   import { StartSession, Write, Resize, StopSession } from '$lib/wailsjs/go/wails/TerminalAPI'
   import { EventsOn } from '$lib/wailsjs/runtime/runtime'
   import { terminalTheme, onThemeChange } from '$lib/terminalTheme'
+  import { matchFractions } from '$lib/terminalSearch'
   import { terminalSessions, sessionKey } from '$stores/terminalSessions.svelte'
   import PaneToolbar from './PaneToolbar.svelte'
   import ToolbarButton from './ToolbarButton.svelte'
@@ -73,12 +74,26 @@
   let connectionState = $state<'connecting' | 'connected' | 'disconnected' | 'error'>('connecting')
 
   let query = $state('')
+  /** Where the matches fall through the whole buffer, as fractions of it. */
+  let markers = $state.raw<number[]>([])
+  /** What the search found, as the addon reports it. */
+  let results = $state<{ index: number; count: number } | null>(null)
   let copiedAll = $state(false)
   /** The chip shown beside a selection, and where to put it. */
   let selection = $state<{ text: string; x: number; y: number } | null>(null)
 
   let stopWatchingTheme: (() => void) | null = null
   let clearChip: number | null = null
+  let rescan: number | null = null
+  /**
+   * Set while the SEARCH is moving the selection rather than the operator.
+   *
+   * Copy-on-select must not fire for a match the addon selected: stepping
+   * through a search would then overwrite the clipboard with each hit, which
+   * is the opposite of a search's purpose — somebody looking for a line has
+   * not asked to copy every line on the way to it.
+   */
+  let searching = false
 
   /**
    * Unsubscribes for the two Wails events, held so they can be undone.
@@ -121,6 +136,7 @@
   onDestroy(() => {
     stopWatchingTheme?.()
     if (clearChip !== null) window.clearTimeout(clearChip)
+    if (rescan !== null) window.clearTimeout(rescan)
     cleanup()
   })
 
@@ -159,6 +175,13 @@
     })
 
     terminal.onSelectionChange(() => showSelection())
+
+    // The addon knows how many matches there are and which is current; the
+    // ruler above knows where they are. Both are needed and neither has the
+    // other's half.
+    searchAddon.onDidChangeResults((event) => {
+      results = event.resultCount > 0 ? { index: event.resultIndex + 1, count: event.resultCount } : null
+    })
   }
 
   /**
@@ -174,7 +197,7 @@
    */
   function showSelection(): void {
     const text = terminal?.getSelection() ?? ''
-    if (text.trim() === '') {
+    if (text.trim() === '' || searching) {
       selection = null
       return
     }
@@ -223,9 +246,59 @@
   function search(direction: 'next' | 'previous'): void {
     if (!searchAddon || query === '') return
 
-    const options = { caseSensitive: false, regex: false, decorations: undefined }
-    if (direction === 'next') searchAddon.findNext(query, options)
-    else searchAddon.findPrevious(query, options)
+    const options = { caseSensitive: false, regex: false }
+    searching = true
+    try {
+      if (direction === 'next') searchAddon.findNext(query, options)
+      else searchAddon.findPrevious(query, options)
+    } finally {
+      // Synchronous: xterm raises the selection change inside the find call,
+      // so the flag is down again before anything the operator does next.
+      searching = false
+    }
+  }
+
+  /**
+   * Where every match falls through the whole buffer, as a fraction of it.
+   *
+   * SCANNED HERE RATHER THAN ASKED OF THE ADDON, which reports how many
+   * matches there are and which one is current but not where they sit. The
+   * ruler needs positions, and the buffer is the only thing that has them.
+   *
+   * Over the WHOLE buffer, scrollback included, because the point of the ruler
+   * is to show what is off screen — marking only the visible rows would draw a
+   * track that agrees with what somebody can already see.
+   */
+  function scanMarkers(): void {
+    if (!terminal || query === '') {
+      markers = []
+      return
+    }
+
+    const buffer = terminal.buffer.active
+    markers = matchFractions(
+      {
+        length: buffer.length,
+        lineAt: (row) => buffer.getLine(row)?.translateToString(true),
+      },
+      query,
+    )
+  }
+
+  /**
+   * Puts the terminal back as it was when the query goes away.
+   *
+   * CLEARING THE BOX HAS TO CLEAR THE HIGHLIGHT. The last match stays selected
+   * otherwise — and in a terminal a selection is not decoration, it is the
+   * clipboard: copy-on-select means an abandoned search would leave somebody's
+   * clipboard holding a word they had stopped looking for.
+   */
+  function clearSearch(): void {
+    markers = []
+    results = null
+    searchAddon?.clearDecorations()
+    terminal?.clearSelection()
+    selection = null
   }
 
   /**
@@ -274,7 +347,16 @@
   }
 
   function handleTerminalData(event: { sessionId: string; data: string }): void {
-    if (terminal && event.sessionId === sessionId) terminal.write(event.data)
+    if (!terminal || event.sessionId !== sessionId) return
+    terminal.write(event.data)
+
+    // The ruler describes the buffer, and the buffer is still moving. Rescanned
+    // on a trailing delay rather than per write: a build log arrives in
+    // thousands of small chunks, and scanning the scrollback for each one would
+    // cost more than the search does.
+    if (query === '') return
+    if (rescan !== null) window.clearTimeout(rescan)
+    rescan = window.setTimeout(scanMarkers, 250)
   }
 
   function handleTerminalExit(event: { sessionId: string; reason?: string }): void {
@@ -396,9 +478,16 @@
         value={query}
         placeholder="Find in terminal…"
         label="Find in the terminal"
+        count={results ? `${results.index}/${results.count}` : ''}
+        empty={query !== '' && results === null}
         onchange={(value) => {
           query = value
-          if (value) search('next')
+          if (value === '') {
+            clearSearch()
+            return
+          }
+          search('next')
+          scanMarkers()
         }}
         onnext={() => search('next')}
         onprevious={() => search('previous')}
@@ -457,6 +546,20 @@
   -->
   <div class="relative min-h-0 flex-1 bg-surface-container-lowest">
     <div bind:this={terminalContainer} class="h-full overflow-hidden p-1"></div>
+
+    <!-- Where the matches fall through the whole buffer. The same track the
+         log viewer draws, in the same place and the same colour, because a
+         person who has learned one pane should not have to learn this one. -->
+    {#if markers.length > 0}
+      <div class="pointer-events-none absolute inset-y-0 right-0 w-2.5" aria-hidden="true">
+        {#each markers as fraction (fraction)}
+          <span
+            class="absolute right-0.5 h-0.5 w-1.5 rounded-full bg-gauge-warn"
+            style="top: {(fraction * 100).toFixed(3)}%"
+          ></span>
+        {/each}
+      </div>
+    {/if}
 
     {#if selection}
       <!--
