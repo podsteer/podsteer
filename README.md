@@ -159,6 +159,7 @@ Everything is optional and prefixed `PODSTEER_`:
 | `PODSTEER_REQUEST_TIMEOUT` | `30s`                           | Per-call deadline             |
 | `PODSTEER_LOG_LEVEL`       | `info`                          | `debug`/`info`/`warn`/`error` |
 | `PODSTEER_LOG_SOURCE`      | `false`                         | Include source file and line  |
+| `PODSTEER_UPDATE_CHECK`    | `true`                          | `false` disables the update check machine-wide |
 
 ## Contributing and releasing
 
@@ -189,9 +190,17 @@ with the credentials your kubeconfig already grants, and it enforces no
 permissions of its own — restricting what it may do is a matter of restricting
 those credentials.
 
-What it does not do is talk to anyone else. There is no account, no telemetry
-and no update check, and the webview is locked down by a CSP that forbids every
-remote origin — all cluster traffic goes through the Go process, never the
-page.
+There is no account and no telemetry, and the webview is locked down by a CSP
+that forbids every remote origin — all cluster traffic goes through the Go
+process, never the page.
+
+The one thing it contacts besides your clusters is GitHub, once a day, to see
+whether a newer release exists — and only if you leave that on. It sends no
+version, no platform and no identifier; the comparison happens locally. Switch
+it off in Settings → Notifications, or set `PODSTEER_UPDATE_CHECK=false` to
+disable it for a whole machine. [SECURITY.md](SECURITY.md) says exactly what is
+and is not sent, and
+[docs/decisions/0005](docs/decisions/0005-the-update-check-is-opt-outable-and-tells-github-nothing.md)
+records why this was added after two releases of promising it never would be.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).

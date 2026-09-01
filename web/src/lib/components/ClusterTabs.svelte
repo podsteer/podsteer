@@ -43,6 +43,7 @@
   import { preferences, THEME_LABELS } from '$stores/preferences.svelte'
   import { windowState } from '$stores/windowState.svelte'
   import SettingsDialog from './SettingsDialog.svelte'
+  import UpdateBadge from './UpdateBadge.svelte'
   import { Home, Server, Plus, X, RefreshCw, Moon, Sun, Monitor, Settings } from '@lucide/svelte'
 
   let settingsOpen = $state(false)
@@ -179,6 +180,11 @@
   {/if}
 
   <div class="mx-1 h-5 w-px shrink-0 self-center bg-outline-variant/60" aria-hidden="true"></div>
+
+  <!-- Between the separator and Refresh, and ABSENT unless there is genuinely
+       a newer release. See UpdateBadge.svelte for why the quiet states show
+       nothing at all. -->
+  <UpdateBadge />
 
   <!-- Refresh: acts on whichever tab is in front. Nothing to refresh on the
        picker, so it is disabled rather than hidden — its position stays put. -->

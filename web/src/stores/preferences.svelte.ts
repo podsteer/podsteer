@@ -279,6 +279,12 @@ interface PersistedShape {
   podMeasure: PodMeasure
   /** How much recent usage to keep for the drawer's charts, in minutes. */
   usageWindowMinutes: number
+  /** Whether to ask GitHub about newer releases. See UpdateBadge.svelte. */
+  updateChecksEnabled: boolean
+  /** When the last check happened, so a restart does not trigger another. */
+  lastUpdateCheck: number
+  /** A version the operator has dismissed, so the badge stays gone. */
+  dismissedUpdate: string
   /**
    * Detail-pane sections the operator has opened or closed, by id.
    *
@@ -340,6 +346,15 @@ const DEFAULTS: PersistedShape = {
   // per-object sample cap as well, so a fast refresh cannot turn it into
   // something expensive.
   usageWindowMinutes: 5,
+  // ON BY DEFAULT, and that is a deliberate reversal of a promise this project
+  // used to make — see docs/decisions/0005-*.md. Off by default would mean
+  // almost nobody ever learns a security fix shipped, which is the outcome the
+  // feature exists to prevent. It is one switch away, the switch is in
+  // Settings → Notifications, and PODSTEER_UPDATE_CHECK=false overrides it for
+  // a whole machine.
+  updateChecksEnabled: true,
+  lastUpdateCheck: 0,
+  dismissedUpdate: '',
   sections: {},
   // Off. An application that starts making noise nobody asked for is one
   // people mute at the operating system, taking the alarm they DID want with
@@ -427,6 +442,9 @@ class Preferences {
    * fills as you watch, and nothing about any object is held in memory.
    */
   usageWindowMinutes = $state<number>(DEFAULTS.usageWindowMinutes)
+  updateChecksEnabled = $state<boolean>(DEFAULTS.updateChecksEnabled)
+  lastUpdateCheck = $state<number>(DEFAULTS.lastUpdateCheck)
+  dismissedUpdate = $state<string>(DEFAULTS.dismissedUpdate)
 
   /** Detail-pane sections the operator has opened or closed, by id. */
   sections = $state<Record<string, boolean>>({})
@@ -604,6 +622,37 @@ class Preferences {
   /** Sets how much recent usage the drawer's charts start with. */
   setUsageWindowMinutes = (minutes: number): void => {
     this.usageWindowMinutes = USAGE_WINDOWS.includes(minutes) ? minutes : DEFAULTS.usageWindowMinutes
+  }
+
+  /**
+   * Turns the update check on or off.
+   *
+   * Turning it OFF forgets when the last one happened, so switching it back on
+   * checks immediately rather than waiting out the remainder of a day nobody
+   * was checking during.
+   */
+  setUpdateChecksEnabled(enabled: boolean): void {
+    this.updateChecksEnabled = enabled
+    if (!enabled) this.lastUpdateCheck = 0
+    this.#save()
+  }
+
+  /** Records that a check just happened. */
+  markUpdateChecked(at: number): void {
+    this.lastUpdateCheck = at
+    this.#save()
+  }
+
+  /**
+   * Stops the badge nagging about one particular version.
+   *
+   * Per VERSION rather than a blanket "never show me this": somebody who is
+   * not upgrading today still wants to hear about the release after this one,
+   * and a permanent dismissal is what the Settings switch is for.
+   */
+  dismissUpdate(version: string): void {
+    this.dismissedUpdate = version
+    this.#save()
     this.#save()
   }
 
@@ -825,6 +874,15 @@ class Preferences {
       if (USAGE_WINDOWS.includes(stored.usageWindowMinutes as number)) {
         this.usageWindowMinutes = stored.usageWindowMinutes as number
       }
+      if (typeof stored.updateChecksEnabled === 'boolean') {
+        this.updateChecksEnabled = stored.updateChecksEnabled
+      }
+      if (typeof stored.lastUpdateCheck === 'number') {
+        this.lastUpdateCheck = stored.lastUpdateCheck
+      }
+      if (typeof stored.dismissedUpdate === 'string') {
+        this.dismissedUpdate = stored.dismissedUpdate
+      }
       if (stored.sections && typeof stored.sections === 'object') {
         this.sections = stored.sections
       }
@@ -881,6 +939,9 @@ class Preferences {
         thresholds: this.thresholds,
         podMeasure: this.podMeasure,
         usageWindowMinutes: this.usageWindowMinutes,
+        updateChecksEnabled: this.updateChecksEnabled,
+        lastUpdateCheck: this.lastUpdateCheck,
+        dismissedUpdate: this.dismissedUpdate,
         sections: this.sections,
         alertSoundsEnabled: this.alertSoundsEnabled,
         alertSounds: this.alertSounds,

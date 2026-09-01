@@ -13,6 +13,7 @@
   import ClusterWorkspace from '$pages/ClusterWorkspace.svelte'
   import { workspace } from '$stores/workspace.svelte'
   import { loadAppInfo } from '$stores/system.svelte'
+  import { updates } from '$stores/updates.svelte'
   import { alertPlayer } from '$stores/alerts.svelte'
   import { forwards } from '$stores/forwards.svelte'
 
@@ -41,12 +42,17 @@
     // Arming here means the first click or keypress of the session wakes it,
     // so an alert never arrives to find the speaker asleep.
     alertPlayer.arm()
+    // The update check, on its own delay and off the startup path entirely.
+    // Nothing here waits for it, and it does nothing at all when the operator
+    // has switched it off — see updates.svelte.ts.
+    updates.start()
     const minimum = new Promise((resolve) => setTimeout(resolve, MIN_SPLASH_MS))
     void Promise.all([workspace.initialise(), minimum]).then(() => {
       booted = true
     })
     return () => {
       unwatchForwards()
+      updates.stop()
       workspace.dispose()
     }
   })

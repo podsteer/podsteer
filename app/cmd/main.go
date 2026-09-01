@@ -31,6 +31,7 @@ import (
 	"github.com/podsteer/podsteer/app/adapters/k8s"
 	"github.com/podsteer/podsteer/app/adapters/macwindow"
 	"github.com/podsteer/podsteer/app/adapters/shellpath"
+	"github.com/podsteer/podsteer/app/adapters/updates"
 	wailsadapter "github.com/podsteer/podsteer/app/adapters/wails"
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/config"
@@ -247,6 +248,18 @@ func run() error {
 		return fmt.Errorf("wiring history API: %w", err)
 	}
 
+	// The update check. Its adapter is the ONLY thing in PodSteer that talks
+	// to anything but a cluster, and it acts only when the interface asks —
+	// there is no timer here and nothing on the startup path. See
+	// docs/decisions/0005-*.md for why this exists at all and what it does not
+	// send.
+	updateService := application.NewUpdateService(updates.NewClient(), cfg.App.Version, logger)
+
+	updateAPI, err := wailsadapter.NewUpdateAPI(updateService, logger)
+	if err != nil {
+		return fmt.Errorf("wiring update API: %w", err)
+	}
+
 	systemAPI, err := wailsadapter.NewSystemAPI(cfg.App.Name, cfg.App.Version, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring system API: %w", err)
@@ -305,6 +318,7 @@ func run() error {
 			managementAPI,
 			terminalAPI,
 			systemAPI,
+			updateAPI,
 		},
 
 		// Only one PodSteer should hold the kubeconfig and its client caches;

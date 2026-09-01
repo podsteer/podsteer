@@ -1344,6 +1344,24 @@ export namespace wails {
 	
 	
 	
+	export class UpdateStatus {
+	    state: string;
+	    installed: string;
+	    latest: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.state = source["state"];
+	        this.installed = source["installed"];
+	        this.latest = source["latest"];
+	        this.url = source["url"];
+	    }
+	}
 	
 	export class Workload {
 	    kind: string;

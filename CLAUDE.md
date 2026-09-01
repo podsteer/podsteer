@@ -309,7 +309,7 @@ client adapter that will be Apache-2.0 like everything else here. Two
 consequences for code written now:
 
 - **The community build must never require an account** or contact anything
-  PodSteer operates — no telemetry, no update check, no sign-in. That is a
+  PodSteer operates — no telemetry, no sign-in. That is a
   product commitment, and the CSP plus the absence of any HTTP client outside
   `adapters/k8s` is what keeps it honest.
 - **Anything remote is an outbound port with a local implementation first.**
@@ -352,8 +352,23 @@ somebody to check a VPN, and it is deliberately not retryable.
 ## External systems
 
 The local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`) and the API servers
-it names. Nothing else: no telemetry, no update check, no network access from
-the webview (see the CSP in `web/index.html`).
+it names — plus, since v0.1.2, `api.github.com` for the update check, and
+nothing else. No telemetry, no account, and still no network access from the
+webview (see the CSP in `web/index.html`).
+
+**The update check is the only outbound call that is not a cluster**, and the
+constraints on it are not negotiable style preferences — see
+[docs/decisions/0005](docs/decisions/0005-the-update-check-is-opt-outable-and-tells-github-nothing.md).
+It sends no identifier of any kind, goes to GitHub rather than anything we
+operate (so no dataset exists here to correlate with the planned paid tier),
+never runs on the startup path, caches failures, and is off entirely under
+`PODSTEER_UPDATE_CHECK=false`. **Off means no request is made**, and that is
+asserted in `app/application/updates_test.go` by counting calls to the source
+rather than by checking the returned state — the opt-out is precisely what has
+silently broken in k9s, Terraform, dotnet, JetBrains and Docker Desktop.
+
+If a future paid tier wants a client-side call, **it does not get to reuse this
+one.** That is the creep path this ADR exists to make visible.
 
 The kubeconfig is **read on every call and written in exactly one place**:
 `KubeconfigPort.Merge`, behind Add cluster. Everything about that write is

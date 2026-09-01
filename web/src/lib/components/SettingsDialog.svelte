@@ -58,6 +58,7 @@
     SAMPLING_INTERVALS,
   } from '$stores/history.svelte'
   import { accelerator } from '$lib/platform'
+  import { updates } from '$stores/updates.svelte'
   import Button from './Button.svelte'
   import CreditsPane from './CreditsPane.svelte'
   import {
@@ -490,6 +491,67 @@
           </section>
         {:else if section === 'notifications'}
           <section class="flex flex-col gap-6">
+            <!--
+              STATED PLAINLY, INCLUDING WHAT IS SENT. This is the only thing in
+              PodSteer that contacts anything but a cluster, and the project
+              spent its first releases promising it never would. Somebody who
+              read that promise deserves to find the reversal described here
+              rather than discover it in a proxy log.
+            -->
+            <div>
+              <h3 class="text-title-medium text-on-surface">Tell me about new versions</h3>
+              <p class="mt-0.5 text-body-small text-on-surface-variant">
+                Asks GitHub once a day whether a newer PodSteer has been released, and shows a
+                small badge beside Refresh when one has. It sends nothing about you — no version,
+                no platform, no identifier — and the comparison happens here, on the answer.
+                PodSteer never installs anything itself.
+              </p>
+
+              <label class="mt-3 flex items-center justify-between gap-4">
+                <span class="text-body-medium text-on-surface">
+                  Check for updates
+                  {#if !updates.permitted}
+                    <span class="ml-1 text-label-small text-on-surface-variant">
+                      — turned off on this machine by PODSTEER_UPDATE_CHECK
+                    </span>
+                  {/if}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={preferences.updateChecksEnabled}
+                  disabled={!updates.permitted}
+                  onchange={(event) =>
+                    preferences.setUpdateChecksEnabled(event.currentTarget.checked)}
+                  class="size-4 accent-primary disabled:opacity-40"
+                />
+              </label>
+
+              <div class="mt-3 flex items-center gap-3">
+                <button
+                  type="button"
+                  disabled={!preferences.updateChecksEnabled || !updates.permitted || updates.checking}
+                  onclick={() => void updates.refresh(true)}
+                  class="state-layer h-8 rounded-xs border border-outline px-3 text-label-large
+                         text-on-surface-variant transition-colors duration-150
+                         disabled:pointer-events-none disabled:opacity-40"
+                >
+                  {updates.checking ? 'Checking…' : 'Check now'}
+                </button>
+
+                <span class="text-body-small text-on-surface-variant/80">
+                  {#if !preferences.updateChecksEnabled}
+                    Nothing is sent while this is off.
+                  {:else if updates.status?.state === 'available'}
+                    {updates.status.latest} is available.
+                  {:else if updates.status?.state === 'current'}
+                    You are on the latest release.
+                  {:else if updates.status?.state === 'unknown'}
+                    Could not reach GitHub — that is not a problem with your cluster.
+                  {/if}
+                </span>
+              </div>
+            </div>
+
             <div>
               <h3 class="text-title-medium text-on-surface">Sound on a new finding</h3>
               <p class="mt-0.5 text-body-small text-on-surface-variant">

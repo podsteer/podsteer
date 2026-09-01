@@ -38,8 +38,41 @@ an account should not be able to delete a namespace, that has to be true in the
 cluster's RBAC — there is no setting here that can make it so. Restricting what
 PodSteer may do means restricting the credentials it runs with.
 
-**It talks to your clusters and to nothing else.** No account, no telemetry, no
-update check. The webview has no network access at all: a content security
+**It talks to your clusters, and to GitHub only if you let it.** No account and
+no telemetry — those remain absolute, and there is no code here that could send
+either.
+
+The one exception is an **update check**, added in v0.1.2. It asks
+`api.github.com` once a day whether a newer release has been published. This
+file said "no update check" for the first two releases, and reversing that is
+not something to bury: what changed, and the case both ways, is in
+[docs/decisions/0005-the-update-check-is-opt-outable-and-tells-github-nothing.md](docs/decisions/0005-the-update-check-is-opt-outable-and-tells-github-nothing.md).
+
+What the check does and does not do:
+
+- **It sends no identifier.** No installed version, no platform, no machine id,
+  no query string. GitHub requires a `User-Agent` and refuses requests without
+  one, so `podsteer` is sent and nothing else — deliberately not the version,
+  which would turn every check into a report of what you are running. The
+  comparison happens locally, on the answer.
+- **It goes to GitHub, not to us.** We have no access to `api.github.com`'s
+  logs, so this produces no data anyone here can hold, correlate, or be
+  compelled to produce. A PodSteer-operated endpoint would produce all three,
+  which is why there isn't one.
+- **It is unauthenticated**, so there is no credential at rest.
+- **It never runs on the startup path** and nothing waits on it. It cannot
+  delay or prevent the application starting.
+- **Turn it off two ways.** Settings → Notifications switches it off for you.
+  `PODSTEER_UPDATE_CHECK=false` switches it off for the whole machine,
+  regardless of that setting, for packagers and for deny-by-default egress
+  policies. Off means no request is made — not a request that is discarded —
+  and there are tests in `app/application/updates_test.go` and
+  `web/src/stores/updates.test.ts` asserting exactly that.
+- **PodSteer never installs anything.** The badge opens the release page in
+  your browser. It does not download, replace its own binary, or run an
+  installer.
+
+The webview still has no network access at all: a content security
 policy in `web/index.html` forbids every remote origin, and all cluster traffic
 goes through the Go process rather than the page. Two things are written to
 your own machine and transmitted nowhere: sampled capacity history and its
