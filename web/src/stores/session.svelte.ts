@@ -43,6 +43,7 @@ import {
   type SortState,
 } from '$lib/sort'
 import { alertPlayer } from './alerts.svelte'
+import { usageHistory, usageKey } from './usageHistory.svelte'
 import { preferences } from './preferences.svelte'
 
 /** Lifecycle of an asynchronous read. */
@@ -875,7 +876,41 @@ export class ClusterSession {
         this.table = rows as ResourceTable
     }
 
+    this.#retainUsage()
     this.#refreshSelection()
+  }
+
+  /**
+   * Keeps the usage every refresh already fetched.
+   *
+   * The list response carries a measurement for EVERY row, and until now all
+   * of it except the one being drawn was discarded — so a drawer opened after
+   * five minutes of browsing started from nothing, having thrown away the
+   * five minutes it had been handed. metrics-server cannot be asked for that
+   * history afterwards: a PodMetrics is one point and the API has no range.
+   *
+   * Costs one array push per row per refresh, and nothing on the wire.
+   */
+  #retainUsage(): void {
+    const at = Date.now()
+
+    for (const pod of this.pods) {
+      if (!pod.hasMetrics) continue
+      usageHistory.record(usageKey('pod', pod.namespace, pod.name), {
+        at,
+        cpuCores: parseQuantity(pod.cpu) ?? 0,
+        memoryBytes: parseQuantity(pod.memory) ?? 0,
+      })
+    }
+
+    for (const node of this.nodes) {
+      if (!node.hasMetrics) continue
+      usageHistory.record(usageKey('node', '', node.name), {
+        at,
+        cpuCores: parseQuantity(node.cpu) ?? 0,
+        memoryBytes: parseQuantity(node.memory) ?? 0,
+      })
+    }
   }
 
   /**
@@ -996,9 +1031,16 @@ export class ClusterSession {
     this.selectedWorkload = workload ?? null
     this.manifest = null
     this.manifestStatus = 'loading'
-    // A new object means a new series. Carrying the previous pod's samples
-    // over would draw its usage under this one's name.
-    this.usage = []
+    // SEEDED FROM WHAT WAS ALREADY WATCHED, rather than starting empty. The
+    // list has been refreshing since the tab opened and every one of those
+    // responses carried this object's usage; the chart may as well open with
+    // it. Empty when nothing was retained — a window of zero, or an object
+    // whose list has not been visited.
+    this.usage = pod
+      ? usageHistory.since(usageKey('pod', namespace, name))
+      : node
+        ? usageHistory.since(usageKey('node', '', name))
+        : []
     // Every open starts hidden. A reveal is a decision about one object, and
     // carrying it to the next one is how Freelens ends up showing a value
     // somebody unmasked in private on the pod they open in a meeting.
