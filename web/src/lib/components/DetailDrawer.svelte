@@ -723,6 +723,7 @@
           selectedWorkload={selectedWorkload}
           kind={session.selectedKind?.kind}
           usage={session.usage}
+          backend={session.overview?.backend}
           canOpen={kindIdFor}
           onopen={openObject}
         />

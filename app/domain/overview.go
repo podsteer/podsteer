@@ -880,6 +880,9 @@ type OverviewInput struct {
 	// Metrics says WHY, when MetricsMeasured is false. The boolean gates the
 	// arithmetic; this is what a person can be told.
 	Metrics MetricsStatus
+	// Backend is a monitoring system found running in the cluster, if any.
+	// Zero means none was found, which is the ordinary case.
+	Backend MetricsBackend
 	// Now is the reference time. Passed rather than read so the rules are
 	// testable, the same reason every Age method takes it.
 	Now time.Time
@@ -909,6 +912,12 @@ type Overview struct {
 	// name metrics-server rather than saying "metrics" at somebody who has
 	// never heard of it.
 	Metrics MetricsStatus
+	// Backend names a monitoring system already running in this cluster, when
+	// one was found. It changes nothing PodSteer measures — it exists so the
+	// UI can point at a system that keeps months of the same figures PodSteer
+	// keeps minutes of, rather than pretending its own window is the whole
+	// picture.
+	Backend MetricsBackend
 }
 
 // NewOverview assesses a cluster snapshot.
@@ -966,6 +975,7 @@ func NewOverview(input OverviewInput) Overview {
 		NodeLoads:   nodeLoads(input.Nodes, input.Pods),
 		Unavailable: slices.Clone(input.Unavailable),
 		Metrics:     input.Metrics,
+		Backend:     input.Backend,
 	}
 }
 

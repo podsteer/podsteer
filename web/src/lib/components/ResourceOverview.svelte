@@ -12,6 +12,8 @@
   import DetailList, { type DetailRow } from './DetailList.svelte'
   import ContainerDetail from './ContainerDetail.svelte'
   import UsageChart from './UsageChart.svelte'
+  import MetricsBackendNote from './MetricsBackendNote.svelte'
+  import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
   import type { UsageSample } from '$stores/session.svelte'
 
@@ -24,6 +26,12 @@
     usage?: UsageSample[]
     /** The node the drawer is open on, when it is a node. */
     selectedNode?: Node | null
+    /**
+     * A monitoring system found running in this cluster, if any. Shown under
+     * the charts, because the shortness of our own window is exactly where
+     * knowing a longer record exists is worth something.
+     */
+    backend?: MetricsBackend | null
     /** Whether this cluster serves a kind, so a link is only offered when
         there is somewhere for it to go. */
     canOpen?: (kindName: string) => string | null
@@ -38,6 +46,7 @@
     selectedWorkload,
     kind,
     usage = [],
+    backend,
     canOpen,
     onopen,
   }: Props = $props()
@@ -522,6 +531,7 @@
               />
             </div>
           {/each}
+          <MetricsBackendNote {backend} />
         </div>
       </DetailSection>
     {/if}
@@ -558,6 +568,7 @@
               />
             </div>
           {/each}
+          <MetricsBackendNote {backend} />
         </div>
       </DetailSection>
     {/if}

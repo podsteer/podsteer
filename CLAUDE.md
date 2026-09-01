@@ -99,8 +99,8 @@ built**, even though `filesystems.go` already proves the mechanism works. See
 [docs/decisions/0001-no-kubelet-metrics-fallback.md](docs/decisions/0001-no-kubelet-metrics-fallback.md)
 for what would reverse that.
 
-Two sources beyond metrics-server behave the same way and are worth knowing
-about before adding a third:
+Three sources beyond metrics-server behave the same way and are worth knowing
+about before adding a fourth:
 
 - **Node disk occupancy comes from the kubelets**, not from any aggregated API
   — `app/adapters/k8s/filesystems.go` reads `/stats/summary` through the API
@@ -112,6 +112,15 @@ about before adding a third:
   `app/domain/release.go`. It goes stale by construction, so a release it does
   not cover is reported as `SupportUnknown` and produces nothing. Never make an
   unknown version default to unsupported.
+- **A monitoring stack already in the cluster is discovered, and only pointed
+  at** — `app/adapters/k8s/prometheus.go` lists Services by two label selectors
+  and ranks the matches by name, because a kube-prometheus-stack install
+  returns several and only one answers PromQL. Finding nothing is the ordinary
+  answer and never reaches `Unavailable`: a cluster with no Prometheus is not a
+  degraded cluster. PodSteer does not query it — see
+  [docs/decisions/0004-usage-history-is-sampled-not-stored.md](docs/decisions/0004-usage-history-is-sampled-not-stored.md)
+  for why advice is the whole feature, and why 48 hours of per-object usage on
+  disk was rejected.
 
 Dependencies point inward. `app/domain` and `app/ports` import nothing outside
 the standard library; if either ever needs `client-go`, something has been

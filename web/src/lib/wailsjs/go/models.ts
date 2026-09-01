@@ -478,6 +478,26 @@ export namespace wails {
 	        this.path = source["path"];
 	    }
 	}
+	export class MetricsBackend {
+	    kind: string;
+	    label: string;
+	    namespace: string;
+	    service: string;
+	    port: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MetricsBackend(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.label = source["label"];
+	        this.namespace = source["namespace"];
+	        this.service = source["service"];
+	        this.port = source["port"];
+	    }
+	}
 	export class Namespace {
 	    name: string;
 	    phase: string;
@@ -937,6 +957,7 @@ export namespace wails {
 	    restarts: RestartHotspot[];
 	    unavailable: string[];
 	    metrics: string;
+	    backend: MetricsBackend;
 	    criticalCount: number;
 	    warningCount: number;
 	    infoCount: number;
@@ -965,6 +986,7 @@ export namespace wails {
 	        this.restarts = this.convertValues(source["restarts"], RestartHotspot);
 	        this.unavailable = source["unavailable"];
 	        this.metrics = source["metrics"];
+	        this.backend = this.convertValues(source["backend"], MetricsBackend);
 	        this.criticalCount = source["criticalCount"];
 	        this.warningCount = source["warningCount"];
 	        this.infoCount = source["infoCount"];

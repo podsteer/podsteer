@@ -300,6 +300,7 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 		nodeUsage map[string]domain.Metrics
 		podUsage  map[string]domain.PodUsage
 		nodeDisks map[string]domain.NodeFilesystems
+		backend   domain.MetricsBackend
 		volumes   []domain.PersistentVolume
 		claims    []domain.PersistentVolumeClaim
 		measured  bool
@@ -424,6 +425,25 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 		return err
 	})
 
+	// DISCOVERY RIDES THE ASSESSMENT rather than getting a call of its own,
+	// because it is one cached lookup answering a question about the cluster —
+	// exactly what the assessment is for. Not run through `run` deliberately:
+	// finding no Prometheus, and being forbidden to look, are both ordinary
+	// answers, and neither belongs in the list of sources that failed. A
+	// cluster with no monitoring stack is not a degraded cluster.
+	wg.Go(func() {
+		result, err := s.metrics.DiscoverMetricsBackend(ctx, id)
+		if err != nil {
+			s.logger.Debug("metrics backend discovery skipped",
+				slog.String("cluster", string(id)),
+				slog.String("error", err.Error()))
+			return
+		}
+		mu.Lock()
+		backend = result
+		mu.Unlock()
+	})
+
 	// One goroutine per controller kind, each appending under the lock. The
 	// order they finish in does not matter: the assessment sorts everything it
 	// reports.
@@ -475,6 +495,7 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 		Unavailable:     unavailable,
 		MetricsMeasured: measured,
 		Metrics:         metricsStatus,
+		Backend:         backend,
 		Now:             time.Now().UTC(),
 	})
 

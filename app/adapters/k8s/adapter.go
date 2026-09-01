@@ -47,6 +47,9 @@ type Adapter struct {
 	// service, because each one is a goroutine holding a socket and the thing
 	// that must not happen is the record and the goroutine parting company.
 	forwards portForwards
+	// backends caches metrics-backend discovery, which answers a question
+	// whose value moves in days: a monitoring stack is installed once.
+	backends backendCache
 }
 
 // Compile-time proof that the adapter satisfies every outbound port it claims.

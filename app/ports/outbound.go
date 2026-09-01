@@ -121,6 +121,19 @@ type MetricsPort interface {
 	// A partial answer is a success: on a large cluster one unreachable
 	// kubelet must not cost the other fifty.
 	NodeFilesystems(ctx context.Context, id domain.ClusterID) (map[string]domain.NodeFilesystems, error)
+
+	// DiscoverMetricsBackend looks for a monitoring system already running in
+	// the cluster.
+	//
+	// FINDING NOTHING IS THE ORDINARY ANSWER, not an error: most clusters run
+	// no Prometheus, and plenty of accounts cannot list services across
+	// namespaces to find one. Both return a zero MetricsBackend, and the
+	// caller carries on with the samples PodSteer takes itself.
+	//
+	// This exists because PodSteer's own history is bounded by how long the
+	// application has been open, and a cluster that already keeps months of
+	// the same figures should be pointed at rather than competed with.
+	DiscoverMetricsBackend(ctx context.Context, id domain.ClusterID) (domain.MetricsBackend, error)
 }
 
 // HistoryPort stores and reads the samples PodSteer takes of a cluster.

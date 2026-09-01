@@ -544,10 +544,38 @@ type Overview struct {
 	// because "install metrics-server" is the wrong advice for somebody who
 	// is merely not allowed to read the one already running.
 	Metrics string `json:"metrics"`
+	// Backend names a monitoring system already running in this cluster, when
+	// one was found — empty otherwise, which is the ordinary case.
+	//
+	// It changes nothing PodSteer measures. It is here so the UI can point at
+	// a system that already keeps months of the same figures PodSteer keeps
+	// minutes of, instead of presenting its own window as the whole picture.
+	Backend MetricsBackend `json:"backend"`
 	// Counts the findings by severity, so the header does not have to.
 	CriticalCount int `json:"criticalCount"`
 	WarningCount  int `json:"warningCount"`
 	InfoCount     int `json:"infoCount"`
+}
+
+// MetricsBackend is a monitoring system found running in the cluster.
+type MetricsBackend struct {
+	// Kind is "prometheus", or empty when nothing was found.
+	Kind string `json:"kind"`
+	// Label is what to show a person, e.g. "Prometheus in monitoring".
+	Label     string `json:"label"`
+	Namespace string `json:"namespace"`
+	Service   string `json:"service"`
+	Port      string `json:"port"`
+}
+
+func toMetricsBackend(backend domain.MetricsBackend) MetricsBackend {
+	return MetricsBackend{
+		Kind:      backend.Kind,
+		Label:     backend.Describe(),
+		Namespace: string(backend.Namespace),
+		Service:   backend.Service,
+		Port:      backend.Port,
+	}
 }
 
 func toOverview(overview domain.Overview) Overview {
@@ -574,6 +602,7 @@ func toOverview(overview domain.Overview) Overview {
 		Restarts:    toRestartHotspots(overview.Restarts),
 		Unavailable: overview.Unavailable,
 		Metrics:     string(overview.Metrics),
+		Backend:     toMetricsBackend(overview.Backend),
 	}
 
 	for _, finding := range overview.Findings {
