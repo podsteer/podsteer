@@ -46,6 +46,10 @@ describe('dependency map icons', () => {
     const svg = decodeURIComponent(iconURI('ingress', '#000'))
 
     expect(svg).toContain('viewBox="0 0 24 24"')
+    // An intrinsic size, without which a browser falls back to 300x150 and
+    // the icon renders as a flat bar.
+    expect(svg).toContain('width="24"')
+    expect(svg).toContain('height="24"')
     expect(svg).toMatch(/<(path|circle|rect|line)/)
   })
 })

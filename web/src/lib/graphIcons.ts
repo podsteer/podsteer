@@ -59,10 +59,16 @@ export function iconURI(kind: string, colour: string): string {
   if (hit) return hit
 
   const geometry = GEOMETRY[kind] ?? GEOMETRY.pod
+  // WIDTH AND HEIGHT, NOT JUST A viewBox. An SVG with only a viewBox has no
+  // intrinsic size, and a browser asked to size such an image falls back to
+  // the CSS default for a replaced element — 300x150. That is 2:1, which is
+  // exactly what the icons looked like: flat bars. It came and went between
+  // layouts because it depends on whether the decode had finished before
+  // ECharts measured, not on the layout itself.
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" ` +
-    `stroke="${colour}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
-    `${geometry}</svg>`
+    `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" ` +
+    `fill="none" stroke="${colour}" stroke-width="2" stroke-linecap="round" ` +
+    `stroke-linejoin="round">${geometry}</svg>`
 
   // encodeURIComponent rather than base64: it survives the '#' in a colour,
   // which is what breaks a naively-inlined SVG data URI.

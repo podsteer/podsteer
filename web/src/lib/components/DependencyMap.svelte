@@ -109,7 +109,10 @@
    * across-gap is generous because that axis carries the labels.
    */
   const TIER_GAP = 260
-  const NODE_GAP = 120
+  // Wider than it looks like it needs to be, because a tier's spacing has to
+  // clear the LABELS rather than the icons — and a pod name is far wider than
+  // a 24px symbol.
+  const NODE_GAP = 200
 
   /**
    * Lays the graph out by tier, and routes every edge as a right angle.
@@ -185,13 +188,25 @@
           color: text,
           fontSize: 11,
           lineHeight: 15,
+          // CAPPED AND TRUNCATED. Kubernetes names run long — a pod carries
+          // its ReplicaSet hash and a generated suffix — and at full length
+          // adjacent labels in the same tier ran into one another and became
+          // unreadable together, which is worse than one being shortened.
+          width: 140,
+          overflow: 'truncate',
           // Kind in bold above the name. A map of twenty boxes is read by
           // shape first: the kind says what a thing is, the name says which
           // one, and that is the order they are needed in.
           formatter: `{k|${node.apiKind || 'Container'}}\n{n|${node.name}}`,
           rich: {
             k: { color: text, fontWeight: 'bold', fontSize: 11, lineHeight: 15 },
-            n: { color: ink, fontSize: 10, lineHeight: 14 },
+            n: {
+              color: ink,
+              fontSize: 10,
+              lineHeight: 14,
+              width: 140,
+              overflow: 'truncate',
+            },
           },
         },
         emphasis: { label: { show: true } },
@@ -217,9 +232,16 @@
         continue
       }
 
-      // The turn happens halfway between the tiers, so every edge crossing
-      // the same gap shares one corridor instead of fanning.
-      const midAlong = horizontal ? (from.x + to.x) / 2 : (from.y + to.y) / 2
+      // THE CORRIDOR SITS IN THE GAP BEFORE THE TARGET, not at the midpoint
+      // of the span. An edge that crosses more than one tier — the pod to its
+      // ConfigMaps, which passes the container tier — had its midpoint land
+      // exactly ON that tier, so the corridor was drawn straight through the
+      // Container node and its label. Placed just short of the destination it
+      // is always in empty space, whatever it crossed to get there.
+      const fromAlong = horizontal ? from.x : from.y
+      const toAlong = horizontal ? to.x : to.y
+      const midAlong = toAlong - Math.sign(toAlong - fromAlong) * TIER_GAP * 0.45
+
       const a = horizontal ? { x: midAlong, y: from.y } : { x: from.x, y: midAlong }
       const b = horizontal ? { x: midAlong, y: to.y } : { x: to.x, y: midAlong }
 
@@ -242,9 +264,13 @@
         })
       }
 
+      // ONE ARROWHEAD PER EDGE, on the segment that actually arrives. The
+      // series-level edgeSymbol applies to every link, so without this each
+      // bend grew a spurious arrow pointing at empty space.
+      const plain = { symbol: ['none', 'none'] }
       links.push(
-        { source: edge.from, target: first, lineStyle: style },
-        { source: first, target: second, lineStyle: style },
+        { source: edge.from, target: first, lineStyle: style, ...plain },
+        { source: first, target: second, lineStyle: style, ...plain },
         { source: second, target: edge.to, lineStyle: style },
       )
     }
@@ -299,6 +325,12 @@
               lineStyle: { color: line, opacity: 0.15 },
               label: { opacity: 0.35 },
             },
+            // A LAST RESORT AGAINST COLLISION. Truncation handles the common
+            // case; this drops a label outright when the pane is too narrow
+            // for even a shortened one to fit beside its neighbour. Losing a
+            // name is better than two illegible ones on top of each other,
+            // and zooming in brings it back.
+            labelLayout: { hideOverlap: true },
             left: '6%',
             right: '6%',
             top: '10%',
