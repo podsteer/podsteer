@@ -117,7 +117,7 @@
               <li>
                 <button
                   type="button"
-                  onclick={() => onopen?.('pods', pod.name, pod.namespace)}
+                  onclick={() => onopen?.('Pod', pod.name, pod.namespace)}
                   disabled={!onopen}
                   class="state-layer flex w-full items-center gap-2 py-1.5 text-left
                          transition-colors duration-100 disabled:pointer-events-none"

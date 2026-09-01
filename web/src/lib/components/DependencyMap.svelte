@@ -77,6 +77,19 @@
     graph ? layout(graph, orientation === 'horizontal') : null,
   )
 
+  /**
+   * Whether an edge should show its flow.
+   *
+   * EVERYTHING WHEN NOTHING IS HOVERED, and only the route in question when
+   * something is. At rest the movement says the map is a set of directed
+   * dependencies rather than a static diagram; under the pointer, stopping it
+   * everywhere else is what makes the one path stand out — the eye follows
+   * motion, so leaving it on for all of them would drown the answer.
+   */
+  function flowing(id: string): boolean {
+    return hovered === null || lit.has(id)
+  }
+
   /** Edges touching the hovered box, so a whole route lights at once. */
   const lit = $derived.by(() => {
     if (!hovered || !plan) return new Set<string>()
@@ -199,12 +212,19 @@
     ;(event.currentTarget as Element).releasePointerCapture?.(event.pointerId)
   }
 
-  /** Follows a node into its own panel. */
+  /**
+   * Follows a node into its own panel.
+   *
+   * THE KUBERNETES KIND, VERBATIM. The drawer resolves this against the
+   * navigator's catalogue, which is keyed by `Kind` — "Ingress", "ConfigMap" —
+   * so a lowercased plural matches nothing and the click silently does
+   * nothing at all. That is what it did: every node, every kind.
+   */
   function open(node: LaidOutNode): void {
     // Containers are not objects and have no panel of their own; the pod they
     // belong to is already the subject of this map.
     if (!node.apiKind || !onopen) return
-    onopen(node.apiKind.toLowerCase() + 's', node.name, node.namespace || namespace)
+    onopen(node.apiKind, node.name, node.namespace || namespace)
   }
 
   /**
@@ -218,6 +238,52 @@
     return value.length <= characters ? value : value.slice(0, characters - 1) + '…'
   }
 </script>
+
+
+{#snippet box(node: LaidOutNode, half: { w: number; h: number })}
+                <!-- The hit area is the whole object, icon and text together,
+                     which is also what the lines are routed between. -->
+                <rect
+                  x={-half.w} y={-half.h} width={node.width} height={node.height}
+                  rx="8"
+                  class="fill-transparent {hovered === node.id
+                    ? 'fill-surface-container-high/60'
+                    : ''}"
+                />
+
+                <g
+                  transform="translate(-12 {-half.h + 6})"
+                  fill="none"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class={node.healthy
+                    ? node.subject
+                      ? 'stroke-primary'
+                      : 'stroke-gauge-normal'
+                    : 'stroke-gauge-critical'}
+                >
+                  {@html iconGeometry(node.kind)}
+                </g>
+
+                <!-- Kind above name. A map of twenty boxes is read by shape
+                     first: the kind says what a thing is, the name says which
+                     one, and that is the order they are needed in. -->
+                <text
+                  y={-half.h + 44}
+                  text-anchor="middle"
+                  class="fill-on-surface text-[11px] font-semibold"
+                >
+                  {node.apiKind || 'Container'}
+                </text>
+                <text
+                  y={-half.h + 58}
+                  text-anchor="middle"
+                  class="fill-on-surface-variant text-[10px]"
+                >
+                  {fitText(node.name, 26)}
+                </text>
+{/snippet}
 
 <div class="flex h-full flex-col">
   <PaneToolbar>
@@ -301,74 +367,57 @@
                 fill="none"
                 stroke-width="1.25"
                 marker-end="url(#{lit.has(edge.id) ? 'dep-arrow-lit' : 'dep-arrow'})"
-                class={lit.has(edge.id) ? 'stroke-on-surface' : 'stroke-outline'}
+                class="{lit.has(edge.id) ? 'stroke-on-surface' : 'stroke-outline'} {flowing(
+                  edge.id,
+                )
+                  ? 'flow'
+                  : ''}"
               />
             {/each}
 
             {#each plan.nodes as node (node.id)}
               {@const half = { w: node.width / 2, h: node.height / 2 }}
-              <g
-                data-node
-                transform="translate({node.x} {node.y})"
-                class="cursor-pointer"
-                role="button"
-                tabindex="0"
-                aria-label="{node.apiKind || 'Container'} {node.name}"
-                onmouseenter={() => (hovered = node.id)}
-                onmouseleave={() => (hovered = null)}
-                onfocus={() => (hovered = node.id)}
-                onblur={() => (hovered = null)}
-                onclick={() => open(node)}
-                onkeydown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    open(node)
-                  }
-                }}
-              >
-                <!-- The hit area is the whole object, icon and text together,
-                     which is also what the lines are routed between. -->
-                <rect
-                  x={-half.w} y={-half.h} width={node.width} height={node.height}
-                  rx="8"
-                  class="fill-transparent {hovered === node.id
-                    ? 'fill-surface-container-high/60'
-                    : ''}"
-                />
-
+              {#if node.apiKind}
+                <!--
+                  A followable object is a button. Containers are not objects
+                  and have no panel of their own — the pod they belong to is
+                  already the subject of this map — so they are drawn as a
+                  picture rather than given interactive markup that leads
+                  nowhere.
+                -->
                 <g
-                  transform="translate(-12 {-half.h + 6})"
-                  fill="none"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  class={node.healthy
-                    ? node.subject
-                      ? 'stroke-primary'
-                      : 'stroke-gauge-normal'
-                    : 'stroke-gauge-critical'}
+                  data-node
+                  transform="translate({node.x} {node.y})"
+                  class="cursor-pointer"
+                  role="button"
+                  tabindex="0"
+                  aria-label="Open {node.apiKind} {node.name}"
+                  onmouseenter={() => (hovered = node.id)}
+                  onmouseleave={() => (hovered = null)}
+                  onfocus={() => (hovered = node.id)}
+                  onblur={() => (hovered = null)}
+                  onclick={() => open(node)}
+                  onkeydown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      open(node)
+                    }
+                  }}
                 >
-                  {@html iconGeometry(node.kind)}
+                  {@render box(node, half)}
                 </g>
-
-                <!-- Kind above name. A map of twenty boxes is read by shape
-                     first: the kind says what a thing is, the name says which
-                     one, and that is the order they are needed in. -->
-                <text
-                  y={-half.h + 44}
-                  text-anchor="middle"
-                  class="fill-on-surface text-[11px] font-semibold"
+              {:else}
+                <g
+                  data-node
+                  transform="translate({node.x} {node.y})"
+                  role="img"
+                  aria-label="Container {node.name}"
+                  onmouseenter={() => (hovered = node.id)}
+                  onmouseleave={() => (hovered = null)}
                 >
-                  {node.apiKind || 'Container'}
-                </text>
-                <text
-                  y={-half.h + 58}
-                  text-anchor="middle"
-                  class="fill-on-surface-variant text-[10px]"
-                >
-                  {fitText(node.name, 26)}
-                </text>
-              </g>
+                  {@render box(node, half)}
+                </g>
+              {/if}
             {/each}
           </g>
         </svg>
@@ -391,3 +440,37 @@
     {/if}
   {/if}
 </div>
+
+<style>
+  /*
+    The dashes travel from source to target, which is the direction the
+    dependency runs — a decreasing offset advances along the path, so the
+    movement reads as flow rather than as decoration.
+
+    A dash pattern is only applied while animating. A static dashed line reads
+    as "provisional" or "not real" in every other diagram somebody has seen,
+    which is the wrong thing to say about a dependency that exists.
+  */
+  .flow {
+    stroke-dasharray: 5 9;
+    animation: dependency-flow 900ms linear infinite;
+  }
+
+  @keyframes dependency-flow {
+    to {
+      stroke-dashoffset: -14;
+    }
+  }
+
+  /*
+    Movement is the one thing a person cannot look away from, so anybody who
+    has asked for less of it gets a solid line and no animation at all — not a
+    slower one.
+  */
+  @media (prefers-reduced-motion: reduce) {
+    .flow {
+      stroke-dasharray: none;
+      animation: none;
+    }
+  }
+</style>
