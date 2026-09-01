@@ -3,14 +3,17 @@
  *
  * This module exists so the imports below can be *static named* imports.
  * Registering the same pieces inline with `await import('echarts/charts')` and
- * then reaching into the namespace defeats tree-shaking entirely — the bundler
+ * then reaching into the namespace defeats tree-shaking entirely: the bundler
  * cannot prove which members are used, so it keeps every chart type ECharts
- * has. Measured on this project, that was the difference between a 262 kB
- * chunk and a 60 kB one, for a page that draws a single line chart.
+ * has, including the ones nothing here draws.
  *
- * The module is still loaded lazily: the component `await import()`s *this*
- * file, so nothing here reaches the browser until a chart is first drawn.
- * Static imports within a lazily-imported module tree-shake normally.
+ * The module is still loaded lazily — the component `await import()`s *this*
+ * file, so nothing here is parsed until a chart is first drawn, and static
+ * imports within a lazily-imported module tree-shake normally.
+ *
+ * ADDING A CHART TYPE IS A ONE-LINE CHANGE HERE and needs no arithmetic: keep
+ * the list to what is actually drawn because an unregistered chart fails at
+ * runtime and an unused one is dead code, not because of what it weighs.
  */
 
 import { init, use } from 'echarts/core'

@@ -192,8 +192,8 @@ fakes with no cluster, no HTTP and no Kubernetes types in sight.
   spawn a credential-plugin process; that cost is paid once.
 - **client-go's 5 QPS default raised**, because it is sized for a controller's
   background load, not for a UI that fans out on navigation.
-- **No sourcemaps, no webfonts, no icon font** in the embedded bundle. The
-  frontend is ~67 kB of JavaScript and ~21 kB of CSS.
+- **No sourcemaps, no webfonts, no icon font** in the embedded bundle — the
+  application starts from what it ships with and fetches nothing to render.
 
 &nbsp;
 
