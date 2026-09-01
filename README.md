@@ -35,7 +35,7 @@ brew install --cask podsteer
 to load a cask from a third-party tap until you say you trust it, because a
 cask is code that runs on your machine at install time. Every tap outside
 Homebrew's own needs it. You can read what you are trusting first — it is one
-file, [`Casks/podsteer.rb`](https://github.com/podsteer/homebrew-tap/blob/main/Casks/podsteer.rb).
+file, [`Casks/podsteer.rb`](https://github.com/podsteer/homebrew-tap/blob/HEAD/Casks/podsteer.rb).
 
 **Linux and Windows** — download from
 [the latest release](https://github.com/podsteer/podsteer/releases/latest) and
