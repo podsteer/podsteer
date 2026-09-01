@@ -43,10 +43,13 @@ no telemetry — those remain absolute, and there is no code here that could sen
 either.
 
 The one exception is an **update check**, added in v0.1.2. It asks
-`api.github.com` once a day whether a newer release has been published. This
-file said "no update check" for the first two releases, and reversing that is
-not something to bury: what changed, and the case both ways, is in
-[docs/decisions/0005-the-update-check-is-opt-outable-and-tells-github-nothing.md](docs/decisions/0005-the-update-check-is-opt-outable-and-tells-github-nothing.md).
+`api.github.com` once a day whether a newer release has been published.
+
+**This is new in v0.1.2**, and it is called out because v0.1.0 and v0.1.1
+stated the opposite here: anyone who reviewed those releases against this file
+should re-read the list below rather than assume it still applies. The
+reasoning behind the change is recorded in
+[docs/decisions/0005](docs/decisions/0005-the-update-check-is-opt-outable-and-tells-github-nothing.md).
 
 What the check does and does not do:
 
