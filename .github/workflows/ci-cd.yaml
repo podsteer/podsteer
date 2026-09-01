@@ -523,3 +523,28 @@ jobs:
             --title "${{ github.ref_name }}" \
             --generate-notes \
             $PRERELEASE
+
+  # THE TAP IS CALLED, NOT LEFT TO REACT.
+  #
+  # homebrew.yaml carries a `release: published` trigger that looks sufficient
+  # and is not: the release above is created with GITHUB_TOKEN, and GitHub does
+  # not start workflows from events raised by that token. The event never
+  # arrives. v0.1.0 published with the cask untouched, silently, and had to be
+  # dispatched by hand — the exact shape of quiet breakage the rest of this
+  # pipeline exists to avoid.
+  #
+  # Calling it keeps the credential situation unchanged: the App token is still
+  # minted inside that workflow and still scoped to the tap repository alone.
+  # Nothing here gains write access to anything it did not already have.
+  #
+  # `needs: release` is what makes the checksum honest. The cask is verified
+  # against the bytes GitHub actually serves, which only exist once the release
+  # job has finished uploading them.
+  tap:
+    name: Update Homebrew Tap
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev-')
+    uses: ./.github/workflows/homebrew.yaml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit

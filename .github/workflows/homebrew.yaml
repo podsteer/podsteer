@@ -3,10 +3,24 @@ name: Update Homebrew Tap
 # Rewrites the cask in podsteer/homebrew-tap after a production release, so
 # `brew install --cask podsteer` serves the version that was just published.
 #
-# Separate from ci-cd.yaml deliberately. That workflow's release job builds and
-# publishes; this one reacts to a release having been published, which is the
-# only moment the download URL and its checksum both exist. Folding it in would
-# mean computing a checksum for an asset GitHub had not finished storing.
+# Separate from ci-cd.yaml because it is a distinct concern, but CALLED by it
+# rather than left to react on its own. The `release: published` trigger below
+# looks like it should be enough and is not: the release is created by a
+# workflow using GITHUB_TOKEN, and GitHub deliberately does not start workflows
+# from events raised by that token — an anti-recursion rule with no exception
+# for this case. So the event never arrived, the tap was never updated, and
+# nothing failed to say so. v0.1.0 shipped with the cask untouched until it was
+# dispatched by hand.
+#
+# The trigger is kept anyway: it costs nothing, and it works for a release
+# published by a human or by anything holding a non-GITHUB_TOKEN credential.
+# The workflow_call path is the one the pipeline actually relies on.
+#
+# Still a separate JOB from the release rather than a step inside it, which was
+# the original reason for the separation and remains right: the checksum has to
+# be computed from the asset as GitHub serves it, and that is only true once
+# the release job has finished uploading. `needs: release` guarantees that;
+# folding it into the release job itself would race the upload.
 #
 # Production tags only. A -dev- or -rc- build is not something anyone should
 # get from `brew install`.
@@ -14,11 +28,18 @@ name: Update Homebrew Tap
 on:
   release:
     types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag to publish to the tap, e.g. v1.2.3'
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
         description: 'Release tag to publish to the tap, e.g. v1.2.3'
         required: true
+        type: string
 
 permissions:
   contents: read
@@ -33,7 +54,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tag="${{ github.event.inputs.tag || github.event.release.tag_name }}"
+          # `inputs.tag` is set for both workflow_call and workflow_dispatch;
+          # the event payload covers a release published by something other
+          # than GITHUB_TOKEN.
+          tag="${{ inputs.tag || github.event.release.tag_name }}"
 
           # Pre-releases and development builds are not what `brew install`
           # should hand somebody.
