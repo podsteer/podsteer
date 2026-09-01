@@ -71,13 +71,28 @@ type LogConfig struct {
 	AddSource bool
 }
 
+// version is the release this binary was built from.
+//
+// A VAR RATHER THAN A CONSTANT so the linker can set it:
+//
+//	-ldflags "-X github.com/podsteer/podsteer/app/config.version=v0.1.0"
+//
+// "dev" is the honest answer for a build nobody tagged, and it is what a
+// local `make build` reports. It is not a placeholder to be tidied away: a
+// binary built from a working tree is not v0.1.0 and should not claim to be,
+// because the version is what somebody quotes in a bug report.
+var version = "dev"
+
+// Version returns the release this binary was built from.
+func Version() string { return version }
+
 // Default returns the configuration used when nothing is set.
 func Default() Config {
 	return Config{
 		App: AppConfig{
 			Name:    "podsteer",
 			Title:   "PodSteer",
-			Version: "dev",
+			Version: version,
 		},
 		Window: WindowConfig{
 			Width:     1440,

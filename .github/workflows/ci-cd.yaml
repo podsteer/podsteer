@@ -256,7 +256,7 @@ jobs:
 
       - name: Build Application
         if: runner.os != 'Linux'
-        run: wails build -clean -trimpath -s ${{ matrix.platform && format('-platform {0}', matrix.platform) || '' }}
+        run: wails build -clean -trimpath -s -ldflags "-X github.com/podsteer/podsteer/app/config.version=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}" ${{ matrix.platform && format('-platform {0}', matrix.platform) || '' }}
 
       # The bundle is renamed for the same reason the Makefile renames it: the
       # executable stays lowercase for PATHs, the bundle is what a person sees
@@ -272,7 +272,7 @@ jobs:
 
       - name: Build Application (Linux)
         if: runner.os == 'Linux'
-        run: wails build -clean -trimpath -s -tags ${{ env.LINUX_TAGS }}
+        run: wails build -clean -trimpath -s -ldflags "-X github.com/podsteer/podsteer/app/config.version=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}" -tags ${{ env.LINUX_TAGS }}
 
       # --- macOS signing and notarisation -----------------------------------
       #

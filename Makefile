@@ -128,8 +128,16 @@ dev: web-build
 # Deliberately NOT a dependency of `dev`: the inner loop should let somebody
 # try a dependency before deciding to keep it. `build`, `run` and `open` are
 # where the artefact becomes real, and that is where the rule applies.
+# VERSION is what the binary reports in its status bar and its logs, and it is
+# what somebody quotes in a bug report — so a build from a working tree must
+# not claim to be a release. `git describe --exact-match` names the tag ONLY
+# when HEAD is exactly that tag; anything else, including one commit past it,
+# falls back to "dev" and says so.
+VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || echo dev)
+LDFLAGS = -X github.com/podsteer/podsteer/app/config.version=$(VERSION)
+
 build: web-build notices
-	$(WAILS) build -clean -trimpath -s $(BUILD_TAGS)
+	$(WAILS) build -clean -trimpath -s -ldflags "$(LDFLAGS)" $(BUILD_TAGS)
 ifdef APP_BUNDLE
 	@# Wails names the bundle after `outputfilename`, which has to stay
 	@# lowercase: it is also the executable name, and that is what a Linux
