@@ -10,6 +10,7 @@
 -->
 <script lang="ts">
   import type { ClusterSession } from '$stores/session.svelte'
+  import { WORKLOAD_KIND_BY_ID } from '$stores/session.svelte'
   import LogViewer from './LogViewer.svelte'
   import ResourceOverview from './ResourceOverview.svelte'
   import EventsView from './EventsView.svelte'
@@ -232,6 +233,14 @@
     session.selectedKindId === 'apps/v1/daemonsets'
   )
 
+  /** The Kubernetes kind of the open workload, or null when it is not one. */
+  const mappedWorkloadKind = $derived(
+    session.selectedKindId ? (WORKLOAD_KIND_BY_ID[session.selectedKindId] ?? null) : null,
+  )
+
+  /** Whether the open object is one of the six controllers. */
+  const isWorkloadKind = $derived(Boolean(mappedWorkloadKind))
+
   const isWorkloadWithLogs = $derived(
     session.selectedKindId === 'apps/v1/deployments' ||
     session.selectedKindId === 'apps/v1/statefulsets' ||
@@ -421,10 +430,11 @@
     { id: 'overview', label: 'Overview', icon: Info, show: () => true },
     { id: 'logs', label: 'Logs', icon: ScrollText, show: () => isPod || isWorkloadWithLogs },
     { id: 'terminal', label: 'Terminal', icon: TerminalSquare, show: () => isPod || isWorkloadWithLogs },
-    // Pods only. The map is drawn AROUND a pod — what routes to it, what it
-    // runs, what it consumes — and the same picture for a Deployment would be
-    // one of these per replica with nothing to choose between them.
-    { id: 'map', label: 'Map', icon: Workflow, show: () => isPod },
+    // Pods and the six controllers. A pod's map is a chain with the pod in
+    // the middle; a workload's is a fan — one controller over the pods it
+    // currently has — and both are worth walking, which is what the map is
+    // for. Nothing else has dependencies to draw.
+    { id: 'map', label: 'Map', icon: Workflow, show: () => isPod || isWorkloadKind },
     // An event has no events of its own, and asking for them returns the
     // empty list that means "nothing recent" — which reads as a fault here
     // rather than as the tautology it is.
@@ -493,7 +503,17 @@
     <DependencyMap
       clusterId={session.cluster.id}
       namespace={selectedPod.namespace}
-      podName={selectedPod.name}
+      name={selectedPod.name}
+      kind="Pod"
+      onopen={openObject}
+      onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
+    />
+  {:else if mappedWorkloadKind && session.selectedName}
+    <DependencyMap
+      clusterId={session.cluster.id}
+      namespace={session.selectedNamespace}
+      name={session.selectedName}
+      kind={mappedWorkloadKind}
       onopen={openObject}
       onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
     />
@@ -825,12 +845,12 @@
               Showing the map in a larger window.
             </p>
           </div>
-        {:else if isPod && selectedPod}
+        {:else if (isPod && selectedPod) || mappedWorkloadKind}
           {@render mapSurface()}
         {:else}
           <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
             <Workflow class="size-8" strokeWidth={1.2} />
-            <p class="text-body-medium">The map is drawn around a pod</p>
+            <p class="text-body-medium">This kind has no dependencies to map</p>
           </div>
         {/if}
       {:else if activeTab === 'events'}

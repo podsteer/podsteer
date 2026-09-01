@@ -367,3 +367,170 @@ func apiKindOf(kind GraphKind) string {
 func (g PodGraph) String() string {
 	return fmt.Sprintf("%d nodes, %d edges", len(g.Nodes), len(g.Edges))
 }
+
+// WorkloadGraphInput is everything needed to draw one workload's map.
+//
+// SEPARATE FROM GraphInput BECAUSE THE SUBJECT IS DIFFERENT, and the subject
+// decides the shape. A pod's map is a chain with the pod in the middle; a
+// workload's is a fan — one controller over however many pods it currently
+// has — and pretending they are the same structure would mean a pod field
+// that is sometimes a list and edges that mean different things depending on
+// which it was.
+type WorkloadGraphInput struct {
+	// Kind and Name identify the workload the map is drawn around.
+	Kind      string
+	Name      string
+	Namespace NamespaceName
+	// Healthy drives the colour of the subject box.
+	Healthy bool
+	// Pods are the pods it currently has. Empty is a real state — a scaled-to-
+	// zero Deployment, or a CronJob between runs — and draws a workload with
+	// nothing under it rather than an error.
+	Pods []Pod
+	// Services and Ingresses in the namespace, filtered here.
+	Services  []ServiceRef
+	Ingresses []IngressRef
+	// Owner is what controls the workload, if anything — a Job's CronJob.
+	Owner []OwnerReference
+	// Attached is what the pod template mounts or reads.
+	Attached []AttachedRef
+	// Unreadable names sources that failed.
+	Unreadable []string
+}
+
+// NewWorkloadGraph assembles the map around a workload.
+//
+// The same rules as a pod's map, applied to a fan instead of a chain: a
+// service matches on the labels of the pods BENEATH the workload rather than
+// the workload's own, because a Service selects pods and knows nothing about
+// what created them.
+func NewWorkloadGraph(input WorkloadGraphInput) PodGraph {
+	graph := PodGraph{Unreadable: input.Unreadable}
+
+	subjectID := strings.ToLower(input.Kind) + "/" + input.Name
+	graph.Nodes = append(graph.Nodes, GraphNode{
+		ID:        subjectID,
+		Kind:      GraphWorkload,
+		APIKind:   input.Kind,
+		Name:      input.Name,
+		Namespace: input.Namespace.String(),
+		Tier:      TierOwner,
+		Detail:    replicaSummary(input.Pods),
+		Healthy:   input.Healthy,
+		Subject:   true,
+	})
+
+	graph.addOwners(input.Owner, subjectID, input.Namespace.String())
+
+	// The pods, and their containers under them.
+	for _, pod := range input.Pods {
+		podID := "pod/" + pod.Name()
+		graph.Nodes = append(graph.Nodes, GraphNode{
+			ID:        podID,
+			Kind:      GraphPod,
+			APIKind:   "Pod",
+			Name:      pod.Name(),
+			Namespace: pod.Namespace().String(),
+			Tier:      TierPod,
+			Detail:    string(pod.Phase()),
+			Healthy:   pod.IsHealthy(),
+		})
+		graph.Edges = append(graph.Edges, GraphEdge{From: subjectID, To: podID, Label: "manages"})
+
+		// CONTAINERS ARE KEYED BY POD, unlike a pod's own map. Every replica
+		// of a Deployment runs containers with the same names, so keying on
+		// the name alone would collapse three replicas' containers into one
+		// box with three edges into it.
+		for _, container := range pod.Containers() {
+			id := "container/" + pod.Name() + "/" + container.Name
+			graph.Nodes = append(graph.Nodes, GraphNode{
+				ID: id, Kind: GraphContainer, Name: container.Name,
+				Namespace: pod.Namespace().String(), Tier: TierContainer,
+				Detail: imageTag(container.Image), Healthy: container.Ready,
+			})
+			graph.Edges = append(graph.Edges, GraphEdge{From: podID, To: id})
+		}
+	}
+
+	graph.addWorkloadServices(input)
+
+	// ATTACHED HANGS OFF THE WORKLOAD, not off each pod. Config and secrets
+	// come from the pod TEMPLATE, so every replica reads the same ones — an
+	// edge per pod would draw the same dependency three times and say nothing
+	// the one edge does not.
+	graph.addAttached(input.Attached, subjectID)
+
+	graph.sort()
+	return graph
+}
+
+// addWorkloadServices connects services selecting any pod of the workload.
+func (g *PodGraph) addWorkloadServices(input WorkloadGraphInput) {
+	subjectID := strings.ToLower(input.Kind) + "/" + input.Name
+	routed := make(map[string]string)
+
+	for _, service := range input.Services {
+		// ANY pod matching is enough. A Service selects pods; if it reaches
+		// one of this workload's, it reaches the workload.
+		matches := false
+		for _, pod := range input.Pods {
+			if selectorMatches(service.Selector, pod.Labels()) {
+				matches = true
+				break
+			}
+		}
+		if !matches {
+			continue
+		}
+
+		id := "service/" + service.Name
+		routed[service.Name] = id
+
+		g.Nodes = append(g.Nodes, GraphNode{
+			ID: id, Kind: GraphService, APIKind: "Service", Name: service.Name,
+			Namespace: service.Namespace, Tier: TierService,
+			Detail: strings.Join(service.Ports, ", "), Healthy: true,
+		})
+		// To the WORKLOAD rather than to each pod: a fan of edges from one
+		// service into every replica says the same thing several times and
+		// makes the map unreadable at three replicas, let alone thirty.
+		g.Edges = append(g.Edges, GraphEdge{From: id, To: subjectID, Label: "selects"})
+	}
+
+	for _, ingress := range input.Ingresses {
+		var reaches []string
+		for _, backend := range ingress.Backends {
+			if id, ok := routed[backend]; ok {
+				reaches = append(reaches, id)
+			}
+		}
+		if len(reaches) == 0 {
+			continue
+		}
+
+		id := "ingress/" + ingress.Name
+		g.Nodes = append(g.Nodes, GraphNode{
+			ID: id, Kind: GraphIngress, APIKind: "Ingress", Name: ingress.Name,
+			Namespace: ingress.Namespace, Tier: TierIngress,
+			Detail: strings.Join(ingress.Hosts, ", "), Healthy: true,
+		})
+		for _, to := range reaches {
+			g.Edges = append(g.Edges, GraphEdge{From: id, To: to, Label: "routes to"})
+		}
+	}
+}
+
+// replicaSummary says how many pods a workload has and how many are well.
+func replicaSummary(pods []Pod) string {
+	if len(pods) == 0 {
+		return "no pods"
+	}
+
+	healthy := 0
+	for _, pod := range pods {
+		if pod.IsHealthy() {
+			healthy++
+		}
+	}
+	return fmt.Sprintf("%d/%d ready", healthy, len(pods))
+}

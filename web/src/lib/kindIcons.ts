@@ -74,7 +74,12 @@ const ICON_BY_KIND_NAME: Record<string, LucideIcon> = {
   Pod: Box,
   Deployment: Layers,
   StatefulSet: Database,
-  DaemonSet: Container,
+  // Boxes, not Container: the dependency map draws a pod's CONTAINERS with
+  // lucide's container glyph, and a DaemonSet wearing the same one made two
+  // unrelated things look identical wherever they appeared together. A set of
+  // boxes also says what a DaemonSet is — one pod on every node — against the
+  // single Box a Pod gets.
+  DaemonSet: Boxes,
   ReplicaSet: Repeat,
   Job: Zap,
   CronJob: Timer,

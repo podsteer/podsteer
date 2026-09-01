@@ -154,6 +154,20 @@ func (s *WorkloadService) PodGraph(ctx context.Context, id domain.ClusterID, nam
 	return domain.NewPodGraph(input), nil
 }
 
+// WorkloadGraph returns the dependency chain around one workload.
+func (s *WorkloadService) WorkloadGraph(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.PodGraph, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return domain.PodGraph{}, fmt.Errorf("mapping workload dependencies: %w", err)
+	}
+
+	input, err := s.workloads.WorkloadGraphSources(ctx, id, namespace, kind, name)
+	if err != nil {
+		return domain.PodGraph{}, fmt.Errorf("reading dependencies for %s/%s in %q: %w",
+			kind, name, namespace, err)
+	}
+	return domain.NewWorkloadGraph(input), nil
+}
+
 // ListPodsOnNode returns the pods the scheduler has placed on one node.
 //
 // NOT ENRICHED WITH METRICS, unlike the workload listing. Usage for these pods

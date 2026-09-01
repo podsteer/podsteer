@@ -160,6 +160,44 @@ Three rules there have subtleties worth not re-deriving:
 - **A correctly configured pod produces no findings**, and a test asserts it. A
   panel that always has something to say is one people stop reading.
 
+## The dependency map is two shapes, not one
+
+`app/domain/graph.go` builds both, and they are separate functions because the
+SUBJECT decides the structure: a pod's map is a chain with the pod in the
+middle, a workload's is a fan — one controller over however many pods it
+currently has. Pretending they are one shape would mean a pod field that is
+sometimes a list, and edges that mean different things depending on which it
+was.
+
+Four rules there are load-bearing and were each found the hard way:
+
+- **An empty selector matches nothing.** In the Kubernetes API an empty
+  selector on a Service means it has none at all — an ExternalName, or
+  Endpoints managed by hand. Read as "matches everything" it draws an edge to
+  every pod in the namespace.
+- **A Service connects to the WORKLOAD, not to each replica.** A fan of edges
+  from one Service into thirty pods says the same thing thirty times.
+- **Container boxes are keyed by pod.** Every replica runs containers with the
+  same names, so keying on the name alone collapses three replicas' containers
+  into one box with three edges into it.
+- **Attached config hangs off the workload once.** It comes from the pod
+  template, so every replica reads the same ConfigMap; an edge per pod draws
+  one dependency three times and says nothing extra.
+
+**The layout is dagre's, and that is deliberate.** `web/src/lib/graphLayout.ts`
+hand-rolled a layered layout and an orthogonal edge router for several
+iterations, and every fix traded one geometric case for another — siblings
+looping, a line through a box, a route arriving backwards. It is a hard,
+well-studied problem; dagre is the port of what Graphviz's `dot` does, and
+ArgoCD draws its own resource tree with it. What stays ours is the drawing: the
+boxes, the Lucide icons, hover, pan and zoom, and the rounding of the corners.
+
+**A followable node passes its Kubernetes `Kind` verbatim.** The drawer
+resolves references against the navigator's catalogue, which is keyed by
+`Kind` — so a lowercased plural matches nothing and the click silently does
+nothing at all. That is what it did on every node of every kind until it was
+noticed.
+
 ## Secrets are read on request, never on render
 
 The rules here are load-bearing, so read them before touching anything that

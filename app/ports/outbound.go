@@ -91,6 +91,10 @@ type WorkloadPort interface {
 	// GraphInput.Unreadable names what was missing.
 	PodGraphSources(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string) (domain.GraphInput, error)
 
+	// WorkloadGraphSources reads what one workload's dependency map is drawn
+	// from — the same sources as a pod's, with its pods in place of the one.
+	WorkloadGraphSources(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.WorkloadGraphInput, error)
+
 	// ListPodsOnNode returns the pods the scheduler has placed on one node,
 	// across every namespace.
 	//

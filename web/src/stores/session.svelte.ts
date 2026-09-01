@@ -132,7 +132,7 @@ export const RICH_KIND_IDS = {
  */
 const SEARCH_DEBOUNCE_MS = 120
 
-const WORKLOAD_KIND_BY_ID: Record<string, string> = {
+export const WORKLOAD_KIND_BY_ID: Record<string, string> = {
   'apps/v1/deployments': 'Deployment',
   'apps/v1/statefulsets': 'StatefulSet',
   'apps/v1/daemonsets': 'DaemonSet',

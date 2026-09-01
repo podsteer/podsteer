@@ -82,37 +82,10 @@ func (a *Adapter) PodGraphSources(ctx context.Context, id domain.ClusterID, name
 	})
 
 	wg.Go(func() {
-		list, err := client.NetworkingV1().Ingresses(namespace.String()).
-			List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
+		refs, err := ingressRefs(ctx, client, namespace.String())
 		if err != nil {
 			degrade("ingresses", err)
 			return
-		}
-
-		refs := make([]domain.IngressRef, 0, len(list.Items))
-		for i := range list.Items {
-			item := &list.Items[i]
-			ref := domain.IngressRef{Name: item.Name, Namespace: item.Namespace}
-
-			// The default backend counts: an ingress with no rules still
-			// routes everything to it.
-			if item.Spec.DefaultBackend != nil && item.Spec.DefaultBackend.Service != nil {
-				ref.Backends = append(ref.Backends, item.Spec.DefaultBackend.Service.Name)
-			}
-			for _, rule := range item.Spec.Rules {
-				if rule.Host != "" {
-					ref.Hosts = append(ref.Hosts, rule.Host)
-				}
-				if rule.HTTP == nil {
-					continue
-				}
-				for _, path := range rule.HTTP.Paths {
-					if path.Backend.Service != nil {
-						ref.Backends = append(ref.Backends, path.Backend.Service.Name)
-					}
-				}
-			}
-			refs = append(refs, ref)
 		}
 
 		mu.Lock()
@@ -122,6 +95,45 @@ func (a *Adapter) PodGraphSources(ctx context.Context, id domain.ClusterID, name
 
 	wg.Wait()
 	return input, nil
+}
+
+// ingressRefs reduces a namespace's Ingresses to what the map needs.
+//
+// Shared by both maps, because "which services does this route to" is the same
+// question whether the subject is a pod or the workload above it.
+func ingressRefs(ctx context.Context, client kubernetes.Interface, namespace string) ([]domain.IngressRef, error) {
+	list, err := client.NetworkingV1().Ingresses(namespace).
+		List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
+	if err != nil {
+		return nil, err
+	}
+
+	refs := make([]domain.IngressRef, 0, len(list.Items))
+	for i := range list.Items {
+		item := &list.Items[i]
+		ref := domain.IngressRef{Name: item.Name, Namespace: item.Namespace}
+
+		// The default backend counts: an ingress with no rules still routes
+		// everything to it.
+		if item.Spec.DefaultBackend != nil && item.Spec.DefaultBackend.Service != nil {
+			ref.Backends = append(ref.Backends, item.Spec.DefaultBackend.Service.Name)
+		}
+		for _, rule := range item.Spec.Rules {
+			if rule.Host != "" {
+				ref.Hosts = append(ref.Hosts, rule.Host)
+			}
+			if rule.HTTP == nil {
+				continue
+			}
+			for _, path := range rule.HTTP.Paths {
+				if path.Backend.Service != nil {
+					ref.Backends = append(ref.Backends, path.Backend.Service.Name)
+				}
+			}
+		}
+		refs = append(refs, ref)
+	}
+	return refs, nil
 }
 
 // serviceRef reduces a Service to what the map needs.
@@ -245,4 +257,130 @@ func mountPath(pod *corev1.Pod, volume string) string {
 	// Declared and mounted nowhere. Worth drawing — an unused volume is a
 	// finding of its own — but not worth claiming a path for.
 	return "not mounted"
+}
+
+// WorkloadGraphSources reads what one workload's dependency map is drawn from.
+//
+// The same five reads as a pod's, with the pods themselves in place of the
+// one. Sources still degrade individually: an account that can list pods but
+// not ingresses gets a map without an ingress tier, named rather than silently
+// absent.
+func (a *Adapter) WorkloadGraphSources(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.WorkloadGraphInput, error) {
+	set, err := a.factory.clientsFor(id)
+	if err != nil {
+		return domain.WorkloadGraphInput{}, err
+	}
+	client := set.typed
+
+	pods, err := a.ListPodsForWorkload(ctx, id, namespace, kind, name)
+	if err != nil {
+		// The pods are the map's substance. Without them there is a box and
+		// nothing under it, which is worth failing rather than drawing.
+		return domain.WorkloadGraphInput{}, err
+	}
+
+	input := domain.WorkloadGraphInput{
+		Kind:      string(kind),
+		Name:      name,
+		Namespace: namespace,
+		Pods:      pods,
+		// Healthy when nothing beneath it is unwell. The workload's own status
+		// says the same thing more slowly, and this map already has the pods.
+		Healthy: allHealthy(pods),
+	}
+
+	// FROM ONE POD'S SPEC, not from the workload's template. Reading the
+	// template means a typed read per workload kind — six of them, each with
+	// its own path to a PodSpec — where any running pod carries the template
+	// already resolved. A workload with no pods has nothing attached to show,
+	// which is the honest answer for something scaled to zero.
+	if len(pods) > 0 {
+		raw, err := client.CoreV1().Pods(namespace.String()).
+			Get(ctx, pods[0].Name(), metav1.GetOptions{})
+		if err == nil {
+			input.Attached = attachedRefs(raw)
+			input.Owner = ownerChainAbove(ctx, client, namespace.String(), kind, name, a.logger)
+		} else {
+			input.Unreadable = append(input.Unreadable, "the pod template")
+		}
+	}
+
+	var (
+		mu sync.Mutex
+		wg sync.WaitGroup
+	)
+
+	degrade := func(source string, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		input.Unreadable = append(input.Unreadable, source)
+		a.logger.DebugContext(ctx, "graph source unavailable",
+			slog.String("source", source), slog.String("error", err.Error()))
+	}
+
+	wg.Go(func() {
+		list, err := client.CoreV1().Services(namespace.String()).
+			List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
+		if err != nil {
+			degrade("services", err)
+			return
+		}
+
+		refs := make([]domain.ServiceRef, 0, len(list.Items))
+		for i := range list.Items {
+			refs = append(refs, serviceRef(&list.Items[i]))
+		}
+
+		mu.Lock()
+		input.Services = refs
+		mu.Unlock()
+	})
+
+	wg.Go(func() {
+		refs, err := ingressRefs(ctx, client, namespace.String())
+		if err != nil {
+			degrade("ingresses", err)
+			return
+		}
+
+		mu.Lock()
+		input.Ingresses = refs
+		mu.Unlock()
+	})
+
+	wg.Wait()
+	return input, nil
+}
+
+// ownerChainAbove finds what controls a workload — a Job's CronJob.
+//
+// ONE HOP AND ONLY FOR A JOB. Nothing in Kubernetes owns a Deployment or a
+// DaemonSet, so a general walk would spend a read per workload discovering
+// that. A Job created by a CronJob is the one case that exists.
+func ownerChainAbove(ctx context.Context, client kubernetes.Interface, namespace string, kind domain.WorkloadKind, name string, logger *slog.Logger) []domain.OwnerReference {
+	if kind != domain.WorkloadJob {
+		return nil
+	}
+
+	job, err := client.BatchV1().Jobs(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		logger.DebugContext(ctx, "graph owner chain stopped at the job",
+			slog.String("name", name), slog.String("error", err.Error()))
+		return nil
+	}
+
+	if owner := controllerOf(job.OwnerReferences); owner != nil {
+		return []domain.OwnerReference{{Kind: owner.Kind, Name: owner.Name, Controller: true}}
+	}
+	return nil
+}
+
+// allHealthy reports whether every pod is well.
+func allHealthy(pods []domain.Pod) bool {
+	for _, pod := range pods {
+		if !pod.IsHealthy() {
+			return false
+		}
+	}
+	return true
 }

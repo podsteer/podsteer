@@ -31,6 +31,25 @@ func graphPod(t *testing.T, name, namespace string, labels map[string]string) do
 	return pod
 }
 
+// graphPodWithContainer builds a pod carrying one named container.
+func graphPodWithContainer(t *testing.T, name, container string) domain.Pod {
+	t.Helper()
+
+	pod, err := domain.NewPod(domain.PodSpec{
+		UID:        name + "-uid",
+		Name:       name,
+		Namespace:  "default",
+		ClusterID:  "dev",
+		Phase:      domain.PodPhaseRunning,
+		Containers: []domain.Container{{Name: container, Image: "repo/app:1.2.3", Ready: true}},
+		CreatedAt:  time.Now().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("building pod %q: %v", name, err)
+	}
+	return pod
+}
+
 func nodeIDs(graph domain.PodGraph) map[string]domain.GraphNode {
 	out := make(map[string]domain.GraphNode, len(graph.Nodes))
 	for _, node := range graph.Nodes {
@@ -212,5 +231,116 @@ func TestUnreadableSourcesAreCarried(t *testing.T) {
 
 	if len(graph.Unreadable) != 1 || graph.Unreadable[0] != "ingresses" {
 		t.Fatalf("unreadable sources were lost: %v", graph.Unreadable)
+	}
+}
+
+func TestAWorkloadMapFansOutToItsPods(t *testing.T) {
+	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
+		Kind: "Deployment", Name: "api", Namespace: "default", Healthy: true,
+		Pods: []domain.Pod{
+			graphPod(t, "api-1", "default", map[string]string{"app": "api"}),
+			graphPod(t, "api-2", "default", map[string]string{"app": "api"}),
+		},
+	})
+
+	if !hasEdge(graph, "deployment/api", "pod/api-1") ||
+		!hasEdge(graph, "deployment/api", "pod/api-2") {
+		t.Fatal("the workload does not reach both of its pods")
+	}
+	if !nodeIDs(graph)["deployment/api"].Subject {
+		t.Error("the workload the map was opened from is not marked as the subject")
+	}
+}
+
+func TestAServiceConnectsToTheWorkloadNotEveryReplica(t *testing.T) {
+	// A fan of edges from one Service into every replica says the same thing
+	// several times, and is unreadable at three replicas let alone thirty.
+	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
+		Kind: "Deployment", Name: "api", Namespace: "default",
+		Pods: []domain.Pod{
+			graphPod(t, "api-1", "default", map[string]string{"app": "api"}),
+			graphPod(t, "api-2", "default", map[string]string{"app": "api"}),
+		},
+		Services: []domain.ServiceRef{{Name: "api", Selector: map[string]string{"app": "api"}}},
+	})
+
+	if !hasEdge(graph, "service/api", "deployment/api") {
+		t.Fatal("the service is not connected to the workload")
+	}
+	if hasEdge(graph, "service/api", "pod/api-1") {
+		t.Error("the service was also wired to an individual replica")
+	}
+}
+
+func TestAServiceMatchingNoReplicaIsNotDrawn(t *testing.T) {
+	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
+		Kind: "Deployment", Name: "api", Namespace: "default",
+		Pods:     []domain.Pod{graphPod(t, "api-1", "default", map[string]string{"app": "api"})},
+		Services: []domain.ServiceRef{{Name: "other", Selector: map[string]string{"app": "worker"}}},
+	})
+
+	if _, drawn := nodeIDs(graph)["service/other"]; drawn {
+		t.Error("a service selecting none of the workload's pods was drawn")
+	}
+}
+
+func TestReplicaContainersAreNotCollapsedTogether(t *testing.T) {
+	// Every replica of a Deployment runs containers with the SAME names, so
+	// keying a container box on its name alone would collapse three replicas'
+	// containers into one box with three edges into it.
+	pods := []domain.Pod{
+		graphPodWithContainer(t, "api-1", "app"),
+		graphPodWithContainer(t, "api-2", "app"),
+	}
+
+	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
+		Kind: "Deployment", Name: "api", Namespace: "default", Pods: pods,
+	})
+
+	nodes := nodeIDs(graph)
+	if _, ok := nodes["container/api-1/app"]; !ok {
+		t.Error("the first replica's container is missing")
+	}
+	if _, ok := nodes["container/api-2/app"]; !ok {
+		t.Error("the second replica's container is missing")
+	}
+}
+
+func TestAttachedResourcesHangOffTheWorkloadOnce(t *testing.T) {
+	// Config and secrets come from the pod TEMPLATE, so every replica reads
+	// the same ones: an edge per pod would draw one dependency three times.
+	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
+		Kind: "Deployment", Name: "api", Namespace: "default",
+		Pods: []domain.Pod{
+			graphPod(t, "api-1", "default", nil),
+			graphPod(t, "api-2", "default", nil),
+		},
+		Attached: []domain.AttachedRef{{Kind: domain.GraphConfig, Name: "settings"}},
+	})
+
+	edges := 0
+	for _, edge := range graph.Edges {
+		if edge.To == "config/settings" {
+			edges++
+		}
+	}
+	if edges != 1 {
+		t.Fatalf("the ConfigMap was connected %d times, want once", edges)
+	}
+}
+
+func TestAWorkloadWithNoPodsStillDraws(t *testing.T) {
+	// A Deployment scaled to zero, or a CronJob between runs. A real state,
+	// not an error.
+	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
+		Kind: "CronJob", Name: "nightly", Namespace: "default",
+	})
+
+	subject := nodeIDs(graph)["cronjob/nightly"]
+	if subject.Name != "nightly" {
+		t.Fatal("the workload itself was not drawn")
+	}
+	if subject.Detail != "no pods" {
+		t.Errorf("detail is %q; it should say the workload has none", subject.Detail)
 	}
 }

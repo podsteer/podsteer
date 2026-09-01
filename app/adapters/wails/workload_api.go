@@ -114,6 +114,29 @@ func (w *WorkloadAPI) PodGraph(clusterID, namespace, podName string) (PodGraph, 
 	return toPodGraph(graph), nil
 }
 
+// WorkloadGraph returns the dependency chain around one workload.
+func (w *WorkloadAPI) WorkloadGraph(clusterID, namespace, kind, name string) (PodGraph, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return PodGraph{}, apiError(w.logger, "WorkloadGraph", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return PodGraph{}, apiError(w.logger, "WorkloadGraph", err)
+	}
+
+	graph, err := w.workloads.WorkloadGraph(ctx, id, ns, domain.WorkloadKind(kind), name)
+	if err != nil {
+		return PodGraph{}, apiError(w.logger, "WorkloadGraph", err)
+	}
+
+	return toPodGraph(graph), nil
+}
+
 // ListPodsOnNode returns the pods running on one node, across every namespace.
 func (w *WorkloadAPI) ListPodsOnNode(clusterID, nodeName string) ([]Pod, error) {
 	ctx, cancel := w.app.requestContext()

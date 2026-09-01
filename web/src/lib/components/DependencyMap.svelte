@@ -22,7 +22,7 @@
   to start.
 -->
 <script lang="ts">
-  import { podGraph, type PodGraph } from '$lib/api/client'
+  import { podGraph, workloadGraph, type PodGraph } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import { iconGeometry } from '$lib/graphIcons'
   import { layout, type Layout, type LaidOutNode } from '$lib/graphLayout'
@@ -34,14 +34,24 @@
   interface Props {
     clusterId: string
     namespace: string
-    podName: string
+    /** The object the map is drawn around. */
+    name: string
+    /**
+     * Its Kubernetes kind.
+     *
+     * "Pod" draws the chain with the pod in the middle; a workload kind draws
+     * the fan — one controller over however many pods it currently has. The
+     * two are different shapes, so the backend builds them separately and
+     * this decides which to ask for.
+     */
+    kind: string
     /** Follows a node into its own panel. */
     onopen?: (kindName: string, name: string, namespace: string) => void
     /** Offered when the pane can still be made bigger. */
     onmaximize?: () => void
   }
 
-  let { clusterId, namespace, podName, onopen, onmaximize }: Props = $props()
+  let { clusterId, namespace, name, kind, onopen, onmaximize }: Props = $props()
 
   /**
    * Which way the chain runs.
@@ -99,13 +109,16 @@
   })
 
   async function load(): Promise<void> {
-    const key = `${clusterId}/${namespace}/${podName}`
+    const key = `${clusterId}/${namespace}/${kind}/${name}`
     if (loading || loadedFor === key) return
 
     loading = true
     failure = ''
     try {
-      graph = await podGraph(clusterId, namespace, podName)
+      graph =
+        kind === 'Pod'
+          ? await podGraph(clusterId, namespace, name)
+          : await workloadGraph(clusterId, namespace, kind, name)
       loadedFor = key
       fit()
     } catch (error) {
@@ -120,7 +133,7 @@
   // when somebody changes it, and redrawing a map under a reader is worse than
   // it being a few seconds stale.
   $effect(() => {
-    const key = `${clusterId}/${namespace}/${podName}`
+    const key = `${clusterId}/${namespace}/${kind}/${name}`
     if (key !== loadedFor) void load()
   })
 

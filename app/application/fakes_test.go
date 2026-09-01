@@ -171,6 +171,12 @@ func (f *fakeKubernetes) ListPersistentVolumeClaims(_ context.Context, _ domain.
 	return f.claims, nil
 }
 
+func (f *fakeKubernetes) WorkloadGraphSources(_ context.Context, _ domain.ClusterID, ns domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.WorkloadGraphInput, error) {
+	return domain.WorkloadGraphInput{
+		Kind: string(kind), Name: name, Namespace: ns, Pods: f.pods,
+	}, nil
+}
+
 func (f *fakeKubernetes) PodGraphSources(_ context.Context, _ domain.ClusterID, _ domain.NamespaceName, name string) (domain.GraphInput, error) {
 	for _, pod := range f.pods {
 		if pod.Name() == name {
