@@ -106,7 +106,7 @@ jobs:
       - name: Mint A Tap Token
         id: tap-token
         if: steps.release.outputs.skip == 'false'
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.PDS__TAP_APP_ID }}
           private-key: ${{ secrets.PDS__TAP_APP_PRIVATE_KEY }}
