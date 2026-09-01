@@ -96,6 +96,29 @@
   let disconnectingId = $state<string | null>(null)
 
   /**
+   * ⌘K focuses the filter, here as well as in a cluster tab.
+   *
+   * The workspace has its own ⌘K for the resource search and is unmounted on
+   * this page, which is correct — that one acts on the cluster in front. But
+   * it left the picker as the one screen in the application where the
+   * shortcut did nothing, and a shortcut that works everywhere except where
+   * you happen to be is worse than one that does not exist: you press it,
+   * nothing happens, and you have learnt not to trust it.
+   *
+   * Mounted with this page, so there is no contest between the two handlers.
+   */
+  function onKeydown(event: KeyboardEvent): void {
+    if (!(event.metaKey || event.ctrlKey)) return
+    if (event.key.toLowerCase() !== 'k') return
+    // A dialog is a different context with its own fields; pulling focus out
+    // of one to a search box behind it would be the shortcut misfiring.
+    if (addOpen || organiseOpen) return
+
+    event.preventDefault()
+    searchField?.focus()
+  }
+
+  /**
    * Focuses the filter as soon as there is anything to filter.
    *
    * Typing is what somebody arriving here wants to do first — the same
@@ -246,7 +269,7 @@
   }
 </script>
 
-<svelte:window ondragend={endDrag} />
+<svelte:window ondragend={endDrag} onkeydown={onKeydown} />
 
 <!--
   Wide enough for three cards, and no wider.

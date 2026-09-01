@@ -548,6 +548,7 @@ export namespace wails {
 	    allocatableCpu: string;
 	    allocatableMemory: string;
 	    disk: string;
+	    diskCapacity: string;
 	    diskPercent: number;
 	    hasDisk: boolean;
 	    maxPods: number;
@@ -579,6 +580,7 @@ export namespace wails {
 	        this.allocatableCpu = source["allocatableCpu"];
 	        this.allocatableMemory = source["allocatableMemory"];
 	        this.disk = source["disk"];
+	        this.diskCapacity = source["diskCapacity"];
 	        this.diskPercent = source["diskPercent"];
 	        this.hasDisk = source["hasDisk"];
 	        this.maxPods = source["maxPods"];

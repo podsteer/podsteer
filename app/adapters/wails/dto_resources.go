@@ -93,8 +93,15 @@ type Node struct {
 	// imagefs is closer to full, because that is the one that decides whether
 	// the kubelet starts evicting. Reporting the average, or only nodefs,
 	// would hide a full image filesystem on a node that shares neither.
-	Disk        string  `json:"disk"`
-	DiskPercent float64 `json:"diskPercent"`
+	// Disk is what is USED, alone, so the column renders the same shape as
+	// CPU and memory: a value, a bar, a percentage. It carried "6.2GiB of
+	// 40.0GiB" before, which needed a value box twice the width of its
+	// neighbours and made one column of three look like a different kind of
+	// thing. The capacity moved to DiskCapacity and is named in the tooltip.
+	Disk string `json:"disk"`
+	// DiskCapacity is the size of that same filesystem, for the tooltip.
+	DiskCapacity string  `json:"diskCapacity"`
+	DiskPercent  float64 `json:"diskPercent"`
 	// HasDisk distinguishes a node that reported an empty disk from one never
 	// asked. Disk occupancy needs nodes/proxy, which plenty of clusters do
 	// not grant, so absent is the ordinary case rather than a fault.
@@ -125,7 +132,8 @@ func toNode(node domain.Node, now time.Time) Node {
 		OSImage:        node.OSImage(),
 		Architecture:   node.Architecture(),
 		InternalIP:     node.InternalIP(),
-		Disk:           formatDisk(node.Filesystems()),
+		Disk:           formatDiskUsed(node.Filesystems()),
+		DiskCapacity:   formatDiskCapacity(node.Filesystems()),
 		DiskPercent:    node.Filesystems().Fullest().Percent(),
 		HasDisk:        node.Filesystems().Measured,
 		AllocatableCPU: formatMilliCores(allocatable.CPUMilli),
@@ -425,12 +433,14 @@ func formatResources(resources domain.Resources) string {
 	return strings.Join(parts, ", ")
 }
 
-// formatDisk renders a node's fullest filesystem as "used of capacity".
+// formatDiskUsed renders what is occupied on a node's fullest filesystem.
 //
-// Both halves, because a percentage alone cannot be acted on: 85% of 40GiB
-// and 85% of 2TiB call for different responses, and the second is not
-// urgent at all.
-func formatDisk(filesystems domain.NodeFilesystems) string {
+// Used alone, matching how CPU and memory report themselves, so the three
+// columns read as three of the same thing. The capacity is still shown —
+// a percentage alone cannot be acted on, since 85% of 40GiB and 85% of 2TiB
+// call for different responses — but in the tooltip, where it does not cost
+// the column twice the width of its neighbours.
+func formatDiskUsed(filesystems domain.NodeFilesystems) string {
 	if !filesystems.Measured {
 		return "—"
 	}
@@ -439,5 +449,18 @@ func formatDisk(filesystems domain.NodeFilesystems) string {
 	if fullest.CapacityBytes <= 0 {
 		return "—"
 	}
-	return formatBytes(fullest.UsedBytes) + " of " + formatBytes(fullest.CapacityBytes)
+	return formatBytes(fullest.UsedBytes)
+}
+
+// formatDiskCapacity renders the size of that same filesystem.
+func formatDiskCapacity(filesystems domain.NodeFilesystems) string {
+	if !filesystems.Measured {
+		return ""
+	}
+
+	fullest := filesystems.Fullest()
+	if fullest.CapacityBytes <= 0 {
+		return ""
+	}
+	return formatBytes(fullest.CapacityBytes)
 }

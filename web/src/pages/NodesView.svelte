@@ -71,15 +71,17 @@
         </td>
         {#if isVisible('roles')}
           <td class="truncate px-3 py-1.5">
-            {#if node.roles.length}
-              <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-small text-on-surface-variant">
-                {node.roles.join(', ')}
-              </span>
-            {:else}
-              <span class="rounded bg-surface-container px-1.5 py-0.5 text-body-small text-on-surface-variant/60">
-                worker
-              </span>
-            {/if}
+            <!--
+              ONE TREATMENT FOR EVERY ROLE. "worker" used to render dimmer
+              than "control-plane", on a distinction the colour was not
+              actually making: a worker is not a lesser node, it is the
+              default one, and shading it made the column look like it
+              carried a severity it does not. Reading down a mixed column is
+              easier when the only thing changing is the word.
+            -->
+            <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-small text-on-surface-variant">
+              {node.roles.length ? node.roles.join(', ') : 'worker'}
+            </span>
           </td>
         {/if}
         <!--
@@ -137,18 +139,20 @@
               label={node.disk}
               scope="nodes"
               name="Disk"
-              valueWidth="17ch"
               percent={node.hasDisk ? node.diskPercent : null}
               measured={node.hasDisk}
               absent="not readable"
               title={node.hasDisk
-                ? `${node.disk} on the fullest of this node's filesystems`
+                ? `${node.disk} of ${node.diskCapacity} on the fullest of this node's filesystems`
                 : 'Disk occupancy needs the nodes/proxy permission, which this account does not have'}
             />
           </td>
         {/if}
         {#if isVisible('version')}
-          <td class="truncate px-3 py-1.5 font-mono text-body-medium tabular-nums text-on-surface-variant">{node.version}</td>
+          <!-- Not monospaced. A kubelet version is read, not aligned against
+               the row above it, and the mono face made one column of this
+               table look like it came from somewhere else. -->
+          <td class="truncate px-3 py-1.5 text-body-medium tabular-nums text-on-surface-variant">{node.version}</td>
         {/if}
         {#if isVisible('ip')}
           <td class="truncate px-3 py-1.5 font-mono text-body-medium text-on-surface-variant" data-selectable>
