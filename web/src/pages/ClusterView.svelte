@@ -248,7 +248,18 @@
 
 <svelte:window ondragend={endDrag} />
 
-<div class="mx-auto w-full max-w-4xl px-8 py-10">
+<!--
+  Wide enough for three cards, and no wider.
+  max-w-4xl fitted two and left a third of a 1440-wide window empty, which is
+  the default size this application opens at. 6xl is 1152px: minus the padding
+  and two gaps that is about 350px a card, which is what one needs for a
+  context name that does not truncate.
+
+  Still capped rather than fluid. A cluster card is a fixed amount of
+  information, and letting the grid grow with the window turns three cards
+  into three very wide cards with the same content strung across them.
+-->
+<div class="mx-auto w-full max-w-6xl px-8 py-10">
   <!-- Header -->
   <div class="mb-8 flex items-start justify-between gap-4">
     <div class="flex items-center gap-3">
@@ -294,7 +305,7 @@
           placeholder="Filter clusters…"
           onchange={(value) => (filter = value)}
           onnext={openOnlyMatch}
-          class="w-56"
+          class="w-72"
         />
       {/if}
       <Button variant="tonal" onclick={() => (organiseOpen = true)}>
@@ -432,10 +443,16 @@
                   {#if !groupCollapsed}
                     <!-- A real list: it is one, and it gives a screen reader
                          the count and per-item navigation a grid would not. -->
+                    <!-- Three columns from xl (1280px) rather than lg. The
+                         window's own minimum is 960, and three cards in 960 is
+                         290px each — narrow enough that the context names
+                         these are mostly made of start truncating, which is
+                         the one thing somebody scanning this page needs to
+                         read. -->
                     <div
                       id="group-{key}"
                       role="list"
-                      class="mt-2 grid gap-3 sm:grid-cols-1 lg:grid-cols-2"
+                      class="mt-2 grid gap-3 sm:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3"
                     >
                       {#each group.clusters as cluster (cluster.id)}
                         {@const open = workspace.openIds.has(cluster.id)}
