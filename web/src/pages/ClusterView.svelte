@@ -38,6 +38,7 @@
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
   import AddClusterDialog from '$lib/components/AddClusterDialog.svelte'
   import OrganiseDialog from '$lib/components/OrganiseDialog.svelte'
+  import SearchField from '$lib/components/SearchField.svelte'
   import MoveClusterMenu from '$lib/components/MoveClusterMenu.svelte'
   import { formatConnection, formatConnectionTitle } from '$lib/format'
   import { clusterActivity } from '$stores/activity.svelte'
@@ -95,14 +96,92 @@
   let disconnectingId = $state<string | null>(null)
 
   /**
+   * How many clusters make a filter worth showing.
+   *
+   * Below this, finding one is a glance rather than a task, and a search box
+   * is a control that costs attention and saves nothing. A kubeconfig on a
+   * working machine routinely holds twenty.
+   */
+  const FILTER_THRESHOLD = 8
+
+  /**
+   * Focuses the filter when the page has clusters to filter.
+   *
+   * Typing is what somebody arriving here with twenty clusters wants to do
+   * first, and the same reasoning as the logs and manifest panes: a search
+   * field that has to be clicked before it accepts a keystroke is one people
+   * reach for the mouse to use.
+   *
+   * Not focused when the field is not shown, and not focused while a dialog
+   * is open — stealing focus from Add cluster or Organise would put the
+   * keystrokes somewhere the operator is not looking.
+   */
+  $effect(() => {
+    if (workspace.clusters.length < FILTER_THRESHOLD) return
+    if (addOpen || organiseOpen) return
+    searchField?.focus()
+  })
+
+  /** What has been typed into the filter. */
+  let filter = $state('')
+  let searchField = $state<{ focus: () => void } | undefined>()
+
+  /**
+   * Clusters matching the filter, or all of them.
+   *
+   * Matched against everything ON THE CARD plus where it is filed — the
+   * context name, the user, the API server address, and the project and group
+   * it sits in. A kubeconfig on a working machine holds twenty of these with
+   * names that differ by three characters in the middle, so matching only the
+   * name would mean typing most of one to narrow anything; and somebody who
+   * remembers "the staging one in ParliTrack" is remembering the grouping.
+   */
+  const matches = $derived.by(() => {
+    const term = filter.trim().toLowerCase()
+    if (!term) return workspace.clusters
+
+    return workspace.clusters.filter((cluster) => {
+      const at = organisation.placementOf(cluster.id)
+      const haystack = [
+        cluster.id,
+        cluster.authInfo,
+        cluster.host,
+        organisation.allProjects().find((project) => project.id === at.project)?.name,
+        organisation.groupsIn(at.project).find((group) => group.id === at.group)?.name,
+      ]
+      return haystack.some((field) => field?.toLowerCase().includes(term))
+    })
+  })
+
+  /**
    * Empty projects and groups are shown, not hidden.
    *
    * Hiding them was wrong twice over. Creating one in the organiser changed
    * nothing on screen, so there was no way to tell it had worked; and
    * revealing them only once a drag began moved the layout under the cursor at
    * exactly the moment the operator was aiming at something.
+   *
+   * WHILE FILTERING, THE OPPOSITE. A search that leaves every empty group on
+   * screen has not narrowed anything — the answer is one row among a page of
+   * headings it does not belong to. So empties are included only when the
+   * filter is clear.
    */
-  const sections = $derived(organisation.sections(workspace.clusters, true))
+  const sections = $derived(organisation.sections(matches, filter.trim() === ''))
+
+  /**
+   * Down opens the only match, for somebody who typed enough to be sure.
+   *
+   * ONLY WHEN THERE IS EXACTLY ONE. Opening whichever cluster happened to
+   * sort first on an ambiguous filter is how somebody ends up connected to
+   * production having meant staging — so with two matches this does nothing
+   * and says so by returning false, which leaves the keystroke alone rather
+   * than swallowing it.
+   */
+  function openOnlyMatch(): boolean {
+    if (matches.length !== 1) return false
+    activate(matches[0].id)
+    return true
+  }
 
   function startDrag(event: DragEvent, clusterId: string): void {
     if (armedId !== clusterId || !event.dataTransfer) {
@@ -189,7 +268,16 @@
       <div>
         <h2 class="text-headline-small font-semibold text-on-surface">Clusters</h2>
         <p class="text-body-medium text-on-surface-variant/70">
-          {workspace.clusters.length} contexts from kubeconfig
+          <!--
+            The COUNT changes while filtering, because a heading that still
+            says "19 contexts" over four visible cards is describing a page
+            that is not on screen.
+          -->
+          {#if filter.trim()}
+            {matches.length} of {workspace.clusters.length} contexts
+          {:else}
+            {workspace.clusters.length} contexts from kubeconfig
+          {/if}
           {#if workspace.sessions.length > 0}
             · {workspace.sessions.length} open
           {/if}
@@ -198,6 +286,21 @@
     </div>
 
     <div class="flex shrink-0 items-center gap-2">
+      <!--
+        Shown only once there are enough clusters for finding one to be work.
+        A search box above four cards is a control that costs a glance and
+        saves nothing; above twenty it is the fastest thing on the page.
+      -->
+      {#if workspace.clusters.length >= FILTER_THRESHOLD}
+        <SearchField
+          bind:this={searchField}
+          value={filter}
+          placeholder="Filter clusters…"
+          onchange={(value) => (filter = value)}
+          onnext={openOnlyMatch}
+          class="w-56"
+        />
+      {/if}
       <Button variant="tonal" onclick={() => (organiseOpen = true)}>
         <FolderTree class="size-4" strokeWidth={1.8} />
         Organise
@@ -221,6 +324,16 @@
       <div class="size-10 animate-pulse rounded-full bg-surface-container-high"></div>
       <p class="text-body-medium text-on-surface-variant">Reading kubeconfig…</p>
     </div>
+  {:else if matches.length === 0 && filter.trim()}
+    <!--
+      A filter that hides everything must say it filtered, not that there is
+      nothing. Falling through to "No clusters configured" on a machine with
+      nineteen of them would read as the kubeconfig having gone missing.
+    -->
+    <EmptyState
+      title="No cluster matches “{filter.trim()}”"
+      description="Filtering on the context name, the user, the API server address, and the project and group it is filed under."
+    />
   {:else if workspace.clusters.length === 0}
     <EmptyState
       title="No clusters configured"
