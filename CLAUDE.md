@@ -95,9 +95,11 @@ being unable to tell an unconfigured cluster from a broken application is the
 bug that put this here.
 
 A kubelet fallback for CPU and memory was considered and **deliberately not
-built**, even though `filesystems.go` already proves the mechanism works. See
-[docs/decisions/0001-no-kubelet-metrics-fallback.md](docs/decisions/0001-no-kubelet-metrics-fallback.md)
-for what would reverse that.
+built**, even though `filesystems.go` already proves the mechanism works: it
+would need `nodes/proxy` on every node, report a different measurement from
+metrics-server under the same column heading, and turn one absent add-on into
+two code paths that disagree. Do not add one without a decision recorded in
+`podsteer/business-docs`.
 
 Three sources beyond metrics-server behave the same way and are worth knowing
 about before adding a fourth:
@@ -117,10 +119,12 @@ about before adding a fourth:
   and ranks the matches by name, because a kube-prometheus-stack install
   returns several and only one answers PromQL. Finding nothing is the ordinary
   answer and never reaches `Unavailable`: a cluster with no Prometheus is not a
-  degraded cluster. PodSteer does not query it — see
-  [docs/decisions/0004-usage-history-is-sampled-not-stored.md](docs/decisions/0004-usage-history-is-sampled-not-stored.md)
-  for why advice is the whole feature, and why 48 hours of per-object usage on
-  disk was rejected.
+  degraded cluster. **PodSteer does not query it, and advice is the whole
+  feature**: a service listing establishes that something named
+  `prometheus-operated` exists, not that it scrapes this cluster or retains
+  anything, so the note claims only the former. Per-object usage is not written
+  to disk either — the recorded cluster history deliberately carries no object
+  names, and a file of per-pod series would reverse that.
 
 Dependencies point inward. `app/domain` and `app/ports` import nothing outside
 the standard library; if either ever needs `client-go`, something has been
@@ -158,8 +162,8 @@ Three rules there have subtleties worth not re-deriving:
 
 ## Secrets are read on request, never on render
 
-See `docs/decisions/0003-secrets-are-read-on-request-only.md` before touching
-anything that displays a Secret. The short version: nothing resolves a Secret
+The rules here are load-bearing, so read them before touching anything that
+displays a Secret: nothing resolves a Secret
 when a pane opens, because Kubernetes' own guidance tells cluster operators to
 alert on exactly that pattern; `RevealSecretKey` returns one key and discards
 the rest in the adapter; and a Secret's values in the YAML tab are replaced
@@ -357,9 +361,8 @@ nothing else. No telemetry, no account, and still no network access from the
 webview (see the CSP in `web/index.html`).
 
 **The update check is the only outbound call that is not a cluster**, and the
-constraints on it are not negotiable style preferences — see
-[docs/decisions/0005](docs/decisions/0005-the-update-check-is-opt-outable-and-tells-github-nothing.md).
-It sends no identifier of any kind, goes to GitHub rather than anything we
+constraints on it are not negotiable style preferences. It sends no identifier
+of any kind, goes to GitHub rather than anything we
 operate (so no dataset exists here to correlate with the planned paid tier),
 never runs on the startup path, caches failures, and is off entirely under
 `PODSTEER_UPDATE_CHECK=false`. **Off means no request is made**, and that is

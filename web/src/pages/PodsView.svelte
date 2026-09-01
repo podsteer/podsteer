@@ -239,8 +239,7 @@
           how much of what you reserved you are actually using — and it is the
           one a pod list can answer that `kubectl top` cannot. A pod declaring
           no request has no denominator, so it SAYS SO where the bar would be
-          rather than being metered against something invented for it. See
-          docs/decisions/0002-pod-meters-name-the-absent-denominator.md.
+          rather than being metered against something invented for it.
         -->
         {#if isVisible('cpu')}
           {@const cpu = meter(

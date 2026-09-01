@@ -250,9 +250,8 @@ func run() error {
 
 	// The update check. Its adapter is the ONLY thing in PodSteer that talks
 	// to anything but a cluster, and it acts only when the interface asks —
-	// there is no timer here and nothing on the startup path. See
-	// docs/decisions/0005-*.md for why this exists at all and what it does not
-	// send.
+	// there is no timer here and nothing on the startup path. It sends no
+	// identifier and is off entirely under PODSTEER_UPDATE_CHECK=false.
 	updateService := application.NewUpdateService(updates.NewClient(), cfg.App.Version, logger)
 
 	updateAPI, err := wailsadapter.NewUpdateAPI(updateService, logger)

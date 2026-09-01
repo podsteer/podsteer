@@ -4,8 +4,7 @@
  * WHY THIS EXISTS AT ALL, given that PodSteer used to promise it would never
  * check: a security fix only protects people who install it, and Homebrew is
  * pull rather than push — a user who never runs `brew upgrade` is never told
- * anything, and Linux and Windows have no package manager in the picture. See
- * docs/decisions/0005-*.md for the full reasoning and what was given up.
+ * anything, and Linux and Windows have no package manager in the picture.
  *
  * WHAT MAKES IT DEFENSIBLE is all in what it does NOT do. It sends no
  * identifier — no version, no platform, no machine id — because the comparison

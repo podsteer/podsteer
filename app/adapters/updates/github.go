@@ -18,8 +18,6 @@
 //     here to hold, correlate with a future paid tier, or be compelled to
 //     produce. An updates.podsteer.com would produce all three, and is the
 //     documented path by which an update channel becomes a licence check.
-//
-// See docs/decisions/0005-the-update-check-is-opt-outable-and-tells-github-nothing.md.
 package updates
 
 import (

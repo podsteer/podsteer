@@ -47,9 +47,7 @@ The one exception is an **update check**, added in v0.1.2. It asks
 
 **This is new in v0.1.2**, and it is called out because v0.1.0 and v0.1.1
 stated the opposite here: anyone who reviewed those releases against this file
-should re-read the list below rather than assume it still applies. The
-reasoning behind the change is recorded in
-[docs/decisions/0005](docs/decisions/0005-the-update-check-is-opt-outable-and-tells-github-nothing.md).
+should re-read the list below rather than assume it still applies.
 
 What the check does and does not do:
 

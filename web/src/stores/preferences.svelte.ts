@@ -346,8 +346,7 @@ const DEFAULTS: PersistedShape = {
   // per-object sample cap as well, so a fast refresh cannot turn it into
   // something expensive.
   usageWindowMinutes: 5,
-  // ON BY DEFAULT, and that is a deliberate reversal of a promise this project
-  // used to make — see docs/decisions/0005-*.md. Off by default would mean
+  // ON BY DEFAULT. Off by default would mean
   // almost nobody ever learns a security fix shipped, which is the outcome the
   // feature exists to prevent. It is one switch away, the switch is in
   // Settings → Notifications, and PODSTEER_UPDATE_CHECK=false overrides it for

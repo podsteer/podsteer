@@ -48,8 +48,7 @@
      * The obvious substitute is the node's allocatable capacity, and it fails
      * twice over: a pod is typically a fraction of one percent of its node,
      * so the bar would be an invisible sliver, and a column whose denominator
-     * changes from row to row cannot be compared down its own length. See
-     * docs/decisions/0002-pod-meters-name-the-absent-denominator.md.
+     * changes from row to row cannot be compared down its own length.
      */
     absent?: string
     /** False when nothing measured it: no metrics-server, or a pod it did not reach. */
