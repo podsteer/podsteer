@@ -37,7 +37,7 @@ function keepEmbedDirectory(): Plugin {
  * clear a directory outside its root without it.
  */
 export default defineConfig({
-  plugins: [svelte(), tailwindcss(), keepEmbedDirectory()],
+  plugins: [svelte(), tailwindcss(), keepEmbedDirectory(), tightenPolicy()],
 
   resolve: {
     alias: {
@@ -78,3 +78,28 @@ export default defineConfig({
     strictPort: false,
   },
 })
+
+/**
+ * Removes the dev server's WebSocket allowance from the SHIPPED page.
+ *
+ * `connect-src 'self' ws: wss:` is what Vite's hot reload needs, and a bare
+ * scheme source is a wildcard: it permits a WebSocket to ANY host. That
+ * allowance was shipping. CLAUDE.md names this policy as one of the two things
+ * keeping the no-telemetry commitment honest — "no HTTP client outside
+ * adapters/k8s" being the other — and a policy that permits arbitrary outbound
+ * WebSockets from the webview does not keep it.
+ *
+ * Stripped at build rather than removed from index.html, because `wails dev`
+ * genuinely needs it and a policy nobody can develop under gets loosened back.
+ * `app/adapters/assets/csp_test.go` asserts the result on the embedded bundle,
+ * so the two cannot drift apart unnoticed.
+ */
+function tightenPolicy(): Plugin {
+  return {
+    name: 'podsteer:tighten-content-security-policy',
+    apply: 'build',
+    transformIndexHtml(html) {
+      return html.replace(/connect-src 'self' ws: wss:/, "connect-src 'self'")
+    },
+  }
+}

@@ -60,6 +60,8 @@
    * every keystroke is noise — so the error only appears once typing pauses.
    */
   let debounce: ReturnType<typeof setTimeout> | null = null
+  /** Previews asked for so far, so a superseded one cannot land. */
+  let previewRequest = 0
   $effect(() => {
     const text = raw
     if (debounce) clearTimeout(debounce)
@@ -70,11 +72,22 @@
       return
     }
 
+    // THE DEBOUNCE IS NOT THE GUARD. It stops a request per keystroke; it
+    // does not stop two in flight from landing out of order, and this dialog
+    // exists to show what is about to happen before a file full of
+    // credentials is written. Paste one config, edit to another, and the
+    // first could land last — leaving the preview describing a paste that is
+    // no longer in the box, while `add()` posts the one that is.
+    const asked = ++previewRequest
+
     debounce = setTimeout(async () => {
       try {
-        preview = await previewKubeconfig(text)
+        const result = await previewKubeconfig(text)
+        if (asked !== previewRequest) return
+        preview = result
         previewError = null
       } catch (cause) {
+        if (asked !== previewRequest) return
         preview = null
         previewError = toApiError(cause).message
       }

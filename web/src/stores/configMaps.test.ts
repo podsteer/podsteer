@@ -7,7 +7,8 @@ import { configMapData, forgetConfigMaps } from './configMaps.svelte'
 
 describe('reading a config map for an environment variable', () => {
   beforeEach(() => {
-    forgetConfigMaps()
+    forgetConfigMaps('dev')
+    forgetConfigMaps('staging')
     getManifest.mockReset()
   })
 
@@ -61,5 +62,33 @@ describe('reading a config map for an environment variable', () => {
     getManifest.mockResolvedValue('metadata:\n  name: empty\n')
 
     await expect(configMapData('dev', 'web', 'empty')).resolves.toEqual({})
+  })
+})
+
+describe('forgetting a disconnected cluster', () => {
+  beforeEach(() => {
+    forgetConfigMaps('dev')
+    forgetConfigMaps('staging')
+    getManifest.mockReset()
+  })
+
+  it('leaves the clusters still open alone', async () => {
+    // Per-cluster, not wholesale: closing one tab must not make every other
+    // tab re-read the ConfigMaps it already has. (It used to be wholesale and
+    // was never called from anywhere at all, so a disconnected cluster's
+    // ConfigMap contents stayed in memory for the life of the process.)
+    getManifest.mockResolvedValue('data:\n  host: redis-master\n')
+
+    await configMapData('dev', 'web', 'redis')
+    await configMapData('staging', 'web', 'redis')
+    expect(getManifest).toHaveBeenCalledTimes(2)
+
+    forgetConfigMaps('dev')
+
+    await configMapData('staging', 'web', 'redis')
+    expect(getManifest).toHaveBeenCalledTimes(2)
+
+    await configMapData('dev', 'web', 'redis')
+    expect(getManifest).toHaveBeenCalledTimes(3)
   })
 })

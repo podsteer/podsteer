@@ -99,9 +99,32 @@
   function onKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape' && open) openMenu = null
   }
+
+  /**
+   * Window listeners, ONLY WHILE THIS MENU IS OPEN.
+   *
+   * They were attached unconditionally, and there is one of these per detail
+   * ROW: a sixty-row pod pane installed a hundred and twenty window
+   * listeners, and every keystroke anywhere in the application was dispatched
+   * to sixty handlers that immediately returned. Only one row menu can be
+   * open at a time, so at most two of these ever exist now.
+   *
+   * Attached from an effect rather than a conditional `<svelte:window>`,
+   * which Svelte does not allow inside a block.
+   */
+  $effect(() => {
+    if (!open) return
+
+    window.addEventListener('pointerdown', onWindowPointerDown)
+    window.addEventListener('keydown', onKeydown)
+    return () => {
+      window.removeEventListener('pointerdown', onWindowPointerDown)
+      window.removeEventListener('keydown', onKeydown)
+    }
+  })
 </script>
 
-<svelte:window onpointerdown={onWindowPointerDown} onkeydown={onKeydown} />
+
 
 {#if actions.length > 0}
   <div class="relative" data-row-menu bind:this={node}>

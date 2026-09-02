@@ -324,11 +324,32 @@
     invalidateHeights()
   })
 
-  /** Drops heights for lines that have been trimmed away. */
+  /**
+   * Drops heights for lines that have been trimmed away.
+   *
+   * IT ONLY EVER CLEARED ON EMPTY, which is not what trimming does: lines go
+   * from the FRONT at MAX_LINES and their entries stayed. A chatty pod at a
+   * hundred lines a second left a few hundred thousand entries in this map
+   * after an hour, none of them reachable — measured heights for lines that
+   * are no longer on screen and can never be scrolled back to.
+   *
+   * Sequence numbers only rise, so everything below the oldest retained line
+   * is dead and can go in one pass. The pass is proportional to the map, and
+   * it runs when the map is bigger than the buffer it describes.
+   */
   $effect(() => {
-    if (logs.length === 0 && heights.size > 0) {
-      heights.clear()
-      invalidateHeights()
+    if (logs.length === 0) {
+      if (heights.size > 0) {
+        heights.clear()
+        invalidateHeights()
+      }
+      return
+    }
+    if (heights.size <= logs.length) return
+
+    const oldest = logs[0].seq
+    for (const seq of heights.keys()) {
+      if (seq < oldest) heights.delete(seq)
     }
   })
 

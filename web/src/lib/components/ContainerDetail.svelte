@@ -24,6 +24,7 @@
   can be argued with in a test. See web/src/lib/container.ts.
 -->
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity'
   import DetailList, { type DetailRow } from './DetailList.svelte'
   import {
     formatEnvValue,
@@ -31,6 +32,7 @@
     formatProbe,
     isFromSecret,
     looksSensitive,
+    sensitivity,
     type PodManifest,
   } from '$lib/container'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
@@ -186,12 +188,30 @@
    */
   let configMaps = $state<Record<string, Record<string, string>>>({})
 
+  /**
+   * Literal values unmasked in THIS pane, by their full identity.
+   *
+   * Not in a store, unlike a revealed Secret: this value is already in the
+   * pod spec that is already on screen in the YAML tab, so revealing it reads
+   * nothing and audits nothing. It exists only so somebody can check whether
+   * the thing we masked on the strength of its name is a credential at all.
+   */
+  let literalReveals = $state<Set<string>>(new SvelteSet())
+
   /** Identifies one Secret key across panes, for what is revealed of it. */
   function revealKey(secret: string, key: string): string {
     return `${clusterId}/${namespace}/${secret}/${key}`
   }
 
   $effect(() => {
+    // CLEARED FIRST. What is held is keyed by ConfigMap NAME alone, so
+    // switching between two pods in different clusters — or in different
+    // namespaces — left staging's `API_URL` rendered under production's pod
+    // until the new read landed, with nothing on screen saying it was stale.
+    // The name is not the identity; the cluster and the namespace are part of
+    // it, and the store below keys on all three.
+    configMaps = {}
+
     const names = new Set<string>()
     for (const variable of env) {
       const ref = configRef(variable)
@@ -251,12 +271,34 @@
         }
       }
 
-      if (looksSensitive(variable as never)) {
+      const suspicion = sensitivity(variable as never)
+      if (suspicion) {
+        const literalKey = `${clusterId}/${namespace}/${podName}/${spec.name}/${variable.name}`
+        const shown = literalReveals.has(literalKey)
         return {
           label: variable.name,
-          value: '••••••••',
-          info: 'A literal credential, written into the pod spec in the clear — anyone who can read the pod can read it',
-          tone: 'warn' as const,
+          value: shown ? (variable.value ?? '') : '••••••••',
+          // A GUESS SAYS IT IS A GUESS. The shapes are unmistakable; a name
+          // matching /secret|token|.../ is a hint about the NAME, and
+          // captioning it as fact was a false accusation about somebody's
+          // workload — one they could not even check, because this branch
+          // offered no way to look.
+          info:
+            suspicion === 'certain'
+              ? 'A literal credential, written into the pod spec in the clear — anyone who can read the pod can read it'
+              : 'Masked because of the name. Written into the pod spec in the clear, so if it is a credential anyone who can read the pod can read it',
+          tone: suspicion === 'certain' ? ('critical' as const) : ('warn' as const),
+          action: shown
+            ? {
+                label: 'Hide value',
+                kind: 'hide' as const,
+                onclick: () => literalReveals.delete(literalKey),
+              }
+            : {
+                label: 'Reveal value',
+                kind: 'reveal' as const,
+                onclick: () => literalReveals.add(literalKey),
+              },
         }
       }
 

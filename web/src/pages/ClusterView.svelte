@@ -129,9 +129,20 @@
    * Not while a dialog is open. Stealing focus from Add cluster or Organise
    * would put the keystrokes somewhere the operator is not looking.
    */
+  /**
+   * ONCE, when the list first arrives — not on every reassignment of it.
+   *
+   * `workspace.clusters` is replaced wholesale by anything that touches it,
+   * including "connect without leaving the picker". So typing a filter and
+   * clicking connect re-ran this, refocused the field and selected its
+   * contents, and the next keystroke wiped what had been typed.
+   */
+  let focused = false
   $effect(() => {
+    if (focused) return
     if (workspace.clusters.length === 0) return
     if (addOpen || organiseOpen) return
+    focused = true
     searchField?.focus()
   })
 

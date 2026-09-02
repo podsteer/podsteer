@@ -59,7 +59,18 @@ export function configMapData(
   return data
 }
 
-/** Forgets everything, for a cluster being disconnected. */
-export function forgetConfigMaps(): void {
-  cache.clear()
+/**
+ * Forgets one cluster's reads, for a tab being closed.
+ *
+ * Per-cluster rather than wholesale, so closing one tab does not make every
+ * other tab re-read the ConfigMaps it already has. It was previously
+ * wholesale AND never called from anywhere: a disconnected cluster's
+ * ConfigMap contents stayed in memory for the life of the process, which is a
+ * poor thing to be true of data read out of somebody's cluster.
+ */
+export function forgetConfigMaps(clusterId: string): void {
+  const prefix = `${clusterId}/`
+  for (const key of cache.keys()) {
+    if (key.startsWith(prefix)) cache.delete(key)
+  }
 }

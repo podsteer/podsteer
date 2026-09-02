@@ -47,9 +47,17 @@
     // has switched it off — see updates.svelte.ts.
     updates.start()
     const minimum = new Promise((resolve) => setTimeout(resolve, MIN_SPLASH_MS))
-    void Promise.all([workspace.initialise(), minimum]).then(() => {
-      booted = true
-    })
+    // .catch AS WELL, because there was none: a rejection anywhere in
+    // initialise left the splash screen up for ever with nothing on it. A
+    // failed start must still reach the application — whatever went wrong is
+    // reported there, where somebody can read it.
+    void Promise.all([workspace.initialise(), minimum])
+      .catch((cause) => {
+        console.error('Failed to initialise the workspace:', cause)
+      })
+      .finally(() => {
+        booted = true
+      })
     return () => {
       unwatchForwards()
       updates.stop()

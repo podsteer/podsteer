@@ -207,8 +207,12 @@
     // Positioned from the live DOM selection rather than from xterm's row and
     // column, which would need converting through the font metrics to get back
     // to where the glyphs actually are.
-    const range = window.getSelection()?.getRangeAt(0)
-    const box = range?.getBoundingClientRect()
+    // rangeCount FIRST: getRangeAt(0) THROWS when there is no DOM selection,
+    // and copyAll() calls terminal.selectAll() programmatically, which fires
+    // this handler with xterm holding a selection and the DOM holding none.
+    // LogViewer guards the same API correctly; this one did not.
+    const live = window.getSelection()
+    const box = live && live.rangeCount > 0 ? live.getRangeAt(0).getBoundingClientRect() : null
     const pane = terminalContainer.getBoundingClientRect()
     if (!box || box.width === 0) {
       selection = null

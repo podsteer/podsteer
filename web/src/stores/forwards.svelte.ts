@@ -12,13 +12,8 @@
  * holding sockets.
  */
 
-import {
-  listPortForwards,
-  startPortForward,
-  stopPortForward,
-  type PortForward,
-} from "$lib/api/client";
-import { toApiError } from "$lib/api/errors";
+import { listPortForwards, startPortForward, stopPortForward, type PortForward } from '$lib/api/client'
+import { toApiError } from '$lib/api/errors'
 
 /**
  * Identifies one forwarded port, and THE CLUSTER IS PART OF IT.
@@ -31,24 +26,19 @@ import { toApiError } from "$lib/api/errors";
  * row, showed production the wrong address, and — worst — let Stop tear down
  * the other cluster's forward.
  */
-function forwardKey(
-  cluster: string,
-  namespace: string,
-  pod: string,
-  remotePort: number,
-): string {
-  return `${cluster}/${namespace}/${pod}/${remotePort}`;
+function forwardKey(cluster: string, namespace: string, pod: string, remotePort: number): string {
+  return `${cluster}/${namespace}/${pod}/${remotePort}`
 }
 
 class Forwards {
   /** Everything forwarded right now, across every cluster. */
-  active = $state.raw<PortForward[]>([]);
+  active = $state.raw<PortForward[]>([])
 
   /** The last failure, for the surface that asked. Cleared by the next attempt. */
-  error = $state<string>("");
+  error = $state<string>('')
 
   /** Whether a start or stop is in flight, keyed so one button can spin. */
-  busy = $state.raw<Set<string>>(new Set());
+  busy = $state.raw<Set<string>>(new Set())
 
   /**
    * Whether this pod's port is already forwarded, and by which forward.
@@ -69,7 +59,7 @@ class Forwards {
         forward.namespace === namespace &&
         forward.pod === pod &&
         forward.remotePort === remotePort,
-    );
+    )
   }
 
   /**
@@ -82,9 +72,9 @@ class Forwards {
    */
   watch(): () => void {
     const timer = setInterval(() => {
-      if (this.active.length > 0) void this.refresh();
-    }, 3000);
-    return () => clearInterval(timer);
+      if (this.active.length > 0) void this.refresh()
+    }, 3000)
+    return () => clearInterval(timer)
   }
 
   /**
@@ -101,12 +91,12 @@ class Forwards {
         forward.clusterId === cluster &&
         forward.namespace === namespace &&
         forward.pod === pod,
-    );
+    )
   }
 
   async refresh(): Promise<void> {
     try {
-      this.active = await listPortForwards();
+      this.active = await listPortForwards()
     } catch {
       // A failure to LIST forwards is not worth a banner: the list is a
       // convenience over state the backend owns, and the next change refreshes
@@ -125,9 +115,9 @@ class Forwards {
     /** The pod's own labels, so a replacement can be found if it dies. */
     selector: Record<string, string>,
   ): Promise<void> {
-    const key = forwardKey(clusterId, namespace, pod, remotePort);
-    this.#setBusy(key, true);
-    this.error = "";
+    const key = forwardKey(clusterId, namespace, pod, remotePort)
+    this.#setBusy(key, true)
+    this.error = ''
 
     try {
       // Local port zero: the operating system chooses. Asking somebody to
@@ -143,49 +133,39 @@ class Forwards {
         portName,
         protocol,
         selector,
-      );
-      await this.refresh();
+      )
+      await this.refresh()
     } catch (cause) {
-      this.error = toApiError(cause).message;
+      this.error = toApiError(cause).message
     } finally {
-      this.#setBusy(key, false);
+      this.#setBusy(key, false)
     }
   }
 
   async stop(forward: PortForward): Promise<void> {
-    const key = forwardKey(
-      forward.clusterId,
-      forward.namespace,
-      forward.pod,
-      forward.remotePort,
-    );
-    this.#setBusy(key, true);
+    const key = forwardKey(forward.clusterId, forward.namespace, forward.pod, forward.remotePort)
+    this.#setBusy(key, true)
 
     try {
-      await stopPortForward(forward.id);
-      await this.refresh();
+      await stopPortForward(forward.id)
+      await this.refresh()
     } catch (cause) {
-      this.error = toApiError(cause).message;
+      this.error = toApiError(cause).message
     } finally {
-      this.#setBusy(key, false);
+      this.#setBusy(key, false)
     }
   }
 
-  isBusy(
-    cluster: string,
-    namespace: string,
-    pod: string,
-    remotePort: number,
-  ): boolean {
-    return this.busy.has(forwardKey(cluster, namespace, pod, remotePort));
+  isBusy(cluster: string, namespace: string, pod: string, remotePort: number): boolean {
+    return this.busy.has(forwardKey(cluster, namespace, pod, remotePort))
   }
 
   #setBusy(key: string, busy: boolean): void {
-    const next = new Set(this.busy);
-    if (busy) next.add(key);
-    else next.delete(key);
-    this.busy = next;
+    const next = new Set(this.busy)
+    if (busy) next.add(key)
+    else next.delete(key)
+    this.busy = next
   }
 }
 
-export const forwards = new Forwards();
+export const forwards = new Forwards()

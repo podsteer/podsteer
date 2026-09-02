@@ -169,6 +169,31 @@
   let measured: boolean[] = []
 
   /**
+   * Forgets per-row state when the list becomes a different list.
+   *
+   * ALL OF IT IS KEYED BY POSITION, which is the cheapest thing to key on and
+   * the only thing that is wrong across a change of subject. Expand row five
+   * on one pod, switch to another, and row five of the new one rendered
+   * already open with an inherited chevron — a row nobody had touched
+   * claiming to have been.
+   *
+   * Keyed on the labels rather than on identity, because that is what
+   * position means here: the same labels in the same order are the same rows,
+   * and a caller rebuilding an equivalent array on every tick must not have
+   * an open row shut under it.
+   */
+  const shape = $derived(rows.map((row) => row.label).join('\u0000'))
+  let shapeSeen = ''
+
+  $effect(() => {
+    if (shape === shapeSeen) return
+    shapeSeen = shape
+    expanded = []
+    clipped = []
+    measured = []
+  })
+
+  /**
    * The same value, laid out, when it is JSON.
    *
    * Annotations are the reason: `last-applied-configuration` and most of what

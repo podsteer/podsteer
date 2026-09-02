@@ -742,6 +742,16 @@
     }),
   )
 
+  /**
+   * What the container boxes belong to, so two pods cannot share one.
+   *
+   * See the keys on the each-blocks below: a container name is unique within
+   * a pod and repeated across every replica of a workload.
+   */
+  const containerScope = $derived(
+    `${selectedPod?.clusterId ?? ''}/${metadata.namespace ?? ''}/${metadata.name ?? ''}`,
+  )
+
   /** Turns a metadata map into rows, for labels and annotations. */
   function pairRows(pairs: [string, unknown][]): DetailRow[] {
     return pairs.map(([key, value]) => ({ label: key, value: String(value) }))
@@ -1054,7 +1064,14 @@
       {#if containers.length > 0}
         <DetailSection level="h3" id="containers" title="Containers" hint={String(containers.length)}>
           <div class="flex flex-col">
-            {#each containers as container (container.name)}
+            <!--
+              KEYED WITH THE POD, NOT ONLY THE CONTAINER NAME. Every replica
+              of a workload runs containers with the same names, so keying on
+              the name alone let Svelte reuse one pod's ContainerDetail for
+              another's — carrying its resolved ConfigMap values and its open
+              rows across as though they described the new pod.
+            -->
+            {#each containers as container (`${containerScope}/${container.name}`)}
               <ContainerDetail
                 spec={container}
                 status={statusFor(container.name)}
@@ -1081,7 +1098,7 @@
       {#if ephemeralContainers.length > 0}
         <DetailSection level="h3" id="debug-containers" title="Debug containers" hint={String(ephemeralContainers.length)}>
           <div class="flex flex-col">
-            {#each ephemeralContainers as container (container.name)}
+            {#each ephemeralContainers as container (`${containerScope}/${container.name}`)}
               <ContainerDetail
                 spec={container}
                 status={statusFor(container.name)}
@@ -1105,7 +1122,7 @@
       {#if initContainers.length > 0}
         <DetailSection level="h3" id="init-containers" title="Init containers" defaultOpen={false} hint={String(initContainers.length)}>
           <div class="flex flex-col">
-            {#each initContainers as container (container.name)}
+            {#each initContainers as container (`${containerScope}/${container.name}`)}
               <ContainerDetail
                 spec={container}
                 status={statusFor(container.name)}

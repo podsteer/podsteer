@@ -6,6 +6,7 @@ import {
   formatPorts,
   formatProbe,
   looksSensitive,
+  sensitivity,
   type PodManifest,
 } from './container'
 
@@ -156,7 +157,14 @@ describe('the downward API', () => {
     ).toBe('api')
   })
 
-  it('resolves a container resource against that container', () => {
+  it('resolves a container resource the way the kubelet does', () => {
+    // THIS TEST USED TO ASSERT THE QUANTITY AS WRITTEN, which is not what the
+    // process receives and is the whole reason the field has a divisor. The
+    // kubelet divides by it — default 1, meaning whole cores for CPU and
+    // bytes for memory — and rounds UP to an integer. So a container asking
+    // for `100m` of CPU hands its process `1`, and a `512Mi` limit hands it
+    // 536870912. Printing `100m` and `512Mi` under the variable's own name
+    // was showing a different number from the one the container can read.
     expect(
       formatEnvValue(
         {
@@ -165,7 +173,7 @@ describe('the downward API', () => {
         },
         pod,
       ),
-    ).toBe('100m')
+    ).toBe('1')
     expect(
       formatEnvValue(
         {
@@ -174,7 +182,34 @@ describe('the downward API', () => {
         },
         pod,
       ),
-    ).toBe('512Mi')
+    ).toBe('536870912')
+  })
+
+  it('applies the divisor, which is the idiom everybody actually writes', () => {
+    // `limits.memory` over `1Mi` is how a JVM's heap size gets set, and it is
+    // the case the ignored divisor got most wrong.
+    expect(
+      formatEnvValue(
+        {
+          name: 'MEMORY_LIMIT_MB',
+          valueFrom: {
+            resourceFieldRef: { containerName: 'app', resource: 'limits.memory', divisor: '1Mi' },
+          },
+        },
+        pod,
+      ),
+    ).toBe('512')
+    expect(
+      formatEnvValue(
+        {
+          name: 'CPU_MILLIS',
+          valueFrom: {
+            resourceFieldRef: { containerName: 'app', resource: 'requests.cpu', divisor: '1m' },
+          },
+        },
+        pod,
+      ),
+    ).toBe('100')
   })
 
   it('keeps the path when it cannot resolve one', () => {
@@ -218,5 +253,31 @@ describe('the downward API', () => {
         pod,
       ),
     ).toBe("<set to the key 'jwt' in secret 'app-secrets'>")
+  })
+})
+
+describe('sensitivity', () => {
+  it('is certain only about shapes that are unmistakable', () => {
+    expect(sensitivity({ name: 'AWS_KEY', value: 'AKIAIOSFODNN7EXAMPLE' })).toBe('certain')
+    expect(sensitivity({ name: 'ANYTHING', value: '-----BEGIN RSA PRIVATE KEY-----' })).toBe(
+      'certain',
+    )
+  })
+
+  it('only suspects when the NAME is what matched', () => {
+    // The distinction the pane needs: a name is a hint about the name. It was
+    // captioned as fact — "a literal credential, written into the pod spec in
+    // the clear" — which is an accusation about somebody's workload.
+    expect(sensitivity({ name: 'DB_PASSWORD', value: 'hunter2-but-long-enough' })).toBe('suspected')
+  })
+
+  it('does not accuse a value that announces it is something else', () => {
+    // The real report that started this: masked, and captioned as a leaked
+    // credential, with no way to reveal it and disagree.
+    expect(
+      sensitivity({ name: 'SECRET_MANAGER_ENDPOINT', value: 'https://vault.internal.example' }),
+    ).toBeNull()
+    expect(sensitivity({ name: 'TOKEN_FILE_PATH', value: '/var/run/secrets/token' })).toBeNull()
+    expect(sensitivity({ name: 'SECRET_HOSTS', value: 'vault-0.vault, vault-1.vault' })).toBeNull()
   })
 })

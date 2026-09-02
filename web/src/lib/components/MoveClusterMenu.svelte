@@ -106,9 +106,24 @@
   function onKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape' && open) open = false
   }
+
+  /**
+   * Window listeners, only while open. There is one of these per cluster
+   * card, and forty contexts otherwise means eighty idle window listeners.
+   */
+  $effect(() => {
+    if (!open) return
+
+    window.addEventListener('keydown', onKeydown)
+    window.addEventListener('pointerdown', onPointerDown)
+    return () => {
+      window.removeEventListener('keydown', onKeydown)
+      window.removeEventListener('pointerdown', onPointerDown)
+    }
+  })
 </script>
 
-<svelte:window onkeydown={onKeydown} onpointerdown={onPointerDown} />
+
 
 <div class="relative">
   <button
