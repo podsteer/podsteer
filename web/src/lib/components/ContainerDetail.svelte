@@ -227,7 +227,7 @@
           // The wording follows what is on screen, and reading is the
           // deliberate act: see $stores/secretReveals.
           action: shown.value
-            ? { label: 'Hide value', kind: 'reveal' as const, onclick: () => secretReveals.hide(key) }
+            ? { label: 'Hide value', kind: 'hide' as const, onclick: () => secretReveals.hide(key) }
             : {
                 label: 'Reveal value',
                 kind: 'reveal' as const,

@@ -313,6 +313,11 @@
         can do. It was a cluster of up to three icons that changed from row to
         row — a reveal here, an information note there — which had to be
         learnt one at a time and read as clutter in a column of values.
+
+        COLOUR IS THE ONLY HOVER. They used to take a filled circle and a
+        state layer as well, which on a small glyph reads as the icon itself
+        thickening — three effects where one says the same thing, in a column
+        whose whole job is the text beside them.
       -->
       <span class="ml-auto flex shrink-0 items-center gap-0.5">
 
@@ -328,9 +333,9 @@
             aria-expanded={open}
             aria-label={open ? `Collapse ${row.label}` : `Expand ${row.label}`}
             title={open ? 'Show less' : 'Show the whole value'}
-            class="state-layer grid size-5 shrink-0 place-items-center rounded-full
+            class="grid size-5 shrink-0 cursor-pointer place-items-center rounded-full
                    text-on-surface-variant/60 transition-colors duration-100
-                   hover:bg-surface-container hover:text-on-surface"
+                   hover:text-on-surface"
           >
             <ChevronDown
               class="size-3.5 transition-transform duration-150 ease-standard {open

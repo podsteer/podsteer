@@ -248,6 +248,26 @@ describe('DetailList', () => {
     expect(reveal).toHaveBeenCalledOnce()
   })
 
+  it('confirms a copy in place, because the clipboard says nothing', async () => {
+    // Every other item has a visible result — a panel changes, a value
+    // appears. Copying leaves the row identical, so the menu says so before
+    // it closes, the way the status bar's share menu does.
+    const { container } = render(DetailList, {
+      rows: [{ label: 'Pod IP', value: '10.0.0.1' }],
+    })
+
+    container
+      .querySelector('[data-row-menu] button')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await tick()
+
+    const copy = container.querySelector('[role="menuitem"]')!
+    copy.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await tick()
+
+    expect(container.querySelector('[role="menuitem"]')?.textContent).toContain('Copied!')
+  })
+
   it('puts the source of a resolved value in its tooltip', () => {
     // A value resolved out of a ConfigMap no longer names its source — that
     // is the point of resolving it — and a third control to say so was more
