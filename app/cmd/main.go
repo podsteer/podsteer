@@ -109,6 +109,7 @@ func run() error {
 		Burst:          cfg.Kubernetes.Burst,
 		UserAgent:      fmt.Sprintf("%s/%s", cfg.App.Name, cfg.App.Version),
 		EnvReady:       envReady,
+		LiveWatch:      cfg.Kubernetes.LiveWatch,
 	}, logger)
 
 	// The Wails lifecycle handler doubles as the outbound event publisher, so
@@ -303,6 +304,9 @@ func run() error {
 			// complaint every competing client has an issue open about, and
 			// the fix is to close them rather than to hope.
 			kubernetes.StopAllPortForwards()
+			// Same reason, same place: reflectors are goroutines holding
+			// connections, and every one of them has an owner that stops it.
+			kubernetes.StopAllWatches()
 			historyService.Close()
 			desktop.OnShutdown(ctx)
 		},

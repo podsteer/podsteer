@@ -50,6 +50,10 @@ type Adapter struct {
 	// backends caches metrics-backend discovery, which answers a question
 	// whose value moves in days: a monitoring stack is installed once.
 	backends backendCache
+	// watches mirror a cluster's pods locally, so a refresh reads memory
+	// rather than the network. An optimisation: see watch.go, where the
+	// governing sentence is that polling remains the truth.
+	watches *watchManager
 	// reads coalesce the whole-collection lists a refresh repeats. Unlike the
 	// two caches above it holds nothing for long — it exists to stop the same
 	// request leaving twice in one tick. See readcache.go.
@@ -77,9 +81,11 @@ func New(cfg Config, logger *slog.Logger) *Adapter {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	scoped := logger.With(slog.String("adapter", "k8s"))
 	return &Adapter{
 		factory:  newClientFactory(cfg),
-		logger:   logger.With(slog.String("adapter", "k8s")),
+		logger:   scoped,
+		watches:  newWatchManager(cfg.LiveWatch, scoped),
 		forwards: portForwards{byID: make(map[string]*forwarder)},
 	}
 }
@@ -135,8 +141,22 @@ func (a *Adapter) Invalidate(id domain.ClusterID) {
 	// rather than ten seconds stale, and carrying that across a reconnect
 	// would answer the first assessment of a freshly opened cluster with
 	// numbers from before it was closed.
+	// The watch goes FIRST, and is waited for. Its reflectors hold the client
+	// this is about to discard, and a set is never reused — a reconnect
+	// builds a fresh one, so nothing from before the disconnect can write
+	// into a store a later read answers from.
+	a.watches.forget(id)
 	a.filesystems.forget(id)
 	a.reads.forget(id.String())
+}
+
+// StopAllWatches tears down every cluster's watch, for shutdown.
+//
+// Beside StopAllPortForwards in the composition root and for the same reason:
+// these are goroutines holding sockets, and the thing that must not happen is
+// the record and the goroutine parting company.
+func (a *Adapter) StopAllWatches() {
+	a.watches.stopAll()
 }
 
 // forgetReads drops the coalesced lists for one cluster.

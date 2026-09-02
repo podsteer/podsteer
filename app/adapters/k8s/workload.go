@@ -39,9 +39,43 @@ func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace d
 		}
 	}
 
+	// Starts watching this cluster if nothing is yet, and does not wait: this
+	// call is about to answer from the network either way, and whether the
+	// store ever becomes useful is decided in the background.
+	a.watches.ensure(id, func() (kubernetes.Interface, error) { return a.factory.clientFor(id) })
+
+	// THE CACHE STAYS IN FRONT OF THE STORE. Reading the store is free on the
+	// wire but not free in CPU — it is five thousand pods mapped into domain
+	// values — and the assessment and the open list both want them in the
+	// same instant. Coalescing that is the same job it was doing before, so
+	// the mapping happens once per tick rather than once per caller.
 	return cachedSlice(&a.reads, readKey(id.String(), "pods", namespace.String()), func() ([]domain.Pod, error) {
+		if watched, serving := a.watches.pods(id); serving {
+			return mapWatchedPods(id, watched, namespace)
+		}
 		return a.listPods(ctx, id, namespace)
 	})
+}
+
+// mapWatchedPods turns the store's pods into domain values, narrowed to one
+// namespace.
+//
+// A pod that will not map is SKIPPED rather than failing the read: the store
+// holds whatever the cluster sent, and one unmappable object must not empty a
+// list of five thousand. That matches how the list path already treats them.
+func mapWatchedPods(id domain.ClusterID, watched []*corev1.Pod, namespace domain.NamespaceName) ([]domain.Pod, error) {
+	pods := make([]domain.Pod, 0, len(watched))
+	for _, pod := range watched {
+		if !namespace.IsAll() && pod.Namespace != namespace.String() {
+			continue
+		}
+		mapped, err := mapPod(id, pod)
+		if err != nil {
+			continue
+		}
+		pods = append(pods, mapped)
+	}
+	return pods, nil
 }
 
 // podsIn narrows a cluster-wide read to one namespace, into a slice of its

@@ -58,6 +58,50 @@ section to the UI is an entry there, not a frontend change. Custom resources
 are appended per cluster by `DiscoverCustomKinds` — never globally, because two
 clusters run different operators.
 
+## The watch is an optimisation; polling is the truth
+
+`app/adapters/k8s/watch.go` mirrors a cluster's pods locally so a refresh reads
+memory instead of the network. Everything about it follows from one rule: **a
+read is never blocked on the store**. The path that answers when the store is
+not ready is the path that answered before the store existed, so there is no
+sync timeout to tune, no first-refresh stall, and the worst it can do is not
+help.
+
+That rule is also what makes RBAC tractable. An account scoped to one
+namespace cannot list pods cluster-wide; an account with a list/get Role
+cannot watch at all. Both are ordinary, both surface as a 403 on the
+reflector's first call, and both end the same way — the store is marked
+degraded, one debug line is logged, and reads carry on down the path they were
+using anyway. There are no per-namespace informers and no permission probe:
+the cost of finding out is one refused request per connection.
+
+Three things to know before touching it:
+
+- **`stripPod` has a contract test, and it is not optional.** The store holds
+  stripped pods, so anything `mapPod` reads that `stripPod` removes goes
+  quietly blank on clusters where the watch happens to be serving — and stays
+  correct everywhere else, which is the worst way to find out. It has already
+  caught one: probes. Extend `mapPod`, and `TestStrippingAPodChangesNothing…`
+  fails.
+- **A set is never reused.** `Invalidate` cancels and *waits*, and a reconnect
+  builds a fresh set against the fresh client, so a reflector from before a
+  disconnect cannot write into a store a later read answers from.
+- **The read cache stays in front of the store.** Reading it is free on the
+  wire and not free in CPU — five thousand pods mapped into domain values —
+  and the assessment and the open list still want them in the same instant.
+
+Pods only. Controller lists are kilobytes and already coalesced; ReplicaSets
+and Jobs are the plausible next two and are deliberately absent until the
+per-cluster tally (logged at debug on disconnect) says otherwise — a
+ReplicaSet carries a whole pod template, which is not the intuition anybody
+starts with. Metrics can never be watched: `metrics.k8s.io` serves no watch
+verb, which sets the floor on what a refresh can cost.
+
+Off by default (`PODSTEER_LIVE_WATCH=true`). Off is not an approximation of
+the old behaviour — it is the same code path. `live_test.go` exercises the real
+streaming list against the current kubeconfig context, which the fake
+clientset cannot.
+
 ## The polled lists are coalesced, and it is a singleflight not a cache
 
 Every refresh fires the assessment AND the open list at the same instant, and
