@@ -21,6 +21,9 @@
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
   import { podTemplateOf } from '$lib/podTemplate'
   import { classifyConditions, type ConditionRef } from '$lib/api/client'
+  import { ingressAddresses, ingressCertificates, ingressRoutes, isOpenable } from '$lib/ingress'
+  import { isCordoned, nodeTaints } from '$lib/taints'
+  import { BrowserOpenURL } from '$lib/wailsjs/runtime/runtime'
   import type { UsageSample } from '$stores/session.svelte'
 
   interface Props {
@@ -142,6 +145,173 @@
       kind === 'CronJob',
   )
 
+  /**
+   * A CronJob's schedule, and whether it is running.
+   *
+   * THE SCHEDULE IS A CRONJOB'S IDENTITY. It appeared nowhere in this panel —
+   * not the expression, not whether it is suspended, not when it last ran —
+   * which left a CronJob between runs showing usage of nothing, a template,
+   * and its metadata.
+   */
+  const cronRows = $derived.by<DetailRow[]>(() => {
+    if (kind !== 'CronJob') return []
+
+    const rows: DetailRow[] = [{ label: 'Schedule', value: spec.schedule ?? '—' }]
+    if (spec.timeZone) rows.push({ label: 'Time zone', value: spec.timeZone })
+
+    // Said out loud and coloured, because a suspended CronJob looks identical
+    // to one that simply has not fired — and "why has this not run" is the
+    // question it is usually asked.
+    rows.push({
+      label: 'Suspended',
+      value: spec.suspend ? 'yes — it will not run until resumed' : 'no',
+      tone: spec.suspend ? ('warn' as const) : undefined,
+    })
+
+    if (spec.concurrencyPolicy) {
+      rows.push({ label: 'Concurrency', value: spec.concurrencyPolicy })
+    }
+    rows.push({
+      label: 'Last scheduled',
+      value: status.lastScheduleTime ? formatAge(status.lastScheduleTime) + ' ago' : 'never',
+    })
+    // Kubernetes records these separately, and the gap between them is the
+    // whole story: a CronJob that fires hourly and last SUCCEEDED yesterday
+    // is failing every hour.
+    if (status.lastSuccessfulTime) {
+      rows.push({ label: 'Last succeeded', value: formatAge(status.lastSuccessfulTime) + ' ago' })
+    }
+    const active = (status.active ?? []).length
+    if (active > 0) rows.push({ label: 'Running now', value: String(active) })
+
+    return rows
+  })
+
+  /** A Job's progress, which is what a Job is. */
+  const jobRows = $derived.by<DetailRow[]>(() => {
+    if (kind !== 'Job') return []
+
+    const rows: DetailRow[] = [
+      { label: 'Completions', value: `${status.succeeded ?? 0} of ${spec.completions ?? 1}` },
+    ]
+    if (spec.parallelism !== undefined) {
+      rows.push({ label: 'Parallelism', value: String(spec.parallelism) })
+    }
+    rows.push({ label: 'Active', value: String(status.active ?? 0) })
+    rows.push({
+      label: 'Failed',
+      value: String(status.failed ?? 0),
+      tone: (status.failed ?? 0) > 0 ? ('warn' as const) : undefined,
+    })
+    if (spec.backoffLimit !== undefined) {
+      rows.push({ label: 'Backoff limit', value: String(spec.backoffLimit) })
+    }
+    if (status.startTime) rows.push({ label: 'Started', value: formatAge(status.startTime) + ' ago' })
+    if (status.completionTime) {
+      rows.push({ label: 'Finished', value: formatAge(status.completionTime) + ' ago' })
+      rows.push({ label: 'Took', value: elapsed(status.startTime, status.completionTime) })
+    }
+    return rows
+  })
+
+  /** How long a Job ran for, from the two times it records. */
+  function elapsed(from: string, to: string): string {
+    const seconds = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 1000)
+    if (!Number.isFinite(seconds) || seconds < 0) return '—'
+    if (seconds < 60) return `${seconds}s`
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`
+  }
+
+  /**
+   * The machine facts a node's panel never showed.
+   *
+   * Taints above all: the pod panel opposite renders tolerations in full, and
+   * the thing they exist to tolerate appeared nowhere. Every scheduling
+   * question needs both sides of that.
+   */
+  const machineRows = $derived.by<DetailRow[]>(() => {
+    if (!selectedNode) return []
+
+    const rows: DetailRow[] = []
+    const info = (status.nodeInfo ?? {}) as Record<string, string>
+
+    if (isCordoned(parsedManifest)) {
+      rows.push({
+        label: 'Scheduling',
+        value: 'cordoned — nothing new will be placed here',
+        tone: 'warn' as const,
+      })
+    }
+
+    for (const taint of nodeTaints(parsedManifest)) {
+      rows.push({ label: 'Taint', value: taint })
+    }
+
+    const capacity = (status.capacity ?? {}) as Record<string, string>
+    const allocatable = (status.allocatable ?? {}) as Record<string, string>
+    for (const [label, key] of [
+      ['CPU', 'cpu'],
+      ['Memory', 'memory'],
+      ['Pods', 'pods'],
+    ] as const) {
+      if (!capacity[key] && !allocatable[key]) continue
+      // Allocatable against capacity, because the difference is what the
+      // kubelet and the system reserved and it is the number the scheduler
+      // actually has to give out.
+      rows.push({
+        label: `${label} allocatable`,
+        value: `${allocatable[key] ?? '—'} of ${capacity[key] ?? '—'}`,
+      })
+    }
+
+    if (info.kubeletVersion) rows.push({ label: 'Kubelet', value: info.kubeletVersion })
+    if (info.containerRuntimeVersion) {
+      rows.push({ label: 'Runtime', value: info.containerRuntimeVersion })
+    }
+    if (info.osImage) rows.push({ label: 'OS', value: info.osImage })
+    if (info.kernelVersion) rows.push({ label: 'Kernel', value: info.kernelVersion })
+    if (info.architecture) rows.push({ label: 'Architecture', value: info.architecture })
+
+    return rows
+  })
+
+  /**
+   * The addresses an Ingress answers on, and the certificates behind them.
+   *
+   * An Ingress is a routing table written as a nested list, and every client
+   * renders it as one — hosts here, paths there, backends in a third column —
+   * leaving the reader to assemble the URL in their head. The one thing they
+   * came for is the address, so that is what this shows, and it opens.
+   */
+  const routeRows = $derived.by<DetailRow[]>(() =>
+    ingressRoutes(parsedManifest).map((route) => ({
+      label: route.host || 'Any host',
+      value: route.url,
+      info: `${route.pathType} path to ${route.backend}${route.secure ? ', TLS terminated here' : ', not encrypted'}`,
+      // Opened in the real browser, not the webview: this is somebody else's
+      // site, and loading it inside the application would replace PodSteer.
+      onclick: isOpenable(route) ? () => BrowserOpenURL(route.url) : undefined,
+      tone: route.secure ? undefined : ('warn' as const),
+    })),
+  )
+
+  const certificateRows = $derived.by<DetailRow[]>(() =>
+    ingressCertificates(parsedManifest).map((certificate) => ({
+      label: certificate.secretName,
+      // An empty host list means EVERY host, which is the API's meaning and
+      // the opposite of how an empty cell reads.
+      value: certificate.hosts.length > 0 ? certificate.hosts.join(', ') : 'every host in this Ingress',
+      onclick: follow('Secret', certificate.secretName, metadata.namespace ?? ''),
+    })),
+  )
+
+  const addressRows = $derived.by<DetailRow[]>(() =>
+    ingressAddresses(parsedManifest).map((address) => ({ label: 'Address', value: address })),
+  )
+
+  const isIngress = $derived(kind === 'Ingress')
+
   /** Whether the panel is showing a pod. */
   const isPodPanel = $derived(kind === 'Pod' || !!selectedPod)
 
@@ -154,7 +324,12 @@
    * that failed to load.
    */
   const isGenericKind = $derived(
-    !isPodPanel && !isWorkload && !selectedNode && !selectedNamespaceRow && kind !== 'Namespace',
+    !isPodPanel &&
+      !isWorkload &&
+      !isIngress &&
+      !selectedNode &&
+      !selectedNamespaceRow &&
+      kind !== 'Namespace',
   )
 
   /**
@@ -1057,6 +1232,76 @@
           <DetailList rows={templateVolumeRows} />
         </DetailSection>
       {/if}
+    {/if}
+
+    <!--
+      A CRONJOB'S SCHEDULE IS ITS IDENTITY, and it appeared nowhere: not the
+      expression, not whether it is suspended, not when it last ran. Between
+      runs that left the panel showing usage of nothing, a template, and some
+      metadata.
+    -->
+    {#if cronRows.length > 0}
+      <DetailSection level="h3" id="schedule" title="Schedule" hint={spec.schedule ?? ''}>
+        <DetailList rows={cronRows} />
+      </DetailSection>
+    {/if}
+
+    <!-- A Job's progress, which is the whole of what a Job is. -->
+    {#if jobRows.length > 0}
+      <DetailSection
+        level="h3"
+        id="job-progress"
+        title="Progress"
+        hint="{status.succeeded ?? 0}/{spec.completions ?? 1}"
+      >
+        <DetailList rows={jobRows} />
+      </DetailSection>
+    {/if}
+
+    <!--
+      Where an Ingress actually sends people, as somewhere they can go.
+    -->
+    {#if isIngress && routeRows.length > 0}
+      <DetailSection level="h3" id="routes" title="Addresses" hint={String(routeRows.length)}>
+        <DetailList rows={routeRows} />
+        {#if addressRows.length > 0}
+          <div class="mt-3">
+            <DetailList rows={addressRows} />
+          </div>
+        {:else}
+          <!-- Ordinary rather than an error, and often the answer to "why
+               does this not work": nothing has claimed it yet. -->
+          <p class="mt-3 text-body-small text-on-surface-variant/60">
+            No controller has published an address for this Ingress yet.
+          </p>
+        {/if}
+      </DetailSection>
+    {/if}
+
+    {#if isIngress && certificateRows.length > 0}
+      <DetailSection
+        level="h3"
+        id="certificates"
+        title="TLS"
+        hint={String(certificateRows.length)}
+      >
+        <DetailList rows={certificateRows} />
+        <p class="mt-3 text-body-small text-on-surface-variant/60">
+          Which Secret terminates which hosts. What the certificate itself says — who
+          issued it, when it expires — is inside that Secret and is not read here.
+        </p>
+      </DetailSection>
+    {/if}
+
+    <!--
+      The machine, and above all its taints. The pod panel opposite renders
+      tolerations in full, including the toleration seconds several clients
+      drop, and the thing they exist to tolerate was shown nowhere.
+    -->
+    {#if machineRows.length > 0}
+      <DetailSection level="h3" id="machine" title="Machine" defaultOpen={false} hint={String(machineRows.length)}>
+        <DetailList rows={machineRows} />
+      </DetailSection>
     {/if}
 
     <!--
