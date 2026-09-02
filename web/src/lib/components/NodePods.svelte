@@ -16,6 +16,7 @@
 -->
 <script lang="ts">
   import { listPodsOnNode, type Pod } from '$lib/api/client'
+  import { preferences } from '$stores/preferences.svelte'
   import { toApiError } from '$lib/api/errors'
   import DetailSection from './DetailSection.svelte'
   import ColumnDivider from './ColumnDivider.svelte'
@@ -80,13 +81,23 @@
     }
   }
 
-  // A different node invalidates what is held. Not a refetch — the section may
-  // be closed, and opening it is what asks.
+  /**
+   * A different node invalidates what is held — AND ASKS AGAIN IF THE
+   * SECTION IS OPEN.
+   *
+   * It used only to clear, on the reasoning that opening the section is what
+   * asks. True the first time and false every time after: the section is open
+   * by default and stays open, so `onopen` never fires again, and moving from
+   * one node to another left the cleared, never-refilled state on screen —
+   * rendering "Nothing is scheduled on this node." indefinitely until the operator collapsed the section
+   * and expanded it. Comparing two nodes is exactly when somebody does
+   * that navigation.
+   */
   $effect(() => {
-    if (nodeName !== loadedFor) {
-      pods = []
-      failure = ''
-    }
+    if (nodeName === loadedFor) return
+    pods = []
+    failure = ''
+    if (preferences.sectionOpen('node-pods', true)) void load()
   })
 </script>
 

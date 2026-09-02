@@ -121,9 +121,20 @@ export function meterTitle(
   limitPercent: number,
 ): string {
   if (!measured) {
-    return available
-      ? 'Nothing here reported usage — no running pod has been measured yet'
-      : 'Not measured — this cluster has no metrics source'
+    // THREE STATES, NOT TWO, and collapsing them told operators to install a
+    // metrics-server they already had. `available` is undefined on every row
+    // that measures ONE thing — a pod, a node — because a single object
+    // reporting nothing says nothing about the cluster. Undefined is falsy,
+    // so those rows all took the no-metrics-source branch: a pod twenty
+    // seconds old, or a Completed Job's pod, on a perfectly metered cluster,
+    // was told its cluster had no metrics source. That is the exact advice
+    // CLAUDE.md names as sending somebody to argue with an administrator,
+    // and the overview pane — which does know — said the opposite.
+    if (available === false) return 'Not measured — this cluster has no metrics source'
+    if (available === true) {
+      return 'Nothing here reported usage — no running pod has been measured yet'
+    }
+    return 'Not measured — nothing has reported for it, or this cluster serves no metrics'
   }
 
   const against = hasRequest

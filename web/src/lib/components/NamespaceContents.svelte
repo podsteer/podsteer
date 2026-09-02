@@ -17,6 +17,7 @@
 -->
 <script lang="ts">
   import { namespaceInventory, type NamespaceInventory } from '$lib/api/client'
+  import { preferences } from '$stores/preferences.svelte'
   import { toApiError } from '$lib/api/errors'
   import DetailSection from './DetailSection.svelte'
   import ColumnDivider from './ColumnDivider.svelte'
@@ -56,11 +57,23 @@
     }
   }
 
+  /**
+   * A different namespace invalidates what is held — AND ASKS AGAIN IF THE
+   * SECTION IS OPEN.
+   *
+   * It used only to clear, on the reasoning that opening the section is what
+   * asks. True the first time and false every time after: the section is open
+   * by default and stays open, so `onopen` never fires again, and moving from
+   * one namespace to another left the cleared, never-refilled state on screen —
+   * rendering "no contents" indefinitely until the operator collapsed the section
+   * and expanded it. Comparing two namespaces is exactly when somebody does
+   * that navigation.
+   */
   $effect(() => {
-    if (namespace !== loadedFor) {
-      inventory = null
-      failure = ''
-    }
+    if (namespace === loadedFor) return
+    inventory = null
+    failure = ''
+    if (preferences.sectionOpen('namespace-contents', true)) void load()
   })
 
   /**

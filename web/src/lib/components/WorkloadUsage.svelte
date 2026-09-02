@@ -77,20 +77,28 @@
    * that looks like a workload doing nothing.
    */
   async function sample(): Promise<void> {
+    // TAKEN BEFORE THE AWAIT, NOT AFTER. `key` is derived from the props, so
+    // reading it on the far side of the request reads whatever the panel has
+    // MOVED ON TO: click Deployment `api`, then `web` before the first reply
+    // lands, and api's measurement is recorded into web's series and drawn on
+    // web's chart. The cluster was the same bug one level up.
+    const asked = key
     try {
       const result = await workloadUsage(clusterId, namespace, kind, name)
+      if (asked !== key) return
       reading = result
       failure = ''
 
       if (result.hasMetrics) {
-        usageHistory.record(key, {
+        usageHistory.record(asked, {
           at: Date.now(),
           cpuCores: result.cpuCores,
           memoryBytes: result.memoryBytes,
         })
       }
-      samples = usageHistory.since(key)
+      samples = usageHistory.since(asked)
     } catch (error) {
+      if (asked !== key) return
       failure = toApiError(error).message
     }
   }

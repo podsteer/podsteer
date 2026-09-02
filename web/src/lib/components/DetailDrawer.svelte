@@ -294,8 +294,22 @@
     }
   }
 
+  /**
+   * Identifies the object the drawer is showing, WHOLE.
+   *
+   * The reset below used to watch the name alone, and a name is not an
+   * identity here: selecting `postgres-0` in staging and then `postgres-0`
+   * in production — routine with StatefulSets, and one click apart in an
+   * all-namespaces list — changed nothing this effect could see. The tab
+   * stayed put and the pane inside it was never remounted, so an open
+   * Terminal went on talking to staging under a header reading production.
+   */
+  const shownObject = $derived(
+    `${session.cluster.id}|${session.selectedKindId}|${session.selectedNamespace}|${session.selectedName ?? ''}`,
+  )
+
   $effect(() => {
-    session.selectedName
+    shownObject
     activeTab = 'overview'
     actionError = null
   })
@@ -523,7 +537,16 @@
 {/snippet}
 
 {#snippet logsSurface()}
-  {#if isPod && selectedPod}
+  <!--
+    KEYED ON THE WHOLE IDENTITY, because both panes attach on mount and
+    neither reacts to the pod changing under it. Without this, moving between
+    two pods of the same name in different clusters left the stream and the
+    shell attached to the first — and the terminal's teardown then filed the
+    OLD session's id under the NEW pod's key, so the next visit attached to
+    the previous cluster's shell and cheerfully reported "Connected".
+  -->
+  {#key shownObject}
+    {#if isPod && selectedPod}
     <LogViewer
       clusterId={session.cluster.id}
       namespace={selectedPod.namespace}
@@ -531,7 +554,7 @@
       containers={selectedPod.containers?.map((c) => c.name) ?? []}
       onmaximize={maximized === 'logs' ? undefined : () => (maximized = 'logs')}
     />
-  {:else if isWorkloadWithLogs && workloadPods.length > 0}
+    {:else if isWorkloadWithLogs && workloadPods.length > 0}
     <LogViewer
       clusterId={session.cluster.id}
       namespace={session.selectedNamespace}
@@ -541,7 +564,8 @@
       }))}
       onmaximize={maximized === 'logs' ? undefined : () => (maximized = 'logs')}
     />
-  {/if}
+    {/if}
+  {/key}
 {/snippet}
 
 {#snippet mapSurface()}
@@ -567,7 +591,8 @@
 {/snippet}
 
 {#snippet terminalSurface()}
-  {#if isPod && selectedPod}
+  {#key shownObject}
+    {#if isPod && selectedPod}
     <Terminal
       clusterId={session.cluster.id}
       namespace={selectedPod.namespace}
@@ -576,7 +601,7 @@
       containers={selectedPod.containers?.map((c) => c.name) ?? []}
       onmaximize={maximized === 'terminal' ? undefined : () => (maximized = 'terminal')}
     />
-  {:else if isWorkloadWithLogs && workloadPods.length > 0}
+    {:else if isWorkloadWithLogs && workloadPods.length > 0}
     <Terminal
       clusterId={session.cluster.id}
       namespace={workloadPods[0].namespace}
@@ -585,7 +610,8 @@
       containers={workloadPods[0].containers?.map((c: any) => c.name) ?? []}
       onmaximize={maximized === 'terminal' ? undefined : () => (maximized = 'terminal')}
     />
-  {/if}
+    {/if}
+  {/key}
 {/snippet}
 
 {#snippet yamlSurface()}
@@ -763,7 +789,7 @@
             one is replaced and this pane is where somebody arrives to check
             whether THIS is the pod holding it.
           -->
-          {#each forwards.forPod(session.selectedNamespace, session.selectedName ?? '') as forward (forward.id)}
+          {#each forwards.forPod(session.cluster.id, session.selectedNamespace, session.selectedName ?? '') as forward (forward.id)}
             <span
               class="inline-flex shrink-0 items-center gap-1 rounded bg-primary/12 px-1.5
                      text-body-small text-primary"

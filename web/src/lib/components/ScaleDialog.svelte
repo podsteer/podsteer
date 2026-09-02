@@ -28,9 +28,25 @@
     }
   }
 
+  /**
+   * Escape closes; Enter confirms, but only where Enter meant nothing else.
+   *
+   * ENTER USED TO CONFIRM FROM ANYWHERE. The browser already activates a
+   * focused button on Enter, so a global handler on top of it meant that
+   * tabbing to Cancel and pressing Enter did the dangerous thing and then
+   * closed the dialog — leaving Escape as the only way to back out of it, and
+   * nothing on screen saying so. DeleteDialog deliberately binds no Enter at
+   * all: an irreversible action should cost a deliberate click.
+   */
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && open) onclose()
-    if (event.key === 'Enter' && open) handleSubmit()
+    if (!open) return
+    if (event.key === 'Escape') {
+      onclose()
+      return
+    }
+    if (event.key !== 'Enter') return
+    if ((event.target as HTMLElement | null)?.closest('button, a, [role="button"]')) return
+    handleSubmit()
   }
 </script>
 

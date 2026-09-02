@@ -330,8 +330,8 @@
     <p class="mt-3 mb-1 text-body-medium text-on-surface">Ports</p>
     <div class="flex flex-col gap-1.5">
       {#each forwardable as port, index (index)}
-        {@const open = forwards.forPort(namespace, podName, port.containerPort)}
-        {@const busy = forwards.isBusy(namespace, podName, port.containerPort)}
+        {@const open = forwards.forPort(clusterId, namespace, podName, port.containerPort)}
+        {@const busy = forwards.isBusy(clusterId, namespace, podName, port.containerPort)}
         <!--
           THE PORT'S NAME IS THE LABEL AND THE PORT IS THE VALUE, so a port
           row reads like every other row in the panel: what it is on the left,

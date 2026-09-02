@@ -122,7 +122,7 @@
               The port is in the mark rather than only in a tooltip, because
               the question being asked is "which of these is on 59595".
             -->
-            {#each forwards.forPod(pod.namespace, pod.name) as forward (forward.id)}
+            {#each forwards.forPod(session.cluster.id, pod.namespace, pod.name) as forward (forward.id)}
               <span
                 class="inline-flex shrink-0 items-center gap-1 rounded bg-primary/12 px-1.5
                        text-body-small text-primary"

@@ -39,28 +39,28 @@ import {
   type ResourceTable,
   type TableRow,
   type Workload,
-} from '$lib/api/client'
-import { ApiError, toApiError } from '$lib/api/errors'
-import { podStatusLabel } from '$lib/format'
+} from "$lib/api/client";
+import { ApiError, toApiError } from "$lib/api/errors";
+import { podStatusLabel } from "$lib/format";
 import {
   parseAgeSeconds,
   parseQuantity,
   sortRows,
   type SortAccessors,
   type SortState,
-} from '$lib/sort'
-import { alertPlayer } from './alerts.svelte'
-import { usageHistory, usageKey } from './usageHistory.svelte'
-import { preferences } from './preferences.svelte'
+} from "$lib/sort";
+import { alertPlayer } from "./alerts.svelte";
+import { usageHistory, usageKey } from "./usageHistory.svelte";
+import { preferences } from "./preferences.svelte";
 
 /** Lifecycle of an asynchronous read. */
-export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
+export type LoadStatus = "idle" | "loading" | "ready" | "error";
 
 /** One measurement of the open pod, taken from a refresh that already happened. */
 export interface UsageSample {
   /** Epoch milliseconds, from the client — these are points on a local clock,
       spaced by the refresh interval, not timestamps the cluster asserted. */
-  at: number
+  at: number;
   /**
    * CPU in CORES and memory in BYTES, parsed back out of the strings Go
    * formatted. Both are only ever used to draw a shape scaled to its own
@@ -68,8 +68,8 @@ export interface UsageSample {
    * which is why they are parsed from one formatter's output rather than
    * mixed with a second source.
    */
-  cpuCores: number
-  memoryBytes: number
+  cpuCores: number;
+  memoryBytes: number;
 }
 
 /**
@@ -79,10 +79,10 @@ export interface UsageSample {
  * refresh, and about forty kilobytes. Long enough to show a shape; short
  * enough that nobody has to think about it.
  */
-const MAX_USAGE_SAMPLES = 200
+const MAX_USAGE_SAMPLES = 200;
 
 /** How often the current view re-fetches while auto-refresh is on. */
-export const DEFAULT_REFRESH_INTERVAL_MS = 10_000
+export const DEFAULT_REFRESH_INTERVAL_MS = 10_000;
 
 /**
  * How stale the browsable-kind list may get before it is re-read.
@@ -99,7 +99,7 @@ export const DEFAULT_REFRESH_INTERVAL_MS = 10_000
  * wait a few minutes for it to show up far more readily than they would
  * reconnect a tab to find out it worked.
  */
-const KINDS_REFRESH_INTERVAL_MS = 5 * 60_000
+const KINDS_REFRESH_INTERVAL_MS = 5 * 60_000;
 
 /**
  * The cluster dashboard's navigation id.
@@ -110,7 +110,7 @@ const KINDS_REFRESH_INTERVAL_MS = 5 * 60_000
  * to GET what it names. The `podsteer` prefix cannot collide with a real API
  * group, which always contains a dot.
  */
-export const OVERVIEW_KIND_ID = 'podsteer/overview'
+export const OVERVIEW_KIND_ID = "podsteer/overview";
 
 /**
  * The view the navigator selects by default.
@@ -128,17 +128,17 @@ export const OVERVIEW_KIND_ID = 'podsteer/overview'
  * would offer it to every consumer that expects to be able to fetch what it
  * names.
  */
-export const APPLICATIONS_KIND_ID = 'podsteer/applications'
+export const APPLICATIONS_KIND_ID = "podsteer/applications";
 
-export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
+export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID;
 
 /** Kind ids PodSteer renders with purpose-built columns rather than generically. */
 export const RICH_KIND_IDS = {
-  pods: 'core/v1/pods',
-  nodes: 'core/v1/nodes',
-  events: 'core/v1/events',
-  namespaces: 'core/v1/namespaces',
-} as const
+  pods: "core/v1/pods",
+  nodes: "core/v1/nodes",
+  events: "core/v1/events",
+  namespaces: "core/v1/namespaces",
+} as const;
 
 /** Maps a rich workload kind id onto the controller name the backend expects. */
 /**
@@ -148,27 +148,27 @@ export const RICH_KIND_IDS = {
  * short enough to read as instant — the threshold where a delay starts being
  * felt is around a fifth of a second.
  */
-const SEARCH_DEBOUNCE_MS = 120
+const SEARCH_DEBOUNCE_MS = 120;
 
 export const WORKLOAD_KIND_BY_ID: Record<string, string> = {
-  'apps/v1/deployments': 'Deployment',
-  'apps/v1/statefulsets': 'StatefulSet',
-  'apps/v1/daemonsets': 'DaemonSet',
-  'apps/v1/replicasets': 'ReplicaSet',
-  'batch/v1/jobs': 'Job',
-  'batch/v1/cronjobs': 'CronJob',
-}
+  "apps/v1/deployments": "Deployment",
+  "apps/v1/statefulsets": "StatefulSet",
+  "apps/v1/daemonsets": "DaemonSet",
+  "apps/v1/replicasets": "ReplicaSet",
+  "batch/v1/jobs": "Job",
+  "batch/v1/cronjobs": "CronJob",
+};
 
 /** What the content pane should render for the selected kind. */
 export type ViewMode =
-  | 'overview'
-  | 'applications'
-  | 'pods'
-  | 'nodes'
-  | 'events'
-  | 'namespaces'
-  | 'workloads'
-  | 'table'
+  | "overview"
+  | "applications"
+  | "pods"
+  | "nodes"
+  | "events"
+  | "namespaces"
+  | "workloads"
+  | "table";
 
 /*
  * Sort accessors per view, keyed by the column ids the views declare. Values
@@ -189,12 +189,12 @@ const POD_SORT: SortAccessors<Pod> = {
   qos: (pod) => pod.qosClass,
   ip: (pod) => pod.podIp,
   age: (pod) => pod.ageSeconds,
-}
+};
 
 const NODE_SORT: SortAccessors<Node> = {
   status: (node) => node.status,
   name: (node) => node.name,
-  roles: (node) => (node.roles.length ? node.roles.join(', ') : 'worker'),
+  roles: (node) => (node.roles.length ? node.roles.join(", ") : "worker"),
   cpu: (node) => (node.hasMetrics ? node.cpuPercent : null),
   memory: (node) => (node.hasMetrics ? node.memoryPercent : null),
   // Sorted by how FULL it is, not by bytes used. A 900GiB disk with 100GiB
@@ -207,7 +207,7 @@ const NODE_SORT: SortAccessors<Node> = {
   pods: (node) => node.maxPods,
   taints: (node) => node.taints,
   age: (node) => node.ageSeconds,
-}
+};
 
 const APPLICATION_SORT: SortAccessors<Application> = {
   instance: (application) => application.instance,
@@ -216,7 +216,7 @@ const APPLICATION_SORT: SortAccessors<Application> = {
   managedBy: (application) => application.managedBy || null,
   version: (application) => application.version || null,
   objects: (application) => application.objects,
-}
+};
 
 const NAMESPACE_SORT: SortAccessors<NamespaceSummary> = {
   status: (namespace) => namespace.phase,
@@ -228,13 +228,18 @@ const NAMESPACE_SORT: SortAccessors<NamespaceSummary> = {
   // Sorted on how FULL the reservation is rather than on bytes: a namespace
   // using 8GiB of 16 and one using 1GiB of 1 are ordered by volume one way
   // and by urgency the other, and urgency is what this column is scanned for.
-  cpu: (namespace) => (namespace.hasMetrics && namespace.hasCpuRequest ? namespace.cpuPercent : null),
+  cpu: (namespace) =>
+    namespace.hasMetrics && namespace.hasCpuRequest
+      ? namespace.cpuPercent
+      : null,
   memory: (namespace) =>
-    namespace.hasMetrics && namespace.hasMemoryRequest ? namespace.memoryPercent : null,
+    namespace.hasMetrics && namespace.hasMemoryRequest
+      ? namespace.memoryPercent
+      : null,
   cpuRequests: (namespace) => namespace.requestCores,
   memoryRequests: (namespace) => namespace.requestBytes,
   age: (namespace) => namespace.ageSeconds,
-}
+};
 
 const WORKLOAD_SORT: SortAccessors<Workload> = {
   status: (workload) => workload.status,
@@ -245,10 +250,10 @@ const WORKLOAD_SORT: SortAccessors<Workload> = {
   ready: (workload) => workload.readyCount,
   updated: (workload) => workload.updated,
   available: (workload) => workload.available,
-  images: (workload) => workload.images.join(', '),
+  images: (workload) => workload.images.join(", "),
   controlledBy: (workload) => workload.controlledBy,
   age: (workload) => workload.ageSeconds,
-}
+};
 
 const EVENT_SORT: SortAccessors<K8sEvent> = {
   type: (event) => event.type,
@@ -259,33 +264,33 @@ const EVENT_SORT: SortAccessors<K8sEvent> = {
   source: (event) => event.source,
   count: (event) => event.count,
   age: (event) => event.ageSeconds,
-}
+};
 
 export class ClusterSession {
   /** The connected cluster this tab shows. */
-  readonly cluster: Cluster
+  readonly cluster: Cluster;
 
   /** Kinds the navigator can offer, from the backend's per-cluster catalog. */
-  kinds = $state.raw<ResourceKind[]>([])
+  kinds = $state.raw<ResourceKind[]>([]);
   /** Namespaces, for the filter. */
-  namespaces = $state.raw<Namespace[]>([])
+  namespaces = $state.raw<Namespace[]>([]);
 
   /** The kind currently selected in the navigator. */
-  selectedKindId = $state<string>(DEFAULT_KIND_ID)
+  selectedKindId = $state<string>(DEFAULT_KIND_ID);
   /** The namespace filter. ALL_NAMESPACES means every namespace. */
-  namespace = $state<string>(ALL_NAMESPACES)
+  namespace = $state<string>(ALL_NAMESPACES);
   /** The client-side search term. */
   /** The term the lists are filtered by. Trails `typedSearch` by a beat. */
-  search = $state<string>('')
+  search = $state<string>("");
   /** What is in the box right now, applied immediately so typing feels live. */
-  typedSearch = $state<string>('')
-  #searchTimer: ReturnType<typeof setTimeout> | null = null
+  typedSearch = $state<string>("");
+  #searchTimer: ReturnType<typeof setTimeout> | null = null;
   /** The 1-based page currently shown. */
-  page = $state<number>(1)
+  page = $state<number>(1);
 
   /** Active sort per kind id. Kinds hold different columns, so a sort set on
       one must not leak into another. */
-  sorts = $state<Record<string, SortState>>({})
+  sorts = $state<Record<string, SortState>>({});
 
   /**
    * Rows for whichever view is active. Only one is populated at a time.
@@ -302,10 +307,10 @@ export class ClusterSession {
    * place: every assignment replaces the whole array with what the backend
    * just returned. Deep proxying was paying for a capability nothing uses.
    */
-  pods = $state.raw<Pod[]>([])
-  nodes = $state.raw<Node[]>([])
-  workloads = $state.raw<Workload[]>([])
-  events = $state.raw<K8sEvent[]>([])
+  pods = $state.raw<Pod[]>([]);
+  nodes = $state.raw<Node[]>([]);
+  workloads = $state.raw<Workload[]>([]);
+  events = $state.raw<K8sEvent[]>([]);
 
   /**
    * The namespace list view's rows.
@@ -315,11 +320,11 @@ export class ClusterSession {
    * cluster-wide pod list to produce, so they are fetched only while this
    * view is the one on screen.
    */
-  namespaceRows = $state.raw<NamespaceSummary[]>([])
+  namespaceRows = $state.raw<NamespaceSummary[]>([]);
 
   /** The applications view's rows, and what carried no label to group by. */
-  applications = $state.raw<Application[]>([])
-  unlabelled = $state(0)
+  applications = $state.raw<Application[]>([]);
+  unlabelled = $state(0);
 
   /**
    * What each controller in the open list is consuming, keyed by
@@ -331,7 +336,7 @@ export class ClusterSession {
    * may list Deployments and not pods — still gets its list, with the meters
    * reading "not measured" rather than nothing at all.
    */
-  workloadUsage = $state.raw<Record<string, Consumption>>({})
+  workloadUsage = $state.raw<Record<string, Consumption>>({});
 
   /**
    * Which request for those figures is the current one.
@@ -341,34 +346,34 @@ export class ClusterSession {
    * refreshes of the SAME list can resolve out of order, and the older one
    * would win.
    */
-  #usageGeneration = 0
-  table = $state.raw<ResourceTable | null>(null)
-  overview = $state.raw<Overview | null>(null)
+  #usageGeneration = 0;
+  table = $state.raw<ResourceTable | null>(null);
+  overview = $state.raw<Overview | null>(null);
 
   /**
    * The non-info finding ids of the previous assessment, or null before the
    * first one has landed. Not reactive: nothing renders it, and it exists
    * only to decide what is new.
    */
-  #lastFindingIds: Set<string> | null = null
+  #lastFindingIds: Set<string> | null = null;
 
-  status = $state<LoadStatus>('idle')
-  error = $state<ApiError | null>(null)
-  lastRefreshedAt = $state<Date | null>(null)
+  status = $state<LoadStatus>("idle");
+  error = $state<ApiError | null>(null);
+  lastRefreshedAt = $state<Date | null>(null);
 
   /** The selected row, shown in the detail drawer. */
-  selectedName = $state<string | null>(null)
-  selectedNamespace = $state<string>('')
-  selectedPod = $state<Pod | null>(null)
+  selectedName = $state<string | null>(null);
+  selectedNamespace = $state<string>("");
+  selectedPod = $state<Pod | null>(null);
   /** The node the drawer is open on, when it is a node. */
-  selectedNode = $state<Node | null>(null)
-  selectedWorkload = $state<Workload | null>(null)
+  selectedNode = $state<Node | null>(null);
+  selectedWorkload = $state<Workload | null>(null);
   /** The open namespace's row, which is where its usage figures live. */
-  selectedNamespaceRow = $state<NamespaceSummary | null>(null)
+  selectedNamespaceRow = $state<NamespaceSummary | null>(null);
   /** The open application, which is not a Kubernetes object at all. */
-  selectedApplication = $state<Application | null>(null)
-  manifest = $state<string | null>(null)
-  manifestStatus = $state<LoadStatus>('idle')
+  selectedApplication = $state<Application | null>(null);
+  manifest = $state<string | null>(null);
+  manifestStatus = $state<LoadStatus>("idle");
 
   /**
    * Monotonic request counter.
@@ -378,8 +383,8 @@ export class ClusterSession {
    * this the first to *return* wins rather than the last to be *asked* — which
    * shows the operator a list they already navigated away from.
    */
-  #request = 0
-  #timer: ReturnType<typeof setInterval> | null = null
+  #request = 0;
+  #timer: ReturnType<typeof setInterval> | null = null;
 
   /**
    * When the kind list was last read, as a timestamp.
@@ -388,7 +393,7 @@ export class ClusterSession {
    * that failed at connect retry on the first poll instead of leaving the
    * navigator empty for five minutes.
    */
-  #kindsReadAt = 0
+  #kindsReadAt = 0;
 
   /**
    * Invoked when this cluster turns out to be gone from the kubeconfig.
@@ -397,38 +402,44 @@ export class ClusterSession {
    * make the two mutually dependent for one edge case. The workspace owns tab
    * lifecycle; the session only reports what it observed.
    */
-  onVanished?: (reason: ApiError) => void
+  onVanished?: (reason: ApiError) => void;
 
   constructor(cluster: Cluster) {
-    this.cluster = cluster
+    this.cluster = cluster;
     // The operator's own last choice for this cluster wins over kubeconfig's
     // context default — that default is a fallback for kubectl, not a
     // statement about which namespace matters to whoever is looking at
     // PodSteer, and reconnecting to a cluster that was left on "billing"
     // should not silently snap back to "default".
-    this.namespace = preferences.getClusterNamespace(cluster.id) ?? (cluster.defaultNamespace || ALL_NAMESPACES)
+    this.namespace =
+      preferences.getClusterNamespace(cluster.id) ??
+      (cluster.defaultNamespace || ALL_NAMESPACES);
   }
 
   /** The kind currently selected, or undefined before kinds have loaded. */
-  readonly selectedKind = $derived(this.kinds.find((kind) => kind.id === this.selectedKindId))
+  readonly selectedKind = $derived(
+    this.kinds.find((kind) => kind.id === this.selectedKindId),
+  );
 
   /** What the content pane should render. */
   readonly viewMode = $derived.by<ViewMode>(() => {
-    const id = this.selectedKindId
-    if (id === OVERVIEW_KIND_ID) return 'overview'
-    if (id === APPLICATIONS_KIND_ID) return 'applications'
-    if (id === RICH_KIND_IDS.pods) return 'pods'
-    if (id === RICH_KIND_IDS.nodes) return 'nodes'
-    if (id === RICH_KIND_IDS.events) return 'events'
-    if (id === RICH_KIND_IDS.namespaces) return 'namespaces'
-    if (id in WORKLOAD_KIND_BY_ID) return 'workloads'
-    return 'table'
-  })
+    const id = this.selectedKindId;
+    if (id === OVERVIEW_KIND_ID) return "overview";
+    if (id === APPLICATIONS_KIND_ID) return "applications";
+    if (id === RICH_KIND_IDS.pods) return "pods";
+    if (id === RICH_KIND_IDS.nodes) return "nodes";
+    if (id === RICH_KIND_IDS.events) return "events";
+    if (id === RICH_KIND_IDS.namespaces) return "namespaces";
+    if (id in WORKLOAD_KIND_BY_ID) return "workloads";
+    return "table";
+  });
 
   /** Whether the selected kind carries namespaces. */
   readonly isNamespaced = $derived(
-    this.viewMode === 'overview' ? false : (this.selectedKind?.namespaced ?? true),
-  )
+    this.viewMode === "overview"
+      ? false
+      : (this.selectedKind?.namespaced ?? true),
+  );
 
   /**
    * Whether the current view is a list.
@@ -436,22 +447,31 @@ export class ClusterSession {
    * The overview is an assessment of the whole cluster, so the search box,
    * the pagination and the row count in the toolbar have nothing to act on.
    */
-  readonly isList = $derived(this.viewMode !== 'overview')
+  readonly isList = $derived(this.viewMode !== "overview");
 
   /** Rows after the search filter, for whichever view is active. */
   readonly visiblePods = $derived(
-    filterRows(this.pods, this.search, (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase]),
-  )
+    filterRows(this.pods, this.search, (pod) => [
+      pod.name,
+      pod.namespace,
+      pod.nodeName,
+      pod.phase,
+    ]),
+  );
   readonly visibleNodes = $derived(
-    filterRows(this.nodes, this.search, (node) => [node.name, node.status, ...node.roles]),
-  )
+    filterRows(this.nodes, this.search, (node) => [
+      node.name,
+      node.status,
+      ...node.roles,
+    ]),
+  );
   readonly visibleWorkloads = $derived(
     filterRows(this.workloads, this.search, (workload) => [
       workload.name,
       workload.namespace,
       workload.status,
     ]),
-  )
+  );
   readonly visibleApplications = $derived(
     filterRows(this.applications, this.search, (application) => [
       application.instance,
@@ -459,10 +479,13 @@ export class ClusterSession {
       application.partOf,
       application.name,
     ]),
-  )
+  );
   readonly visibleNamespaces = $derived(
-    filterRows(this.namespaceRows, this.search, (namespace) => [namespace.name, namespace.phase]),
-  )
+    filterRows(this.namespaceRows, this.search, (namespace) => [
+      namespace.name,
+      namespace.phase,
+    ]),
+  );
   readonly visibleEvents = $derived(
     filterRows(this.events, this.search, (event) => [
       event.reason,
@@ -470,37 +493,41 @@ export class ClusterSession {
       event.involvedObject,
       event.namespace,
     ]),
-  )
+  );
   readonly visibleTableRows = $derived(
-    filterRows(this.table?.rows ?? [], this.search, (row) => [row.name, row.namespace, ...row.cells]),
-  )
+    filterRows(this.table?.rows ?? [], this.search, (row) => [
+      row.name,
+      row.namespace,
+      ...row.cells,
+    ]),
+  );
 
   /** Total rows after filtering, before pagination. */
   readonly visibleCount = $derived.by(() => {
     switch (this.viewMode) {
-      case 'overview':
-        return 0
-      case 'pods':
-        return this.visiblePods.length
-      case 'nodes':
-        return this.visibleNodes.length
-      case 'workloads':
-        return this.visibleWorkloads.length
-      case 'events':
-        return this.visibleEvents.length
-      case 'namespaces':
-        return this.visibleNamespaces.length
-      case 'applications':
-        return this.visibleApplications.length
+      case "overview":
+        return 0;
+      case "pods":
+        return this.visiblePods.length;
+      case "nodes":
+        return this.visibleNodes.length;
+      case "workloads":
+        return this.visibleWorkloads.length;
+      case "events":
+        return this.visibleEvents.length;
+      case "namespaces":
+        return this.visibleNamespaces.length;
+      case "applications":
+        return this.visibleApplications.length;
       default:
-        return this.visibleTableRows.length
+        return this.visibleTableRows.length;
     }
-  })
+  });
 
   /** How many pages the filtered rows fill. */
   readonly pageCount = $derived(
     Math.max(1, Math.ceil(this.visibleCount / preferences.pageSize)),
-  )
+  );
 
   /**
    * The page actually rendered.
@@ -509,22 +536,32 @@ export class ClusterSession {
    * narrower search, can leave the stored page beyond the end — and a table
    * that renders nothing while claiming "page 7 of 3" looks broken.
    */
-  readonly currentPage = $derived(Math.min(Math.max(1, this.page), this.pageCount))
+  readonly currentPage = $derived(
+    Math.min(Math.max(1, this.page), this.pageCount),
+  );
 
   /** Index of the first row on the current page, for the range readout. */
-  readonly pageStart = $derived((this.currentPage - 1) * preferences.pageSize)
+  readonly pageStart = $derived((this.currentPage - 1) * preferences.pageSize);
 
   /** The sort applied to the current kind, or null for server order. */
-  readonly sort = $derived(this.sorts[this.selectedKindId] ?? null)
+  readonly sort = $derived(this.sorts[this.selectedKindId] ?? null);
 
   /** Filtered rows after sorting, per view. */
-  readonly sortedPods = $derived(sortRows(this.visiblePods, this.sort, POD_SORT))
-  readonly sortedNodes = $derived(sortRows(this.visibleNodes, this.sort, NODE_SORT))
-  readonly sortedWorkloads = $derived(sortRows(this.visibleWorkloads, this.sort, WORKLOAD_SORT))
-  readonly sortedEvents = $derived(sortRows(this.visibleEvents, this.sort, EVENT_SORT))
+  readonly sortedPods = $derived(
+    sortRows(this.visiblePods, this.sort, POD_SORT),
+  );
+  readonly sortedNodes = $derived(
+    sortRows(this.visibleNodes, this.sort, NODE_SORT),
+  );
+  readonly sortedWorkloads = $derived(
+    sortRows(this.visibleWorkloads, this.sort, WORKLOAD_SORT),
+  );
+  readonly sortedEvents = $derived(
+    sortRows(this.visibleEvents, this.sort, EVENT_SORT),
+  );
   readonly sortedNamespaces = $derived(
     sortRows(this.visibleNamespaces, this.sort, NAMESPACE_SORT),
-  )
+  );
 
   /**
    * Generic table rows after sorting. The column ids are positional ("c0"),
@@ -533,40 +570,42 @@ export class ClusterSession {
    * as text.
    */
   readonly sortedTableRows = $derived.by(() => {
-    const state = this.sort
-    const table = this.table
-    const index = state ? /^c(\d+)$/.exec(state.columnId)?.[1] : undefined
-    if (!state || !table || index === undefined) return this.visibleTableRows
+    const state = this.sort;
+    const table = this.table;
+    const index = state ? /^c(\d+)$/.exec(state.columnId)?.[1] : undefined;
+    if (!state || !table || index === undefined) return this.visibleTableRows;
 
-    const column = table.columns[Number(index)]
-    if (!column) return this.visibleTableRows
+    const column = table.columns[Number(index)];
+    if (!column) return this.visibleTableRows;
 
-    const cell = (row: TableRow): string => row.cells[Number(index)] ?? ''
-    let accessor: (row: TableRow) => string | number | null
-    if (column.type === 'integer' || column.type === 'number') {
+    const cell = (row: TableRow): string => row.cells[Number(index)] ?? "";
+    let accessor: (row: TableRow) => string | number | null;
+    if (column.type === "integer" || column.type === "number") {
       accessor = (row) => {
-        const parsed = Number.parseFloat(cell(row))
-        return Number.isNaN(parsed) ? null : parsed
-      }
-    } else if (column.type === 'date') {
-      accessor = (row) => parseAgeSeconds(cell(row))
+        const parsed = Number.parseFloat(cell(row));
+        return Number.isNaN(parsed) ? null : parsed;
+      };
+    } else if (column.type === "date") {
+      accessor = (row) => parseAgeSeconds(cell(row));
     } else {
-      accessor = cell
+      accessor = cell;
     }
-    return sortRows(this.visibleTableRows, state, { [state.columnId]: accessor })
-  })
+    return sortRows(this.visibleTableRows, state, {
+      [state.columnId]: accessor,
+    });
+  });
 
   /** Rows of the current page, per view. */
-  readonly pagedPods = $derived(this.#slice(this.sortedPods))
-  readonly pagedNodes = $derived(this.#slice(this.sortedNodes))
-  readonly pagedWorkloads = $derived(this.#slice(this.sortedWorkloads))
-  readonly pagedEvents = $derived(this.#slice(this.sortedEvents))
-  readonly pagedNamespaces = $derived(this.#slice(this.sortedNamespaces))
+  readonly pagedPods = $derived(this.#slice(this.sortedPods));
+  readonly pagedNodes = $derived(this.#slice(this.sortedNodes));
+  readonly pagedWorkloads = $derived(this.#slice(this.sortedWorkloads));
+  readonly pagedEvents = $derived(this.#slice(this.sortedEvents));
+  readonly pagedNamespaces = $derived(this.#slice(this.sortedNamespaces));
   readonly sortedApplications = $derived(
     sortRows(this.visibleApplications, this.sort, APPLICATION_SORT),
-  )
-  readonly pagedApplications = $derived(this.#slice(this.sortedApplications))
-  readonly pagedTableRows = $derived(this.#slice(this.sortedTableRows))
+  );
+  readonly pagedApplications = $derived(this.#slice(this.sortedApplications));
+  readonly pagedTableRows = $derived(this.#slice(this.sortedTableRows));
 
   /**
    * Findings that need acting on, minus anything the operator has snoozed.
@@ -578,23 +617,28 @@ export class ClusterSession {
    */
   readonly activeIssues = $derived(
     (this.overview?.findings ?? []).filter(
-      (finding) => finding.severity !== 'info' && !this.isFullySnoozed(finding),
+      (finding) => finding.severity !== "info" && !this.isFullySnoozed(finding),
     ),
-  )
+  );
 
   /** Findings every object of which is currently quietened. */
   readonly snoozedIssues = $derived(
     (this.overview?.findings ?? []).filter(
-      (finding) => finding.severity !== 'info' && this.isFullySnoozed(finding),
+      (finding) => finding.severity !== "info" && this.isFullySnoozed(finding),
     ),
-  )
+  );
 
   /** How many of a finding's listed objects are snoozed. */
   snoozedSubjectCount = (finding: Finding): number =>
     finding.subjects.filter(
       (subject) =>
-        preferences.snoozedUntil(this.cluster.id, finding.id, subject.namespace, subject.name) > 0,
-    ).length
+        preferences.snoozedUntil(
+          this.cluster.id,
+          finding.id,
+          subject.namespace,
+          subject.name,
+        ) > 0,
+    ).length;
 
   /**
    * Whether a finding has nothing left to say.
@@ -607,7 +651,7 @@ export class ClusterSession {
   isFullySnoozed = (finding: Finding): boolean =>
     finding.subjects.length > 0 &&
     !finding.truncated &&
-    this.snoozedSubjectCount(finding) === finding.subjects.length
+    this.snoozedSubjectCount(finding) === finding.subjects.length;
 
   /**
    * How many findings need attention, from the last assessment.
@@ -615,12 +659,12 @@ export class ClusterSession {
    * Info findings are excluded: they are worth reading but do not mean
    * anything is wrong, and a badge that is permanently lit stops being read.
    */
-  readonly issueCount = $derived(this.activeIssues.length)
+  readonly issueCount = $derived(this.activeIssues.length);
 
   /** Whether any finding is critical, which decides the badge's colour. */
   readonly hasCriticalIssues = $derived(
-    this.activeIssues.some((finding) => finding.severity === 'critical'),
-  )
+    this.activeIssues.some((finding) => finding.severity === "critical"),
+  );
 
   /**
    * The verdict, re-graded over what is actually outstanding.
@@ -631,55 +675,58 @@ export class ClusterSession {
    * something: quietening the only warning on a cluster should leave it
    * reading as healthy, not as degraded by something deliberately deferred.
    */
-  readonly health = $derived.by((): 'healthy' | 'degraded' | 'critical' | 'unknown' => {
-    if (this.activeIssues.some((finding) => finding.severity === 'critical')) return 'critical'
-    if (this.activeIssues.length > 0) return 'degraded'
+  readonly health = $derived.by(
+    (): "healthy" | "degraded" | "critical" | "unknown" => {
+      if (this.activeIssues.some((finding) => finding.severity === "critical"))
+        return "critical";
+      if (this.activeIssues.length > 0) return "degraded";
 
-    // SNOOZING CANNOT TURN "NOT READ" INTO "NOTHING WRONG". Re-grading over the
-    // outstanding findings is right for everything else, but the backend
-    // reports `unknown` when a source the verdict depends on could not be read
-    // — and no amount of quietening findings makes unread data read. Falling
-    // through to 'healthy' here is how this view kept saying "No problems
-    // found" over a cluster it could not reach.
-    if (this.overview?.health === 'unknown') return 'unknown'
+      // SNOOZING CANNOT TURN "NOT READ" INTO "NOTHING WRONG". Re-grading over the
+      // outstanding findings is right for everything else, but the backend
+      // reports `unknown` when a source the verdict depends on could not be read
+      // — and no amount of quietening findings makes unread data read. Falling
+      // through to 'healthy' here is how this view kept saying "No problems
+      // found" over a cluster it could not reach.
+      if (this.overview?.health === "unknown") return "unknown";
 
-    return 'healthy'
-  })
+      return "healthy";
+    },
+  );
 
   /** Counts for the header summary, meaningful only for pod views. */
   readonly podSummary = $derived({
     total: this.pods.length,
     unhealthy: this.pods.filter((pod) => !pod.isHealthy).length,
     restarts: this.pods.reduce((sum, pod) => sum + pod.restarts, 0),
-  })
+  });
 
   /** Loads the navigator tree and namespace list, then the default view. */
   initialise = async (): Promise<void> => {
-    await Promise.all([this.loadKinds(), this.loadNamespaces()])
-    await this.refresh()
-  }
+    await Promise.all([this.loadKinds(), this.loadNamespaces()]);
+    await this.refresh();
+  };
 
   loadKinds = async (): Promise<void> => {
     try {
-      this.kinds = await listKinds(this.cluster.id)
-      this.#kindsReadAt = Date.now()
+      this.kinds = await listKinds(this.cluster.id);
+      this.#kindsReadAt = Date.now();
     } catch (cause) {
-      this.#fail(cause)
+      this.#fail(cause);
     }
-  }
+  };
 
   loadNamespaces = async (): Promise<void> => {
     try {
-      this.namespaces = await listNamespaces(this.cluster.id)
+      this.namespaces = await listNamespaces(this.cluster.id);
     } catch (cause) {
       // A cluster whose RBAC forbids listing namespaces is still usable for a
       // namespace named directly, so this empties the filter rather than
       // blocking the whole tab.
-      const error = toApiError(cause)
-      this.namespaces = []
-      if (error.code !== 'forbidden') this.error = error
+      const error = toApiError(cause);
+      this.namespaces = [];
+      if (error.code !== "forbidden") this.error = error;
     }
-  }
+  };
 
   /**
    * Re-reads the namespace list, for the moment somebody opens the filter.
@@ -704,20 +751,20 @@ export class ClusterSession {
    */
   refreshNamespaces = async (): Promise<void> => {
     try {
-      this.namespaces = await listNamespaces(this.cluster.id)
+      this.namespaces = await listNamespaces(this.cluster.id);
     } catch {
       // Keep what is displayed. The next open tries again.
     }
-  }
+  };
 
   /** Selects a kind and loads it. */
   selectKind = async (kindId: string): Promise<void> => {
-    if (kindId === this.selectedKindId) return
-    this.selectedKindId = kindId
-    this.page = 1
-    this.closeDetail()
-    await this.refresh()
-  }
+    if (kindId === this.selectedKindId) return;
+    this.selectedKindId = kindId;
+    this.page = 1;
+    this.closeDetail();
+    await this.refresh();
+  };
 
   /**
    * Finds the row object for an object being opened, when one was not handed
@@ -725,27 +772,32 @@ export class ClusterSession {
    * panel falls back to what the manifest alone can show.
    */
   #findPod(name: string, namespace: string): Pod | null {
-    if (this.viewMode !== 'pods') return null
-    return this.pods.find((pod) => pod.name === name && pod.namespace === namespace) ?? null
+    if (this.viewMode !== "pods") return null;
+    return (
+      this.pods.find(
+        (pod) => pod.name === name && pod.namespace === namespace,
+      ) ?? null
+    );
   }
 
   #findNamespace(name: string): NamespaceSummary | null {
-    if (this.viewMode !== 'namespaces') return null
-    return this.namespaceRows.find((row) => row.name === name) ?? null
+    if (this.viewMode !== "namespaces") return null;
+    return this.namespaceRows.find((row) => row.name === name) ?? null;
   }
 
   #findNode(name: string): Node | null {
-    if (this.viewMode !== 'nodes') return null
-    return this.nodes.find((node) => node.name === name) ?? null
+    if (this.viewMode !== "nodes") return null;
+    return this.nodes.find((node) => node.name === name) ?? null;
   }
 
   #findWorkload(name: string, namespace: string): Workload | null {
-    if (this.viewMode !== 'workloads') return null
+    if (this.viewMode !== "workloads") return null;
     return (
       this.workloads.find(
-        (workload) => workload.name === name && workload.namespace === namespace,
+        (workload) =>
+          workload.name === name && workload.namespace === namespace,
       ) ?? null
-    )
+    );
   }
 
   /**
@@ -770,23 +822,23 @@ export class ClusterSession {
   ): Promise<void> => {
     const needsNamespace =
       namespaced &&
-      namespace !== '' &&
+      namespace !== "" &&
       this.namespace !== ALL_NAMESPACES &&
-      this.namespace !== namespace
+      this.namespace !== namespace;
 
     if (kindId !== this.selectedKindId || needsNamespace) {
-      this.selectedKindId = kindId
+      this.selectedKindId = kindId;
       if (needsNamespace) {
-        this.namespace = namespace
-        preferences.setClusterNamespace(this.cluster.id, namespace)
+        this.namespace = namespace;
+        preferences.setClusterNamespace(this.cluster.id, namespace);
       }
-      this.page = 1
-      this.closeDetail()
-      await this.refresh()
+      this.page = 1;
+      this.closeDetail();
+      await this.refresh();
     }
 
-    await this.openDetail(name, namespace)
-  }
+    await this.openDetail(name, namespace);
+  };
 
   /**
    * Opens an application's panel.
@@ -796,21 +848,26 @@ export class ClusterSession {
    * shows is already in the row, which is why this takes the row.
    */
   openApplication = (application: Application): void => {
-    this.selectedApplication = application
-    this.selectedName = application.instance
-    this.selectedNamespace = application.namespace
-    this.selectedPod = null
-    this.selectedNode = null
-    this.selectedWorkload = null
-    this.selectedNamespaceRow = null
-    this.manifest = null
-    this.manifestStatus = 'ready'
+    this.selectedApplication = application;
+    this.selectedName = application.instance;
+    this.selectedNamespace = application.namespace;
+    this.selectedPod = null;
+    this.selectedNode = null;
+    this.selectedWorkload = null;
+    this.selectedNamespaceRow = null;
+    this.manifest = null;
+    this.manifestStatus = "ready";
     // Seeded from what the list has been recording since the tab opened, the
     // same way a pod's and a node's are.
     this.usage = usageHistory.since(
-      usageKey(this.cluster.id, 'application', application.namespace, application.instance),
-    )
-  }
+      usageKey(
+        this.cluster.id,
+        "application",
+        application.namespace,
+        application.instance,
+      ),
+    );
+  };
 
   /**
    * Opens a kind's list, filtered to one namespace.
@@ -821,28 +878,29 @@ export class ClusterSession {
    * the wrong list, and on a large cluster an expensive one.
    */
   browseKind = async (kindId: string, namespace: string): Promise<void> => {
-    const changed = kindId !== this.selectedKindId || namespace !== this.namespace
+    const changed =
+      kindId !== this.selectedKindId || namespace !== this.namespace;
 
-    this.selectedKindId = kindId
-    this.namespace = namespace
-    preferences.setClusterNamespace(this.cluster.id, namespace)
-    this.page = 1
+    this.selectedKindId = kindId;
+    this.namespace = namespace;
+    preferences.setClusterNamespace(this.cluster.id, namespace);
+    this.page = 1;
     // Closed either way: the drawer is open on the namespace that was just
     // navigated away from, and leaving it there over a list of something else
     // is a panel describing an object nothing on screen refers to.
-    this.closeDetail()
+    this.closeDetail();
 
-    if (changed) await this.refresh()
-  }
+    if (changed) await this.refresh();
+  };
 
   /** Changes the namespace filter, remembers it for this cluster, and reloads. */
   selectNamespace = async (namespace: string): Promise<void> => {
-    if (namespace === this.namespace) return
-    this.namespace = namespace
-    preferences.setClusterNamespace(this.cluster.id, namespace)
-    this.page = 1
-    await this.refresh()
-  }
+    if (namespace === this.namespace) return;
+    this.namespace = namespace;
+    preferences.setClusterNamespace(this.cluster.id, namespace);
+    this.page = 1;
+    await this.refresh();
+  };
 
   /**
    * Sets the search term.
@@ -858,26 +916,26 @@ export class ClusterSession {
    * imperceptible on a word typed at speed.
    */
   setSearch = (search: string): void => {
-    this.typedSearch = search
-    this.page = 1
+    this.typedSearch = search;
+    this.page = 1;
 
-    if (this.#searchTimer) clearTimeout(this.#searchTimer)
-    if (search === '') {
+    if (this.#searchTimer) clearTimeout(this.#searchTimer);
+    if (search === "") {
       // Clearing is immediate. It is usually a deliberate "show me everything
       // again", and waiting for a timer to restore the full list feels broken.
-      this.search = ''
-      return
+      this.search = "";
+      return;
     }
     this.#searchTimer = setTimeout(() => {
-      this.#searchTimer = null
-      this.search = this.typedSearch
-    }, SEARCH_DEBOUNCE_MS)
-  }
+      this.#searchTimer = null;
+      this.search = this.typedSearch;
+    }, SEARCH_DEBOUNCE_MS);
+  };
 
   /** Moves to a page, clamped to the range that exists. */
   goToPage = (page: number): void => {
-    this.page = Math.min(Math.max(1, page), this.pageCount)
-  }
+    this.page = Math.min(Math.max(1, page), this.pageCount);
+  };
 
   /**
    * Cycles a column's sort: ascending, descending, then back to server order.
@@ -887,28 +945,34 @@ export class ClusterSession {
    * longer exists.
    */
   toggleSort = (columnId: string): void => {
-    const current = this.sorts[this.selectedKindId]
+    const current = this.sorts[this.selectedKindId];
     const next: SortState | null =
       !current || current.columnId !== columnId
-        ? { columnId, direction: 'asc' }
-        : current.direction === 'asc'
-          ? { columnId, direction: 'desc' }
-          : null
+        ? { columnId, direction: "asc" }
+        : current.direction === "asc"
+          ? { columnId, direction: "desc" }
+          : null;
 
-    const sorts = { ...this.sorts }
+    const sorts = { ...this.sorts };
     if (next) {
-      sorts[this.selectedKindId] = next
+      sorts[this.selectedKindId] = next;
     } else {
-      delete sorts[this.selectedKindId]
+      delete sorts[this.selectedKindId];
     }
-    this.sorts = sorts
-    this.page = 1
-  }
+    this.sorts = sorts;
+    this.page = 1;
+  };
 
   /** Slices a filtered list down to the current page. */
   #slice<T>(rows: T[]): T[] {
-    const start = (Math.min(Math.max(1, this.page), Math.max(1, Math.ceil(rows.length / preferences.pageSize))) - 1) * preferences.pageSize
-    return rows.slice(start, start + preferences.pageSize)
+    const start =
+      (Math.min(
+        Math.max(1, this.page),
+        Math.max(1, Math.ceil(rows.length / preferences.pageSize)),
+      ) -
+        1) *
+      preferences.pageSize;
+    return rows.slice(start, start + preferences.pageSize);
   }
 
   /**
@@ -921,37 +985,37 @@ export class ClusterSession {
    * nodes.
    */
   #fail(cause: unknown): ApiError {
-    const error = toApiError(cause)
-    this.error = error
-    if (error.code === 'cluster_not_found') this.onVanished?.(error)
-    return error
+    const error = toApiError(cause);
+    this.error = error;
+    if (error.code === "cluster_not_found") this.onVanished?.(error);
+    return error;
   }
 
   /** Reloads whichever view is active. */
   refresh = async (): Promise<void> => {
-    const request = ++this.#request
-    this.status = 'loading'
+    const request = ++this.#request;
+    this.status = "loading";
 
     // Hung off refresh rather than off the poll timer, so it also happens for
     // somebody who turned auto-refresh off in Settings and drives the app with
     // the refresh button. It rate-limits itself, so the mutation handlers that
     // call refresh() to reload a list tick past it for free.
-    void this.#refreshKinds()
+    void this.#refreshKinds();
 
     try {
-      const rows = await this.#fetch()
-      if (request !== this.#request) return
+      const rows = await this.#fetch();
+      if (request !== this.#request) return;
 
-      this.#assign(rows)
-      this.status = 'ready'
-      this.lastRefreshedAt = new Date()
-      this.error = null
+      this.#assign(rows);
+      this.status = "ready";
+      this.lastRefreshedAt = new Date();
+      this.error = null;
     } catch (cause) {
-      if (request !== this.#request) return
-      this.status = 'error'
-      this.#fail(cause)
+      if (request !== this.#request) return;
+      this.status = "error";
+      this.#fail(cause);
     }
-  }
+  };
 
   /**
    * Re-reads the navigator's kinds once they are old enough to be worth it.
@@ -968,16 +1032,16 @@ export class ClusterSession {
    * frontend.
    */
   async #refreshKinds(): Promise<void> {
-    if (Date.now() - this.#kindsReadAt < KINDS_REFRESH_INTERVAL_MS) return
+    if (Date.now() - this.#kindsReadAt < KINDS_REFRESH_INTERVAL_MS) return;
 
     // Stamped BEFORE the call, not after it. Stamping on success alone means
     // a cluster whose discovery is failing gets retried on every single poll
     // — every two seconds, at the fastest interval — instead of once per
     // window, which is the opposite of what a slow clock is for.
-    this.#kindsReadAt = Date.now()
+    this.#kindsReadAt = Date.now();
 
     try {
-      this.kinds = await listKinds(this.cluster.id)
+      this.kinds = await listKinds(this.cluster.id);
     } catch {
       // Keep the tree that is on screen. This is a background top-up of
       // something already displayed and usable, so it must not blank the
@@ -995,7 +1059,7 @@ export class ClusterSession {
    */
   async #refreshAssessment(): Promise<void> {
     try {
-      this.#adopt(await getOverview(this.cluster.id))
+      this.#adopt(await getOverview(this.cluster.id));
     } catch {
       // The next cycle tries again. A missed assessment is a stale badge for
       // one interval, not something to interrupt anyone over.
@@ -1016,41 +1080,45 @@ export class ClusterSession {
    * feature like this gets switched off in its first minute.
    */
   #adopt(overview: Overview): void {
-    const previous = this.#lastFindingIds
+    const previous = this.#lastFindingIds;
     const current = new Set(
-      overview.findings.filter((finding) => finding.severity !== 'info').map((finding) => finding.id),
-    )
-    this.#lastFindingIds = current
-    this.overview = overview
-    this.#retainNodeUsage(overview)
+      overview.findings
+        .filter((finding) => finding.severity !== "info")
+        .map((finding) => finding.id),
+    );
+    this.#lastFindingIds = current;
+    this.overview = overview;
+    this.#retainNodeUsage(overview);
 
-    if (previous === null) return
+    if (previous === null) return;
 
     // Snoozed findings are silent by definition, and so is un-snoozing one:
     // the id was in the previous set throughout, because that set is not
     // filtered by snoozing.
     const raised = overview.findings.filter(
       (finding) =>
-        finding.severity !== 'info' && !previous.has(finding.id) && !this.isFullySnoozed(finding),
-    )
-    if (raised.length === 0) return
+        finding.severity !== "info" &&
+        !previous.has(finding.id) &&
+        !this.isFullySnoozed(finding),
+    );
+    if (raised.length === 0) return;
 
     // One sound for the batch, at the worst severity in it. Six pods failing
     // at once is one event to an operator, and six overlapping chimes is
     // noise they cannot count anyway. The worst severity wins because a
     // critical arriving alongside a warning is a critical arriving.
     if (preferences.alertSoundsEnabled) {
-      const worst = raised.some((finding) => finding.severity === 'critical')
-        ? 'critical'
-        : 'warning'
-      void alertPlayer.play(preferences.alertSoundFor(worst))
+      const worst = raised.some((finding) => finding.severity === "critical")
+        ? "critical"
+        : "warning";
+      void alertPlayer.play(preferences.alertSoundFor(worst));
     }
   }
 
   /** Issues the call the active view needs. */
   async #fetch(): Promise<unknown> {
-    const { id } = this.cluster
-    const namespace = this.isNamespaced ? this.namespace : ALL_NAMESPACES
+    const { id } = this.cluster;
+    const namespace = this.isNamespaced ? this.namespace : ALL_NAMESPACES;
 
     // The assessment is refreshed whatever is on screen. It used to be
     // fetched only while the overview was open, which left two things wrong:
@@ -1059,23 +1127,23 @@ export class ClusterSession {
     // nothing could raise an alert about a finding while somebody was reading
     // a pod list. It runs alongside, so a slow assessment never delays the
     // rows the operator is actually waiting for.
-    if (this.viewMode !== 'overview') void this.#refreshAssessment()
+    if (this.viewMode !== "overview") void this.#refreshAssessment();
 
     switch (this.viewMode) {
-      case 'overview':
-        return getOverview(id)
-      case 'pods':
-        return listPods(id, namespace)
-      case 'nodes':
-        return listNodes(id)
-      case 'events':
-        return listEvents(id, namespace)
-      case 'namespaces':
-        return listNamespaceSummaries(id)
-      case 'applications':
-        return listApplications(id, namespace)
-      case 'workloads': {
-        const kind = WORKLOAD_KIND_BY_ID[this.selectedKindId]
+      case "overview":
+        return getOverview(id);
+      case "pods":
+        return listPods(id, namespace);
+      case "nodes":
+        return listNodes(id);
+      case "events":
+        return listEvents(id, namespace);
+      case "namespaces":
+        return listNamespaceSummaries(id);
+      case "applications":
+        return listApplications(id, namespace);
+      case "workloads": {
+        const kind = WORKLOAD_KIND_BY_ID[this.selectedKindId];
         // Not awaited, so a slow pod list never delays the rows themselves.
         //
         // GUARDED BY A GENERATION, not by comparing the kind. The kind alone
@@ -1083,18 +1151,19 @@ export class ClusterSession {
         // unchanged, two refreshes of the same list resolving out of order
         // with the older winning, and a failure clearing figures a later
         // success had already installed. One counter closes all three.
-        const generation = ++this.#usageGeneration
+        const generation = ++this.#usageGeneration;
         void workloadConsumption(id, kind, namespace)
           .then((usage) => {
-            if (generation === this.#usageGeneration) this.workloadUsage = usage
+            if (generation === this.#usageGeneration)
+              this.workloadUsage = usage;
           })
           .catch(() => {
-            if (generation === this.#usageGeneration) this.workloadUsage = {}
-          })
-        return listWorkloads(id, kind, namespace)
+            if (generation === this.#usageGeneration) this.workloadUsage = {};
+          });
+        return listWorkloads(id, kind, namespace);
       }
       default:
-        return listTable(id, this.selectedKindId, namespace)
+        return listTable(id, this.selectedKindId, namespace);
     }
   }
 
@@ -1102,13 +1171,13 @@ export class ClusterSession {
   #assign(rows: unknown): void {
     // Clearing the others matters: a stale pod list left behind would flash
     // back into view for a frame when the operator returns to Pods.
-    this.pods = []
-    this.nodes = []
-    this.workloads = []
-    this.events = []
-    this.namespaceRows = []
-    this.applications = []
-    this.table = null
+    this.pods = [];
+    this.nodes = [];
+    this.workloads = [];
+    this.events = [];
+    this.namespaceRows = [];
+    this.applications = [];
+    this.table = null;
     // NOT cleared: it arrives a beat after the rows it belongs to, and
     // clearing it here would blank every meter for one frame on each refresh.
     // A response for another list is turned away where it lands instead.
@@ -1118,36 +1187,36 @@ export class ClusterSession {
     // moment an operator clicked through to look at those three issues.
 
     switch (this.viewMode) {
-      case 'overview':
-        this.#adopt(rows as Overview)
-        break
-      case 'pods':
-        this.pods = rows as Pod[]
-        break
-      case 'nodes':
-        this.nodes = rows as Node[]
-        break
-      case 'events':
-        this.events = rows as K8sEvent[]
-        break
-      case 'namespaces':
-        this.namespaceRows = rows as NamespaceSummary[]
-        break
-      case 'applications': {
-        const inventory = rows as ApplicationInventory
-        this.applications = inventory.applications
-        this.unlabelled = inventory.unlabelled
-        break
+      case "overview":
+        this.#adopt(rows as Overview);
+        break;
+      case "pods":
+        this.pods = rows as Pod[];
+        break;
+      case "nodes":
+        this.nodes = rows as Node[];
+        break;
+      case "events":
+        this.events = rows as K8sEvent[];
+        break;
+      case "namespaces":
+        this.namespaceRows = rows as NamespaceSummary[];
+        break;
+      case "applications": {
+        const inventory = rows as ApplicationInventory;
+        this.applications = inventory.applications;
+        this.unlabelled = inventory.unlabelled;
+        break;
       }
-      case 'workloads':
-        this.workloads = rows as Workload[]
-        break
+      case "workloads":
+        this.workloads = rows as Workload[];
+        break;
       default:
-        this.table = rows as ResourceTable
+        this.table = rows as ResourceTable;
     }
 
-    this.#retainUsage()
-    this.#refreshSelection()
+    this.#retainUsage();
+    this.#refreshSelection();
   }
 
   /**
@@ -1162,7 +1231,7 @@ export class ClusterSession {
    * Costs one array push per row per refresh, and nothing on the wire.
    */
   #retainUsage(): void {
-    const at = Date.now()
+    const at = Date.now();
 
     // Applications, on the same terms: the row carries a measurement for
     // every application on screen, so a panel opened after a few refreshes
@@ -1170,12 +1239,20 @@ export class ClusterSession {
     // never filled at all — the panel was being handed a series nothing had
     // ever written to.
     for (const application of this.applications) {
-      if (!application.hasMetrics) continue
-      usageHistory.record(usageKey(this.cluster.id, 'application', application.namespace, application.instance), {
-        at,
-        cpuCores: application.cpuCores,
-        memoryBytes: application.memoryBytes,
-      })
+      if (!application.hasMetrics) continue;
+      usageHistory.record(
+        usageKey(
+          this.cluster.id,
+          "application",
+          application.namespace,
+          application.instance,
+        ),
+        {
+          at,
+          cpuCores: application.cpuCores,
+          memoryBytes: application.memoryBytes,
+        },
+      );
     }
 
     // Namespaces, on the same terms and for the same reason: the row already
@@ -1184,21 +1261,27 @@ export class ClusterSession {
     // Raw numbers rather than the formatted strings the pods loop parses —
     // the row carries both, and the formatted CPU is rounded to two decimals.
     for (const row of this.namespaceRows) {
-      if (!row.hasMetrics) continue
-      usageHistory.record(usageKey(this.cluster.id, 'namespace', '', row.name), {
-        at,
-        cpuCores: row.cpuCores,
-        memoryBytes: row.memoryBytes,
-      })
+      if (!row.hasMetrics) continue;
+      usageHistory.record(
+        usageKey(this.cluster.id, "namespace", "", row.name),
+        {
+          at,
+          cpuCores: row.cpuCores,
+          memoryBytes: row.memoryBytes,
+        },
+      );
     }
 
     for (const pod of this.pods) {
-      if (!pod.hasMetrics) continue
-      usageHistory.record(usageKey(this.cluster.id, 'pod', pod.namespace, pod.name), {
-        at,
-        cpuCores: parseQuantity(pod.cpu) ?? 0,
-        memoryBytes: parseQuantity(pod.memory) ?? 0,
-      })
+      if (!pod.hasMetrics) continue;
+      usageHistory.record(
+        usageKey(this.cluster.id, "pod", pod.namespace, pod.name),
+        {
+          at,
+          cpuCores: parseQuantity(pod.cpu) ?? 0,
+          memoryBytes: parseQuantity(pod.memory) ?? 0,
+        },
+      );
     }
 
     // Nodes are NOT recorded here. #assign clears every row buffer each poll
@@ -1225,18 +1308,18 @@ export class ClusterSession {
    * plausible line of the wrong quantity.
    */
   #retainNodeUsage(overview: Overview): void {
-    const at = Date.now()
+    const at = Date.now();
 
     for (const load of overview.nodeLoads) {
       // An unmeasured node is skipped rather than recorded as zero: a cluster
       // with no metrics-server would otherwise accumulate a confident flat
       // line along the axis.
-      if (!load.usageMeasured) continue
-      usageHistory.record(usageKey(this.cluster.id, 'node', '', load.name), {
+      if (!load.usageMeasured) continue;
+      usageHistory.record(usageKey(this.cluster.id, "node", "", load.name), {
         at,
         cpuCores: load.usageCpuMilli / 1000,
         memoryBytes: load.usageMemoryBytes,
-      })
+      });
     }
   }
 
@@ -1256,7 +1339,7 @@ export class ClusterSession {
    * reading, and the list behind them already shows it is no longer there.
    */
   #refreshSelection(): void {
-    if (!this.selectedName) return
+    if (!this.selectedName) return;
 
     // An open application, refreshed from the list behind it and appended to
     // its chart. Without this the panel showed whatever had been recorded
@@ -1267,46 +1350,49 @@ export class ClusterSession {
         (application) =>
           application.instance === this.selectedName &&
           application.namespace === this.selectedNamespace,
-      )
+      );
       if (fresh) {
-        this.selectedApplication = fresh
+        this.selectedApplication = fresh;
         if (fresh.hasMetrics) {
           this.#append({
             at: Date.now(),
             cpuCores: fresh.cpuCores,
             memoryBytes: fresh.memoryBytes,
-          })
+          });
         }
       }
-      return
+      return;
     }
 
     if (this.selectedPod) {
       const fresh = this.pods.find(
-        (pod) => pod.name === this.selectedName && pod.namespace === this.selectedNamespace,
-      )
+        (pod) =>
+          pod.name === this.selectedName &&
+          pod.namespace === this.selectedNamespace,
+      );
       if (fresh) {
-        this.selectedPod = fresh
-        this.#recordUsage(fresh)
+        this.selectedPod = fresh;
+        this.#recordUsage(fresh);
       }
-      return
+      return;
     }
 
     if (this.selectedNode) {
-      const fresh = this.nodes.find((node) => node.name === this.selectedName)
+      const fresh = this.nodes.find((node) => node.name === this.selectedName);
       if (fresh) {
-        this.selectedNode = fresh
-        this.#recordNodeUsage(fresh)
+        this.selectedNode = fresh;
+        this.#recordNodeUsage(fresh);
       }
-      return
+      return;
     }
 
     if (this.selectedWorkload) {
       const fresh = this.workloads.find(
         (workload) =>
-          workload.name === this.selectedName && workload.namespace === this.selectedNamespace,
-      )
-      if (fresh) this.selectedWorkload = fresh
+          workload.name === this.selectedName &&
+          workload.namespace === this.selectedNamespace,
+      );
+      if (fresh) this.selectedWorkload = fresh;
     }
   }
 
@@ -1325,33 +1411,34 @@ export class ClusterSession {
    * starts empty and fills as you watch, rather than pretending to a history
    * nothing recorded.
    */
-  usage = $state.raw<UsageSample[]>([])
+  usage = $state.raw<UsageSample[]>([]);
 
   /** The open node's usage, on the same terms as a pod's. */
   #recordNodeUsage(node: Node): void {
-    if (!node.hasMetrics) return
+    if (!node.hasMetrics) return;
     this.#append({
       at: Date.now(),
       cpuCores: parseQuantity(node.cpu) ?? 0,
       memoryBytes: parseQuantity(node.memory) ?? 0,
-    })
+    });
   }
 
   #recordUsage(pod: Pod): void {
-    if (!pod.hasMetrics) return
+    if (!pod.hasMetrics) return;
 
     this.#append({
       at: Date.now(),
       cpuCores: parseQuantity(pod.cpu) ?? 0,
       memoryBytes: parseQuantity(pod.memory) ?? 0,
-    })
+    });
   }
 
   #append(sample: UsageSample): void {
     // Replaced rather than pushed: `$state.raw` does not track mutation, and
     // a chart that never redrew would be a subtle and very confusing bug.
-    const next = [...this.usage, sample]
-    this.usage = next.length > MAX_USAGE_SAMPLES ? next.slice(-MAX_USAGE_SAMPLES) : next
+    const next = [...this.usage, sample];
+    this.usage =
+      next.length > MAX_USAGE_SAMPLES ? next.slice(-MAX_USAGE_SAMPLES) : next;
   }
 
   // --- Detail drawer --------------------------------------------------------
@@ -1364,7 +1451,7 @@ export class ClusterSession {
    * Editing a masked Secret would write the placeholders back over the real
    * values, which is data loss dressed up as an edit.
    */
-  secretsRevealed = $state(false)
+  secretsRevealed = $state(false);
 
   /**
    * Opens the detail drawer for one object and loads its manifest.
@@ -1388,15 +1475,15 @@ export class ClusterSession {
     workload?: Workload,
     node?: Node,
   ): Promise<void> => {
-    this.selectedName = name
-    this.selectedNamespace = namespace
-    this.selectedPod = pod ?? this.#findPod(name, namespace)
-    this.selectedNode = node ?? this.#findNode(name)
-    this.selectedWorkload = workload ?? this.#findWorkload(name, namespace)
-    this.selectedNamespaceRow = this.#findNamespace(name)
-    this.selectedApplication = null
-    this.manifest = null
-    this.manifestStatus = 'loading'
+    this.selectedName = name;
+    this.selectedNamespace = namespace;
+    this.selectedPod = pod ?? this.#findPod(name, namespace);
+    this.selectedNode = node ?? this.#findNode(name);
+    this.selectedWorkload = workload ?? this.#findWorkload(name, namespace);
+    this.selectedNamespaceRow = this.#findNamespace(name);
+    this.selectedApplication = null;
+    this.manifest = null;
+    this.manifestStatus = "loading";
     // SEEDED FROM WHAT WAS ALREADY WATCHED, rather than starting empty. The
     // list has been refreshing since the tab opened and every one of those
     // responses carried this object's usage; the chart may as well open with
@@ -1406,19 +1493,19 @@ export class ClusterSession {
     // resolved above rather than handed in — which is what makes a followed
     // link open with the same history a clicked row does.
     this.usage = this.selectedPod
-      ? usageHistory.since(usageKey(this.cluster.id, 'pod', namespace, name))
+      ? usageHistory.since(usageKey(this.cluster.id, "pod", namespace, name))
       : this.selectedNode
-        ? usageHistory.since(usageKey(this.cluster.id, 'node', '', name))
+        ? usageHistory.since(usageKey(this.cluster.id, "node", "", name))
         : this.selectedNamespaceRow
-          ? usageHistory.since(usageKey(this.cluster.id, 'namespace', '', name))
-          : []
+          ? usageHistory.since(usageKey(this.cluster.id, "namespace", "", name))
+          : [];
     // Every open starts hidden. A reveal is a decision about one object, and
     // carrying it to the next one is how Freelens ends up showing a value
     // somebody unmasked in private on the pod they open in a meeting.
-    this.secretsRevealed = false
+    this.secretsRevealed = false;
 
-    await this.#loadManifest(name, namespace)
-  }
+    await this.#loadManifest(name, namespace);
+  };
 
   /**
    * Re-reads the manifest with the Secret values in it.
@@ -1427,10 +1514,10 @@ export class ClusterSession {
    * read, and it happens because somebody asked for it.
    */
   revealManifestSecrets = async (): Promise<void> => {
-    if (!this.selectedName) return
-    this.secretsRevealed = true
-    await this.#loadManifest(this.selectedName, this.selectedNamespace)
-  }
+    if (!this.selectedName) return;
+    this.secretsRevealed = true;
+    await this.#loadManifest(this.selectedName, this.selectedNamespace);
+  };
 
   /**
    * Puts the values back behind their placeholders.
@@ -1446,39 +1533,62 @@ export class ClusterSession {
    * looks like anyway.
    */
   hideManifestSecrets = async (): Promise<void> => {
-    if (!this.selectedName || !this.secretsRevealed) return
-    this.secretsRevealed = false
-    await this.#loadManifest(this.selectedName, this.selectedNamespace)
-  }
+    if (!this.selectedName || !this.secretsRevealed) return;
+    this.secretsRevealed = false;
+    await this.#loadManifest(this.selectedName, this.selectedNamespace);
+  };
+
+  /**
+   * The manifest reads issued so far, so a stale one cannot land.
+   *
+   * WITHOUT THIS A SECRET STAYS ON SCREEN WITH ITS AUTO-MASK DISARMED, which
+   * is the one outcome the whole reveal design exists to prevent. Revealing
+   * sets `secretsRevealed` synchronously, so the toolbar button swaps to
+   * "Hide" in the same position before the larger read returns. On a slow
+   * cluster the operator does the universal did-that-work gesture and clicks
+   * again — now two reads are in flight, and if the reveal lands last the
+   * manifest holds decoded values while `secretsRevealed` is false. The
+   * window-blur mask is gated on that flag, so alt-tabbing to start a screen
+   * share no longer hides anything.
+   *
+   * It also stops pod A's YAML appearing under pod B's header, and stops a
+   * stale failure closing a tab for an object already navigated away from.
+   */
+  #manifestRequest = 0;
 
   async #loadManifest(name: string, namespace: string): Promise<void> {
-    this.manifestStatus = 'loading'
+    const request = ++this.#manifestRequest;
+    const revealed = this.secretsRevealed;
+    this.manifestStatus = "loading";
     try {
-      this.manifest = await getManifest(
+      const manifest = await getManifest(
         this.cluster.id,
         this.selectedKindId,
         namespace,
         name,
-        this.secretsRevealed,
-      )
-      this.manifestStatus = 'ready'
+        revealed,
+      );
+      if (request !== this.#manifestRequest) return;
+      this.manifest = manifest;
+      this.manifestStatus = "ready";
     } catch (cause) {
-      this.manifestStatus = 'error'
-      this.#fail(cause)
+      if (request !== this.#manifestRequest) return;
+      this.manifestStatus = "error";
+      this.#fail(cause);
     }
   }
 
   /** Closes the detail drawer. */
   closeDetail = (): void => {
-    this.selectedName = null
-    this.selectedNamespace = ''
-    this.selectedPod = null
-    this.selectedNode = null
-    this.selectedWorkload = null
-    this.manifest = null
-    this.manifestStatus = 'idle'
-    this.usage = []
-  }
+    this.selectedName = null;
+    this.selectedNamespace = "";
+    this.selectedPod = null;
+    this.selectedNode = null;
+    this.selectedWorkload = null;
+    this.manifest = null;
+    this.manifestStatus = "idle";
+    this.usage = [];
+  };
 
   // --- Auto-refresh ---------------------------------------------------------
 
@@ -1490,53 +1600,60 @@ export class ClusterSession {
    * watch has to handle. Swapping in a watch changes this method and nothing
    * else.
    */
-  startAutoRefresh = (intervalMs: number = preferences.effectiveIntervalMs): void => {
-    this.stopAutoRefresh()
+  startAutoRefresh = (
+    intervalMs: number = preferences.effectiveIntervalMs,
+  ): void => {
+    this.stopAutoRefresh();
 
     // Zero means the operator chose manual refreshing in Settings. Starting a
     // zero-delay interval would spin the CPU rather than doing nothing.
-    if (intervalMs <= 0) return
+    if (intervalMs <= 0) return;
 
     this.#timer = setInterval(() => {
       // Skip while a request is in flight, so a slow cluster cannot accumulate
       // a backlog of overlapping refreshes.
-      if (this.status === 'loading') return
-      void this.refresh()
-    }, intervalMs)
-  }
+      if (this.status === "loading") return;
+      void this.refresh();
+    }, intervalMs);
+  };
 
   stopAutoRefresh = (): void => {
     if (this.#timer !== null) {
-      clearInterval(this.#timer)
-      this.#timer = null
+      clearInterval(this.#timer);
+      this.#timer = null;
     }
-  }
+  };
 
   /** Releases the timer, for when the tab closes. */
   dispose = (): void => {
-    this.stopAutoRefresh()
+    this.stopAutoRefresh();
     // The charts this tab accumulated go with it. Per-cluster, so closing one
     // tab does not blank the charts in another.
-    usageHistory.forget(this.cluster.id)
-  }
+    usageHistory.forget(this.cluster.id);
+  };
 
   /** Scales a workload to the specified number of replicas. */
-  scaleWorkload = async (kind: string, name: string, namespace: string, replicas: number): Promise<void> => {
+  scaleWorkload = async (
+    kind: string,
+    name: string,
+    namespace: string,
+    replicas: number,
+  ): Promise<void> => {
     try {
-      await scaleWorkload(this.cluster.id, kind, namespace, name, replicas)
+      await scaleWorkload(this.cluster.id, kind, namespace, name, replicas);
     } catch (cause) {
-      this.#fail(cause)
+      this.#fail(cause);
     }
-  }
+  };
 
   /** Updates a resource with the provided YAML manifest. */
   updateResource = async (manifest: string): Promise<void> => {
     try {
-      await updateResource(this.cluster.id, manifest)
+      await updateResource(this.cluster.id, manifest);
     } catch (cause) {
-      this.#fail(cause)
+      this.#fail(cause);
     }
-  }
+  };
 }
 
 /**
@@ -1546,11 +1663,15 @@ export class ClusterSession {
  * a pod list is usually pasting part of a name they already have, and fuzzy
  * matching would bury the exact hit among approximations.
  */
-function filterRows<T>(rows: T[], search: string, project: (row: T) => (string | undefined)[]): T[] {
-  const term = search.trim().toLowerCase()
-  if (!term) return rows
+function filterRows<T>(
+  rows: T[],
+  search: string,
+  project: (row: T) => (string | undefined)[],
+): T[] {
+  const term = search.trim().toLowerCase();
+  if (!term) return rows;
 
   return rows.filter((row) =>
     project(row).some((field) => field?.toLowerCase().includes(term)),
-  )
+  );
 }
