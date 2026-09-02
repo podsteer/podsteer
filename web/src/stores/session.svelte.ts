@@ -15,6 +15,7 @@ import {
   listEvents,
   listKinds,
   listNamespaces,
+  listApplications,
   listNamespaceSummaries,
   workloadConsumption,
   listNodes,
@@ -28,6 +29,8 @@ import {
   type K8sEvent,
   type Namespace,
   type NamespaceSummary,
+  type Application,
+  type ApplicationInventory,
   type Consumption,
   type Node,
   type Overview,
@@ -116,6 +119,17 @@ export const OVERVIEW_KIND_ID = 'podsteer/overview'
  * asking "is anything wrong", and a pod list makes them work that out for
  * themselves by reading it.
  */
+/**
+ * The applications view, pinned beside the overview.
+ *
+ * A PSEUDO-ENTRY, NOT A KIND, for the same reason the overview is one: there
+ * is no object to GET called an application. It is a grouping of objects by
+ * the labels Kubernetes recommends they carry, and putting it in the catalog
+ * would offer it to every consumer that expects to be able to fetch what it
+ * names.
+ */
+export const APPLICATIONS_KIND_ID = 'podsteer/applications'
+
 export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
 
 /** Kind ids PodSteer renders with purpose-built columns rather than generically. */
@@ -148,6 +162,7 @@ export const WORKLOAD_KIND_BY_ID: Record<string, string> = {
 /** What the content pane should render for the selected kind. */
 export type ViewMode =
   | 'overview'
+  | 'applications'
   | 'pods'
   | 'nodes'
   | 'events'
@@ -192,6 +207,15 @@ const NODE_SORT: SortAccessors<Node> = {
   pods: (node) => node.maxPods,
   taints: (node) => node.taints,
   age: (node) => node.ageSeconds,
+}
+
+const APPLICATION_SORT: SortAccessors<Application> = {
+  instance: (application) => application.instance,
+  namespace: (application) => application.namespace,
+  partOf: (application) => application.partOf || null,
+  managedBy: (application) => application.managedBy || null,
+  version: (application) => application.version || null,
+  objects: (application) => application.objects,
 }
 
 const NAMESPACE_SORT: SortAccessors<NamespaceSummary> = {
@@ -293,6 +317,10 @@ export class ClusterSession {
    */
   namespaceRows = $state.raw<NamespaceSummary[]>([])
 
+  /** The applications view's rows, and what carried no label to group by. */
+  applications = $state.raw<Application[]>([])
+  unlabelled = $state(0)
+
   /**
    * What each controller in the open list is consuming, keyed by
    * "namespace/name".
@@ -386,6 +414,7 @@ export class ClusterSession {
   readonly viewMode = $derived.by<ViewMode>(() => {
     const id = this.selectedKindId
     if (id === OVERVIEW_KIND_ID) return 'overview'
+    if (id === APPLICATIONS_KIND_ID) return 'applications'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
     if (id === RICH_KIND_IDS.events) return 'events'
@@ -421,6 +450,14 @@ export class ClusterSession {
       workload.status,
     ]),
   )
+  readonly visibleApplications = $derived(
+    filterRows(this.applications, this.search, (application) => [
+      application.instance,
+      application.namespace,
+      application.partOf,
+      application.name,
+    ]),
+  )
   readonly visibleNamespaces = $derived(
     filterRows(this.namespaceRows, this.search, (namespace) => [namespace.name, namespace.phase]),
   )
@@ -451,6 +488,8 @@ export class ClusterSession {
         return this.visibleEvents.length
       case 'namespaces':
         return this.visibleNamespaces.length
+      case 'applications':
+        return this.visibleApplications.length
       default:
         return this.visibleTableRows.length
     }
@@ -521,6 +560,10 @@ export class ClusterSession {
   readonly pagedWorkloads = $derived(this.#slice(this.sortedWorkloads))
   readonly pagedEvents = $derived(this.#slice(this.sortedEvents))
   readonly pagedNamespaces = $derived(this.#slice(this.sortedNamespaces))
+  readonly sortedApplications = $derived(
+    sortRows(this.visibleApplications, this.sort, APPLICATION_SORT),
+  )
+  readonly pagedApplications = $derived(this.#slice(this.sortedApplications))
   readonly pagedTableRows = $derived(this.#slice(this.sortedTableRows))
 
   /**
@@ -1003,6 +1046,8 @@ export class ClusterSession {
         return listEvents(id, namespace)
       case 'namespaces':
         return listNamespaceSummaries(id)
+      case 'applications':
+        return listApplications(id, namespace)
       case 'workloads': {
         const kind = WORKLOAD_KIND_BY_ID[this.selectedKindId]
         // Not awaited, so a slow pod list never delays the rows themselves.
@@ -1036,6 +1081,7 @@ export class ClusterSession {
     this.workloads = []
     this.events = []
     this.namespaceRows = []
+    this.applications = []
     this.table = null
     // NOT cleared: it arrives a beat after the rows it belongs to, and
     // clearing it here would blank every meter for one frame on each refresh.
@@ -1061,6 +1107,12 @@ export class ClusterSession {
       case 'namespaces':
         this.namespaceRows = rows as NamespaceSummary[]
         break
+      case 'applications': {
+        const inventory = rows as ApplicationInventory
+        this.applications = inventory.applications
+        this.unlabelled = inventory.unlabelled
+        break
+      }
       case 'workloads':
         this.workloads = rows as Workload[]
         break

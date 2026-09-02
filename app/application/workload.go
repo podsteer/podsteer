@@ -238,6 +238,63 @@ func podsWithUsage(
 	return enriched, true
 }
 
+// ListApplications groups a cluster's workloads by the application they
+// belong to.
+//
+// FROM THE READS ALREADY BEING MADE. Every controller kind and the pod list
+// are polled anyway, and they are coalesced by the adapter's read cache — so
+// on a refresh where anything else has asked for them this costs nothing new,
+// and where it has not it costs the same reads the workload pages make.
+//
+// Workloads and pods only, deliberately. The recommended labels are carried
+// by everything a chart deploys — Services, Ingresses, ConfigMaps — but
+// listing every kind in the cluster to count them would turn one page into a
+// dozen reads. What an application IS, to somebody looking at this list, is
+// the things that run; the panel for one member reaches the rest.
+func (s *WorkloadService) ListApplications(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.ApplicationInventory, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return domain.ApplicationInventory{}, fmt.Errorf("listing applications: %w", err)
+	}
+
+	objects := make([]domain.ApplicationObject, 0)
+
+	pods, err := s.workloads.ListPods(ctx, id, namespace)
+	if err != nil {
+		return domain.ApplicationInventory{}, fmt.Errorf(
+			"listing pods in %q of %q: %w", namespace, id, err)
+	}
+	for _, pod := range pods {
+		objects = append(objects, domain.ApplicationObject{
+			Kind:      "Pod",
+			Namespace: pod.Namespace(),
+			Labels:    pod.Labels(),
+		})
+	}
+
+	for _, kind := range domain.WorkloadKinds() {
+		workloads, err := s.workloads.ListWorkloads(ctx, id, kind, namespace)
+		if err != nil {
+			// One kind an account may not list must not empty the page. The
+			// application is still found through its other members, and its
+			// counts are short rather than absent — which the page says.
+			s.logger.DebugContext(ctx, "a kind was not counted towards applications",
+				slog.String("cluster", id.String()),
+				slog.String("kind", string(kind)),
+				slog.String("error", err.Error()))
+			continue
+		}
+		for _, workload := range workloads {
+			objects = append(objects, domain.ApplicationObject{
+				Kind:      string(workload.Kind()),
+				Namespace: workload.Namespace(),
+				Labels:    workload.Labels(),
+			})
+		}
+	}
+
+	return domain.NewApplicationInventory(objects), nil
+}
+
 // PodGraph returns the dependency chain around one pod.
 //
 // Thin, and correctly so: the reading is the adapter's and the rules are the

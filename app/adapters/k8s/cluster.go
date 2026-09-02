@@ -182,6 +182,27 @@ var kubernetesGroupSuffixes = []string{
 	"kubernetes.io",
 }
 
+// builtInGroups are Kubernetes' own API groups that carry no `.k8s.io`
+// suffix, and so slip past the rule below.
+//
+// A REAL DUPLICATION, AND IT WAS ON SCREEN. `apps`, `batch`, `autoscaling`
+// and `policy` are as much a part of Kubernetes as anything ending in
+// k8s.io, but the suffix rule never matched them — so every Deployment,
+// StatefulSet, Job, CronJob, HorizontalPodAutoscaler and
+// PodDisruptionBudget was discovered a second time and listed again under
+// Custom Resources, beside the catalog entry that already had it. Grouping
+// custom resources by publisher is what finally made it visible: the
+// duplicates gathered under headings reading "apps" and "batch".
+//
+// The core group is excluded above, by having no "group/version" to split.
+var builtInGroups = map[string]bool{
+	"apps":        true,
+	"batch":       true,
+	"autoscaling": true,
+	"policy":      true,
+	"extensions":  true,
+}
+
 // adoptedGroups are Kubernetes-owned groups that are nonetheless installed by
 // an operator and are worth browsing.
 //
@@ -201,6 +222,9 @@ var adoptedGroups = map[string]bool{
 func isKubernetesGroup(group string) bool {
 	if adoptedGroups[group] {
 		return false
+	}
+	if builtInGroups[group] {
+		return true
 	}
 	for _, suffix := range kubernetesGroupSuffixes {
 		if group == suffix || strings.HasSuffix(group, "."+suffix) {

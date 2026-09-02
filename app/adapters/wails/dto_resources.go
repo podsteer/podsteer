@@ -332,6 +332,62 @@ func toConsumption(usage domain.AggregateUsage) Consumption {
 	}
 }
 
+// Application is one deployed instance and what it is made of.
+type Application struct {
+	// Instance is the app.kubernetes.io/instance label — the identity.
+	Instance  string `json:"instance"`
+	Namespace string `json:"namespace"`
+	// PartOf, Name, ManagedBy and Version are the other recommended labels,
+	// empty when nothing carries them.
+	PartOf    string `json:"partOf"`
+	Name      string `json:"name"`
+	ManagedBy string `json:"managedBy"`
+	Version   string `json:"version"`
+	// Members are the kinds it is made of, largest first.
+	Members []ApplicationMember `json:"members"`
+	// Objects is how many it holds in total.
+	Objects int `json:"objects"`
+}
+
+// ApplicationMember is one kind's contribution to an application.
+type ApplicationMember struct {
+	Kind  string `json:"kind"`
+	Count int    `json:"count"`
+}
+
+// ApplicationInventory is every application found, and what was not.
+type ApplicationInventory struct {
+	Applications []Application `json:"applications"`
+	// Unlabelled is how many objects carried no instance label.
+	//
+	// The UI must show it. The labels are a convention rather than a
+	// guarantee, and a view that silently omits what does not carry them is
+	// worse than no view because it looks complete.
+	Unlabelled int `json:"unlabelled"`
+}
+
+func toApplicationInventory(inventory domain.ApplicationInventory) ApplicationInventory {
+	applications := make([]Application, 0, len(inventory.Applications))
+	for _, application := range inventory.Applications {
+		members := make([]ApplicationMember, 0, len(application.Members))
+		for _, member := range application.Members {
+			members = append(members, ApplicationMember{Kind: member.Kind, Count: member.Count})
+		}
+		applications = append(applications, Application{
+			Instance:  application.Instance,
+			Namespace: application.Namespace.String(),
+			PartOf:    application.PartOf,
+			Name:      application.Name,
+			ManagedBy: application.ManagedBy,
+			Version:   application.Version,
+			Members:   members,
+			Objects:   application.Objects,
+		})
+	}
+
+	return ApplicationInventory{Applications: applications, Unlabelled: inventory.Unlabelled}
+}
+
 // ConditionRef is one status condition, for classification.
 type ConditionRef struct {
 	Type   string `json:"type"`

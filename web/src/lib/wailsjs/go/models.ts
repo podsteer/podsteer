@@ -18,6 +18,97 @@ export namespace wails {
 	        this.website = source["website"];
 	    }
 	}
+	export class ApplicationMember {
+	    kind: string;
+	    count: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ApplicationMember(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.count = source["count"];
+	    }
+	}
+	export class Application {
+	    instance: string;
+	    namespace: string;
+	    partOf: string;
+	    name: string;
+	    managedBy: string;
+	    version: string;
+	    members: ApplicationMember[];
+	    objects: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Application(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.instance = source["instance"];
+	        this.namespace = source["namespace"];
+	        this.partOf = source["partOf"];
+	        this.name = source["name"];
+	        this.managedBy = source["managedBy"];
+	        this.version = source["version"];
+	        this.members = this.convertValues(source["members"], ApplicationMember);
+	        this.objects = source["objects"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ApplicationInventory {
+	    applications: Application[];
+	    unlabelled: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ApplicationInventory(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.applications = this.convertValues(source["applications"], Application);
+	        this.unlabelled = source["unlabelled"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class PodCapacity {
 	    scheduled: number;
 	    scheduledLabel: string;

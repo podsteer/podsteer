@@ -38,6 +38,7 @@ import {
   ListPodsForWorkload as bindListPodsForWorkload,
   WorkloadUsage as bindWorkloadUsage,
   WorkloadConsumption as bindWorkloadConsumption,
+  ListApplications as bindListApplications,
   ListPodsOnNode as bindListPodsOnNode,
   PodGraph as bindPodGraph,
   WorkloadGraph as bindWorkloadGraph,
@@ -90,6 +91,9 @@ export type Node = wails.Node
 export type Workload = wails.Workload
 
 export type Consumption = wails.Consumption
+
+export type ApplicationInventory = wails.ApplicationInventory
+export type Application = wails.Application
 /** A Kubernetes Event. */
 export type K8sEvent = wails.Event
 /** A browsable kind, as shown in the navigator. */
@@ -380,6 +384,20 @@ export function workloadConsumption(
   namespace: string,
 ): Promise<Record<string, Consumption>> {
   return call(() => bindWorkloadConsumption(clusterId, kind, namespace))
+}
+
+/**
+ * Groups a cluster's workloads by the application they belong to.
+ *
+ * From Kubernetes' own recommended labels, which is the only thing that
+ * standardises this — and a convention rather than a guarantee, so the answer
+ * carries a count of what did not say which application it belongs to.
+ */
+export function listApplications(
+  clusterId: string,
+  namespace: string,
+): Promise<ApplicationInventory> {
+  return call(() => bindListApplications(clusterId, namespace))
 }
 
 /** Lists all pods owned by a specific workload. */

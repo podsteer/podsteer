@@ -18,11 +18,15 @@
 -->
 <script lang="ts">
   import { ALL_NAMESPACES, type ResourceKind } from '$lib/api/client'
-  import { OVERVIEW_KIND_ID, type ClusterSession } from '$stores/session.svelte'
+  import {
+    APPLICATIONS_KIND_ID,
+    OVERVIEW_KIND_ID,
+    type ClusterSession,
+  } from '$stores/session.svelte'
   import { clampNavigatorWidth, preferences } from '$stores/preferences.svelte'
   import { categoryMeta, iconForKind } from '$lib/kindIcons'
   import Select from './Select.svelte'
-  import { ChevronDown, LayoutDashboard, AlertTriangle } from '@lucide/svelte'
+  import { Boxes, ChevronDown, LayoutDashboard, AlertTriangle } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -62,6 +66,7 @@
   })
 
   const onOverview = $derived(session.selectedKindId === OVERVIEW_KIND_ID)
+  const onApplications = $derived(session.selectedKindId === APPLICATIONS_KIND_ID)
 
   /**
    * Kinds grouped by category and then by who publishes them.
@@ -216,6 +221,32 @@
         <p class="text-body-small text-on-surface-variant/70">Loading resources…</p>
       </div>
     {/if}
+
+    <!-- Applications, pinned beside the dashboard for the same reason: there
+         is no object called an application. It is a grouping of what is
+         there by the labels Kubernetes recommends they carry, so it belongs
+         with the other view that is not a kind rather than filed among the
+         kinds. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(APPLICATIONS_KIND_ID)}
+        aria-current={onApplications ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onApplications
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <Boxes
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onApplications ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium">Applications</span>
+      </button>
+    </div>
+
 
     {#each sections as section (section.category)}
       {@const open = preferences.isCategoryExpanded(section.category)}

@@ -87,6 +87,10 @@ type WorkloadService interface {
 	// they reserved and what they will be stopped at.
 	WorkloadUsage(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.AggregateUsage, error)
 
+	// ListApplications groups a cluster's workloads by the application they
+	// belong to, using Kubernetes' own recommended labels.
+	ListApplications(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.ApplicationInventory, error)
+
 	// WorkloadConsumption does the same for a whole list, keyed by
 	// "namespace/name".
 	//

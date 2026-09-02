@@ -14,10 +14,16 @@ import (
 type ResourceCategory string
 
 const (
-	// CategoryCluster covers cluster-scoped infrastructure: nodes, namespaces,
-	// events.
+	// CategoryCluster covers the cluster's own structure and its running
+	// commentary: nodes, namespaces, events.
+	//
+	// Events are namespaced rather than cluster-scoped, and belong here all
+	// the same: a feed of what the cluster is doing is a view OF the cluster,
+	// and burying it under the kind it happens to be about would be filing it
+	// by its storage rather than by its use.
 	CategoryCluster ResourceCategory = "Cluster"
-	// CategoryWorkloads covers everything that runs containers.
+	// CategoryWorkloads covers everything that runs containers, and the
+	// controllers that decide how many run.
 	CategoryWorkloads ResourceCategory = "Workloads"
 	// CategoryConfig covers configuration and secret material.
 	CategoryConfig ResourceCategory = "Config"

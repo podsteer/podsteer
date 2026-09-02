@@ -91,6 +91,34 @@ func (w *WorkloadAPI) WorkloadUsage(clusterID, namespace, kind, name string) (Co
 	return toConsumption(usage), nil
 }
 
+// ListApplications groups a cluster's workloads by the application they
+// belong to.
+//
+// From Kubernetes' own recommended labels, which is the only thing that
+// standardises this — and which is a convention rather than a guarantee, so
+// the answer carries a count of what did not say.
+func (w *WorkloadAPI) ListApplications(clusterID, namespace string) (ApplicationInventory, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return ApplicationInventory{}, apiError(w.logger, "ListApplications", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return ApplicationInventory{}, apiError(w.logger, "ListApplications", err)
+	}
+
+	inventory, err := w.workloads.ListApplications(ctx, id, ns)
+	if err != nil {
+		return ApplicationInventory{}, apiError(w.logger, "ListApplications", err)
+	}
+
+	return toApplicationInventory(inventory), nil
+}
+
 // WorkloadConsumption sums what each controller in a list is using, keyed by
 // "namespace/name".
 //

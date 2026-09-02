@@ -26,6 +26,19 @@ const (
 	WorkloadCronJob WorkloadKind = "CronJob"
 )
 
+// WorkloadKinds returns every controller kind, in the order a navigator shows
+// them: what most clusters run most of, first.
+func WorkloadKinds() []WorkloadKind {
+	return []WorkloadKind{
+		WorkloadDeployment,
+		WorkloadStatefulSet,
+		WorkloadDaemonSet,
+		WorkloadReplicaSet,
+		WorkloadJob,
+		WorkloadCronJob,
+	}
+}
+
 // WorkloadSpec carries the data needed to build a Workload.
 //
 // A single type covers all six controller kinds because their *list* view is
