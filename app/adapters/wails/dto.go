@@ -437,6 +437,10 @@ type GraphNode struct {
 	Healthy bool `json:"healthy"`
 	// Subject marks the object the map was opened from.
 	Subject bool `json:"subject"`
+	// Group names the node whose children this is one of, for folding a
+	// sibling set. Empty for anything with no natural set. The graph is always
+	// complete — what is drawn is the view's decision.
+	Group string `json:"group"`
 }
 
 // GraphEdge is a dependency, drawn the way a request travels.
@@ -473,6 +477,7 @@ func toPodGraph(graph domain.PodGraph) PodGraph {
 			Detail:    node.Detail,
 			Healthy:   node.Healthy,
 			Subject:   node.Subject,
+			Group:     node.Group,
 		})
 	}
 	for _, edge := range graph.Edges {

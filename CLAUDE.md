@@ -220,6 +220,27 @@ Secret stops the pod before the application starts. The `default` service
 account is deliberately not drawn: every pod has one, so it would add a box to
 every map that distinguishes nothing.
 
+**Folding is a VIEW decision; the graph is always complete.** The backend emits
+every pod, every container and every edge — a map that quietly omitted a
+replica would be a map nobody could trust — and `web/src/lib/graphFold.ts`
+collapses a sibling set larger than five into one box that stands for its
+members, rewriting their edges onto it and deduplicating. Thirty pods reading
+one ConfigMap draw one line instead of thirty; expanding puts them back.
+
+Three rules keep folding honest, each with a test:
+
+- **A folded set is unwell if any member is**, and says how many. Folding must
+  never hide the thing somebody opened the map to find.
+- **The resource count in the toolbar is the COMPLETE one**, never the drawn
+  one, so a collapsed set cannot under-report a cluster.
+- **Nothing is invented.** A group node IS its members; every edge on it is an
+  edge one of them has, and the count is on the box so it never reads as one
+  thing.
+
+The domain marks sibling sets with `GraphNode.Group` — the workload that
+manages a pod, the pod that runs a container. Attached resources have none:
+they are shared between pods and belong to no single one.
+
 **The layout is dagre's, and that is deliberate.** `web/src/lib/graphLayout.ts`
 hand-rolled a layered layout and an orthogonal edge router for several
 iterations, and every fix traded one geometric case for another — siblings

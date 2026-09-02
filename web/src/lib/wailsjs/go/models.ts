@@ -468,6 +468,7 @@ export namespace wails {
 	    detail: string;
 	    healthy: boolean;
 	    subject: boolean;
+	    group: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new GraphNode(source);
@@ -484,6 +485,7 @@ export namespace wails {
 	        this.detail = source["detail"];
 	        this.healthy = source["healthy"];
 	        this.subject = source["subject"];
+	        this.group = source["group"];
 	    }
 	}
 	export class HistorySettings {

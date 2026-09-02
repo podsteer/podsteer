@@ -26,10 +26,11 @@
   import { toApiError } from '$lib/api/errors'
   import { iconGeometry } from '$lib/graphIcons'
   import { layout, type Layout, type LaidOutNode } from '$lib/graphLayout'
+  import { fold } from '$lib/graphFold'
   import { preferences } from '$stores/preferences.svelte'
   import PaneToolbar from './PaneToolbar.svelte'
   import ToolbarButton from './ToolbarButton.svelte'
-  import { Maximize2, Columns3, Rows3, ZoomIn, ZoomOut, Crosshair } from '@lucide/svelte'
+  import { Maximize2, Columns3, Rows3, ZoomIn, ZoomOut, Crosshair, Layers } from '@lucide/svelte'
 
   interface Props {
     clusterId: string
@@ -83,9 +84,43 @@
   /** The box the pointer is over, which lights its own lines. */
   let hovered = $state<string | null>(null)
 
+  /**
+   * Sibling sets the operator has opened.
+   *
+   * THE GRAPH IS ALWAYS COMPLETE; this only decides what is drawn. A folded
+   * set is one box standing for its members, and expanding puts them back —
+   * so a busy map stays navigable without anything being left out of it.
+   */
+  let expanded = $state.raw<Set<string>>(new Set())
+
+  const folded = $derived(graph ? fold(graph, expanded) : null)
+
   const plan = $derived<Layout | null>(
-    graph ? layout(graph, orientation === 'horizontal') : null,
+    folded ? layout(folded, orientation === 'horizontal') : null,
   )
+
+  /** Which drawn nodes are folded sets, by id. */
+  const foldedByID = $derived(
+    new Map((folded?.nodes ?? []).filter((n) => n.fold).map((n) => [n.id, n.fold!])),
+  )
+
+  /** Whether every foldable set is currently open. */
+  const allExpanded = $derived(
+    Boolean(folded?.groups.length) && folded!.groups.every((g) => expanded.has(g.id)),
+  )
+
+  /** Opens every set at once, or closes them all. */
+  function toggleAllFolds(): void {
+    expanded = allExpanded ? new Set() : new Set((folded?.groups ?? []).map((g) => g.id))
+  }
+
+  /** Opens or closes one set. */
+  function toggleFold(id: string): void {
+    const next = new Set(expanded)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    expanded = next
+  }
 
   /**
    * Whether an edge should show its flow.
@@ -120,6 +155,8 @@
           ? await podGraph(clusterId, namespace, name)
           : await workloadGraph(clusterId, namespace, kind, name)
       loadedFor = key
+      // A different object's sets are not this one's.
+      expanded = new Set()
       fit()
     } catch (error) {
       failure = toApiError(error).message
@@ -234,6 +271,13 @@
    * nothing at all. That is what it did: every node, every kind.
    */
   function open(node: LaidOutNode): void {
+    // A folded set is not an object. Clicking it opens the set, which is the
+    // only thing it could usefully mean.
+    if (foldedByID.has(node.id)) {
+      toggleFold(node.id)
+      return
+    }
+
     // Containers are not objects and have no panel of their own; the pod they
     // belong to is already the subject of this map.
     if (!node.apiKind || !onopen) return
@@ -263,6 +307,40 @@
                     ? 'fill-surface-container-high/60'
                     : ''}"
                 />
+
+                <!--
+                  A FOLDED SET IS DRAWN AS A STACK. Two offset outlines behind
+                  the icon say "more than one" before the count is read, and
+                  the +/- says it opens. Without that it is a box like any
+                  other, and somebody would take "30 Pods" for the name of a
+                  thing rather than a summary of thirty.
+                -->
+                {#if foldedByID.has(node.id)}
+                  <g
+                    transform="translate(-12 {-half.h + 6})"
+                    fill="none"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="{node.healthy
+                      ? 'stroke-gauge-normal'
+                      : 'stroke-gauge-critical'} opacity-30"
+                  >
+                    <g transform="translate(5 5)">{@html iconGeometry(node.kind)}</g>
+                  </g>
+                  <g
+                    transform="translate(-12 {-half.h + 6})"
+                    fill="none"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="{node.healthy
+                      ? 'stroke-gauge-normal'
+                      : 'stroke-gauge-critical'} opacity-60"
+                  >
+                    <g transform="translate(2.5 2.5)">{@html iconGeometry(node.kind)}</g>
+                  </g>
+                {/if}
 
                 <g
                   transform="translate(-12 {-half.h + 6})"
@@ -296,12 +374,34 @@
                 >
                   {fitText(node.name, 26)}
                 </text>
+
+                {#if foldedByID.has(node.id)}
+                  <!--
+                    Only a folded set carries the control. On an expanded set
+                    it would be a badge per member, and the set's own box is
+                    the way back — clicking it again closes it.
+                  -->
+                  <g transform="translate({half.w - 16} {-half.h + 10})">
+                    <circle r="8" class="fill-surface-container-high stroke-outline-variant" />
+                    <path
+                      d="M -3.5 0 H 3.5 M 0 -3.5 V 3.5"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      class="stroke-on-surface"
+                    />
+                  </g>
+                {/if}
 {/snippet}
 
 <div class="flex h-full flex-col">
   <PaneToolbar>
     <span class="shrink-0 pl-1 text-body-small text-on-surface-variant">
       {#if graph}
+        <!--
+          The COMPLETE count, always. Folding changes what is drawn and must
+          never change what the map says it found, or a collapsed set becomes
+          a way to under-report a cluster.
+        -->
         {graph.nodes.length} resources
       {:else}
         Dependencies
@@ -309,6 +409,23 @@
     </span>
 
     {#snippet trailing()}
+      {#if folded && folded.groups.length > 0}
+        <!--
+          Only when there is something to fold. A control that is always
+          present and usually does nothing is one people stop seeing.
+        -->
+        <ToolbarButton
+          icon={Layers}
+          label={allExpanded ? 'Collapse all groups' : 'Expand all groups'}
+          title={allExpanded
+            ? 'Collapse all groups'
+            : `Expand all ${folded.groups.length} groups`}
+          active={allExpanded}
+          onclick={toggleAllFolds}
+        />
+        <div class="mx-0.5 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+      {/if}
+
       <ToolbarButton icon={ZoomOut} label="Zoom out" title="Zoom out" onclick={() => zoomBy(1 / 1.25)} />
       <ToolbarButton icon={ZoomIn} label="Zoom in" title="Zoom in" onclick={() => zoomBy(1.25)} />
       <!-- Pan and zoom have no undo of their own, and a map dragged off screen

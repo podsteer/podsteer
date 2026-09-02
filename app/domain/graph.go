@@ -70,6 +70,19 @@ type GraphNode struct {
 	// Subject marks the object the map was opened from, so it can be drawn as
 	// the centre rather than as one box among twenty.
 	Subject bool
+	// Group names the node whose children this is one of — the workload that
+	// manages a pod, the pod that runs a container.
+	//
+	// FOR FOLDING, NOT FOR DRAWING. The graph itself is always complete: a
+	// map that quietly omitted a replica would be a map nobody could trust.
+	// This says which nodes form a sibling set, so the interface can collapse
+	// thirty replicas into one box somebody expands when they want them. What
+	// is drawn is the view's decision; what exists is not.
+	//
+	// Empty for anything with no natural set — the subject, a Service, an
+	// Ingress, and attached resources, which are shared between pods and so
+	// belong to no single one of them.
+	Group string
 }
 
 // GraphEdge is a dependency, drawn from the thing that depends to the thing
@@ -262,6 +275,7 @@ func (g *PodGraph) addContainers(pod Pod, podID string) {
 			// A container's health is the reader's starting point: this is the
 			// tier where "something is wrong" usually resolves to a name.
 			Healthy: container.Ready,
+			Group:   podID,
 		})
 		g.Edges = append(g.Edges, GraphEdge{From: podID, To: id})
 	}
@@ -468,6 +482,13 @@ func NewWorkloadGraph(input WorkloadGraphInput) PodGraph {
 	// The pods, and their containers under them.
 	for _, pod := range input.Pods {
 		podID := "pod/" + pod.Name()
+		// From whatever actually created it: the Job for a CronJob's pods, the
+		// workload itself for everything else.
+		from := subjectID
+		if parent, ok := parentOf[pod.Name()]; ok {
+			from = parent
+		}
+
 		graph.Nodes = append(graph.Nodes, GraphNode{
 			ID:        podID,
 			Kind:      GraphPod,
@@ -477,13 +498,8 @@ func NewWorkloadGraph(input WorkloadGraphInput) PodGraph {
 			Tier:      TierPod,
 			Detail:    string(pod.Phase()),
 			Healthy:   pod.IsHealthy(),
+			Group:     from,
 		})
-		// From whatever actually created it: the Job for a CronJob's pods, the
-		// workload itself for everything else.
-		from := subjectID
-		if parent, ok := parentOf[pod.Name()]; ok {
-			from = parent
-		}
 		graph.Edges = append(graph.Edges, GraphEdge{From: from, To: podID, Label: "manages"})
 
 		// CONTAINERS ARE KEYED BY POD, unlike a pod's own map. Every replica
@@ -496,6 +512,7 @@ func NewWorkloadGraph(input WorkloadGraphInput) PodGraph {
 				ID: id, Kind: GraphContainer, Name: container.Name,
 				Namespace: pod.Namespace().String(), Tier: TierContainer,
 				Detail: imageTag(container.Image), Healthy: container.Ready,
+				Group: podID,
 			})
 			graph.Edges = append(graph.Edges, GraphEdge{From: podID, To: id})
 		}
