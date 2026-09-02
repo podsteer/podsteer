@@ -29,7 +29,7 @@
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import { ChevronDown } from '@lucide/svelte'
+  import { ChevronDown, Info } from '@lucide/svelte'
   import ColumnDivider from './ColumnDivider.svelte'
 
   export interface DetailRow {
@@ -72,30 +72,32 @@
      */
     title?: string
     /**
-     * The value cell holds a control rather than text, and is rendered by the
-     * list's `value` snippet.
+     * Where the value came from, when the value alone does not say it.
      *
-     * Never clipped: clipping text loses a few characters somebody can ask
-     * for back, and clipping a control loses the button. An environment
-     * variable read from a Secret is the case — the cell is a reveal button,
-     * not a string.
+     * Shown behind an info button in the row's trailing controls rather than
+     * as text: a value resolved out of a ConfigMap, or read from a Secret, or
+     * lifted off the pod's own metadata, is worth explaining ONCE PER ROW and
+     * on request — spelt out in the cell it was thirty repetitions of one
+     * sentence where thirty values should be.
      */
-    control?: boolean
+    info?: string
   }
 
   interface Props {
     rows: DetailRow[]
     /**
-     * Renders the value cell of every `control` row.
+     * A control for one row, drawn at the START of its trailing cluster.
      *
-     * Optional, because most lists are text throughout. A row marked
-     * `control` with no snippet to render falls back to its text, which is
-     * the safe direction to fail in.
+     * For the one thing a list cannot draw itself: the button that reveals a
+     * Secret owns state — a timer, a hide-on-blur — that belongs to whoever
+     * knows what is being revealed. Everything after it is this list's, so
+     * the cluster reads the same on every row: what the row can do, then what
+     * it is, then whether it fits.
      */
-    value?: Snippet<[DetailRow, number]>
+    action?: Snippet<[DetailRow, number]>
   }
 
-  let { rows, value }: Props = $props()
+  let { rows, action }: Props = $props()
 
   let list = $state<HTMLElement | null>(null)
   /**
@@ -225,10 +227,7 @@
           ? 'text-gauge-warn'
           : 'text-on-surface-variant'}"
     >
-      {#if row.control && value}
-        <!-- The caller's own markup, at its natural size. See `control`. -->
-        <span class="min-w-0" title={row.value}>{@render value(row, index)}</span>
-      {:else if open && laidOut(row.value)}
+      {#if open && laidOut(row.value)}
         <!--
           Laid out, in the monospace face indentation needs to mean anything.
           `pre-wrap` rather than `pre`: a long string value inside the JSON
@@ -240,52 +239,84 @@
                  whitespace-pre-wrap"
           data-selectable>{laidOut(row.value)}</pre>
       {:else}
-        <span
-          bind:this={valueCells[index]}
-          class="min-w-0 {open ? 'break-words' : 'truncate'}"
-          title={row.title}
-          data-selectable
-        >
-          {#if row.onclick}
-            <!-- A button, not an anchor: this navigates within the
-                 application and has no address. Styled as a link because that
-                 is what it behaves like, and because a value that is
-                 followable should look different from one that is not. It
-                 sets no width of its own — the span around it is what clips,
-                 so a link and a plain value are cut off in the same place. -->
-            <button type="button" onclick={row.onclick} class="resource-link text-left">
-              {row.value}
-            </button>
-          {:else}
+      <span
+        bind:this={valueCells[index]}
+        class="min-w-0 flex-1 {open ? 'break-words' : 'truncate'}"
+        title={row.title}
+        data-selectable
+      >
+        {#if row.onclick}
+          <!-- A button, not an anchor: this navigates within the application
+               and has no address. Styled as a link because that is what it
+               behaves like, and because a value that is followable should
+               look different from one that is not. It sets no width of its
+               own — the span around it is what clips, so a link and a plain
+               value are cut off in the same place. -->
+          <button type="button" onclick={row.onclick} class="resource-link text-left">
             {row.value}
-          {/if}
-        </span>
+          </button>
+        {:else}
+          {row.value}
+        {/if}
+      </span>
       {/if}
 
       <!--
-        Only on rows that lost something. A chevron on every row is a column
-        of controls that mostly do nothing, and it would be the loudest thing
-        in a pane whose whole job is the text beside it.
+        ONE CLUSTER, AT THE END OF THE VALUE COLUMN, IN ONE ORDER: what the
+        row can do, what it is, whether it fits. They used to be scattered —
+        a reveal button wherever the masked value happened to end, an
+        expander at the far right — so a column of rows had controls at three
+        different distances from the edge and no two rows agreed.
+
+        `ml-auto` on the group rather than a column of its own, because the
+        cluster is one to three buttons wide depending on the row, and a
+        fixed column would leave a gap on every row that has fewer.
       -->
-      {#if clipped[index]}
-        <button
-          type="button"
-          onclick={() => toggle(index)}
-          aria-expanded={open}
-          aria-label={open ? `Collapse ${row.label}` : `Expand ${row.label}`}
-          title={open ? 'Show less' : 'Show the whole value'}
-          class="state-layer grid size-5 shrink-0 place-items-center rounded-full
-                 text-on-surface-variant/60 transition-colors duration-100
-                 hover:bg-surface-container hover:text-on-surface"
-        >
-          <ChevronDown
-            class="size-3.5 transition-transform duration-150 ease-standard {open
-              ? 'rotate-180'
-              : ''}"
-            strokeWidth={2}
-          />
-        </button>
-      {/if}
+      <span class="ml-auto flex shrink-0 items-center gap-0.5">
+        {#if action}{@render action(row, index)}{/if}
+
+        <!--
+          Where the value came from, on request. A value resolved out of a
+          ConfigMap or lifted off the pod's own metadata no longer says where
+          it came from — that is the point of resolving it — so the source is
+          one hover away rather than spelt out in every cell.
+        -->
+        {#if row.info}
+          <span
+            class="state-layer grid size-5 shrink-0 cursor-help place-items-center rounded-full
+                   text-on-surface-variant/60 transition-colors duration-100
+                   hover:bg-surface-container hover:text-on-surface"
+            title={row.info}
+          >
+            <Info class="size-3.5" strokeWidth={1.8} />
+          </span>
+        {/if}
+
+        <!--
+          Only on rows that lost something. A chevron on every row is a column
+          of controls that mostly do nothing, and it would be the loudest thing
+          in a pane whose whole job is the text beside it.
+        -->
+        {#if clipped[index]}
+          <button
+            type="button"
+            onclick={() => toggle(index)}
+            aria-expanded={open}
+            aria-label={open ? `Collapse ${row.label}` : `Expand ${row.label}`}
+            title={open ? 'Show less' : 'Show the whole value'}
+            class="state-layer grid size-5 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant/60 transition-colors duration-100
+                   hover:bg-surface-container hover:text-on-surface"
+          >
+            <ChevronDown
+              class="size-3.5 transition-transform duration-150 ease-standard {open
+                ? 'rotate-180'
+                : ''}"
+              strokeWidth={2}
+            />
+          </button>
+        {/if}
+      </span>
     </dd>
   {/each}
   </dl>

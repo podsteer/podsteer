@@ -31,9 +31,22 @@
     /** The Secret holding it, and the key within it. */
     secret: string
     secretKey: string
+    /**
+     * Reports what is revealed, so the row can show it.
+     *
+     * THE CONTROL IS HERE AND THE VALUE IS NOT. This used to render both —
+     * the masked or revealed text AND the button beside it — which put the
+     * button wherever the text ended, halfway across the row. A detail row's
+     * controls belong together at its end, so the row draws the value and
+     * this draws the button; what stays here is the part worth keeping in one
+     * place, which is when a revealed value stops being on screen.
+     *
+     * Called with null when it hides itself, on the timer or on losing focus.
+     */
+    onchange: (value: string | null, error: string) => void
   }
 
-  let { clusterId, namespace, secret, secretKey }: Props = $props()
+  let { clusterId, namespace, secret, secretKey, onchange }: Props = $props()
 
   /**
    * The plaintext, while it is on screen.
@@ -53,6 +66,7 @@
   function hide(): void {
     value = null
     error = ''
+    onchange(null, '')
     if (timer) {
       clearTimeout(timer)
       timer = null
@@ -67,9 +81,11 @@
       // how a client shows a secret to somebody who was not allowed to read
       // it, for the moment before the error lands.
       value = await revealSecretKey(clusterId, namespace, secret, secretKey)
+      onchange(value, '')
       timer = setTimeout(hide, HIDE_AFTER_MS)
     } catch (cause) {
       error = toApiError(cause).message
+      onchange(null, error)
     } finally {
       loading = false
     }
@@ -88,51 +104,23 @@
 
 <svelte:window onblur={hide} />
 
-<span class="inline-flex min-w-0 items-baseline gap-2">
-  {#if error}
-    <span class="text-error">{error}</span>
-  {:else if value !== null}
-    <span class="min-w-0 font-mono break-all text-on-surface" data-selectable>{value}</span>
+<button
+  type="button"
+  onclick={() => (value === null && !error ? reveal() : hide())}
+  disabled={loading}
+  class="state-layer grid size-5 shrink-0 place-items-center rounded-full
+         text-on-surface-variant/60 transition-colors duration-100
+         hover:bg-surface-container hover:text-on-surface disabled:opacity-50"
+  aria-label={value === null ? `Reveal ${secretKey}` : `Hide ${secretKey}`}
+  title={value === null
+    ? 'Read this value from the Secret. This is an audited read, and it hides itself again shortly.'
+    : 'Hide'}
+>
+  {#if loading}
+    <Loader class="size-3.5 animate-spin" strokeWidth={2} />
+  {:else if value === null}
+    <Eye class="size-3.5" strokeWidth={1.8} />
   {:else}
-    <!--
-      DOTS, NOT A SENTENCE. This used to spell out where the value comes from
-      — "<set to the key 'x' in secret 'y'>" — which is what kubectl prints
-      and is right for kubectl, because kubectl has no second line to put it
-      on. In a list of thirty variables it is thirty repetitions of one
-      secret's name where thirty values should be, and it reads as prose in a
-      column of data.
-      
-      The same mask the literal-credential case uses, so a value that is
-      hidden looks the same however it came to be hidden. Where it comes from
-      is in the tooltip, and the Secret itself is reachable from the volume
-      that mounts it and from the Map.
-    -->
-    <span
-      class="font-mono text-on-surface-variant"
-      title="Set to the key '{secretKey}' in secret '{secret}'"
-    >
-      ••••••••
-    </span>
+    <EyeOff class="size-3.5" strokeWidth={1.8} />
   {/if}
-
-  <button
-    type="button"
-    onclick={() => (value === null && !error ? reveal() : hide())}
-    disabled={loading}
-    class="state-layer inline-grid size-6 shrink-0 place-items-center rounded-full
-           text-on-surface-variant transition-colors duration-100
-           hover:bg-surface-container hover:text-on-surface disabled:opacity-50"
-    aria-label={value === null ? `Reveal ${secretKey}` : `Hide ${secretKey}`}
-    title={value === null
-      ? 'Read this value from the Secret. This is an audited read, and it hides itself again shortly.'
-      : 'Hide'}
-  >
-    {#if loading}
-      <Loader class="size-3.5 animate-spin" strokeWidth={2} />
-    {:else if value === null}
-      <Eye class="size-3.5" strokeWidth={1.8} />
-    {:else}
-      <EyeOff class="size-3.5" strokeWidth={1.8} />
-    {/if}
-  </button>
-</span>
+</button>

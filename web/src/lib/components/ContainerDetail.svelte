@@ -172,6 +172,17 @@
    */
   let configMaps = $state<Record<string, Record<string, string>>>({})
 
+  /**
+   * What a Secret has been revealed to say, by variable name.
+   *
+   * Held here rather than inside SecretReveal because the row draws the value
+   * and SecretReveal draws only the button — a detail row's controls belong
+   * together at its end, not wherever the value happens to stop. What stays
+   * inside SecretReveal is the part worth keeping in one place: when a
+   * revealed value stops being on screen.
+   */
+  let revealed = $state<Record<string, { value: string | null; error: string }>>({})
+
   $effect(() => {
     const names = new Set<string>()
     for (const variable of env) {
@@ -204,19 +215,26 @@
     env.map((variable) => {
       const secret = secretRef(variable)
       if (secret?.name && secret?.key) {
-        // The words are the tooltip now, not the cell. Thirty variables each
-        // spelling out "<set to the key 'x' in secret 'y'>" is thirty lines
-        // of the same sentence where thirty values should be — and the
-        // sentence was mostly one secret's name, repeated.
+        // The mask, and the plaintext once somebody asks for it. The words
+        // are behind the info button now: thirty variables each spelling out
+        // "<set to the key 'x' in secret 'y'>" is thirty lines of one
+        // sentence where thirty values should be.
+        const shown = revealed[variable.name]
         return {
           label: variable.name,
-          value: `set to the key '${secret.key}' in secret '${secret.name}'`,
-          control: true,
+          value: shown?.error || shown?.value || '••••••••',
+          info: `Set to the key '${secret.key}' in secret '${secret.name}'`,
+          tone: shown?.error ? ('critical' as const) : undefined,
         }
       }
 
       if (looksSensitive(variable as never)) {
-        return { label: variable.name, value: 'literal credential in the pod spec', control: true }
+        return {
+          label: variable.name,
+          value: '••••••••',
+          info: 'A literal credential, written into the pod spec in the clear — anyone who can read the pod can read it',
+          tone: 'warn' as const,
+        }
       }
 
       const configMap = configRef(variable)
@@ -227,15 +245,18 @@
       const resolved =
         configMap?.name && configMap?.key ? configMaps[configMap.name]?.[configMap.key] : undefined
 
+      const field = (variable.valueFrom as { fieldRef?: { fieldPath?: string } })?.fieldRef
+
       return {
         label: variable.name,
         value: resolved ?? formatEnvValue(variable as never, pod ?? undefined),
-        // Said in the tooltip once the value replaces the reference,
-        // because the value no longer names where it came from — and
-        // following it still goes there.
-        title:
-          resolved !== undefined
-            ? `From the '${configMap?.name}' config map, key '${configMap?.key}'`
+        // Said behind the info button once a value replaces the reference to
+        // it, because a resolved value no longer names where it came from —
+        // and following it still goes there.
+        info: configMap?.name
+          ? `From the '${configMap.name}' config map, key '${configMap.key}'`
+          : field?.fieldPath
+            ? `From this pod's own ${field.fieldPath}`
             : undefined,
         onclick: configMap?.name ? follow('ConfigMap', configMap.name, namespace) : undefined,
       }
@@ -384,9 +405,9 @@
       hand-written <dl> at its own proportions, which is exactly how a panel
       ends up looking like four components stacked rather than one.
     -->
-    <DetailList rows={envRows} value={envValue} />
+    <DetailList rows={envRows} action={envAction} />
 
-    {#snippet envValue(_row: DetailRow, index: number)}
+    {#snippet envAction(_row: DetailRow, index: number)}
       {@const variable = env[index]}
       {@const secret = secretRef(variable)}
       {#if secret?.name && secret?.key}
@@ -396,18 +417,8 @@
           {namespace}
           secret={secret.name}
           secretKey={secret.key}
+          onchange={(value, error) => (revealed[variable.name] = { value, error })}
         />
-      {:else}
-        <!--
-          A literal that looks like a credential. There is nothing to reveal —
-          it is right there in the manifest tab — so this is not a lock, it is
-          a note that the pod spec is carrying a secret in the clear where
-          anyone with `get pod` can read it.
-        -->
-        <span class="inline-flex items-baseline gap-2">
-          <span class="font-mono">••••••••</span>
-          <span class="text-body-small text-gauge-warn">literal credential in the pod spec</span>
-        </span>
       {/if}
     {/snippet}
 

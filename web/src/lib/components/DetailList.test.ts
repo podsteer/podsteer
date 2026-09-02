@@ -28,10 +28,23 @@ function stubLayout(fits: number): () => void {
     get: () => fits,
   })
 
+  // THE UNDO HAS TO HANDLE "THERE WAS NOTHING THERE". happy-dom may not
+  // define these at all, in which case restoring the saved descriptor is a
+  // no-op and the stub survives into every test that follows — which showed
+  // up as a row reporting itself clipped in a test that never stubbed
+  // anything.
   return () => {
-    if (scroll) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', scroll)
-    if (client) Object.defineProperty(HTMLElement.prototype, 'clientWidth', client)
+    restore('scrollWidth', scroll)
+    restore('clientWidth', client)
   }
+}
+
+function restore(property: string, original: PropertyDescriptor | undefined): void {
+  if (original) {
+    Object.defineProperty(HTMLElement.prototype, property, original)
+    return
+  }
+  delete (HTMLElement.prototype as unknown as Record<string, unknown>)[property]
 }
 
 describe('DetailList', () => {
@@ -163,17 +176,43 @@ describe('DetailList', () => {
     }
   })
 
-  it('renders a control row from the snippet and never clips it', () => {
-    // A cell holding a button is not text: clipping text loses characters
-    // somebody can ask back, and clipping a control loses the control. The
-    // row is measured on its label alone.
+  it("gathers a row's controls at the end of the value column", async () => {
+    // THE ARRANGEMENT THIS GUARDS. The reveal button used to sit wherever the
+    // masked value happened to end and the expander at the far right, so a
+    // column of rows had controls at different distances from the edge and no
+    // two agreed. They are one cluster now, in one order: what the row can
+    // do, what it is, whether it fits.
+    const wide = stubLayout(30)
+    try {
+      const { container } = render(DetailList, {
+        rows: [
+          {
+            label: 'DB_PASSWORD',
+            value: '••••••••',
+            info: "Set to the key 'p' in secret 'db'",
+          },
+          { label: 'Long', value: 'a'.repeat(200) },
+        ],
+      })
+
+      // The info button is present only on the row that has a source to name.
+      const cells = container.querySelectorAll('dd')
+      expect(cells[0].querySelectorAll('[title]')).toHaveLength(1)
+      expect(cells[1].querySelectorAll('[title]')).toHaveLength(1)
+
+      // And every control sits after the value, in the trailing group.
+      const group = cells[0].lastElementChild
+      expect(group?.querySelector('svg')).not.toBeNull()
+    } finally {
+      wide()
+    }
+  })
+
+  it('does not offer a source note on a row that has none', () => {
     const { container } = render(DetailList, {
-      rows: [{ label: 'DB_PASSWORD', value: "<set to the key 'p' in secret 'db'>", control: true }],
-      // Svelte 5 snippets cannot be written from a test, so the fallback path
-      // is what is asserted: a control row with nothing to render it falls
-      // back to its own text rather than to an empty cell.
+      rows: [{ label: 'Pod IP', value: '10.0.0.1' }],
     })
 
-    expect(container.textContent).toContain("<set to the key 'p' in secret 'db'>")
+    expect(container.querySelector('dd')?.querySelectorAll('[title]')).toHaveLength(0)
   })
 })
