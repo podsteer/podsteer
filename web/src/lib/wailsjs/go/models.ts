@@ -1455,6 +1455,7 @@ export namespace wails {
 	    kind: string;
 	    namespaced: boolean;
 	    category: string;
+	    subcategory: string;
 	    title: string;
 	    singular: string;
 	    rich: boolean;
@@ -1471,6 +1472,7 @@ export namespace wails {
 	        this.kind = source["kind"];
 	        this.namespaced = source["namespaced"];
 	        this.category = source["category"];
+	        this.subcategory = source["subcategory"];
 	        this.title = source["title"];
 	        this.singular = source["singular"];
 	        this.rich = source["rich"];

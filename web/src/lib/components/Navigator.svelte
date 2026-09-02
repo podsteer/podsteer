@@ -63,7 +63,19 @@
 
   const onOverview = $derived(session.selectedKindId === OVERVIEW_KIND_ID)
 
-  /** Kinds grouped by category, preserving the backend's ordering. */
+  /**
+   * Kinds grouped by category and then by who publishes them.
+   *
+   * A CLUSTER RUNNING SEVERAL OPERATORS HAS SIXTY CUSTOM RESOURCES, and they
+   * were one flat alphabetical list — an Argo CD Application next to a
+   * Prometheus Alertmanager next to a cert-manager Certificate, with nothing
+   * saying which controller any of them belonged to. Grouped by API group
+   * they arrive already sorted into the things that installed them.
+   *
+   * The subgroup is the project that publishes the group, decided in the Go
+   * domain — see domain.GroupOwner, including why it names a project and
+   * never a product.
+   */
   const sections = $derived.by(() => {
     const grouped = new Map<string, ResourceKind[]>()
     for (const kind of session.kinds) {
@@ -71,8 +83,32 @@
       if (bucket) bucket.push(kind)
       else grouped.set(kind.category, [kind])
     }
-    return [...grouped.entries()].map(([category, kinds]) => ({ category, kinds }))
+
+    return [...grouped.entries()].map(([category, kinds]) => ({
+      category,
+      kinds,
+      groups: subgroupsOf(kinds),
+    }))
   })
+
+  /**
+   * A category's kinds split by publisher, or null when they all share one.
+   *
+   * Null rather than a single group holding everything: a heading over the
+   * whole list adds a line and says nothing, and every built-in category is
+   * exactly that case.
+   */
+  function subgroupsOf(kinds: ResourceKind[]): { name: string; kinds: ResourceKind[] }[] | null {
+    if (new Set(kinds.map((kind) => kind.subcategory)).size <= 1) return null
+
+    const grouped = new Map<string, ResourceKind[]>()
+    for (const kind of kinds) {
+      const bucket = grouped.get(kind.subcategory)
+      if (bucket) bucket.push(kind)
+      else grouped.set(kind.subcategory, [kind])
+    }
+    return [...grouped.entries()].map(([name, entries]) => ({ name, kinds: entries }))
+  }
 
   // --- Resize logic ---
   let resizing = $state(false)
@@ -218,8 +254,65 @@
              as "indented". -->
         {#if open}
           <div class="mt-0.5 border-l border-outline-variant/30 pl-2">
-            <ul>
-              {#each section.kinds as kind (kind.id)}
+            {#if section.groups}
+              <!--
+                One heading per publisher, for a category whose members come
+                from several. Only Custom Resources ever has more than one,
+                and on a cluster running Argo CD, cert-manager and a
+                Prometheus Operator that is the difference between sixty
+                alphabetised entries and three short lists.
+
+                Not collapsible: these are already inside a section somebody
+                opened, and a second level of folding is a second thing to
+                remember the state of.
+              -->
+              {#each section.groups as group (group.name)}
+                <p
+                  class="mt-2 px-2 pb-0.5 text-label-small font-semibold uppercase tracking-wider
+                         text-on-surface-variant/50 first:mt-0"
+                >
+                  {group.name}
+                </p>
+                <ul>
+                  {#each group.kinds as kind (kind.id)}
+                  {@const selected = kind.id === session.selectedKindId}
+                  {@const KindIcon = iconForKind(kind)}
+                  <li>
+                    <button
+                      type="button"
+                      onclick={() => session.selectKind(kind.id)}
+                      aria-current={selected ? 'page' : undefined}
+                      title={kind.group ? `${kind.kind} · ${kind.group}/${kind.version}` : kind.kind}
+                      class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
+                             transition-all duration-100 ease-standard
+                             {selected
+                               ? 'bg-primary/12 text-primary'
+                               : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+                    >
+                      <span class="w-1.5 shrink-0" aria-hidden="true"></span>
+                      <KindIcon
+                        class="size-4 shrink-0 transition-colors duration-100
+                               {selected ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+                        strokeWidth={1.8}
+                      />
+                      <span class="flex-1 truncate text-body-medium">{kind.title}</span>
+                      {#if !kind.namespaced}
+                        <span
+                          class="rounded bg-surface-container-high px-1 py-px text-label-small uppercase
+                                 text-on-surface-variant/50"
+                          title="Cluster-scoped"
+                        >
+                          C
+                        </span>
+                      {/if}
+                    </button>
+                  </li>
+                  {/each}
+                </ul>
+              {/each}
+            {:else}
+              <ul>
+                {#each section.kinds as kind (kind.id)}
                 {@const selected = kind.id === session.selectedKindId}
                 {@const KindIcon = iconForKind(kind)}
                 <li>
@@ -252,8 +345,9 @@
                     {/if}
                   </button>
                 </li>
-              {/each}
-            </ul>
+                {/each}
+              </ul>
+            {/if}
           </div>
         {/if}
       </div>

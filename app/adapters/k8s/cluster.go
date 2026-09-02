@@ -153,14 +153,15 @@ func (a *Adapter) DiscoverCustomKinds(ctx context.Context, id domain.ClusterID) 
 			}
 
 			kind := domain.ResourceKind{
-				Group:      groupName,
-				Version:    version,
-				Resource:   resource.Name,
-				Kind:       resource.Kind,
-				Namespaced: resource.Namespaced,
-				Category:   domain.CategoryCustomResources,
-				Title:      resource.Kind,
-				Singular:   resource.Kind,
+				Group:       groupName,
+				Version:     version,
+				Resource:    resource.Name,
+				Kind:        resource.Kind,
+				Namespaced:  resource.Namespaced,
+				Category:    domain.CategoryCustomResources,
+				Subcategory: domain.GroupOwner(groupName),
+				Title:       resource.Kind,
+				Singular:    resource.Kind,
 			}
 			if _, duplicate := seen[kind.ID()]; duplicate {
 				continue
@@ -181,9 +182,26 @@ var kubernetesGroupSuffixes = []string{
 	"kubernetes.io",
 }
 
+// adoptedGroups are Kubernetes-owned groups that are nonetheless installed by
+// an operator and are worth browsing.
+//
+// THE SUFFIX RULE WAS TOO BROAD AND HID REAL THINGS. Gateway API is the
+// declared successor to Ingress and ships as CRDs under a k8s.io group;
+// VolumeSnapshots are how anybody takes a backup of a PVC and ship the same
+// way. Both were being filtered out as "part of Kubernetes" — which is true
+// of their names and false of their availability: a cluster only has them
+// because somebody installed them.
+var adoptedGroups = map[string]bool{
+	"gateway.networking.k8s.io": true,
+	"snapshot.storage.k8s.io":   true,
+}
+
 // isKubernetesGroup reports whether a group is part of Kubernetes rather than
 // a custom resource worth listing.
 func isKubernetesGroup(group string) bool {
+	if adoptedGroups[group] {
+		return false
+	}
 	for _, suffix := range kubernetesGroupSuffixes {
 		if group == suffix || strings.HasSuffix(group, "."+suffix) {
 			return true

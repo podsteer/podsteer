@@ -66,6 +66,16 @@ type ResourceKind struct {
 	Namespaced bool
 	// Category places the kind in the navigator.
 	Category ResourceCategory
+	// Subcategory groups a kind WITHIN its category, and is set only for
+	// custom resources, where it names the project that publishes the API
+	// group — see GroupOwner.
+	//
+	// A SUBHEADING RATHER THAN A CATEGORY OF ITS OWN. Categories are a closed,
+	// ordered set that several things key off; adding one per operator would
+	// make an unranked category sort to the top, make the CRD exclusion in
+	// the namespace inventory stop matching, and orphan every stored
+	// navigator preference. This groups without any of that.
+	Subcategory string
 	// Title is the plural display name, e.g. "Deployments".
 	Title string
 	// Singular is the singular display name, e.g. "Deployment".

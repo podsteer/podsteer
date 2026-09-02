@@ -27,6 +27,9 @@ type ResourceKind struct {
 	Namespaced bool `json:"namespaced"`
 	// Category places the kind in a navigator section.
 	Category string `json:"category"`
+	// Subcategory groups it within that section — the project publishing its
+	// API group, for a custom resource, and empty for everything else.
+	Subcategory string `json:"subcategory"`
 	// Title is the plural display name.
 	Title string `json:"title"`
 	// Singular is the singular display name.
@@ -39,15 +42,16 @@ type ResourceKind struct {
 
 func toResourceKind(kind domain.ResourceKind) ResourceKind {
 	return ResourceKind{
-		ID:         kind.ID(),
-		Group:      kind.Group,
-		Version:    kind.Version,
-		Kind:       kind.Kind,
-		Namespaced: kind.Namespaced,
-		Category:   string(kind.Category),
-		Title:      kind.Title,
-		Singular:   kind.Singular,
-		Rich:       kind.Rich,
+		ID:          kind.ID(),
+		Group:       kind.Group,
+		Version:     kind.Version,
+		Kind:        kind.Kind,
+		Namespaced:  kind.Namespaced,
+		Category:    string(kind.Category),
+		Subcategory: kind.Subcategory,
+		Title:       kind.Title,
+		Singular:    kind.Singular,
+		Rich:        kind.Rich,
 	}
 }
 

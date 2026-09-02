@@ -100,6 +100,13 @@ func (s *BrowseService) Kinds(_ context.Context, id domain.ClusterID) ([]domain.
 		if byCategory := cmp.Compare(categoryRank[a.Category], categoryRank[b.Category]); byCategory != 0 {
 			return byCategory
 		}
+		// Then by the project that publishes it, so a category's custom
+		// resources arrive already gathered under their owner and the
+		// navigator has only to draw the headings. Empty sorts first, which
+		// is every built-in kind: they have no owner but Kubernetes.
+		if bySubcategory := cmp.Compare(a.Subcategory, b.Subcategory); bySubcategory != 0 {
+			return bySubcategory
+		}
 		if a.Rich != b.Rich {
 			if a.Rich {
 				return -1
