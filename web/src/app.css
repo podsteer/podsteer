@@ -233,10 +233,24 @@
   /* The scrim behind overlays is theme-independent. */
   --color-scrim: #000000;
 
-  /* The label column of every detail pane. Wide enough for "Service account"
-     on one line, which is the longest label that is a phrase rather than an
-     identifier; identifiers are clipped and expanded on request instead. */
-  --detail-label-width: 11rem;
+  /* The label column of every detail pane.
+   *
+   * A SHARE OF THE PANEL, not a fixed width, so that widening the panel
+   * widens both columns. It was 11rem while the panel itself was a fixed
+   * 44rem — which stopped being true the moment the panel's edge could be
+   * dragged, and left dragging it wider doing nothing at all for the column
+   * holding annotation keys, which is the column most in need of the room.
+   *
+   * A percentage resolves against the grid container, so every section
+   * follows the panel with nothing measuring anything.
+   *
+   * Clamped for the same reason the panel's own width is: 26% of the
+   * narrowest panel is too little for "Reason", and 26% of the widest is a
+   * gutter. The lower bound is the longest label that is one short word; the
+   * upper is where a longer label stops being worth more room and the value
+   * beside it starts wanting it back. 26% is what the fixed 11rem worked out
+   * to at the default width, so a panel nobody has dragged looks unchanged. */
+  --detail-label-width: clamp(7rem, 26%, 18rem);
 
   /* ---- MD3 shape scale ------------------------------------------------ */
   /* These deliberately override Tailwind's defaults so that `rounded-lg` and
@@ -402,9 +416,11 @@
  * left edges and read as three different components stacked up. A panel
  * should look like one thing from top to bottom.
  *
- * A fixed width rather than a percentage, for the same reason: a percentage
- * column is a different size in a narrow drawer than a wide one, so the same
- * pane changes shape as the window does. Labels are labels at any width.
+ * One width, not a fixed one: --detail-label-width is a share of the panel,
+ * so BOTH columns follow the panel's edge as it is dragged. Every section
+ * still shares the one value, which is what keeps the left edges aligned —
+ * the alignment was never about the width being constant, only about it being
+ * the same everywhere.
  *
  * `minmax(0, 1fr)` on the value column, because a grid track's default
  * minimum is `auto` — the widest thing inside it — and one long unbroken

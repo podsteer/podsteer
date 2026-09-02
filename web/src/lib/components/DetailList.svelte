@@ -4,7 +4,10 @@
   ONE GRID FOR THE WHOLE DRAWER — see `detail-grid` in app.css. Every section
   of every panel puts its labels in the same column at the same width, so a
   panel reads as one thing from top to bottom rather than as a stack of lists
-  that each chose their own proportions.
+  that each chose their own proportions. That width is a share of the panel,
+  so dragging the panel's edge widens both columns rather than only the values
+  — which is what the clipping below responds to, since a wider label column
+  is fewer rows that need opening at all.
 
   THE LABEL CARRIES THE EMPHASIS AND THE VALUE RECEDES. The labels are the
   same on every object of a kind, so they are what the eye navigates by:
