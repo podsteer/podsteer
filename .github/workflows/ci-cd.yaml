@@ -383,28 +383,13 @@ jobs:
           # openable on the other side.
           ditto -c -k --keepParent build/bin/PodSteer.app "$RUNNER_TEMP/notarize.zip"
 
-          # --wait blocks until Apple has a verdict, so a rejection fails this
-          # job rather than shipping an unnotarised build that passes every
-          # other check.
-          #
-          # --timeout IS NOT OPTIONAL. Apple's notary service is usually a few
-          # minutes, but it queues: on 2026-08-28 three separate submissions sat
-          # "In Progress" for over ten hours while Apple's own status page
-          # reported the service Available. Without a timeout, --wait would hold
-          # a macOS runner until GitHub's six-hour job limit killed it — and
-          # macOS minutes bill at ten times the Linux rate, so an Apple backlog
-          # would quietly cost hours of runner time per release attempt and
-          # report as a timeout with no explanation.
-          #
-          # 30m is comfortably beyond a normal turnaround, so hitting it means
-          # something is genuinely wrong rather than merely slow. The job then
-          # fails quickly and legibly, and the release can be retried when
-          # Apple's queue drains.
-          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
-            --key "$RUNNER_TEMP/api-key.p8" \
-            --key-id "$API_KEY_ID" \
-            --issuer "$API_ISSUER_ID" \
-            --wait --timeout 30m
+          # The submission, its timeout and its retry policy all live in
+          # build/notarise.sh, because a release makes TWO of them now — this
+          # bundle and the disk image wrapping it — and Apple's notary service
+          # is unreliable enough that the difference between "Apple said no"
+          # and "Apple did not answer" has to be made in one place. See that
+          # script for why a rejection is never retried.
+          API_KEY_PATH="$RUNNER_TEMP/api-key.p8" build/notarise.sh "$RUNNER_TEMP/notarize.zip"
 
           rm -f "$RUNNER_TEMP/api-key.p8" "$RUNNER_TEMP/notarize.zip"
 
@@ -496,11 +481,13 @@ jobs:
 
           # Submitted directly: notarytool takes a .dmg as-is, unlike the .app
           # above which had to be wrapped first.
-          xcrun notarytool submit build/bin/PodSteer.dmg \
-            --key "$RUNNER_TEMP/api-key.p8" \
-            --key-id "$API_KEY_ID" \
-            --issuer "$API_ISSUER_ID" \
-            --wait --timeout 30m
+          #
+          # THIS IS THE SUBMISSION THAT PROVED THE RETRY NECESSARY. Its first
+          # run met a bare 504 from Apple's front door fifteen seconds after
+          # the bundle above had notarised successfully with the same
+          # credentials — a perfectly good release failed by somebody else's
+          # gateway.
+          API_KEY_PATH="$RUNNER_TEMP/api-key.p8" build/notarise.sh build/bin/PodSteer.dmg
 
           rm -f "$RUNNER_TEMP/api-key.p8"
 

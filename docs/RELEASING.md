@@ -142,6 +142,15 @@ Linux and Windows have no package-manager channel at all — they are
 download-and-unzip, which is why the release notes and the checksums matter more
 there.
 
+**A notarisation failure is usually Apple, and is retried.** `build/notarise.sh`
+wraps both submissions: it retries when Apple does not answer — a gateway
+timeout, a queue that never drains — and does NOT retry when Apple has looked
+at the binary and said no, because another half hour arrives at the same
+answer with the reason buried under three copies of itself. The distinction
+exists because a release makes two submissions now, so it is twice as exposed
+to a service that returned a bare `504` fifteen seconds after accepting a
+submission with the same credentials.
+
 **macOS publishes two assets, and neither is spare.** The `.dmg` is what
 podsteer.com links from its download button, because a zip unpacks to a `.app`
 in `~/Downloads` that most people then run from there. The `.zip` is what the
