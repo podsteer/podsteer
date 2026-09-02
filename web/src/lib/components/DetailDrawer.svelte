@@ -15,6 +15,7 @@
   import ResourceOverview from './ResourceOverview.svelte'
   import EventsView from './EventsView.svelte'
   import EventDetail from './EventDetail.svelte'
+  import ApplicationDetail from './ApplicationDetail.svelte'
   import { iconForKind } from '$lib/kindIcons'
   import { parse } from 'yaml'
   import { forwards } from '$stores/forwards.svelte'
@@ -105,6 +106,7 @@
   const isPod = $derived(session.selectedKindId === 'core/v1/pods')
 
   const isEvent = $derived(session.selectedKindId === 'core/v1/events')
+  const isApplication = $derived(!!session.selectedApplication)
   const isSecret = $derived(session.selectedKindId === 'core/v1/secrets')
 
   /**
@@ -429,8 +431,12 @@
     // An event has no events of its own, and asking for them returns the
     // empty list that means "nothing recent" — which reads as a fault here
     // rather than as the tautology it is.
-    { id: 'events', label: 'Events', icon: Activity, show: () => !isEvent },
-    { id: 'yaml', label: 'YAML', icon: FileCode, show: () => true },
+    { id: 'events', label: 'Events', icon: Activity, show: () => !isEvent && !isApplication },
+    // AN APPLICATION HAS NO MANIFEST. It is a set of objects that agree about
+    // a label, so there is nothing to GET by that name, nothing to edit and
+    // nothing to delete — and a YAML tab offering to show one would be an
+    // empty pane promising an object that does not exist.
+    { id: 'yaml', label: 'YAML', icon: FileCode, show: () => !isApplication },
   ]
 
   // --- Resizing ------------------------------------------------------------
@@ -843,7 +849,13 @@
              now live in the YAML tab's toolbar beside it — a control belongs
              next to the thing it changes, and from the Overview tab "Copy"
              gave no clue that what landed on the clipboard was YAML. Delete
-             stays: it acts on the object, not on any one view of it. -->
+             stays: it acts on the object, not on any one view of it.
+
+             Absent for an application, which is not an object: there is
+             nothing to delete that is not one of its members, and a control
+             offering to would either do nothing or do far more than it
+             says. -->
+        {#if !isApplication}
         <button
           type="button"
           onclick={() => (deleteDialogOpen = true)}
@@ -854,6 +866,7 @@
         >
           <Trash2 class="size-4" strokeWidth={1.8} />
         </button>
+        {/if}
 
         <div class="mx-1 h-5 w-px bg-outline-variant/40"></div>
 
@@ -901,7 +914,16 @@
 
     <!-- Tab content -->
     <div class="min-h-0 flex-1 overflow-auto bg-surface-container-lowest">
-      {#if activeTab === 'overview' && isEvent}
+      {#if activeTab === 'overview' && session.selectedApplication}
+        <!-- An application is not an object: nothing to fetch, nothing to
+             edit, nothing to delete. Its pane is built from the row. -->
+        <ApplicationDetail
+          application={session.selectedApplication}
+          usage={session.usage}
+          onbrowse={(kindId, namespace) => void session.browseKind(kindId, namespace)}
+          onnamespace={(namespace) => void session.selectNamespace(namespace)}
+        />
+      {:else if activeTab === 'overview' && isEvent}
         <!-- The same reference-following the generic overview gets: an event
              names an object, a node and a namespace, and each is somewhere to
              go. `kindIdFor` is what keeps a link off a kind this cluster does

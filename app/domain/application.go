@@ -70,6 +70,14 @@ type Application struct {
 	Members []ApplicationMember
 	// Objects is how many objects it holds in total.
 	Objects int
+	// Usage is what its pods are consuming, against what they reserved.
+	//
+	// The same type a namespace row and a controller carry, so an
+	// application's meter is the same meter and means the same thing. An
+	// application HAS no usage of its own for exactly the reason a controller
+	// does not: the consumption belongs to whatever pods carry its label at
+	// this moment.
+	Usage AggregateUsage
 }
 
 // ApplicationObject is one object being grouped, reduced to what grouping
@@ -101,7 +109,12 @@ type ApplicationInventory struct {
 // Ordered by name, because an application list is looked up rather than
 // ranked — and within one, by how many of each kind, so the thing it is
 // mostly made of leads.
-func NewApplicationInventory(objects []ApplicationObject) ApplicationInventory {
+// pods are passed SEPARATELY from objects even though they also appear among
+// them, because the two answer different questions: objects say what an
+// application is made of, and pods say what it costs. Deriving the second
+// from the first would mean carrying a whole domain.Pod on every object,
+// including the Deployments and Services for which it is meaningless.
+func NewApplicationInventory(objects []ApplicationObject, pods []Pod, metricsAvailable bool) ApplicationInventory {
 	type key struct {
 		instance  string
 		namespace NamespaceName
@@ -144,7 +157,19 @@ func NewApplicationInventory(objects []ApplicationObject) ApplicationInventory {
 		counts[id][object.Kind]++
 	}
 
+	// What each application's pods cost, grouped the same way its members are.
+	podsOf := make(map[key][]Pod)
+	for _, pod := range pods {
+		instance := pod.Labels()[LabelInstance]
+		if instance == "" {
+			continue
+		}
+		id := key{instance: instance, namespace: pod.Namespace()}
+		podsOf[id] = append(podsOf[id], pod)
+	}
+
 	for id, application := range found {
+		application.Usage = NewAggregateUsage(podsOf[id], metricsAvailable)
 		for kind, count := range counts[id] {
 			application.Members = append(application.Members, ApplicationMember{Kind: kind, Count: count})
 		}

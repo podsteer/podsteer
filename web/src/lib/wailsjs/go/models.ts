@@ -41,6 +41,31 @@ export namespace wails {
 	    version: string;
 	    members: ApplicationMember[];
 	    objects: number;
+	    pods: number;
+	    measuredPods: number;
+	    measurablePods: number;
+	    hasMetrics: boolean;
+	    metricsAvailable: boolean;
+	    cpu: string;
+	    memory: string;
+	    cpuRequest: string;
+	    memoryRequest: string;
+	    cpuLimit: string;
+	    memoryLimit: string;
+	    hasCpuRequest: boolean;
+	    hasMemoryRequest: boolean;
+	    hasCpuLimit: boolean;
+	    hasMemoryLimit: boolean;
+	    cpuPercent: number;
+	    memoryPercent: number;
+	    cpuLimitPercent: number;
+	    memoryLimitPercent: number;
+	    cpuCores: number;
+	    memoryBytes: number;
+	    requestCores: number;
+	    requestBytes: number;
+	    limitCores: number;
+	    limitBytes: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Application(source);
@@ -56,6 +81,31 @@ export namespace wails {
 	        this.version = source["version"];
 	        this.members = this.convertValues(source["members"], ApplicationMember);
 	        this.objects = source["objects"];
+	        this.pods = source["pods"];
+	        this.measuredPods = source["measuredPods"];
+	        this.measurablePods = source["measurablePods"];
+	        this.hasMetrics = source["hasMetrics"];
+	        this.metricsAvailable = source["metricsAvailable"];
+	        this.cpu = source["cpu"];
+	        this.memory = source["memory"];
+	        this.cpuRequest = source["cpuRequest"];
+	        this.memoryRequest = source["memoryRequest"];
+	        this.cpuLimit = source["cpuLimit"];
+	        this.memoryLimit = source["memoryLimit"];
+	        this.hasCpuRequest = source["hasCpuRequest"];
+	        this.hasMemoryRequest = source["hasMemoryRequest"];
+	        this.hasCpuLimit = source["hasCpuLimit"];
+	        this.hasMemoryLimit = source["hasMemoryLimit"];
+	        this.cpuPercent = source["cpuPercent"];
+	        this.memoryPercent = source["memoryPercent"];
+	        this.cpuLimitPercent = source["cpuLimitPercent"];
+	        this.memoryLimitPercent = source["memoryLimitPercent"];
+	        this.cpuCores = source["cpuCores"];
+	        this.memoryBytes = source["memoryBytes"];
+	        this.requestCores = source["requestCores"];
+	        this.requestBytes = source["requestBytes"];
+	        this.limitCores = source["limitCores"];
+	        this.limitBytes = source["limitBytes"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

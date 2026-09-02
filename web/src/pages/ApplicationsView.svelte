@@ -14,7 +14,10 @@
 -->
 <script lang="ts">
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
+  import { cpuMeter, cpuTitle, memoryMeter, memoryTitle } from '$lib/meter'
+  import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import { Boxes } from '@lucide/svelte'
 
@@ -24,6 +27,9 @@
 
   let { session }: Props = $props()
 
+  /** The same denominator the pod list is set to. See NamespacesView. */
+  const byLimit = $derived(preferences.podMeasure === 'limits')
+
   const COLUMNS: Column[] = [
     { id: 'instance', label: 'Application', width: 280, pinned: true },
     { id: 'namespace', label: 'Namespace', width: 150 },
@@ -31,7 +37,9 @@
     { id: 'managedBy', label: 'Managed by', width: 130 },
     { id: 'version', label: 'Version', width: 140 },
     { id: 'objects', label: 'Objects', width: 90, numeric: true },
-    { id: 'members', label: 'Made of', width: 320 },
+    { id: 'cpu', label: 'CPU', width: 200, minWidth: 180 },
+    { id: 'memory', label: 'Memory', width: 200, minWidth: 180 },
+    { id: 'members', label: 'Made of', width: 300 },
   ]
 </script>
 
@@ -54,7 +62,14 @@
 
     {#snippet rows(isVisible)}
       {#each session.pagedApplications as application (application.namespace + '/' + application.instance)}
-        <tr class="border-t border-outline-variant/25">
+        {@const selected =
+          session.selectedName === application.instance &&
+          session.selectedNamespace === application.namespace}
+        <tr
+          class="group cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
+                 {selected ? 'bg-primary/8' : 'hover:bg-surface-container-low'}"
+          onclick={() => session.openApplication(application)}
+        >
           <td class="px-3 py-1.5" title={application.instance}>
             <span class="flex items-center gap-2">
               <Boxes class="size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
@@ -82,6 +97,39 @@
           {#if isVisible('objects')}
             <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
               {application.objects}
+            </td>
+          {/if}
+          {#if isVisible('cpu')}
+            {@const cpu = cpuMeter(application, byLimit)}
+            <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
+              <MeterBar
+                label={application.hasMetrics ? application.cpu : '—'}
+                scope="pods"
+                name="CPU"
+                valueWidth="7ch"
+                percent={cpu.percent}
+                measured={application.hasMetrics}
+                thresholds={cpu.thresholds}
+                absent={cpu.absent}
+                severity={cpu.severity}
+                title={cpuTitle(application)}
+              />
+            </td>
+          {/if}
+          {#if isVisible('memory')}
+            {@const memory = memoryMeter(application, byLimit)}
+            <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
+              <MeterBar
+                label={application.hasMetrics ? application.memory : '—'}
+                scope="pods"
+                name="Memory"
+                percent={memory.percent}
+                measured={application.hasMetrics}
+                thresholds={memory.thresholds}
+                absent={memory.absent}
+                severity={memory.severity}
+                title={memoryTitle(application)}
+              />
             </td>
           {/if}
           {#if isVisible('members')}

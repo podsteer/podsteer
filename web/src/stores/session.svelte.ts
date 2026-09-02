@@ -365,6 +365,8 @@ export class ClusterSession {
   selectedWorkload = $state<Workload | null>(null)
   /** The open namespace's row, which is where its usage figures live. */
   selectedNamespaceRow = $state<NamespaceSummary | null>(null)
+  /** The open application, which is not a Kubernetes object at all. */
+  selectedApplication = $state<Application | null>(null)
   manifest = $state<string | null>(null)
   manifestStatus = $state<LoadStatus>('idle')
 
@@ -784,6 +786,26 @@ export class ClusterSession {
     }
 
     await this.openDetail(name, namespace)
+  }
+
+  /**
+   * Opens an application's panel.
+   *
+   * ITS OWN PATH, because an application is not an object: there is no
+   * manifest to fetch and nothing to GET by that name. Everything its panel
+   * shows is already in the row, which is why this takes the row.
+   */
+  openApplication = (application: Application): void => {
+    this.selectedApplication = application
+    this.selectedName = application.instance
+    this.selectedNamespace = application.namespace
+    this.selectedPod = null
+    this.selectedNode = null
+    this.selectedWorkload = null
+    this.selectedNamespaceRow = null
+    this.manifest = null
+    this.manifestStatus = 'ready'
+    this.usage = []
   }
 
   /**
@@ -1331,6 +1353,7 @@ export class ClusterSession {
     this.selectedNode = node ?? this.#findNode(name)
     this.selectedWorkload = workload ?? this.#findWorkload(name, namespace)
     this.selectedNamespaceRow = this.#findNamespace(name)
+    this.selectedApplication = null
     this.manifest = null
     this.manifestStatus = 'loading'
     // SEEDED FROM WHAT WAS ALREADY WATCHED, rather than starting empty. The

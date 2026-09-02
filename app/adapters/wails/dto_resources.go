@@ -347,6 +347,9 @@ type Application struct {
 	Members []ApplicationMember `json:"members"`
 	// Objects is how many it holds in total.
 	Objects int `json:"objects"`
+	// What its pods are using, on exactly the terms a namespace row and a
+	// controller row use. See Consumption.
+	Consumption
 }
 
 // ApplicationMember is one kind's contribution to an application.
@@ -374,14 +377,15 @@ func toApplicationInventory(inventory domain.ApplicationInventory) ApplicationIn
 			members = append(members, ApplicationMember{Kind: member.Kind, Count: member.Count})
 		}
 		applications = append(applications, Application{
-			Instance:  application.Instance,
-			Namespace: application.Namespace.String(),
-			PartOf:    application.PartOf,
-			Name:      application.Name,
-			ManagedBy: application.ManagedBy,
-			Version:   application.Version,
-			Members:   members,
-			Objects:   application.Objects,
+			Consumption: toConsumption(application.Usage),
+			Instance:    application.Instance,
+			Namespace:   application.Namespace.String(),
+			PartOf:      application.PartOf,
+			Name:        application.Name,
+			ManagedBy:   application.ManagedBy,
+			Version:     application.Version,
+			Members:     members,
+			Objects:     application.Objects,
 		})
 	}
 

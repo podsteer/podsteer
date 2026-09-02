@@ -263,6 +263,10 @@ func (s *WorkloadService) ListApplications(ctx context.Context, id domain.Cluste
 		return domain.ApplicationInventory{}, fmt.Errorf(
 			"listing pods in %q of %q: %w", namespace, id, err)
 	}
+	// With their measurements, so an application can be metered the way a
+	// namespace and a controller are. The read is coalesced with whatever
+	// else this tick asked for.
+	pods, measured := podsWithUsage(ctx, s.metrics, s.logger, id, namespace, pods)
 	for _, pod := range pods {
 		objects = append(objects, domain.ApplicationObject{
 			Kind:      "Pod",
@@ -292,7 +296,7 @@ func (s *WorkloadService) ListApplications(ctx context.Context, id domain.Cluste
 		}
 	}
 
-	return domain.NewApplicationInventory(objects), nil
+	return domain.NewApplicationInventory(objects, pods, measured), nil
 }
 
 // PodGraph returns the dependency chain around one pod.
