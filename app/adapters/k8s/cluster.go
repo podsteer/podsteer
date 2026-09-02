@@ -16,7 +16,7 @@ import (
 //
 // Cached: the assessment and the namespace list both ask on the same tick.
 func (a *Adapter) ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
-	return cachedRead(&a.reads, readKey(id.String(), "namespaces"), func() ([]domain.Namespace, error) {
+	return cachedSlice(&a.reads, readKey(id.String(), "namespaces"), func() ([]domain.Namespace, error) {
 		return a.listNamespaces(ctx, id)
 	})
 }
@@ -56,7 +56,7 @@ func (a *Adapter) listNamespaces(ctx context.Context, id domain.ClusterID) ([]do
 // Cached: the assessment reads them on every refresh, and the node list reads
 // them again in the same instant.
 func (a *Adapter) ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
-	return cachedRead(&a.reads, readKey(id.String(), "nodes"), func() ([]domain.Node, error) {
+	return cachedSlice(&a.reads, readKey(id.String(), "nodes"), func() ([]domain.Node, error) {
 		return a.listNodes(ctx, id)
 	})
 }

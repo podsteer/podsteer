@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -140,5 +141,86 @@ func waitFor(t *testing.T, condition func() bool) {
 			t.Fatal("timed out waiting")
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestEveryCallerGetsItsOwnSliceToSort(t *testing.T) {
+	// THE RACE THIS FIXES, and it was shipped. Four use cases sort what they
+	// are given, in place, and the whole point of this cache is that two of
+	// them are now holding the same read. Sharing the backing array turns
+	// "the assessment and the open list both wanted the pods" into two
+	// goroutines permuting one array.
+	var cache readCache
+
+	fetch := func() ([]int, error) { return []int{3, 1, 2}, nil }
+
+	first, err := cachedSlice(&cache, "dev|pods|", fetch)
+	if err != nil {
+		t.Fatalf("cachedSlice() error = %v", err)
+	}
+	second, err := cachedSlice(&cache, "dev|pods|", fetch)
+	if err != nil {
+		t.Fatalf("cachedSlice() error = %v", err)
+	}
+
+	slices.Sort(first)
+	if !slices.Equal(second, []int{3, 1, 2}) {
+		t.Fatalf("sorting one caller's slice reordered another's: %v", second)
+	}
+}
+
+func TestANarrowerReadWaitsForTheBroaderOneAlreadyRunning(t *testing.T) {
+	// A namespace's pods are a subset of the cluster's, and the assessment
+	// reads the cluster's on every refresh. Rather than a second, narrower
+	// request beside it, the narrow caller waits for the one in flight.
+	var cache readCache
+	release := make(chan struct{})
+	started := make(chan struct{})
+
+	go func() {
+		_, _ = cachedRead(&cache, readKey("dev", "pods", ""), func() ([]string, error) {
+			close(started)
+			<-release
+			return []string{"web/api", "kube-system/dns"}, nil
+		})
+	}()
+
+	<-started
+	borrowed := make(chan bool, 1)
+	go func() {
+		_, ok := borrow[[]string](&cache, readKey("dev", "pods", ""))
+		borrowed <- ok
+	}()
+
+	// It must still be waiting, not have given up and gone its own way.
+	select {
+	case <-borrowed:
+		t.Fatal("borrow returned before the read it was waiting on finished")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(release)
+	if !<-borrowed {
+		t.Fatal("borrow refused a read it had waited for")
+	}
+}
+
+func TestNothingIsBorrowedFromAReadThatIsAbsentOrRefused(t *testing.T) {
+	// The account that may list one namespace and not the cluster. There is
+	// no cluster-wide read to narrow, and inventing one would fail where the
+	// narrow request succeeds.
+	var cache readCache
+
+	if _, ok := borrow[[]string](&cache, readKey("dev", "pods", "")); ok {
+		t.Fatal("borrowed a read nobody had made")
+	}
+
+	refused := errors.New("forbidden")
+	_, _ = cachedRead(&cache, readKey("dev", "pods", ""), func() ([]string, error) {
+		return nil, refused
+	})
+
+	if _, ok := borrow[[]string](&cache, readKey("dev", "pods", "")); ok {
+		t.Fatal("borrowed a read that was refused")
 	}
 }

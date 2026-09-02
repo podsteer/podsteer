@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,9 +20,29 @@ import (
 // each of them independently. metrics-server has no watch, so this stays a
 // poll whatever else changes.
 func (a *Adapter) PodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (map[string]domain.PodUsage, error) {
+	// The same reuse the pod list makes, for the other half of the same read.
+	// The map is keyed "namespace/name", so narrowing it is a prefix match.
+	if !namespace.IsAll() {
+		if all, borrowed := borrow[map[string]domain.PodUsage](&a.reads, readKey(id.String(), "podmetrics", "")); borrowed {
+			return usageIn(all, namespace), nil
+		}
+	}
+
 	return cachedRead(&a.reads, readKey(id.String(), "podmetrics", namespace.String()), func() (map[string]domain.PodUsage, error) {
 		return a.podMetrics(ctx, id, namespace)
 	})
+}
+
+// usageIn narrows cluster-wide usage to one namespace, into a map of its own.
+func usageIn(usage map[string]domain.PodUsage, namespace domain.NamespaceName) map[string]domain.PodUsage {
+	prefix := namespace.String() + "/"
+	narrowed := make(map[string]domain.PodUsage, len(usage))
+	for key, value := range usage {
+		if strings.HasPrefix(key, prefix) {
+			narrowed[key] = value
+		}
+	}
+	return narrowed
 }
 
 // PodMetrics returns pod usage keyed by "namespace/name".

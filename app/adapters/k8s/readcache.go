@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -95,6 +96,57 @@ func cachedRead[T any](cache *readCache, key string, fetch func() (T, error)) (T
 		return zero, entry.err
 	}
 	return result[T](entry)
+}
+
+// cachedSlice is cachedRead for a list, handing every caller its own slice.
+//
+// THE COPY IS NOT OPTIONAL. Four use cases sort what they are given, in
+// place, and the whole point of this file is that two of them are now holding
+// the same read. Sharing the backing array turns "the assessment and the open
+// list both wanted the pods" into two goroutines permuting one array — a data
+// race, and the kind that shows up as rows in the wrong order rather than as
+// a crash.
+//
+// Shallow, deliberately: sorting permutes the outer slice and nothing reaches
+// into the elements, so cloning what they point at would be work for nobody.
+func cachedSlice[T any](cache *readCache, key string, fetch func() ([]T, error)) ([]T, error) {
+	shared, err := cachedRead(cache, key, fetch)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Clone(shared), nil
+}
+
+// borrow reuses a read that is ALREADY fresh or already under way, and
+// reports whether there was one.
+//
+// For the case where one read contains another: a namespace's pods are a
+// subset of the cluster's, and the assessment reads the cluster's on every
+// refresh whatever is on screen. Rather than issue a second, narrower request
+// beside it, the narrower caller waits for the one already in flight and
+// filters it.
+//
+// It never STARTS anything. If the broader read is absent, stale or failed —
+// an account that may list one namespace and not the cluster is the case that
+// matters — this reports false and the caller does its own read.
+func borrow[T any](cache *readCache, key string) (T, bool) {
+	var zero T
+
+	cache.mu.Lock()
+	entry, found := cache.entries[key]
+	if !found || (!entry.at.IsZero() && time.Since(entry.at) >= readTTL) {
+		cache.mu.Unlock()
+		return zero, false
+	}
+	cache.mu.Unlock()
+
+	<-entry.done
+	if entry.err != nil {
+		return zero, false
+	}
+
+	value, ok := entry.value.(T)
+	return value, ok
 }
 
 func result[T any](entry *readEntry) (T, error) {

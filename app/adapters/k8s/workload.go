@@ -24,9 +24,36 @@ import (
 // controller list the consumption sums do it for one namespace. See
 // readcache.go — identical reads in one tick become one request.
 func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error) {
-	return cachedRead(&a.reads, readKey(id.String(), "pods", namespace.String()), func() ([]domain.Pod, error) {
+	// ONE NAMESPACE OUT OF A READ THAT ALREADY COVERS IT. The assessment
+	// lists every pod in the cluster on every refresh whatever is on screen,
+	// so on a controller page the cluster-wide read is in flight beside this
+	// one — and a namespace's pods are a subset of it. Waiting for the read
+	// already under way and filtering costs nothing on the wire.
+	//
+	// Only ever a reuse, never a promotion: an account that may list one
+	// namespace and not the cluster has no such read to borrow, so this
+	// misses and the narrow request goes out as before.
+	if !namespace.IsAll() {
+		if all, borrowed := borrow[[]domain.Pod](&a.reads, readKey(id.String(), "pods", "")); borrowed {
+			return podsIn(all, namespace), nil
+		}
+	}
+
+	return cachedSlice(&a.reads, readKey(id.String(), "pods", namespace.String()), func() ([]domain.Pod, error) {
 		return a.listPods(ctx, id, namespace)
 	})
+}
+
+// podsIn narrows a cluster-wide read to one namespace, into a slice of its
+// own — callers sort what they are given.
+func podsIn(pods []domain.Pod, namespace domain.NamespaceName) []domain.Pod {
+	narrowed := make([]domain.Pod, 0, len(pods))
+	for _, pod := range pods {
+		if pod.Namespace() == namespace {
+			narrowed = append(narrowed, pod)
+		}
+	}
+	return narrowed
 }
 
 // ListPods returns the pods in namespace, or across every namespace when it is
@@ -72,7 +99,7 @@ func (a *Adapter) listPods(ctx context.Context, id domain.ClusterID, namespace d
 // its consumption sums both ask for the same controllers in the same tick,
 // and the assessment asks for all six kinds alongside.
 func (a *Adapter) ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
-	return cachedRead(&a.reads, readKey(id.String(), "workloads", string(kind), namespace.String()), func() ([]domain.Workload, error) {
+	return cachedSlice(&a.reads, readKey(id.String(), "workloads", string(kind), namespace.String()), func() ([]domain.Workload, error) {
 		return a.listWorkloads(ctx, id, kind, namespace)
 	})
 }
