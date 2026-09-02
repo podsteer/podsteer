@@ -596,6 +596,21 @@ code and is only reached by PR. Tags are `v1.2.3-dev-N` / `v1.2.3-rc-N` /
 Unlike a ParliTrack service, a tag here publishes artefacts and a GitHub
 Release — there is no environment to deploy into and no `iac-argocd` step.
 
+**macOS ships TWO assets, and the zip is not redundant.** The `.dmg` is what
+podsteer.com links from its button, because a zip unpacks to a `.app` in
+`~/Downloads` that most people then run from there. The zip is what
+`homebrew.yaml` fetches BY EXACT NAME to compute the cask's checksum, so
+removing it would break `brew install --cask podsteer` silently — the cask
+would point at an asset that is not there. Both are signed, notarised and
+stapled: the image is assessed with `spctl --type open`, not `--type execute`,
+which reports a disk image as rejected whatever its state.
+
+The asset names are a contract with podsteer.com, which composes them itself —
+`Release.AssetName` there, guarded by `TestAssetNameMatchesWhatCIPublishes`.
+GitHub resolves a release asset by exact name, so a rename here that is not
+made there produces a download page of buttons that 404 against a real
+release.
+
 ## Where this deviates from the Service Blueprint
 
 Two deviations, both forced by Wails rather than chosen:
@@ -666,7 +681,7 @@ somebody to check a VPN, and it is deliberately not retryable.
 ## External systems
 
 The local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`) and the API servers
-it names — plus, since v0.1.2, `api.github.com` for the update check, and
+it names — plus, since v0.2.0, `api.github.com` for the update check, and
 nothing else. No telemetry, no account, and still no network access from the
 webview (see the CSP in `web/index.html`).
 

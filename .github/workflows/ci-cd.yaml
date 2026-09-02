@@ -422,6 +422,97 @@ jobs:
           # Gatekeeper does when somebody double-clicks the application.
           spctl --assess --verbose=4 --type execute build/bin/PodSteer.app
 
+      # --- The macOS disk image ---------------------------------------------
+      #
+      # A .dmg BECAUSE THE WEBSITE NEEDS SOMETHING TO LINK TO. The zip below
+      # is what the Homebrew cask consumes and is not going anywhere; it is
+      # also the wrong thing to hand somebody who arrived from podsteer.com,
+      # because unzipping produces a .app in ~/Downloads that most people then
+      # run from there for ever. A disk image with an /Applications symlink is
+      # the gesture macOS taught everybody, and it puts the application where
+      # it belongs.
+      #
+      # ONE UNIVERSAL IMAGE RATHER THAN ONE PER ARCHITECTURE, and the reason is
+      # specific to macOS: browsers on Apple Silicon report `Intel Mac OS X` in
+      # the user-agent for compatibility, so a download page CANNOT reliably
+      # detect the visitor's chip. Splitting would mean asking people to know
+      # their own processor, and the failure mode is an application that will
+      # not launch at all. It costs roughly twice the download.
+      #
+      # Built unsigned too, on every branch build, so this path is exercised
+      # long before a release depends on it.
+      - name: Build The macOS Disk Image
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+
+          staging="$RUNNER_TEMP/dmg"
+          rm -rf "$staging"
+          mkdir -p "$staging"
+
+          # ditto, NOT cp: it is the tool that understands bundles, and a
+          # signed .app copied with anything less careful can arrive with its
+          # signature broken by a lost extended attribute — which shows up as
+          # Gatekeeper refusing the application, not as an error here.
+          ditto build/bin/PodSteer.app "$staging/PodSteer.app"
+
+          # THE GESTURE THE WHOLE IMAGE EXISTS FOR. Without this symlink the
+          # window offers nowhere to drag to, and the .app gets run from the
+          # mounted volume — which works until the volume is ejected.
+          ln -s /Applications "$staging/Applications"
+
+          hdiutil create \
+            -volname "PodSteer" \
+            -srcfolder "$staging" \
+            -fs HFS+ \
+            -format UDZO \
+            -ov \
+            build/bin/PodSteer.dmg
+
+          rm -rf "$staging"
+
+      - name: Sign And Notarise The macOS Disk Image
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
+        env:
+          API_KEY_P8: ${{ secrets.PDS__APPLE_API_KEY_P8 }}
+          API_KEY_ID: ${{ vars.PDS__APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ vars.PDS__APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+
+          # THE CONTAINER IS ASSESSED IN ITS OWN RIGHT, which is the part that
+          # is easy to get wrong: an unsigned disk image wrapping a perfectly
+          # notarised application still makes Gatekeeper complain, because what
+          # the user double-clicks first is the image. The .app inside was
+          # signed, notarised and stapled by the steps above, so this is the
+          # second half of the same job rather than a repeat of it.
+          #
+          # No --options runtime here. The hardened runtime is a property of an
+          # executable's process, and a disk image does not have one.
+          codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" build/bin/PodSteer.dmg
+          codesign --verify --strict --verbose=2 build/bin/PodSteer.dmg
+
+          echo "$API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/api-key.p8"
+
+          # Submitted directly: notarytool takes a .dmg as-is, unlike the .app
+          # above which had to be wrapped first.
+          xcrun notarytool submit build/bin/PodSteer.dmg \
+            --key "$RUNNER_TEMP/api-key.p8" \
+            --key-id "$API_KEY_ID" \
+            --issuer "$API_ISSUER_ID" \
+            --wait --timeout 30m
+
+          rm -f "$RUNNER_TEMP/api-key.p8"
+
+          xcrun stapler staple build/bin/PodSteer.dmg
+
+          # --type open --context context:primary-signature is the assessment
+          # for a DISK IMAGE. `--type execute`, which is right for the .app,
+          # reports an image as rejected whatever its state, so using it here
+          # would fail every release for no reason.
+          spctl --assess --verbose=4 --type open \
+            --context context:primary-signature build/bin/PodSteer.dmg
+
       - name: Remove The Signing Keychain
         # `always()` so the key does not survive a failed signing step. The
         # runner is ephemeral, but a job that leaves secrets behind on the
@@ -468,6 +559,9 @@ jobs:
       # Compress before upload so the macOS .app keeps its bundle structure and
       # its executable bit; actions/upload-artifact would otherwise flatten it
       # into an unopenable directory tree.
+      # The disk image is EXCLUDED from the zip. It is a separate release
+      # asset, and a zip that also contained it would double every macOS
+      # download for people who only wanted one of the two.
       - name: Archive Artifact
         shell: bash
         run: |
@@ -475,7 +569,7 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then
             7z a ../../${{ matrix.artifact }}.zip ./*
           else
-            zip -r -y ../../${{ matrix.artifact }}.zip ./*
+            zip -r -y ../../${{ matrix.artifact }}.zip ./* -x '*.dmg'
           fi
 
       - name: Upload Artifact
@@ -483,6 +577,18 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.zip
+          retention-days: 14
+          if-no-files-found: error
+
+      # Its own upload rather than a second path on the one above, because
+      # `if-no-files-found: error` is worth keeping and the image exists on
+      # exactly one runner.
+      - name: Upload The macOS Disk Image
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}-dmg
+          path: build/bin/PodSteer.dmg
           retention-days: 14
           if-no-files-found: error
 
@@ -517,6 +623,15 @@ jobs:
             platform=$(basename "$f" .zip | sed 's/^podsteer-//')
             mv "$f" "artifacts/podsteer_${version}_${platform}.zip"
           done
+          # THE SAME NAMING AS THE ZIPS, and podsteer.com composes this string
+          # itself — see `Release.AssetName` there, and the test named
+          # TestAssetNameMatchesWhatCIPublishes, which exists because GitHub's
+          # /releases/latest/download/<name> redirect matches an asset by its
+          # exact name. A change here that is not made there produces download
+          # buttons that 404 against a real release.
+          if [ -e artifacts/PodSteer.dmg ]; then
+            mv artifacts/PodSteer.dmg "artifacts/podsteer_${version}_macos-universal.dmg"
+          fi
           ls -la artifacts/
 
       # A cask and a package manager both need a checksum they did not compute
@@ -525,7 +640,10 @@ jobs:
       - name: Checksums
         run: |
           cd artifacts
-          shasum -a 256 *.zip > "podsteer_${{ github.ref_name }}_checksums.txt"
+          # The disk image is checksummed too: it is the asset most people
+          # will actually download, and "verify what you downloaded" is not
+          # advice that should apply to only some of the downloads.
+          shasum -a 256 *.zip *.dmg > "podsteer_${{ github.ref_name }}_checksums.txt"
           cat "podsteer_${{ github.ref_name }}_checksums.txt"
 
       # `gh` rather than a third-party release action: it ships on the runner,
@@ -541,7 +659,7 @@ jobs:
             PRERELEASE=""
           fi
           gh release create "${{ github.ref_name }}" \
-            artifacts/*.zip artifacts/*.cdx.json artifacts/*checksums.txt \
+            artifacts/*.zip artifacts/*.dmg artifacts/*.cdx.json artifacts/*checksums.txt \
             --title "${{ github.ref_name }}" \
             --generate-notes \
             $PRERELEASE
