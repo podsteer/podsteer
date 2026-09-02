@@ -24,6 +24,7 @@
   relied on to show.
 -->
 <script lang="ts">
+  import { modal } from '$lib/modal'
   import Button from './Button.svelte'
   import { DEFAULT_PROJECT_ID, organisation } from '$stores/organisation.svelte'
   import { workspace } from '$stores/workspace.svelte'
@@ -324,6 +325,7 @@
              border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
       role="dialog"
       aria-modal="true"
+      use:modal
       aria-label="Projects and groups"
     >
     <h2 class="text-headline-small text-on-surface">Projects and groups</h2>

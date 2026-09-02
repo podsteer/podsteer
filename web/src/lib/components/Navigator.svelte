@@ -160,6 +160,39 @@
     draggedWidth = null
     resizing = false
   }
+
+  /**
+   * Arrow keys resize the navigator, which is the only way a keyboard can.
+   *
+   * It was pointer-only, so an operator working from the keyboard could not
+   * narrow a sidebar that was taking half their window. Enter restores the
+   * default, matching what a double-click does.
+   */
+  function onResizeKeydown(event: KeyboardEvent): void {
+    const STEP = 16
+    let width: number
+    switch (event.key) {
+      case 'ArrowLeft':
+        width = preferences.navigatorWidth - STEP
+        break
+      case 'ArrowRight':
+        width = preferences.navigatorWidth + STEP
+        break
+      case 'Home':
+        width = 0
+        break
+      case 'End':
+        width = Number.MAX_SAFE_INTEGER
+        break
+      case 'Enter':
+        width = 240
+        break
+      default:
+        return
+    }
+    event.preventDefault()
+    preferences.setNavigatorWidth(width)
+  }
 </script>
 
 <nav
@@ -467,11 +500,24 @@
   </div>
 
   <!-- Resize handle -->
+  <!--
+    svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions
+  
+    Both warnings are false here. ARIA's `separator` is non-interactive ONLY
+    when it is not focusable; a focusable one is the window-splitter pattern,
+    which is what this is — it carries a value, it has bounds, and the arrow
+    keys change it. See ColumnDivider.svelte for the same note in full.
+  -->
   <span
     role="separator"
     aria-orientation="vertical"
     aria-label="Resize sidebar"
-    tabindex="-1"
+    aria-valuenow={preferences.navigatorWidth}
+    aria-valuemin={180}
+    aria-valuemax={400}
+    aria-valuetext="{preferences.navigatorWidth} pixels"
+    tabindex="0"
+    onkeydown={onResizeKeydown}
     class="absolute top-0 -right-1 z-20 h-full w-2 cursor-col-resize
            after:absolute after:top-0 after:left-1/2 after:h-full after:w-px
            after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-100

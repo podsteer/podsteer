@@ -128,7 +128,12 @@
         <button
           type="button"
           onclick={() => workspace.focus(session.cluster.id)}
-          title="{session.cluster.id} — {session.cluster.host}"
+          title="{session.cluster.id} — {session.cluster.host} — {session.cluster.isReachable
+            ? 'reachable'
+            : 'not reachable'}"
+          aria-label="{session.cluster.id}, {session.cluster.isReachable
+            ? 'reachable'
+            : 'not reachable'}"
           aria-current={active ? 'page' : undefined}
           class="no-drag flex h-full max-w-52 items-center gap-2 pl-3 pr-7
                  text-label-medium transition-all duration-150 ease-standard
@@ -140,6 +145,14 @@
             class="size-3.5 shrink-0 {active ? 'text-primary' : 'text-on-surface-variant/60'}"
             strokeWidth={1.8}
           />
+          <!--
+            THE ONLY SIGNAL WAS THE COLOUR. A dead cluster and a live one
+            differed by a red or green dot, hidden from assistive technology
+            and indistinguishable to a red/green colour-blind reader — on the
+            control that says which cluster you are about to act on. The dot
+            stays as the glanceable form; the fact is now in the tab's own
+            accessible name and its tooltip.
+          -->
           <span
             class="size-1.5 shrink-0 rounded-full {toneFor(session.cluster.isReachable)}"
             aria-hidden="true"

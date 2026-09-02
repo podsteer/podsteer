@@ -59,10 +59,16 @@
   </button>
 
   {#if open}
+    <!-- NOT role="menu". A menu's children must be menu items, and these are a
+         <ul> of <label><input type=checkbox>. Assistive technology in menu
+         mode exposes only menu items, so it found none at all and "Choose
+         columns" opened an empty menu. A labelled group of checkboxes is what
+         this actually is. -->
     <div
       class="absolute top-full right-0 z-30 mt-1 w-56 rounded-sm border border-outline-variant/60
              bg-surface-container-high py-1.5 shadow-level-3"
-      role="menu"
+      role="group"
+      aria-label="Columns"
     >
       <p class="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant/60">
         Columns

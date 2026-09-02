@@ -75,6 +75,55 @@
     }
     dividing = false
   }
+
+  /** One arrow press, as a share of the pane. */
+  const STEP = 0.02
+
+  /**
+   * Arrow keys move it, which is the only way a keyboard could.
+   *
+   * IT WAS POINTER-ONLY, and so were the other three handles in the
+   * application: an operator working from the keyboard could not narrow the
+   * detail panel or widen a column whose text was being cut off. A separator
+   * is a real widget with a real value, so it gets a tab stop, arrow keys,
+   * Home and End for the bounds, and a reported value.
+   */
+  function onKeydown(event: KeyboardEvent): void {
+    if (!pane) return
+
+    const box = pane.getBoundingClientRect()
+    if (box.width <= 0) return
+
+    const { min, max } = detailLabelBounds(box.width, rootFontSize())
+    const lowest = min / box.width
+    const highest = max / box.width
+
+    let share: number
+    switch (event.key) {
+      case 'ArrowLeft':
+        share = preferences.detailLabelShare - STEP
+        break
+      case 'ArrowRight':
+        share = preferences.detailLabelShare + STEP
+        break
+      case 'Home':
+        share = lowest
+        break
+      case 'End':
+        share = highest
+        break
+      // Double-click resets it, and so does Enter — the pointer gesture and
+      // the keyboard one should not disagree about what the handle can do.
+      case 'Enter':
+        share = DEFAULT_DETAIL_LABEL_SHARE
+        break
+      default:
+        return
+    }
+
+    event.preventDefault()
+    preferences.setDetailLabelShare(Math.min(highest, Math.max(lowest, share)))
+  }
 </script>
 
 <!--
@@ -85,11 +134,26 @@
   Positioned from the column width rather than measured, so it stays on the
   boundary as the panel is resized with nothing listening for it.
 -->
+<!--
+  svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions
+
+  Both warnings are false here. ARIA's `separator` is non-interactive ONLY
+  when it is not focusable; a focusable separator is the window-splitter
+  pattern, which is exactly what this is — it has a value, it has bounds, and
+  the arrow keys change it. Svelte's rule cannot see the difference, and the
+  alternative it pushes towards, a <button>, would be a lie about a control
+  that carries a position rather than performing an action.
+-->
 <span
   role="separator"
   aria-orientation="vertical"
   aria-label="Resize the label column"
-  tabindex="-1"
+  aria-valuenow={Math.round(preferences.detailLabelShare * 100)}
+  aria-valuemin={0}
+  aria-valuemax={100}
+  aria-valuetext="{Math.round(preferences.detailLabelShare * 100)}% of the panel"
+  tabindex="0"
+  onkeydown={onKeydown}
   style="left: calc(var(--detail-label-width) + 0.5rem)"
   class="absolute top-0 z-10 h-full w-2 -translate-x-1/2 cursor-col-resize
          after:absolute after:top-0 after:left-1/2 after:h-full after:w-px

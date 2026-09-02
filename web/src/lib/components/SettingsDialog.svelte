@@ -14,6 +14,7 @@
   changing something with kubectl.
 -->
 <script lang="ts">
+  import { modal } from '$lib/modal'
   import {
     preferences,
     REFRESH_INTERVALS,
@@ -291,6 +292,7 @@
            bg-surface-container-high shadow-level-3"
     role="dialog"
     aria-modal="true"
+    use:modal
     aria-label="Settings"
   >
     <!-- Section navigation -->

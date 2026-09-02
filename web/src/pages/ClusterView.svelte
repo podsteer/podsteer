@@ -592,10 +592,17 @@
                                      which one kubectl uses are different acts,
                                      and the second changes the behaviour of
                                      every other terminal on the machine. -->
+                                <!-- role="img" so the label is honoured: an
+                                     aria-label on a role-less <span> is
+                                     dropped by browsers, so this star had no
+                                     accessible name at all and the only
+                                     signal that a context is the current one
+                                     was its colour. -->
                                 <span
                                   class="pointer-events-none text-primary"
+                                  role="img"
                                   title="Your kubeconfig's current context"
-                                  aria-label="Current context"
+                                  aria-label="Your kubeconfig's current context"
                                 >
                                   <Star class="size-4" strokeWidth={2} fill="currentColor" />
                                 </span>

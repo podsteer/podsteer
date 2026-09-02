@@ -315,6 +315,68 @@
   })
 
   /**
+   * Arrow keys move between tabs, which is what a tablist is for.
+   *
+   * Only the selected tab is in the tab order (see `tabindex` below), so this
+   * is the only way to reach the others from the keyboard — and it is the way
+   * every other tablist works, so nobody has to be told.
+   */
+  /**
+   * Arrow keys resize the panel. Pointer-only before, so a keyboard operator
+   * could not narrow a drawer covering the list they were reading. Enter
+   * restores the default, matching the double-click.
+   */
+  function onResizeKeydown(event: KeyboardEvent): void {
+    const STEP = 0.02
+    let fraction: number
+    switch (event.key) {
+      // Left widens: the panel is anchored to the right edge, so dragging its
+      // handle left makes it bigger, and the key has to agree with the drag.
+      case 'ArrowLeft':
+        fraction = preferences.detailWidthFraction + STEP
+        break
+      case 'ArrowRight':
+        fraction = preferences.detailWidthFraction - STEP
+        break
+      case 'Home':
+        fraction = 0
+        break
+      case 'End':
+        fraction = 1
+        break
+      case 'Enter':
+        fraction = DEFAULT_DETAIL_FRACTION
+        break
+      default:
+        return
+    }
+    event.preventDefault()
+    preferences.setDetailWidth(fraction)
+  }
+
+  function onTabKeydown(event: KeyboardEvent): void {
+    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+    if (step === 0 && event.key !== 'Home' && event.key !== 'End') return
+
+    const shown = tabs.filter((tab) => tab.show())
+    if (shown.length === 0) return
+
+    const at = shown.findIndex((tab) => tab.id === activeTab)
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? shown.length - 1
+          : (at + step + shown.length) % shown.length
+
+    event.preventDefault()
+    activeTab = shown[next].id
+    // The strip is a roving tabindex, so focus has to follow the selection or
+    // the next arrow press would be dispatched from a tab that is now -1.
+    document.getElementById(`detail-tab-${shown[next].id}`)?.focus()
+  }
+
+  /**
    * Copies the manifest AS SHOWN, managed fields included only if they are.
    *
    * The button sits in the YAML toolbar now, directly above the text, so what
@@ -732,7 +794,22 @@
     when the window is resized without anything listening for it. A drag in
     progress is the one time a pixel width is used — see draggedWidth.
   -->
-  <aside
+  <!--
+    A DIALOG, AND DELIBERATELY NOT aria-modal. This had a label and no role at
+    all, so the name was announced on nothing. `dialog` is what it is: it sits
+    over a full-window scrim and Escape closes it.
+
+    aria-modal is left off on purpose. It tells assistive technology that
+    nothing outside exists, and honouring that claim means trapping Tab —
+    right for a dialog asking one question, wrong for a browsing surface
+    people move in and out of while reading the list behind it. The dialogs
+    that DO make the claim use `use:modal`, which keeps it.
+
+    A <div> rather than the <aside> this was, because an aside means
+    complementary content and a dialog is not that — and Svelte's own a11y
+    check says so.
+  -->
+  <div
     style="--detail-label-width: {detailLabelWidthCSS(preferences.detailLabelShare)}; width: {draggedWidth !== null
       ? `${draggedWidth}px`
       : `min(${DETAIL_MAX_SHARE * 100}vw, clamp(${DETAIL_MIN_REM}rem, ${
@@ -740,6 +817,7 @@
         }vw, ${DETAIL_MAX_REM}rem))`}"
     class="fixed top-0 right-0 bottom-0 z-50 flex flex-col
            border-l border-outline-variant/60 bg-surface shadow-level-3"
+    role="dialog"
     aria-label="Object details"
   >
     <!--
@@ -750,11 +828,22 @@
       What is STORED is still a share, so a width chosen here means the same
       on somebody else's screen. Double-click restores the default.
     -->
+    <!--
+      svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions
+
+      Both warnings are false here — see ColumnDivider.svelte. A focusable
+      separator is the window-splitter pattern.
+    -->
     <span
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize the detail panel"
-      tabindex="-1"
+      aria-valuenow={Math.round(preferences.detailWidthFraction * 100)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuetext="{Math.round(preferences.detailWidthFraction * 100)}% of the window"
+      tabindex="0"
+      onkeydown={onResizeKeydown}
       class="absolute top-0 -left-1 z-20 h-full w-2 cursor-col-resize
              after:absolute after:top-0 after:left-1/2 after:h-full after:w-px
              after:-translate-x-1/2 after:bg-transparent after:transition-colors
@@ -908,14 +997,35 @@
       </div>
     </header>
 
-    <!-- Tabs -->
-    <div class="flex border-b border-outline-variant/60 bg-surface-container-low/50 px-2">
+    <!--
+      Tabs, WITH THE SEMANTICS OF TABS. These were six plain buttons in a row,
+      with the active one marked by colour and a two-pixel underline and
+      nothing else — so a screen reader heard six identical buttons, could not
+      tell which pane was showing, and paid six Tab stops to reach the content
+      on every object opened.
+
+      A real tablist costs one Tab stop for the whole strip and moves between
+      tabs with the arrow keys, which is both the standard and less work for
+      everybody.
+    -->
+    <div
+      class="flex border-b border-outline-variant/60 bg-surface-container-low/50 px-2"
+      role="tablist"
+      aria-label="Detail views"
+      tabindex={-1}
+      onkeydown={onTabKeydown}
+    >
       {#each tabs as tab (tab.id)}
         {#if tab.show()}
           {@const TabIcon = tab.icon}
           {@const active = activeTab === tab.id}
           <button
             type="button"
+            role="tab"
+            id="detail-tab-{tab.id}"
+            aria-selected={active}
+            aria-controls="detail-panel"
+            tabindex={active ? 0 : -1}
             onclick={() => (activeTab = tab.id)}
             class="flex items-center gap-1.5 border-b-2 px-3 py-2 text-body-small font-medium
                    transition-colors duration-100
@@ -939,7 +1049,12 @@
     {/if}
 
     <!-- Tab content -->
-    <div class="min-h-0 flex-1 overflow-auto bg-surface-container-lowest">
+    <div
+      class="min-h-0 flex-1 overflow-auto bg-surface-container-lowest"
+      id="detail-panel"
+      role="tabpanel"
+      aria-labelledby="detail-tab-{activeTab}"
+    >
       {#if activeTab === 'overview' && session.selectedApplication}
         <!-- An application is not an object: nothing to fetch, nothing to
              edit, nothing to delete. Its pane is built from the row. -->
@@ -1097,7 +1212,7 @@
         </div>
       </div>
     {/if}
-  </aside>
+  </div>
 
   <!-- Dialogs -->
   <DeleteDialog

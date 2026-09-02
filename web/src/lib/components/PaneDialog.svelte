@@ -17,6 +17,7 @@
   it back.
 -->
 <script lang="ts">
+  import { modal } from '$lib/modal'
   import type { Snippet } from 'svelte'
   import type { Component } from 'svelte'
   import { Minimize2, X } from '@lucide/svelte'
@@ -64,6 +65,7 @@
            border-outline-variant bg-surface-container-high shadow-level-3"
     role="dialog"
     aria-modal="true"
+    use:modal
     aria-label={label}
   >
     <!-- The same identity the drawer shows, so it is obvious this is that

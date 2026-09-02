@@ -13,6 +13,7 @@
   the same code that performs the write rather than by a second guess at it.
 -->
 <script lang="ts">
+  import { modal } from '$lib/modal'
   import Button from './Button.svelte'
   import {
     addKubeconfig,
@@ -150,6 +151,7 @@
              border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
       role="dialog"
       aria-modal="true"
+      use:modal
       aria-label="Add cluster"
     >
       {#if added}

@@ -2,6 +2,7 @@
   Confirmation dialog for restarting a workload rollout.
 -->
 <script lang="ts">
+  import { modal } from '$lib/modal'
   import Button from './Button.svelte'
 
   interface Props {
@@ -52,6 +53,7 @@
            rounded-sm border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
     aria-modal="true"
+    use:modal
     aria-label="Restart rollout"
   >
     <h2 class="text-headline-small text-on-surface">Restart {workloadKind}</h2>

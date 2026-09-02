@@ -51,12 +51,18 @@
 >
   {#if session}
     <!-- Cluster connection -->
+    <!-- The dot is the glance; the word is the fact. Colour alone told a
+         red/green colour-blind or screen-reader operator nothing about
+         whether this cluster is answering. -->
     <span class="flex items-center gap-1.5">
       <span
         class="size-1.5 rounded-full {session.cluster.isReachable ? 'bg-success' : 'bg-error'}"
         aria-hidden="true"
       ></span>
       <span class="truncate font-medium">{session.cluster.id}</span>
+      <span class="sr-only">
+        {session.cluster.isReachable ? 'reachable' : 'not reachable'}
+      </span>
     </span>
 
     {#if session.cluster.version}
