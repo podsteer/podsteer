@@ -12,12 +12,19 @@
   entirely ABOUT something else, so the object it concerns is written as a path
   whose last part is a link: arriving at an event and not being able to reach
   the pod it describes is the dead end this pane exists to remove.
+
+  THE SAME APPLIES INSIDE THE DETAILS LIST. An event names a node and a
+  namespace, and both are somewhere to go — the node the kubelet that reported
+  this is running on, and the namespace the whole application can be filtered
+  to. Leaving them as text made them facts to copy and paste into a search box.
+  The event's own name is not one of those: it names the record you are already
+  reading, so it is labelled as such and left as text.
 -->
 <script lang="ts">
   import { Activity } from '@lucide/svelte'
   import { iconForKind } from '$lib/kindIcons'
   import DetailSection from './DetailSection.svelte'
-  import DetailList from './DetailList.svelte'
+  import DetailList, { type DetailRow } from './DetailList.svelte'
 
   interface InvolvedObject {
     kind: string
@@ -28,19 +35,44 @@
   interface Props {
     /** The parsed event manifest. */
     event: Record<string, unknown> | null
-    /** Opens the object the event is about, when that kind is reachable. */
-    onopen?: (target: InvolvedObject) => void
-    /** False when nothing in the cluster serves the involved kind. */
-    canOpen?: boolean
+    /**
+     * Whether this cluster serves a kind, so a link is only offered when there
+     * is somewhere for it to go.
+     *
+     * An event can name a kind PodSteer has no list for — a CRD removed since
+     * the event fired, most obviously — and a node reported by a kubelet is
+     * unreachable to an account that cannot list nodes.
+     */
+    canOpen?: (kindName: string) => string | null
+    /** Follows a reference to the object it names. */
+    onopen?: (kindName: string, name: string, namespace: string) => void
+    /** Filters the application to a namespace, as the drawer header does. */
+    onnamespace?: (namespace: string) => void
   }
 
-  let { event, onopen, canOpen = false }: Props = $props()
+  let { event, canOpen, onopen, onnamespace }: Props = $props()
+
+  /**
+   * Builds the click handler for a reference, or leaves it undefined.
+   *
+   * Undefined is the important half: a Node row on a cluster whose nodes this
+   * account cannot list must render as plain text, not as a link that fails
+   * when followed. Offering a dead link is worse than offering none.
+   */
+  function follow(kindName: string, name: string, namespace = ''): (() => void) | undefined {
+    if (!name || !onopen || !canOpen?.(kindName)) return undefined
+    return () => onopen(kindName, name, namespace)
+  }
 
   const involved = $derived.by((): InvolvedObject | null => {
     const raw = event?.involvedObject as Record<string, string> | undefined
     if (!raw?.kind || !raw?.name) return null
     return { kind: raw.kind, name: raw.name, namespace: raw.namespace ?? '' }
   })
+
+  const openInvolved = $derived(
+    involved ? follow(involved.kind, involved.name, involved.namespace) : undefined,
+  )
 
   const isWarning = $derived(event?.type === 'Warning')
 
@@ -62,7 +94,7 @@
    * from events.k8s.io carries eventTime and neither of the older fields, and
    * showing a blank there would suggest it never happened.
    */
-  const rows = $derived.by(() => {
+  const rows = $derived.by((): DetailRow[] => {
     const metadata = (event?.metadata ?? {}) as Record<string, string>
     const series = (event?.series ?? {}) as Record<string, unknown>
     const source = (event?.source ?? {}) as Record<string, string>
@@ -74,6 +106,7 @@
       (event?.eventTime as string) ??
       ''
     const count = (series?.count as number) ?? (event?.count as number) ?? 1
+    const namespace = metadata.namespace ?? ''
 
     return [
       { label: 'Type', value: (event?.type as string) ?? '—' },
@@ -85,9 +118,27 @@
         label: 'Reported by',
         value: source.component || (event?.reportingComponent as string) || '—',
       },
-      { label: 'Node', value: source.host || '—' },
-      { label: 'Namespace', value: metadata.namespace || '—' },
-      { label: 'Name', value: metadata.name || '—' },
+      // The machine the reporting component was running on. A kubelet event
+      // carries it and a scheduler event does not, which is why the row can
+      // drop out below rather than showing a blank.
+      {
+        label: 'Node',
+        value: source.host || '—',
+        onclick: follow('Node', source.host ?? ''),
+      },
+      {
+        // Following a namespace filters the whole application to it, which is
+        // the same thing clicking it in the drawer's header does — not an
+        // object to open, but the most common next move from an event.
+        label: 'Namespace',
+        value: namespace || '—',
+        onclick: namespace && onnamespace ? () => onnamespace(namespace) : undefined,
+      },
+      // The EVENT's name, not the object's — `nginx-7d8f.17a2b3c4d5e6f7`.
+      // Labelled in full because "Name" beside an object's kind and name in
+      // the header above reads as though it were followable, and it is not:
+      // it identifies the record already open.
+      { label: 'Event name', value: metadata.name || '—' },
     ].filter((row) => row.value !== '—' || row.label === 'Type')
   })
 
@@ -122,10 +173,10 @@
           <p class="flex min-w-0 items-baseline gap-1.5 text-body-medium text-on-surface-variant">
             <span class="shrink-0">{involved.kind}</span>
             <span class="shrink-0 text-on-surface-variant/40" aria-hidden="true">/</span>
-            {#if canOpen && onopen}
+            {#if openInvolved}
               <button
                 type="button"
-                onclick={() => onopen?.(involved)}
+                onclick={openInvolved}
                 class="resource-link min-w-0 truncate text-left"
                 title="Open {involved.kind.toLowerCase()} {involved.name}"
               >

@@ -175,27 +175,6 @@
   })
 
   /**
-   * The navigator id for the kind an event is about, or null when this
-   * cluster does not serve it.
-   *
-   * An event can name a kind PodSteer has no list for — a CRD removed since
-   * the event fired, most obviously — so the link is offered only when there
-   * is somewhere for it to go.
-   */
-  const involvedKindId = $derived.by((): string | null => {
-    const involved = parsedEvent?.involvedObject as Record<string, string> | undefined
-    if (!involved?.kind) return null
-    return session.kinds.find((kind) => kind.kind === involved.kind)?.id ?? null
-  })
-
-  /** Opens the object an event is about, in the list it belongs to. */
-  async function openInvolved(target: { name: string; namespace: string }): Promise<void> {
-    if (!involvedKindId) return
-    await session.selectKind(involvedKindId)
-    await session.openDetail(target.name, target.namespace)
-  }
-
-  /**
    * The navigator id for a kind named by its Kubernetes Kind, or null.
    *
    * Resolved against what THIS cluster serves rather than a table compiled in
@@ -774,7 +753,17 @@
     <!-- Tab content -->
     <div class="min-h-0 flex-1 overflow-auto bg-surface-container-lowest">
       {#if activeTab === 'overview' && isEvent}
-        <EventDetail event={parsedEvent} canOpen={involvedKindId !== null} onopen={openInvolved} />
+        <!-- The same reference-following the generic overview gets: an event
+             names an object, a node and a namespace, and each is somewhere to
+             go. `kindIdFor` is what keeps a link off a kind this cluster does
+             not serve — a CRD removed since the event fired, or nodes an
+             account cannot list. -->
+        <EventDetail
+          event={parsedEvent}
+          canOpen={kindIdFor}
+          onopen={openObject}
+          onnamespace={(namespace) => void session.selectNamespace(namespace)}
+        />
       {:else if activeTab === 'overview'}
         <ResourceOverview
           manifest={session.manifest}
