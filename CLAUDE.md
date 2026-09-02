@@ -87,6 +87,47 @@ already pays with the namespace filter on "all", and it is why
 `ListNamespaces` — which feeds the filter — stays a cheap read of names and is
 a separate call.
 
+## A pod belongs to the controller that OWNS it, not the one that selects it
+
+Attribution — which pods count towards a Deployment's CPU meter — goes through
+the pod's controlling `ownerReference`, resolved one hop where Kubernetes puts
+an intermediate: a Deployment's pods are owned by its ReplicaSets, a CronJob's
+by its Jobs. `domain.WorkloadConsumption` is the one rule, and both the list
+row and the detail panel go through it so they cannot disagree.
+
+It was briefly done by matching the controller's label selector instead, and
+that is worth recording as a mistake rather than rediscovering:
+
+- **A selector is not ownership.** Two controllers with overlapping selectors
+  are each charged the whole shared set, so a column sums to more than the
+  namespace it is in; a bare ReplicaSet wearing a Deployment's labels is
+  charged to the Deployment; an orphaned pod is charged to whatever still
+  matches it.
+- **The selector reaching the domain is lossy.** `matchLabels` in the k8s
+  mapper keeps `spec.selector.matchLabels` and drops `matchExpressions`, which
+  is fine for display and fatal for attribution: a controller selecting purely
+  by expression arrives with an EMPTY selector and is charged nothing, so a
+  healthy workload reports zero pods.
+- **It saved nothing.** The argument was that the owner chain costs a
+  ReplicaSet list per refresh — while the same refresh already lists every POD
+  in the namespace, an order of magnitude more.
+
+A pod nothing in the list owns is charged to **nobody**. Attributing an
+unattributable pod to something that merely looks similar reports usage
+against a thing that is not causing it.
+
+## "Nothing measured" and "no metrics API" are different, and both get said
+
+`domain.AggregateUsage` carries `Measured` (how many pods reported), and
+`MetricsAvailable` (whether the cluster served metrics at all). Collapsing
+them tells somebody with a working metrics-server to install one, every time a
+CronJob's pods finish or a Deployment scales to zero.
+
+`Measurable` is the third: metrics-server never reports a finished or
+unscheduled pod, so it is the denominator for "is this total short". Measuring
+against every pod made any namespace holding a completed Job permanently
+"partial" while claiming a total that was not short at all.
+
 ## The overview is analysis, and it lives in the domain
 
 `app/domain/overview.go` turns a cluster snapshot into a verdict: grouped

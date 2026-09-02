@@ -123,9 +123,22 @@
       Nothing is running, so there is nothing to measure.
     </p>
   {:else if reading && !reading.hasMetrics}
+    <!--
+      Three different absences, said as three different things. Telling
+      somebody to install metrics-server when they already have one is what
+      collapsing them cost: a CronJob whose pods have all finished measures
+      nothing on a perfectly metered cluster, and so does a Deployment whose
+      pods started ten seconds ago.
+    -->
     <p class="py-2 text-body-small text-on-surface-variant/70">
-      None of the {reading.pods}
-      {reading.pods === 1 ? 'pod' : 'pods'} reported usage — this cluster has no metrics source.
+      {#if !reading.metricsAvailable}
+        Not measured — this cluster has no metrics source.
+      {:else if reading.measurablePods === 0}
+        Its {reading.pods}
+        {reading.pods === 1 ? 'pod has' : 'pods have'} finished, and a finished pod uses nothing.
+      {:else}
+        No usage reported yet — a pod is measured a little after it starts.
+      {/if}
     </p>
   {:else if reading}
     <div class="flex flex-col gap-4">
@@ -151,10 +164,16 @@
            twenty pods where metrics-server answered for eighteen is showing
            less than it is using, and a figure that does not say so is an
            understatement presented as a measurement. -->
-      {#if reading.measuredPods < reading.pods}
+      <!--
+        Against the pods that COULD be measured, not against every pod. A
+        finished pod is not a missing measurement — it is contributing
+        nothing — and counting it here made every CronJob permanently
+        "partial" while claiming a total that was not short.
+      -->
+      {#if reading.measuredPods < reading.measurablePods}
         <p class="text-body-small text-gauge-warn">
-          Summed over {reading.measuredPods} of {reading.pods} pods — the rest reported no usage,
-          so this is less than the whole.
+          Summed over {reading.measuredPods} of {reading.measurablePods} running pods — the rest
+          reported no usage, so this is less than the whole.
         </p>
       {/if}
 

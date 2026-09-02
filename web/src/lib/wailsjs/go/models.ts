@@ -217,7 +217,9 @@ export namespace wails {
 	export class Consumption {
 	    pods: number;
 	    measuredPods: number;
+	    measurablePods: number;
 	    hasMetrics: boolean;
+	    metricsAvailable: boolean;
 	    cpu: string;
 	    memory: string;
 	    cpuRequest: string;
@@ -247,7 +249,9 @@ export namespace wails {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.pods = source["pods"];
 	        this.measuredPods = source["measuredPods"];
+	        this.measurablePods = source["measurablePods"];
 	        this.hasMetrics = source["hasMetrics"];
+	        this.metricsAvailable = source["metricsAvailable"];
 	        this.cpu = source["cpu"];
 	        this.memory = source["memory"];
 	        this.cpuRequest = source["cpuRequest"];
@@ -717,7 +721,9 @@ export namespace wails {
 	    notReady: number;
 	    pods: number;
 	    measuredPods: number;
+	    measurablePods: number;
 	    hasMetrics: boolean;
+	    metricsAvailable: boolean;
 	    cpu: string;
 	    memory: string;
 	    cpuRequest: string;
@@ -753,7 +759,9 @@ export namespace wails {
 	        this.notReady = source["notReady"];
 	        this.pods = source["pods"];
 	        this.measuredPods = source["measuredPods"];
+	        this.measurablePods = source["measurablePods"];
 	        this.hasMetrics = source["hasMetrics"];
+	        this.metricsAvailable = source["metricsAvailable"];
 	        this.cpu = source["cpu"];
 	        this.memory = source["memory"];
 	        this.cpuRequest = source["cpuRequest"];

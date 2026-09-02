@@ -17,7 +17,21 @@
  * depend on all three for no benefit.
  */
 export interface Measured {
+  /** Whether there are figures to draw. */
   hasMetrics: boolean
+  /**
+   * Whether the CLUSTER serves metrics at all.
+   *
+   * Distinct from hasMetrics, and the tooltip depends on which is false: an
+   * idle namespace on a metered cluster and a cluster with no metrics-server
+   * both measure nothing, and telling somebody to install one they already
+   * have is the failure this separates.
+   *
+   * Optional because only the rows that AGGREGATE pods carry it. A single
+   * pod or node that reports nothing is unmeasured either way, so those rows
+   * leave it undefined and keep the wording they always had.
+   */
+  metricsAvailable?: boolean
   cpu: string
   memory: string
   cpuRequest: string
@@ -97,6 +111,7 @@ export function meter(
  */
 export function meterTitle(
   measured: boolean,
+  available: boolean | undefined,
   value: string,
   hasRequest: boolean,
   request: string,
@@ -105,7 +120,11 @@ export function meterTitle(
   limit: string,
   limitPercent: number,
 ): string {
-  if (!measured) return 'Not measured — this cluster has no metrics source'
+  if (!measured) {
+    return available
+      ? 'Nothing here reported usage — no running pod has been measured yet'
+      : 'Not measured — this cluster has no metrics source'
+  }
 
   const against = hasRequest
     ? `${value} of ${request} requested (${Math.round(percent)}%)`
@@ -138,6 +157,7 @@ export function memoryMeter(row: Measured, byLimit: boolean): Meter {
 export function cpuTitle(row: Measured): string {
   return meterTitle(
     row.hasMetrics,
+    row.metricsAvailable,
     row.cpu,
     row.hasCpuRequest,
     row.cpuRequest,
@@ -152,6 +172,7 @@ export function cpuTitle(row: Measured): string {
 export function memoryTitle(row: Measured): string {
   return meterTitle(
     row.hasMetrics,
+    row.metricsAvailable,
     row.memory,
     row.hasMemoryRequest,
     row.memoryRequest,

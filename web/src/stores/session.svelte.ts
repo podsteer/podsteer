@@ -304,6 +304,16 @@ export class ClusterSession {
    * reading "not measured" rather than nothing at all.
    */
   workloadUsage = $state.raw<Record<string, Consumption>>({})
+
+  /**
+   * Which request for those figures is the current one.
+   *
+   * Incremented per fetch, so only the newest response may land. Comparing
+   * what was asked for — the kind, the namespace — cannot do this: two
+   * refreshes of the SAME list can resolve out of order, and the older one
+   * would win.
+   */
+  #usageGeneration = 0
   table = $state.raw<ResourceTable | null>(null)
   overview = $state.raw<Overview | null>(null)
 
@@ -996,15 +1006,19 @@ export class ClusterSession {
       case 'workloads': {
         const kind = WORKLOAD_KIND_BY_ID[this.selectedKindId]
         // Not awaited, so a slow pod list never delays the rows themselves.
-        // The guard is the usual one: a response for a list the operator has
-        // already navigated away from must not land on the new one.
-        const requested = this.selectedKindId
+        //
+        // GUARDED BY A GENERATION, not by comparing the kind. The kind alone
+        // let three things through: a namespace change with the kind
+        // unchanged, two refreshes of the same list resolving out of order
+        // with the older winning, and a failure clearing figures a later
+        // success had already installed. One counter closes all three.
+        const generation = ++this.#usageGeneration
         void workloadConsumption(id, kind, namespace)
           .then((usage) => {
-            if (this.selectedKindId === requested) this.workloadUsage = usage
+            if (generation === this.#usageGeneration) this.workloadUsage = usage
           })
           .catch(() => {
-            if (this.selectedKindId === requested) this.workloadUsage = {}
+            if (generation === this.#usageGeneration) this.workloadUsage = {}
           })
         return listWorkloads(id, kind, namespace)
       }

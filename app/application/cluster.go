@@ -290,9 +290,12 @@ func (s *ClusterService) ListNamespaceSummaries(ctx context.Context, id domain.C
 		return nil, fmt.Errorf("summarising namespaces: %w", err)
 	}
 
-	pods, _ = podsWithUsage(ctx, s.metrics, s.logger, id, domain.NamespaceAll, pods)
+	// The boolean matters: it is the difference between a cluster with no
+	// metrics-server and an idle namespace on a metered one, which measure
+	// the same and are not the same thing to say.
+	pods, measured := podsWithUsage(ctx, s.metrics, s.logger, id, domain.NamespaceAll, pods)
 
-	return domain.NewNamespaceSummaries(namespaces, pods), nil
+	return domain.NewNamespaceSummaries(namespaces, pods, measured), nil
 }
 
 // ListNodes returns the nodes of a connected cluster, enriched with usage.

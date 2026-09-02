@@ -116,10 +116,11 @@ func (s *WorkloadService) ListWorkloads(ctx context.Context, id domain.ClusterID
 // account cannot list pods the list must still render. Folding it in would
 // make a column cost the page.
 //
-// A pod is attributed by the controller's own label selector — see
-// domain.WorkloadConsumption for why that rather than the ownerReference
-// chain. CronJobs have no selector, so their Jobs are read as the missing
-// hop; nothing else needs a second list.
+// A pod is attributed by its controlling ownerReference — see
+// domain.WorkloadConsumption. Two kinds do not own their pods directly, so
+// their intermediates are read as the missing hop: a Deployment's ReplicaSets
+// and a CronJob's Jobs. Both are small objects beside the pod list already
+// being fetched.
 func (s *WorkloadService) WorkloadConsumption(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) (map[string]domain.AggregateUsage, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("reading %s usage: %w", kind, err)
@@ -134,23 +135,59 @@ func (s *WorkloadService) WorkloadConsumption(ctx context.Context, id domain.Clu
 	if err != nil {
 		return nil, fmt.Errorf("listing pods in %q of %q: %w", namespace, id, err)
 	}
-	pods, _ = podsWithUsage(ctx, s.metrics, s.logger, id, namespace, pods)
+	pods, measured := podsWithUsage(ctx, s.metrics, s.logger, id, namespace, pods)
 
 	var intermediates []domain.Workload
-	if kind == domain.WorkloadCronJob {
-		jobs, err := s.workloads.ListWorkloads(ctx, id, domain.WorkloadJob, namespace)
+	if hop, needed := intermediateKind(kind); needed {
+		// FAILING RATHER THAN REPORTING IDLE. Without the hop every
+		// controller of this kind reads as running nothing — which is also
+		// the ordinary state of a CronJob between runs and a Deployment
+		// scaled to zero, so the two would be indistinguishable. An error
+		// puts a dash and a reason on screen; a silent zero is a lie.
+		found, err := s.workloads.ListWorkloads(ctx, id, hop, namespace)
 		if err != nil {
-			// The Jobs are the only way a CronJob reaches its pods. Without
-			// them every CronJob reads as running nothing, which is also its
-			// ordinary state between runs — so the two would be
-			// indistinguishable, and the honest answer is to fail rather than
-			// to report "idle" for a cluster that would not say.
-			return nil, fmt.Errorf("listing jobs in %q of %q: %w", namespace, id, err)
+			return nil, fmt.Errorf("listing %ss in %q of %q: %w", hop, namespace, id, err)
 		}
-		intermediates = jobs
+		intermediates = found
 	}
 
-	return domain.WorkloadConsumption(workloads, pods, intermediates), nil
+	return domain.WorkloadConsumption(workloads, pods, intermediates, measured), nil
+}
+
+// intermediateKind names the object that stands between a controller and its
+// pods, for the two kinds that do not own theirs directly.
+func intermediateKind(kind domain.WorkloadKind) (domain.WorkloadKind, bool) {
+	switch kind {
+	case domain.WorkloadDeployment:
+		return domain.WorkloadReplicaSet, true
+	case domain.WorkloadCronJob:
+		return domain.WorkloadJob, true
+	default:
+		return "", false
+	}
+}
+
+// WorkloadUsage sums what one controller's pods are consuming.
+//
+// THROUGH THE SAME FUNCTION THE LIST USES, deliberately. It used to have its
+// own path — ListPodsForWorkload, which resolves ownership inside the adapter
+// — and the two rules disagreed: the meter in the row and the chart in the
+// panel were computed differently and would show different numbers for the
+// same controller. Sharing the rule is what makes them agree by construction
+// rather than by two people remembering to change both.
+//
+// It costs listing the controllers of this kind as well as the pods, which is
+// the cheap half of a read this was doing anyway.
+func (s *WorkloadService) WorkloadUsage(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.AggregateUsage, error) {
+	consumption, err := s.WorkloadConsumption(ctx, id, kind, namespace)
+	if err != nil {
+		return domain.AggregateUsage{}, err
+	}
+
+	// Absent means the controller is gone, or is not in the namespace being
+	// browsed. A zero reading is the honest answer either way: there are no
+	// pods to count.
+	return consumption[namespace.String()+"/"+name], nil
 }
 
 // withPodMetrics attaches usage to pods, degrading silently when the cluster
@@ -163,10 +200,10 @@ func (s *WorkloadService) withPodMetrics(ctx context.Context, id domain.ClusterI
 // podsWithUsage attaches measured usage to pods and reports whether the
 // cluster answered at all.
 //
-// Shared by the two use cases that need pods with figures on them. The BOOLEAN
-// is the reason it is not simply a slice: zero usage on a cluster with no
-// metrics API is the absence of a measurement, and a caller that cannot tell
-// the two apart reports an unmeasured namespace as an idle one.
+// Shared by the use cases that need pods with figures on them. The BOOLEAN is
+// the reason it is not simply a slice: zero usage on a cluster with no metrics
+// API is the absence of a measurement, and a caller that cannot tell the two
+// apart reports an unmeasured namespace as an idle one.
 func podsWithUsage(
 	ctx context.Context,
 	metrics ports.MetricsPort,
@@ -175,10 +212,11 @@ func podsWithUsage(
 	namespace domain.NamespaceName,
 	pods []domain.Pod,
 ) ([]domain.Pod, bool) {
-	if len(pods) == 0 {
-		return pods, false
-	}
-
+	// No early return on an empty slice, deliberately. The answer is not only
+	// the enriched pods but whether the cluster serves metrics AT ALL, and an
+	// empty namespace on a metered cluster must not report the same thing as
+	// a cluster with no metrics-server — that distinction is what stops the
+	// panel telling somebody to install one.
 	usage, err := metrics.PodMetrics(ctx, id, namespace)
 	if err != nil {
 		if !errors.Is(err, ports.ErrMetricsUnavailable) {
@@ -198,34 +236,6 @@ func podsWithUsage(
 	}
 
 	return enriched, true
-}
-
-// WorkloadUsage sums what a controller's pods are consuming.
-//
-// ITS PODS, FETCHED NOW, rather than anything held about the controller. A
-// controller has no usage of its own — it is a template and a replica count —
-// so the only honest answer is the sum over whatever it currently has, which
-// is also why a Deployment scaled to zero and a CronJob between runs both
-// correctly read as nothing.
-//
-// Called while a panel is open rather than alongside the list: summing every
-// controller's pods on every refresh of the controller list would list the
-// namespace's pods once per controller, and the figure is only ever looked at
-// one controller at a time.
-func (s *WorkloadService) WorkloadUsage(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.AggregateUsage, error) {
-	if _, err := s.registry.Get(id); err != nil {
-		return domain.AggregateUsage{}, fmt.Errorf("reading %s usage: %w", kind, err)
-	}
-
-	pods, err := s.workloads.ListPodsForWorkload(ctx, id, namespace, kind, name)
-	if err != nil {
-		return domain.AggregateUsage{}, fmt.Errorf(
-			"reading pods of %s/%s in %q: %w", kind, name, namespace, err)
-	}
-
-	pods, _ = podsWithUsage(ctx, s.metrics, s.logger, id, namespace, pods)
-
-	return domain.NewAggregateUsage(pods), nil
 }
 
 // PodGraph returns the dependency chain around one pod.

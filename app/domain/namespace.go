@@ -185,7 +185,7 @@ func (s NamespaceSummary) IsEmpty() bool { return s.Usage.Pods == 0 }
 // Ordered by name. A namespace list is read by looking one up, not by ranking
 // them — the ranking that matters, by what they reserve, is the overview's
 // job and is already there.
-func NewNamespaceSummaries(namespaces []Namespace, pods []Pod) []NamespaceSummary {
+func NewNamespaceSummaries(namespaces []Namespace, pods []Pod, metricsAvailable bool) []NamespaceSummary {
 	byName := make(map[NamespaceName][]Pod, len(namespaces))
 	for _, namespace := range namespaces {
 		byName[namespace.Name()] = nil
@@ -216,7 +216,7 @@ func NewNamespaceSummaries(namespaces []Namespace, pods []Pod) []NamespaceSummar
 		summaries = append(summaries, NamespaceSummary{
 			Namespace: namespace,
 			NotReady:  notReady,
-			Usage:     NewAggregateUsage(held),
+			Usage:     NewAggregateUsage(held, metricsAvailable),
 		})
 	}
 

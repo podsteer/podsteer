@@ -102,7 +102,7 @@ func TestEveryNamespaceGetsARowIncludingTheEmptyOnes(t *testing.T) {
 
 	summaries := domain.NewNamespaceSummaries(namespaces, []domain.Pod{
 		mustSummaryPod(t, "web", "api-1", domain.PodPhaseRunning),
-	})
+	}, true)
 
 	if len(summaries) != 2 {
 		t.Fatalf("summarised %d namespaces, want 2", len(summaries))
@@ -129,7 +129,7 @@ func TestCompletedPodsAreCountedButReserveNothing(t *testing.T) {
 	summaries := domain.NewNamespaceSummaries(namespaces, []domain.Pod{
 		mustSummaryPod(t, "batch", "nightly-1", domain.PodPhaseSucceeded),
 		mustSummaryPod(t, "batch", "nightly-2", domain.PodPhaseRunning),
-	})
+	}, true)
 
 	if summaries[0].Usage.Pods != 2 {
 		t.Fatalf("counted %d pods, want both", summaries[0].Usage.Pods)
@@ -148,7 +148,7 @@ func TestAPodInAnInvisibleNamespaceIsNotInvented(t *testing.T) {
 	summaries := domain.NewNamespaceSummaries(namespaces, []domain.Pod{
 		mustSummaryPod(t, "web", "api-1", domain.PodPhaseRunning),
 		mustSummaryPod(t, "kube-system", "coredns-1", domain.PodPhaseRunning),
-	})
+	}, true)
 
 	if len(summaries) != 1 {
 		t.Fatalf("summarised %d namespaces, want only the visible one", len(summaries))

@@ -251,9 +251,21 @@ type Consumption struct {
 	// Pods is how many pods the figures cover, MeasuredPods how many of those
 	// reported a measurement. Fewer measured than pods means the total is
 	// real and short.
-	Pods         int  `json:"pods"`
-	MeasuredPods int  `json:"measuredPods"`
-	HasMetrics   bool `json:"hasMetrics"`
+	Pods         int `json:"pods"`
+	MeasuredPods int `json:"measuredPods"`
+	// MeasurablePods is how many COULD be measured — the ones on a node.
+	// metrics-server never reports a finished or unscheduled pod, so this is
+	// the denominator for "is this total short", not Pods.
+	MeasurablePods int `json:"measurablePods"`
+	// HasMetrics is whether there are figures to draw.
+	HasMetrics bool `json:"hasMetrics"`
+	// MetricsAvailable is whether the CLUSTER serves metrics at all.
+	//
+	// The UI must not collapse the two. An idle namespace on a metered
+	// cluster and a cluster with no metrics-server both measure nothing, and
+	// telling somebody to install one when they already have it is the bug
+	// this field exists to prevent.
+	MetricsAvailable bool `json:"metricsAvailable"`
 	// CPU and Memory are what the pods are using, formatted.
 	CPU    string `json:"cpu"`
 	Memory string `json:"memory"`
@@ -290,7 +302,9 @@ func toConsumption(usage domain.AggregateUsage) Consumption {
 	return Consumption{
 		Pods:               usage.Pods,
 		MeasuredPods:       usage.Measured,
+		MeasurablePods:     usage.Measurable,
 		HasMetrics:         usage.HasMetrics(),
+		MetricsAvailable:   usage.MetricsAvailable,
 		CPU:                formatMilliCores(usage.Usage.CPUMilli),
 		Memory:             formatBytes(usage.Usage.MemoryBytes),
 		CPURequest:         formatMilliCores(usage.Requests.CPUMilli),

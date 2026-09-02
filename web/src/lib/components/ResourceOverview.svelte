@@ -663,10 +663,11 @@
             </div>
           {/each}
 
-          {#if selectedNamespaceRow.measuredPods < selectedNamespaceRow.pods}
+          <!-- Against the pods that could be measured. See WorkloadUsage. -->
+          {#if selectedNamespaceRow.measuredPods < selectedNamespaceRow.measurablePods}
             <p class="text-body-small text-gauge-warn">
-              Summed over {selectedNamespaceRow.measuredPods} of {selectedNamespaceRow.pods} pods —
-              the rest reported no usage, so this is less than the whole.
+              Summed over {selectedNamespaceRow.measuredPods} of {selectedNamespaceRow.measurablePods}
+              running pods — the rest reported no usage, so this is less than the whole.
             </p>
           {/if}
 
