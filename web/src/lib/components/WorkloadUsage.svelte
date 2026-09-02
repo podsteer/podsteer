@@ -67,7 +67,7 @@
   const open = $derived(preferences.sectionOpen('workload-usage', true))
 
   /** Identifies this controller's series across panels and refreshes. */
-  const key = $derived(usageKey('workload', namespace, `${kind}/${name}`))
+  const key = $derived(usageKey(clusterId, 'workload', namespace, `${kind}/${name}`))
 
   /**
    * Reads the sum and records it.

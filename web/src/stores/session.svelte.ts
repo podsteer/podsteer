@@ -808,7 +808,7 @@ export class ClusterSession {
     // Seeded from what the list has been recording since the tab opened, the
     // same way a pod's and a node's are.
     this.usage = usageHistory.since(
-      usageKey('application', application.namespace, application.instance),
+      usageKey(this.cluster.id, 'application', application.namespace, application.instance),
     )
   }
 
@@ -1171,7 +1171,7 @@ export class ClusterSession {
     // ever written to.
     for (const application of this.applications) {
       if (!application.hasMetrics) continue
-      usageHistory.record(usageKey('application', application.namespace, application.instance), {
+      usageHistory.record(usageKey(this.cluster.id, 'application', application.namespace, application.instance), {
         at,
         cpuCores: application.cpuCores,
         memoryBytes: application.memoryBytes,
@@ -1185,7 +1185,7 @@ export class ClusterSession {
     // the row carries both, and the formatted CPU is rounded to two decimals.
     for (const row of this.namespaceRows) {
       if (!row.hasMetrics) continue
-      usageHistory.record(usageKey('namespace', '', row.name), {
+      usageHistory.record(usageKey(this.cluster.id, 'namespace', '', row.name), {
         at,
         cpuCores: row.cpuCores,
         memoryBytes: row.memoryBytes,
@@ -1194,7 +1194,7 @@ export class ClusterSession {
 
     for (const pod of this.pods) {
       if (!pod.hasMetrics) continue
-      usageHistory.record(usageKey('pod', pod.namespace, pod.name), {
+      usageHistory.record(usageKey(this.cluster.id, 'pod', pod.namespace, pod.name), {
         at,
         cpuCores: parseQuantity(pod.cpu) ?? 0,
         memoryBytes: parseQuantity(pod.memory) ?? 0,
@@ -1232,7 +1232,7 @@ export class ClusterSession {
       // with no metrics-server would otherwise accumulate a confident flat
       // line along the axis.
       if (!load.usageMeasured) continue
-      usageHistory.record(usageKey('node', '', load.name), {
+      usageHistory.record(usageKey(this.cluster.id, 'node', '', load.name), {
         at,
         cpuCores: load.usageCpuMilli / 1000,
         memoryBytes: load.usageMemoryBytes,
@@ -1406,11 +1406,11 @@ export class ClusterSession {
     // resolved above rather than handed in — which is what makes a followed
     // link open with the same history a clicked row does.
     this.usage = this.selectedPod
-      ? usageHistory.since(usageKey('pod', namespace, name))
+      ? usageHistory.since(usageKey(this.cluster.id, 'pod', namespace, name))
       : this.selectedNode
-        ? usageHistory.since(usageKey('node', '', name))
+        ? usageHistory.since(usageKey(this.cluster.id, 'node', '', name))
         : this.selectedNamespaceRow
-          ? usageHistory.since(usageKey('namespace', '', name))
+          ? usageHistory.since(usageKey(this.cluster.id, 'namespace', '', name))
           : []
     // Every open starts hidden. A reveal is a decision about one object, and
     // carrying it to the next one is how Freelens ends up showing a value
@@ -1515,6 +1515,9 @@ export class ClusterSession {
   /** Releases the timer, for when the tab closes. */
   dispose = (): void => {
     this.stopAutoRefresh()
+    // The charts this tab accumulated go with it. Per-cluster, so closing one
+    // tab does not blank the charts in another.
+    usageHistory.forget(this.cluster.id)
   }
 
   /** Scales a workload to the specified number of replicas. */

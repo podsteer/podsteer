@@ -33,13 +33,36 @@ import { preferences } from './preferences.svelte'
  */
 const MAX_SAMPLES_PER_OBJECT = 200
 
-/** Identifies one object across refreshes. */
+/**
+ * How many records pass between sweeps of the key set.
+ *
+ * One tick records a sample per row on screen, so this is a sweep every few
+ * refreshes on a busy list and rarely on a quiet one — which is the right
+ * shape: keys accumulate in proportion to what has been browsed.
+ */
+const SWEEP_EVERY = 500
+
+/**
+ * Identifies one object across refreshes.
+ *
+ * THE CLUSTER IS PART OF THE IDENTITY, and leaving it out was a bug that
+ * showed one cluster's numbers on another's object. This application holds
+ * several clusters open at once, one per tab, and two of them routinely
+ * contain a pod with the same name in a namespace with the same name — a
+ * `web-abc` in `development` on staging and on production. Without the
+ * cluster those two share one series, so opening the second pod draws a chart
+ * built from the first's measurements interleaved with its own.
+ *
+ * That is the worst class of defect this application can have: not a missing
+ * number but a plausible wrong one.
+ */
 export function usageKey(
+  cluster: string,
   kind: 'pod' | 'node' | 'workload' | 'namespace' | 'application',
   namespace: string,
   name: string,
 ): string {
-  return `${kind}:${namespace}/${name}`
+  return `${cluster}|${kind}:${namespace}/${name}`
 }
 
 class UsageHistory {
@@ -50,6 +73,19 @@ class UsageHistory {
    * nobody is watching.
    */
   #series = new Map<string, UsageSample[]>()
+
+  /**
+   * Records since the last sweep of keys that have gone quiet.
+   *
+   * The SAMPLES in a series are bounded by the window and by
+   * MAX_SAMPLES_PER_OBJECT, but nothing bounded the number of KEYS: an object
+   * seen once kept its entry for the life of the process, so a long session
+   * browsing several clusters accumulated an entry per object ever listed.
+   * Sweeping on a counter rather than on every record keeps the cost
+   * amortised — a full pass is proportional to the key set, and the key set
+   * is what the pass exists to keep small.
+   */
+  #sinceSweep = 0
 
   /** How far back to keep, in milliseconds. Zero disables the whole thing. */
   get #windowMs(): number {
@@ -76,6 +112,34 @@ class UsageHistory {
     }
 
     this.#series.set(key, fresh)
+
+    this.#sinceSweep++
+    if (this.#sinceSweep >= SWEEP_EVERY) {
+      this.#sinceSweep = 0
+      this.#sweep(sample.at - windowMs)
+    }
+  }
+
+  /** Drops series whose newest sample has aged out of the window entirely. */
+  #sweep(cutoff: number): void {
+    for (const [key, samples] of this.#series) {
+      const newest = samples[samples.length - 1]
+      if (!newest || newest.at < cutoff) this.#series.delete(key)
+    }
+  }
+
+  /**
+   * Forgets one cluster's history, for a tab being closed.
+   *
+   * Per-cluster rather than wholesale now that the key carries the cluster:
+   * closing one tab must not blank the charts in another, which is what
+   * clearing everything would do.
+   */
+  forget(cluster: string): void {
+    const prefix = `${cluster}|`
+    for (const key of this.#series.keys()) {
+      if (key.startsWith(prefix)) this.#series.delete(key)
+    }
   }
 
   /**
