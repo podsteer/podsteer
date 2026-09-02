@@ -85,7 +85,7 @@ func New(cfg Config, logger *slog.Logger) *Adapter {
 	return &Adapter{
 		factory:  newClientFactory(cfg),
 		logger:   scoped,
-		watches:  newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery),
+		watches:  newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery, recheckEvery),
 		forwards: portForwards{byID: make(map[string]*forwarder)},
 	}
 }
@@ -135,17 +135,25 @@ func (a *Adapter) ServerVersion(ctx context.Context, id domain.ClusterID) (domai
 // change on disk, and so disconnecting a cluster genuinely releases its
 // connections rather than leaving them pooled.
 func (a *Adapter) Invalidate(id domain.ClusterID) {
+	// THE CLIENT GOES FIRST, AND THE ORDER IS LOAD-BEARING. A read racing
+	// this call can re-`ensure` a watch set at any point, so the invalidation
+	// has to happen while `forget` is still ahead of it: the racing read gets
+	// a rebuilt client, and `forget` then destroys whatever set exists.
+	//
+	// Reversed — forget first, factory after — a racing read would ensure a
+	// set against the still-cached STALE client, and the reconnect's own
+	// `ensure` would find it already running and keep it. A reflector bound
+	// to the old server or the old token would then serve reads indefinitely,
+	// which is exactly the resurrection a set is never reused to prevent.
 	a.factory.invalidate(id)
 	a.nodeList.forget(id)
+	// The watch is waited for, not merely signalled: its reflectors hold the
+	// client just discarded.
+	a.watches.forget(id)
 	// The disk sweep goes with them. Its whole value is being a minute stale
 	// rather than ten seconds stale, and carrying that across a reconnect
 	// would answer the first assessment of a freshly opened cluster with
 	// numbers from before it was closed.
-	// The watch goes FIRST, and is waited for. Its reflectors hold the client
-	// this is about to discard, and a set is never reused — a reconnect
-	// builds a fresh one, so nothing from before the disconnect can write
-	// into a store a later read answers from.
-	a.watches.forget(id)
 	a.filesystems.forget(id)
 	a.reads.forget(id.String())
 }

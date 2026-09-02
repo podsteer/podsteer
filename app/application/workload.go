@@ -278,9 +278,15 @@ func (s *WorkloadService) ListApplications(ctx context.Context, id domain.Cluste
 	for _, kind := range domain.WorkloadKinds() {
 		workloads, err := s.workloads.ListWorkloads(ctx, id, kind, namespace)
 		if err != nil {
-			// One kind an account may not list must not empty the page. The
-			// application is still found through its other members, and its
-			// counts are short rather than absent — which the page says.
+			// One kind an account may not list must not empty the page: an
+			// application is still found through its other members.
+			//
+			// The count it reports is then SHORT AND DOES NOT SAY SO, which
+			// is a known gap rather than an intended design — the inventory
+			// carries no field for "a kind was skipped", so a reader cannot
+			// tell an application with no CronJobs from an account that may
+			// not list them. `Unlabelled` exists for the analogous case and
+			// this one wants the same treatment.
 			s.logger.DebugContext(ctx, "a kind was not counted towards applications",
 				slog.String("cluster", id.String()),
 				slog.String("kind", string(kind)),

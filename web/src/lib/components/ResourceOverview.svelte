@@ -700,10 +700,13 @@
       type: condition.type,
       status: condition.status,
     }))
-    if (asked.length === 0) {
-      conditionTones = []
-      return
-    }
+    // CLEARED BEFORE THE NEW ONES ARRIVE, and the reason is that the tones
+    // are paired with the conditions BY INDEX. Opening pod A's drawer and
+    // then pod B left B's conditions wearing A's tones for one IPC
+    // round-trip — a healthy pod briefly showing another pod's warnings,
+    // which is worse than showing none.
+    conditionTones = []
+    if (asked.length === 0) return
 
     let current = true
     void classifyConditions(asked as ConditionRef[])

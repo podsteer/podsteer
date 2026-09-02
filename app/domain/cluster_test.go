@@ -117,3 +117,17 @@ func TestClusterWithVersionDoesNotMutateReceiver(t *testing.T) {
 		t.Errorf("Version().GitVersion = %q, want %q", got, "v1.31.2")
 	}
 }
+
+func TestAClusterIDCannotContainTheCacheKeySeparator(t *testing.T) {
+	// The read cache and the usage history key on "<cluster>|<rest>" and drop
+	// a cluster's entries by that prefix. A context named `prod|staging`
+	// would be dropped by anything forgetting `prod`, and could collide with
+	// another key outright — so the separator is refused where the identifier
+	// is made, rather than defended at every place one is built.
+	if _, err := domain.NewClusterID("prod|staging"); !errors.Is(err, domain.ErrInvalidClusterID) {
+		t.Fatalf("NewClusterID() with a separator error = %v, want %v", err, domain.ErrInvalidClusterID)
+	}
+	if _, err := domain.NewClusterID("prod-staging"); err != nil {
+		t.Fatalf("NewClusterID() refused an ordinary context name: %v", err)
+	}
+}

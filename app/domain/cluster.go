@@ -21,6 +21,16 @@ func NewClusterID(raw string) (ClusterID, error) {
 	if trimmed == "" {
 		return "", ErrEmptyClusterID
 	}
+	// A SEPARATOR, NOT A CHARACTER. The read cache and the usage history both
+	// key on "<cluster>|<rest>" and drop a cluster's entries by that prefix,
+	// so a context named `prod|staging` would have its entries dropped by
+	// anything forgetting `prod`, and could collide with another key outright.
+	// Kubeconfig context names are free-form enough to contain one, and the
+	// one line that makes the scheme sound is cheaper than the scheme being
+	// almost sound.
+	if strings.Contains(trimmed, "|") {
+		return "", ErrInvalidClusterID
+	}
 	return ClusterID(trimmed), nil
 }
 

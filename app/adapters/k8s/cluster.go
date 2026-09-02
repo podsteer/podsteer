@@ -16,7 +16,7 @@ import (
 //
 // Cached: the assessment and the namespace list both ask on the same tick.
 func (a *Adapter) ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
-	return cachedSlice(&a.reads, readKey(id.String(), "namespaces"), func() ([]domain.Namespace, error) {
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "namespaces"), func(ctx context.Context) ([]domain.Namespace, error) {
 		return a.listNamespaces(ctx, id)
 	})
 }
@@ -56,7 +56,7 @@ func (a *Adapter) listNamespaces(ctx context.Context, id domain.ClusterID) ([]do
 // Cached: the assessment reads them on every refresh, and the node list reads
 // them again in the same instant.
 func (a *Adapter) ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
-	return cachedSlice(&a.reads, readKey(id.String(), "nodes"), func() ([]domain.Node, error) {
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "nodes"), func(ctx context.Context) ([]domain.Node, error) {
 		return a.listNodes(ctx, id)
 	})
 }
@@ -227,7 +227,20 @@ var builtInGroups = map[string]bool{
 var adoptedGroups = map[string]bool{
 	"gateway.networking.k8s.io": true,
 	"snapshot.storage.k8s.io":   true,
+	// VerticalPodAutoscaler, which is as widely installed as anything on this
+	// list and was invisible in the navigator on every cluster running it.
+	"autoscaling.k8s.io": true,
+	// VolumeGroupSnapshot, shipped by the same external-snapshotter whose
+	// sibling group is already here. Showing one and hiding the other is
+	// incoherent on a CSI cluster.
+	"groupsnapshot.storage.k8s.io": true,
+	// AdminNetworkPolicy, installed by a CNI rather than by Kubernetes.
+	"policy.networking.k8s.io": true,
 }
+
+// Worth knowing before adding to the list above: `x-k8s.io` groups — Cluster
+// API's cluster.x-k8s.io, Kueue, JobSet — do NOT need an entry. The suffix
+// rule matches ".k8s.io", and the hyphen means they never did match.
 
 // isKubernetesGroup reports whether a group is part of Kubernetes rather than
 // a custom resource worth listing.

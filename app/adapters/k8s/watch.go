@@ -72,9 +72,14 @@ const (
 // an ordinary session never trips it — it is aimed at the tab left open on a
 // cluster nobody is looking at, and at "manual only", where the gap between
 // button presses is the whole point.
+// recheckEvery is how often a demoted store is asked whether its reflector has
+// started delivering again. A few seconds, because the cost of being wrong in
+// the slow direction is a handful of network lists nobody notices, and the
+// check itself is one atomic load and a string comparison.
 const (
-	idleAfter  = 5 * time.Minute
-	sweepEvery = time.Minute
+	idleAfter    = 5 * time.Minute
+	sweepEvery   = time.Minute
+	recheckEvery = 5 * time.Second
 )
 
 // watchSpec is everything needed to watch one kind.
@@ -167,6 +172,7 @@ type watchManager struct {
 	// newWatchManager.
 	idleAfter  time.Duration
 	sweepEvery time.Duration
+	recheck    time.Duration
 
 	stopped chan struct{}
 	wait    sync.WaitGroup
@@ -215,6 +221,10 @@ type kindWatch struct {
 	// nobody should make from intuition about which objects are large.
 	served atomic.Int64
 	direct atomic.Int64
+	// stalled is the resource version the store had reached when a transient
+	// error demoted it, and is what the supervisor compares against to decide
+	// the reflector is delivering again. Nil until something goes wrong.
+	stalled atomic.Pointer[string]
 }
 
 func (k *kindWatch) get() watchState  { return watchState(k.state.Load()) }
@@ -227,13 +237,14 @@ func (k *kindWatch) set(s watchState) { k.state.Store(int32(s)) }
 // IN rather than set afterwards, because the sweeper reads them and starts
 // here. Setting them on the returned value is a data race, which is how this
 // signature came to have four arguments.
-func newWatchManager(enabled bool, logger *slog.Logger, idle, sweep time.Duration) *watchManager {
+func newWatchManager(enabled bool, logger *slog.Logger, idle, sweep, recheck time.Duration) *watchManager {
 	manager := &watchManager{
 		enabled:    enabled,
 		logger:     logger,
 		sets:       make(map[domain.ClusterID]*watchSet),
 		idleAfter:  idle,
 		sweepEvery: sweep,
+		recheck:    recheck,
 		stopped:    make(chan struct{}),
 	}
 	if enabled {
@@ -292,6 +303,16 @@ func (m *watchManager) ensure(id domain.ClusterID, client func() (kubernetes.Int
 	}
 
 	m.mu.Lock()
+	if m.closed {
+		// SHUTTING DOWN, SO START NOTHING. A read racing StopAllWatches would
+		// otherwise insert a fresh set and spawn reflectors that nothing will
+		// ever cancel — the sweeper that would have reaped them is already
+		// stopped, and stopAll has already taken the sets it intends to wait
+		// for. The record and the goroutine would part company, which is the
+		// one thing this file promises cannot happen.
+		m.mu.Unlock()
+		return
+	}
 	if set, running := m.sets[id]; running {
 		set.lastRead.Store(time.Now().UnixNano())
 		m.mu.Unlock()
@@ -373,10 +394,18 @@ func (m *watchManager) run(ctx context.Context, id domain.ClusterID, store *kind
 				slog.String("cluster", id.String()), slog.String("kind", string(spec.kind)))
 			return
 		}
-		// Transient. The store may have gone stale behind a watch that is no
-		// longer delivering, so it stops serving until it has resynced.
-		if store.get() == watchServing {
-			store.set(watchStarting)
+		// TRANSIENT, AND IT MUST BE RECOVERABLE. The store may have gone
+		// stale behind a watch that is no longer delivering, so it stops
+		// serving — but a stop with no way back is worse than the staleness
+		// it avoids. An API server restart would have condemned this store
+		// for the life of the connection while its reflector went on
+		// mirroring the cluster perfectly, so every read paid the network
+		// list this exists to avoid, silently and for as long as the tab
+		// stayed open. The version reached is recorded here and `supervise`
+		// promotes the store back when the reflector moves past it.
+		version := informer.LastSyncResourceVersion()
+		if store.state.CompareAndSwap(int32(watchServing), int32(watchStarting)) {
+			store.stalled.Store(&version)
 		}
 	})
 
@@ -386,21 +415,87 @@ func (m *watchManager) run(ctx context.Context, id domain.ClusterID, store *kind
 	// informer under -race.
 	store.informer = informer
 
+	supervised := make(chan struct{})
 	go func() {
+		defer close(supervised)
+
 		// Flipped to serving only after a sync AND only if nothing has
 		// condemned it in the meantime — a store that listed successfully and
 		// was then refused its watch must never answer.
+		//
+		// COMPARE-AND-SWAP, NOT CHECK-THEN-ACT, and the difference is a real
+		// interleaving rather than a formality. An account with `list` and
+		// without `watch` lists successfully, so HasSynced goes true and this
+		// goroutine reads `starting`; the reflector's first WATCH is then
+		// refused and the handler condemns the store; and the plain write
+		// that used to be here overwrote the condemnation, leaving a store
+		// that may never be updated again answering reads.
 		if !cache.WaitForCacheSync(ctx.Done(), informer.HasSynced) {
 			return
 		}
-		if store.get() == watchStarting {
-			store.set(watchServing)
-			m.logger.DebugContext(ctx, "watching",
-				slog.String("cluster", id.String()), slog.String("kind", string(spec.kind)))
+		if !store.state.CompareAndSwap(int32(watchStarting), int32(watchServing)) {
+			return
 		}
+		m.logger.DebugContext(ctx, "watching",
+			slog.String("cluster", id.String()), slog.String("kind", string(spec.kind)))
+
+		m.supervise(ctx, id, store, spec.kind, informer.LastSyncResourceVersion)
 	}()
 
 	informer.Run(ctx.Done())
+	<-supervised
+}
+
+// supervise returns a store to serving once its reflector is delivering again.
+//
+// ON EVIDENCE, NEVER ON TIME PASSING. There is no callback in client-go that
+// says "the watch recovered", and a store that resumed on a timer would be
+// guessing about the one thing it exists to be sure of. What there is instead
+// is the reflector's last synced resource version: it advances on a relist and
+// on every event delivered, so a version past the one recorded when the error
+// arrived is proof the stream is moving.
+//
+// The failure mode of that choice is the safe one. A cluster so quiet that the
+// version never advances leaves the store demoted and every read going to the
+// network — which is exactly what a cluster that quiet costs nothing.
+func (m *watchManager) supervise(
+	ctx context.Context,
+	id domain.ClusterID,
+	store *kindWatch,
+	kind watchKind,
+	version func() string,
+) {
+	ticker := time.NewTicker(m.recheck)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		switch store.get() {
+		case watchDegraded:
+			// Condemned for good: a refusal is a decision, not a blip.
+			return
+		case watchServing:
+			continue
+		}
+
+		stalled := store.stalled.Load()
+		if stalled == nil {
+			continue
+		}
+		current := version()
+		if current == "" || current == *stalled {
+			continue
+		}
+		if store.state.CompareAndSwap(int32(watchStarting), int32(watchServing)) {
+			m.logger.DebugContext(ctx, "watching again",
+				slog.String("cluster", id.String()), slog.String("kind", string(kind)))
+		}
+	}
 }
 
 // sweep tears down sets nobody has read for a while.

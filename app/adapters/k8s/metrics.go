@@ -23,12 +23,12 @@ func (a *Adapter) PodMetrics(ctx context.Context, id domain.ClusterID, namespace
 	// The same reuse the pod list makes, for the other half of the same read.
 	// The map is keyed "namespace/name", so narrowing it is a prefix match.
 	if !namespace.IsAll() {
-		if all, borrowed := borrow[map[string]domain.PodUsage](&a.reads, readKey(id.String(), "podmetrics", "")); borrowed {
+		if all, borrowed := borrow[map[string]domain.PodUsage](ctx, &a.reads, readKey(id.String(), "podmetrics", "")); borrowed {
 			return usageIn(all, namespace), nil
 		}
 	}
 
-	return cachedRead(&a.reads, readKey(id.String(), "podmetrics", namespace.String()), func() (map[string]domain.PodUsage, error) {
+	return cachedRead(&a.reads, ctx, readKey(id.String(), "podmetrics", namespace.String()), func(ctx context.Context) (map[string]domain.PodUsage, error) {
 		return a.podMetrics(ctx, id, namespace)
 	})
 }
@@ -89,7 +89,7 @@ func (a *Adapter) podMetrics(ctx context.Context, id domain.ClusterID, namespace
 // NodeMetrics returns usage keyed by node name. Cached alongside ListNodes,
 // which every caller pairs it with.
 func (a *Adapter) NodeMetrics(ctx context.Context, id domain.ClusterID) (map[string]domain.Metrics, error) {
-	return cachedRead(&a.reads, readKey(id.String(), "nodemetrics"), func() (map[string]domain.Metrics, error) {
+	return cachedRead(&a.reads, ctx, readKey(id.String(), "nodemetrics"), func(ctx context.Context) (map[string]domain.Metrics, error) {
 		return a.nodeMetrics(ctx, id)
 	})
 }

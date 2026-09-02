@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"log/slog"
 	"reflect"
 	"sync"
@@ -163,7 +164,7 @@ func pollingLists(t *testing.T) {
 }
 
 func newTestManager(client kubernetes.Interface) (*watchManager, func() (kubernetes.Interface, error)) {
-	manager := newWatchManager(true, slog.New(slog.DiscardHandler), idleAfter, sweepEvery)
+	manager := newWatchManager(true, slog.New(slog.DiscardHandler), idleAfter, sweepEvery, recheckEvery)
 	return manager, func() (kubernetes.Interface, error) { return client, nil }
 }
 
@@ -280,7 +281,7 @@ func TestNothingIsWatchedWhenTheFeatureIsOff(t *testing.T) {
 	// Off is not an approximation of the old behaviour — it is the same code
 	// path, because the fallback IS that path.
 	client, lists := watchedClient(t, richPod("api-1"))
-	manager := newWatchManager(false, slog.New(slog.DiscardHandler), idleAfter, sweepEvery)
+	manager := newWatchManager(false, slog.New(slog.DiscardHandler), idleAfter, sweepEvery, recheckEvery)
 	defer manager.stopAll()
 
 	manager.ensure("dev", func() (kubernetes.Interface, error) { return client, nil })
@@ -456,7 +457,7 @@ func TestAWatchNobodyIsReadingIsStopped(t *testing.T) {
 	pollingLists(t)
 
 	client, _ := watchedClient(t, richPod("api-1"))
-	manager := newWatchManager(true, slog.New(slog.DiscardHandler), 50*time.Millisecond, 10*time.Millisecond)
+	manager := newWatchManager(true, slog.New(slog.DiscardHandler), 50*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond)
 	defer manager.stopAll()
 
 	supply := func() (kubernetes.Interface, error) { return client, nil }
@@ -489,7 +490,7 @@ func TestReadingKeepsAWatchAlive(t *testing.T) {
 	pollingLists(t)
 
 	client, _ := watchedClient(t, richPod("api-1"))
-	manager := newWatchManager(true, slog.New(slog.DiscardHandler), 200*time.Millisecond, 10*time.Millisecond)
+	manager := newWatchManager(true, slog.New(slog.DiscardHandler), 200*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond)
 	defer manager.stopAll()
 
 	manager.ensure("dev", func() (kubernetes.Interface, error) { return client, nil })
@@ -505,5 +506,86 @@ func TestReadingKeepsAWatchAlive(t *testing.T) {
 			t.Fatal("a set being read every few milliseconds was reaped")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestATransientErrorDoesNotCondemnAStoreForever(t *testing.T) {
+	// THE BUG THIS GUARDS WAS SILENT AND PERMANENT. A transient watch error —
+	// an API server restart, a reset connection — demoted the store so reads
+	// went back to the network, and nothing ever promoted it again. The
+	// reflector carried on mirroring the cluster perfectly for the life of
+	// the connection while every read paid the full list this exists to
+	// avoid, and because a read still counts as activity the set was never
+	// reaped either. Nothing failed; it just quietly stopped helping.
+	manager := newWatchManager(true, slog.New(slog.DiscardHandler), idleAfter, sweepEvery, time.Millisecond)
+	defer manager.stopAll()
+
+	store := &kindWatch{}
+	store.set(watchServing)
+
+	// The error arrives: the reflector had reached "100" when it stopped
+	// delivering.
+	stalled := "100"
+	store.state.Store(int32(watchStarting))
+	store.stalled.Store(&stalled)
+
+	// It relists and moves past it, which is the only evidence available
+	// that the stream is live again.
+	moved := make(chan struct{})
+	version := func() string {
+		select {
+		case <-moved:
+			return "137"
+		default:
+			return "100"
+		}
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		manager.supervise(ctx, "dev", store, watchPods, version)
+	}()
+
+	// Still stalled, so still not answering.
+	time.Sleep(20 * time.Millisecond)
+	if store.get() != watchStarting {
+		t.Fatalf("resumed with no evidence the reflector recovered: %v", store.get())
+	}
+
+	close(moved)
+	waitFor(t, func() bool { return store.get() == watchServing })
+
+	cancel()
+	<-done
+}
+
+func TestASupervisorLeavesACondemnedStoreCondemned(t *testing.T) {
+	// A refusal is a decision, not a blip. An account that may list and not
+	// watch must never be promoted by anything, however far the version moves.
+	manager := newWatchManager(true, slog.New(slog.DiscardHandler), idleAfter, sweepEvery, time.Millisecond)
+	defer manager.stopAll()
+
+	store := &kindWatch{}
+	store.set(watchDegraded)
+	stalled := "100"
+	store.stalled.Store(&stalled)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		manager.supervise(t.Context(), "dev", store, watchPods, func() string { return "999" })
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("the supervisor kept watching a store nothing will ever update")
+	}
+	if store.get() != watchDegraded {
+		t.Fatalf("a condemned store was promoted: %v", store.get())
 	}
 }

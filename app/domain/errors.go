@@ -9,6 +9,10 @@ import "errors"
 var (
 	// ErrEmptyClusterID is returned when a cluster identifier is blank.
 	ErrEmptyClusterID = errors.New("cluster id must not be empty")
+	// A vertical bar separates the cluster from the rest of a cache key, so a
+	// context name containing one could have another cluster's entries
+	// dropped along with its own.
+	ErrInvalidClusterID = errors.New(`cluster id must not contain "|"`)
 
 	// ErrClusterNotFound reports that no known cluster carries the given id.
 	ErrClusterNotFound = errors.New("cluster not found")

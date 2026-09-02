@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"sync"
@@ -24,7 +25,7 @@ func TestIdenticalReadsInFlightBecomeOneRequest(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			value, err := cachedRead(&cache, "dev|pods|", func() ([]string, error) {
+			value, err := cachedRead(&cache, t.Context(), "dev|pods|", func(context.Context) ([]string, error) {
 				calls.Add(1)
 				<-release
 				return []string{"one"}, nil
@@ -52,14 +53,14 @@ func TestIdenticalReadsInFlightBecomeOneRequest(t *testing.T) {
 func TestDifferentReadsDoNotShareAnAnswer(t *testing.T) {
 	var cache readCache
 
-	pods, err := cachedRead(&cache, "dev|pods|web", func() ([]string, error) {
+	pods, err := cachedRead(&cache, t.Context(), "dev|pods|web", func(context.Context) ([]string, error) {
 		return []string{"pod"}, nil
 	})
 	if err != nil || len(pods) != 1 {
 		t.Fatalf("pods = %v, %v", pods, err)
 	}
 
-	other, err := cachedRead(&cache, "dev|pods|staging", func() ([]string, error) {
+	other, err := cachedRead(&cache, t.Context(), "dev|pods|staging", func(context.Context) ([]string, error) {
 		return []string{"a", "b"}, nil
 	})
 	if err != nil || len(other) != 2 {
@@ -76,7 +77,7 @@ func TestAFailedReadIsNotHandedToTheNextCaller(t *testing.T) {
 	refused := errors.New("forbidden")
 
 	for range 3 {
-		_, err := cachedRead(&cache, "dev|pods|", func() ([]string, error) {
+		_, err := cachedRead(&cache, t.Context(), "dev|pods|", func(context.Context) ([]string, error) {
 			calls.Add(1)
 			return nil, refused
 		})
@@ -98,7 +99,7 @@ func TestAWriteDropsWhatTheClusterHadCached(t *testing.T) {
 	var calls atomic.Int64
 
 	read := func() (string, error) {
-		return cachedRead(&cache, readKey("dev", "pods", ""), func() (string, error) {
+		return cachedRead(&cache, t.Context(), readKey("dev", "pods", ""), func(context.Context) (string, error) {
 			calls.Add(1)
 			return "listed", nil
 		})
@@ -152,13 +153,13 @@ func TestEveryCallerGetsItsOwnSliceToSort(t *testing.T) {
 	// goroutines permuting one array.
 	var cache readCache
 
-	fetch := func() ([]int, error) { return []int{3, 1, 2}, nil }
+	fetch := func(context.Context) ([]int, error) { return []int{3, 1, 2}, nil }
 
-	first, err := cachedSlice(&cache, "dev|pods|", fetch)
+	first, err := cachedSlice(&cache, t.Context(), "dev|pods|", fetch)
 	if err != nil {
 		t.Fatalf("cachedSlice() error = %v", err)
 	}
-	second, err := cachedSlice(&cache, "dev|pods|", fetch)
+	second, err := cachedSlice(&cache, t.Context(), "dev|pods|", fetch)
 	if err != nil {
 		t.Fatalf("cachedSlice() error = %v", err)
 	}
@@ -178,7 +179,7 @@ func TestANarrowerReadWaitsForTheBroaderOneAlreadyRunning(t *testing.T) {
 	started := make(chan struct{})
 
 	go func() {
-		_, _ = cachedRead(&cache, readKey("dev", "pods", ""), func() ([]string, error) {
+		_, _ = cachedRead(&cache, t.Context(), readKey("dev", "pods", ""), func(context.Context) ([]string, error) {
 			close(started)
 			<-release
 			return []string{"web/api", "kube-system/dns"}, nil
@@ -188,7 +189,7 @@ func TestANarrowerReadWaitsForTheBroaderOneAlreadyRunning(t *testing.T) {
 	<-started
 	borrowed := make(chan bool, 1)
 	go func() {
-		_, ok := borrow[[]string](&cache, readKey("dev", "pods", ""))
+		_, ok := borrow[[]string](t.Context(), &cache, readKey("dev", "pods", ""))
 		borrowed <- ok
 	}()
 
@@ -211,16 +212,82 @@ func TestNothingIsBorrowedFromAReadThatIsAbsentOrRefused(t *testing.T) {
 	// narrow request succeeds.
 	var cache readCache
 
-	if _, ok := borrow[[]string](&cache, readKey("dev", "pods", "")); ok {
+	if _, ok := borrow[[]string](t.Context(), &cache, readKey("dev", "pods", "")); ok {
 		t.Fatal("borrowed a read nobody had made")
 	}
 
 	refused := errors.New("forbidden")
-	_, _ = cachedRead(&cache, readKey("dev", "pods", ""), func() ([]string, error) {
+	_, _ = cachedRead(&cache, t.Context(), readKey("dev", "pods", ""), func(context.Context) ([]string, error) {
 		return nil, refused
 	})
 
-	if _, ok := borrow[[]string](&cache, readKey("dev", "pods", "")); ok {
+	if _, ok := borrow[[]string](t.Context(), &cache, readKey("dev", "pods", "")); ok {
 		t.Fatal("borrowed a read that was refused")
+	}
+}
+
+func TestCachedReadSurvivesTheStartingCallersCancellation(t *testing.T) {
+	// ONE PANE'S REFUSAL MUST NOT BREAK ANOTHER'S. The first caller to ask
+	// runs the fetch and everyone else waits on it, so running that fetch on
+	// the first caller's context makes one caller's cancellation everybody's.
+	//
+	// The real shape: ListNamespaceSummaries runs the namespace list and the
+	// cluster-wide pod list under one errgroup. On an account without
+	// `list namespaces` the first 403s at once, the group cancels, and the
+	// pod list that account IS permitted dies with it — so the pod list page
+	// shows context.Canceled for a read nothing refused, and the cause is a
+	// different pane entirely.
+	var cache readCache
+
+	owner, cancelOwner := context.WithCancel(t.Context())
+	started := make(chan struct{})
+	release := make(chan struct{})
+
+	got := make(chan error, 1)
+	go func() {
+		_, err := cachedRead(&cache, owner, "dev|pods|", func(ctx context.Context) ([]string, error) {
+			close(started)
+			<-release
+			return []string{"a"}, ctx.Err()
+		})
+		got <- err
+	}()
+
+	<-started
+	cancelOwner()
+	close(release)
+
+	if err := <-got; err != nil {
+		t.Fatalf("the fetch saw its starter's cancellation: %v", err)
+	}
+}
+
+func TestWaiterLeavesWhenItsOwnCallerGivesUp(t *testing.T) {
+	// A waiter does not own the fetch — it joined one already running — so a
+	// fetch wedged behind an unresponsive API server must not pin every
+	// goroutine that happened to ask for the same thing.
+	var cache readCache
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+
+	go func() {
+		_, _ = cachedRead(&cache, context.Background(), "dev|pods|", func(context.Context) ([]string, error) {
+			close(started)
+			<-release
+			return []string{"a"}, nil
+		})
+	}()
+	<-started
+
+	waiter, giveUp := context.WithCancel(t.Context())
+	go giveUp()
+
+	if _, err := cachedRead(&cache, waiter, "dev|pods|", func(context.Context) ([]string, error) {
+		t.Error("the waiter started a second fetch instead of joining the first")
+		return nil, nil
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("waiter did not leave on its own cancellation: %v", err)
 	}
 }

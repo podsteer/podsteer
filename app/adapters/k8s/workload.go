@@ -34,7 +34,7 @@ func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace d
 	// namespace and not the cluster has no such read to borrow, so this
 	// misses and the narrow request goes out as before.
 	if !namespace.IsAll() {
-		if all, borrowed := borrow[[]domain.Pod](&a.reads, readKey(id.String(), "pods", "")); borrowed {
+		if all, borrowed := borrow[[]domain.Pod](ctx, &a.reads, readKey(id.String(), "pods", "")); borrowed {
 			return podsIn(all, namespace), nil
 		}
 	}
@@ -49,7 +49,7 @@ func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace d
 	// values — and the assessment and the open list both want them in the
 	// same instant. Coalescing that is the same job it was doing before, so
 	// the mapping happens once per tick rather than once per caller.
-	return cachedSlice(&a.reads, readKey(id.String(), "pods", namespace.String()), func() ([]domain.Pod, error) {
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "pods", namespace.String()), func(ctx context.Context) ([]domain.Pod, error) {
 		if stored, serving := watched[*corev1.Pod](a.watches, id, watchPods); serving {
 			return mapWatchedPods(id, stored, namespace)
 		}
@@ -135,7 +135,7 @@ func (a *Adapter) listPods(ctx context.Context, id domain.ClusterID, namespace d
 func (a *Adapter) ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
 	a.watches.ensure(id, func() (kubernetes.Interface, error) { return a.factory.clientFor(id) })
 
-	return cachedSlice(&a.reads, readKey(id.String(), "workloads", string(kind), namespace.String()), func() ([]domain.Workload, error) {
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "workloads", string(kind), namespace.String()), func(ctx context.Context) ([]domain.Workload, error) {
 		// Only the two that are watched, and only because they are the ones a
 		// refresh re-reads: ReplicaSets stand between a Deployment and its
 		// pods, Jobs between a CronJob and its. The other four are one small

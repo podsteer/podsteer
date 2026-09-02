@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -54,7 +55,12 @@ type readEntry struct {
 // and the alternative — storing `any` and asserting at every call site — is
 // exactly the kind of type hole that shows up as a nil list on someone's
 // screen rather than as a compile error.
-func cachedRead[T any](cache *readCache, key string, fetch func() (T, error)) (T, error) {
+func cachedRead[T any](
+	cache *readCache,
+	ctx context.Context,
+	key string,
+	fetch func(context.Context) (T, error),
+) (T, error) {
 	var zero T
 
 	cache.mu.Lock()
@@ -66,7 +72,9 @@ func cachedRead[T any](cache *readCache, key string, fetch func() (T, error)) (T
 		// In flight, or finished recently enough to reuse.
 		if entry.at.IsZero() || time.Since(entry.at) < readTTL {
 			cache.mu.Unlock()
-			<-entry.done
+			if err := wait(ctx, entry.done); err != nil {
+				return zero, err
+			}
 			return result[T](entry)
 		}
 		delete(cache.entries, key)
@@ -76,7 +84,9 @@ func cachedRead[T any](cache *readCache, key string, fetch func() (T, error)) (T
 	cache.entries[key] = entry
 	cache.mu.Unlock()
 
-	entry.value, entry.err = fetch()
+	fetchCtx, release := detach(ctx)
+	entry.value, entry.err = fetch(fetchCtx)
+	release()
 
 	cache.mu.Lock()
 	entry.at = time.Now()
@@ -109,8 +119,13 @@ func cachedRead[T any](cache *readCache, key string, fetch func() (T, error)) (T
 //
 // Shallow, deliberately: sorting permutes the outer slice and nothing reaches
 // into the elements, so cloning what they point at would be work for nobody.
-func cachedSlice[T any](cache *readCache, key string, fetch func() ([]T, error)) ([]T, error) {
-	shared, err := cachedRead(cache, key, fetch)
+func cachedSlice[T any](
+	cache *readCache,
+	ctx context.Context,
+	key string,
+	fetch func(context.Context) ([]T, error),
+) ([]T, error) {
+	shared, err := cachedRead(cache, ctx, key, fetch)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +144,7 @@ func cachedSlice[T any](cache *readCache, key string, fetch func() ([]T, error))
 // It never STARTS anything. If the broader read is absent, stale or failed —
 // an account that may list one namespace and not the cluster is the case that
 // matters — this reports false and the caller does its own read.
-func borrow[T any](cache *readCache, key string) (T, bool) {
+func borrow[T any](ctx context.Context, cache *readCache, key string) (T, bool) {
 	var zero T
 
 	cache.mu.Lock()
@@ -140,13 +155,57 @@ func borrow[T any](cache *readCache, key string) (T, bool) {
 	}
 	cache.mu.Unlock()
 
-	<-entry.done
+	if err := wait(ctx, entry.done); err != nil {
+		return zero, false
+	}
 	if entry.err != nil {
 		return zero, false
 	}
 
 	value, ok := entry.value.(T)
 	return value, ok
+}
+
+// detach separates a shared fetch from the caller that happened to start it.
+//
+// THE FIRST CALLER IS NOT THE ONLY CALLER, and forgetting that made one
+// pane's refusal break another's. The reads here are coalesced: whoever
+// arrives first runs the fetch and everyone else waits on it. If that fetch
+// runs on the first caller's context, the first caller's cancellation kills
+// an answer several other callers are waiting for.
+//
+// It is not hypothetical. ListNamespaceSummaries runs the namespace list and
+// the cluster-wide pod list under one errgroup. On an account without
+// `list namespaces` the first 403s immediately, the group cancels, and the
+// pod list — which that account IS permitted — dies with it. Every other
+// consumer coalesced onto the same key that tick gets context.Canceled for a
+// read nothing refused, tick after tick, and the cause is a different pane.
+//
+// A DEADLINE IS KEPT AND CANCELLATION IS NOT. The deadline is a statement
+// about how long the answer is worth waiting for, which is as true for the
+// second caller as the first; cancellation is a statement about one caller
+// having lost interest, which is not.
+func detach(ctx context.Context) (context.Context, context.CancelFunc) {
+	free := context.WithoutCancel(ctx)
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return context.WithCancel(free)
+	}
+	return context.WithDeadline(free, deadline)
+}
+
+// wait blocks for a shared fetch, or for the caller to give up on it.
+//
+// A waiter must be able to leave. It does not own the fetch — it joined one
+// already running — so a fetch wedged behind an unresponsive API server must
+// not pin every goroutine that asked for the same thing.
+func wait(ctx context.Context, done <-chan struct{}) error {
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func result[T any](entry *readEntry) (T, error) {
