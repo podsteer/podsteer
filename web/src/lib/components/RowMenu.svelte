@@ -12,6 +12,20 @@
   reads the menu, and a menu that vanishes when the list moves is a menu that
   cannot be used with a trackpad.
 -->
+<script module lang="ts">
+  /**
+   * Which row's menu is open, across every list in the application.
+   *
+   * ONE VALUE, NOT ONE PER MENU. Each menu used to keep its own, and the
+   * outside-click handler asked only whether the pointer had landed in *a*
+   * row menu — so opening a second one left the first standing, and a panel
+   * could end up with four open at once. A single value cannot hold two
+   * answers, which is the whole fix: opening one closes the last by
+   * construction rather than by every menu remembering to.
+   */
+  let openMenu = $state<symbol | null>(null)
+</script>
+
 <script lang="ts">
   import type { Component } from 'svelte'
   import { Check, Copy, Eye, EyeOff, Link2, MoreVertical } from '@lucide/svelte'
@@ -44,7 +58,11 @@
 
   let { actions, label }: Props = $props()
 
-  let open = $state(false)
+  /** This menu's identity, for the one open at a time. */
+  const id = Symbol('row-menu')
+  const open = $derived(openMenu === id)
+
+  let node = $state<HTMLElement | null>(null)
   let copied = $state(false)
 
   function choose(action: RowAction): void {
@@ -57,31 +75,33 @@
       copied = true
       setTimeout(() => {
         copied = false
-        open = false
+        if (openMenu === id) openMenu = null
       }, 900)
       return
     }
-    open = false
+    openMenu = null
   }
 
   function onWindowPointerDown(event: PointerEvent): void {
     if (!open) return
-    const target = event.target as HTMLElement | null
-    if (!target?.closest('[data-row-menu]')) open = false
+    // THIS menu's element, not any row menu. Asking whether the pointer
+    // landed in a row menu was what let a click on another row's control
+    // leave this one open.
+    if (!node?.contains(event.target as Node)) openMenu = null
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') open = false
+    if (event.key === 'Escape' && open) openMenu = null
   }
 </script>
 
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onKeydown} />
 
 {#if actions.length > 0}
-  <div class="relative" data-row-menu>
+  <div class="relative" data-row-menu bind:this={node}>
     <button
       type="button"
-      onclick={() => (open = !open)}
+      onclick={() => (openMenu = open ? null : id)}
       aria-expanded={open}
       aria-label="More for {label}"
       title="More"

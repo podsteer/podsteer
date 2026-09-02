@@ -268,6 +268,33 @@ describe('DetailList', () => {
     expect(container.querySelector('[role="menuitem"]')?.textContent).toContain('Copied!')
   })
 
+  it('keeps only one menu open at a time', async () => {
+    // THE BUG THIS GUARDS. Each menu kept its own open state and the
+    // outside-click handler asked only whether the pointer had landed in *a*
+    // row menu — so opening a second left the first standing, and a panel
+    // ended up with four open at once.
+    const { container } = render(DetailList, {
+      rows: [
+        { label: 'Pod IP', value: '10.0.0.1' },
+        { label: 'Node', value: 'node-1' },
+      ],
+    })
+
+    const triggers = container.querySelectorAll('[data-row-menu] button')
+    triggers[0].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await tick()
+    expect(container.querySelectorAll('[role="menu"]')).toHaveLength(1)
+
+    triggers[1].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await tick()
+
+    const open = container.querySelectorAll('[role="menu"]')
+    expect(open).toHaveLength(1)
+    // And it is the second one: the first closed rather than both standing.
+    expect(triggers[1].getAttribute('aria-expanded')).toBe('true')
+    expect(triggers[0].getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('puts the source of a resolved value in its tooltip', () => {
     // A value resolved out of a ConfigMap no longer names its source — that
     // is the point of resolving it — and a third control to say so was more
