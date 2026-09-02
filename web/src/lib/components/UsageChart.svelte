@@ -53,6 +53,18 @@
 
   const lines = $derived(markers.filter((marker) => marker.value > 0))
 
+  /**
+   * The references that were asked for and do not exist.
+   *
+   * Said out loud rather than left as a chart with fewer lines on it. An
+   * absent line is ambiguous — undeclared, or declared so far above the usage
+   * that it is off the top? — and that ambiguity is exactly what hid a bug
+   * for the whole life of these charts: the lines were being built and
+   * dropped by ECharts, and a chart with no lines looked like a pod with no
+   * limits. Naming the missing ones makes the two states different on screen.
+   */
+  const undeclared = $derived(markers.filter((marker) => marker.value <= 0))
+
   let container = $state<HTMLDivElement | null>(null)
   let chart: Chart | null = null
   let failed = $state(false)
@@ -140,10 +152,17 @@
     const warn = theme.getPropertyValue('--gauge-warn').trim() || '#e0a458'
     const critical = theme.getPropertyValue('--gauge-critical').trim() || '#e06c75'
 
+    // The figure is in the label, not only on the axis. A dashed line marked
+    // "Limit" still leaves the reading to be taken off the y axis by eye,
+    // which is the work the line was drawn to save.
     const marks = lines.map((line) => ({
       yAxis: line.value,
       lineStyle: { color: line.tone === 'critical' ? critical : warn, type: 'dashed' },
-      label: { formatter: line.label, color: ink, position: 'insideEndTop' },
+      label: {
+        formatter: `${line.label} ${format(line.value)}`,
+        color: ink,
+        position: 'insideEndTop',
+      },
     }))
 
     return {
@@ -270,4 +289,17 @@
       </p>
     {/if}
   </div>
+
+  <!--
+    What the chart is NOT measured against. A container with no limit is a
+    deliberate and common shape rather than an oversight, so this is stated
+    plainly rather than as a warning — but it has to be stated, because the
+    alternative is a chart that looks the same as one whose reference lines
+    failed to draw.
+  -->
+  {#if undeclared.length > 0}
+    <p class="mt-1 text-body-small text-on-surface-variant/60">
+      {undeclared.map((marker) => `No ${marker.label.toLowerCase()} declared`).join(' · ')}.
+    </p>
+  {/if}
 {/if}

@@ -573,7 +573,7 @@
                 samples={usage}
                 metric={track.metric}
                 markers={[
-                  { value: parseQuantity(track.allocatable) ?? 0, label: 'allocatable', tone: 'critical' },
+                  { value: parseQuantity(track.allocatable) ?? 0, label: 'Allocatable', tone: 'critical' },
                 ]}
                 format={track.metric === 'cpu' ? formatCores : formatBytes}
               />
@@ -629,8 +629,8 @@
                 samples={usage}
                 metric={track.metric}
                 markers={[
-                  { value: declared(track.metric, 'request'), label: 'request', tone: 'warn' },
-                  { value: declared(track.metric, 'limit'), label: 'limit', tone: 'critical' },
+                  { value: declared(track.metric, 'request'), label: 'Request', tone: 'warn' },
+                  { value: declared(track.metric, 'limit'), label: 'Limit', tone: 'critical' },
                 ]}
                 format={track.metric === 'cpu' ? formatCores : formatBytes}
               />
