@@ -69,6 +69,33 @@ export const REFRESH_INTERVALS = [
   { label: 'Manual only', value: 0 },
 ] as const
 
+/**
+ * How wide the detail panel opens, as a share of the window.
+ *
+ * A SHARE RATHER THAN A SIZE, because the complaint the setting answers is
+ * relative: the panel covers too much of the list behind it. How much of the
+ * list is left is a proportion, and a fixed 704px leaves half a laptop and a
+ * fifth of an ultrawide.
+ *
+ * Both ends are clamped in CSS all the same — see DETAIL_MIN_REM and
+ * DETAIL_MAX_REM — because a proportion alone breaks at the extremes in the
+ * other direction: a quarter of a small laptop is narrower than one row of
+ * this panel's own two columns, and half an ultrawide is a page of whitespace.
+ *
+ * Stored as the number rather than as which button was pressed, so that a
+ * drag handle can later write any width in range without a stored setting
+ * that has to be migrated out of three categories.
+ */
+export const DETAIL_WIDTHS = [
+  { id: 'wide', label: 'Wide', fraction: 0.5, detail: 'About half the window' },
+  { id: 'medium', label: 'Medium', fraction: 1 / 3, detail: 'About a third' },
+  { id: 'compact', label: 'Compact', fraction: 0.25, detail: 'About a quarter' },
+] as const
+
+/** The detail panel's width bounds, in rem, applied whatever the share says. */
+export const DETAIL_MIN_REM = 26
+export const DETAIL_MAX_REM = 72
+
 const STORAGE_KEY = 'podsteer.preferences.v1'
 
 /**
@@ -248,6 +275,8 @@ interface PersistedShape {
   navigatorCollapsed: boolean
   /** Width of the navigator sidebar in pixels. */
   navigatorWidth: number
+  /** How wide the detail panel opens, as a share of the window. */
+  detailWidthFraction: number
   /** Category names the operator has expanded in the navigator tree. */
   expandedCategories: string[]
   /** Whether the overview's verdict card shows its findings. */
@@ -332,6 +361,10 @@ const DEFAULTS: PersistedShape = {
   autoRefresh: true,
   navigatorCollapsed: false,
   navigatorWidth: 240,
+  // Half, which is what the panel already was on a laptop: it opened at a
+  // fixed 704px, and 704 of a 1440-wide window is very close to this. Somebody
+  // who never touches the setting sees no change.
+  detailWidthFraction: 0.5,
   expandedCategories: [],
   findingsExpanded: false,
   wrapLines: true,
@@ -377,6 +410,7 @@ class Preferences {
   autoRefresh = $state<boolean>(DEFAULTS.autoRefresh)
   navigatorCollapsed = $state<boolean>(DEFAULTS.navigatorCollapsed)
   navigatorWidth = $state<number>(DEFAULTS.navigatorWidth)
+  detailWidthFraction = $state<number>(DEFAULTS.detailWidthFraction)
 
   /**
    * Category names currently expanded in the navigator.
@@ -497,6 +531,18 @@ class Preferences {
   cycleTheme = (): void => {
     const current = THEME_PREFERENCES.indexOf(this.themePreference)
     this.setTheme(THEME_PREFERENCES[(current + 1) % THEME_PREFERENCES.length])
+  }
+
+  /**
+   * Sets how wide the detail panel opens.
+   *
+   * Clamped to something a panel can be: a stored value from a future build,
+   * or a hand-edited one, must not be able to open a panel over the whole
+   * window or reduce it to a sliver.
+   */
+  setDetailWidth = (fraction: number): void => {
+    this.detailWidthFraction = Math.min(0.75, Math.max(0.2, fraction))
+    this.#save()
   }
 
   setPageSize = (size: PageSize): void => {
@@ -858,6 +904,13 @@ class Preferences {
       if (typeof stored.navigatorWidth === 'number' && stored.navigatorWidth >= 180 && stored.navigatorWidth <= 400) {
         this.navigatorWidth = stored.navigatorWidth
       }
+      if (
+        typeof stored.detailWidthFraction === 'number' &&
+        stored.detailWidthFraction >= 0.2 &&
+        stored.detailWidthFraction <= 0.75
+      ) {
+        this.detailWidthFraction = stored.detailWidthFraction
+      }
       if (Array.isArray(stored.expandedCategories)) {
         this.expandedCategories = stored.expandedCategories.filter(
           (entry): entry is string => typeof entry === 'string',
@@ -944,6 +997,7 @@ class Preferences {
       const payload: PersistedShape = {
         themePreference: this.themePreference,
         pageSize: this.pageSize,
+        detailWidthFraction: this.detailWidthFraction,
         refreshIntervalMs: this.refreshIntervalMs,
         autoRefresh: this.autoRefresh,
         navigatorCollapsed: this.navigatorCollapsed,

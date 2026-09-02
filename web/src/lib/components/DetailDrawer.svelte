@@ -26,7 +26,11 @@
   import { withoutManagedFields } from '$lib/manifest'
   import { gitOpsOwner, revertWarning } from '$lib/gitops'
   import GitOpsBadge from './GitOpsBadge.svelte'
-  import { preferences } from '$stores/preferences.svelte'
+  import {
+    preferences,
+    DETAIL_MIN_REM,
+    DETAIL_MAX_REM,
+  } from '$stores/preferences.svelte'
   import DeleteDialog from './DeleteDialog.svelte'
   import ScaleDialog from './ScaleDialog.svelte'
   import RestartDialog from './RestartDialog.svelte'
@@ -589,8 +593,21 @@
     onclick={session.closeDetail}
   ></button>
 
+  <!--
+    A SHARE OF THE WINDOW, CLAMPED AT BOTH ENDS. The panel used to be a fixed
+    44rem, which is about half a laptop and about a fifth of an ultrawide — and
+    the complaint it answers is relative, because what matters is how much of
+    the list behind it is still readable.
+
+    A share alone breaks in the other direction, which is what the clamp is
+    for: a quarter of a small laptop is narrower than one row of this panel's
+    own two columns, and half an ultrawide is a page of whitespace. `min` with
+    90vw on top of that, so a very narrow window still shows the list is there.
+  -->
   <aside
-    class="fixed top-0 right-0 bottom-0 z-50 flex w-[44rem] max-w-[90vw] flex-col
+    style="width: min(90vw, clamp({DETAIL_MIN_REM}rem, {preferences.detailWidthFraction *
+      100}vw, {DETAIL_MAX_REM}rem))"
+    class="fixed top-0 right-0 bottom-0 z-50 flex flex-col
            border-l border-outline-variant/60 bg-surface shadow-level-3"
     aria-label="Object details"
   >

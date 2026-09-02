@@ -17,7 +17,10 @@
   import {
     preferences,
     REFRESH_INTERVALS,
-    PAGE_SIZES,
+    DETAIL_MAX_REM,
+  DETAIL_MIN_REM,
+  DETAIL_WIDTHS,
+  PAGE_SIZES,
     THEME_PREFERENCES,
     THEME_LABELS,
     THRESHOLD_SCOPES,
@@ -405,6 +408,41 @@
                   </button>
                 {/each}
               </div>
+            </div>
+
+            <div class="border-t border-outline-variant pt-5">
+              <h3 class="text-title-medium text-on-surface">Detail panel width</h3>
+              <p class="mt-0.5 text-body-small text-on-surface-variant">
+                How much of the window the panel covers when an object is opened. Narrower
+                leaves more of the list readable behind it.
+              </p>
+
+              <div class="mt-3 flex gap-2">
+                {#each DETAIL_WIDTHS as choice (choice.id)}
+                  <button
+                    type="button"
+                    onclick={() => preferences.setDetailWidth(choice.fraction)}
+                    aria-pressed={Math.abs(preferences.detailWidthFraction - choice.fraction) < 0.01}
+                    title={choice.detail}
+                    class="state-layer h-9 min-w-24 rounded-xs border px-4 text-label-large
+                           transition-colors duration-150 ease-standard
+                           {Math.abs(preferences.detailWidthFraction - choice.fraction) < 0.01
+                             ? 'border-transparent bg-secondary-container text-on-secondary-container'
+                             : 'border-outline text-on-surface-variant'}"
+                  >
+                    {choice.label}
+                  </button>
+                {/each}
+              </div>
+
+              <!-- The clamp said out loud, because it is why a small window
+                   may not visibly change when this does: a quarter of a narrow
+                   laptop is already below the floor. -->
+              <p class="mt-2 text-body-small text-on-surface-variant/70">
+                Clamped either way — never under {DETAIL_MIN_REM * 16}px, which is the
+                narrowest that still fits a label and its value, and never over
+                {DETAIL_MAX_REM * 16}px, past which a detail panel is mostly space.
+              </p>
             </div>
 
             <div class="border-t border-outline-variant pt-5">
