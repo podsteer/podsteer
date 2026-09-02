@@ -50,8 +50,8 @@ func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace d
 	// same instant. Coalescing that is the same job it was doing before, so
 	// the mapping happens once per tick rather than once per caller.
 	return cachedSlice(&a.reads, readKey(id.String(), "pods", namespace.String()), func() ([]domain.Pod, error) {
-		if watched, serving := a.watches.pods(id); serving {
-			return mapWatchedPods(id, watched, namespace)
+		if stored, serving := watched[*corev1.Pod](a.watches, id, watchPods); serving {
+			return mapWatchedPods(id, stored, namespace)
 		}
 		return a.listPods(ctx, id, namespace)
 	})
@@ -133,9 +133,52 @@ func (a *Adapter) listPods(ctx context.Context, id domain.ClusterID, namespace d
 // its consumption sums both ask for the same controllers in the same tick,
 // and the assessment asks for all six kinds alongside.
 func (a *Adapter) ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
+	a.watches.ensure(id, func() (kubernetes.Interface, error) { return a.factory.clientFor(id) })
+
 	return cachedSlice(&a.reads, readKey(id.String(), "workloads", string(kind), namespace.String()), func() ([]domain.Workload, error) {
+		// Only the two that are watched, and only because they are the ones a
+		// refresh re-reads: ReplicaSets stand between a Deployment and its
+		// pods, Jobs between a CronJob and its. The other four are one small
+		// list each and go to the cluster.
+		switch kind {
+		case domain.WorkloadReplicaSet:
+			if stored, serving := watched[*appsv1.ReplicaSet](a.watches, id, watchReplicaSets); serving {
+				return mapWatched(id, stored, namespace, mapReplicaSet), nil
+			}
+		case domain.WorkloadJob:
+			if stored, serving := watched[*batchv1.Job](a.watches, id, watchJobs); serving {
+				return mapWatched(id, stored, namespace, mapJob), nil
+			}
+		}
 		return a.listWorkloads(ctx, id, kind, namespace)
 	})
+}
+
+// mapWatched turns stored objects into domain values, narrowed to one
+// namespace.
+//
+// An object that will not map is SKIPPED rather than failing the read: the
+// store holds whatever the cluster sent, and one unmappable object must not
+// empty a list of thousands. That matches how the list path already treats
+// them — see Adapter.collect.
+func mapWatched[T interface{ GetNamespace() string }, R any](
+	id domain.ClusterID,
+	stored []T,
+	namespace domain.NamespaceName,
+	convert func(domain.ClusterID, T) (R, error),
+) []R {
+	mapped := make([]R, 0, len(stored))
+	for _, item := range stored {
+		if !namespace.IsAll() && item.GetNamespace() != namespace.String() {
+			continue
+		}
+		value, err := convert(id, item)
+		if err != nil {
+			continue
+		}
+		mapped = append(mapped, value)
+	}
+	return mapped
 }
 
 // ListWorkloads returns controllers of the given kind.

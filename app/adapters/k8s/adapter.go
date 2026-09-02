@@ -85,7 +85,7 @@ func New(cfg Config, logger *slog.Logger) *Adapter {
 	return &Adapter{
 		factory:  newClientFactory(cfg),
 		logger:   scoped,
-		watches:  newWatchManager(cfg.LiveWatch, scoped),
+		watches:  newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery),
 		forwards: portForwards{byID: make(map[string]*forwarder)},
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -161,7 +163,7 @@ func pollingLists(t *testing.T) {
 }
 
 func newTestManager(client kubernetes.Interface) (*watchManager, func() (kubernetes.Interface, error)) {
-	manager := newWatchManager(true, slog.New(slog.DiscardHandler))
+	manager := newWatchManager(true, slog.New(slog.DiscardHandler), idleAfter, sweepEvery)
 	return manager, func() (kubernetes.Interface, error) { return client, nil }
 }
 
@@ -174,17 +176,17 @@ func TestTheStoreServesOnlyOnceItHasSynced(t *testing.T) {
 
 	// Before anything is started, and while it is starting, a read is told to
 	// go to the cluster — never to wait.
-	if _, serving := manager.pods("dev"); serving {
+	if _, serving := watched[*corev1.Pod](manager, "dev", watchPods); serving {
 		t.Fatal("served from a store nobody had started")
 	}
 
 	manager.ensure("dev", supply)
 	waitFor(t, func() bool {
-		_, serving := manager.pods("dev")
+		_, serving := watched[*corev1.Pod](manager, "dev", watchPods)
 		return serving
 	})
 
-	pods, _ := manager.pods("dev")
+	pods, _ := watched[*corev1.Pod](manager, "dev", watchPods)
 	if len(pods) != 1 {
 		t.Fatalf("store holds %d pods, want 1", len(pods))
 	}
@@ -210,7 +212,7 @@ func TestOnlyOneWatchIsStartedHoweverManyReadsArrive(t *testing.T) {
 	group.Wait()
 
 	waitFor(t, func() bool {
-		_, serving := manager.pods("dev")
+		_, serving := watched[*corev1.Pod](manager, "dev", watchPods)
 		return serving
 	})
 	// One reflector, so one initial list.
@@ -239,10 +241,10 @@ func TestAnAccountThatMayNotWatchIsNotWatched(t *testing.T) {
 		manager.mu.Lock()
 		set, running := manager.sets["dev"]
 		manager.mu.Unlock()
-		return running && set.pods.get() == watchDegraded
+		return running && set.kinds[watchPods].get() == watchDegraded
 	})
 
-	if _, serving := manager.pods("dev"); serving {
+	if _, serving := watched[*corev1.Pod](manager, "dev", watchPods); serving {
 		t.Fatal("a store whose watch was refused is still answering reads")
 	}
 }
@@ -255,20 +257,20 @@ func TestForgettingAClusterStopsItsGoroutinesAndWaits(t *testing.T) {
 
 	manager.ensure("dev", supply)
 	waitFor(t, func() bool {
-		_, serving := manager.pods("dev")
+		_, serving := watched[*corev1.Pod](manager, "dev", watchPods)
 		return serving
 	})
 
 	manager.forget("dev")
 
-	if _, serving := manager.pods("dev"); serving {
+	if _, serving := watched[*corev1.Pod](manager, "dev", watchPods); serving {
 		t.Fatal("a forgotten cluster is still answering reads")
 	}
 	// A set is never reused: reconnecting builds a new one, so a reflector
 	// from before the disconnect cannot write into a live store.
 	manager.ensure("dev", supply)
 	waitFor(t, func() bool {
-		_, serving := manager.pods("dev")
+		_, serving := watched[*corev1.Pod](manager, "dev", watchPods)
 		return serving
 	})
 	manager.stopAll()
@@ -278,13 +280,13 @@ func TestNothingIsWatchedWhenTheFeatureIsOff(t *testing.T) {
 	// Off is not an approximation of the old behaviour — it is the same code
 	// path, because the fallback IS that path.
 	client, lists := watchedClient(t, richPod("api-1"))
-	manager := newWatchManager(false, slog.New(slog.DiscardHandler))
+	manager := newWatchManager(false, slog.New(slog.DiscardHandler), idleAfter, sweepEvery)
 	defer manager.stopAll()
 
 	manager.ensure("dev", func() (kubernetes.Interface, error) { return client, nil })
 	time.Sleep(20 * time.Millisecond)
 
-	if _, serving := manager.pods("dev"); serving {
+	if _, serving := watched[*corev1.Pod](manager, "dev", watchPods); serving {
 		t.Fatal("served from a store with the feature switched off")
 	}
 	if got := lists.Load(); got != 0 {
@@ -324,5 +326,184 @@ func TestNarrowingTheStoreToOneNamespace(t *testing.T) {
 	}
 	if len(web) != 1 || web[0].Namespace() != "web" {
 		t.Fatalf("narrowing to web gave %d pods", len(web))
+	}
+}
+
+func richReplicaSet(name string) *appsv1.ReplicaSet {
+	template := richPod("template")
+	return &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "web",
+			Labels:    map[string]string{"app": "web"},
+			Annotations: map[string]string{
+				corev1.LastAppliedConfigAnnotation: `{"a":"very long manifest"}`,
+				"keep":                             "this",
+			},
+			ManagedFields:     []metav1.ManagedFieldsEntry{{Manager: "kubectl"}},
+			OwnerReferences:   []metav1.OwnerReference{{Kind: "Deployment", Name: "web", Controller: boolPtr(true)}},
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-time.Hour)),
+		},
+		Spec: appsv1.ReplicaSetSpec{
+			Replicas: func() *int32 { r := int32(3); return &r }(),
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "web"}},
+				Spec:       template.Spec,
+			},
+		},
+		Status: appsv1.ReplicaSetStatus{Replicas: 3, ReadyReplicas: 2, AvailableReplicas: 2},
+	}
+}
+
+func richJob(name string) *batchv1.Job {
+	template := richPod("template")
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:          name,
+			Namespace:     "web",
+			ManagedFields: []metav1.ManagedFieldsEntry{{Manager: "kubectl"}},
+			Annotations: map[string]string{
+				corev1.LastAppliedConfigAnnotation: `{"a":"long"}`,
+			},
+			OwnerReferences:   []metav1.OwnerReference{{Kind: "CronJob", Name: "nightly", Controller: boolPtr(true)}},
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-time.Hour)),
+		},
+		Spec: batchv1.JobSpec{
+			Completions: func() *int32 { c := int32(1); return &c }(),
+			Selector:    &metav1.LabelSelector{MatchLabels: map[string]string{"job": name}},
+			Template:    corev1.PodTemplateSpec{Spec: template.Spec},
+		},
+		Status: batchv1.JobStatus{Succeeded: 1},
+	}
+}
+
+func TestStrippingAControllerChangesNothingThisApplicationReads(t *testing.T) {
+	// One contract test per transform, for the same reason the pod one
+	// exists: a field the mapper reads and the transform removes goes quietly
+	// blank on exactly the clusters where the watch is serving, and stays
+	// correct everywhere else.
+	t.Run("replicaset", func(t *testing.T) {
+		original := richReplicaSet("web-abc")
+
+		stripped, err := stripReplicaSet(original.DeepCopy())
+		if err != nil {
+			t.Fatalf("stripReplicaSet() error = %v", err)
+		}
+
+		want, err := mapReplicaSet("dev", original)
+		if err != nil {
+			t.Fatalf("mapReplicaSet(original) error = %v", err)
+		}
+		got, err := mapReplicaSet("dev", stripped.(*appsv1.ReplicaSet))
+		if err != nil {
+			t.Fatalf("mapReplicaSet(stripped) error = %v", err)
+		}
+		if !reflect.DeepEqual(want, got) {
+			t.Fatalf("stripping changed what the application sees:\n want: %+v\n got:  %+v", want, got)
+		}
+	})
+
+	t.Run("job", func(t *testing.T) {
+		original := richJob("nightly-1")
+
+		stripped, err := stripJob(original.DeepCopy())
+		if err != nil {
+			t.Fatalf("stripJob() error = %v", err)
+		}
+
+		want, err := mapJob("dev", original)
+		if err != nil {
+			t.Fatalf("mapJob(original) error = %v", err)
+		}
+		got, err := mapJob("dev", stripped.(*batchv1.Job))
+		if err != nil {
+			t.Fatalf("mapJob(stripped) error = %v", err)
+		}
+		if !reflect.DeepEqual(want, got) {
+			t.Fatalf("stripping changed what the application sees:\n want: %+v\n got:  %+v", want, got)
+		}
+	})
+}
+
+func TestAControllersPodTemplateIsReducedToItsImages(t *testing.T) {
+	// The reason these two are watched at all. A ReplicaSet carries a whole
+	// pod template and the mapper reads one field out of it, so a namespace
+	// with ten revisions holds ten copies of a spec nothing displays.
+	stripped, err := stripReplicaSet(richReplicaSet("web-abc"))
+	if err != nil {
+		t.Fatalf("stripReplicaSet() error = %v", err)
+	}
+
+	set := stripped.(*appsv1.ReplicaSet)
+	container := set.Spec.Template.Spec.Containers[0]
+	switch {
+	case container.Image == "":
+		t.Fatal("the image was stripped — it is the one field the mapper reads")
+	case container.Env != nil || container.VolumeMounts != nil:
+		t.Fatal("the template's display material survived")
+	case set.Spec.Selector == nil:
+		t.Fatal("the selector was stripped — attribution reads it")
+	case set.Status.ReadyReplicas != 2:
+		t.Fatal("the replica counts were stripped — they are the columns")
+	}
+}
+
+func TestAWatchNobodyIsReadingIsStopped(t *testing.T) {
+	// Somebody who set refresh to "manual only" chose to stop talking to
+	// their cluster, and a stream left open between button presses is not
+	// that. The next read starts a fresh set exactly as the first one did.
+	pollingLists(t)
+
+	client, _ := watchedClient(t, richPod("api-1"))
+	manager := newWatchManager(true, slog.New(slog.DiscardHandler), 50*time.Millisecond, 10*time.Millisecond)
+	defer manager.stopAll()
+
+	supply := func() (kubernetes.Interface, error) { return client, nil }
+	manager.ensure("dev", supply)
+	waitFor(t, func() bool {
+		_, serving := watched[*corev1.Pod](manager, "dev", watchPods)
+		return serving
+	})
+
+	// Stop reading it.
+	waitFor(t, func() bool {
+		manager.mu.Lock()
+		_, running := manager.sets["dev"]
+		manager.mu.Unlock()
+		return !running
+	})
+
+	// And it comes back on the next read.
+	manager.ensure("dev", supply)
+	waitFor(t, func() bool {
+		_, serving := watched[*corev1.Pod](manager, "dev", watchPods)
+		return serving
+	})
+}
+
+func TestReadingKeepsAWatchAlive(t *testing.T) {
+	// The other half: an ordinary session refreshes well inside the idle
+	// window, and reaping a set somebody is watching would turn every refresh
+	// into a fresh initial list.
+	pollingLists(t)
+
+	client, _ := watchedClient(t, richPod("api-1"))
+	manager := newWatchManager(true, slog.New(slog.DiscardHandler), 200*time.Millisecond, 10*time.Millisecond)
+	defer manager.stopAll()
+
+	manager.ensure("dev", func() (kubernetes.Interface, error) { return client, nil })
+	waitFor(t, func() bool {
+		_, serving := watched[*corev1.Pod](manager, "dev", watchPods)
+		return serving
+	})
+
+	// Read across more than one idle window.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, serving := watched[*corev1.Pod](manager, "dev", watchPods); !serving {
+			t.Fatal("a set being read every few milliseconds was reaped")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

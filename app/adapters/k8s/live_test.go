@@ -7,79 +7,90 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+
+	"github.com/podsteer/podsteer/app/config"
 	"github.com/podsteer/podsteer/app/domain"
 )
 
-// The watch, against a real cluster, on purpose.
+// Every store, against a real cluster, on purpose.
 //
 // SKIPPED UNLESS ASKED FOR, because it needs a reachable cluster and the rest
 // of this package deliberately does not. It is here rather than deleted
 // because the fake clientset cannot exercise the path production takes:
 // client-go streams the initial list through the watch by default, and the
-// fake does not implement that protocol — so every other test in watch_test.go
-// pins the fallback and none of them proves the store ever syncs for real.
+// fake does not implement that protocol — so every other test in
+// watch_test.go pins the fallback and none of them proves a store ever syncs.
 //
-//	PODSTEER_LIVE_TEST=1 go test ./app/adapters/k8s/ -run LiveWatch -v
+//	PODSTEER_LIVE_TEST=1 go test ./app/adapters/k8s/ -run LiveEveryStore -v
 //
 // It reads and compares; it writes nothing.
-func TestLiveWatchAgainstTheCurrentContext(t *testing.T) {
+func TestLiveEveryStoreAgrees(t *testing.T) {
 	if os.Getenv("PODSTEER_LIVE_TEST") == "" {
 		t.Skip("set PODSTEER_LIVE_TEST=1")
 	}
 
-	adapter := New(Config{LiveWatch: true}, nil)
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	adapter := New(Config{LiveWatch: loaded.Kubernetes.LiveWatch}, nil)
 	defer adapter.StopAllWatches()
 
 	clusters, err := adapter.Clusters(context.Background())
-	if err != nil || len(clusters) == 0 {
-		t.Fatalf("Clusters() = %d, %v", len(clusters), err)
+	if err != nil {
+		t.Fatalf("Clusters() error = %v", err)
 	}
-
 	var id domain.ClusterID
 	for _, cluster := range clusters {
 		if cluster.IsCurrent() {
 			id = cluster.ID()
 		}
 	}
-	if id.IsZero() {
-		t.Fatal("no current context")
-	}
 
 	ctx := context.Background()
-	first, err := adapter.ListPods(ctx, id, domain.NamespaceAll)
-	if err != nil {
-		t.Fatalf("ListPods() error = %v", err)
-	}
-	fmt.Printf("FIRST(from cluster)=%d\n", len(first))
+	pods, _ := adapter.ListPods(ctx, id, domain.NamespaceAll)
+	sets, _ := adapter.ListWorkloads(ctx, id, domain.WorkloadReplicaSet, domain.NamespaceAll)
+	jobs, _ := adapter.ListWorkloads(ctx, id, domain.WorkloadJob, domain.NamespaceAll)
+	fmt.Printf("CLUSTER pods=%d replicasets=%d jobs=%d\n", len(pods), len(sets), len(jobs))
 
-	// Give the reflector a moment to sync, then read again — this one should
-	// come from the store.
-	deadline := time.After(30 * time.Second)
+	deadline := time.After(45 * time.Second)
 	for {
-		if _, serving := adapter.watches.pods(id); serving {
+		_, p := watched[*corev1.Pod](adapter.watches, id, watchPods)
+		_, r := watched[*appsv1.ReplicaSet](adapter.watches, id, watchReplicaSets)
+		_, j := watched[*batchv1.Job](adapter.watches, id, watchJobs)
+		if p && r && j {
 			break
 		}
 		select {
 		case <-deadline:
-			t.Fatal("the store never started serving")
+			t.Fatalf("stores never all served (pods=%v replicasets=%v jobs=%v)", p, r, j)
 		default:
 			time.Sleep(200 * time.Millisecond)
 		}
 	}
 
-	// Past the read cache's window, so this is a genuine second read.
 	time.Sleep(readTTL + 100*time.Millisecond)
-	second, err := adapter.ListPods(ctx, id, domain.NamespaceAll)
-	if err != nil {
-		t.Fatalf("ListPods() from store error = %v", err)
-	}
-	fmt.Printf("SECOND(from store)=%d\n", len(second))
+	storedPods, _ := adapter.ListPods(ctx, id, domain.NamespaceAll)
+	storedSets, _ := adapter.ListWorkloads(ctx, id, domain.WorkloadReplicaSet, domain.NamespaceAll)
+	storedJobs, _ := adapter.ListWorkloads(ctx, id, domain.WorkloadJob, domain.NamespaceAll)
+	fmt.Printf("STORE   pods=%d replicasets=%d jobs=%d\n", len(storedPods), len(storedSets), len(storedJobs))
 
-	if len(second) != len(first) {
-		t.Fatalf("store has %d pods, the cluster listed %d", len(second), len(first))
+	if len(storedPods) != len(pods) || len(storedSets) != len(sets) || len(storedJobs) != len(jobs) {
+		t.Fatal("a store disagrees with the cluster")
 	}
-	if len(second) > 0 {
-		fmt.Printf("SAMPLE=%s/%s phase=%s containers=%d\n",
-			second[0].Namespace(), second[0].Name(), second[0].Phase(), second[0].TotalContainers())
+	if len(storedSets) > 0 {
+		fmt.Printf("SAMPLE rs=%s/%s ready=%d images=%v selector=%v\n",
+			storedSets[0].Namespace(), storedSets[0].Name(),
+			storedSets[0].Ready(), storedSets[0].Images(), storedSets[0].Selector())
 	}
+
+	// And a namespace-scoped read, which is what a controller page makes.
+	scoped, err := adapter.ListWorkloads(ctx, id, domain.WorkloadReplicaSet, "kube-system")
+	if err != nil {
+		t.Fatalf("scoped ListWorkloads() error = %v", err)
+	}
+	fmt.Printf("SCOPED kube-system replicasets=%d\n", len(scoped))
 }

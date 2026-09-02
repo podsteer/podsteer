@@ -77,12 +77,12 @@ the cost of finding out is one refused request per connection.
 
 Three things to know before touching it:
 
-- **`stripPod` has a contract test, and it is not optional.** The store holds
-  stripped pods, so anything `mapPod` reads that `stripPod` removes goes
-  quietly blank on clusters where the watch happens to be serving — and stays
-  correct everywhere else, which is the worst way to find out. It has already
-  caught one: probes. Extend `mapPod`, and `TestStrippingAPodChangesNothing…`
-  fails.
+- **Every transform has a contract test, and they are not optional.** The
+  stores hold stripped objects, so anything a mapper reads that its transform
+  removes goes quietly blank on clusters where the watch happens to be serving
+  — and stays correct everywhere else, which is the worst way to find out. It
+  has already caught one: probes. Extend a mapper, and the matching
+  `TestStripping…ChangesNothing…` fails.
 - **A set is never reused.** `Invalidate` cancels and *waits*, and a reconnect
   builds a fresh set against the fresh client, so a reflector from before a
   disconnect cannot write into a store a later read answers from.
@@ -90,12 +90,25 @@ Three things to know before touching it:
   wire and not free in CPU — five thousand pods mapped into domain values —
   and the assessment and the open list still want them in the same instant.
 
-Pods only. Controller lists are kilobytes and already coalesced; ReplicaSets
-and Jobs are the plausible next two and are deliberately absent until the
-per-cluster tally (logged at debug on disconnect) says otherwise — a
-ReplicaSet carries a whole pod template, which is not the intuition anybody
-starts with. Metrics can never be watched: `metrics.k8s.io` serves no watch
-verb, which sets the floor on what a refresh can cost.
+**Three kinds, and only three**: pods, ReplicaSets and Jobs — see
+`watchedKinds`. Pods are the great majority of what a poll transfers. The
+other two are the intermediates a controller's usage is attributed through, so
+the Deployment and CronJob pages read them on every refresh, and a ReplicaSet
+carries a whole pod template of which the mapper reads one field: on a
+201-pod cluster measured here there were 186 ReplicaSets, which is not the
+intuition anybody starts with. Their templates are therefore stripped to their
+images.
+
+Nothing else. Deployments, StatefulSets, DaemonSets, CronJobs, namespaces and
+nodes are small lists already coalesced by `readcache.go`. Events are
+high-churn and the store would hold the churn. Metrics can never be watched at
+all — `metrics.k8s.io` serves no watch verb — which sets the floor on what a
+refresh can cost.
+
+**A set nobody reads is stopped** after `idleAfter`, and the next read starts a
+fresh one exactly as the first did. That is what keeps "manual only" honest:
+somebody who chose to stop talking to their cluster should not have a stream
+open between button presses.
 
 On by default; `PODSTEER_LIVE_WATCH=false` is the way back, and it is not an
 approximation of the old behaviour — it is the same code path. One consequence
