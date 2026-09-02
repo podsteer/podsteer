@@ -257,10 +257,49 @@
     observer.observe(list)
     return () => observer.disconnect()
   })
+
+  /** Which row the pointer is over, or null. */
+  let hovered = $state<number | null>(null)
+
+  /**
+   * Marks the row an event landed in, and LEAVES THE PREVIOUS ONE ALONE when
+   * it landed in no row at all.
+   *
+   * The columns have a gap between them, so crossing from the label to the
+   * value passes over the list itself. Clearing on that would flicker the
+   * controls off and on again in the middle of reaching for one. Leaving the
+   * list is what clears it, and that has its own handler.
+   */
+  function hoverRow(target: EventTarget | null): void {
+    const cell = (target as HTMLElement | null)?.closest?.('[data-row]')
+    if (!cell) return
+    const index = Number(cell.getAttribute('data-row'))
+    if (Number.isInteger(index)) hovered = index
+  }
 </script>
 
 <div class="relative">
-  <dl class="detail-grid" bind:this={list}>
+  <!--
+    Hover is tracked HERE, on the list, rather than by a CSS group on the row.
+    A row is two grid items — the label and the value — and they are siblings
+    with no element around them, so a `group` could only ever sit on one of
+    them: the controls appeared when the pointer was over the value and not
+    when it was over the label, which is half a row behaving differently from
+    the other half for no reason a reader could see.
+
+    Wrapping the pair in a `display: contents` element would have been the
+    tidy CSS answer, and is deliberately not what this does — that element
+    generates no box, and whether `:hover` matches on one is exactly the kind
+    of thing that silently stops working on one of the three webviews this
+    ships against. One listener on the list, and the row the pointer is over
+    is then a fact rather than an inference.
+  -->
+  <dl
+    class="detail-grid"
+    bind:this={list}
+    onpointerover={(event) => hoverRow(event.target)}
+    onpointerleave={() => (hovered = null)}
+  >
   <!--
     KEYED BY POSITION, NOT BY LABEL. A label is not unique and was never going
     to be: kubectl prints several "Mounts:" lines for one container and several
@@ -286,14 +325,18 @@
     <dt
       bind:this={labelCells[index]}
       class="min-w-0 text-body-medium text-on-surface {open ? 'break-all' : 'truncate'}"
+      data-row={index}
       data-selectable
     >
       {row.label}
     </dt>
     <!--
-      `group/row`, for controls that appear when the pointer is on the row.
+      `group/row` for the controls inside it, driven by `data-row-hover` from
+      the list above rather than by `:hover` on this cell alone.
     -->
     <dd
+      data-row={index}
+      data-row-hover={hovered === index ? '' : undefined}
       class="group/row flex min-w-0 items-start gap-1 text-body-medium {row.tone === 'critical'
         ? 'text-error'
         : row.tone === 'warn'
@@ -387,7 +430,7 @@
             title={open ? 'Show less' : 'Show the whole value'}
             class="grid size-5 shrink-0 cursor-pointer place-items-center rounded-full
                    text-on-surface-variant/60 opacity-0 transition-all duration-100
-                   group-hover/row:opacity-100 group-focus-within/row:opacity-100
+                   group-data-[row-hover]/row:opacity-100 group-focus-within/row:opacity-100
                    hover:text-on-surface focus-visible:opacity-100"
           >
             <ChevronDown

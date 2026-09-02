@@ -70,7 +70,6 @@
         label="Search the manifest"
         count={String(matches)}
         empty={matches === 0}
-        autofocus
         onchange={(value) => (query = value)}
         onnext={() => api?.findNext()}
         onprevious={() => api?.findPrevious()}

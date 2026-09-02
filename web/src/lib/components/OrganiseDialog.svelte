@@ -24,6 +24,7 @@
   relied on to show.
 -->
 <script lang="ts">
+  import { menuKeys } from '$lib/menuKeys'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
   import Button from './Button.svelte'
@@ -460,6 +461,7 @@
                 <div
                   role="menu"
                   aria-label="{project.name} actions"
+                  use:menuKeys={{ onclose: closeMenu }}
                   use:anchorMenu={{ rect: menuAnchor, key: null }}
                   class="fixed z-[60] w-52 overflow-hidden rounded-sm border
                          border-outline-variant bg-surface-container-highest py-1 shadow-level-2"
@@ -574,6 +576,7 @@
                     <div
                       role="menu"
                       aria-label="{group.name} actions"
+                      use:menuKeys={{ onclose: closeMenu }}
                       use:anchorMenu={{ rect: menuAnchor, key: movingGroup }}
                       class="fixed z-[60] max-h-[60vh] w-56 overflow-y-auto rounded-sm border
                              border-outline-variant bg-surface-container-highest py-1 shadow-level-2"

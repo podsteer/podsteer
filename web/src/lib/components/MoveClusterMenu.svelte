@@ -14,6 +14,7 @@
   contract the rest of the application's transient surfaces keep.
 -->
 <script lang="ts">
+  import { menuKeys } from '$lib/menuKeys'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import {
     DEFAULT_GROUP_ID,
@@ -164,6 +165,7 @@
     <div
       role="menu"
       aria-label="Move to"
+      use:menuKeys={{ onclose: () => (open = false) }}
       data-move-menu
       use:place={anchor}
       class="fixed z-[70] max-h-80 w-64 overflow-y-auto rounded-sm border

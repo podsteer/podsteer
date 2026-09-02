@@ -9,6 +9,7 @@
   Action buttons in the header allow delete, scale, restart, and edit.
 -->
 <script lang="ts">
+  import { flash } from '$lib/flash.svelte'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import type { ClusterSession } from '$stores/session.svelte'
   import { WORKLOAD_KIND_BY_ID } from '$stores/session.svelte'
@@ -75,7 +76,7 @@
 
   type Tab = 'overview' | 'logs' | 'terminal' | 'map' | 'events' | 'yaml'
   let activeTab = $state<Tab>('overview')
-  let copied = $state(false)
+  const copied = flash(1500)
   let deleteDialogOpen = $state(false)
   let scaleDialogOpen = $state(false)
   /**
@@ -390,8 +391,7 @@
   async function copyManifest(): Promise<void> {
     if (!shownManifest) return
     await navigator.clipboard.writeText(shownManifest)
-    copied = true
-    setTimeout(() => (copied = false), 1500)
+    copied.show()
   }
 
   async function handleDelete(): Promise<void> {
@@ -586,6 +586,9 @@
       escape = null
     }
   })
+
+  // Nothing left running behind a component that has gone away.
+  $effect(() => () => copied.cancel())
 </script>
 
 <!--
@@ -745,10 +748,10 @@
         onclick={() => (editing ? stopEditing() : startEditing())}
       />
       <ToolbarButton
-        icon={copied ? Check : Copy}
+        icon={copied.on ? Check : Copy}
         label="Copy manifest"
-        title={copied ? 'Copied' : 'Copy manifest'}
-        active={copied}
+        title={copied.on ? 'Copied' : 'Copy manifest'}
+        active={copied.on}
         disabled={!shownManifest}
         onclick={copyManifest}
       />

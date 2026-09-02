@@ -33,6 +33,8 @@
 </script>
 
 <script lang="ts">
+  import { flash } from '$lib/flash.svelte'
+  import { menuKeys } from '$lib/menuKeys'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import type { Component } from 'svelte'
   import { Check, Copy, Eye, EyeOff, Link2, MoreVertical } from '@lucide/svelte'
@@ -70,7 +72,7 @@
   const open = $derived(openMenu === id)
 
   let node = $state<HTMLElement | null>(null)
-  let copied = $state(false)
+  const copied = flash(900)
 
   function choose(action: RowAction): void {
     action.onclick()
@@ -79,11 +81,9 @@
     // row looks identical — so it says so before closing. Everything else has
     // a visible result: a panel changes, or a value appears.
     if (action.kind === 'copy') {
-      copied = true
-      setTimeout(() => {
-        copied = false
+      copied.show(() => {
         if (openMenu === id) openMenu = null
-      }, 900)
+      })
       return
     }
     openMenu = null
@@ -144,6 +144,9 @@
       escape = null
     }
   })
+
+  // Nothing left running behind a component that has gone away.
+  $effect(() => () => copied.cancel())
 </script>
 
 
@@ -158,7 +161,7 @@
       title="More"
       class="grid size-5 shrink-0 cursor-pointer place-items-center rounded-full
              transition-all duration-100 hover:text-on-surface
-             group-hover/row:opacity-100 group-focus-within/row:opacity-100
+             group-data-[row-hover]/row:opacity-100 group-focus-within/row:opacity-100
              focus-visible:opacity-100
              {open ? 'text-on-surface opacity-100' : 'text-on-surface-variant/60 opacity-0'}"
     >
@@ -175,6 +178,8 @@
         class="absolute top-full right-0 z-30 mt-1 w-48 overflow-hidden rounded-sm
                border border-outline-variant/60 bg-surface-container-high py-1.5 shadow-level-2"
         role="menu"
+        aria-label="More for {label}"
+        use:menuKeys={{ onclose: () => (openMenu = null) }}
       >
         {#each actions as action (action.label)}
           {@const Icon = ICONS[action.kind ?? 'reference']}
@@ -185,9 +190,9 @@
             class="state-layer flex w-full cursor-pointer items-center gap-2.5 px-3 py-1.5
                    text-left text-body-medium transition-colors duration-75
                    hover:bg-surface-container-highest
-                   {copied && action.kind === 'copy' ? 'text-success' : 'text-on-surface'}"
+                   {copied.on && action.kind === 'copy' ? 'text-success' : 'text-on-surface'}"
           >
-            {#if copied && action.kind === 'copy'}
+            {#if copied.on && action.kind === 'copy'}
               <Check class="size-3.5 shrink-0" strokeWidth={2.5} />
               Copied!
             {:else}

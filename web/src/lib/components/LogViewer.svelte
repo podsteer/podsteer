@@ -15,6 +15,7 @@
   For deployments and other workloads, it can aggregate logs from multiple pods.
 -->
 <script lang="ts">
+  import { flash } from '$lib/flash.svelte'
   import { EventsOn } from '$lib/wailsjs/runtime/runtime'
   import { StreamLogs, StopLogStream } from '$lib/wailsjs/go/wails/ManagementAPI'
   import { onMount, onDestroy, untrack } from 'svelte'
@@ -106,7 +107,7 @@
   let logContainer: HTMLDivElement
   /** Unsubscribes for the stream events, so teardown removes only ours. */
   let unsubscribe: Array<() => void> = []
-  let copied = $state(false)
+  const copied = flash(1500)
   /** Why the stream ended, when it ended badly. */
   let streamError = $state('')
 
@@ -140,10 +141,9 @@
     if (!text) return
     try {
       await navigator.clipboard.writeText(text)
-      copied = true
-      setTimeout(() => (copied = false), 1500)
+      copied.show()
     } catch {
-      copied = false
+      copied.cancel()
     }
   }
 
@@ -673,6 +673,9 @@
     unsubscribe = []
     stopStream()
   })
+
+  // Nothing left running behind a component that has gone away.
+  $effect(() => () => copied.cancel())
 </script>
 
 <div class="flex h-full flex-col">
@@ -695,7 +698,6 @@
         label="Filter the log lines"
         count="{matching.length}/{logs.length}"
         empty={matching.length === 0}
-        autofocus
         onchange={(value) => (searchQuery = value)}
         onnext={filterMode ? undefined : () => stepMatch(1)}
         onprevious={filterMode ? undefined : () => stepMatch(-1)}
@@ -773,10 +775,10 @@
       <div class="mx-1 h-5 w-px bg-outline-variant/40"></div>
 
       <ToolbarButton
-        icon={copied ? Check : Copy}
+        icon={copied.on ? Check : Copy}
         label="Copy logs"
-        title={copied ? 'Copied' : 'Copy the lines shown'}
-        active={copied}
+        title={copied.on ? 'Copied' : 'Copy the lines shown'}
+        active={copied.on}
         disabled={filteredLogs.length === 0}
         onclick={copyLogs}
       />

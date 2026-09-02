@@ -20,6 +20,7 @@
     inside it, selection is the unambiguous gesture.
 -->
 <script lang="ts">
+  import { flash } from '$lib/flash.svelte'
   import { onMount, onDestroy } from 'svelte'
   import { Terminal } from '@xterm/xterm'
   import { FitAddon } from '@xterm/addon-fit'
@@ -78,7 +79,7 @@
   let markers = $state.raw<number[]>([])
   /** What the search found, as the addon reports it. */
   let results = $state<{ index: number; count: number } | null>(null)
-  let copiedAll = $state(false)
+  const copiedAll = flash(1400)
   /** The chip shown beside a selection, and where to put it. */
   let selection = $state<{ text: string; x: number; y: number } | null>(null)
 
@@ -239,8 +240,7 @@
     terminal.clearSelection()
 
     await navigator.clipboard.writeText(all).catch(() => {})
-    copiedAll = true
-    window.setTimeout(() => (copiedAll = false), 1400)
+    copiedAll.show()
 
     // Selection is a visible thing in a terminal; putting it back is politer
     // than leaving the whole buffer highlighted.
@@ -435,6 +435,9 @@
     terminal?.dispose()
     terminal = null
   }
+
+  // Nothing left running behind a component that has gone away.
+  $effect(() => () => copiedAll.cancel())
 </script>
 
 <div class="flex h-full flex-col">
@@ -520,10 +523,10 @@
       <div class="mx-0.5 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
 
       <ToolbarButton
-        icon={copiedAll ? Check : Copy}
+        icon={copiedAll.on ? Check : Copy}
         label="Copy everything"
         title="Copy the whole buffer — selecting copies on its own"
-        active={copiedAll}
+        active={copiedAll.on}
         onclick={() => void copyAll()}
       />
       <ToolbarButton
