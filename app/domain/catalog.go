@@ -14,6 +14,27 @@ import (
 // why the lookup below is guarded: the CRD set of a cluster is not known until
 // PodSteer has connected to it.
 
+// WHICH CATEGORY A KIND GOES IN, as a rule rather than by resemblance to
+// whatever it would sit next to. Categorise a kind by WHAT ITS STATUS IS
+// ABOUT — the thing it acts on — never by its API group and never by what it
+// merely mentions. First match wins:
+//
+//  1. Defined by a CRD                                    → Custom Resources
+//  2. Runs containers, or targets a workload to change
+//     whether or how many of its pods run                 → Workloads
+//  3. Decides who may do what, or what identity
+//     something runs as                                   → Access Control
+//  4. Decides how traffic reaches, leaves or is refused    → Network
+//  5. Decides where bytes persist                          → Storage
+//  6. Passive data or ambient policy that pods and
+//     namespaces consume                                   → Config
+//  7. The cluster's own structure, or its commentary       → Cluster
+//
+// The ORDER is load-bearing. Rule 2 before rule 6 is what puts an autoscaler
+// with the workloads it resizes rather than with the ConfigMaps it does not
+// resemble; rule 1 before everything is what keeps per-cluster discovery
+// honest.
+//
 // Built-in kinds. `Rich: true` marks the ones with a purpose-built model and
 // column set; the rest are served by the generic table path, which renders
 // whatever columns the API server prints.
@@ -41,6 +62,15 @@ var builtInKinds = []ResourceKind{
 		Namespaced: true, Category: CategoryWorkloads, Title: "Jobs", Singular: "Job", Rich: true},
 	{Group: "batch", Version: "v1", Resource: "cronjobs", Kind: "CronJob",
 		Namespaced: true, Category: CategoryWorkloads, Title: "CronJobs", Singular: "CronJob", Rich: true},
+	// The two that decide how many pods a controller runs, and how few it may
+	// be reduced to. Not configuration: nothing consumes them, they are
+	// controllers with live status that act ON a workload — and the question
+	// somebody holds when opening either ("why is this at twelve replicas",
+	// "why will this node not drain") is asked while looking at Workloads.
+	{Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers", Kind: "HorizontalPodAutoscaler",
+		Namespaced: true, Category: CategoryWorkloads, Title: "Autoscalers", Singular: "Autoscaler"},
+	{Group: "policy", Version: "v1", Resource: "poddisruptionbudgets", Kind: "PodDisruptionBudget",
+		Namespaced: true, Category: CategoryWorkloads, Title: "Disruption Budgets", Singular: "Disruption Budget"},
 
 	// --- Config ---
 	{Version: "v1", Resource: "configmaps", Kind: "ConfigMap",
@@ -51,10 +81,6 @@ var builtInKinds = []ResourceKind{
 		Namespaced: true, Category: CategoryConfig, Title: "Resource Quotas", Singular: "Resource Quota"},
 	{Version: "v1", Resource: "limitranges", Kind: "LimitRange",
 		Namespaced: true, Category: CategoryConfig, Title: "Limit Ranges", Singular: "Limit Range"},
-	{Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers", Kind: "HorizontalPodAutoscaler",
-		Namespaced: true, Category: CategoryConfig, Title: "Autoscalers", Singular: "Autoscaler"},
-	{Group: "policy", Version: "v1", Resource: "poddisruptionbudgets", Kind: "PodDisruptionBudget",
-		Namespaced: true, Category: CategoryConfig, Title: "Disruption Budgets", Singular: "Disruption Budget"},
 
 	// --- Network ---
 	{Version: "v1", Resource: "services", Kind: "Service",
@@ -75,6 +101,18 @@ var builtInKinds = []ResourceKind{
 		Namespaced: false, Category: CategoryStorage, Title: "Persistent Volumes", Singular: "Volume"},
 	{Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses", Kind: "StorageClass",
 		Namespaced: false, Category: CategoryStorage, Title: "Storage Classes", Singular: "Storage Class"},
+
+	// --- Custom Resources ---
+	// The definitions themselves, pinned above the resources they define.
+	// Kept as a static entry rather than discovered, because it is the one
+	// kind in this category that belongs to Kubernetes: everything else here
+	// is present only because somebody installed it.
+	//
+	// Its Subcategory is empty, which is what sorts it above every API group
+	// — see the ordering in BrowseService.Kinds.
+	{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions",
+		Kind: "CustomResourceDefinition", Namespaced: false, Category: CategoryCustomResources,
+		Title: "Definitions", Singular: "Definition"},
 
 	// --- Access Control ---
 	{Version: "v1", Resource: "serviceaccounts", Kind: "ServiceAccount",

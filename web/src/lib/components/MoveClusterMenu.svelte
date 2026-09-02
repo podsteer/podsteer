@@ -14,6 +14,8 @@
   contract the rest of the application's transient surfaces keep.
 -->
 <script lang="ts">
+  import { menuKeys } from '$lib/menuKeys'
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import {
     DEFAULT_GROUP_ID,
     DEFAULT_PROJECT_ID,
@@ -104,11 +106,43 @@
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && open) open = false
+    if (event.key !== 'Escape' || !open) return
+    // One Escape, one layer. See $lib/escape.
+    if (!escape?.owns()) return
+    open = false
   }
+
+  /**
+   * Window listeners, only while open. There is one of these per cluster
+   * card, and forty contexts otherwise means eighty idle window listeners.
+   */
+  $effect(() => {
+    if (!open) return
+
+    window.addEventListener('keydown', onKeydown)
+    window.addEventListener('pointerdown', onPointerDown)
+    return () => {
+      window.removeEventListener('keydown', onKeydown)
+      window.removeEventListener('pointerdown', onPointerDown)
+    }
+  })
+
+  /**
+   * Escape belongs to the innermost open layer. See $lib/escape.
+   */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
 </script>
 
-<svelte:window onkeydown={onKeydown} onpointerdown={onPointerDown} />
+
 
 <div class="relative">
   <button
@@ -131,6 +165,7 @@
     <div
       role="menu"
       aria-label="Move to"
+      use:menuKeys={{ onclose: () => (open = false) }}
       data-move-menu
       use:place={anchor}
       class="fixed z-[70] max-h-80 w-64 overflow-y-auto rounded-sm border

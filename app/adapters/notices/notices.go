@@ -51,6 +51,16 @@ type Package struct {
 	// Expression holds the original SPDX expression when the package was
 	// dual-licensed and one arm was elected. Empty for the ordinary case.
 	Expression string `json:"expression,omitempty"`
+	// NoticeFrom names the sibling package whose licence file supplied this
+	// entry's text, when the package itself publishes none.
+	//
+	// MIT and BSD require the notice to be reproduced, and a package that
+	// leaves the file out of its tarball does not thereby remove the duty — it
+	// only means the text has to come from where the project actually keeps
+	// it. Recorded rather than left implicit so the inventory never suggests a
+	// package shipped something it did not; the reasoning for each is in
+	// build/licences/notice-sources.json.
+	NoticeFrom string `json:"noticeFrom,omitempty"`
 }
 
 // inventory is the file's shape.

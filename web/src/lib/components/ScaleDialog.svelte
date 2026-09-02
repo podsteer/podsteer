@@ -2,6 +2,8 @@
   Dialog for scaling a deployment or statefulset.
 -->
 <script lang="ts">
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
+  import { modal } from '$lib/modal'
   import Button from './Button.svelte'
 
   interface Props {
@@ -28,10 +30,39 @@
     }
   }
 
+  /**
+   * Escape closes; Enter confirms, but only where Enter meant nothing else.
+   *
+   * ENTER USED TO CONFIRM FROM ANYWHERE. The browser already activates a
+   * focused button on Enter, so a global handler on top of it meant that
+   * tabbing to Cancel and pressing Enter did the dangerous thing and then
+   * closed the dialog — leaving Escape as the only way to back out of it, and
+   * nothing on screen saying so. DeleteDialog deliberately binds no Enter at
+   * all: an irreversible action should cost a deliberate click.
+   */
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && open) onclose()
-    if (event.key === 'Enter' && open) handleSubmit()
+    if (!open) return
+    if (event.key === 'Escape') {
+      if (!escape?.owns()) return
+      onclose()
+      return
+    }
+    if (event.key !== 'Enter') return
+    if ((event.target as HTMLElement | null)?.closest('button, a, [role="button"]')) return
+    handleSubmit()
   }
+
+  /** Escape belongs to the innermost open layer. See $lib/escape. */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -50,6 +81,7 @@
            rounded-sm border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
     aria-modal="true"
+    use:modal
     aria-label="Scale replicas"
   >
     <h2 class="text-headline-small text-on-surface">Scale Replicas</h2>

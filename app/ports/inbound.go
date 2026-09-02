@@ -32,6 +32,10 @@ type ClusterService interface {
 	// ListNamespaces returns the namespaces of a connected cluster.
 	ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error)
 
+	// ListNamespaceSummaries returns the same namespaces with what is running
+	// in each — the list view, where ListNamespaces serves the filter.
+	ListNamespaceSummaries(ctx context.Context, id domain.ClusterID) ([]domain.NamespaceSummary, error)
+
 	// ListNodes returns the nodes of a connected cluster.
 	ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error)
 
@@ -63,8 +67,37 @@ type WorkloadService interface {
 	// ListWorkloads returns controllers of the given kind.
 	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error)
 
+	// PodGraph returns the dependency chain around one pod, from whatever
+	// routes to it down to its containers and what it consumes.
+	PodGraph(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string) (domain.PodGraph, error)
+
+	// WorkloadGraph returns the dependency chain around one workload: what
+	// routes to it, the pods it currently has, and what they consume.
+	WorkloadGraph(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.PodGraph, error)
+
+	// ListPodsOnNode returns the pods the scheduler has placed on one node,
+	// across every namespace — "what is running on this machine" is a question
+	// about the machine, not about a namespace.
+	ListPodsOnNode(ctx context.Context, id domain.ClusterID, nodeName string) ([]domain.Pod, error)
+
 	// ListPodsForWorkload returns all pods owned by a specific workload.
 	ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error)
+
+	// WorkloadUsage sums what a controller's pods are consuming, against what
+	// they reserved and what they will be stopped at.
+	WorkloadUsage(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.AggregateUsage, error)
+
+	// ListApplications groups a cluster's workloads by the application they
+	// belong to, using Kubernetes' own recommended labels.
+	ListApplications(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.ApplicationInventory, error)
+
+	// WorkloadConsumption does the same for a whole list, keyed by
+	// "namespace/name".
+	//
+	// Separate from ListWorkloads so a list still renders on a cluster with
+	// no metrics API, or for an account that cannot list pods: the
+	// controllers are one cheap read, and this is the namespace's pods.
+	WorkloadConsumption(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) (map[string]domain.AggregateUsage, error)
 }
 
 // EventService is the use-case surface for reading Kubernetes Events.
@@ -124,6 +157,14 @@ type ResourceService interface {
 	// ListTable returns objects of the given kind as a table. The kind is
 	// named by its ResourceKind.ID, which is what the navigator hands back.
 	ListTable(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName) (domain.ResourceTable, error)
+
+	// NamespaceInventory reports what one namespace holds, kind by kind.
+	//
+	// A use case rather than a port method because the answer is assembled:
+	// Kubernetes has no endpoint that counts a namespace's contents, so this
+	// is one count per kind, and which kinds are worth counting is a decision
+	// the domain makes.
+	NamespaceInventory(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.NamespaceInventory, error)
 
 	// GetManifest returns one object as YAML.
 	GetManifest(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, name string, revealSecrets bool) (string, error)

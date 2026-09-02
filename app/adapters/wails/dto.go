@@ -95,6 +95,34 @@ func toNamespaces(namespaces []domain.Namespace, now time.Time) []Namespace {
 	return out
 }
 
+// NamespaceSummary is a namespace with what is running in it.
+type NamespaceSummary struct {
+	Namespace
+	// NotReady is how many of its pods are not doing their job.
+	NotReady int `json:"notReady"`
+	// What those pods are using, on exactly the terms a controller's row and
+	// the pod list use. See Consumption.
+	Consumption
+}
+
+// toNamespaceSummary converts one summary, using now as the age reference.
+func toNamespaceSummary(summary domain.NamespaceSummary, now time.Time) NamespaceSummary {
+	return NamespaceSummary{
+		Namespace:   toNamespace(summary.Namespace, now),
+		NotReady:    summary.NotReady,
+		Consumption: toConsumption(summary.Usage),
+	}
+}
+
+// toNamespaceSummaries converts a slice of summaries.
+func toNamespaceSummaries(summaries []domain.NamespaceSummary, now time.Time) []NamespaceSummary {
+	out := make([]NamespaceSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		out = append(out, toNamespaceSummary(summary, now))
+	}
+	return out
+}
+
 // Container is a container as presented to the UI.
 type Container struct {
 	// Name is the container name.
@@ -413,4 +441,79 @@ func formatTime(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+// GraphNode is one box on a pod's dependency map.
+type GraphNode struct {
+	ID string `json:"id"`
+	// Kind is the map's own category — "ingress", "service", "workload",
+	// "pod", "container" and so on. Not the Kubernetes kind: the map groups a
+	// Deployment and a StatefulSet as one thing because a reader following a
+	// request does not need them distinguished at that moment.
+	Kind string `json:"kind"`
+	// APIKind is the Kubernetes kind, for the label and for following the node
+	// into its own panel. Empty for containers, which are not objects.
+	APIKind   string `json:"apiKind"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	// Tier is how far down the request path this sits, and drives the layout.
+	Tier int `json:"tier"`
+	// Detail is a short qualifier — a port, an image tag, a host.
+	Detail string `json:"detail"`
+	// Healthy is false for anything worth looking at. A map in one colour says
+	// where things are; the colour says where to start.
+	Healthy bool `json:"healthy"`
+	// Subject marks the object the map was opened from.
+	Subject bool `json:"subject"`
+	// Group names the node whose children this is one of, for folding a
+	// sibling set. Empty for anything with no natural set. The graph is always
+	// complete — what is drawn is the view's decision.
+	Group string `json:"group"`
+}
+
+// GraphEdge is a dependency, drawn the way a request travels.
+type GraphEdge struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Label string `json:"label"`
+}
+
+// PodGraph is the dependency chain around one pod.
+type PodGraph struct {
+	Nodes []GraphNode `json:"nodes"`
+	Edges []GraphEdge `json:"edges"`
+	// Unreadable names sources that could not be read, so the map can say it
+	// is incomplete rather than implying nothing is there.
+	Unreadable []string `json:"unreadable"`
+}
+
+func toPodGraph(graph domain.PodGraph) PodGraph {
+	out := PodGraph{
+		Nodes:      make([]GraphNode, 0, len(graph.Nodes)),
+		Edges:      make([]GraphEdge, 0, len(graph.Edges)),
+		Unreadable: graph.Unreadable,
+	}
+
+	for _, node := range graph.Nodes {
+		out.Nodes = append(out.Nodes, GraphNode{
+			ID:        node.ID,
+			Kind:      string(node.Kind),
+			APIKind:   node.APIKind,
+			Name:      node.Name,
+			Namespace: node.Namespace,
+			Tier:      int(node.Tier),
+			Detail:    node.Detail,
+			Healthy:   node.Healthy,
+			Subject:   node.Subject,
+			Group:     node.Group,
+		})
+	}
+	for _, edge := range graph.Edges {
+		out.Edges = append(out.Edges, GraphEdge{From: edge.From, To: edge.To, Label: edge.Label})
+	}
+
+	if out.Unreadable == nil {
+		out.Unreadable = []string{}
+	}
+	return out
 }

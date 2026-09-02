@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,6 +14,37 @@ import (
 	"github.com/podsteer/podsteer/app/ports"
 )
 
+// PodMetrics returns usage keyed by "namespace/name".
+//
+// Cached, because it is the second half of every pod read and is asked for by
+// each of them independently. metrics-server has no watch, so this stays a
+// poll whatever else changes.
+func (a *Adapter) PodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (map[string]domain.PodUsage, error) {
+	// The same reuse the pod list makes, for the other half of the same read.
+	// The map is keyed "namespace/name", so narrowing it is a prefix match.
+	if !namespace.IsAll() {
+		if all, borrowed := borrow[map[string]domain.PodUsage](ctx, &a.reads, readKey(id.String(), "podmetrics", "")); borrowed {
+			return usageIn(all, namespace), nil
+		}
+	}
+
+	return cachedRead(&a.reads, ctx, readKey(id.String(), "podmetrics", namespace.String()), func(ctx context.Context) (map[string]domain.PodUsage, error) {
+		return a.podMetrics(ctx, id, namespace)
+	})
+}
+
+// usageIn narrows cluster-wide usage to one namespace, into a map of its own.
+func usageIn(usage map[string]domain.PodUsage, namespace domain.NamespaceName) map[string]domain.PodUsage {
+	prefix := namespace.String() + "/"
+	narrowed := make(map[string]domain.PodUsage, len(usage))
+	for key, value := range usage {
+		if strings.HasPrefix(key, prefix) {
+			narrowed[key] = value
+		}
+	}
+	return narrowed
+}
+
 // PodMetrics returns pod usage keyed by "namespace/name".
 //
 // A pod's usage is the sum of its containers': the metrics API reports per
@@ -21,7 +53,7 @@ import (
 // visits every container to add it up — and because the total alone cannot
 // answer the question the total provokes, which is which container is doing
 // it.
-func (a *Adapter) PodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (map[string]domain.PodUsage, error) {
+func (a *Adapter) podMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (map[string]domain.PodUsage, error) {
 	op := fmt.Sprintf("reading pod metrics in %q of %q", namespace, id)
 
 	set, err := a.factory.clientsFor(id)
@@ -54,8 +86,16 @@ func (a *Adapter) PodMetrics(ctx context.Context, id domain.ClusterID, namespace
 	return usage, nil
 }
 
-// NodeMetrics returns node usage keyed by node name.
+// NodeMetrics returns usage keyed by node name. Cached alongside ListNodes,
+// which every caller pairs it with.
 func (a *Adapter) NodeMetrics(ctx context.Context, id domain.ClusterID) (map[string]domain.Metrics, error) {
+	return cachedRead(&a.reads, ctx, readKey(id.String(), "nodemetrics"), func(ctx context.Context) (map[string]domain.Metrics, error) {
+		return a.nodeMetrics(ctx, id)
+	})
+}
+
+// NodeMetrics returns node usage keyed by node name.
+func (a *Adapter) nodeMetrics(ctx context.Context, id domain.ClusterID) (map[string]domain.Metrics, error) {
 	op := fmt.Sprintf("reading node metrics of %q", id)
 
 	set, err := a.factory.clientsFor(id)

@@ -36,11 +36,22 @@
     /** Whether it starts open, when the operator has expressed no preference. */
     defaultOpen?: boolean
     /**
-     * A short summary shown beside the heading when closed.
+     * A short summary shown beside the heading.
      *
      * The point of a closed section: "3 containers" or "9 annotations" is
      * often all somebody wanted, and a section that reveals nothing until
      * opened makes them open every one to find out.
+     *
+     * WRITTEN AS A VALUE, NOT AS A WHISPER. It sits at the RIGHT of the
+     * heading, in the body size every value in the panel below it is set in
+     * and in the same receding colour — so a figure in a heading and a figure
+     * in a row read as the same kind of thing. Tucked against the title it
+     * read as an aside about the heading rather than as the section's own
+     * figure, and a column of them down the panel lined up against nothing.
+     *
+     * The heading's own size was too much: a heading and its figure set the
+     * same size are two headings, and the eye stops being able to tell which
+     * of them names the section.
      */
     hint?: string
     /**
@@ -51,12 +62,36 @@
      * what it is nested inside.
      */
     level?: 'h3' | 'h4'
+    /**
+     * Called when the section becomes visible, including on first render if
+     * it is already open.
+     *
+     * For a section whose contents cost a request. Fetching in the caller's
+     * `$effect` instead would read the cluster for every collapsed section on
+     * the panel — on a node list, one cross-namespace query per row nobody
+     * expanded.
+     */
+    onopen?: () => void
     children: Snippet
   }
 
-  let { title, id, defaultOpen = true, hint = '', level = 'h4', children }: Props = $props()
+  let {
+    title,
+    id,
+    defaultOpen = true,
+    hint = '',
+    level = 'h4',
+    onopen,
+    children,
+  }: Props = $props()
 
   const open = $derived(preferences.sectionOpen(id, defaultOpen))
+
+  // Fires on mount too, since a section remembered as open is visible without
+  // anybody clicking it — and its contents have to arrive all the same.
+  $effect(() => {
+    if (open) onopen?.()
+  })
 </script>
 
 <section class="flex flex-col gap-2.5">
@@ -80,7 +115,21 @@
       />
       <span class="min-w-0 truncate">{title}</span>
       {#if hint}
-        <span class="shrink-0 text-body-small font-normal text-on-surface-variant/70">{hint}</span>
+        <!--
+          Ends where the rows' trailing icons end.
+          
+          Those sit in a 20px control around a 14px glyph, so the glyph's box
+          stops 3px short of the panel's edge while this text ran all the way
+          to it — a few pixels, but enough that a heading's figure and the
+          column of controls under it did not share an edge. The inset is
+          that difference, not a number somebody liked.
+        -->
+        <span
+          class="ml-auto shrink-0 pr-[3px] pl-3 text-body-medium font-normal
+                 text-on-surface-variant/70"
+        >
+          {hint}
+        </span>
       {/if}
     </button>
   </svelte:element>

@@ -77,6 +77,22 @@
     },
   } as const
 
+  /** The chart in a sentence, for anything that cannot see it. */
+  const summary = $derived.by(() => {
+    const of = METRICS[metric]
+    if (samples.length === 0) return `${of.label} over time. Nothing recorded yet.`
+
+    const values = samples.map(of.usage)
+    const now = values[values.length - 1]
+    const low = Math.min(...values)
+    const high = Math.max(...values)
+    const ceiling = of.capacity(samples[samples.length - 1])
+
+    const span = `${of.label} across ${samples.length} samples: now ${of.format(now)}, between ${of.format(low)} and ${of.format(high)}.`
+    return ceiling > 0 ? `${span} Capacity ${of.format(ceiling)}.` : span
+  })
+
+
   /**
    * Resolves the theme's own colours from CSS custom properties rather than
    * hard-coding them, so the chart follows the light/dark toggle instead of
@@ -274,5 +290,17 @@
     The chart could not be loaded.
   </p>
 {:else}
-  <div bind:this={container} style="height: {height}px" class="w-full"></div>
+  <!--
+    The canvas carries no text and ECharts' tooltip is hover-only, so without
+    this the whole chart is unreachable to a screen reader — data absent
+    rather than degraded. The summary says what somebody reading the line
+    would take from it, not the series read aloud.
+  -->
+  <div
+    bind:this={container}
+    style="height: {height}px"
+    class="w-full"
+    role="img"
+    aria-label={summary}
+  ></div>
 {/if}

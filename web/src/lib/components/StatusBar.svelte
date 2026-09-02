@@ -51,12 +51,18 @@
 >
   {#if session}
     <!-- Cluster connection -->
+    <!-- The dot is the glance; the word is the fact. Colour alone told a
+         red/green colour-blind or screen-reader operator nothing about
+         whether this cluster is answering. -->
     <span class="flex items-center gap-1.5">
       <span
         class="size-1.5 rounded-full {session.cluster.isReachable ? 'bg-success' : 'bg-error'}"
         aria-hidden="true"
       ></span>
       <span class="truncate font-medium">{session.cluster.id}</span>
+      <span class="sr-only">
+        {session.cluster.isReachable ? 'reachable' : 'not reachable'}
+      </span>
     </span>
 
     {#if session.cluster.version}
@@ -147,7 +153,10 @@
 
     {@render sep()}
 
-    <!-- App version -->
-    <span class="tabular-nums opacity-60">{appInfo.name} {appInfo.version}</span>
+    <!-- App version. The NAME is not repeated: it is already the window title
+         and the first thing in this bar, and a status bar reading
+         "podsteer v0.1.1" spends a word saying where you are to somebody who
+         is looking at it. -->
+    <span class="tabular-nums opacity-60">{appInfo.version}</span>
   </div>
 </footer>

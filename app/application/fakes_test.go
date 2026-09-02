@@ -171,6 +171,31 @@ func (f *fakeKubernetes) ListPersistentVolumeClaims(_ context.Context, _ domain.
 	return f.claims, nil
 }
 
+func (f *fakeKubernetes) WorkloadGraphSources(_ context.Context, _ domain.ClusterID, ns domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.WorkloadGraphInput, error) {
+	return domain.WorkloadGraphInput{
+		Kind: string(kind), Name: name, Namespace: ns, Pods: f.pods,
+	}, nil
+}
+
+func (f *fakeKubernetes) PodGraphSources(_ context.Context, _ domain.ClusterID, _ domain.NamespaceName, name string) (domain.GraphInput, error) {
+	for _, pod := range f.pods {
+		if pod.Name() == name {
+			return domain.GraphInput{Pod: pod}, nil
+		}
+	}
+	return domain.GraphInput{}, ports.ErrNotFound
+}
+
+func (f *fakeKubernetes) ListPodsOnNode(_ context.Context, _ domain.ClusterID, node string) ([]domain.Pod, error) {
+	var on []domain.Pod
+	for _, pod := range f.pods {
+		if pod.NodeName() == node {
+			on = append(on, pod)
+		}
+	}
+	return on, nil
+}
+
 func (f *fakeKubernetes) NodeFilesystems(_ context.Context, _ domain.ClusterID) (map[string]domain.NodeFilesystems, error) {
 	if f.nodeFilesystems == nil {
 		return nil, ports.ErrMetricsUnavailable

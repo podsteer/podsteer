@@ -12,8 +12,17 @@ import (
 	"github.com/podsteer/podsteer/app/domain"
 )
 
-// ListNamespaces returns every namespace visible to the configured credentials.
+// ListNamespaces returns every namespace visible to the credentials.
+//
+// Cached: the assessment and the namespace list both ask on the same tick.
 func (a *Adapter) ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "namespaces"), func(ctx context.Context) ([]domain.Namespace, error) {
+		return a.listNamespaces(ctx, id)
+	})
+}
+
+// ListNamespaces returns every namespace visible to the configured credentials.
+func (a *Adapter) listNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
 	op := fmt.Sprintf("listing namespaces of %q", id)
 
 	client, err := a.factory.clientFor(id)
@@ -43,7 +52,17 @@ func (a *Adapter) ListNamespaces(ctx context.Context, id domain.ClusterID) ([]do
 }
 
 // ListNodes returns the cluster's nodes.
+//
+// Cached: the assessment reads them on every refresh, and the node list reads
+// them again in the same instant.
 func (a *Adapter) ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "nodes"), func(ctx context.Context) ([]domain.Node, error) {
+		return a.listNodes(ctx, id)
+	})
+}
+
+// ListNodes returns the cluster's nodes.
+func (a *Adapter) listNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
 	op := fmt.Sprintf("listing nodes of %q", id)
 
 	client, err := a.factory.clientFor(id)
@@ -140,8 +159,21 @@ func (a *Adapter) DiscoverCustomKinds(ctx context.Context, id domain.ClusterID) 
 				Kind:       resource.Kind,
 				Namespaced: resource.Namespaced,
 				Category:   domain.CategoryCustomResources,
-				Title:      resource.Kind,
-				Singular:   resource.Kind,
+				// THE RAW API GROUP, and it took a curated table of project
+				// names to find out why. A table naming "Argo" for
+				// argoproj.io and "cert-manager" for cert-manager.io covered
+				// five groups of the twenty-five on a real cluster, which
+				// produced a navigator speaking two vocabularies at once —
+				// five friendly names among twenty raw ones, with no way for
+				// a reader to tell which kind of thing a heading was.
+				//
+				// The group is the only label that can never be wrong, never
+				// needs a maintainer, and can be grepped straight out of
+				// `kubectl api-resources`. Its cost is real and smaller: a
+				// project publishing eleven groups gets eleven headings.
+				Subcategory: groupName,
+				Title:       resource.Kind,
+				Singular:    resource.Kind,
 			}
 			if _, duplicate := seen[kind.ID()]; duplicate {
 				continue
@@ -162,9 +194,63 @@ var kubernetesGroupSuffixes = []string{
 	"kubernetes.io",
 }
 
+// builtInGroups are Kubernetes' own API groups that carry no `.k8s.io`
+// suffix, and so slip past the rule below.
+//
+// A REAL DUPLICATION, AND IT WAS ON SCREEN. `apps`, `batch`, `autoscaling`
+// and `policy` are as much a part of Kubernetes as anything ending in
+// k8s.io, but the suffix rule never matched them — so every Deployment,
+// StatefulSet, Job, CronJob, HorizontalPodAutoscaler and
+// PodDisruptionBudget was discovered a second time and listed again under
+// Custom Resources, beside the catalog entry that already had it. Grouping
+// custom resources by publisher is what finally made it visible: the
+// duplicates gathered under headings reading "apps" and "batch".
+//
+// The core group is excluded above, by having no "group/version" to split.
+var builtInGroups = map[string]bool{
+	"apps":        true,
+	"batch":       true,
+	"autoscaling": true,
+	"policy":      true,
+	"extensions":  true,
+}
+
+// adoptedGroups are Kubernetes-owned groups that are nonetheless installed by
+// an operator and are worth browsing.
+//
+// THE SUFFIX RULE WAS TOO BROAD AND HID REAL THINGS. Gateway API is the
+// declared successor to Ingress and ships as CRDs under a k8s.io group;
+// VolumeSnapshots are how anybody takes a backup of a PVC and ship the same
+// way. Both were being filtered out as "part of Kubernetes" — which is true
+// of their names and false of their availability: a cluster only has them
+// because somebody installed them.
+var adoptedGroups = map[string]bool{
+	"gateway.networking.k8s.io": true,
+	"snapshot.storage.k8s.io":   true,
+	// VerticalPodAutoscaler, which is as widely installed as anything on this
+	// list and was invisible in the navigator on every cluster running it.
+	"autoscaling.k8s.io": true,
+	// VolumeGroupSnapshot, shipped by the same external-snapshotter whose
+	// sibling group is already here. Showing one and hiding the other is
+	// incoherent on a CSI cluster.
+	"groupsnapshot.storage.k8s.io": true,
+	// AdminNetworkPolicy, installed by a CNI rather than by Kubernetes.
+	"policy.networking.k8s.io": true,
+}
+
+// Worth knowing before adding to the list above: `x-k8s.io` groups — Cluster
+// API's cluster.x-k8s.io, Kueue, JobSet — do NOT need an entry. The suffix
+// rule matches ".k8s.io", and the hyphen means they never did match.
+
 // isKubernetesGroup reports whether a group is part of Kubernetes rather than
 // a custom resource worth listing.
 func isKubernetesGroup(group string) bool {
+	if adoptedGroups[group] {
+		return false
+	}
+	if builtInGroups[group] {
+		return true
+	}
 	for _, suffix := range kubernetesGroupSuffixes {
 		if group == suffix || strings.HasSuffix(group, "."+suffix) {
 			return true

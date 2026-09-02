@@ -102,7 +102,10 @@
               measured={node.hasMetrics}
               title={node.hasMetrics
                 ? `${node.cpu} of ${node.allocatableCpu} allocatable`
-                : 'Not measured — this cluster has no metrics source'}
+                : // A NODE REPORTING NOTHING SAYS NOTHING ABOUT THE CLUSTER. This
+                  // row has no MetricsStatus to consult — the overview pane
+                  // does, and said the opposite — so it claims neither.
+                  'Not measured — nothing has reported for it, or this cluster serves no metrics'}
             />
           </td>
         {/if}
@@ -116,7 +119,10 @@
               measured={node.hasMetrics}
               title={node.hasMetrics
                 ? `${node.memory} of ${node.allocatableMemory} allocatable`
-                : 'Not measured — this cluster has no metrics source'}
+                : // A NODE REPORTING NOTHING SAYS NOTHING ABOUT THE CLUSTER. This
+                  // row has no MetricsStatus to consult — the overview pane
+                  // does, and said the opposite — so it claims neither.
+                  'Not measured — nothing has reported for it, or this cluster serves no metrics'}
             />
           </td>
         {/if}

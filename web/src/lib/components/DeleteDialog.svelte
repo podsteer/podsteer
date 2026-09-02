@@ -2,6 +2,8 @@
   Confirmation dialog for deleting a resource.
 -->
 <script lang="ts">
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
+  import { modal } from '$lib/modal'
   import Button from './Button.svelte'
 
   interface Props {
@@ -15,8 +17,22 @@
   let { open, resourceName, resourceKind, onclose, onconfirm }: Props = $props()
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && open) onclose()
+    if (event.key !== 'Escape' || !open) return
+    if (!escape?.owns()) return
+    onclose()
   }
+
+  /** Escape belongs to the innermost open layer. See $lib/escape. */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -35,6 +51,7 @@
            rounded-sm border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
     aria-modal="true"
+    use:modal
     aria-label="Delete resource"
   >
     <h2 class="text-headline-small text-on-surface">Delete {resourceKind}</h2>

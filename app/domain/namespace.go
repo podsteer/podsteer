@@ -1,8 +1,10 @@
 package domain
 
 import (
+	"cmp"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -144,4 +146,83 @@ func (n Namespace) Age(now time.Time) time.Duration {
 		return 0
 	}
 	return now.Sub(n.createdAt)
+}
+
+// NamespaceSummary is a namespace as the namespace list shows it: what it is,
+// and what is running in it.
+//
+// Kubernetes reports a namespace as a name, a phase and nothing else, which is
+// why every client's namespace list is three columns of almost no information.
+// The interesting half — is anything in here, is any of it broken, how much of
+// the cluster is it holding — is only knowable by looking at what is inside.
+type NamespaceSummary struct {
+	Namespace Namespace
+	// NotReady is how many of its pods are not doing their job.
+	NotReady int
+	// Usage is what its pods are consuming, against what they reserved and
+	// what they will be stopped at. The same type a controller's row and a
+	// controller's panel carry, so all three draw the same meter.
+	//
+	// Its Pods count is EVERY pod in the namespace, completed ones included —
+	// the same count the pod list shows when filtered to it, deliberately: a
+	// row that says 29 and links to a list of 34 is a bug somebody has to go
+	// and disprove.
+	Usage AggregateUsage
+}
+
+// Pods is how many pods are in the namespace.
+func (s NamespaceSummary) Pods() int { return s.Usage.Pods }
+
+// IsEmpty reports whether nothing is running in the namespace.
+func (s NamespaceSummary) IsEmpty() bool { return s.Usage.Pods == 0 }
+
+// NewNamespaceSummaries pairs each namespace with what is running in it.
+//
+// EVERY NAMESPACE GETS A ROW, including the ones holding nothing: "this
+// namespace is empty" is one of the more useful things the list can say, and
+// building the rows from the pods instead would silently drop it.
+//
+// Ordered by name. A namespace list is read by looking one up, not by ranking
+// them — the ranking that matters, by what they reserve, is the overview's
+// job and is already there.
+func NewNamespaceSummaries(namespaces []Namespace, pods []Pod, metricsAvailable bool) []NamespaceSummary {
+	byName := make(map[NamespaceName][]Pod, len(namespaces))
+	for _, namespace := range namespaces {
+		byName[namespace.Name()] = nil
+	}
+
+	for _, pod := range pods {
+		// A pod in a namespace the caller cannot see. It happens: an account
+		// may be allowed to list pods across the cluster and not to list
+		// namespaces. Inventing a row for it would put a namespace on screen
+		// that nothing else in the application knows about.
+		if _, known := byName[pod.Namespace()]; !known {
+			continue
+		}
+		byName[pod.Namespace()] = append(byName[pod.Namespace()], pod)
+	}
+
+	summaries := make([]NamespaceSummary, 0, len(namespaces))
+	for _, namespace := range namespaces {
+		held := byName[namespace.Name()]
+
+		notReady := 0
+		for _, pod := range held {
+			if !pod.IsHealthy() {
+				notReady++
+			}
+		}
+
+		summaries = append(summaries, NamespaceSummary{
+			Namespace: namespace,
+			NotReady:  notReady,
+			Usage:     NewAggregateUsage(held, metricsAvailable),
+		})
+	}
+
+	slices.SortStableFunc(summaries, func(a, b NamespaceSummary) int {
+		return cmp.Compare(a.Namespace.Name(), b.Namespace.Name())
+	})
+
+	return summaries
 }

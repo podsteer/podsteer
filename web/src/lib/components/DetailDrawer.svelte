@@ -9,11 +9,15 @@
   Action buttons in the header allow delete, scale, restart, and edit.
 -->
 <script lang="ts">
+  import { flash } from '$lib/flash.svelte'
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import type { ClusterSession } from '$stores/session.svelte'
+  import { WORKLOAD_KIND_BY_ID } from '$stores/session.svelte'
   import LogViewer from './LogViewer.svelte'
   import ResourceOverview from './ResourceOverview.svelte'
   import EventsView from './EventsView.svelte'
   import EventDetail from './EventDetail.svelte'
+  import ApplicationDetail from './ApplicationDetail.svelte'
   import { iconForKind } from '$lib/kindIcons'
   import { parse } from 'yaml'
   import { forwards } from '$stores/forwards.svelte'
@@ -25,11 +29,20 @@
   import { withoutManagedFields } from '$lib/manifest'
   import { gitOpsOwner, revertWarning } from '$lib/gitops'
   import GitOpsBadge from './GitOpsBadge.svelte'
-  import { preferences } from '$stores/preferences.svelte'
+  import {
+    preferences,
+    detailWidthBounds,
+    detailLabelWidthCSS,
+    DEFAULT_DETAIL_FRACTION,
+    DETAIL_MIN_REM,
+    DETAIL_MAX_REM,
+    DETAIL_MAX_SHARE,
+  } from '$stores/preferences.svelte'
   import DeleteDialog from './DeleteDialog.svelte'
   import ScaleDialog from './ScaleDialog.svelte'
   import RestartDialog from './RestartDialog.svelte'
   import Terminal from './Terminal.svelte'
+  import DependencyMap from './DependencyMap.svelte'
   import { DeleteResource, RestartRollout } from '$lib/wailsjs/go/wails/ManagementAPI'
   import { ListPodsForWorkload } from '$lib/wailsjs/go/wails/WorkloadAPI'
   import type { Pod } from '$lib/api/client'
@@ -38,6 +51,7 @@
     Info,
     ScrollText,
     TerminalSquare,
+    Workflow,
     Activity,
     FileCode,
     RotateCcw,
@@ -49,6 +63,7 @@
     Maximize2,
     TriangleAlert,
     Eye,
+    EyeOff,
     Plug,
     Loader,
   } from '@lucide/svelte'
@@ -59,9 +74,9 @@
 
   let { session }: Props = $props()
 
-  type Tab = 'overview' | 'logs' | 'terminal' | 'events' | 'yaml'
+  type Tab = 'overview' | 'logs' | 'terminal' | 'map' | 'events' | 'yaml'
   let activeTab = $state<Tab>('overview')
-  let copied = $state(false)
+  const copied = flash(1500)
   let deleteDialogOpen = $state(false)
   let scaleDialogOpen = $state(false)
   /**
@@ -80,7 +95,7 @@
   let draftOrigin = $state('')
 
   /** Which pane, if any, has been given the whole window. */
-  let maximized = $state<'yaml' | 'logs' | null>(null)
+  let maximized = $state<'yaml' | 'logs' | 'terminal' | 'map' | null>(null)
   let restartDialogOpen = $state(false)
   let actionError = $state<string | null>(null)
   let workloadPods = $state<Pod[]>([])
@@ -93,6 +108,8 @@
   const isPod = $derived(session.selectedKindId === 'core/v1/pods')
 
   const isEvent = $derived(session.selectedKindId === 'core/v1/events')
+  const isApplication = $derived(!!session.selectedApplication)
+  const isSecret = $derived(session.selectedKindId === 'core/v1/secrets')
 
   /**
    * The manifest as shown, which is not always the manifest as fetched.
@@ -172,27 +189,6 @@
   })
 
   /**
-   * The navigator id for the kind an event is about, or null when this
-   * cluster does not serve it.
-   *
-   * An event can name a kind PodSteer has no list for — a CRD removed since
-   * the event fired, most obviously — so the link is offered only when there
-   * is somewhere for it to go.
-   */
-  const involvedKindId = $derived.by((): string | null => {
-    const involved = parsedEvent?.involvedObject as Record<string, string> | undefined
-    if (!involved?.kind) return null
-    return session.kinds.find((kind) => kind.kind === involved.kind)?.id ?? null
-  })
-
-  /** Opens the object an event is about, in the list it belongs to. */
-  async function openInvolved(target: { name: string; namespace: string }): Promise<void> {
-    if (!involvedKindId) return
-    await session.selectKind(involvedKindId)
-    await session.openDetail(target.name, target.namespace)
-  }
-
-  /**
    * The navigator id for a kind named by its Kubernetes Kind, or null.
    *
    * Resolved against what THIS cluster serves rather than a table compiled in
@@ -213,10 +209,12 @@
    * row in the list behind it.
    */
   async function openObject(kindName: string, name: string, namespace: string): Promise<void> {
-    const kindId = kindIdFor(kindName)
-    if (!kindId) return
-    await session.selectKind(kindId)
-    await session.openDetail(name, namespace)
+    const kind = session.kinds.find((entry) => entry.kind === kindName)
+    if (!kind) return
+    // One call, because the two halves are one move: the list has to end up
+    // somewhere that contains the object, or the panel opens without the row
+    // its live sections are read from. See ClusterSession.openObject.
+    await session.openObject(kind.id, name, namespace, kind.namespaced)
   }
 
   const isScalable = $derived(
@@ -229,6 +227,14 @@
     session.selectedKindId === 'apps/v1/statefulsets' ||
     session.selectedKindId === 'apps/v1/daemonsets'
   )
+
+  /** The Kubernetes kind of the open workload, or null when it is not one. */
+  const mappedWorkloadKind = $derived(
+    session.selectedKindId ? (WORKLOAD_KIND_BY_ID[session.selectedKindId] ?? null) : null,
+  )
+
+  /** Whether the open object is one of the six controllers. */
+  const isWorkloadKind = $derived(Boolean(mappedWorkloadKind))
 
   const isWorkloadWithLogs = $derived(
     session.selectedKindId === 'apps/v1/deployments' ||
@@ -290,11 +296,87 @@
     }
   }
 
+  /**
+   * Identifies the object the drawer is showing, WHOLE.
+   *
+   * The reset below used to watch the name alone, and a name is not an
+   * identity here: selecting `postgres-0` in staging and then `postgres-0`
+   * in production — routine with StatefulSets, and one click apart in an
+   * all-namespaces list — changed nothing this effect could see. The tab
+   * stayed put and the pane inside it was never remounted, so an open
+   * Terminal went on talking to staging under a header reading production.
+   */
+  const shownObject = $derived(
+    `${session.cluster.id}|${session.selectedKindId}|${session.selectedNamespace}|${session.selectedName ?? ''}`,
+  )
+
   $effect(() => {
-    session.selectedName
+    shownObject
     activeTab = 'overview'
     actionError = null
   })
+
+  /**
+   * Arrow keys move between tabs, which is what a tablist is for.
+   *
+   * Only the selected tab is in the tab order (see `tabindex` below), so this
+   * is the only way to reach the others from the keyboard — and it is the way
+   * every other tablist works, so nobody has to be told.
+   */
+  /**
+   * Arrow keys resize the panel. Pointer-only before, so a keyboard operator
+   * could not narrow a drawer covering the list they were reading. Enter
+   * restores the default, matching the double-click.
+   */
+  function onResizeKeydown(event: KeyboardEvent): void {
+    const STEP = 0.02
+    let fraction: number
+    switch (event.key) {
+      // Left widens: the panel is anchored to the right edge, so dragging its
+      // handle left makes it bigger, and the key has to agree with the drag.
+      case 'ArrowLeft':
+        fraction = preferences.detailWidthFraction + STEP
+        break
+      case 'ArrowRight':
+        fraction = preferences.detailWidthFraction - STEP
+        break
+      case 'Home':
+        fraction = 0
+        break
+      case 'End':
+        fraction = 1
+        break
+      case 'Enter':
+        fraction = DEFAULT_DETAIL_FRACTION
+        break
+      default:
+        return
+    }
+    event.preventDefault()
+    preferences.setDetailWidth(fraction)
+  }
+
+  function onTabKeydown(event: KeyboardEvent): void {
+    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+    if (step === 0 && event.key !== 'Home' && event.key !== 'End') return
+
+    const shown = tabs.filter((tab) => tab.show())
+    if (shown.length === 0) return
+
+    const at = shown.findIndex((tab) => tab.id === activeTab)
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? shown.length - 1
+          : (at + step + shown.length) % shown.length
+
+    event.preventDefault()
+    activeTab = shown[next].id
+    // The strip is a roving tabindex, so focus has to follow the selection or
+    // the next arrow press would be dispatched from a tab that is now -1.
+    document.getElementById(`detail-tab-${shown[next].id}`)?.focus()
+  }
 
   /**
    * Copies the manifest AS SHOWN, managed fields included only if they are.
@@ -309,8 +391,7 @@
   async function copyManifest(): Promise<void> {
     if (!shownManifest) return
     await navigator.clipboard.writeText(shownManifest)
-    copied = true
-    setTimeout(() => (copied = false), 1500)
+    copied.show()
   }
 
   async function handleDelete(): Promise<void> {
@@ -412,19 +493,102 @@
   })
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && session.selectedName) session.closeDetail()
+    if (event.key !== 'Escape' || !session.selectedName) return
+    // Only when nothing nearer holds it. A row menu open inside the drawer
+    // used to be closed by the same keystroke that closed the drawer — which
+    // ALSO stops an edit, and stopping an edit discards the draft.
+    if (!escape?.owns()) return
+    session.closeDetail()
   }
 
   const tabs: { id: Tab; label: string; icon: typeof Info; show: () => boolean }[] = [
     { id: 'overview', label: 'Overview', icon: Info, show: () => true },
     { id: 'logs', label: 'Logs', icon: ScrollText, show: () => isPod || isWorkloadWithLogs },
     { id: 'terminal', label: 'Terminal', icon: TerminalSquare, show: () => isPod || isWorkloadWithLogs },
+    // Pods and the six controllers. A pod's map is a chain with the pod in
+    // the middle; a workload's is a fan — one controller over the pods it
+    // currently has — and both are worth walking, which is what the map is
+    // for. Nothing else has dependencies to draw.
+    { id: 'map', label: 'Map', icon: Workflow, show: () => isPod || isWorkloadKind },
     // An event has no events of its own, and asking for them returns the
     // empty list that means "nothing recent" — which reads as a fault here
     // rather than as the tautology it is.
-    { id: 'events', label: 'Events', icon: Activity, show: () => !isEvent },
-    { id: 'yaml', label: 'YAML', icon: FileCode, show: () => true },
+    { id: 'events', label: 'Events', icon: Activity, show: () => !isEvent && !isApplication },
+    // AN APPLICATION HAS NO MANIFEST. It is a set of objects that agree about
+    // a label, so there is nothing to GET by that name, nothing to edit and
+    // nothing to delete — and a YAML tab offering to show one would be an
+    // empty pane promising an object that does not exist.
+    { id: 'yaml', label: 'YAML', icon: FileCode, show: () => !isApplication },
   ]
+
+  // --- Resizing ------------------------------------------------------------
+  //
+  // The same gesture as the navigator's, mirrored: this panel is anchored to
+  // the right, so dragging its left edge LEFTWARD makes it wider.
+
+  let resizing = $state(false)
+  /**
+   * The width during a drag, in pixels, before it becomes a share.
+   *
+   * Pixels only while the pointer is down, because that is what a pointer
+   * gives: the moment the drag ends it is divided by the window width and
+   * stored as a share, which is what survives a different screen. Writing to
+   * preferences on every pointermove would serialise the whole preferences
+   * payload into a synchronous localStorage.setItem sixty times a second, and
+   * the gesture has one outcome worth keeping — where it ended.
+   */
+  let draggedWidth = $state<number | null>(null)
+
+  /** The root font size, since the panel's floor and ceiling are in rem. */
+  function rootFontSize(): number {
+    const size = parseFloat(getComputedStyle(document.documentElement).fontSize)
+    return Number.isFinite(size) && size > 0 ? size : 16
+  }
+
+  function startResize(event: PointerEvent): void {
+    event.preventDefault()
+    resizing = true
+    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  }
+
+  function onResizeMove(event: PointerEvent): void {
+    if (!resizing) return
+
+    // From the window's right edge to the pointer. Taken from the pointer's
+    // absolute position rather than from a delta against where the drag
+    // started: the two diverge as soon as a clamp bites, and the panel then
+    // stops following the pointer until it has been dragged all the way back.
+    const { min, max } = detailWidthBounds(window.innerWidth, rootFontSize())
+    draggedWidth = Math.min(max, Math.max(min, window.innerWidth - event.clientX))
+  }
+
+  function endResize(): void {
+    if (draggedWidth !== null && window.innerWidth > 0) {
+      preferences.setDetailWidth(draggedWidth / window.innerWidth)
+    }
+    draggedWidth = null
+    resizing = false
+  }
+
+  /**
+   * The drawer's claim on Escape, so a menu opened inside it wins.
+   *
+   * It matters more here than anywhere: this Escape also stops an edit, and
+   * stopping an edit discards the draft.
+   */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!session.selectedName) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
+
+  // Nothing left running behind a component that has gone away.
+  $effect(() => () => copied.cancel())
 </script>
 
 <!--
@@ -461,7 +625,16 @@
 {/snippet}
 
 {#snippet logsSurface()}
-  {#if isPod && selectedPod}
+  <!--
+    KEYED ON THE WHOLE IDENTITY, because both panes attach on mount and
+    neither reacts to the pod changing under it. Without this, moving between
+    two pods of the same name in different clusters left the stream and the
+    shell attached to the first — and the terminal's teardown then filed the
+    OLD session's id under the NEW pod's key, so the next visit attached to
+    the previous cluster's shell and cheerfully reported "Connected".
+  -->
+  {#key shownObject}
+    {#if isPod && selectedPod}
     <LogViewer
       clusterId={session.cluster.id}
       namespace={selectedPod.namespace}
@@ -469,7 +642,7 @@
       containers={selectedPod.containers?.map((c) => c.name) ?? []}
       onmaximize={maximized === 'logs' ? undefined : () => (maximized = 'logs')}
     />
-  {:else if isWorkloadWithLogs && workloadPods.length > 0}
+    {:else if isWorkloadWithLogs && workloadPods.length > 0}
     <LogViewer
       clusterId={session.cluster.id}
       namespace={session.selectedNamespace}
@@ -479,7 +652,54 @@
       }))}
       onmaximize={maximized === 'logs' ? undefined : () => (maximized = 'logs')}
     />
+    {/if}
+  {/key}
+{/snippet}
+
+{#snippet mapSurface()}
+  {#if isPod && selectedPod}
+    <DependencyMap
+      clusterId={session.cluster.id}
+      namespace={selectedPod.namespace}
+      name={selectedPod.name}
+      kind="Pod"
+      onopen={openObject}
+      onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
+    />
+  {:else if mappedWorkloadKind && session.selectedName}
+    <DependencyMap
+      clusterId={session.cluster.id}
+      namespace={session.selectedNamespace}
+      name={session.selectedName}
+      kind={mappedWorkloadKind}
+      onopen={openObject}
+      onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
+    />
   {/if}
+{/snippet}
+
+{#snippet terminalSurface()}
+  {#key shownObject}
+    {#if isPod && selectedPod}
+    <Terminal
+      clusterId={session.cluster.id}
+      namespace={selectedPod.namespace}
+      podName={selectedPod.name}
+      containerName={selectedPod.containers?.[0]?.name ?? ''}
+      containers={selectedPod.containers?.map((c) => c.name) ?? []}
+      onmaximize={maximized === 'terminal' ? undefined : () => (maximized = 'terminal')}
+    />
+    {:else if isWorkloadWithLogs && workloadPods.length > 0}
+    <Terminal
+      clusterId={session.cluster.id}
+      namespace={workloadPods[0].namespace}
+      podName={workloadPods[0].name}
+      containerName={workloadPods[0].containers?.[0]?.name ?? ''}
+      containers={workloadPods[0].containers?.map((c: any) => c.name) ?? []}
+      onmaximize={maximized === 'terminal' ? undefined : () => (maximized = 'terminal')}
+    />
+    {/if}
+  {/key}
 {/snippet}
 
 {#snippet yamlSurface()}
@@ -505,6 +725,19 @@
           title="Read this Secret's values. This is an audited read."
           onclick={() => session.revealManifestSecrets()}
         />
+      {:else if isSecret && session.secretsRevealed}
+        <!--
+          And the way back. Revealing used to replace this control with
+          nothing, so re-masking a Secret meant closing the panel and opening
+          it again — an oversight rather than a policy, and one the reveal on
+          an environment variable does not share.
+        -->
+        <ToolbarButton
+          icon={EyeOff}
+          label="Hide values"
+          title="Put the values back behind their placeholders"
+          onclick={() => session.hideManifestSecrets()}
+        />
       {/if}
       <ToolbarToggle
         icon={Pencil}
@@ -515,10 +748,10 @@
         onclick={() => (editing ? stopEditing() : startEditing())}
       />
       <ToolbarButton
-        icon={copied ? Check : Copy}
+        icon={copied.on ? Check : Copy}
         label="Copy manifest"
-        title={copied ? 'Copied' : 'Copy manifest'}
-        active={copied}
+        title={copied.on ? 'Copied' : 'Copy manifest'}
+        active={copied.on}
         disabled={!shownManifest}
         onclick={copyManifest}
       />
@@ -534,7 +767,27 @@
   </YamlPane>
 {/snippet}
 
-<svelte:window onkeydown={onKeydown} />
+<!--
+  Masks a revealed Secret when the window stops being looked at — which in
+  practice is the moment somebody alt-tabs to start a screen share or accepts
+  a call. The same rule the environment-variable reveal follows.
+
+  NOT WHILE EDITING. Re-masking re-reads the manifest, so doing it under
+  somebody mid-edit would throw their work away to hide a value they are
+  deliberately working with. A revealed Secret behind an unsaved edit is the
+  one case where leaving it on screen is the lesser harm.
+
+  No timer, deliberately, unlike the environment-variable reveal: that hides
+  one value somebody glanced at, while this is a manifest being read, and
+  expiring it every thirty seconds would mean repeatedly re-asking — turning
+  one audited read into a dozen.
+-->
+<svelte:window
+  onkeydown={onKeydown}
+  onblur={() => {
+    if (isSecret && session.secretsRevealed && !editing) void session.hideManifestSecrets()
+  }}
+/>
 
 {#if session.selectedName}
   <!-- Scrim: dimmed, not blurred.
@@ -550,11 +803,85 @@
     onclick={session.closeDetail}
   ></button>
 
-  <aside
-    class="fixed top-0 right-0 bottom-0 z-50 flex w-[44rem] max-w-[90vw] flex-col
+  <!--
+    A SHARE OF THE WINDOW, CLAMPED AT BOTH ENDS. The panel used to be a fixed
+    44rem, which is about half a laptop and about a fifth of an ultrawide — and
+    the complaint it answers is relative, because what matters is how much of
+    the list behind it is still readable. A share is also what transfers
+    between people: the same setting means the same thing on a 13-inch laptop
+    and on a 34-inch monitor, which a pixel width does not.
+
+    A share alone breaks in the other direction, which is what the clamp is
+    for: a quarter of a small laptop is narrower than one row of this panel's
+    own two columns, and half an ultrawide is a page of whitespace. `min` with
+    90vw on top of that, so a very narrow window still shows the list is there.
+
+    In CSS rather than measured in JavaScript, so the panel keeps its share
+    when the window is resized without anything listening for it. A drag in
+    progress is the one time a pixel width is used — see draggedWidth.
+  -->
+  <!--
+    A DIALOG, AND DELIBERATELY NOT aria-modal. This had a label and no role at
+    all, so the name was announced on nothing. `dialog` is what it is: it sits
+    over a full-window scrim and Escape closes it.
+
+    aria-modal is left off on purpose. It tells assistive technology that
+    nothing outside exists, and honouring that claim means trapping Tab —
+    right for a dialog asking one question, wrong for a browsing surface
+    people move in and out of while reading the list behind it. The dialogs
+    that DO make the claim use `use:modal`, which keeps it.
+
+    A <div> rather than the <aside> this was, because an aside means
+    complementary content and a dialog is not that — and Svelte's own a11y
+    check says so.
+  -->
+  <div
+    style="--detail-label-width: {detailLabelWidthCSS(preferences.detailLabelShare)}; width: {draggedWidth !== null
+      ? `${draggedWidth}px`
+      : `min(${DETAIL_MAX_SHARE * 100}vw, clamp(${DETAIL_MIN_REM}rem, ${
+          preferences.detailWidthFraction * 100
+        }vw, ${DETAIL_MAX_REM}rem))`}"
+    class="fixed top-0 right-0 bottom-0 z-50 flex flex-col
            border-l border-outline-variant/60 bg-surface shadow-level-3"
+    role="dialog"
     aria-label="Object details"
   >
+    <!--
+      Drag the edge to resize, the same gesture and the same handle as the
+      navigator on the other side of the window — one of these being
+      draggable and the other not would be two ideas about the same thing.
+
+      What is STORED is still a share, so a width chosen here means the same
+      on somebody else's screen. Double-click restores the default.
+    -->
+    <!--
+      svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions
+
+      Both warnings are false here — see ColumnDivider.svelte. A focusable
+      separator is the window-splitter pattern.
+    -->
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the detail panel"
+      aria-valuenow={Math.round(preferences.detailWidthFraction * 100)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuetext="{Math.round(preferences.detailWidthFraction * 100)}% of the window"
+      tabindex="0"
+      onkeydown={onResizeKeydown}
+      class="absolute top-0 -left-1 z-20 h-full w-2 cursor-col-resize
+             after:absolute after:top-0 after:left-1/2 after:h-full after:w-px
+             after:-translate-x-1/2 after:bg-transparent after:transition-colors
+             after:duration-100 hover:after:bg-primary/50 {resizing
+        ? 'after:w-0.5 after:bg-primary'
+        : ''}"
+      onpointerdown={startResize}
+      onpointermove={onResizeMove}
+      onpointerup={endResize}
+      onpointercancel={endResize}
+      ondblclick={() => preferences.setDetailWidth(DEFAULT_DETAIL_FRACTION)}
+    ></span>
     <!-- Header.
          The kind's own icon and a path, the same way the event pane addresses
          the object it is about — so a drawer says what it is holding before
@@ -577,7 +904,7 @@
             one is replaced and this pane is where somebody arrives to check
             whether THIS is the pod holding it.
           -->
-          {#each forwards.forPod(session.selectedNamespace, session.selectedName ?? '') as forward (forward.id)}
+          {#each forwards.forPod(session.cluster.id, session.selectedNamespace, session.selectedName ?? '') as forward (forward.id)}
             <span
               class="inline-flex shrink-0 items-center gap-1 rounded bg-primary/12 px-1.5
                      text-body-small text-primary"
@@ -597,7 +924,15 @@
              link because it is somewhere to go: it filters the whole
              application to that namespace, which is what somebody reading a
              detail usually wants next. -->
-        <p class="flex min-w-0 items-baseline gap-1.5 text-body-small text-on-surface-variant/70">
+        <!--
+          CENTRED, NOT BASELINED. A flex container's baseline is its first
+          item's, and the badge beside this text is itself a flex box whose
+          first item is an icon — so an SVG's bottom edge was being lined up
+          with the text's baseline, which sat the whole pill a few pixels
+          high. Every item on this line is the same size, so centring reads
+          identically for the text and correctly for the pill.
+        -->
+        <p class="flex min-w-0 items-center gap-1.5 text-body-small text-on-surface-variant/70">
           <span class="shrink-0">{session.selectedKind?.singular ?? 'Object'}</span>
           {#if session.selectedNamespace}
             <span class="shrink-0 text-on-surface-variant/40" aria-hidden="true">/</span>
@@ -655,7 +990,13 @@
              now live in the YAML tab's toolbar beside it — a control belongs
              next to the thing it changes, and from the Overview tab "Copy"
              gave no clue that what landed on the clipboard was YAML. Delete
-             stays: it acts on the object, not on any one view of it. -->
+             stays: it acts on the object, not on any one view of it.
+
+             Absent for an application, which is not an object: there is
+             nothing to delete that is not one of its members, and a control
+             offering to would either do nothing or do far more than it
+             says. -->
+        {#if !isApplication}
         <button
           type="button"
           onclick={() => (deleteDialogOpen = true)}
@@ -666,6 +1007,7 @@
         >
           <Trash2 class="size-4" strokeWidth={1.8} />
         </button>
+        {/if}
 
         <div class="mx-1 h-5 w-px bg-outline-variant/40"></div>
 
@@ -681,14 +1023,35 @@
       </div>
     </header>
 
-    <!-- Tabs -->
-    <div class="flex border-b border-outline-variant/60 bg-surface-container-low/50 px-2">
+    <!--
+      Tabs, WITH THE SEMANTICS OF TABS. These were six plain buttons in a row,
+      with the active one marked by colour and a two-pixel underline and
+      nothing else — so a screen reader heard six identical buttons, could not
+      tell which pane was showing, and paid six Tab stops to reach the content
+      on every object opened.
+
+      A real tablist costs one Tab stop for the whole strip and moves between
+      tabs with the arrow keys, which is both the standard and less work for
+      everybody.
+    -->
+    <div
+      class="flex border-b border-outline-variant/60 bg-surface-container-low/50 px-2"
+      role="tablist"
+      aria-label="Detail views"
+      tabindex={-1}
+      onkeydown={onTabKeydown}
+    >
       {#each tabs as tab (tab.id)}
         {#if tab.show()}
           {@const TabIcon = tab.icon}
           {@const active = activeTab === tab.id}
           <button
             type="button"
+            role="tab"
+            id="detail-tab-{tab.id}"
+            aria-selected={active}
+            aria-controls="detail-panel"
+            tabindex={active ? 0 : -1}
             onclick={() => (activeTab = tab.id)}
             class="flex items-center gap-1.5 border-b-2 px-3 py-2 text-body-small font-medium
                    transition-colors duration-100
@@ -712,20 +1075,49 @@
     {/if}
 
     <!-- Tab content -->
-    <div class="min-h-0 flex-1 overflow-auto bg-surface-container-lowest">
-      {#if activeTab === 'overview' && isEvent}
-        <EventDetail event={parsedEvent} canOpen={involvedKindId !== null} onopen={openInvolved} />
+    <div
+      class="min-h-0 flex-1 overflow-auto bg-surface-container-lowest"
+      id="detail-panel"
+      role="tabpanel"
+      aria-labelledby="detail-tab-{activeTab}"
+    >
+      {#if activeTab === 'overview' && session.selectedApplication}
+        <!-- An application is not an object: nothing to fetch, nothing to
+             edit, nothing to delete. Its pane is built from the row. -->
+        <ApplicationDetail
+          application={session.selectedApplication}
+          usage={session.usage}
+          onbrowse={(kindId, namespace) => void session.browseKind(kindId, namespace)}
+          onnamespace={(namespace) => void session.selectNamespace(namespace)}
+        />
+      {:else if activeTab === 'overview' && isEvent}
+        <!-- The same reference-following the generic overview gets: an event
+             names an object, a node and a namespace, and each is somewhere to
+             go. `kindIdFor` is what keeps a link off a kind this cluster does
+             not serve — a CRD removed since the event fired, or nodes an
+             account cannot list. -->
+        <EventDetail
+          event={parsedEvent}
+          canOpen={kindIdFor}
+          onopen={openObject}
+          onnamespace={(namespace) => void session.selectNamespace(namespace)}
+        />
       {:else if activeTab === 'overview'}
         <ResourceOverview
           manifest={session.manifest}
           selectedPod={selectedPod}
           selectedNode={session.selectedNode}
+          selectedNamespaceRow={session.selectedNamespaceRow}
           selectedWorkload={selectedWorkload}
           kind={session.selectedKind?.kind}
           usage={session.usage}
           backend={session.overview?.backend}
+          clusterId={session.cluster.id}
           canOpen={kindIdFor}
           onopen={openObject}
+          onnamespace={(namespace) => void session.selectNamespace(namespace)}
+          onbrowse={(kindId, namespace) => void session.browseKind(kindId, namespace)}
+          tick={session.lastRefreshedAt}
         />
       {:else if activeTab === 'logs'}
         {#if maximized === 'logs'}
@@ -752,22 +1144,18 @@
           </div>
         {/if}
       {:else if activeTab === 'terminal'}
-        {#if isPod && selectedPod}
-          <Terminal
-            clusterId={session.cluster.id}
-            namespace={selectedPod.namespace}
-            podName={selectedPod.name}
-            containerName={selectedPod.containers?.[0]?.name ?? ''}
-            containers={selectedPod.containers?.map(c => c.name) ?? []}
-          />
+        {#if maximized === 'terminal'}
+          <!-- The pane is in the dialog. Saying so beats an empty tab, which
+               reads as a pane that failed to load. -->
+          <div class="flex h-full items-center justify-center p-4">
+            <p class="text-body-medium text-on-surface-variant/70">
+              Showing the terminal in a larger window.
+            </p>
+          </div>
+        {:else if isPod && selectedPod}
+          {@render terminalSurface()}
         {:else if isWorkloadWithLogs && workloadPods.length > 0}
-          <Terminal
-            clusterId={session.cluster.id}
-            namespace={workloadPods[0].namespace}
-            podName={workloadPods[0].name}
-            containerName={workloadPods[0].containers?.[0]?.name ?? ''}
-            containers={workloadPods[0].containers?.map((c: any) => c.name) ?? []}
-          />
+          {@render terminalSurface()}
         {:else if isWorkloadWithLogs}
           <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
             <TerminalSquare class="size-8" strokeWidth={1.2} />
@@ -777,6 +1165,23 @@
           <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
             <TerminalSquare class="size-8" strokeWidth={1.2} />
             <p class="text-body-medium">Terminal is only available for pods and workloads</p>
+          </div>
+        {/if}
+      {:else if activeTab === 'map'}
+        {#if maximized === 'map'}
+          <!-- The pane is in the dialog. Saying so beats an empty tab, which
+               reads as a pane that failed to load. -->
+          <div class="flex h-full items-center justify-center p-4">
+            <p class="text-body-medium text-on-surface-variant/70">
+              Showing the map in a larger window.
+            </p>
+          </div>
+        {:else if (isPod && selectedPod) || mappedWorkloadKind}
+          {@render mapSurface()}
+        {:else}
+          <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
+            <Workflow class="size-8" strokeWidth={1.2} />
+            <p class="text-body-medium">This kind has no dependencies to map</p>
           </div>
         {/if}
       {:else if activeTab === 'events'}
@@ -833,7 +1238,7 @@
         </div>
       </div>
     {/if}
-  </aside>
+  </div>
 
   <!-- Dialogs -->
   <DeleteDialog
@@ -883,6 +1288,28 @@
     onclose={() => (maximized = null)}
   >
     {@render logsSurface()}
+  </PaneDialog>
+
+  <PaneDialog
+    open={maximized === 'terminal'}
+    icon={KindIcon}
+    kind={session.selectedKind?.singular}
+    name={session.selectedName ?? ''}
+    label="Terminal"
+    onclose={() => (maximized = null)}
+  >
+    {@render terminalSurface()}
+  </PaneDialog>
+
+  <PaneDialog
+    open={maximized === 'map'}
+    icon={KindIcon}
+    kind={session.selectedKind?.singular}
+    name={session.selectedName ?? ''}
+    label="Map"
+    onclose={() => (maximized = null)}
+  >
+    {@render mapSurface()}
   </PaneDialog>
 
   {#if selectedWorkload}

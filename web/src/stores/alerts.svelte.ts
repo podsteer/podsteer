@@ -279,7 +279,17 @@ class AlertPlayer {
 
     const start = context.currentTime + 0.02
     for (const note of sound.notes) {
-      this.#ring(context, master, note, start)
+      // `note.at` IS THE MOTIF. Every note used to be scheduled at `start`,
+      // so a two-note chime rang as one chord and "three urgent blips" rang
+      // as a single louder blip — every multi-note sound collapsed into its
+      // first instant, and the descriptions in Settings described something
+      // nobody could hear. #length below was already reading `at`, so the
+      // node graph was being torn down on the correct schedule for a motif
+      // that was never actually played.
+      //
+      // A note with `at: 0` alongside another is still deliberate: `bell`
+      // stacks a fundamental and an overtone to colour one strike.
+      this.#ring(context, master, note, start + note.at)
     }
 
     // Releasing the node graph once the tail has died keeps a long session

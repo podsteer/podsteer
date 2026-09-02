@@ -14,10 +14,16 @@ import (
 type ResourceCategory string
 
 const (
-	// CategoryCluster covers cluster-scoped infrastructure: nodes, namespaces,
-	// events.
+	// CategoryCluster covers the cluster's own structure and its running
+	// commentary: nodes, namespaces, events.
+	//
+	// Events are namespaced rather than cluster-scoped, and belong here all
+	// the same: a feed of what the cluster is doing is a view OF the cluster,
+	// and burying it under the kind it happens to be about would be filing it
+	// by its storage rather than by its use.
 	CategoryCluster ResourceCategory = "Cluster"
-	// CategoryWorkloads covers everything that runs containers.
+	// CategoryWorkloads covers everything that runs containers, and the
+	// controllers that decide how many run.
 	CategoryWorkloads ResourceCategory = "Workloads"
 	// CategoryConfig covers configuration and secret material.
 	CategoryConfig ResourceCategory = "Config"
@@ -66,6 +72,16 @@ type ResourceKind struct {
 	Namespaced bool
 	// Category places the kind in the navigator.
 	Category ResourceCategory
+	// Subcategory groups a kind WITHIN its category, and is set only for
+	// custom resources, where it names the project that publishes the API
+	// group — see GroupOwner.
+	//
+	// A SUBHEADING RATHER THAN A CATEGORY OF ITS OWN. Categories are a closed,
+	// ordered set that several things key off; adding one per operator would
+	// make an unranked category sort to the top, make the CRD exclusion in
+	// the namespace inventory stop matching, and orphan every stored
+	// navigator preference. This groups without any of that.
+	Subcategory string
 	// Title is the plural display name, e.g. "Deployments".
 	Title string
 	// Singular is the singular display name, e.g. "Deployment".

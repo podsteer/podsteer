@@ -50,6 +50,14 @@ type Adapter struct {
 	// backends caches metrics-backend discovery, which answers a question
 	// whose value moves in days: a monitoring stack is installed once.
 	backends backendCache
+	// watches mirror a cluster's pods locally, so a refresh reads memory
+	// rather than the network. An optimisation: see watch.go, where the
+	// governing sentence is that polling remains the truth.
+	watches *watchManager
+	// reads coalesce the whole-collection lists a refresh repeats. Unlike the
+	// two caches above it holds nothing for long — it exists to stop the same
+	// request leaving twice in one tick. See readcache.go.
+	reads readCache
 }
 
 // Compile-time proof that the adapter satisfies every outbound port it claims.
@@ -73,9 +81,11 @@ func New(cfg Config, logger *slog.Logger) *Adapter {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	scoped := logger.With(slog.String("adapter", "k8s"))
 	return &Adapter{
 		factory:  newClientFactory(cfg),
-		logger:   logger.With(slog.String("adapter", "k8s")),
+		logger:   scoped,
+		watches:  newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery, recheckEvery),
 		forwards: portForwards{byID: make(map[string]*forwarder)},
 	}
 }
@@ -125,11 +135,43 @@ func (a *Adapter) ServerVersion(ctx context.Context, id domain.ClusterID) (domai
 // change on disk, and so disconnecting a cluster genuinely releases its
 // connections rather than leaving them pooled.
 func (a *Adapter) Invalidate(id domain.ClusterID) {
+	// THE CLIENT GOES FIRST, AND THE ORDER IS LOAD-BEARING. A read racing
+	// this call can re-`ensure` a watch set at any point, so the invalidation
+	// has to happen while `forget` is still ahead of it: the racing read gets
+	// a rebuilt client, and `forget` then destroys whatever set exists.
+	//
+	// Reversed — forget first, factory after — a racing read would ensure a
+	// set against the still-cached STALE client, and the reconnect's own
+	// `ensure` would find it already running and keep it. A reflector bound
+	// to the old server or the old token would then serve reads indefinitely,
+	// which is exactly the resurrection a set is never reused to prevent.
 	a.factory.invalidate(id)
 	a.nodeList.forget(id)
+	// The watch is waited for, not merely signalled: its reflectors hold the
+	// client just discarded.
+	a.watches.forget(id)
 	// The disk sweep goes with them. Its whole value is being a minute stale
 	// rather than ten seconds stale, and carrying that across a reconnect
 	// would answer the first assessment of a freshly opened cluster with
 	// numbers from before it was closed.
 	a.filesystems.forget(id)
+	a.reads.forget(id.String())
+}
+
+// StopAllWatches tears down every cluster's watch, for shutdown.
+//
+// Beside StopAllPortForwards in the composition root and for the same reason:
+// these are goroutines holding sockets, and the thing that must not happen is
+// the record and the goroutine parting company.
+func (a *Adapter) StopAllWatches() {
+	a.watches.stopAll()
+}
+
+// forgetReads drops the coalesced lists for one cluster.
+//
+// Called after every write. Two seconds is short, but it is long enough to
+// hand back the list a pod was just deleted from — which reads as the
+// application ignoring what it was told to do rather than as a stale cache.
+func (a *Adapter) forgetReads(id domain.ClusterID) {
+	a.reads.forget(id.String())
 }

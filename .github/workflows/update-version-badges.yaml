@@ -46,7 +46,23 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add README.md
+          # -s, SO THE RELEASE PULL REQUEST CAN PASS. This commit lands on
+          # `develop` and `main`, so it is inside the range every develop →
+          # main pull request is checked over — and dco.yaml compares each
+          # commit's Signed-off-by against its own AUTHOR. Unsigned, it made
+          # every future release pull request fail by construction, on a
+          # commit that changed a badge URL.
+          #
+          # Signed off here rather than exempted there, deliberately. An
+          # exemption would have to match on the commit's author email, and
+          # that is just text in the object — anybody can set it to this one.
+          # dco.yaml says exactly that about its dependabot exemption, which
+          # is why that one is gated on who opened the pull request instead.
+          # Signing off at the point of creation needs no exemption and opens
+          # no hole: the identity below is the author, so the trailer and the
+          # author agree by construction.
+          #
           # [skip ci] matters: without it this push re-triggers the pipeline on
           # a commit that changed nothing but a badge URL.
-          git commit -m "Update version badges [skip ci]"
+          git commit -s -m "Update version badges [skip ci]"
           git push origin ${{ matrix.branch }}

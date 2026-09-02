@@ -22,6 +22,10 @@ export function ListClusters() {
   return window['go']['wails']['ClusterAPI']['ListClusters']();
 }
 
+export function ListNamespaceSummaries(arg1) {
+  return window['go']['wails']['ClusterAPI']['ListNamespaceSummaries'](arg1);
+}
+
 export function ListNamespaces(arg1) {
   return window['go']['wails']['ClusterAPI']['ListNamespaces'](arg1);
 }

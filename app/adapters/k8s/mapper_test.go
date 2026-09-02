@@ -295,3 +295,42 @@ func TestMapEventCountsBothGenerations(t *testing.T) {
 		})
 	}
 }
+
+func TestKubernetesOwnGroupsAreNotCustomResources(t *testing.T) {
+	// THE DUPLICATION THIS GUARDS, and it was on screen. The rule was "ends
+	// with k8s.io", and `apps`, `batch`, `autoscaling` and `policy` carry no
+	// suffix — so every Deployment, Job, HorizontalPodAutoscaler and
+	// PodDisruptionBudget was discovered a second time and listed again under
+	// Custom Resources, beside the catalog entry that already had it.
+	for _, group := range []string{"apps", "batch", "autoscaling", "policy", "extensions"} {
+		if !isKubernetesGroup(group) {
+			t.Fatalf("%q was treated as a custom resource group", group)
+		}
+	}
+
+	for _, group := range []string{"rbac.authorization.k8s.io", "storage.k8s.io", "node.k8s.io"} {
+		if !isKubernetesGroup(group) {
+			t.Fatalf("%q was treated as a custom resource group", group)
+		}
+	}
+}
+
+func TestOperatorInstalledGroupsAreCustomResources(t *testing.T) {
+	for _, group := range []string{"argoproj.io", "cert-manager.io", "monitoring.coreos.com"} {
+		if isKubernetesGroup(group) {
+			t.Fatalf("%q was hidden as though Kubernetes published it", group)
+		}
+	}
+}
+
+func TestAdoptedGroupsSurviveTheSuffixRule(t *testing.T) {
+	// Gateway API is the declared successor to Ingress and VolumeSnapshots
+	// are how anybody backs up a PVC. Both ship as CRDs under a k8s.io group,
+	// so the suffix rule was true about their names and false about their
+	// availability — a cluster only has them because somebody installed them.
+	for _, group := range []string{"gateway.networking.k8s.io", "snapshot.storage.k8s.io"} {
+		if isKubernetesGroup(group) {
+			t.Fatalf("%q was hidden, though it is only present when installed", group)
+		}
+	}
+}

@@ -81,6 +81,29 @@ type WorkloadPort interface {
 	// ListWorkloads returns controllers of the given kind.
 	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error)
 
+	// PodGraphSources reads what one pod's dependency map is drawn from.
+	//
+	// GATHERS RATHER THAN ASSEMBLES. Which service selects which pod is a
+	// rule, and rules belong in the domain where they are tested; this returns
+	// what was read and lets NewPodGraph decide what connects. Individual
+	// sources may fail without failing the call — an account that can list
+	// pods but not ingresses gets a map without an ingress tier, and
+	// GraphInput.Unreadable names what was missing.
+	PodGraphSources(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string) (domain.GraphInput, error)
+
+	// WorkloadGraphSources reads what one workload's dependency map is drawn
+	// from — the same sources as a pod's, with its pods in place of the one.
+	WorkloadGraphSources(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.WorkloadGraphInput, error)
+
+	// ListPodsOnNode returns the pods the scheduler has placed on one node,
+	// across every namespace.
+	//
+	// A FIELD SELECTOR, not a client-side filter over every pod in the
+	// cluster. `spec.nodeName` is one of the handful of fields the API server
+	// indexes for pods, so a cluster of fifty thousand pods returns the
+	// hundred on this node rather than all of them for the caller to sift.
+	ListPodsOnNode(ctx context.Context, id domain.ClusterID, nodeName string) ([]domain.Pod, error)
+
 	// ListPodsForWorkload returns all pods owned by a specific workload.
 	ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error)
 }
@@ -168,6 +191,18 @@ type ResourcePort interface {
 	// ListTable returns objects of the given kind as a table, with the columns
 	// the API server itself prints.
 	ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName) (domain.ResourceTable, error)
+
+	// CountResources reports how many objects of kind exist in namespace.
+	//
+	// ONE OBJECT IS FETCHED, NOT ALL OF THEM. The API server reports how many
+	// more it did not send, so a namespace holding ten thousand Secrets costs
+	// the same to count as one holding none — and, just as importantly, their
+	// contents never leave the cluster to be counted here.
+	//
+	// Wraps ErrCountUnavailable when the server did not report a total, which
+	// is the honest answer for one too old to (before Kubernetes 1.15) rather
+	// than the "1" the single fetched object would otherwise imply.
+	CountResources(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName) (int, error)
 
 	// GetManifest returns one object serialised as YAML, for the detail view.
 	GetManifest(ctx context.Context, ref domain.ResourceRef, revealSecrets bool) (string, error)

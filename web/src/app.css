@@ -233,6 +233,28 @@
   /* The scrim behind overlays is theme-independent. */
   --color-scrim: #000000;
 
+  /* The label column of every detail pane.
+   *
+   * A SHARE OF THE PANEL, not a fixed width, so that widening the panel
+   * widens both columns. It was 11rem while the panel itself was a fixed
+   * 44rem — which stopped being true the moment the panel's edge could be
+   * dragged, and left dragging it wider doing nothing at all for the column
+   * holding annotation keys, which is the column most in need of the room.
+   *
+   * A percentage resolves against the grid container, so every section
+   * follows the panel with nothing measuring anything.
+   *
+   * Clamped for the same reason the panel's own width is: 26% of the
+   * narrowest panel is too little for "Reason", and 26% of the widest is a
+   * gutter. The lower bound is the longest label that is one short word; the
+   * upper is where a longer label stops being worth more room and the value
+   * beside it starts wanting it back. 26% is what the fixed 11rem worked out
+   * to at the default width, so a panel nobody has dragged looks unchanged. */
+  /* The panel overrides this inline from the stored share — see
+     detailLabelWidthCSS. This is the same expression at the default share,
+     so anything using the grid outside the panel matches it. */
+  --detail-label-width: min(60%, clamp(5rem, 26%, 24rem));
+
   /* ---- MD3 shape scale ------------------------------------------------ */
   /* These deliberately override Tailwind's defaults so that `rounded-lg` and
      friends mean the MD3 shape tokens everywhere in the app. */
@@ -353,13 +375,22 @@
     border-color: var(--color-outline);
   }
 
-  /* Focus is a ring drawn on the border rather than an outline offset from it,
-     so a focused field does not grow and shift the row it sits in. */
+  /* Focus darkens the border and nothing else.
+   *
+   * It used to be the border in the primary colour PLUS a ring of the same
+   * colour drawn on top of it — two pixels of blue around every search box
+   * the moment it was clicked, which is a lot of emphasis for the control an
+   * operator's cursor sits in most of the time.
+   *
+   * An indicator remains, deliberately: a keyboard user has no other way to
+   * tell where focus is, and a field with no focus state at all is a real
+   * accessibility failure rather than a tidier one. This is neutral instead
+   * of blue, and one pixel instead of two — still plainly darker than the
+   * resting border and than hover's. */
   &:focus,
   &:focus-visible {
     outline: none;
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 1px var(--color-primary);
+    border-color: var(--color-on-surface-variant);
   }
 
   &:disabled {
@@ -388,6 +419,33 @@
  * inherit. So the name inside a link must NOT set a colour — it takes both
  * from here, and the figures beside it keep theirs by declaring one.
  */
+/*
+ * The two columns every detail pane states a fact in.
+ *
+ * ONE WIDTH FOR THE WHOLE DRAWER, and that is the entire point. The lists
+ * used to choose between a quarter and 40% depending on whether their labels
+ * were words or identifiers, so scrolling one panel crossed three different
+ * left edges and read as three different components stacked up. A panel
+ * should look like one thing from top to bottom.
+ *
+ * One width, not a fixed one: --detail-label-width is a share of the panel,
+ * so BOTH columns follow the panel's edge as it is dragged. Every section
+ * still shares the one value, which is what keeps the left edges aligned —
+ * the alignment was never about the width being constant, only about it being
+ * the same everywhere.
+ *
+ * `minmax(0, 1fr)` on the value column, because a grid track's default
+ * minimum is `auto` — the widest thing inside it — and one long unbroken
+ * value would otherwise push the column past the pane instead of being
+ * clipped by it.
+ */
+@utility detail-grid {
+  display: grid;
+  grid-template-columns: var(--detail-label-width) minmax(0, 1fr);
+  column-gap: 1rem;
+  row-gap: 0.5rem;
+}
+
 @utility resource-link {
   color: var(--on-surface);
   cursor: pointer;

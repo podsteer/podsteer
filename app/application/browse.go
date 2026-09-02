@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"slices"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
 )
@@ -97,6 +99,13 @@ func (s *BrowseService) Kinds(_ context.Context, id domain.ClusterID) ([]domain.
 	slices.SortStableFunc(kinds, func(a, b domain.ResourceKind) int {
 		if byCategory := cmp.Compare(categoryRank[a.Category], categoryRank[b.Category]); byCategory != 0 {
 			return byCategory
+		}
+		// Then by the project that publishes it, so a category's custom
+		// resources arrive already gathered under their owner and the
+		// navigator has only to draw the headings. Empty sorts first, which
+		// is every built-in kind: they have no owner but Kubernetes.
+		if bySubcategory := cmp.Compare(a.Subcategory, b.Subcategory); bySubcategory != 0 {
+			return bySubcategory
 		}
 		if a.Rich != b.Rich {
 			if a.Rich {
@@ -197,6 +206,93 @@ func (s *BrowseService) ListTable(ctx context.Context, id domain.ClusterID, kind
 		slog.Int("count", table.Len()))
 
 	return table, nil
+}
+
+// inventoryConcurrency bounds the fan-out of a namespace inventory.
+//
+// One request per kind, and there are around twenty of them. Issued all at
+// once they would spend the client's whole burst allowance on counting, and
+// arrive at the API server as a spike from a client that is meant to be
+// reading a panel — so they are paced. Eight at a time keeps the panel filling
+// in well under a second on a normal round trip without being a thundering
+// herd on a cluster where every call is slow.
+const inventoryConcurrency = 8
+
+// NamespaceInventory reports what a namespace holds, kind by kind.
+//
+// FANNED OUT HERE RATHER THAN IN THE ADAPTER, because which kinds are worth
+// counting is a decision (see domain.CountableKinds) and the adapter's job is
+// to count one of them. A kind that cannot be read is recorded and the rest
+// continue: an account with `list pods` and not `list secrets` gets an
+// inventory that says so, which is far more use than an error.
+func (s *BrowseService) NamespaceInventory(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.NamespaceInventory, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return domain.NamespaceInventory{}, fmt.Errorf("counting namespace contents: %w", err)
+	}
+	if namespace.IsAll() {
+		return domain.NamespaceInventory{}, fmt.Errorf(
+			"counting namespace contents: %w", domain.ErrInvalidNamespaceName)
+	}
+
+	kinds := domain.CountableKinds(s.catalog.Kinds(id))
+	counts := make([]domain.ResourceCount, len(kinds))
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(inventoryConcurrency)
+
+	for index, kind := range kinds {
+		group.Go(func() error {
+			count, err := s.resources.CountResources(groupCtx, id, kind, namespace)
+			if err != nil {
+				// Cancellation is the one failure that is not this kind's:
+				// the whole call is being abandoned, and recording it against
+				// every kind would report a cancelled panel as a cluster that
+				// refuses everything.
+				if groupCtx.Err() != nil {
+					return err
+				}
+				counts[index] = domain.ResourceCount{Kind: kind, Unreadable: countRefusal(err)}
+				return nil
+			}
+			counts[index] = domain.ResourceCount{Kind: kind, Count: count}
+			return nil
+		})
+	}
+
+	if err := group.Wait(); err != nil {
+		return domain.NamespaceInventory{}, fmt.Errorf(
+			"counting contents of %q in %q: %w", namespace, id, err)
+	}
+
+	inventory := domain.NewNamespaceInventory(namespace, counts)
+
+	s.logger.DebugContext(ctx, "counted namespace contents",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.Int("kinds", len(kinds)),
+		slog.Int("objects", inventory.Total),
+		slog.Int("unreadable", inventory.Unreadable))
+
+	return inventory, nil
+}
+
+// countRefusal turns a failed count into the short reason a panel shows beside
+// the kind, in place of a number.
+//
+// Short and factual, because it is rendered in a table cell rather than in a
+// banner: the operator is reading twenty rows and needs to know which of them
+// are missing and roughly why, not to be told a sentence twenty times.
+func countRefusal(err error) string {
+	switch {
+	case errors.Is(err, ports.ErrForbidden):
+		return "not permitted"
+	case errors.Is(err, ports.ErrNotFound):
+		return "not served here"
+	case errors.Is(err, ports.ErrCountUnavailable):
+		return "not reported by this API server"
+	default:
+		return "could not be read"
+	}
 }
 
 // GetManifest returns one object serialised as YAML.

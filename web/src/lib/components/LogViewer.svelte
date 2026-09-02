@@ -15,6 +15,7 @@
   For deployments and other workloads, it can aggregate logs from multiple pods.
 -->
 <script lang="ts">
+  import { flash } from '$lib/flash.svelte'
   import { EventsOn } from '$lib/wailsjs/runtime/runtime'
   import { StreamLogs, StopLogStream } from '$lib/wailsjs/go/wails/ManagementAPI'
   import { onMount, onDestroy, untrack } from 'svelte'
@@ -106,7 +107,7 @@
   let logContainer: HTMLDivElement
   /** Unsubscribes for the stream events, so teardown removes only ours. */
   let unsubscribe: Array<() => void> = []
-  let copied = $state(false)
+  const copied = flash(1500)
   /** Why the stream ended, when it ended badly. */
   let streamError = $state('')
 
@@ -140,10 +141,9 @@
     if (!text) return
     try {
       await navigator.clipboard.writeText(text)
-      copied = true
-      setTimeout(() => (copied = false), 1500)
+      copied.show()
     } catch {
-      copied = false
+      copied.cancel()
     }
   }
 
@@ -324,11 +324,32 @@
     invalidateHeights()
   })
 
-  /** Drops heights for lines that have been trimmed away. */
+  /**
+   * Drops heights for lines that have been trimmed away.
+   *
+   * IT ONLY EVER CLEARED ON EMPTY, which is not what trimming does: lines go
+   * from the FRONT at MAX_LINES and their entries stayed. A chatty pod at a
+   * hundred lines a second left a few hundred thousand entries in this map
+   * after an hour, none of them reachable — measured heights for lines that
+   * are no longer on screen and can never be scrolled back to.
+   *
+   * Sequence numbers only rise, so everything below the oldest retained line
+   * is dead and can go in one pass. The pass is proportional to the map, and
+   * it runs when the map is bigger than the buffer it describes.
+   */
   $effect(() => {
-    if (logs.length === 0 && heights.size > 0) {
-      heights.clear()
-      invalidateHeights()
+    if (logs.length === 0) {
+      if (heights.size > 0) {
+        heights.clear()
+        invalidateHeights()
+      }
+      return
+    }
+    if (heights.size <= logs.length) return
+
+    const oldest = logs[0].seq
+    for (const seq of heights.keys()) {
+      if (seq < oldest) heights.delete(seq)
     }
   })
 
@@ -652,6 +673,9 @@
     unsubscribe = []
     stopStream()
   })
+
+  // Nothing left running behind a component that has gone away.
+  $effect(() => () => copied.cancel())
 </script>
 
 <div class="flex h-full flex-col">
@@ -674,7 +698,6 @@
         label="Filter the log lines"
         count="{matching.length}/{logs.length}"
         empty={matching.length === 0}
-        autofocus
         onchange={(value) => (searchQuery = value)}
         onnext={filterMode ? undefined : () => stepMatch(1)}
         onprevious={filterMode ? undefined : () => stepMatch(-1)}
@@ -752,10 +775,10 @@
       <div class="mx-1 h-5 w-px bg-outline-variant/40"></div>
 
       <ToolbarButton
-        icon={copied ? Check : Copy}
+        icon={copied.on ? Check : Copy}
         label="Copy logs"
-        title={copied ? 'Copied' : 'Copy the lines shown'}
-        active={copied}
+        title={copied.on ? 'Copied' : 'Copy the lines shown'}
+        active={copied.on}
         disabled={filteredLogs.length === 0}
         onclick={copyLogs}
       />

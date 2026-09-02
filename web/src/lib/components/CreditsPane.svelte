@@ -92,12 +92,24 @@
     openNotice = null
     if (!credit.textId) return
 
+    // ONE PACKAGE'S LICENCE UNDER ANOTHER PACKAGE'S NAME is the failure this
+    // guards, on the one pane in the application that exists to discharge an
+    // attribution obligation. Opening two packages in quick succession let
+    // the first read land after the second.
+    const asked = key
     try {
-      openText = await licenceText(credit.textId)
+      const text = await licenceText(credit.textId)
+      if (asked !== openKey) return
+      openText = text
       // Apache-2.0 section 4(d) makes reproducing a NOTICE a duty separate
       // from reproducing the licence, so it is fetched and shown separately.
-      if (credit.noticeTextId) openNotice = await licenceText(credit.noticeTextId)
+      if (credit.noticeTextId) {
+        const notice = await licenceText(credit.noticeTextId)
+        if (asked !== openKey) return
+        openNotice = notice
+      }
     } catch (cause) {
+      if (asked !== openKey) return
       openText = toApiError(cause).message
     }
   }

@@ -31,6 +31,7 @@ import (
 	"github.com/podsteer/podsteer/app/adapters/k8s"
 	"github.com/podsteer/podsteer/app/adapters/macwindow"
 	"github.com/podsteer/podsteer/app/adapters/shellpath"
+	"github.com/podsteer/podsteer/app/adapters/updates"
 	wailsadapter "github.com/podsteer/podsteer/app/adapters/wails"
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/config"
@@ -108,6 +109,7 @@ func run() error {
 		Burst:          cfg.Kubernetes.Burst,
 		UserAgent:      fmt.Sprintf("%s/%s", cfg.App.Name, cfg.App.Version),
 		EnvReady:       envReady,
+		LiveWatch:      cfg.Kubernetes.LiveWatch,
 	}, logger)
 
 	// The Wails lifecycle handler doubles as the outbound event publisher, so
@@ -127,6 +129,7 @@ func run() error {
 	clusterService, err := application.NewClusterService(application.ClusterServiceDeps{
 		Kubeconfig: kubernetes,
 		Cluster:    kubernetes,
+		Workloads:  kubernetes,
 		Metrics:    kubernetes,
 		Events:     desktop,
 		Registry:   registry,
@@ -247,6 +250,17 @@ func run() error {
 		return fmt.Errorf("wiring history API: %w", err)
 	}
 
+	// The update check. Its adapter is the ONLY thing in PodSteer that talks
+	// to anything but a cluster, and it acts only when the interface asks —
+	// there is no timer here and nothing on the startup path. It sends no
+	// identifier and is off entirely under PODSTEER_UPDATE_CHECK=false.
+	updateService := application.NewUpdateService(updates.NewClient(), cfg.App.Version, logger)
+
+	updateAPI, err := wailsadapter.NewUpdateAPI(updateService, logger)
+	if err != nil {
+		return fmt.Errorf("wiring update API: %w", err)
+	}
+
 	systemAPI, err := wailsadapter.NewSystemAPI(cfg.App.Name, cfg.App.Version, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring system API: %w", err)
@@ -290,6 +304,9 @@ func run() error {
 			// complaint every competing client has an issue open about, and
 			// the fix is to close them rather than to hope.
 			kubernetes.StopAllPortForwards()
+			// Same reason, same place: reflectors are goroutines holding
+			// connections, and every one of them has an owner that stops it.
+			kubernetes.StopAllWatches()
 			historyService.Close()
 			desktop.OnShutdown(ctx)
 		},
@@ -305,6 +322,7 @@ func run() error {
 			managementAPI,
 			terminalAPI,
 			systemAPI,
+			updateAPI,
 		},
 
 		// Only one PodSteer should hold the kubeconfig and its client caches;

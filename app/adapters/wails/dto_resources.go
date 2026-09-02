@@ -27,6 +27,9 @@ type ResourceKind struct {
 	Namespaced bool `json:"namespaced"`
 	// Category places the kind in a navigator section.
 	Category string `json:"category"`
+	// Subcategory groups it within that section — the project publishing its
+	// API group, for a custom resource, and empty for everything else.
+	Subcategory string `json:"subcategory"`
 	// Title is the plural display name.
 	Title string `json:"title"`
 	// Singular is the singular display name.
@@ -39,15 +42,16 @@ type ResourceKind struct {
 
 func toResourceKind(kind domain.ResourceKind) ResourceKind {
 	return ResourceKind{
-		ID:         kind.ID(),
-		Group:      kind.Group,
-		Version:    kind.Version,
-		Kind:       kind.Kind,
-		Namespaced: kind.Namespaced,
-		Category:   string(kind.Category),
-		Title:      kind.Title,
-		Singular:   kind.Singular,
-		Rich:       kind.Rich,
+		ID:          kind.ID(),
+		Group:       kind.Group,
+		Version:     kind.Version,
+		Kind:        kind.Kind,
+		Namespaced:  kind.Namespaced,
+		Category:    string(kind.Category),
+		Subcategory: kind.Subcategory,
+		Title:       kind.Title,
+		Singular:    kind.Singular,
+		Rich:        kind.Rich,
 	}
 }
 
@@ -233,6 +237,228 @@ func toWorkloads(workloads []domain.Workload, now time.Time) []Workload {
 		out = append(out, toWorkload(workload, now))
 	}
 	return out
+}
+
+// Consumption is what a set of pods is using, against what they reserved.
+//
+// SHARED BY EVERY ROW THAT AGGREGATES PODS — a namespace and a controller —
+// so the two lists draw the same meter as the pod list, from the same fields,
+// with the same rules about what an absent denominator means. Three lists
+// each inventing their own shape is how three lists end up disagreeing about
+// what 85% is a percentage of.
+//
+// Both formatted and raw. The strings are what a cell and a caption print;
+// the numbers are what a chart plots and what its reference lines sit at, and
+// they are carried separately because the formatted CPU is rounded to two
+// decimals — enough to read, and wrong to plot or to add up.
+type Consumption struct {
+	// Pods is how many pods the figures cover, MeasuredPods how many of those
+	// reported a measurement. Fewer measured than pods means the total is
+	// real and short.
+	Pods         int `json:"pods"`
+	MeasuredPods int `json:"measuredPods"`
+	// MeasurablePods is how many COULD be measured — the ones on a node.
+	// metrics-server never reports a finished or unscheduled pod, so this is
+	// the denominator for "is this total short", not Pods.
+	MeasurablePods int `json:"measurablePods"`
+	// HasMetrics is whether there are figures to draw.
+	HasMetrics bool `json:"hasMetrics"`
+	// MetricsAvailable is whether the CLUSTER serves metrics at all.
+	//
+	// The UI must not collapse the two. An idle namespace on a metered
+	// cluster and a cluster with no metrics-server both measure nothing, and
+	// telling somebody to install one when they already have it is the bug
+	// this field exists to prevent.
+	MetricsAvailable bool `json:"metricsAvailable"`
+	// CPU and Memory are what the pods are using, formatted.
+	CPU    string `json:"cpu"`
+	Memory string `json:"memory"`
+	// The reference figures, formatted.
+	CPURequest    string `json:"cpuRequest"`
+	MemoryRequest string `json:"memoryRequest"`
+	CPULimit      string `json:"cpuLimit"`
+	MemoryLimit   string `json:"memoryLimit"`
+	// Whether there is a denominator at all. A zero percentage cannot stand
+	// in for these: a set of pods that DID reserve CPU and is idle also reads
+	// 0%, and the two must not draw the same thing.
+	HasCPURequest    bool `json:"hasCpuRequest"`
+	HasMemoryRequest bool `json:"hasMemoryRequest"`
+	HasCPULimit      bool `json:"hasCpuLimit"`
+	HasMemoryLimit   bool `json:"hasMemoryLimit"`
+	// Usage as a percentage of the request, and of the limit. The first says
+	// whether the reservation was right; only the second predicts throttling
+	// or a kill.
+	CPUPercent         float64 `json:"cpuPercent"`
+	MemoryPercent      float64 `json:"memoryPercent"`
+	CPULimitPercent    float64 `json:"cpuLimitPercent"`
+	MemoryLimitPercent float64 `json:"memoryLimitPercent"`
+	// The same figures raw, for sorting a column and plotting a chart: CPU in
+	// cores, memory in bytes.
+	CPUCores     float64 `json:"cpuCores"`
+	MemoryBytes  int64   `json:"memoryBytes"`
+	RequestCores float64 `json:"requestCores"`
+	RequestBytes int64   `json:"requestBytes"`
+	LimitCores   float64 `json:"limitCores"`
+	LimitBytes   int64   `json:"limitBytes"`
+}
+
+func toConsumption(usage domain.AggregateUsage) Consumption {
+	return Consumption{
+		Pods:               usage.Pods,
+		MeasuredPods:       usage.Measured,
+		MeasurablePods:     usage.Measurable,
+		HasMetrics:         usage.HasMetrics(),
+		MetricsAvailable:   usage.MetricsAvailable,
+		CPU:                formatMilliCores(usage.Usage.CPUMilli),
+		Memory:             formatBytes(usage.Usage.MemoryBytes),
+		CPURequest:         formatMilliCores(usage.Requests.CPUMilli),
+		MemoryRequest:      formatBytes(usage.Requests.MemoryBytes),
+		CPULimit:           formatMilliCores(usage.Limits.CPUMilli),
+		MemoryLimit:        formatBytes(usage.Limits.MemoryBytes),
+		HasCPURequest:      usage.HasCPURequest(),
+		HasMemoryRequest:   usage.HasMemoryRequest(),
+		HasCPULimit:        usage.HasCPULimit(),
+		HasMemoryLimit:     usage.HasMemoryLimit(),
+		CPUPercent:         usage.CPUPercent(),
+		MemoryPercent:      usage.MemoryPercent(),
+		CPULimitPercent:    usage.CPULimitPercent(),
+		MemoryLimitPercent: usage.MemoryLimitPercent(),
+		CPUCores:           float64(usage.Usage.CPUMilli) / 1000,
+		MemoryBytes:        usage.Usage.MemoryBytes,
+		RequestCores:       float64(usage.Requests.CPUMilli) / 1000,
+		RequestBytes:       usage.Requests.MemoryBytes,
+		LimitCores:         float64(usage.Limits.CPUMilli) / 1000,
+		LimitBytes:         usage.Limits.MemoryBytes,
+	}
+}
+
+// Application is one deployed instance and what it is made of.
+type Application struct {
+	// Instance is the app.kubernetes.io/instance label — the identity.
+	Instance  string `json:"instance"`
+	Namespace string `json:"namespace"`
+	// PartOf, Name, ManagedBy and Version are the other recommended labels,
+	// empty when nothing carries them.
+	PartOf    string `json:"partOf"`
+	Name      string `json:"name"`
+	ManagedBy string `json:"managedBy"`
+	Version   string `json:"version"`
+	// Members are the kinds it is made of, largest first.
+	Members []ApplicationMember `json:"members"`
+	// Objects is how many it holds in total.
+	Objects int `json:"objects"`
+	// What its pods are using, on exactly the terms a namespace row and a
+	// controller row use. See Consumption.
+	Consumption
+}
+
+// ApplicationMember is one kind's contribution to an application.
+type ApplicationMember struct {
+	Kind  string `json:"kind"`
+	Count int    `json:"count"`
+}
+
+// ApplicationInventory is every application found, and what was not.
+type ApplicationInventory struct {
+	Applications []Application `json:"applications"`
+	// Unlabelled is how many objects carried no instance label.
+	//
+	// The UI must show it. The labels are a convention rather than a
+	// guarantee, and a view that silently omits what does not carry them is
+	// worse than no view because it looks complete.
+	Unlabelled int `json:"unlabelled"`
+}
+
+func toApplicationInventory(inventory domain.ApplicationInventory) ApplicationInventory {
+	applications := make([]Application, 0, len(inventory.Applications))
+	for _, application := range inventory.Applications {
+		members := make([]ApplicationMember, 0, len(application.Members))
+		for _, member := range application.Members {
+			members = append(members, ApplicationMember{Kind: member.Kind, Count: member.Count})
+		}
+		applications = append(applications, Application{
+			Consumption: toConsumption(application.Usage),
+			Instance:    application.Instance,
+			Namespace:   application.Namespace.String(),
+			PartOf:      application.PartOf,
+			Name:        application.Name,
+			ManagedBy:   application.ManagedBy,
+			Version:     application.Version,
+			Members:     members,
+			Objects:     application.Objects,
+		})
+	}
+
+	return ApplicationInventory{Applications: applications, Unlabelled: inventory.Unlabelled}
+}
+
+// ConditionRef is one status condition, for classification.
+type ConditionRef struct {
+	Type   string `json:"type"`
+	Status string `json:"status"`
+	// Phase is the subject's own phase, where it has one — a pod's.
+	//
+	// The only context the classification takes, and it takes it because a
+	// finished pod carries Ready=False and ContainersReady=False for ever,
+	// correctly, so a rule reading type and status alone put two warnings on
+	// the panel of every healthy completed Job. Empty for everything that has
+	// no phase, which is most kinds.
+	Phase string `json:"phase"`
+}
+
+// ResourceCount is how many objects of one kind a namespace holds.
+type ResourceCount struct {
+	// KindID is the navigator handle, so the UI can open the list this
+	// counted without looking a kind up by name.
+	KindID string `json:"kindId"`
+	// Kind is the CamelCase singular, e.g. "ConfigMap".
+	Kind string `json:"kind"`
+	// Title is the plural display name, e.g. "ConfigMaps".
+	Title string `json:"title"`
+	// Count is how many exist. Meaningless when Unreadable is set.
+	Count int `json:"count"`
+	// Unreadable says, shortly, why the count is unknown.
+	//
+	// The UI must render this instead of the number rather than beside it: an
+	// unknown count shown as 0 tells somebody a namespace is empty when it
+	// may be full.
+	Unreadable string `json:"unreadable"`
+}
+
+// NamespaceInventory is what a namespace holds, as presented to the UI.
+type NamespaceInventory struct {
+	Namespace string `json:"namespace"`
+	// Counts holds the kinds that hold something, largest first, followed by
+	// any that could not be read.
+	Counts []ResourceCount `json:"counts"`
+	// Empty is how many kinds were counted and hold nothing.
+	Empty int `json:"empty"`
+	// Total is the sum of the known counts — of the built-in kinds only. The
+	// UI says so; custom resources are not counted.
+	Total int `json:"total"`
+	// Unreadable is how many kinds were refused.
+	Unreadable int `json:"unreadable"`
+}
+
+func toNamespaceInventory(inventory domain.NamespaceInventory) NamespaceInventory {
+	counts := make([]ResourceCount, 0, len(inventory.Counts))
+	for _, count := range inventory.Counts {
+		counts = append(counts, ResourceCount{
+			KindID:     count.Kind.ID(),
+			Kind:       count.Kind.Kind,
+			Title:      count.Kind.Title,
+			Count:      count.Count,
+			Unreadable: count.Unreadable,
+		})
+	}
+
+	return NamespaceInventory{
+		Namespace:  inventory.Namespace.String(),
+		Counts:     counts,
+		Empty:      inventory.Empty,
+		Total:      inventory.Total,
+		Unreadable: inventory.Unreadable,
+	}
 }
 
 // Event is a Kubernetes Event as presented to the UI.

@@ -13,6 +13,8 @@
   the same code that performs the write rather than by a second guess at it.
 -->
 <script lang="ts">
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
+  import { modal } from '$lib/modal'
   import Button from './Button.svelte'
   import {
     addKubeconfig,
@@ -60,6 +62,8 @@
    * every keystroke is noise — so the error only appears once typing pauses.
    */
   let debounce: ReturnType<typeof setTimeout> | null = null
+  /** Previews asked for so far, so a superseded one cannot land. */
+  let previewRequest = 0
   $effect(() => {
     const text = raw
     if (debounce) clearTimeout(debounce)
@@ -70,11 +74,22 @@
       return
     }
 
+    // THE DEBOUNCE IS NOT THE GUARD. It stops a request per keystroke; it
+    // does not stop two in flight from landing out of order, and this dialog
+    // exists to show what is about to happen before a file full of
+    // credentials is written. Paste one config, edit to another, and the
+    // first could land last — leaving the preview describing a paste that is
+    // no longer in the box, while `add()` posts the one that is.
+    const asked = ++previewRequest
+
     debounce = setTimeout(async () => {
       try {
-        preview = await previewKubeconfig(text)
+        const result = await previewKubeconfig(text)
+        if (asked !== previewRequest) return
+        preview = result
         previewError = null
       } catch (cause) {
+        if (asked !== previewRequest) return
         preview = null
         previewError = toApiError(cause).message
       }
@@ -112,12 +127,26 @@
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && open) close()
+    if (event.key !== 'Escape' || !open) return
+    if (!escape?.owns()) return
+    close()
   }
 
   const canAdd = $derived(
     !busy && preview !== null && preview.added.length > 0 && preview.conflicts.length === 0,
   )
+
+  /** Escape belongs to the innermost open layer. See $lib/escape. */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -137,6 +166,7 @@
              border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
       role="dialog"
       aria-modal="true"
+      use:modal
       aria-label="Add cluster"
     >
       {#if added}

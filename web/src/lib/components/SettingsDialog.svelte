@@ -14,10 +14,16 @@
   changing something with kubectl.
 -->
 <script lang="ts">
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
+  import { modal } from '$lib/modal'
   import {
     preferences,
     REFRESH_INTERVALS,
-    PAGE_SIZES,
+    DETAIL_MAX_REM,
+  DETAIL_MAX_SHARE,
+  DETAIL_MIN_REM,
+  DETAIL_WIDTHS,
+  PAGE_SIZES,
     THEME_PREFERENCES,
     THEME_LABELS,
     THRESHOLD_SCOPES,
@@ -58,6 +64,7 @@
     SAMPLING_INTERVALS,
   } from '$stores/history.svelte'
   import { accelerator } from '$lib/platform'
+  import { updates } from '$stores/updates.svelte'
   import Button from './Button.svelte'
   import CreditsPane from './CreditsPane.svelte'
   import {
@@ -121,15 +128,41 @@
 
   let section = $state<SectionID>('refresh')
 
+  /**
+   * Whether the stored share is one of the presets.
+   *
+   * A tolerance rather than equality, because a third is 0.3333… and because
+   * a width set by dragging lands wherever the pointer was — within a
+   * percentage point of a preset is that preset as far as anybody looking at
+   * the panel is concerned.
+   */
+  function matchesPreset(fraction: number): boolean {
+    return Math.abs(preferences.detailWidthFraction - fraction) < 0.01
+  }
+
   /** Loads the history settings the first time Settings is opened. */
   $effect(() => {
     if (open && !historySettings.loaded) void historySettings.load()
   })
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && open) onclose()
+    if (event.key !== 'Escape' || !open) return
+    if (!escape?.owns()) return
+    onclose()
   }
 
+
+  /** Escape belongs to the innermost open layer. See $lib/escape. */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
 </script>
 
 <!--
@@ -274,6 +307,7 @@
            bg-surface-container-high shadow-level-3"
     role="dialog"
     aria-modal="true"
+    use:modal
     aria-label="Settings"
   >
     <!-- Section navigation -->
@@ -407,6 +441,58 @@
             </div>
 
             <div class="border-t border-outline-variant pt-5">
+              <h3 class="text-title-medium text-on-surface">Detail panel width</h3>
+              <p class="mt-0.5 text-body-small text-on-surface-variant">
+                How much of the window the panel covers when an object is opened. Narrower
+                leaves more of the list readable behind it. A share rather than a size, so
+                it means the same on any screen — and the panel's own left edge can be
+                dragged to anything between, which is what these three set.
+              </p>
+              <p class="mt-1 text-body-small text-on-surface-variant/70">
+                The divider between a section's two columns drags too, and moves every
+                section at once. Double-click either edge to put it back.
+              </p>
+
+              <div class="mt-3 flex gap-2">
+                {#each DETAIL_WIDTHS as choice (choice.id)}
+                  <button
+                    type="button"
+                    onclick={() => preferences.setDetailWidth(choice.fraction)}
+                    aria-pressed={matchesPreset(choice.fraction)}
+                    title={choice.detail}
+                    class="state-layer h-9 min-w-24 rounded-xs border px-4 text-label-large
+                           transition-colors duration-150 ease-standard
+                           {matchesPreset(choice.fraction)
+                             ? 'border-transparent bg-secondary-container text-on-secondary-container'
+                             : 'border-outline text-on-surface-variant'}"
+                  >
+                    {choice.label}
+                  </button>
+                {/each}
+              </div>
+
+              <!-- A dragged width lands between the presets, and none of them
+                   then reads as pressed. Saying what it currently is beats
+                   three unlit buttons, which look like the setting is unset. -->
+              {#if !DETAIL_WIDTHS.some((choice) => matchesPreset(choice.fraction))}
+                <p class="mt-2 text-body-small text-on-surface-variant">
+                  Currently {Math.round(preferences.detailWidthFraction * 100)}% of the
+                  window, set by dragging the panel's edge.
+                </p>
+              {/if}
+
+              <!-- The clamp said out loud, because it is why a small window
+                   may not visibly change when this does: a quarter of a narrow
+                   laptop is already below the floor. -->
+              <p class="mt-2 text-body-small text-on-surface-variant/70">
+                Clamped either way — never under {DETAIL_MIN_REM * 16}px, which is the
+                narrowest that still fits a label and its value, and never over
+                {DETAIL_MAX_REM * 16}px or {DETAIL_MAX_SHARE * 100}% of the window,
+                whichever comes first.
+              </p>
+            </div>
+
+            <div class="border-t border-outline-variant pt-5">
               <h3 class="text-title-medium text-on-surface">Sidebar</h3>
               <label class="mt-3 flex cursor-pointer items-center gap-3 text-body-medium text-on-surface">
                 <input
@@ -490,6 +576,67 @@
           </section>
         {:else if section === 'notifications'}
           <section class="flex flex-col gap-6">
+            <!--
+              STATED PLAINLY, INCLUDING WHAT IS SENT. This is the only thing in
+              PodSteer that contacts anything but a cluster, and the project
+              spent its first releases promising it never would. Somebody who
+              read that promise deserves to find the reversal described here
+              rather than discover it in a proxy log.
+            -->
+            <div>
+              <h3 class="text-title-medium text-on-surface">Tell me about new versions</h3>
+              <p class="mt-0.5 text-body-small text-on-surface-variant">
+                Asks GitHub once a day whether a newer PodSteer has been released, and shows a
+                small badge beside Refresh when one has. It sends nothing about you — no version,
+                no platform, no identifier — and the comparison happens here, on the answer.
+                PodSteer never installs anything itself.
+              </p>
+
+              <label class="mt-3 flex items-center justify-between gap-4">
+                <span class="text-body-medium text-on-surface">
+                  Check for updates
+                  {#if !updates.permitted}
+                    <span class="ml-1 text-label-small text-on-surface-variant">
+                      — turned off on this machine by PODSTEER_UPDATE_CHECK
+                    </span>
+                  {/if}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={preferences.updateChecksEnabled}
+                  disabled={!updates.permitted}
+                  onchange={(event) =>
+                    preferences.setUpdateChecksEnabled(event.currentTarget.checked)}
+                  class="size-4 accent-primary disabled:opacity-40"
+                />
+              </label>
+
+              <div class="mt-3 flex items-center gap-3">
+                <button
+                  type="button"
+                  disabled={!preferences.updateChecksEnabled || !updates.permitted || updates.checking}
+                  onclick={() => void updates.refresh(true)}
+                  class="state-layer h-8 rounded-xs border border-outline px-3 text-label-large
+                         text-on-surface-variant transition-colors duration-150
+                         disabled:pointer-events-none disabled:opacity-40"
+                >
+                  {updates.checking ? 'Checking…' : 'Check now'}
+                </button>
+
+                <span class="text-body-small text-on-surface-variant/80">
+                  {#if !preferences.updateChecksEnabled}
+                    Nothing is sent while this is off.
+                  {:else if updates.status?.state === 'available'}
+                    {updates.status.latest} is available.
+                  {:else if updates.status?.state === 'current'}
+                    You are on the latest release.
+                  {:else if updates.status?.state === 'unknown'}
+                    Could not reach GitHub — that is not a problem with your cluster.
+                  {/if}
+                </span>
+              </div>
+            </div>
+
             <div>
               <h3 class="text-title-medium text-on-surface">Sound on a new finding</h3>
               <p class="mt-0.5 text-body-small text-on-surface-variant">

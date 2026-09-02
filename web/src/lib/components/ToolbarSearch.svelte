@@ -57,6 +57,13 @@
    *
    * Without the guard the effect re-runs whenever `input` is reassigned and
    * takes focus back from wherever it had moved — mid-edit, in the dialog.
+   *
+   * NOT SET BY THE YAML OR LOG PANES ANY MORE. Both are reached by switching
+   * a tab, and switching to a pane is a request to READ it: a find box taking
+   * focus meant the next arrow key filtered instead of scrolled, and a screen
+   * reader was dropped into a text field rather than at the content somebody
+   * had just asked for. The box is visible in the toolbar and one Tab away.
+   * Keep this for a search that APPEARS because it was asked for.
    */
   let focused = false
   $effect(() => {

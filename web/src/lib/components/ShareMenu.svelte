@@ -8,6 +8,9 @@
   no room below it for a dropdown to open into.
 -->
 <script lang="ts">
+  import { flash } from '$lib/flash.svelte'
+  import { menuKeys } from '$lib/menuKeys'
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import type { Component } from 'svelte'
   import { openURL } from '$lib/api/client'
   import { Share2, Mail, Copy, Check } from '@lucide/svelte'
@@ -61,7 +64,7 @@
   ]
 
   let open = $state(false)
-  let copied = $state(false)
+  const copied = flash(900)
 
   function share(href: string): void {
     void openURL(href)
@@ -70,11 +73,7 @@
 
   async function copyLink(): Promise<void> {
     await navigator.clipboard.writeText(SHARE_URL)
-    copied = true
-    setTimeout(() => {
-      copied = false
-      open = false
-    }, 900)
+    copied.show(() => (open = false))
   }
 
   function onWindowPointerDown(event: PointerEvent): void {
@@ -84,8 +83,28 @@
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') open = false
+    if (event.key !== 'Escape') return
+    // One Escape, one layer. See $lib/escape.
+    if (!escape?.owns()) return
+    open = false
   }
+
+  /**
+   * Escape belongs to the innermost open layer. See $lib/escape.
+   */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
+
+  // Nothing left running behind a component that has gone away.
+  $effect(() => () => copied.cancel())
 </script>
 
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onKeydown} />
@@ -108,6 +127,8 @@
       class="absolute bottom-full left-0 z-50 mb-1.5 w-48 overflow-hidden rounded-sm
              border border-outline-variant/60 bg-surface-container-high py-1.5 shadow-level-2"
       role="menu"
+      aria-label="Share PodSteer"
+      use:menuKeys={{ onclose: () => (open = false) }}
     >
       <p class="px-3 py-1 text-label-small font-semibold uppercase tracking-wider text-on-surface-variant/60">
         Share PodSteer
@@ -136,9 +157,9 @@
         role="menuitem"
         class="state-layer flex w-full cursor-pointer items-center gap-2.5 px-3 py-1.5 text-left
                text-body-medium transition-colors duration-75 hover:bg-surface-container-highest
-               {copied ? 'text-success' : 'text-on-surface'}"
+               {copied.on ? 'text-success' : 'text-on-surface'}"
       >
-        {#if copied}
+        {#if copied.on}
           <Check class="size-3.5 shrink-0" strokeWidth={2.5} />
           Copied!
         {:else}

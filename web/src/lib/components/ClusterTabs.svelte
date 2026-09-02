@@ -43,6 +43,7 @@
   import { preferences, THEME_LABELS } from '$stores/preferences.svelte'
   import { windowState } from '$stores/windowState.svelte'
   import SettingsDialog from './SettingsDialog.svelte'
+  import UpdateBadge from './UpdateBadge.svelte'
   import { Home, Server, Plus, X, RefreshCw, Moon, Sun, Monitor, Settings } from '@lucide/svelte'
 
   let settingsOpen = $state(false)
@@ -127,9 +128,14 @@
         <button
           type="button"
           onclick={() => workspace.focus(session.cluster.id)}
-          title="{session.cluster.id} — {session.cluster.host}"
+          title="{session.cluster.id} — {session.cluster.host} — {session.cluster.isReachable
+            ? 'reachable'
+            : 'not reachable'}"
+          aria-label="{session.cluster.id}, {session.cluster.isReachable
+            ? 'reachable'
+            : 'not reachable'}"
           aria-current={active ? 'page' : undefined}
-          class="no-drag flex h-full max-w-52 items-center gap-2 px-3
+          class="no-drag flex h-full max-w-52 items-center gap-2 pl-3 pr-7
                  text-label-medium transition-all duration-150 ease-standard
                  {active
                    ? 'bg-surface-container border-b-2 border-primary text-on-surface shadow-sm'
@@ -139,6 +145,14 @@
             class="size-3.5 shrink-0 {active ? 'text-primary' : 'text-on-surface-variant/60'}"
             strokeWidth={1.8}
           />
+          <!--
+            THE ONLY SIGNAL WAS THE COLOUR. A dead cluster and a live one
+            differed by a red or green dot, hidden from assistive technology
+            and indistinguishable to a red/green colour-blind reader — on the
+            control that says which cluster you are about to act on. The dot
+            stays as the glanceable form; the fact is now in the tab's own
+            accessible name and its tooltip.
+          -->
           <span
             class="size-1.5 shrink-0 rounded-full {toneFor(session.cluster.isReachable)}"
             aria-hidden="true"
@@ -179,6 +193,11 @@
   {/if}
 
   <div class="mx-1 h-5 w-px shrink-0 self-center bg-outline-variant/60" aria-hidden="true"></div>
+
+  <!-- Between the separator and Refresh, and ABSENT unless there is genuinely
+       a newer release. See UpdateBadge.svelte for why the quiet states show
+       nothing at all. -->
+  <UpdateBadge />
 
   <!-- Refresh: acts on whichever tab is in front. Nothing to refresh on the
        picker, so it is disabled rather than hidden — its position stays put. -->

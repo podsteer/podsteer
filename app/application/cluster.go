@@ -9,6 +9,8 @@ import (
 	"slices"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
 )
@@ -19,6 +21,11 @@ type ClusterServiceDeps struct {
 	Kubeconfig ports.KubeconfigPort
 	// Cluster reads cluster-scoped facts from an API server. Required.
 	Cluster ports.ClusterPort
+	// Workloads reads the pods a namespace summary counts. Required.
+	//
+	// A namespace is a name and a phase and nothing else as far as Kubernetes
+	// is concerned; everything worth knowing about one is what is inside it.
+	Workloads ports.WorkloadPort
 	// Metrics supplies node usage. Required, but allowed to fail.
 	Metrics ports.MetricsPort
 	// Events receives connection lifecycle events. Required.
@@ -52,6 +59,7 @@ type ClusterInvalidator interface {
 type ClusterService struct {
 	kubeconfig  ports.KubeconfigPort
 	cluster     ports.ClusterPort
+	workloads   ports.WorkloadPort
 	metrics     ports.MetricsPort
 	invalidator ClusterInvalidator
 	events      ports.EventPublisher
@@ -71,6 +79,8 @@ func NewClusterService(deps ClusterServiceDeps) (*ClusterService, error) {
 		return nil, errors.New("application: ClusterService requires a KubeconfigPort")
 	case deps.Cluster == nil:
 		return nil, errors.New("application: ClusterService requires a ClusterPort")
+	case deps.Workloads == nil:
+		return nil, errors.New("application: ClusterService requires a WorkloadPort")
 	case deps.Metrics == nil:
 		return nil, errors.New("application: ClusterService requires a MetricsPort")
 	case deps.Events == nil:
@@ -93,6 +103,7 @@ func NewClusterService(deps ClusterServiceDeps) (*ClusterService, error) {
 	return &ClusterService{
 		kubeconfig:  deps.Kubeconfig,
 		cluster:     deps.Cluster,
+		workloads:   deps.Workloads,
 		metrics:     deps.Metrics,
 		invalidator: deps.Invalidator,
 		events:      deps.Events,
@@ -234,6 +245,57 @@ func (s *ClusterService) ListNamespaces(ctx context.Context, id domain.ClusterID
 	})
 
 	return namespaces, nil
+}
+
+// ListNamespaceSummaries returns every namespace with what is running in it.
+//
+// TWO READS, CONCURRENTLY: the namespaces, and every pod in the cluster. The
+// second is the expensive one and there is no cheaper way to it — Kubernetes
+// has no per-namespace pod count, and asking each namespace separately turns
+// one request into one per namespace.
+//
+// A namespace list that is only names and phases is what every other client
+// shows, and it answers nothing: the questions actually asked of one are
+// whether a namespace is still in use, whether anything in it is broken, and
+// which of them is holding the cluster.
+func (s *ClusterService) ListNamespaceSummaries(ctx context.Context, id domain.ClusterID) ([]domain.NamespaceSummary, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return nil, fmt.Errorf("summarising namespaces: %w", err)
+	}
+
+	var (
+		namespaces []domain.Namespace
+		pods       []domain.Pod
+	)
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		result, err := s.cluster.ListNamespaces(groupCtx, id)
+		if err != nil {
+			return fmt.Errorf("listing namespaces of %q: %w", id, err)
+		}
+		namespaces = result
+		return nil
+	})
+	group.Go(func() error {
+		result, err := s.workloads.ListPods(groupCtx, id, domain.NamespaceAll)
+		if err != nil {
+			return fmt.Errorf("listing pods of %q: %w", id, err)
+		}
+		pods = result
+		return nil
+	})
+
+	if err := group.Wait(); err != nil {
+		return nil, fmt.Errorf("summarising namespaces: %w", err)
+	}
+
+	// The boolean matters: it is the difference between a cluster with no
+	// metrics-server and an idle namespace on a metered one, which measure
+	// the same and are not the same thing to say.
+	pods, measured := podsWithUsage(ctx, s.metrics, s.logger, id, domain.NamespaceAll, pods)
+
+	return domain.NewNamespaceSummaries(namespaces, pods, measured), nil
 }
 
 // ListNodes returns the nodes of a connected cluster, enriched with usage.

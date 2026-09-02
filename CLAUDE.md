@@ -58,6 +58,196 @@ section to the UI is an entry there, not a frontend change. Custom resources
 are appended per cluster by `DiscoverCustomKinds` — never globally, because two
 clusters run different operators.
 
+## The watch is an optimisation; polling is the truth
+
+`app/adapters/k8s/watch.go` mirrors a cluster's pods locally so a refresh reads
+memory instead of the network. Everything about it follows from one rule: **a
+read is never blocked on the store**. The path that answers when the store is
+not ready is the path that answered before the store existed, so there is no
+sync timeout to tune, no first-refresh stall, and the worst it can do is not
+help.
+
+That rule is also what makes RBAC tractable. An account scoped to one
+namespace cannot list pods cluster-wide; an account with a list/get Role
+cannot watch at all. Both are ordinary, both surface as a 403 on the
+reflector's first call, and both end the same way — the store is marked
+degraded, one debug line is logged, and reads carry on down the path they were
+using anyway. There are no per-namespace informers and no permission probe:
+the cost of finding out is one refused request per connection.
+
+Three things to know before touching it:
+
+- **Anything rendering a pod TEMPLATE must read the object's own manifest,
+  never the watch store.** A ReplicaSet in the store has had its template
+  stripped to the container images — that is most of why watching it is worth
+  anything — so a panel sourcing a template from there would show a container
+  with no environment, no volumes and no probes, and would be right about the
+  images. The drawer already fetches the full manifest; use that.
+- **Every transform has a contract test, and they are not optional.** The
+  stores hold stripped objects, so anything a mapper reads that its transform
+  removes goes quietly blank on clusters where the watch happens to be serving
+  — and stays correct everywhere else, which is the worst way to find out. It
+  has already caught one: probes. Extend a mapper, and the matching
+  `TestStripping…ChangesNothing…` fails.
+- **A set is never reused.** `Invalidate` cancels and *waits*, and a reconnect
+  builds a fresh set against the fresh client, so a reflector from before a
+  disconnect cannot write into a store a later read answers from. The client
+  is invalidated FIRST and the watch forgotten second; reversing that opens a
+  window in which a racing read ensures a set against the stale client and the
+  reconnect keeps it.
+- **A transient error demotes a store, and a supervisor promotes it back.**
+  There is no "the watch recovered" callback in client-go, so recovery is
+  detected from the reflector's last synced resource version moving past the
+  one recorded when the error arrived — evidence, never a timer. A cluster too
+  quiet to advance it stays on the network path, which costs a cluster that
+  quiet nothing. Promotion is a compare-and-swap in both places, because an
+  account with `list` and without `watch` can otherwise have its condemnation
+  overwritten by the sync that preceded it.
+- **The read cache stays in front of the store.** Reading it is free on the
+  wire and not free in CPU — five thousand pods mapped into domain values —
+  and the assessment and the open list still want them in the same instant.
+
+**Three kinds, and only three**: pods, ReplicaSets and Jobs — see
+`watchedKinds`. Pods are the great majority of what a poll transfers. The
+other two are the intermediates a controller's usage is attributed through, so
+the Deployment and CronJob pages read them on every refresh, and a ReplicaSet
+carries a whole pod template of which the mapper reads one field: on a
+201-pod cluster measured here there were 186 ReplicaSets, which is not the
+intuition anybody starts with. Their templates are therefore stripped to their
+images.
+
+Nothing else. Deployments, StatefulSets, DaemonSets, CronJobs, namespaces and
+nodes are small lists already coalesced by `readcache.go`. Events are
+high-churn and the store would hold the churn. Metrics can never be watched at
+all — `metrics.k8s.io` serves no watch verb — which sets the floor on what a
+refresh can cost.
+
+**A set nobody reads is stopped** after `idleAfter`, and the next read starts a
+fresh one exactly as the first did. That is what keeps "manual only" honest:
+somebody who chose to stop talking to their cluster should not have a stream
+open between button presses.
+
+On by default; `PODSTEER_LIVE_WATCH=false` is the way back, and it is not an
+approximation of the old behaviour — it is the same code path. One consequence
+worth knowing: a watch is a background stream, so an operator who set refresh
+to "manual only" still has one open once they have read a list. It carries
+only changes and is strictly less traffic than the polling it replaces, but it
+is a connection they did not press a button for.
+
+`live_test.go` exercises the real streaming list against the current
+kubeconfig context, which the fake clientset cannot — every other test in the
+package pins the fallback.
+
+## The polled lists are coalesced, and it is a singleflight not a cache
+
+Every refresh fires the assessment AND the open list at the same instant, and
+they overlap: on the namespace list both want every pod in the cluster; on a
+controller list both want that kind, and the consumption sums want the
+namespace's pods and metrics. Two identical requests leaving together is not a
+caching problem — it is the same request twice.
+
+`readcache.go` wraps the whole-collection reads a poll repeats — `ListPods`,
+`ListWorkloads`, `ListNamespaces`, `ListNodes`, `PodMetrics`, `NodeMetrics`.
+Identical reads in flight share one answer; a repeat within `readTTL` reuses
+the last.
+
+Three rules it holds to, each with a test:
+
+- **The window is shorter than the fastest refresh the application offers**
+  (5s), so it can never serve one tick's data to the next. It collapses a
+  pile-up inside one tick and nothing more. This is the opposite trade from
+  `filesystemCache` (a minute) and `backendCache` (a day), which hold answers
+  because those questions move slowly.
+- **A failure is never reused.** Handing the same refusal to every caller for
+  two seconds turns one denied read into a pane that stays broken after the
+  permission is granted.
+- **The shared fetch is detached from whoever started it.** Whoever arrives
+  first runs it and everyone else waits, so running it on that caller's
+  context makes one caller's cancellation everybody's —
+  `ListNamespaceSummaries` runs the namespace list and the cluster-wide pod
+  list under one errgroup, and on an account without `list namespaces` the
+  403 killed a pod list that account was permitted. The DEADLINE is kept and
+  the cancellation is not: how long an answer is worth waiting for is as true
+  for the second caller as the first. Waiters leave on their own context, so
+  a wedged fetch cannot pin them.
+- **Every write drops the cluster's cached reads** (`forgetReads`, deferred on
+  entry in each `ManagementPort` method). Deleting a pod and then being handed
+  the list that still contains it reads as the application ignoring what it
+  was told.
+
+Narrowed reads — one object, one node's pods, one workload's pods — go
+straight through. Nothing on-demand is cached.
+
+## Counting is `limit=1`, never `len(list)`
+
+Kubernetes has no endpoint that reports how many objects a namespace holds, and
+two places here need one: the namespace list's Pods column and the namespace
+panel's Contents section.
+
+`ResourcePort.CountResources` asks for **one** object and reads
+`metadata.remainingItemCount` — the server's own count of what it did not send.
+One request, constant payload, and no Secret's contents cross the wire to
+arrive at a number. `len(ListTable(...))` would be all three of those things
+wrong, and would silently cap at `tableListLimit`.
+
+Two rules that fall out of it, both tested:
+
+- **A refused count is not zero.** An account with `list pods` and without
+  `list secrets` must be told the Secrets count is unknown. `ResourceCount`
+  carries `Unreadable` for that, and the UI renders it *instead of* a number.
+- **The total is of built-in kinds.** Custom resources are excluded by
+  `domain.CountableKinds` because their number is unbounded — a cluster with
+  200 CRDs would make one panel 200 requests — so anything showing the total
+  says what it counted.
+
+The namespace LIST is different again: it counts pods by listing them
+cluster-wide once (`ClusterService.ListNamespaceSummaries`), because a count
+per namespace would be one request per row. That is the same cost the pod list
+already pays with the namespace filter on "all", and it is why
+`ListNamespaces` — which feeds the filter — stays a cheap read of names and is
+a separate call.
+
+## A pod belongs to the controller that OWNS it, not the one that selects it
+
+Attribution — which pods count towards a Deployment's CPU meter — goes through
+the pod's controlling `ownerReference`, resolved one hop where Kubernetes puts
+an intermediate: a Deployment's pods are owned by its ReplicaSets, a CronJob's
+by its Jobs. `domain.WorkloadConsumption` is the one rule, and both the list
+row and the detail panel go through it so they cannot disagree.
+
+It was briefly done by matching the controller's label selector instead, and
+that is worth recording as a mistake rather than rediscovering:
+
+- **A selector is not ownership.** Two controllers with overlapping selectors
+  are each charged the whole shared set, so a column sums to more than the
+  namespace it is in; a bare ReplicaSet wearing a Deployment's labels is
+  charged to the Deployment; an orphaned pod is charged to whatever still
+  matches it.
+- **The selector reaching the domain is lossy.** `matchLabels` in the k8s
+  mapper keeps `spec.selector.matchLabels` and drops `matchExpressions`, which
+  is fine for display and fatal for attribution: a controller selecting purely
+  by expression arrives with an EMPTY selector and is charged nothing, so a
+  healthy workload reports zero pods.
+- **It saved nothing.** The argument was that the owner chain costs a
+  ReplicaSet list per refresh — while the same refresh already lists every POD
+  in the namespace, an order of magnitude more.
+
+A pod nothing in the list owns is charged to **nobody**. Attributing an
+unattributable pod to something that merely looks similar reports usage
+against a thing that is not causing it.
+
+## "Nothing measured" and "no metrics API" are different, and both get said
+
+`domain.AggregateUsage` carries `Measured` (how many pods reported), and
+`MetricsAvailable` (whether the cluster served metrics at all). Collapsing
+them tells somebody with a working metrics-server to install one, every time a
+CronJob's pods finish or a Deployment scales to zero.
+
+`Measurable` is the third: metrics-server never reports a finished or
+unscheduled pod, so it is the denominator for "is this total short". Measuring
+against every pod made any namespace holding a completed Job permanently
+"partial" while claiming a total that was not short at all.
+
 ## The overview is analysis, and it lives in the domain
 
 `app/domain/overview.go` turns a cluster snapshot into a verdict: grouped
@@ -95,9 +285,11 @@ being unable to tell an unconfigured cluster from a broken application is the
 bug that put this here.
 
 A kubelet fallback for CPU and memory was considered and **deliberately not
-built**, even though `filesystems.go` already proves the mechanism works. See
-[docs/decisions/0001-no-kubelet-metrics-fallback.md](docs/decisions/0001-no-kubelet-metrics-fallback.md)
-for what would reverse that.
+built**, even though `filesystems.go` already proves the mechanism works: it
+would need `nodes/proxy` on every node, report a different measurement from
+metrics-server under the same column heading, and turn one absent add-on into
+two code paths that disagree. Do not add one without a decision recorded in
+`podsteer/business-docs`.
 
 Three sources beyond metrics-server behave the same way and are worth knowing
 about before adding a fourth:
@@ -117,10 +309,12 @@ about before adding a fourth:
   and ranks the matches by name, because a kube-prometheus-stack install
   returns several and only one answers PromQL. Finding nothing is the ordinary
   answer and never reaches `Unavailable`: a cluster with no Prometheus is not a
-  degraded cluster. PodSteer does not query it — see
-  [docs/decisions/0004-usage-history-is-sampled-not-stored.md](docs/decisions/0004-usage-history-is-sampled-not-stored.md)
-  for why advice is the whole feature, and why 48 hours of per-object usage on
-  disk was rejected.
+  degraded cluster. **PodSteer does not query it, and advice is the whole
+  feature**: a service listing establishes that something named
+  `prometheus-operated` exists, not that it scrapes this cluster or retains
+  anything, so the note claims only the former. Per-object usage is not written
+  to disk either — the recorded cluster history deliberately carries no object
+  names, and a file of per-pod series would reverse that.
 
 Dependencies point inward. `app/domain` and `app/ports` import nothing outside
 the standard library; if either ever needs `client-go`, something has been
@@ -156,15 +350,126 @@ Three rules there have subtleties worth not re-deriving:
 - **A correctly configured pod produces no findings**, and a test asserts it. A
   panel that always has something to say is one people stop reading.
 
+## The dependency map is two shapes, not one
+
+`app/domain/graph.go` builds both, and they are separate functions because the
+SUBJECT decides the structure: a pod's map is a chain with the pod in the
+middle, a workload's is a fan — one controller over however many pods it
+currently has. Pretending they are one shape would mean a pod field that is
+sometimes a list, and edges that mean different things depending on which it
+was.
+
+**EVERY EDGE IS A RELATIONSHIP KUBERNETES ACTUALLY HAS.** That rule is worth
+stating on its own, because breaking it is always the convenient thing to do
+and the map is used to reason about a cluster. A Service selects PODS and knows
+nothing about what created them; a ReplicaSet does not read a Secret, it
+carries a template declaring what the pods it creates will read. Both were once
+drawn to the controller — one edge instead of one per replica — and both were
+false. Connecting to the pods also surfaces the case the shortcut hid: a
+Service reaching only SOME of a workload's pods, which is what a half-finished
+rollout looks like.
+
+The one exception is a workload with NO pods, where nothing is mounting
+anything and the only true statement left is that the template declares them.
+The edge from the subject means that, and only in that case.
+
+Four more rules there are load-bearing and were each found the hard way:
+
+- **An empty selector matches nothing.** In the Kubernetes API an empty
+  selector on a Service means it has none at all — an ExternalName, or
+  Endpoints managed by hand. Read as "matches everything" it draws an edge to
+  every pod in the namespace.
+- **Container boxes are keyed by pod.** Every replica runs containers with the
+  same names, so keying on the name alone collapses three replicas' containers
+  into one box with three edges into it.
+- **One box per attached resource, however many pods read it.** Every replica
+  mounts the same ConfigMap, so the node is added once and each pod draws an
+  edge to it — three replicas must not produce three identical boxes.
+
+**A CronJob does not own pods.** It owns Jobs and those own pods, so its map
+carries the Job tier between them — anything else draws a relationship
+Kubernetes does not have, and loses the only thing that says which run a pod
+belongs to. `ListPodsForWorkload` finds them by **ownerReference, not by the
+`job-name` label**: the label is just a label, and a pod relabelled by hand
+would be claimed by a Job that never created it.
+
+**Attached resources come from the workload's own template, never from a
+running pod.** Sampling a pod is one read instead of a typed one per kind, and
+wrong twice: a CronJob between runs and a Deployment scaled to zero have no pod
+to sample, so their configuration did not appear at all; and a pod left from a
+previous revision carries the OLD template. A CronJob nests one level deeper
+than the rest — `spec.jobTemplate.spec.template.spec`.
+
+**What counts as a dependency is wider than the volume list.** `attachedFromSpec`
+reads volumes, **projected volume sources** (how most pods actually mount a CA
+bundle beside a ConfigMap), `envFrom` and `valueFrom`, generic **ephemeral**
+volumes, a CSI driver's `nodePublishSecretRef`, and **imagePullSecrets** — the
+last being one of the few whose absence stops a pod before its own
+configuration is read. Init containers count, because one that cannot find its
+Secret stops the pod before the application starts. The `default` service
+account is deliberately not drawn: every pod has one, so it would add a box to
+every map that distinguishes nothing.
+
+**Folding is a VIEW decision; the graph is always complete.** The backend emits
+every pod, every container and every edge — a map that quietly omitted a
+replica would be a map nobody could trust — and `web/src/lib/graphFold.ts`
+collapses a sibling set larger than five into one box that stands for its
+members, rewriting their edges onto it and deduplicating. Thirty pods reading
+one ConfigMap draw one line instead of thirty; expanding puts them back.
+
+Three rules keep folding honest, each with a test:
+
+- **A folded set is unwell if any member is**, and says how many. Folding must
+  never hide the thing somebody opened the map to find.
+- **The resource count in the toolbar is the COMPLETE one**, never the drawn
+  one, so a collapsed set cannot under-report a cluster.
+- **Nothing is invented.** A group node IS its members; every edge on it is an
+  edge one of them has, and the count is on the box so it never reads as one
+  thing.
+
+The domain marks sibling sets with `GraphNode.Group` — the workload that
+manages a pod, the pod that runs a container. Attached resources have none:
+they are shared between pods and belong to no single one.
+
+**The layout is dagre's, and that is deliberate.** `web/src/lib/graphLayout.ts`
+hand-rolled a layered layout and an orthogonal edge router for several
+iterations, and every fix traded one geometric case for another — siblings
+looping, a line through a box, a route arriving backwards. It is a hard,
+well-studied problem; dagre is the port of what Graphviz's `dot` does, and
+ArgoCD draws its own resource tree with it. What stays ours is the drawing: the
+boxes, the Lucide icons, hover, pan and zoom, and the rounding of the corners.
+
+**A followable node passes its Kubernetes `Kind` verbatim.** The drawer
+resolves references against the navigator's catalogue, which is keyed by
+`Kind` — so a lowercased plural matches nothing and the click silently does
+nothing at all. That is what it did on every node of every kind until it was
+noticed.
+
 ## Secrets are read on request, never on render
 
-See `docs/decisions/0003-secrets-are-read-on-request-only.md` before touching
-anything that displays a Secret. The short version: nothing resolves a Secret
+The rules here are load-bearing, so read them before touching anything that
+displays a Secret: nothing resolves a Secret
 when a pane opens, because Kubernetes' own guidance tells cluster operators to
 alert on exactly that pattern; `RevealSecretKey` returns one key and discards
 the rest in the adapter; and a Secret's values in the YAML tab are replaced
 with their decoded size before the object is serialised, because base64 is an
 encoding and not a cipher.
+
+## Escape belongs to one layer, and the layers say which
+
+Seventeen components listen for Escape on the window, so `stopPropagation`
+between them is meaningless — they share a target, and nothing propagates.
+`web/src/lib/escape.ts` holds a stack instead: each layer claims while it is
+open and only the innermost claim acts. Add a claim to anything new that
+closes on Escape, or it will close alongside whatever is underneath it — which
+is how one keystroke aimed at a row menu used to close the drawer and discard
+an unsaved YAML draft with it.
+
+The dialogs are the other half of the same idea. `aria-modal` without a focus
+trap is worse than neither: it tells assistive technology the background does
+not exist while Tab walks straight into it. `use:modal` (`web/src/lib/modal.ts`)
+is what makes the claim true — focus in, focus trapped, focus restored, and the
+background marked `inert`. Anything carrying `aria-modal` must use it.
 
 ## Two structural facts that look like mistakes
 
@@ -246,6 +551,15 @@ Three things about the scope are easy to get wrong and are handled in
   build-scope exception is guarded by a cross-check that fails if its package
   ever enters the shipped tree.
 
+A shipped package that publishes **no licence text** blocks the build too, and
+has two outcomes: the notice genuinely does not exist, which is recorded as an
+exception in `notices_test.go`, or it exists elsewhere in the same project —
+a monorepo where some tarballs carry the file and some do not — in which case
+`build/licences/notice-sources.json` names a **sibling already in the
+inventory** to copy it from. Never prose typed out from memory, and the
+collector fails if the sibling is missing or the package has since started
+shipping its own.
+
 `UNKNOWN` is a blocking tier, not an error — an unclassifiable licence must
 stop a build rather than be omitted from one. A package whose declared licence
 and licence text disagree resolves to `UNKNOWN` too.
@@ -282,6 +596,21 @@ code and is only reached by PR. Tags are `v1.2.3-dev-N` / `v1.2.3-rc-N` /
 Unlike a ParliTrack service, a tag here publishes artefacts and a GitHub
 Release — there is no environment to deploy into and no `iac-argocd` step.
 
+**macOS ships TWO assets, and the zip is not redundant.** The `.dmg` is what
+podsteer.com links from its button, because a zip unpacks to a `.app` in
+`~/Downloads` that most people then run from there. The zip is what
+`homebrew.yaml` fetches BY EXACT NAME to compute the cask's checksum, so
+removing it would break `brew install --cask podsteer` silently — the cask
+would point at an asset that is not there. Both are signed, notarised and
+stapled: the image is assessed with `spctl --type open`, not `--type execute`,
+which reports a disk image as rejected whatever its state.
+
+The asset names are a contract with podsteer.com, which composes them itself —
+`Release.AssetName` there, guarded by `TestAssetNameMatchesWhatCIPublishes`.
+GitHub resolves a release asset by exact name, so a rename here that is not
+made there produces a download page of buttons that 404 against a real
+release.
+
 ## Where this deviates from the Service Blueprint
 
 Two deviations, both forced by Wails rather than chosen:
@@ -309,7 +638,7 @@ client adapter that will be Apache-2.0 like everything else here. Two
 consequences for code written now:
 
 - **The community build must never require an account** or contact anything
-  PodSteer operates — no telemetry, no update check, no sign-in. That is a
+  PodSteer operates — no telemetry, no sign-in. That is a
   product commitment, and the CSP plus the absence of any HTTP client outside
   `adapters/k8s` is what keeps it honest.
 - **Anything remote is an outbound port with a local implementation first.**
@@ -352,8 +681,28 @@ somebody to check a VPN, and it is deliberately not retryable.
 ## External systems
 
 The local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`) and the API servers
-it names. Nothing else: no telemetry, no update check, no network access from
-the webview (see the CSP in `web/index.html`).
+it names — plus, since v0.2.0, `api.github.com` for the update check, and
+nothing else. No telemetry, no account, and still no network access from the
+webview (see the CSP in `web/index.html`).
+
+The webview's own policy is tightened at BUILD time, not in `index.html`:
+`connect-src 'self' ws: wss:` is what Vite's hot reload needs, and a bare
+scheme source permits a WebSocket to any host. A Vite plugin strips it from
+the shipped page and `app/adapters/assets/csp_test.go` asserts the result on
+the embedded bundle, so dev keeps what it needs and the two cannot drift.
+
+**The update check is the only outbound call that is not a cluster**, and the
+constraints on it are not negotiable style preferences. It sends no identifier
+of any kind, goes to GitHub rather than anything we
+operate (so no dataset exists here to correlate with the planned paid tier),
+never runs on the startup path, caches failures, and is off entirely under
+`PODSTEER_UPDATE_CHECK=false`. **Off means no request is made**, and that is
+asserted in `app/application/updates_test.go` by counting calls to the source
+rather than by checking the returned state — the opt-out is precisely what has
+silently broken in k9s, Terraform, dotnet, JetBrains and Docker Desktop.
+
+If a future paid tier wants a client-side call, **it does not get to reuse this
+one.** That is the creep path this ADR exists to make visible.
 
 The kubeconfig is **read on every call and written in exactly one place**:
 `KubeconfigPort.Merge`, behind Add cluster. Everything about that write is

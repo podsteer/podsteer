@@ -24,6 +24,9 @@
   relied on to show.
 -->
 <script lang="ts">
+  import { menuKeys } from '$lib/menuKeys'
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
+  import { modal } from '$lib/modal'
   import Button from './Button.svelte'
   import { DEFAULT_PROJECT_ID, organisation } from '$stores/organisation.svelte'
   import { workspace } from '$stores/workspace.svelte'
@@ -283,6 +286,9 @@
 
   function onKeydown(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || !open) return
+    // Only when nothing nearer holds it — this dialog already layers its own
+    // Escape internally, and the same rule applies between components.
+    if (!escape?.owns()) return
     // Escape unwinds the innermost thing first: a menu, then a rename, then
     // the dialog itself.
     if (menuFor) closeMenu()
@@ -295,6 +301,18 @@
     node.focus()
     node.select()
   }
+
+  /** Escape belongs to the innermost open layer. See $lib/escape. */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
 </script>
 
 <svelte:window onkeydown={onKeydown} ondragend={endDrag} onpointerdown={onPointerDown} />
@@ -324,6 +342,7 @@
              border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
       role="dialog"
       aria-modal="true"
+      use:modal
       aria-label="Projects and groups"
     >
     <h2 class="text-headline-small text-on-surface">Projects and groups</h2>
@@ -442,6 +461,7 @@
                 <div
                   role="menu"
                   aria-label="{project.name} actions"
+                  use:menuKeys={{ onclose: closeMenu }}
                   use:anchorMenu={{ rect: menuAnchor, key: null }}
                   class="fixed z-[60] w-52 overflow-hidden rounded-sm border
                          border-outline-variant bg-surface-container-highest py-1 shadow-level-2"
@@ -556,6 +576,7 @@
                     <div
                       role="menu"
                       aria-label="{group.name} actions"
+                      use:menuKeys={{ onclose: closeMenu }}
                       use:anchorMenu={{ rect: menuAnchor, key: movingGroup }}
                       class="fixed z-[60] max-h-[60vh] w-56 overflow-y-auto rounded-sm border
                              border-outline-variant bg-surface-container-highest py-1 shadow-level-2"

@@ -8,7 +8,9 @@
 
 A fast, native desktop client for Kubernetes.
 
-**[podsteer.com](https://podsteer.com)** · [What it does](https://podsteer.com/#what-it-does) · [Compared to k9s, Lens and others](https://podsteer.com/compare/) · [FAQ](https://podsteer.com/#faq)
+**[podsteer.com](https://podsteer.com)** &nbsp;|&nbsp; [What it does](https://podsteer.com/#what-it-does) &nbsp;|&nbsp; [Compared to k9s, Lens and others](https://podsteer.com/compare/) &nbsp;|&nbsp; [FAQ](https://podsteer.com/#faq)
+
+&nbsp;
 
 Every other Kubernetes client hands you a pod list and leaves you to work out
 what is wrong. PodSteer reads the cluster and tells you — findings ranked and
@@ -19,6 +21,12 @@ It is built on [Wails](https://wails.io) v2: a Go backend talking to the
 operating system's own webview, rather than a bundled Chromium. There is no
 second browser engine in the process tree, which is where most of an
 Electron-based client's memory and startup time go.
+
+&nbsp;
+
+🔝 [back to top](#podsteer)
+
+&nbsp;
 
 ## Installing
 
@@ -31,11 +39,15 @@ brew trust podsteer/tap
 brew install --cask podsteer
 ```
 
+&nbsp;
+
 `brew trust` is not a formality and not specific to PodSteer: Homebrew refuses
 to load a cask from a third-party tap until you say you trust it, because a
 cask is code that runs on your machine at install time. Every tap outside
 Homebrew's own needs it. You can read what you are trusting first — it is one
 file, [`Casks/podsteer.rb`](https://github.com/podsteer/homebrew-tap/blob/HEAD/Casks/podsteer.rb).
+
+&nbsp;
 
 **Linux and Windows** — download from
 [the latest release](https://github.com/podsteer/podsteer/releases/latest) and
@@ -50,6 +62,12 @@ here until it is.
 
 Every release publishes SHA-256 checksums and a CycloneDX SBOM alongside the
 binaries.
+
+&nbsp;
+
+🔝 [back to top](#podsteer)
+
+&nbsp;
 
 ## Status
 
@@ -71,6 +89,12 @@ the present — and is deliberately presented as the narrow window it is.
 [podsteer.com/download](https://podsteer.com/download/) carries the same
 downloads with a little more context.
 
+&nbsp;
+
+🔝 [back to top](#podsteer)
+
+&nbsp;
+
 ## Requirements
 
 - Go 1.26+
@@ -79,12 +103,20 @@ downloads with a little more context.
   `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
 - A kubeconfig at `$KUBECONFIG` or `~/.kube/config`
 
+&nbsp;
+
+🔝 [back to top](#podsteer)
+
+&nbsp;
+
 ## Running it
 
 ```sh
 make deps     # frontend dependencies + go mod tidy
 make run      # build it, then launch it with logs in your terminal
 ```
+
+&nbsp;
 
 `make run` produces the real packaged artefact and starts it in the foreground,
 so application logs land in the terminal and Ctrl-C stops it. Add
@@ -100,11 +132,19 @@ A locally built app is self-signed by Wails, so macOS runs it without
 complaint. Downloaded release artefacts are a different matter — see
 [docs/RELEASING.md](docs/RELEASING.md#code-signing).
 
+&nbsp;
+
+🔝 [back to top](#podsteer)
+
+&nbsp;
+
 ## Architecture
 
 Hexagonal (ports and adapters) with a domain-driven core. The whole point of
 the layering is the direction of the arrows: **dependencies point inward**, and
 the domain knows nothing about Kubernetes, Wails, or the UI.
+
+&nbsp;
 
 ```text
                     ┌─────────────────────────────┐
@@ -123,18 +163,26 @@ the domain knows nothing about Kubernetes, Wails, or the UI.
                         objects, events; stdlib only
 ```
 
-| Directory            | Responsibility                                                |
-| -------------------- | ------------------------------------------------------------- |
-| `app/domain`         | `Cluster`, `Namespace`, `Pod`; invariants and derived status  |
-| `app/ports`          | Interfaces: what the app offers, and what it needs            |
-| `app/application`    | Use cases; orchestration, ordering, event publication         |
-| `app/adapters/k8s`   | `client-go` + `cli-runtime`; the anti-corruption layer        |
-| `app/adapters/wails` | Bound structs and DTOs — the frontend API contract            |
-| `app/cmd`            | Composition root; the only place dependencies are constructed |
-| `web/src`            | Svelte 5 UI, Material Design 3 tokens over Tailwind v4        |
+&nbsp;
+
+| Directory             | Responsibility                                                |
+| :---                  | :---                                                          |
+| `app/domain`          | `Cluster`, `Namespace`, `Pod`; invariants and derived status  |
+| `app/ports`           | Interfaces: what the app offers, and what it needs            |
+| `app/application`     | Use cases; orchestration, ordering, event publication         |
+| `app/adapters/k8s`    | `client-go` + `cli-runtime`; the anti-corruption layer        |
+| `app/adapters/wails`  | Bound structs and DTOs — the frontend API contract            |
+| `app/cmd`             | Composition root; the only place dependencies are constructed |
+| `web/src`             | Svelte 5 UI, Material Design 3 tokens over Tailwind v4        |
 
 A concrete payoff: the entire `application` test suite runs against hand-written
 fakes with no cluster, no HTTP and no Kubernetes types in sight.
+
+&nbsp;
+
+🔝 [back to top](#podsteer)
+
+&nbsp;
 
 ### Performance choices
 
@@ -144,21 +192,35 @@ fakes with no cluster, no HTTP and no Kubernetes types in sight.
   spawn a credential-plugin process; that cost is paid once.
 - **client-go's 5 QPS default raised**, because it is sized for a controller's
   background load, not for a UI that fans out on navigation.
-- **No sourcemaps, no webfonts, no icon font** in the embedded bundle. The
-  frontend is ~67 kB of JavaScript and ~21 kB of CSS.
+- **No sourcemaps, no webfonts, no icon font** in the embedded bundle — the
+  application starts from what it ships with and fetches nothing to render.
+
+&nbsp;
+
+🔝 [back to top](#podsteer)
+
+&nbsp;
 
 ## Configuration
 
 Everything is optional and prefixed `PODSTEER_`:
 
-| Variable                   | Default                         | Purpose                       |
-| -------------------------- | ------------------------------- | ----------------------------- |
-| `PODSTEER_KUBECONFIG`      | `$KUBECONFIG`, `~/.kube/config` | Alternative kubeconfig        |
-| `PODSTEER_QPS`             | `50`                            | Sustained request rate        |
-| `PODSTEER_BURST`           | `100`                           | Burst allowance               |
-| `PODSTEER_REQUEST_TIMEOUT` | `30s`                           | Per-call deadline             |
-| `PODSTEER_LOG_LEVEL`       | `info`                          | `debug`/`info`/`warn`/`error` |
-| `PODSTEER_LOG_SOURCE`      | `false`                         | Include source file and line  |
+| Variable                    | Default                         | Purpose                                         |
+| :---                        | :---                            | :---                                            |
+| `PODSTEER_KUBECONFIG`       | `$KUBECONFIG`, `~/.kube/config` | Alternative kubeconfig                          |
+| `PODSTEER_QPS`              | `50`                            | Sustained request rate                          |
+| `PODSTEER_BURST`            | `100`                           | Burst allowance                                 |
+| `PODSTEER_REQUEST_TIMEOUT`  | `30s`                           | Per-call deadline                               |
+| `PODSTEER_LOG_LEVEL`        | `info`                          | `debug`/`info`/`warn`/`error`                   |
+| `PODSTEER_LOG_SOURCE`       | `false`                         | Include source file and line                    |
+| `PODSTEER_UPDATE_CHECK`     | `true`                          | `false` disables the update check machine-wide  |
+| `PODSTEER_LIVE_WATCH`       | `true`                          | `false` re-lists pods instead of watching them  |
+
+&nbsp;
+
+🔝 [back to top](#podsteer)
+
+&nbsp;
 
 ## Contributing and releasing
 
@@ -181,6 +243,12 @@ make test     # go test -race ./...
 make tag show # what is actually released right now
 ```
 
+&nbsp;
+
+🔝 [back to top](#podsteer)
+
+&nbsp;
+
 ## Security
 
 PodSteer reads *and* writes: it can delete objects, scale and restart
@@ -189,9 +257,35 @@ with the credentials your kubeconfig already grants, and it enforces no
 permissions of its own — restricting what it may do is a matter of restricting
 those credentials.
 
-What it does not do is talk to anyone else. There is no account, no telemetry
-and no update check, and the webview is locked down by a CSP that forbids every
-remote origin — all cluster traffic goes through the Go process, never the
-page.
+There is no account and no telemetry, and the webview is locked down by a CSP
+that forbids every remote origin — all cluster traffic goes through the Go
+process, never the page.
+
+The one thing it contacts besides your clusters is GitHub, once a day, to see
+whether a newer release exists — and only if you leave that on. It sends no
+version, no platform and no identifier; the comparison happens locally. Switch
+it off in Settings → Notifications, or set `PODSTEER_UPDATE_CHECK=false` to
+disable it for a whole machine. [SECURITY.md](SECURITY.md) says exactly what is
+and is not sent.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+&nbsp;
+
+🔝 [back to top](#podsteer)
+
+&nbsp;
+
+&nbsp;
+
+---
+
+### PodSteer
+
+[Website](https://podsteer.com) &nbsp;|&nbsp; [LinkedIn](https://www.linkedin.com/company/podsteer) &nbsp;|&nbsp; [BlueSky](https://bsky.app/profile/podsteer.com) &nbsp;|&nbsp; [GitHub](https://github.com/podsteer)
+
+A [Cloudresty](https://cloudresty.com/) project
+
+<sub>&copy; PodSteer</sub>
+
+&nbsp;

@@ -65,6 +65,16 @@ type Config struct {
 	// defaultUserAgent.
 	UserAgent string
 
+	// LiveWatch mirrors a cluster's pods locally instead of re-listing them
+	// on every refresh. See watch.go.
+	//
+	// A SWITCH BECAUSE IT IS AN OPTIMISATION, and an optimisation that talks
+	// to somebody's cluster differently deserves a way back. Off restores the
+	// polling behaviour exactly — not an approximation of it, the same code
+	// path, because the fallback IS that path rather than a reimplementation
+	// of it.
+	LiveWatch bool
+
 	// EnvReady is closed once the process PATH has been resolved, if it is
 	// being resolved at all. Nil means it is not, and nothing waits.
 	//

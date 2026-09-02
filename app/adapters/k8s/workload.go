@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -16,9 +17,82 @@ import (
 	"github.com/podsteer/podsteer/app/domain"
 )
 
+// ListPods returns pods in a namespace, or across every namespace.
+//
+// Shared through the read cache: the assessment lists every pod on every
+// refresh whatever is on screen, and so does the namespace list, and on a
+// controller list the consumption sums do it for one namespace. See
+// readcache.go — identical reads in one tick become one request.
+func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error) {
+	// ONE NAMESPACE OUT OF A READ THAT ALREADY COVERS IT. The assessment
+	// lists every pod in the cluster on every refresh whatever is on screen,
+	// so on a controller page the cluster-wide read is in flight beside this
+	// one — and a namespace's pods are a subset of it. Waiting for the read
+	// already under way and filtering costs nothing on the wire.
+	//
+	// Only ever a reuse, never a promotion: an account that may list one
+	// namespace and not the cluster has no such read to borrow, so this
+	// misses and the narrow request goes out as before.
+	if !namespace.IsAll() {
+		if all, borrowed := borrow[[]domain.Pod](ctx, &a.reads, readKey(id.String(), "pods", "")); borrowed {
+			return podsIn(all, namespace), nil
+		}
+	}
+
+	// Starts watching this cluster if nothing is yet, and does not wait: this
+	// call is about to answer from the network either way, and whether the
+	// store ever becomes useful is decided in the background.
+	a.watches.ensure(id, func() (kubernetes.Interface, error) { return a.factory.clientFor(id) })
+
+	// THE CACHE STAYS IN FRONT OF THE STORE. Reading the store is free on the
+	// wire but not free in CPU — it is five thousand pods mapped into domain
+	// values — and the assessment and the open list both want them in the
+	// same instant. Coalescing that is the same job it was doing before, so
+	// the mapping happens once per tick rather than once per caller.
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "pods", namespace.String()), func(ctx context.Context) ([]domain.Pod, error) {
+		if stored, serving := watched[*corev1.Pod](a.watches, id, watchPods); serving {
+			return mapWatchedPods(id, stored, namespace)
+		}
+		return a.listPods(ctx, id, namespace)
+	})
+}
+
+// mapWatchedPods turns the store's pods into domain values, narrowed to one
+// namespace.
+//
+// A pod that will not map is SKIPPED rather than failing the read: the store
+// holds whatever the cluster sent, and one unmappable object must not empty a
+// list of five thousand. That matches how the list path already treats them.
+func mapWatchedPods(id domain.ClusterID, watched []*corev1.Pod, namespace domain.NamespaceName) ([]domain.Pod, error) {
+	pods := make([]domain.Pod, 0, len(watched))
+	for _, pod := range watched {
+		if !namespace.IsAll() && pod.Namespace != namespace.String() {
+			continue
+		}
+		mapped, err := mapPod(id, pod)
+		if err != nil {
+			continue
+		}
+		pods = append(pods, mapped)
+	}
+	return pods, nil
+}
+
+// podsIn narrows a cluster-wide read to one namespace, into a slice of its
+// own — callers sort what they are given.
+func podsIn(pods []domain.Pod, namespace domain.NamespaceName) []domain.Pod {
+	narrowed := make([]domain.Pod, 0, len(pods))
+	for _, pod := range pods {
+		if pod.Namespace() == namespace {
+			narrowed = append(narrowed, pod)
+		}
+	}
+	return narrowed
+}
+
 // ListPods returns the pods in namespace, or across every namespace when it is
 // domain.NamespaceAll.
-func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error) {
+func (a *Adapter) listPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error) {
 	op := fmt.Sprintf("listing pods in %q of %q", namespace, id)
 
 	client, err := a.factory.clientFor(id)
@@ -53,12 +127,66 @@ func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace d
 	return pods, nil
 }
 
+// ListWorkloads returns controllers of one kind.
+//
+// Cached, which is what makes the controller list's meters free: the list and
+// its consumption sums both ask for the same controllers in the same tick,
+// and the assessment asks for all six kinds alongside.
+func (a *Adapter) ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
+	a.watches.ensure(id, func() (kubernetes.Interface, error) { return a.factory.clientFor(id) })
+
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "workloads", string(kind), namespace.String()), func(ctx context.Context) ([]domain.Workload, error) {
+		// Only the two that are watched, and only because they are the ones a
+		// refresh re-reads: ReplicaSets stand between a Deployment and its
+		// pods, Jobs between a CronJob and its. The other four are one small
+		// list each and go to the cluster.
+		switch kind {
+		case domain.WorkloadReplicaSet:
+			if stored, serving := watched[*appsv1.ReplicaSet](a.watches, id, watchReplicaSets); serving {
+				return mapWatched(id, stored, namespace, mapReplicaSet), nil
+			}
+		case domain.WorkloadJob:
+			if stored, serving := watched[*batchv1.Job](a.watches, id, watchJobs); serving {
+				return mapWatched(id, stored, namespace, mapJob), nil
+			}
+		}
+		return a.listWorkloads(ctx, id, kind, namespace)
+	})
+}
+
+// mapWatched turns stored objects into domain values, narrowed to one
+// namespace.
+//
+// An object that will not map is SKIPPED rather than failing the read: the
+// store holds whatever the cluster sent, and one unmappable object must not
+// empty a list of thousands. That matches how the list path already treats
+// them — see Adapter.collect.
+func mapWatched[T interface{ GetNamespace() string }, R any](
+	id domain.ClusterID,
+	stored []T,
+	namespace domain.NamespaceName,
+	convert func(domain.ClusterID, T) (R, error),
+) []R {
+	mapped := make([]R, 0, len(stored))
+	for _, item := range stored {
+		if !namespace.IsAll() && item.GetNamespace() != namespace.String() {
+			continue
+		}
+		value, err := convert(id, item)
+		if err != nil {
+			continue
+		}
+		mapped = append(mapped, value)
+	}
+	return mapped
+}
+
 // ListWorkloads returns controllers of the given kind.
 //
 // One method rather than six because the caller's question is the same in
 // every case, and the typed clients differ only in which List to call. The
 // per-kind translation lives in the mapper.
-func (a *Adapter) ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
+func (a *Adapter) listWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
 	op := fmt.Sprintf("listing %ss in %q of %q", kind, namespace, id)
 
 	client, err := a.factory.clientFor(id)
@@ -251,6 +379,66 @@ func selectorForWorkload(
 //
 // For Deployments, this returns pods owned by the deployment's ReplicaSets.
 // For StatefulSets and DaemonSets, this returns pods directly owned by the workload.
+// ListPodsOnNode returns the pods the scheduler has placed on one node.
+//
+// Across every namespace deliberately: "what is running on this machine" is a
+// question about the machine, and an operator draining a node or chasing a
+// noisy neighbour does not care which namespace the answer is in. RBAC decides
+// what comes back — an account scoped to one namespace sees that namespace's
+// pods on the node and no error, which is the correct partial answer rather
+// than a refusal.
+func (a *Adapter) ListPodsOnNode(ctx context.Context, id domain.ClusterID, nodeName string) ([]domain.Pod, error) {
+	op := fmt.Sprintf("listing pods on node %q of %q", nodeName, id)
+
+	if strings.TrimSpace(nodeName) == "" {
+		return nil, fmt.Errorf("%s: no node named", op)
+	}
+
+	client, err := a.factory.clientFor(id)
+	if err != nil {
+		return nil, err
+	}
+
+	// `spec.nodeName` is one of the few fields the API server indexes for
+	// pods, so this is served from that index rather than by listing the
+	// cluster and discarding most of it.
+	list, err := client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector:   fields.OneTermEqualSelector("spec.nodeName", nodeName).String(),
+		ResourceVersion: cachedResourceVersion,
+	})
+	if err != nil {
+		return nil, classify(op, err)
+	}
+
+	pods := make([]domain.Pod, 0, len(list.Items))
+	for i := range list.Items {
+		pod, err := mapPod(id, &list.Items[i])
+		if err != nil {
+			// One object the domain rejects is a mapping bug, not a reason to
+			// tell somebody their node is empty.
+			a.logger.WarnContext(ctx, "skipping unmappable pod",
+				slog.String("cluster", id.String()),
+				slog.String("node", nodeName),
+				slog.String("name", list.Items[i].Name),
+				slog.String("error", err.Error()))
+			continue
+		}
+		pods = append(pods, pod)
+	}
+	return pods, nil
+}
+
+// ownedBy reports whether an owner of the given kind and name controls this
+// object.
+func ownedBy(owners []metav1.OwnerReference, kind, name string) bool {
+	for _, owner := range owners {
+		if owner.Kind == kind && owner.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error) {
 	client, err := a.factory.clientFor(id)
 	if err != nil {
@@ -330,10 +518,57 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 		}
 		podList.Items = filteredPods
 
-	case domain.WorkloadJob, domain.WorkloadCronJob:
-		// Jobs and CronJobs don't have the same pod ownership model
-		// For now, return empty list
-		return []domain.Pod{}, nil
+	case domain.WorkloadJob:
+		// BY OWNER REFERENCE, not by the `job-name` label. The label is set by
+		// the Job controller and is the usual shortcut, but it is also just a
+		// label: anything may carry it, and a pod relabelled by hand would be
+		// claimed by a Job that never created it. The ownerReference is what
+		// the controller itself uses to decide what is its.
+		all, err := client.CoreV1().Pods(namespace.String()).
+			List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
+		if err != nil {
+			return nil, classify(fmt.Sprintf("listing pods for job %q", name), err)
+		}
+
+		podList = &corev1.PodList{}
+		for i := range all.Items {
+			if ownedBy(all.Items[i].OwnerReferences, "Job", name) {
+				podList.Items = append(podList.Items, all.Items[i])
+			}
+		}
+
+	case domain.WorkloadCronJob:
+		// TWO HOPS. A CronJob owns Jobs and a Job owns Pods; nothing links a
+		// CronJob to a pod directly, which is why this used to return nothing
+		// at all and a CronJob's map drew a box over empty space.
+		jobs, err := client.BatchV1().Jobs(namespace.String()).
+			List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
+		if err != nil {
+			return nil, classify(fmt.Sprintf("listing jobs for cronjob %q", name), err)
+		}
+
+		owned := make(map[string]bool)
+		for i := range jobs.Items {
+			if ownedBy(jobs.Items[i].OwnerReferences, "CronJob", name) {
+				owned[jobs.Items[i].Name] = true
+			}
+		}
+
+		all, err := client.CoreV1().Pods(namespace.String()).
+			List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
+		if err != nil {
+			return nil, classify(fmt.Sprintf("listing pods for cronjob %q", name), err)
+		}
+
+		podList = &corev1.PodList{}
+		for i := range all.Items {
+			for _, owner := range all.Items[i].OwnerReferences {
+				if owner.Kind == "Job" && owned[owner.Name] {
+					podList.Items = append(podList.Items, all.Items[i])
+					break
+				}
+			}
+		}
 
 	default:
 		return nil, fmt.Errorf("unsupported workload kind: %s", kind)

@@ -17,6 +17,7 @@ import {
   Disconnect as bindDisconnect,
   ListClusters as bindListClusters,
   ListNamespaces as bindListNamespaces,
+  ListNamespaceSummaries as bindListNamespaceSummaries,
   ListNodes as bindListNodes,
   PreviewKubeconfig as bindPreviewKubeconfig,
   ReadKubeconfigFile as bindReadKubeconfigFile,
@@ -28,11 +29,19 @@ import {
   ListEventsForResource as bindListEventsForResource,
   ListKinds as bindListKinds,
   ListTable as bindListTable,
+  NamespaceInventory as bindNamespaceInventory,
+  ClassifyConditions as bindClassifyConditions,
 } from '$lib/wailsjs/go/wails/BrowseAPI'
 import {
   ListPods as bindListPods,
   ListWorkloads as bindListWorkloads,
   ListPodsForWorkload as bindListPodsForWorkload,
+  WorkloadUsage as bindWorkloadUsage,
+  WorkloadConsumption as bindWorkloadConsumption,
+  ListApplications as bindListApplications,
+  ListPodsOnNode as bindListPodsOnNode,
+  PodGraph as bindPodGraph,
+  WorkloadGraph as bindWorkloadGraph,
 } from '$lib/wailsjs/go/wails/WorkloadAPI'
 import {
   ScaleWorkload as bindScaleWorkload,
@@ -68,6 +77,8 @@ export type Cluster = wails.Cluster
 export type KubeconfigMerge = wails.KubeconfigMerge
 /** A namespace in a connected cluster. */
 export type Namespace = wails.Namespace
+
+export type NamespaceSummary = wails.NamespaceSummary
 /** A pod, with derived status and measured usage. */
 export type Pod = wails.Pod
 /** One container within a pod. */
@@ -78,12 +89,21 @@ export type PortForward = wails.PortForward
 export type Node = wails.Node
 /** A pod-managing controller. */
 export type Workload = wails.Workload
+
+export type Consumption = wails.Consumption
+
+export type ApplicationInventory = wails.ApplicationInventory
+export type Application = wails.Application
 /** A Kubernetes Event. */
 export type K8sEvent = wails.Event
 /** A browsable kind, as shown in the navigator. */
 export type ResourceKind = wails.ResourceKind
 /** A generically browsed kind, with server-printed columns. */
 export type ResourceTable = wails.ResourceTable
+
+export type NamespaceInventory = wails.NamespaceInventory
+export type ConditionRef = wails.ConditionRef
+export type ResourceCount = wails.ResourceCount
 /** One column of a generic table. */
 export type TableColumn = wails.TableColumn
 /** One row of a generic table. */
@@ -101,6 +121,7 @@ export type HistorySettings = wails.HistorySettings
 /** An assessed cluster: what is wrong, what is left, what is running. */
 export type Overview = wails.Overview
 export type MetricsBackend = wails.MetricsBackend
+export type PodGraph = wails.PodGraph
 /** One problem, aggregated across the objects it affects. */
 export type Finding = wails.Finding
 
@@ -206,6 +227,27 @@ export function listNamespaces(clusterId: string): Promise<Namespace[]> {
   return call(() => bindListNamespaces(clusterId))
 }
 
+/**
+ * Lists every namespace with what is running in it.
+ *
+ * Separate from listNamespaces, which feeds the namespace filter and stays a
+ * cheap read of names: this one counts pods, which means listing them.
+ */
+export function listNamespaceSummaries(clusterId: string): Promise<NamespaceSummary[]> {
+  return call(() => bindListNamespaceSummaries(clusterId))
+}
+
+/**
+ * Says which status conditions report a problem, in order.
+ *
+ * A pure call that reaches no cluster: the polarity of a condition is a
+ * verdict, verdicts live in the Go domain, and getting one backwards is
+ * invisible until somebody reads the wrong colour during an incident.
+ */
+export function classifyConditions(conditions: ConditionRef[]): Promise<string[]> {
+  return call(() => bindClassifyConditions(conditions))
+}
+
 /** Lists the nodes of a connected cluster, with usage where available. */
 export function listNodes(clusterId: string): Promise<Node[]> {
   return call(() => bindListNodes(clusterId))
@@ -293,6 +335,71 @@ export function listWorkloads(
   return call(() => bindListWorkloads(clusterId, kind, namespace))
 }
 
+/** The dependency chain around one pod, from what routes to it to what it needs. */
+export function podGraph(clusterId: string, namespace: string, podName: string): Promise<PodGraph> {
+  return call(() => bindPodGraph(clusterId, namespace, podName))
+}
+
+/** The dependency chain around one workload: what routes to it, and its pods. */
+export function workloadGraph(
+  clusterId: string,
+  namespace: string,
+  kind: string,
+  name: string,
+): Promise<PodGraph> {
+  return call(() => bindWorkloadGraph(clusterId, namespace, kind, name))
+}
+
+/** Lists the pods the scheduler has placed on one node, across namespaces. */
+export function listPodsOnNode(clusterId: string, nodeName: string): Promise<Pod[]> {
+  return call(() => bindListPodsOnNode(clusterId, nodeName))
+}
+
+/**
+ * Sums what a controller's pods are consuming, against what they reserved.
+ *
+ * Read while a panel is open rather than alongside the list: a controller has
+ * no usage of its own, so this costs that controller's pods and the
+ * namespace's metrics, and the figure is only looked at one at a time.
+ */
+export function workloadUsage(
+  clusterId: string,
+  namespace: string,
+  kind: string,
+  name: string,
+): Promise<Consumption> {
+  return call(() => bindWorkloadUsage(clusterId, namespace, kind, name))
+}
+
+/**
+ * Sums what every controller in a list is using, keyed by "namespace/name".
+ *
+ * Fetched beside the list rather than as part of it: the controllers are one
+ * cheap read and this is the namespace's pods and their metrics, so a cluster
+ * without a metrics API still gets its list.
+ */
+export function workloadConsumption(
+  clusterId: string,
+  kind: string,
+  namespace: string,
+): Promise<Record<string, Consumption>> {
+  return call(() => bindWorkloadConsumption(clusterId, kind, namespace))
+}
+
+/**
+ * Groups a cluster's workloads by the application they belong to.
+ *
+ * From Kubernetes' own recommended labels, which is the only thing that
+ * standardises this — and a convention rather than a guarantee, so the answer
+ * carries a count of what did not say which application it belongs to.
+ */
+export function listApplications(
+  clusterId: string,
+  namespace: string,
+): Promise<ApplicationInventory> {
+  return call(() => bindListApplications(clusterId, namespace))
+}
+
 /** Lists all pods owned by a specific workload. */
 export function listPodsForWorkload(
   clusterId: string,
@@ -329,6 +436,19 @@ export function listTable(
   namespace: string,
 ): Promise<ResourceTable> {
   return call(() => bindListTable(clusterId, kindId, namespace))
+}
+
+/**
+ * Counts what one namespace holds, kind by kind.
+ *
+ * One request per built-in namespaced kind on the Go side, so this is asked
+ * when a panel section is opened rather than on every refresh.
+ */
+export function namespaceInventory(
+  clusterId: string,
+  namespace: string,
+): Promise<NamespaceInventory> {
+  return call(() => bindNamespaceInventory(clusterId, namespace))
 }
 
 /**

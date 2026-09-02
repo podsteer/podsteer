@@ -18,11 +18,15 @@
 -->
 <script lang="ts">
   import { ALL_NAMESPACES, type ResourceKind } from '$lib/api/client'
-  import { OVERVIEW_KIND_ID, type ClusterSession } from '$stores/session.svelte'
+  import {
+    APPLICATIONS_KIND_ID,
+    OVERVIEW_KIND_ID,
+    type ClusterSession,
+  } from '$stores/session.svelte'
   import { clampNavigatorWidth, preferences } from '$stores/preferences.svelte'
   import { categoryMeta, iconForKind } from '$lib/kindIcons'
   import Select from './Select.svelte'
-  import { ChevronDown, LayoutDashboard, AlertTriangle } from '@lucide/svelte'
+  import { Blocks, ChevronDown, LayoutDashboard, AlertTriangle } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -62,8 +66,24 @@
   })
 
   const onOverview = $derived(session.selectedKindId === OVERVIEW_KIND_ID)
+  const onApplications = $derived(session.selectedKindId === APPLICATIONS_KIND_ID)
 
-  /** Kinds grouped by category, preserving the backend's ordering. */
+  /**
+   * Kinds grouped by category and then by who publishes them.
+   *
+   * A CLUSTER RUNNING SEVERAL OPERATORS HAS SIXTY CUSTOM RESOURCES, and they
+   * were one flat alphabetical list — an Argo CD Application next to a
+   * Prometheus Alertmanager next to a cert-manager Certificate, with nothing
+   * saying which controller any of them belonged to. Grouped by API group
+   * they arrive already sorted into the things that installed them.
+   *
+   * The subgroup is the RAW API GROUP. A curated table of project names was
+   * tried and removed: it covered five of the twenty-five groups on a real
+   * cluster, which left the navigator speaking two vocabularies at once with
+   * no way to tell which kind of thing a heading was. The group is the only
+   * label that can never be wrong and never needs a maintainer, and it is
+   * what `kubectl api-resources` prints.
+   */
   const sections = $derived.by(() => {
     const grouped = new Map<string, ResourceKind[]>()
     for (const kind of session.kinds) {
@@ -71,8 +91,42 @@
       if (bucket) bucket.push(kind)
       else grouped.set(kind.category, [kind])
     }
-    return [...grouped.entries()].map(([category, kinds]) => ({ category, kinds }))
+
+    return [...grouped.entries()].map(([category, kinds]) => ({
+      category,
+      kinds,
+      groups: subgroupsOf(kinds),
+    }))
   })
+
+  /**
+   * A category's kinds split by publisher, or null when they all share one.
+   *
+   * Null rather than a single group holding everything: a heading over the
+   * whole list adds a line and says nothing, and every built-in category is
+   * exactly that case.
+   */
+  function subgroupsOf(kinds: ResourceKind[]): { name: string; kinds: ResourceKind[] }[] | null {
+    if (new Set(kinds.map((kind) => kind.subcategory)).size <= 1) return null
+
+    const grouped = new Map<string, ResourceKind[]>()
+    for (const kind of kinds) {
+      const bucket = grouped.get(kind.subcategory)
+      if (bucket) bucket.push(kind)
+      else grouped.set(kind.subcategory, [kind])
+    }
+    return [...grouped.entries()].map(([name, entries]) => ({ name, kinds: entries }))
+  }
+
+  /**
+   * The kinds in a category that belong to no group, shown above the groups.
+   *
+   * One entry today: the CustomResourceDefinitions themselves, which are
+   * Kubernetes' own and are the index to everything below them.
+   */
+  function ungroupedIn(section: { groups: { name: string; kinds: ResourceKind[] }[] | null }) {
+    return section.groups?.find((group) => group.name === '')?.kinds ?? []
+  }
 
   // --- Resize logic ---
   let resizing = $state(false)
@@ -105,6 +159,39 @@
     if (draggedWidth !== null) preferences.setNavigatorWidth(draggedWidth)
     draggedWidth = null
     resizing = false
+  }
+
+  /**
+   * Arrow keys resize the navigator, which is the only way a keyboard can.
+   *
+   * It was pointer-only, so an operator working from the keyboard could not
+   * narrow a sidebar that was taking half their window. Enter restores the
+   * default, matching what a double-click does.
+   */
+  function onResizeKeydown(event: KeyboardEvent): void {
+    const STEP = 16
+    let width: number
+    switch (event.key) {
+      case 'ArrowLeft':
+        width = preferences.navigatorWidth - STEP
+        break
+      case 'ArrowRight':
+        width = preferences.navigatorWidth + STEP
+        break
+      case 'Home':
+        width = 0
+        break
+      case 'End':
+        width = Number.MAX_SAFE_INTEGER
+        break
+      case 'Enter':
+        width = 240
+        break
+      default:
+        return
+    }
+    event.preventDefault()
+    preferences.setNavigatorWidth(width)
   }
 </script>
 
@@ -181,6 +268,36 @@
       </div>
     {/if}
 
+    <!-- Applications, pinned beside the dashboard for the same reason: there
+         is no object called an application. It is a grouping of what is
+         there by the labels Kubernetes recommends they carry, so it belongs
+         with the other view that is not a kind rather than filed among the
+         kinds. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(APPLICATIONS_KIND_ID)}
+        aria-current={onApplications ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onApplications
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <!-- Not the stacked boxes: those mark the Workloads category two
+             entries below, and an application is not a workload — it is
+             several of them agreeing about a label. Two entries wearing one
+             glyph is a navigator asking to be misread. -->
+        <Blocks
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onApplications ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium">Applications</span>
+      </button>
+    </div>
+
+
     {#each sections as section (section.category)}
       {@const open = preferences.isCategoryExpanded(section.category)}
       {@const CategoryIcon = categoryMeta(section.category).icon}
@@ -218,8 +335,129 @@
              as "indented". -->
         {#if open}
           <div class="mt-0.5 border-l border-outline-variant/30 pl-2">
-            <ul>
-              {#each section.kinds as kind (kind.id)}
+            {#if section.groups}
+              <!--
+                One collapsible heading per API group. Twenty-five of them on
+                a cluster running Elastic, cert-manager, Argo and KEDA — a
+                flat list of that inside an already-open section is a wall,
+                and each one folds so somebody can keep open only the
+                operators they are working with.
+
+                Folded state goes through the same store the categories use,
+                keyed "Custom Resources/<group>" — a namespaced key in a
+                mechanism that was already there, rather than a second thing
+                to persist and migrate.
+              -->
+              <ul>
+                {#each ungroupedIn(section) as kind (kind.id)}
+                  {@const selected = kind.id === session.selectedKindId}
+                  {@const KindIcon = iconForKind(kind)}
+                  <li>
+                    <button
+                      type="button"
+                      onclick={() => session.selectKind(kind.id)}
+                      aria-current={selected ? 'page' : undefined}
+                      title={kind.group ? `${kind.kind} · ${kind.group}/${kind.version}` : kind.kind}
+                      class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
+                             transition-all duration-100 ease-standard
+                             {selected
+                               ? 'bg-primary/12 text-primary'
+                               : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+                    >
+                      <span class="w-1.5 shrink-0" aria-hidden="true"></span>
+                      <KindIcon
+                        class="size-4 shrink-0 transition-colors duration-100
+                               {selected ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+                        strokeWidth={1.8}
+                      />
+                      <span class="flex-1 truncate text-body-medium">{kind.title}</span>
+                      {#if !kind.namespaced}
+                        <span
+                          class="rounded bg-surface-container-high px-1 py-px text-label-small uppercase
+                                 text-on-surface-variant/50"
+                          title="Cluster-scoped"
+                        >
+                          C
+                        </span>
+                      {/if}
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+
+              {#each section.groups.filter((group) => group.name !== '') as group (group.name)}
+                {@const groupKey = `${section.category}/${group.name}`}
+                {@const groupOpen = preferences.isCategoryExpanded(groupKey)}
+                <button
+                  type="button"
+                  onclick={() => preferences.toggleCategory(groupKey)}
+                  aria-expanded={groupOpen}
+                  class="state-layer mt-0.5 flex w-full items-center gap-2 rounded-sm px-2
+                         py-[5px] text-left text-on-surface-variant transition-colors duration-100
+                         hover:bg-surface-container hover:text-on-surface"
+                >
+                  <!-- The same leading spacer every kind row carries, so this
+                       chevron lands in the column their icons are in. Without
+                       it the fold controls sat a whole icon-width to the left
+                       of the rows they fold, which reads as two lists rather
+                       than as one indented under the other. -->
+                  <span class="w-1.5 shrink-0" aria-hidden="true"></span>
+                  <ChevronDown
+                    class="size-4 shrink-0 text-on-surface-variant/60 transition-transform
+                           duration-150 ease-standard {groupOpen ? '' : '-rotate-90'}"
+                    strokeWidth={2}
+                  />
+                  <!-- The kind rows' own size. A group heading naming an API
+                       group is read as often as the kinds under it, and set
+                       smaller it read as a caption on them. -->
+                  <span class="flex-1 truncate text-body-medium">{group.name}</span>
+                  <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant/50">
+                    {group.kinds.length}
+                  </span>
+                </button>
+
+                {#if groupOpen}
+                  <ul class="ml-1.5 border-l border-outline-variant/20 pl-1.5">
+                    {#each group.kinds as kind (kind.id)}
+                  {@const selected = kind.id === session.selectedKindId}
+                  {@const KindIcon = iconForKind(kind)}
+                  <li>
+                    <button
+                      type="button"
+                      onclick={() => session.selectKind(kind.id)}
+                      aria-current={selected ? 'page' : undefined}
+                      title={kind.group ? `${kind.kind} · ${kind.group}/${kind.version}` : kind.kind}
+                      class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
+                             transition-all duration-100 ease-standard
+                             {selected
+                               ? 'bg-primary/12 text-primary'
+                               : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+                    >
+                      <span class="w-1.5 shrink-0" aria-hidden="true"></span>
+                      <KindIcon
+                        class="size-4 shrink-0 transition-colors duration-100
+                               {selected ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+                        strokeWidth={1.8}
+                      />
+                      <span class="flex-1 truncate text-body-medium">{kind.title}</span>
+                      {#if !kind.namespaced}
+                        <span
+                          class="rounded bg-surface-container-high px-1 py-px text-label-small uppercase
+                                 text-on-surface-variant/50"
+                          title="Cluster-scoped"
+                        >
+                          C
+                        </span>
+                      {/if}
+                    </button>
+                  </li>
+                    {/each}
+                  </ul>
+                {/if}
+              {/each}
+            {:else}
+              <ul>
+                {#each section.kinds as kind (kind.id)}
                 {@const selected = kind.id === session.selectedKindId}
                 {@const KindIcon = iconForKind(kind)}
                 <li>
@@ -252,8 +490,9 @@
                     {/if}
                   </button>
                 </li>
-              {/each}
-            </ul>
+                {/each}
+              </ul>
+            {/if}
           </div>
         {/if}
       </div>
@@ -261,11 +500,24 @@
   </div>
 
   <!-- Resize handle -->
+  <!--
+    svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions
+  
+    Both warnings are false here. ARIA's `separator` is non-interactive ONLY
+    when it is not focusable; a focusable one is the window-splitter pattern,
+    which is what this is — it carries a value, it has bounds, and the arrow
+    keys change it. See ColumnDivider.svelte for the same note in full.
+  -->
   <span
     role="separator"
     aria-orientation="vertical"
     aria-label="Resize sidebar"
-    tabindex="-1"
+    aria-valuenow={preferences.navigatorWidth}
+    aria-valuemin={180}
+    aria-valuemax={400}
+    aria-valuetext="{preferences.navigatorWidth} pixels"
+    tabindex="0"
+    onkeydown={onResizeKeydown}
     class="absolute top-0 -right-1 z-20 h-full w-2 cursor-col-resize
            after:absolute after:top-0 after:left-1/2 after:h-full after:w-px
            after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-100

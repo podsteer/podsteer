@@ -13,6 +13,7 @@
   import ClusterWorkspace from '$pages/ClusterWorkspace.svelte'
   import { workspace } from '$stores/workspace.svelte'
   import { loadAppInfo } from '$stores/system.svelte'
+  import { updates } from '$stores/updates.svelte'
   import { alertPlayer } from '$stores/alerts.svelte'
   import { forwards } from '$stores/forwards.svelte'
 
@@ -41,12 +42,25 @@
     // Arming here means the first click or keypress of the session wakes it,
     // so an alert never arrives to find the speaker asleep.
     alertPlayer.arm()
+    // The update check, on its own delay and off the startup path entirely.
+    // Nothing here waits for it, and it does nothing at all when the operator
+    // has switched it off — see updates.svelte.ts.
+    updates.start()
     const minimum = new Promise((resolve) => setTimeout(resolve, MIN_SPLASH_MS))
-    void Promise.all([workspace.initialise(), minimum]).then(() => {
-      booted = true
-    })
+    // .catch AS WELL, because there was none: a rejection anywhere in
+    // initialise left the splash screen up for ever with nothing on it. A
+    // failed start must still reach the application — whatever went wrong is
+    // reported there, where somebody can read it.
+    void Promise.all([workspace.initialise(), minimum])
+      .catch((cause) => {
+        console.error('Failed to initialise the workspace:', cause)
+      })
+      .finally(() => {
+        booted = true
+      })
     return () => {
       unwatchForwards()
+      updates.stop()
       workspace.dispose()
     }
   })

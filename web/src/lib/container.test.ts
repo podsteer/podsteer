@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatEnvValue, formatMount, formatPorts, formatProbe, looksSensitive } from './container'
+import {
+  formatEnvValue,
+  formatMount,
+  formatPorts,
+  formatProbe,
+  looksSensitive,
+  sensitivity,
+  type PodManifest,
+} from './container'
 
 describe('formatProbe', () => {
   it('renders all four handler types', () => {
@@ -88,5 +96,188 @@ describe('formatPorts and formatMount', () => {
     expect(formatMount({ name: 'cfg', mountPath: '/etc/cfg', readOnly: true })).toBe('/etc/cfg from cfg (ro)')
     expect(formatMount({ name: 'data', mountPath: '/data' })).toBe('/data from data (rw)')
     expect(formatMount({ name: 'cfg', mountPath: '/etc/x', subPath: 'a.yaml' })).toContain('path="a.yaml"')
+  })
+})
+
+const pod: PodManifest = {
+  metadata: {
+    name: 'api-7d8f-k76wb',
+    namespace: 'development',
+    uid: 'a1b2c3',
+    labels: { app: 'api' },
+    annotations: { 'app.kubernetes.io/name': 'authentication-identity-service' },
+  },
+  spec: {
+    nodeName: 'node-1',
+    serviceAccountName: 'api',
+    containers: [
+      { name: 'app', resources: { requests: { cpu: '100m' }, limits: { memory: '512Mi' } } },
+    ],
+  },
+  status: { podIP: '10.0.0.1', hostIP: '10.1.0.1' },
+}
+
+describe('the downward API', () => {
+  it('shows the value, not the path to it', () => {
+    // kubectl prints `<metadata.name>` because kubectl is describing a
+    // template. This is describing a running pod, and the running pod knows
+    // its own name — so a column of `<...>` placeholders is a column of
+    // values nobody has been shown.
+    expect(formatEnvValue({ name: 'POD_NAME', valueFrom: { fieldRef: { fieldPath: 'metadata.name' } } }, pod))
+      .toBe('api-7d8f-k76wb')
+    expect(
+      formatEnvValue(
+        { name: 'NS', valueFrom: { fieldRef: { fieldPath: 'metadata.namespace' } } },
+        pod,
+      ),
+    ).toBe('development')
+    expect(
+      formatEnvValue({ name: 'IP', valueFrom: { fieldRef: { fieldPath: 'status.podIP' } } }, pod),
+    ).toBe('10.0.0.1')
+  })
+
+  it('reads a keyed label or annotation', () => {
+    expect(
+      formatEnvValue(
+        {
+          name: 'SERVICE',
+          valueFrom: {
+            fieldRef: { fieldPath: "metadata.annotations['app.kubernetes.io/name']" },
+          },
+        },
+        pod,
+      ),
+    ).toBe('authentication-identity-service')
+
+    expect(
+      formatEnvValue(
+        { name: 'APP', valueFrom: { fieldRef: { fieldPath: "metadata.labels['app']" } } },
+        pod,
+      ),
+    ).toBe('api')
+  })
+
+  it('resolves a container resource the way the kubelet does', () => {
+    // THIS TEST USED TO ASSERT THE QUANTITY AS WRITTEN, which is not what the
+    // process receives and is the whole reason the field has a divisor. The
+    // kubelet divides by it — default 1, meaning whole cores for CPU and
+    // bytes for memory — and rounds UP to an integer. So a container asking
+    // for `100m` of CPU hands its process `1`, and a `512Mi` limit hands it
+    // 536870912. Printing `100m` and `512Mi` under the variable's own name
+    // was showing a different number from the one the container can read.
+    expect(
+      formatEnvValue(
+        {
+          name: 'CPU',
+          valueFrom: { resourceFieldRef: { containerName: 'app', resource: 'requests.cpu' } },
+        },
+        pod,
+      ),
+    ).toBe('1')
+    expect(
+      formatEnvValue(
+        {
+          name: 'MEM',
+          valueFrom: { resourceFieldRef: { containerName: 'app', resource: 'limits.memory' } },
+        },
+        pod,
+      ),
+    ).toBe('536870912')
+  })
+
+  it('applies the divisor, which is the idiom everybody actually writes', () => {
+    // `limits.memory` over `1Mi` is how a JVM's heap size gets set, and it is
+    // the case the ignored divisor got most wrong.
+    expect(
+      formatEnvValue(
+        {
+          name: 'MEMORY_LIMIT_MB',
+          valueFrom: {
+            resourceFieldRef: { containerName: 'app', resource: 'limits.memory', divisor: '1Mi' },
+          },
+        },
+        pod,
+      ),
+    ).toBe('512')
+    expect(
+      formatEnvValue(
+        {
+          name: 'CPU_MILLIS',
+          valueFrom: {
+            resourceFieldRef: { containerName: 'app', resource: 'requests.cpu', divisor: '1m' },
+          },
+        },
+        pod,
+      ),
+    ).toBe('100')
+  })
+
+  it('keeps the path when it cannot resolve one', () => {
+    // THE IMPORTANT HALF. A path this does not recognise, an annotation that
+    // is not set, or a pane with no manifest yet must fall back to what
+    // kubectl would have printed — never to a blank, and never to a guess.
+    expect(
+      formatEnvValue(
+        { name: 'MISSING', valueFrom: { fieldRef: { fieldPath: "metadata.labels['absent']" } } },
+        pod,
+      ),
+    ).toBe('<metadata.labels[\'absent\']>')
+
+    expect(
+      formatEnvValue({ name: 'NEW', valueFrom: { fieldRef: { fieldPath: 'spec.somethingNew' } } }, pod),
+    ).toBe('<spec.somethingNew>')
+
+    expect(
+      formatEnvValue({ name: 'POD_NAME', valueFrom: { fieldRef: { fieldPath: 'metadata.name' } } }),
+    ).toBe('<metadata.name>')
+  })
+
+  it('refuses paths the API server would have refused', () => {
+    // Only the fields a fieldRef may actually name are resolved. A general
+    // path walker would happily answer `spec.containers[0].image` — which
+    // Kubernetes rejects — so the pane would be showing a value the pod could
+    // never have been given.
+    expect(
+      formatEnvValue(
+        { name: 'IMAGE', valueFrom: { fieldRef: { fieldPath: 'spec.containers[0].image' } } },
+        pod,
+      ),
+    ).toBe('<spec.containers[0].image>')
+  })
+
+  it('still names a secret rather than resolving one', () => {
+    // Nothing here ever reads a Secret. See container.ts.
+    expect(
+      formatEnvValue(
+        { name: 'KEY', valueFrom: { secretKeyRef: { name: 'app-secrets', key: 'jwt' } } },
+        pod,
+      ),
+    ).toBe("<set to the key 'jwt' in secret 'app-secrets'>")
+  })
+})
+
+describe('sensitivity', () => {
+  it('is certain only about shapes that are unmistakable', () => {
+    expect(sensitivity({ name: 'AWS_KEY', value: 'AKIAIOSFODNN7EXAMPLE' })).toBe('certain')
+    expect(sensitivity({ name: 'ANYTHING', value: '-----BEGIN RSA PRIVATE KEY-----' })).toBe(
+      'certain',
+    )
+  })
+
+  it('only suspects when the NAME is what matched', () => {
+    // The distinction the pane needs: a name is a hint about the name. It was
+    // captioned as fact — "a literal credential, written into the pod spec in
+    // the clear" — which is an accusation about somebody's workload.
+    expect(sensitivity({ name: 'DB_PASSWORD', value: 'hunter2-but-long-enough' })).toBe('suspected')
+  })
+
+  it('does not accuse a value that announces it is something else', () => {
+    // The real report that started this: masked, and captioned as a leaked
+    // credential, with no way to reveal it and disagree.
+    expect(
+      sensitivity({ name: 'SECRET_MANAGER_ENDPOINT', value: 'https://vault.internal.example' }),
+    ).toBeNull()
+    expect(sensitivity({ name: 'TOKEN_FILE_PATH', value: '/var/run/secrets/token' })).toBeNull()
+    expect(sensitivity({ name: 'SECRET_HOSTS', value: 'vault-0.vault, vault-1.vault' })).toBeNull()
   })
 })

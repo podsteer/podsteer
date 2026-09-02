@@ -129,9 +129,20 @@
    * Not while a dialog is open. Stealing focus from Add cluster or Organise
    * would put the keystrokes somewhere the operator is not looking.
    */
+  /**
+   * ONCE, when the list first arrives — not on every reassignment of it.
+   *
+   * `workspace.clusters` is replaced wholesale by anything that touches it,
+   * including "connect without leaving the picker". So typing a filter and
+   * clicking connect re-ran this, refocused the field and selected its
+   * contents, and the next keystroke wiped what had been typed.
+   */
+  let focused = false
   $effect(() => {
+    if (focused) return
     if (workspace.clusters.length === 0) return
     if (addOpen || organiseOpen) return
+    focused = true
     searchField?.focus()
   })
 
@@ -534,9 +545,20 @@
                                  lower still and sits below the rule. -->
                             <div class="min-w-0 flex-1">
                               <div class="flex items-center gap-2">
+                                <!--
+                                  NOT data-selectable, unlike a name in a
+                                  detail pane. That attribute sets a text
+                                  cursor, which on a card whose whole surface
+                                  opens the cluster says "select me" where
+                                  the card means "click me" — and these cards
+                                  are draggable, so a text selection would
+                                  fight the drag rather than be useful. The
+                                  title carries a truncated name instead,
+                                  which is what selecting it was for.
+                                -->
                                 <h5
                                   class="truncate text-title-small font-semibold text-on-surface"
-                                  data-selectable
+                                  title={cluster.id}
                                 >
                                   {cluster.id}
                                 </h5>
@@ -570,10 +592,17 @@
                                      which one kubectl uses are different acts,
                                      and the second changes the behaviour of
                                      every other terminal on the machine. -->
+                                <!-- role="img" so the label is honoured: an
+                                     aria-label on a role-less <span> is
+                                     dropped by browsers, so this star had no
+                                     accessible name at all and the only
+                                     signal that a context is the current one
+                                     was its colour. -->
                                 <span
                                   class="pointer-events-none text-primary"
+                                  role="img"
                                   title="Your kubeconfig's current context"
-                                  aria-label="Current context"
+                                  aria-label="Your kubeconfig's current context"
                                 >
                                   <Star class="size-4" strokeWidth={2} fill="currentColor" />
                                 </span>

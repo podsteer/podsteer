@@ -69,6 +69,113 @@ export const REFRESH_INTERVALS = [
   { label: 'Manual only', value: 0 },
 ] as const
 
+/**
+ * How wide the detail panel opens, as a share of the window.
+ *
+ * A SHARE RATHER THAN A SIZE, because the complaint the setting answers is
+ * relative: the panel covers too much of the list behind it. How much of the
+ * list is left is a proportion, and a fixed 704px leaves half a laptop and a
+ * fifth of an ultrawide.
+ *
+ * Both ends are clamped in CSS all the same — see DETAIL_MIN_REM and
+ * DETAIL_MAX_REM — because a proportion alone breaks at the extremes in the
+ * other direction: a quarter of a small laptop is narrower than one row of
+ * this panel's own two columns, and half an ultrawide is a page of whitespace.
+ *
+ * Stored as the number rather than as which button was pressed, so that a
+ * drag handle can later write any width in range without a stored setting
+ * that has to be migrated out of three categories.
+ */
+export const DETAIL_WIDTHS = [
+  { id: 'wide', label: 'Wide', fraction: 0.5, detail: 'About half the window' },
+  { id: 'medium', label: 'Medium', fraction: 1 / 3, detail: 'About a third' },
+  { id: 'compact', label: 'Compact', fraction: 0.25, detail: 'About a quarter' },
+] as const
+
+/**
+ * The share the panel opens at until somebody changes it.
+ *
+ * Half, which is what it already was on a laptop: it opened at a fixed 44rem,
+ * and 704 of a 1440-wide window is very close to this. Somebody who never
+ * touches the setting sees no change. It is also what a double-click on the
+ * panel's edge restores.
+ */
+export const DEFAULT_DETAIL_FRACTION = 0.5
+
+/**
+ * The label column's share of a detail pane, until somebody drags it.
+ *
+ * 26% is what the fixed 11rem this column used to be worked out to at the
+ * panel's own default width, so a panel nobody has touched looks unchanged.
+ */
+export const DEFAULT_DETAIL_LABEL_SHARE = 0.26
+
+/** The label column's bounds, in rem, and as a share of the pane. */
+export const DETAIL_LABEL_MIN_REM = 5
+export const DETAIL_LABEL_MAX_REM = 24
+export const DETAIL_LABEL_MAX_SHARE = 0.6
+
+/**
+ * What the label column may be, in pixels, in a pane this wide.
+ *
+ * The same shape as detailWidthBounds and for the same reason: the drag and
+ * the resting style must agree exactly, or a divider dropped at the end of its
+ * travel would let go of the pointer and land somewhere else.
+ *
+ * The ceiling is a share rather than a length because it is about the OTHER
+ * column: past 60% the values have less room than their labels, which is the
+ * wrong way round whatever the pane is.
+ */
+export function detailLabelBounds(
+  paneWidth: number,
+  rootFontSize: number,
+): { min: number; max: number } {
+  const ceiling = paneWidth * DETAIL_LABEL_MAX_SHARE
+  const min = Math.min(DETAIL_LABEL_MIN_REM * rootFontSize, ceiling)
+  const max = Math.max(min, Math.min(DETAIL_LABEL_MAX_REM * rootFontSize, ceiling))
+  return { min, max }
+}
+
+/** The CSS this share becomes, matching detailLabelBounds exactly. */
+export function detailLabelWidthCSS(share: number): string {
+  return `min(${DETAIL_LABEL_MAX_SHARE * 100}%, clamp(${DETAIL_LABEL_MIN_REM}rem, ${
+    share * 100
+  }%, ${DETAIL_LABEL_MAX_REM}rem))`
+}
+
+/** The detail panel's width bounds, in rem, applied whatever the share says. */
+export const DETAIL_MIN_REM = 26
+export const DETAIL_MAX_REM = 72
+
+/** The most of the window the panel may ever cover, dragged or not. */
+export const DETAIL_MAX_SHARE = 0.9
+
+/**
+ * What the panel may actually be, in pixels, on a window this wide.
+ *
+ * ONE FUNCTION FOR BOTH the resting width and a drag in progress. They have to
+ * agree exactly: a drag that could be released outside what the resting style
+ * allows would let go of the pointer and snap somewhere else, which reads as
+ * the application refusing the size rather than as a limit.
+ *
+ * rootFontSize is passed rather than assumed, because the bounds are in rem
+ * and a user who has scaled their interface up has scaled the floor up with
+ * it — the floor exists to fit a row of text, and that is what changed.
+ */
+export function detailWidthBounds(
+  windowWidth: number,
+  rootFontSize: number,
+): { min: number; max: number } {
+  const ceiling = windowWidth * DETAIL_MAX_SHARE
+  // The floor gives way to the ceiling on a very narrow window rather than
+  // the other way round: a panel wider than the window it is in has covered
+  // the list completely, and the whole point of the setting is what is left
+  // of the list.
+  const min = Math.min(DETAIL_MIN_REM * rootFontSize, ceiling)
+  const max = Math.max(min, Math.min(DETAIL_MAX_REM * rootFontSize, ceiling))
+  return { min, max }
+}
+
 const STORAGE_KEY = 'podsteer.preferences.v1'
 
 /**
@@ -248,6 +355,10 @@ interface PersistedShape {
   navigatorCollapsed: boolean
   /** Width of the navigator sidebar in pixels. */
   navigatorWidth: number
+  /** How wide the detail panel opens, as a share of the window. */
+  detailWidthFraction: number
+  /** How wide the label column is, as a share of a detail pane. */
+  detailLabelFraction: number
   /** Category names the operator has expanded in the navigator tree. */
   expandedCategories: string[]
   /** Whether the overview's verdict card shows its findings. */
@@ -279,6 +390,14 @@ interface PersistedShape {
   podMeasure: PodMeasure
   /** How much recent usage to keep for the drawer's charts, in minutes. */
   usageWindowMinutes: number
+  /** Whether to ask GitHub about newer releases. See UpdateBadge.svelte. */
+  /** Which way the dependency map lays out its tiers. */
+  mapOrientation: 'horizontal' | 'vertical'
+  updateChecksEnabled: boolean
+  /** When the last check happened, so a restart does not trigger another. */
+  lastUpdateCheck: number
+  /** A version the operator has dismissed, so the badge stays gone. */
+  dismissedUpdate: string
   /**
    * Detail-pane sections the operator has opened or closed, by id.
    *
@@ -324,6 +443,8 @@ const DEFAULTS: PersistedShape = {
   autoRefresh: true,
   navigatorCollapsed: false,
   navigatorWidth: 240,
+  detailWidthFraction: DEFAULT_DETAIL_FRACTION,
+  detailLabelFraction: DEFAULT_DETAIL_LABEL_SHARE,
   expandedCategories: [],
   findingsExpanded: false,
   wrapLines: true,
@@ -340,6 +461,15 @@ const DEFAULTS: PersistedShape = {
   // per-object sample cap as well, so a fast refresh cannot turn it into
   // something expensive.
   usageWindowMinutes: 5,
+  // ON BY DEFAULT. Off by default would mean
+  // almost nobody ever learns a security fix shipped, which is the outcome the
+  // feature exists to prevent. It is one switch away, the switch is in
+  // Settings → Notifications, and PODSTEER_UPDATE_CHECK=false overrides it for
+  // a whole machine.
+  mapOrientation: 'horizontal',
+  updateChecksEnabled: true,
+  lastUpdateCheck: 0,
+  dismissedUpdate: '',
   sections: {},
   // Off. An application that starts making noise nobody asked for is one
   // people mute at the operating system, taking the alarm they DID want with
@@ -360,6 +490,22 @@ class Preferences {
   autoRefresh = $state<boolean>(DEFAULTS.autoRefresh)
   navigatorCollapsed = $state<boolean>(DEFAULTS.navigatorCollapsed)
   navigatorWidth = $state<number>(DEFAULTS.navigatorWidth)
+  detailWidthFraction = $state<number>(DEFAULTS.detailWidthFraction)
+  detailLabelFraction = $state<number>(DEFAULTS.detailLabelFraction)
+
+  /**
+   * The label column's share while a divider is being dragged.
+   *
+   * DELIBERATELY NOT PERSISTED, and deliberately here rather than in the list
+   * holding the pointer. Every pane's divider is the same divider — dragging
+   * one has to move all of them, which is the whole point of the gesture —
+   * and the element that carries the width is the panel, not the list. This
+   * is the only place both can see. It holds a share rather than a pixel
+   * width for the same reason: a pane nested inside a card is narrower than
+   * the one around it, and both have to stay in proportion while the pointer
+   * moves, not only after it is released.
+   */
+  labelShareDrag = $state<number | null>(null)
 
   /**
    * Category names currently expanded in the navigator.
@@ -427,6 +573,10 @@ class Preferences {
    * fills as you watch, and nothing about any object is held in memory.
    */
   usageWindowMinutes = $state<number>(DEFAULTS.usageWindowMinutes)
+  mapOrientation = $state<'horizontal' | 'vertical'>(DEFAULTS.mapOrientation)
+  updateChecksEnabled = $state<boolean>(DEFAULTS.updateChecksEnabled)
+  lastUpdateCheck = $state<number>(DEFAULTS.lastUpdateCheck)
+  dismissedUpdate = $state<string>(DEFAULTS.dismissedUpdate)
 
   /** Detail-pane sections the operator has opened or closed, by id. */
   sections = $state<Record<string, boolean>>({})
@@ -476,6 +626,33 @@ class Preferences {
   cycleTheme = (): void => {
     const current = THEME_PREFERENCES.indexOf(this.themePreference)
     this.setTheme(THEME_PREFERENCES[(current + 1) % THEME_PREFERENCES.length])
+  }
+
+  /**
+   * Sets how wide the detail panel opens.
+   *
+   * Clamped to something a panel can be: a stored value from a future build,
+   * or a hand-edited one, must not be able to open a panel over the whole
+   * window or reduce it to a sliver.
+   */
+  /** The label column's share, live while a divider is being dragged. */
+  readonly detailLabelShare = $derived(this.labelShareDrag ?? this.detailLabelFraction)
+
+  /** Stores the label column's share. See setDetailWidth on why loosely. */
+  setDetailLabelShare = (fraction: number): void => {
+    this.detailLabelFraction = Math.min(0.9, Math.max(0.05, fraction))
+    this.labelShareDrag = null
+    this.#save()
+  }
+
+  setDetailWidth = (fraction: number): void => {
+    // Sanity only. What the panel may actually be is decided per window by
+    // detailWidthBounds, in pixels — clamping the SHARE narrowly here as well
+    // would fight it: 90% of a small laptop is a legitimate drag and 0.9 is
+    // not a legitimate share of an ultrawide, and the same number cannot be
+    // wrong in one place and right in the other.
+    this.detailWidthFraction = Math.min(0.95, Math.max(0.05, fraction))
+    this.#save()
   }
 
   setPageSize = (size: PageSize): void => {
@@ -604,6 +781,49 @@ class Preferences {
   /** Sets how much recent usage the drawer's charts start with. */
   setUsageWindowMinutes = (minutes: number): void => {
     this.usageWindowMinutes = USAGE_WINDOWS.includes(minutes) ? minutes : DEFAULTS.usageWindowMinutes
+  }
+
+  /**
+   * Lays the dependency map out along one axis or the other.
+   *
+   * Remembered rather than reset per pod: somebody who prefers the map on its
+   * side prefers it on its side, and having to turn every map they open is
+   * the setting failing to be one.
+   */
+  setMapOrientation(value: 'horizontal' | 'vertical'): void {
+    this.mapOrientation = value
+    this.#save()
+  }
+
+  /**
+   * Turns the update check on or off.
+   *
+   * Turning it OFF forgets when the last one happened, so switching it back on
+   * checks immediately rather than waiting out the remainder of a day nobody
+   * was checking during.
+   */
+  setUpdateChecksEnabled(enabled: boolean): void {
+    this.updateChecksEnabled = enabled
+    if (!enabled) this.lastUpdateCheck = 0
+    this.#save()
+  }
+
+  /** Records that a check just happened. */
+  markUpdateChecked(at: number): void {
+    this.lastUpdateCheck = at
+    this.#save()
+  }
+
+  /**
+   * Stops the badge nagging about one particular version.
+   *
+   * Per VERSION rather than a blanket "never show me this": somebody who is
+   * not upgrading today still wants to hear about the release after this one,
+   * and a permanent dismissal is what the Settings switch is for.
+   */
+  dismissUpdate(version: string): void {
+    this.dismissedUpdate = version
+    this.#save()
     this.#save()
   }
 
@@ -794,6 +1014,20 @@ class Preferences {
       if (typeof stored.navigatorWidth === 'number' && stored.navigatorWidth >= 180 && stored.navigatorWidth <= 400) {
         this.navigatorWidth = stored.navigatorWidth
       }
+      if (
+        typeof stored.detailWidthFraction === 'number' &&
+        stored.detailWidthFraction >= 0.05 &&
+        stored.detailWidthFraction <= 0.95
+      ) {
+        this.detailWidthFraction = stored.detailWidthFraction
+      }
+      if (
+        typeof stored.detailLabelFraction === 'number' &&
+        stored.detailLabelFraction >= 0.05 &&
+        stored.detailLabelFraction <= 0.9
+      ) {
+        this.detailLabelFraction = stored.detailLabelFraction
+      }
       if (Array.isArray(stored.expandedCategories)) {
         this.expandedCategories = stored.expandedCategories.filter(
           (entry): entry is string => typeof entry === 'string',
@@ -824,6 +1058,18 @@ class Preferences {
       }
       if (USAGE_WINDOWS.includes(stored.usageWindowMinutes as number)) {
         this.usageWindowMinutes = stored.usageWindowMinutes as number
+      }
+      if (stored.mapOrientation === 'horizontal' || stored.mapOrientation === 'vertical') {
+        this.mapOrientation = stored.mapOrientation
+      }
+      if (typeof stored.updateChecksEnabled === 'boolean') {
+        this.updateChecksEnabled = stored.updateChecksEnabled
+      }
+      if (typeof stored.lastUpdateCheck === 'number') {
+        this.lastUpdateCheck = stored.lastUpdateCheck
+      }
+      if (typeof stored.dismissedUpdate === 'string') {
+        this.dismissedUpdate = stored.dismissedUpdate
       }
       if (stored.sections && typeof stored.sections === 'object') {
         this.sections = stored.sections
@@ -868,6 +1114,8 @@ class Preferences {
       const payload: PersistedShape = {
         themePreference: this.themePreference,
         pageSize: this.pageSize,
+        detailWidthFraction: this.detailWidthFraction,
+        detailLabelFraction: this.detailLabelFraction,
         refreshIntervalMs: this.refreshIntervalMs,
         autoRefresh: this.autoRefresh,
         navigatorCollapsed: this.navigatorCollapsed,
@@ -881,6 +1129,10 @@ class Preferences {
         thresholds: this.thresholds,
         podMeasure: this.podMeasure,
         usageWindowMinutes: this.usageWindowMinutes,
+        mapOrientation: this.mapOrientation,
+        updateChecksEnabled: this.updateChecksEnabled,
+        lastUpdateCheck: this.lastUpdateCheck,
+        dismissedUpdate: this.dismissedUpdate,
         sections: this.sections,
         alertSoundsEnabled: this.alertSoundsEnabled,
         alertSounds: this.alertSounds,

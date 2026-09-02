@@ -313,6 +313,33 @@
   function resetWidth(column: Column): void {
     preferences.setColumnWidth(kindId, column.id, column.width)
   }
+
+  /**
+   * Arrow keys resize a column, which is the only way a keyboard can.
+   *
+   * It was pointer-only, so a keyboard operator could not widen a column
+   * whose values were being cut off — and could not undo it either, because
+   * the reset was a double-click. Enter is the reset now.
+   */
+  function onResizeKeydown(event: KeyboardEvent, column: Column): void {
+    const STEP = 16
+    let width: number
+    switch (event.key) {
+      case 'ArrowLeft':
+        width = widthOf(column) - STEP
+        break
+      case 'ArrowRight':
+        width = widthOf(column) + STEP
+        break
+      case 'Enter':
+        width = column.width
+        break
+      default:
+        return
+    }
+    event.preventDefault()
+    preferences.setColumnWidth(kindId, column.id, Math.max(minWidthOf(column), width))
+  }
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
@@ -380,11 +407,20 @@
 
                 <!-- The drag handle. Sits over the cell boundary and is wider
                      than it looks, because a 1px target is unhittable. -->
+                <!--
+                  svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions
+
+                  Both warnings are false here — see ColumnDivider.svelte. A
+                  focusable separator is the window-splitter pattern.
+                -->
                 <span
                   role="separator"
                   aria-orientation="vertical"
                   aria-label="Resize {column.label}"
-                  tabindex="-1"
+                  aria-valuenow={widthOf(column)}
+                  aria-valuetext="{widthOf(column)} pixels"
+                  tabindex="0"
+                  onkeydown={(event) => onResizeKeydown(event, column)}
                   class="absolute top-0 -right-1 z-10 h-full w-2 cursor-col-resize
                          after:absolute after:top-1/2 after:left-1/2 after:h-1/2 after:w-px
                          after:-translate-x-1/2 after:-translate-y-1/2 after:bg-outline-variant

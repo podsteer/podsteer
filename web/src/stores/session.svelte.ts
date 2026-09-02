@@ -15,6 +15,9 @@ import {
   listEvents,
   listKinds,
   listNamespaces,
+  listApplications,
+  listNamespaceSummaries,
+  workloadConsumption,
   listNodes,
   listPods,
   listTable,
@@ -25,6 +28,10 @@ import {
   type Finding,
   type K8sEvent,
   type Namespace,
+  type NamespaceSummary,
+  type Application,
+  type ApplicationInventory,
+  type Consumption,
   type Node,
   type Overview,
   type Pod,
@@ -43,10 +50,22 @@ import {
   type SortState,
 } from '$lib/sort'
 import { alertPlayer } from './alerts.svelte'
+import { forgetConfigMaps } from './configMaps.svelte'
 import { usageHistory, usageKey } from './usageHistory.svelte'
 import { preferences } from './preferences.svelte'
 
 /** Lifecycle of an asynchronous read. */
+
+/**
+ * How many ticks a request may miss before it is written off as wedged.
+ *
+ * Four, which is generous enough that an ordinary slow cluster is never
+ * interrupted and short enough that nobody stares at a frozen screen for
+ * long. The replaced request is not cancelled — nothing here can cancel one —
+ * it is simply superseded, and refresh()'s generation guard stops it landing.
+ */
+const MISSED_TICKS_BEFORE_RETRY = 4
+
 export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 /** One measurement of the open pod, taken from a refresh that already happened. */
@@ -112,6 +131,17 @@ export const OVERVIEW_KIND_ID = 'podsteer/overview'
  * asking "is anything wrong", and a pod list makes them work that out for
  * themselves by reading it.
  */
+/**
+ * The applications view, pinned beside the overview.
+ *
+ * A PSEUDO-ENTRY, NOT A KIND, for the same reason the overview is one: there
+ * is no object to GET called an application. It is a grouping of objects by
+ * the labels Kubernetes recommends they carry, and putting it in the catalog
+ * would offer it to every consumer that expects to be able to fetch what it
+ * names.
+ */
+export const APPLICATIONS_KIND_ID = 'podsteer/applications'
+
 export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
 
 /** Kind ids PodSteer renders with purpose-built columns rather than generically. */
@@ -132,7 +162,7 @@ export const RICH_KIND_IDS = {
  */
 const SEARCH_DEBOUNCE_MS = 120
 
-const WORKLOAD_KIND_BY_ID: Record<string, string> = {
+export const WORKLOAD_KIND_BY_ID: Record<string, string> = {
   'apps/v1/deployments': 'Deployment',
   'apps/v1/statefulsets': 'StatefulSet',
   'apps/v1/daemonsets': 'DaemonSet',
@@ -142,7 +172,15 @@ const WORKLOAD_KIND_BY_ID: Record<string, string> = {
 }
 
 /** What the content pane should render for the selected kind. */
-export type ViewMode = 'overview' | 'pods' | 'nodes' | 'events' | 'workloads' | 'table'
+export type ViewMode =
+  | 'overview'
+  | 'applications'
+  | 'pods'
+  | 'nodes'
+  | 'events'
+  | 'namespaces'
+  | 'workloads'
+  | 'table'
 
 /*
  * Sort accessors per view, keyed by the column ids the views declare. Values
@@ -181,6 +219,33 @@ const NODE_SORT: SortAccessors<Node> = {
   pods: (node) => node.maxPods,
   taints: (node) => node.taints,
   age: (node) => node.ageSeconds,
+}
+
+const APPLICATION_SORT: SortAccessors<Application> = {
+  instance: (application) => application.instance,
+  namespace: (application) => application.namespace,
+  partOf: (application) => application.partOf || null,
+  managedBy: (application) => application.managedBy || null,
+  version: (application) => application.version || null,
+  objects: (application) => application.objects,
+}
+
+const NAMESPACE_SORT: SortAccessors<NamespaceSummary> = {
+  status: (namespace) => namespace.phase,
+  name: (namespace) => namespace.name,
+  pods: (namespace) => namespace.pods,
+  notReady: (namespace) => namespace.notReady,
+  // Sorted on the numbers rather than on the formatted strings beside them:
+  // "1.5" and "900m" compare as text in the wrong order entirely.
+  // Sorted on how FULL the reservation is rather than on bytes: a namespace
+  // using 8GiB of 16 and one using 1GiB of 1 are ordered by volume one way
+  // and by urgency the other, and urgency is what this column is scanned for.
+  cpu: (namespace) => (namespace.hasMetrics && namespace.hasCpuRequest ? namespace.cpuPercent : null),
+  memory: (namespace) =>
+    namespace.hasMetrics && namespace.hasMemoryRequest ? namespace.memoryPercent : null,
+  cpuRequests: (namespace) => namespace.requestCores,
+  memoryRequests: (namespace) => namespace.requestBytes,
+  age: (namespace) => namespace.ageSeconds,
 }
 
 const WORKLOAD_SORT: SortAccessors<Workload> = {
@@ -253,6 +318,42 @@ export class ClusterSession {
   nodes = $state.raw<Node[]>([])
   workloads = $state.raw<Workload[]>([])
   events = $state.raw<K8sEvent[]>([])
+
+  /**
+   * The namespace list view's rows.
+   *
+   * Distinct from `namespaces`, which is the filter's list of names and is
+   * read on connect. These carry what is IN each namespace and cost a
+   * cluster-wide pod list to produce, so they are fetched only while this
+   * view is the one on screen.
+   */
+  namespaceRows = $state.raw<NamespaceSummary[]>([])
+
+  /** The applications view's rows, and what carried no label to group by. */
+  applications = $state.raw<Application[]>([])
+  unlabelled = $state(0)
+
+  /**
+   * What each controller in the open list is consuming, keyed by
+   * "namespace/name".
+   *
+   * Fetched ALONGSIDE the list rather than as part of it, and allowed to
+   * fail: the controllers are one cheap read and this is the namespace's pods
+   * and their metrics, so a cluster with no metrics API — or an account that
+   * may list Deployments and not pods — still gets its list, with the meters
+   * reading "not measured" rather than nothing at all.
+   */
+  workloadUsage = $state.raw<Record<string, Consumption>>({})
+
+  /**
+   * Which request for those figures is the current one.
+   *
+   * Incremented per fetch, so only the newest response may land. Comparing
+   * what was asked for — the kind, the namespace — cannot do this: two
+   * refreshes of the SAME list can resolve out of order, and the older one
+   * would win.
+   */
+  #usageGeneration = 0
   table = $state.raw<ResourceTable | null>(null)
   overview = $state.raw<Overview | null>(null)
 
@@ -274,6 +375,10 @@ export class ClusterSession {
   /** The node the drawer is open on, when it is a node. */
   selectedNode = $state<Node | null>(null)
   selectedWorkload = $state<Workload | null>(null)
+  /** The open namespace's row, which is where its usage figures live. */
+  selectedNamespaceRow = $state<NamespaceSummary | null>(null)
+  /** The open application, which is not a Kubernetes object at all. */
+  selectedApplication = $state<Application | null>(null)
   manifest = $state<string | null>(null)
   manifestStatus = $state<LoadStatus>('idle')
 
@@ -286,6 +391,8 @@ export class ClusterSession {
    * shows the operator a list they already navigated away from.
    */
   #request = 0
+  /** When the newest request left, so a wedged one can be written off. */
+  #requestedAt = 0
   #timer: ReturnType<typeof setInterval> | null = null
 
   /**
@@ -323,9 +430,11 @@ export class ClusterSession {
   readonly viewMode = $derived.by<ViewMode>(() => {
     const id = this.selectedKindId
     if (id === OVERVIEW_KIND_ID) return 'overview'
+    if (id === APPLICATIONS_KIND_ID) return 'applications'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
     if (id === RICH_KIND_IDS.events) return 'events'
+    if (id === RICH_KIND_IDS.namespaces) return 'namespaces'
     if (id in WORKLOAD_KIND_BY_ID) return 'workloads'
     return 'table'
   })
@@ -357,6 +466,17 @@ export class ClusterSession {
       workload.status,
     ]),
   )
+  readonly visibleApplications = $derived(
+    filterRows(this.applications, this.search, (application) => [
+      application.instance,
+      application.namespace,
+      application.partOf,
+      application.name,
+    ]),
+  )
+  readonly visibleNamespaces = $derived(
+    filterRows(this.namespaceRows, this.search, (namespace) => [namespace.name, namespace.phase]),
+  )
   readonly visibleEvents = $derived(
     filterRows(this.events, this.search, (event) => [
       event.reason,
@@ -382,6 +502,10 @@ export class ClusterSession {
         return this.visibleWorkloads.length
       case 'events':
         return this.visibleEvents.length
+      case 'namespaces':
+        return this.visibleNamespaces.length
+      case 'applications':
+        return this.visibleApplications.length
       default:
         return this.visibleTableRows.length
     }
@@ -412,6 +536,9 @@ export class ClusterSession {
   readonly sortedNodes = $derived(sortRows(this.visibleNodes, this.sort, NODE_SORT))
   readonly sortedWorkloads = $derived(sortRows(this.visibleWorkloads, this.sort, WORKLOAD_SORT))
   readonly sortedEvents = $derived(sortRows(this.visibleEvents, this.sort, EVENT_SORT))
+  readonly sortedNamespaces = $derived(
+    sortRows(this.visibleNamespaces, this.sort, NAMESPACE_SORT),
+  )
 
   /**
    * Generic table rows after sorting. The column ids are positional ("c0"),
@@ -448,6 +575,11 @@ export class ClusterSession {
   readonly pagedNodes = $derived(this.#slice(this.sortedNodes))
   readonly pagedWorkloads = $derived(this.#slice(this.sortedWorkloads))
   readonly pagedEvents = $derived(this.#slice(this.sortedEvents))
+  readonly pagedNamespaces = $derived(this.#slice(this.sortedNamespaces))
+  readonly sortedApplications = $derived(
+    sortRows(this.visibleApplications, this.sort, APPLICATION_SORT),
+  )
+  readonly pagedApplications = $derived(this.#slice(this.sortedApplications))
   readonly pagedTableRows = $derived(this.#slice(this.sortedTableRows))
 
   /**
@@ -601,6 +733,122 @@ export class ClusterSession {
     await this.refresh()
   }
 
+  /**
+   * Finds the row object for an object being opened, when one was not handed
+   * in. Null when the list holds no such row, which is not an error: the
+   * panel falls back to what the manifest alone can show.
+   */
+  #findPod(name: string, namespace: string): Pod | null {
+    if (this.viewMode !== 'pods') return null
+    return this.pods.find((pod) => pod.name === name && pod.namespace === namespace) ?? null
+  }
+
+  #findNamespace(name: string): NamespaceSummary | null {
+    if (this.viewMode !== 'namespaces') return null
+    return this.namespaceRows.find((row) => row.name === name) ?? null
+  }
+
+  #findNode(name: string): Node | null {
+    if (this.viewMode !== 'nodes') return null
+    return this.nodes.find((node) => node.name === name) ?? null
+  }
+
+  #findWorkload(name: string, namespace: string): Workload | null {
+    if (this.viewMode !== 'workloads') return null
+    return (
+      this.workloads.find(
+        (workload) => workload.name === name && workload.namespace === namespace,
+      ) ?? null
+    )
+  }
+
+  /**
+   * Opens one object, bringing the list behind it to where that object is.
+   *
+   * What following a reference has to do, and in ONE refresh. Selecting the
+   * kind and then opening the object separately loads the list twice — and
+   * loads it the first time under whatever namespace filter was already set,
+   * which for a pod on a node in another namespace is a list that does not
+   * contain the pod being opened. The panel is then left with no row object
+   * to read its live sections from.
+   *
+   * The namespace filter is moved ONLY when it would otherwise hide the
+   * target: a filter set to one namespace, and an object in another. "All
+   * namespaces" already shows it and is left alone.
+   */
+  openObject = async (
+    kindId: string,
+    name: string,
+    namespace: string,
+    namespaced: boolean,
+  ): Promise<void> => {
+    const needsNamespace =
+      namespaced &&
+      namespace !== '' &&
+      this.namespace !== ALL_NAMESPACES &&
+      this.namespace !== namespace
+
+    if (kindId !== this.selectedKindId || needsNamespace) {
+      this.selectedKindId = kindId
+      if (needsNamespace) {
+        this.namespace = namespace
+        preferences.setClusterNamespace(this.cluster.id, namespace)
+      }
+      this.page = 1
+      this.closeDetail()
+      await this.refresh()
+    }
+
+    await this.openDetail(name, namespace)
+  }
+
+  /**
+   * Opens an application's panel.
+   *
+   * ITS OWN PATH, because an application is not an object: there is no
+   * manifest to fetch and nothing to GET by that name. Everything its panel
+   * shows is already in the row, which is why this takes the row.
+   */
+  openApplication = (application: Application): void => {
+    this.selectedApplication = application
+    this.selectedName = application.instance
+    this.selectedNamespace = application.namespace
+    this.selectedPod = null
+    this.selectedNode = null
+    this.selectedWorkload = null
+    this.selectedNamespaceRow = null
+    this.manifest = null
+    this.manifestStatus = 'ready'
+    // Seeded from what the list has been recording since the tab opened, the
+    // same way a pod's and a node's are.
+    this.usage = usageHistory.since(
+      usageKey(this.cluster.id, 'application', application.namespace, application.instance),
+    )
+  }
+
+  /**
+   * Opens a kind's list, filtered to one namespace.
+   *
+   * Both at once and ONE reload. Calling selectKind and selectNamespace in
+   * turn does the same thing in two refreshes, the first of which loads the
+   * new kind across whatever namespace was previously selected — a flash of
+   * the wrong list, and on a large cluster an expensive one.
+   */
+  browseKind = async (kindId: string, namespace: string): Promise<void> => {
+    const changed = kindId !== this.selectedKindId || namespace !== this.namespace
+
+    this.selectedKindId = kindId
+    this.namespace = namespace
+    preferences.setClusterNamespace(this.cluster.id, namespace)
+    this.page = 1
+    // Closed either way: the drawer is open on the namespace that was just
+    // navigated away from, and leaving it there over a list of something else
+    // is a panel describing an object nothing on screen refers to.
+    this.closeDetail()
+
+    if (changed) await this.refresh()
+  }
+
   /** Changes the namespace filter, remembers it for this cluster, and reloads. */
   selectNamespace = async (namespace: string): Promise<void> => {
     if (namespace === this.namespace) return
@@ -696,6 +944,7 @@ export class ClusterSession {
   /** Reloads whichever view is active. */
   refresh = async (): Promise<void> => {
     const request = ++this.#request
+    this.#requestedAt = Date.now()
     this.status = 'loading'
 
     // Hung off refresh rather than off the poll timer, so it also happens for
@@ -836,8 +1085,29 @@ export class ClusterSession {
         return listNodes(id)
       case 'events':
         return listEvents(id, namespace)
-      case 'workloads':
-        return listWorkloads(id, WORKLOAD_KIND_BY_ID[this.selectedKindId], namespace)
+      case 'namespaces':
+        return listNamespaceSummaries(id)
+      case 'applications':
+        return listApplications(id, namespace)
+      case 'workloads': {
+        const kind = WORKLOAD_KIND_BY_ID[this.selectedKindId]
+        // Not awaited, so a slow pod list never delays the rows themselves.
+        //
+        // GUARDED BY A GENERATION, not by comparing the kind. The kind alone
+        // let three things through: a namespace change with the kind
+        // unchanged, two refreshes of the same list resolving out of order
+        // with the older winning, and a failure clearing figures a later
+        // success had already installed. One counter closes all three.
+        const generation = ++this.#usageGeneration
+        void workloadConsumption(id, kind, namespace)
+          .then((usage) => {
+            if (generation === this.#usageGeneration) this.workloadUsage = usage
+          })
+          .catch(() => {
+            if (generation === this.#usageGeneration) this.workloadUsage = {}
+          })
+        return listWorkloads(id, kind, namespace)
+      }
       default:
         return listTable(id, this.selectedKindId, namespace)
     }
@@ -851,7 +1121,12 @@ export class ClusterSession {
     this.nodes = []
     this.workloads = []
     this.events = []
+    this.namespaceRows = []
+    this.applications = []
     this.table = null
+    // NOT cleared: it arrives a beat after the rows it belongs to, and
+    // clearing it here would blank every meter for one frame on each refresh.
+    // A response for another list is turned away where it lands instead.
     // The overview is deliberately NOT cleared here. It is a cached assessment
     // rather than one of the mutually exclusive row buffers, and the navigator
     // badge reads from it: clearing it would blank the "3 issues" badge the
@@ -870,6 +1145,15 @@ export class ClusterSession {
       case 'events':
         this.events = rows as K8sEvent[]
         break
+      case 'namespaces':
+        this.namespaceRows = rows as NamespaceSummary[]
+        break
+      case 'applications': {
+        const inventory = rows as ApplicationInventory
+        this.applications = inventory.applications
+        this.unlabelled = inventory.unlabelled
+        break
+      }
       case 'workloads':
         this.workloads = rows as Workload[]
         break
@@ -895,9 +1179,37 @@ export class ClusterSession {
   #retainUsage(): void {
     const at = Date.now()
 
+    // Applications, on the same terms: the row carries a measurement for
+    // every application on screen, so a panel opened after a few refreshes
+    // has a line in it rather than an empty frame. Without this the charts
+    // never filled at all — the panel was being handed a series nothing had
+    // ever written to.
+    for (const application of this.applications) {
+      if (!application.hasMetrics) continue
+      usageHistory.record(usageKey(this.cluster.id, 'application', application.namespace, application.instance), {
+        at,
+        cpuCores: application.cpuCores,
+        memoryBytes: application.memoryBytes,
+      })
+    }
+
+    // Namespaces, on the same terms and for the same reason: the row already
+    // carries a measurement for every namespace on screen, so a panel opened
+    // after a few refreshes has a line in it rather than an empty frame.
+    // Raw numbers rather than the formatted strings the pods loop parses —
+    // the row carries both, and the formatted CPU is rounded to two decimals.
+    for (const row of this.namespaceRows) {
+      if (!row.hasMetrics) continue
+      usageHistory.record(usageKey(this.cluster.id, 'namespace', '', row.name), {
+        at,
+        cpuCores: row.cpuCores,
+        memoryBytes: row.memoryBytes,
+      })
+    }
+
     for (const pod of this.pods) {
       if (!pod.hasMetrics) continue
-      usageHistory.record(usageKey('pod', pod.namespace, pod.name), {
+      usageHistory.record(usageKey(this.cluster.id, 'pod', pod.namespace, pod.name), {
         at,
         cpuCores: parseQuantity(pod.cpu) ?? 0,
         memoryBytes: parseQuantity(pod.memory) ?? 0,
@@ -935,7 +1247,7 @@ export class ClusterSession {
       // with no metrics-server would otherwise accumulate a confident flat
       // line along the axis.
       if (!load.usageMeasured) continue
-      usageHistory.record(usageKey('node', '', load.name), {
+      usageHistory.record(usageKey(this.cluster.id, 'node', '', load.name), {
         at,
         cpuCores: load.usageCpuMilli / 1000,
         memoryBytes: load.usageMemoryBytes,
@@ -960,6 +1272,29 @@ export class ClusterSession {
    */
   #refreshSelection(): void {
     if (!this.selectedName) return
+
+    // An open application, refreshed from the list behind it and appended to
+    // its chart. Without this the panel showed whatever had been recorded
+    // when it opened and never moved again — the series is written by the
+    // list, and the open panel has to keep taking from it.
+    if (this.selectedApplication) {
+      const fresh = this.applications.find(
+        (application) =>
+          application.instance === this.selectedName &&
+          application.namespace === this.selectedNamespace,
+      )
+      if (fresh) {
+        this.selectedApplication = fresh
+        if (fresh.hasMetrics) {
+          this.#append({
+            at: Date.now(),
+            cpuCores: fresh.cpuCores,
+            memoryBytes: fresh.memoryBytes,
+          })
+        }
+      }
+      return
+    }
 
     if (this.selectedPod) {
       const fresh = this.pods.find(
@@ -1046,7 +1381,21 @@ export class ClusterSession {
    */
   secretsRevealed = $state(false)
 
-  /** Opens the detail drawer for one object and loads its manifest. */
+  /**
+   * Opens the detail drawer for one object and loads its manifest.
+   *
+   * The row that was clicked hands its own object in, because it has one and
+   * a lookup would be wasted. NOTHING ELSE DOES — a reference followed from
+   * another panel knows a kind, a name and a namespace and no more — so when
+   * one is not supplied it is found in the list this session has loaded.
+   *
+   * That lookup is not a nicety. A panel's live sections come from the row
+   * object rather than from the manifest: a node's usage charts, a pod's
+   * findings and its containers' current state, a workload's replica figures.
+   * Without it, following a link opened a panel missing exactly the parts the
+   * manifest cannot supply — and closing it and clicking the row fixed it,
+   * which is how the difference was noticed.
+   */
   openDetail = async (
     name: string,
     namespace: string,
@@ -1056,9 +1405,11 @@ export class ClusterSession {
   ): Promise<void> => {
     this.selectedName = name
     this.selectedNamespace = namespace
-    this.selectedPod = pod ?? null
-    this.selectedNode = node ?? null
-    this.selectedWorkload = workload ?? null
+    this.selectedPod = pod ?? this.#findPod(name, namespace)
+    this.selectedNode = node ?? this.#findNode(name)
+    this.selectedWorkload = workload ?? this.#findWorkload(name, namespace)
+    this.selectedNamespaceRow = this.#findNamespace(name)
+    this.selectedApplication = null
     this.manifest = null
     this.manifestStatus = 'loading'
     // SEEDED FROM WHAT WAS ALREADY WATCHED, rather than starting empty. The
@@ -1066,11 +1417,16 @@ export class ClusterSession {
     // responses carried this object's usage; the chart may as well open with
     // it. Empty when nothing was retained — a window of zero, or an object
     // whose list has not been visited.
-    this.usage = pod
-      ? usageHistory.since(usageKey('pod', namespace, name))
-      : node
-        ? usageHistory.since(usageKey('node', '', name))
-        : []
+    // For whichever of the two this turned out to be, INCLUDING when it was
+    // resolved above rather than handed in — which is what makes a followed
+    // link open with the same history a clicked row does.
+    this.usage = this.selectedPod
+      ? usageHistory.since(usageKey(this.cluster.id, 'pod', namespace, name))
+      : this.selectedNode
+        ? usageHistory.since(usageKey(this.cluster.id, 'node', '', name))
+        : this.selectedNamespaceRow
+          ? usageHistory.since(usageKey(this.cluster.id, 'namespace', '', name))
+          : []
     // Every open starts hidden. A reveal is a decision about one object, and
     // carrying it to the next one is how Freelens ends up showing a value
     // somebody unmasked in private on the pod they open in a meeting.
@@ -1091,18 +1447,60 @@ export class ClusterSession {
     await this.#loadManifest(this.selectedName, this.selectedNamespace)
   }
 
+  /**
+   * Puts the values back behind their placeholders.
+   *
+   * THERE WAS NO WAY BACK, which was an oversight rather than a policy:
+   * revealing swapped the Reveal control for nothing, so the only way to
+   * re-mask a Secret was to close the panel and open it again. Everything
+   * else about revealing a value here says it should be re-hideable —
+   * including the reveal on an environment variable, which hides itself.
+   *
+   * Not an audited read: masking asks the API server for the same object with
+   * the values replaced by their sizes, which is what an unprivileged read
+   * looks like anyway.
+   */
+  hideManifestSecrets = async (): Promise<void> => {
+    if (!this.selectedName || !this.secretsRevealed) return
+    this.secretsRevealed = false
+    await this.#loadManifest(this.selectedName, this.selectedNamespace)
+  }
+
+  /**
+   * The manifest reads issued so far, so a stale one cannot land.
+   *
+   * WITHOUT THIS A SECRET STAYS ON SCREEN WITH ITS AUTO-MASK DISARMED, which
+   * is the one outcome the whole reveal design exists to prevent. Revealing
+   * sets `secretsRevealed` synchronously, so the toolbar button swaps to
+   * "Hide" in the same position before the larger read returns. On a slow
+   * cluster the operator does the universal did-that-work gesture and clicks
+   * again — now two reads are in flight, and if the reveal lands last the
+   * manifest holds decoded values while `secretsRevealed` is false. The
+   * window-blur mask is gated on that flag, so alt-tabbing to start a screen
+   * share no longer hides anything.
+   *
+   * It also stops pod A's YAML appearing under pod B's header, and stops a
+   * stale failure closing a tab for an object already navigated away from.
+   */
+  #manifestRequest = 0
+
   async #loadManifest(name: string, namespace: string): Promise<void> {
+    const request = ++this.#manifestRequest
+    const revealed = this.secretsRevealed
     this.manifestStatus = 'loading'
     try {
-      this.manifest = await getManifest(
+      const manifest = await getManifest(
         this.cluster.id,
         this.selectedKindId,
         namespace,
         name,
-        this.secretsRevealed,
+        revealed,
       )
+      if (request !== this.#manifestRequest) return
+      this.manifest = manifest
       this.manifestStatus = 'ready'
     } catch (cause) {
+      if (request !== this.#manifestRequest) return
       this.manifestStatus = 'error'
       this.#fail(cause)
     }
@@ -1139,8 +1537,19 @@ export class ClusterSession {
 
     this.#timer = setInterval(() => {
       // Skip while a request is in flight, so a slow cluster cannot accumulate
-      // a backlog of overlapping refreshes.
-      if (this.status === 'loading') return
+      // a backlog of overlapping refreshes — BUT NOT FOR EVER.
+      //
+      // `status` is only ever cleared inside refresh(), so a request that
+      // never settles left it reading 'loading' and this check skipping every
+      // tick from then on. Auto-refresh stopped, permanently and silently,
+      // with the screen showing whatever it had last managed to read. Nothing
+      // said so; the numbers simply stopped moving.
+      //
+      // After a few missed ticks the request is written off and a new one
+      // starts. Nothing stale can land on top of it — refresh() guards every
+      // assignment on its own generation.
+      const stalled = Date.now() - this.#requestedAt >= intervalMs * MISSED_TICKS_BEFORE_RETRY
+      if (this.status === 'loading' && !stalled) return
       void this.refresh()
     }, intervalMs)
   }
@@ -1155,6 +1564,11 @@ export class ClusterSession {
   /** Releases the timer, for when the tab closes. */
   dispose = (): void => {
     this.stopAutoRefresh()
+    // Everything this tab accumulated goes with it. Per-cluster in both
+    // cases, so closing one tab does not blank the charts in another or make
+    // it re-read ConfigMaps it already has.
+    usageHistory.forget(this.cluster.id)
+    forgetConfigMaps(this.cluster.id)
   }
 
   /** Scales a workload to the specified number of replicas. */

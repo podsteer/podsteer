@@ -60,6 +60,18 @@ type KubernetesConfig struct {
 	Burst int
 	// RequestTimeout bounds a single call from the frontend.
 	RequestTimeout time.Duration
+	// LiveWatch mirrors a cluster's pods locally rather than re-listing them
+	// on every refresh.
+	//
+	// ON, AND SWITCHABLE. It changes how PodSteer talks to somebody's API
+	// server — one long-lived watch instead of a list every few seconds — so
+	// it keeps a way back, and `false` is not an approximation of the old
+	// behaviour but the same code path, because the fallback IS that path.
+	//
+	// It is safe as a default for the reason the whole design rests on: a
+	// read is never blocked on the store, and an account that may not watch
+	// degrades to polling on its own. See app/adapters/k8s/watch.go.
+	LiveWatch bool
 }
 
 // LogConfig controls diagnostics.
@@ -104,6 +116,7 @@ func Default() Config {
 			QPS:            50,
 			Burst:          100,
 			RequestTimeout: 30 * time.Second,
+			LiveWatch:      true,
 		},
 		Log: LogConfig{
 			Level: slog.LevelInfo,
@@ -128,6 +141,14 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("%sQPS: %q is not a positive number", envPrefix, value)
 		}
 		cfg.Kubernetes.QPS = float32(qps)
+	}
+
+	if value, ok := lookup("LIVE_WATCH"); ok {
+		live, err := strconv.ParseBool(value)
+		if err != nil {
+			return Config{}, fmt.Errorf("%sLIVE_WATCH: %q is not true or false", envPrefix, value)
+		}
+		cfg.Kubernetes.LiveWatch = live
 	}
 
 	if value, ok := lookup("BURST"); ok {

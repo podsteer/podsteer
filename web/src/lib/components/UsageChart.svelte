@@ -53,6 +53,39 @@
 
   const lines = $derived(markers.filter((marker) => marker.value > 0))
 
+  /**
+   * The references that were asked for and do not exist.
+   *
+   * Said out loud rather than left as a chart with fewer lines on it. An
+   * absent line is ambiguous — undeclared, or declared so far above the usage
+   * that it is off the top? — and that ambiguity is exactly what hid a bug
+   * for the whole life of these charts: the lines were being built and
+   * dropped by ECharts, and a chart with no lines looked like a pod with no
+   * limits. Naming the missing ones makes the two states different on screen.
+   */
+  const undeclared = $derived(markers.filter((marker) => marker.value <= 0))
+
+  /**
+   * The chart in a sentence, for anything that cannot see it.
+   *
+   * Deliberately the reading rather than the series: a hundred numbers read
+   * aloud is not an alternative to a line, and what the line is for is the
+   * current value, its range, and its distance from the marks.
+   */
+  const summary = $derived.by(() => {
+    const name = metric === 'cpu' ? 'CPU' : 'Memory'
+    if (samples.length === 0) return `${name} over time. Nothing measured yet.`
+
+    const values = samples.map((sample) => (metric === 'cpu' ? sample.cpuCores : sample.memoryBytes))
+    const now = values[values.length - 1]
+    const low = Math.min(...values)
+    const high = Math.max(...values)
+
+    const against = lines.map((line) => `${line.label} ${format(line.value)}`).join(', ')
+    const span = `${name} over the last ${samples.length} samples: now ${format(now)}, between ${format(low)} and ${format(high)}.`
+    return against ? `${span} Measured against ${against}.` : span
+  })
+
   let container = $state<HTMLDivElement | null>(null)
   let chart: Chart | null = null
   let failed = $state(false)
@@ -140,10 +173,17 @@
     const warn = theme.getPropertyValue('--gauge-warn').trim() || '#e0a458'
     const critical = theme.getPropertyValue('--gauge-critical').trim() || '#e06c75'
 
+    // The figure is in the label, not only on the axis. A dashed line marked
+    // "Limit" still leaves the reading to be taken off the y axis by eye,
+    // which is the work the line was drawn to save.
     const marks = lines.map((line) => ({
       yAxis: line.value,
       lineStyle: { color: line.tone === 'critical' ? critical : warn, type: 'dashed' },
-      label: { formatter: line.label, color: ink, position: 'insideEndTop' },
+      label: {
+        formatter: `${line.label} ${format(line.value)}`,
+        color: ink,
+        position: 'insideEndTop',
+      },
     }))
 
     return {
@@ -260,7 +300,16 @@
     there is no line yet.
   -->
   <div class="relative">
-    <div bind:this={container} class="h-32 w-full"></div>
+    <!--
+      THE DATA IS ABSENT, NOT DEGRADED, WITHOUT THIS. The canvas carries no
+      text at all and ECharts' tooltip is hover-only, so everything the chart
+      knows was unreachable to a screen reader — while the chrome around it
+      ("No CPU limit declared", "Watching — the line appears after a few
+      refreshes") was carefully rendered as words. The summary below says what
+      somebody reading the line would take from it: where it is now, how far
+      it ranged, and what it is measured against.
+    -->
+    <div bind:this={container} class="h-32 w-full" role="img" aria-label={summary}></div>
     {#if samples.length < 2}
       <p
         class="pointer-events-none absolute inset-0 flex items-center justify-center
@@ -270,4 +319,17 @@
       </p>
     {/if}
   </div>
+
+  <!--
+    What the chart is NOT measured against. A container with no limit is a
+    deliberate and common shape rather than an oversight, so this is stated
+    plainly rather than as a warning — but it has to be stated, because the
+    alternative is a chart that looks the same as one whose reference lines
+    failed to draw.
+  -->
+  {#if undeclared.length > 0}
+    <p class="mt-1 text-body-small text-on-surface-variant/60">
+      {undeclared.map((marker) => `No ${marker.label.toLowerCase()} declared`).join(' · ')}.
+    </p>
+  {/if}
 {/if}

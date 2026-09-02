@@ -387,7 +387,7 @@ export function collect(repoRoot) {
   const mislabelled = [...imported].filter((name) => !shippedTree.has(name) && fullTree.has(name))
   const unresolved = [...imported].filter((name) => !fullTree.has(name))
 
-  const packages = [
+  const packages = applyNoticeSources(repoRoot, [
     ...[...shippedGo].sort().map((entry) => goPackage(modCache, entry, 'shipped')),
     ...buildGo.sort().map((entry) => goPackage(modCache, entry, 'build')),
     ...[...shippedTree.entries()]
@@ -397,7 +397,7 @@ export function collect(repoRoot) {
       .filter(([name]) => !shippedTree.has(name))
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([name, entry]) => npmPackage(name, entry, 'build')),
-  ]
+  ])
 
   return {
     packages,
@@ -408,6 +408,64 @@ export function collect(repoRoot) {
     unresolved,
     unfetchedGo,
   }
+}
+
+/**
+ * Fills in notices for packages that publish none of their own.
+ *
+ * MIT AND BSD REQUIRE THE NOTICE TO BE REPRODUCED, and a package that omits
+ * the file from its tarball does not thereby remove the duty — it only means
+ * the text has to come from where the project actually keeps it. The rule here
+ * is that it comes from a SIBLING ALREADY IN THIS INVENTORY: same project, same
+ * licence, same holder, and a file we can point at rather than prose somebody
+ * typed out. `build/licences/notice-sources.json` records which, and why.
+ *
+ * Three things make it fail rather than fudge:
+ *
+ *   - a sibling that is not in the tree, so the entry cannot silently do
+ *     nothing after a dependency is dropped;
+ *   - a sibling with no licence text of its own, which would inherit nothing;
+ *   - a package that has SINCE started shipping its own licence, so the
+ *     exception is removed rather than quietly shadowing the real file.
+ */
+function applyNoticeSources(root, packages) {
+  const path = join(root, 'build', 'licences', 'notice-sources.json')
+  if (!existsSync(path)) return packages
+
+  const { sources = [] } = JSON.parse(readFileSync(path, 'utf8'))
+  const byName = new Map(packages.map((entry) => [`${entry.ecosystem}:${entry.name}`, entry]))
+
+  for (const source of sources) {
+    const key = `${source.ecosystem}:${source.package}`
+    const target = byName.get(key)
+    if (!target) continue
+
+    if (target.text) {
+      throw new Error(
+        `${key} now ships its own licence; remove its entry from notice-sources.json ` +
+          `rather than shadowing the real file`,
+      )
+    }
+
+    const donor = byName.get(`${source.ecosystem}:${source.inheritsFrom}`)
+    if (!donor) {
+      throw new Error(
+        `${key} inherits its notice from ${source.inheritsFrom}, which is not in the ` +
+          `dependency tree — the entry is stale`,
+      )
+    }
+    if (!donor.text) {
+      throw new Error(`${key} inherits its notice from ${source.inheritsFrom}, which has none`)
+    }
+
+    target.text = donor.text
+    target.copyright = donor.copyright
+    // Recorded on the entry so the inventory says where the text came from
+    // rather than implying the package shipped it.
+    target.noticeFrom = source.inheritsFrom
+  }
+
+  return packages
 }
 
 /**

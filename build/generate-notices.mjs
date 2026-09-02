@@ -74,6 +74,10 @@ const shipped = outcome.resolved
     // Only present when there is one, so the committed file stays readable.
     if (entry.expression) record.expression = entry.expression
     if (entry.noticeText) record.noticeTextId = intern(entry.noticeText)
+    // Where a notice came from, when the package did not ship one itself.
+    // Recorded so the inventory does not imply the text was in the tarball —
+    // see build/licences/notice-sources.json for why it is allowed at all.
+    if (entry.noticeFrom) record.noticeFrom = entry.noticeFrom
     return record
   })
 

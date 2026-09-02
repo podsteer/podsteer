@@ -100,6 +100,16 @@
   let anchor = $state<DOMRect | null>(null)
   /** Which option the keyboard is on, which is not always the chosen one. */
   let active = $state(-1)
+
+  /**
+   * A stable id per option, for aria-activedescendant.
+   *
+   * Instance-scoped, because several of these are on screen at once — the
+   * namespace filter and the settings panes — and two listboxes numbering
+   * their options the same way would have the browser resolve the wrong one.
+   */
+  const instance = $props.id()
+  const optionId = (index: number): string => `${instance}-option-${index}`
   /**
    * The VALUE that index points at, kept alongside it.
    *
@@ -347,11 +357,18 @@
   </button>
 
   {#if open}
+    <!--
+      aria-activedescendant says WHICH OPTION IS ACTIVE. Focus stays on the
+      panel and the arrow keys move a highlight, which is the right design for
+      a listbox — but the highlight was only drawn, never announced, so a
+      screen reader following the arrow keys heard nothing move.
+    -->
     <div
       bind:this={panel}
       data-select-root
       role="listbox"
       aria-label={accessibleName ?? label}
+      aria-activedescendant={active >= 0 && options[active] ? optionId(active) : undefined}
       tabindex="-1"
       use:place={anchor}
       onkeydown={onPanelKeydown}
@@ -381,6 +398,7 @@
         <button
           type="button"
           role="option"
+          id={optionId(index)}
           data-index={index}
           aria-selected={isSelected}
           onclick={() => choose(index)}

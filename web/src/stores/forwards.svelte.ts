@@ -15,6 +15,21 @@
 import { listPortForwards, startPortForward, stopPortForward, type PortForward } from '$lib/api/client'
 import { toApiError } from '$lib/api/errors'
 
+/**
+ * Identifies one forwarded port, and THE CLUSTER IS PART OF IT.
+ *
+ * `active` holds every forward across every open cluster, which is what makes
+ * leaving the cluster out a bug rather than an omission: PodSteer holds
+ * several clusters open at once, and a StatefulSet gives them pods with
+ * identical names in identically named namespaces. A forward on
+ * `default/postgres-0` in staging therefore rendered as open on production's
+ * row, showed production the wrong address, and — worst — let Stop tear down
+ * the other cluster's forward.
+ */
+function forwardKey(cluster: string, namespace: string, pod: string, remotePort: number): string {
+  return `${cluster}/${namespace}/${pod}/${remotePort}`
+}
+
 class Forwards {
   /** Everything forwarded right now, across every cluster. */
   active = $state.raw<PortForward[]>([])
@@ -32,9 +47,15 @@ class Forwards {
    * question a button asks is "is this container port already open
    * somewhere", and the local port is the answer to it, not part of it.
    */
-  forPort(namespace: string, pod: string, remotePort: number): PortForward | undefined {
+  forPort(
+    cluster: string,
+    namespace: string,
+    pod: string,
+    remotePort: number,
+  ): PortForward | undefined {
     return this.active.find(
       (forward) =>
+        forward.clusterId === cluster &&
         forward.namespace === namespace &&
         forward.pod === pod &&
         forward.remotePort === remotePort,
@@ -64,9 +85,12 @@ class Forwards {
    * row holding it is not the row it was started from, and with several
    * replicas of one workload there is otherwise nothing to tell them apart.
    */
-  forPod(namespace: string, pod: string): PortForward[] {
+  forPod(cluster: string, namespace: string, pod: string): PortForward[] {
     return this.active.filter(
-      (forward) => forward.namespace === namespace && forward.pod === pod,
+      (forward) =>
+        forward.clusterId === cluster &&
+        forward.namespace === namespace &&
+        forward.pod === pod,
     )
   }
 
@@ -91,7 +115,7 @@ class Forwards {
     /** The pod's own labels, so a replacement can be found if it dies. */
     selector: Record<string, string>,
   ): Promise<void> {
-    const key = `${namespace}/${pod}/${remotePort}`
+    const key = forwardKey(clusterId, namespace, pod, remotePort)
     this.#setBusy(key, true)
     this.error = ''
 
@@ -119,7 +143,7 @@ class Forwards {
   }
 
   async stop(forward: PortForward): Promise<void> {
-    const key = `${forward.namespace}/${forward.pod}/${forward.remotePort}`
+    const key = forwardKey(forward.clusterId, forward.namespace, forward.pod, forward.remotePort)
     this.#setBusy(key, true)
 
     try {
@@ -132,8 +156,8 @@ class Forwards {
     }
   }
 
-  isBusy(namespace: string, pod: string, remotePort: number): boolean {
-    return this.busy.has(`${namespace}/${pod}/${remotePort}`)
+  isBusy(cluster: string, namespace: string, pod: string, remotePort: number): boolean {
+    return this.busy.has(forwardKey(cluster, namespace, pod, remotePort))
   }
 
   #setBusy(key: string, busy: boolean): void {

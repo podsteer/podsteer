@@ -58,6 +58,14 @@
     class="pointer-events-none absolute left-3 size-3.5 text-on-surface-variant/60"
     strokeWidth={2}
   />
+  <!--
+    NAMED EXPLICITLY, because the label wrapping this has no text of its own —
+    only the search icon, the shortcut chip and the clear button. A screen
+    reader therefore built the name out of those: empty, this box announced
+    itself as "Ctrl K, edit text", and once you typed in it the chip was
+    replaced by the clear button and the name became "Clear search". Wrong in
+    both states, and it changed as you typed.
+  -->
   <input
     bind:this={inputEl}
     type="text"
@@ -67,6 +75,7 @@
     spellcheck="false"
     {value}
     {placeholder}
+    aria-label={placeholder}
     oninput={(event) => onchange(event.currentTarget.value)}
     onkeydown={handleKeydown}
     class="field h-8 w-full pl-9 text-body-medium {value ? 'pr-8' : 'pr-16'}"
