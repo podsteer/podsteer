@@ -366,10 +366,17 @@
     void session.selectKind(kindId)
   }
 
-  /** Opens one object from a finding, in the list it belongs to. */
+  /**
+   * Opens one object from a finding, in the list it belongs to.
+   *
+   * One call rather than selecting the kind and then opening: the two halves
+   * are one move, and doing them separately loads the list twice and can
+   * leave the panel without the row its live sections are read from. See
+   * ClusterSession.openObject.
+   */
   async function openObject(kindId: string, name: string, namespace: string): Promise<void> {
-    await session.selectKind(kindId)
-    await session.openDetail(name, namespace)
+    const kind = session.kinds.find((entry) => entry.id === kindId)
+    await session.openObject(kindId, name, namespace, kind?.namespaced ?? true)
   }
 </script>
 

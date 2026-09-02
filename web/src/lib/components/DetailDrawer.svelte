@@ -203,10 +203,12 @@
    * row in the list behind it.
    */
   async function openObject(kindName: string, name: string, namespace: string): Promise<void> {
-    const kindId = kindIdFor(kindName)
-    if (!kindId) return
-    await session.selectKind(kindId)
-    await session.openDetail(name, namespace)
+    const kind = session.kinds.find((entry) => entry.kind === kindName)
+    if (!kind) return
+    // One call, because the two halves are one move: the list has to end up
+    // somewhere that contains the object, or the panel opens without the row
+    // its live sections are read from. See ClusterSession.openObject.
+    await session.openObject(kind.id, name, namespace, kind.namespaced)
   }
 
   const isScalable = $derived(

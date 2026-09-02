@@ -645,6 +645,70 @@ export class ClusterSession {
   }
 
   /**
+   * Finds the row object for an object being opened, when one was not handed
+   * in. Null when the list holds no such row, which is not an error: the
+   * panel falls back to what the manifest alone can show.
+   */
+  #findPod(name: string, namespace: string): Pod | null {
+    if (this.viewMode !== 'pods') return null
+    return this.pods.find((pod) => pod.name === name && pod.namespace === namespace) ?? null
+  }
+
+  #findNode(name: string): Node | null {
+    if (this.viewMode !== 'nodes') return null
+    return this.nodes.find((node) => node.name === name) ?? null
+  }
+
+  #findWorkload(name: string, namespace: string): Workload | null {
+    if (this.viewMode !== 'workloads') return null
+    return (
+      this.workloads.find(
+        (workload) => workload.name === name && workload.namespace === namespace,
+      ) ?? null
+    )
+  }
+
+  /**
+   * Opens one object, bringing the list behind it to where that object is.
+   *
+   * What following a reference has to do, and in ONE refresh. Selecting the
+   * kind and then opening the object separately loads the list twice — and
+   * loads it the first time under whatever namespace filter was already set,
+   * which for a pod on a node in another namespace is a list that does not
+   * contain the pod being opened. The panel is then left with no row object
+   * to read its live sections from.
+   *
+   * The namespace filter is moved ONLY when it would otherwise hide the
+   * target: a filter set to one namespace, and an object in another. "All
+   * namespaces" already shows it and is left alone.
+   */
+  openObject = async (
+    kindId: string,
+    name: string,
+    namespace: string,
+    namespaced: boolean,
+  ): Promise<void> => {
+    const needsNamespace =
+      namespaced &&
+      namespace !== '' &&
+      this.namespace !== ALL_NAMESPACES &&
+      this.namespace !== namespace
+
+    if (kindId !== this.selectedKindId || needsNamespace) {
+      this.selectedKindId = kindId
+      if (needsNamespace) {
+        this.namespace = namespace
+        preferences.setClusterNamespace(this.cluster.id, namespace)
+      }
+      this.page = 1
+      this.closeDetail()
+      await this.refresh()
+    }
+
+    await this.openDetail(name, namespace)
+  }
+
+  /**
    * Opens a kind's list, filtered to one namespace.
    *
    * Both at once and ONE reload. Calling selectKind and selectNamespace in
@@ -1118,7 +1182,21 @@ export class ClusterSession {
    */
   secretsRevealed = $state(false)
 
-  /** Opens the detail drawer for one object and loads its manifest. */
+  /**
+   * Opens the detail drawer for one object and loads its manifest.
+   *
+   * The row that was clicked hands its own object in, because it has one and
+   * a lookup would be wasted. NOTHING ELSE DOES — a reference followed from
+   * another panel knows a kind, a name and a namespace and no more — so when
+   * one is not supplied it is found in the list this session has loaded.
+   *
+   * That lookup is not a nicety. A panel's live sections come from the row
+   * object rather than from the manifest: a node's usage charts, a pod's
+   * findings and its containers' current state, a workload's replica figures.
+   * Without it, following a link opened a panel missing exactly the parts the
+   * manifest cannot supply — and closing it and clicking the row fixed it,
+   * which is how the difference was noticed.
+   */
   openDetail = async (
     name: string,
     namespace: string,
@@ -1128,9 +1206,9 @@ export class ClusterSession {
   ): Promise<void> => {
     this.selectedName = name
     this.selectedNamespace = namespace
-    this.selectedPod = pod ?? null
-    this.selectedNode = node ?? null
-    this.selectedWorkload = workload ?? null
+    this.selectedPod = pod ?? this.#findPod(name, namespace)
+    this.selectedNode = node ?? this.#findNode(name)
+    this.selectedWorkload = workload ?? this.#findWorkload(name, namespace)
     this.manifest = null
     this.manifestStatus = 'loading'
     // SEEDED FROM WHAT WAS ALREADY WATCHED, rather than starting empty. The
@@ -1138,9 +1216,12 @@ export class ClusterSession {
     // responses carried this object's usage; the chart may as well open with
     // it. Empty when nothing was retained — a window of zero, or an object
     // whose list has not been visited.
-    this.usage = pod
+    // For whichever of the two this turned out to be, INCLUDING when it was
+    // resolved above rather than handed in — which is what makes a followed
+    // link open with the same history a clicked row does.
+    this.usage = this.selectedPod
       ? usageHistory.since(usageKey('pod', namespace, name))
-      : node
+      : this.selectedNode
         ? usageHistory.since(usageKey('node', '', name))
         : []
     // Every open starts hidden. A reveal is a decision about one object, and
