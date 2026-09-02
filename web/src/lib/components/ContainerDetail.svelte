@@ -35,9 +35,9 @@
   } from '$lib/container'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
   import type { Container } from '$lib/api/client'
-  import SecretReveal from './SecretReveal.svelte'
   import { forwards } from '$stores/forwards.svelte'
   import { configMapData } from '$stores/configMaps.svelte'
+  import { secretReveals } from '$stores/secretReveals.svelte'
   import { BrowserOpenURL } from '$lib/wailsjs/runtime/runtime'
   import { EyeOff, ExternalLink, Loader, Plug, Unplug } from '@lucide/svelte'
 
@@ -172,16 +172,10 @@
    */
   let configMaps = $state<Record<string, Record<string, string>>>({})
 
-  /**
-   * What a Secret has been revealed to say, by variable name.
-   *
-   * Held here rather than inside SecretReveal because the row draws the value
-   * and SecretReveal draws only the button — a detail row's controls belong
-   * together at its end, not wherever the value happens to stop. What stays
-   * inside SecretReveal is the part worth keeping in one place: when a
-   * revealed value stops being on screen.
-   */
-  let revealed = $state<Record<string, { value: string | null; error: string }>>({})
+  /** Identifies one Secret key across panes, for what is revealed of it. */
+  function revealKey(secret: string, key: string): string {
+    return `${clusterId}/${namespace}/${secret}/${key}`
+  }
 
   $effect(() => {
     const names = new Set<string>()
@@ -215,16 +209,31 @@
     env.map((variable) => {
       const secret = secretRef(variable)
       if (secret?.name && secret?.key) {
+        // Narrowed once, so the closures below carry strings rather than
+        // maybes — the guard above already proved both are present.
+        const { name: secretName, key: secretKey } = secret as { name: string; key: string }
         // The mask, and the plaintext once somebody asks for it. The words
         // are behind the info button now: thirty variables each spelling out
         // "<set to the key 'x' in secret 'y'>" is thirty lines of one
         // sentence where thirty values should be.
-        const shown = revealed[variable.name]
+        const key = revealKey(secretName, secretKey)
+        const shown = secretReveals.at(key)
         return {
           label: variable.name,
-          value: shown?.error || shown?.value || '••••••••',
-          info: `Set to the key '${secret.key}' in secret '${secret.name}'`,
-          tone: shown?.error ? ('critical' as const) : undefined,
+          value: shown.error || shown.value || '••••••••',
+          info: `Set to the key '${secretKey}' in secret '${secretName}'`,
+          tone: shown.error ? ('critical' as const) : undefined,
+          reference: follow('Secret', secretName, namespace),
+          // The wording follows what is on screen, and reading is the
+          // deliberate act: see $stores/secretReveals.
+          action: shown.value
+            ? { label: 'Hide value', kind: 'reveal' as const, onclick: () => secretReveals.hide(key) }
+            : {
+                label: 'Reveal value',
+                kind: 'reveal' as const,
+                onclick: () =>
+                  void secretReveals.reveal(key, clusterId, namespace, secretName, secretKey),
+              },
         }
       }
 
@@ -258,7 +267,11 @@
           : field?.fieldPath
             ? `From this pod's own ${field.fieldPath}`
             : undefined,
-        onclick: configMap?.name ? follow('ConfigMap', configMap.name, namespace) : undefined,
+        // A REFERENCE, NOT A LINK ON THE VALUE. Once the value is the config
+        // map's contents it no longer names the config map, so making the
+        // contents blue and clickable would be pointing at something the text
+        // does not mention.
+        reference: configMap?.name ? follow('ConfigMap', configMap.name, namespace) : undefined,
       }
     }),
   )
@@ -405,22 +418,7 @@
       hand-written <dl> at its own proportions, which is exactly how a panel
       ends up looking like four components stacked rather than one.
     -->
-    <DetailList rows={envRows} action={envAction} />
-
-    {#snippet envAction(_row: DetailRow, index: number)}
-      {@const variable = env[index]}
-      {@const secret = secretRef(variable)}
-      {#if secret?.name && secret?.key}
-        <!-- Read on request only, never on render. -->
-        <SecretReveal
-          {clusterId}
-          {namespace}
-          secret={secret.name}
-          secretKey={secret.key}
-          onchange={(value, error) => (revealed[variable.name] = { value, error })}
-        />
-      {/if}
-    {/snippet}
+    <DetailList rows={envRows} />
 
     {#if env.some((variable) => isFromSecret(variable as never)) || env.some((variable) => looksSensitive(variable as never))}
       <!-- Set well clear of the last row. Tucked against it, a note about how

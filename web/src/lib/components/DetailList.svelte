@@ -28,8 +28,8 @@
   A real <dl>, so the pairing is in the document and not only in the grid.
 -->
 <script lang="ts">
-  import type { Snippet } from 'svelte'
-  import { ChevronDown, Info } from '@lucide/svelte'
+  import { ChevronDown } from '@lucide/svelte'
+  import RowMenu, { type RowAction } from './RowMenu.svelte'
   import ColumnDivider from './ColumnDivider.svelte'
 
   export interface DetailRow {
@@ -74,30 +74,66 @@
     /**
      * Where the value came from, when the value alone does not say it.
      *
-     * Shown behind an info button in the row's trailing controls rather than
-     * as text: a value resolved out of a ConfigMap, or read from a Secret, or
-     * lifted off the pod's own metadata, is worth explaining ONCE PER ROW and
-     * on request — spelt out in the cell it was thirty repetitions of one
-     * sentence where thirty values should be.
+     * The value's own tooltip rather than an icon: a value resolved out of a
+     * ConfigMap or lifted off the pod's own metadata no longer names its
+     * source — that is the point of resolving it — but a third control on
+     * every row to say so was more to learn than it was worth.
      */
     info?: string
+    /**
+     * The resource this row refers to, reachable from its menu.
+     *
+     * Distinct from `onclick`, which makes the VALUE a link and is right when
+     * the value IS the name — a node, an owner. When the value is the
+     * contents of a ConfigMap, the ConfigMap is still worth reaching and the
+     * contents are not a link to it.
+     */
+    reference?: () => void
+    /**
+     * One more thing this row can do, offered in its menu.
+     *
+     * For what a list cannot know: revealing a Secret is a deliberate,
+     * audited read whose wording depends on whether it is currently shown.
+     */
+    action?: RowAction
   }
 
   interface Props {
     rows: DetailRow[]
-    /**
-     * A control for one row, drawn at the START of its trailing cluster.
-     *
-     * For the one thing a list cannot draw itself: the button that reveals a
-     * Secret owns state — a timer, a hide-on-blur — that belongs to whoever
-     * knows what is being revealed. Everything after it is this list's, so
-     * the cluster reads the same on every row: what the row can do, then what
-     * it is, then whether it fits.
-     */
-    action?: Snippet<[DetailRow, number]>
   }
 
-  let { rows, action }: Props = $props()
+  let { rows }: Props = $props()
+
+  /**
+   * What one row's menu offers.
+   *
+   * Copy is on every row, because every row has a value and copying it is the
+   * thing an operator does with a panel more than anything else. The other
+   * two are there when they mean something.
+   */
+  function actionsFor(row: DetailRow): RowAction[] {
+    const actions: RowAction[] = []
+
+    const reference = row.reference ?? row.onclick
+    if (reference) actions.push({ label: 'Reference', kind: 'reference', onclick: reference })
+
+    actions.push({ label: 'Copy value', kind: 'copy', onclick: () => copy(row.value) })
+
+    if (row.action) actions.push(row.action)
+    return actions
+  }
+
+  /**
+   * Copies a value.
+   *
+   * Deliberately silent about failure. The webview's clipboard can refuse —
+   * it is a permissioned API — and a panel that raises an error banner
+   * because a copy did not take is worse than one that simply did not copy:
+   * the text is on screen and selectable either way.
+   */
+  function copy(value: string): void {
+    void navigator.clipboard?.writeText(value).catch(() => {})
+  }
 
   let list = $state<HTMLElement | null>(null)
   /**
@@ -242,7 +278,7 @@
       <span
         bind:this={valueCells[index]}
         class="min-w-0 flex-1 {open ? 'break-words' : 'truncate'}"
-        title={row.title}
+        title={row.info ?? row.title}
         data-selectable
       >
         {#if row.onclick}
@@ -272,25 +308,13 @@
         cluster is one to three buttons wide depending on the row, and a
         fixed column would leave a gap on every row that has fewer.
       -->
+      <!--
+        TWO CONTROLS, THE SAME TWO ON EVERY ROW: whether it fits, and what it
+        can do. It was a cluster of up to three icons that changed from row to
+        row — a reveal here, an information note there — which had to be
+        learnt one at a time and read as clutter in a column of values.
+      -->
       <span class="ml-auto flex shrink-0 items-center gap-0.5">
-        {#if action}{@render action(row, index)}{/if}
-
-        <!--
-          Where the value came from, on request. A value resolved out of a
-          ConfigMap or lifted off the pod's own metadata no longer says where
-          it came from — that is the point of resolving it — so the source is
-          one hover away rather than spelt out in every cell.
-        -->
-        {#if row.info}
-          <span
-            class="state-layer grid size-5 shrink-0 cursor-help place-items-center rounded-full
-                   text-on-surface-variant/60 transition-colors duration-100
-                   hover:bg-surface-container hover:text-on-surface"
-            title={row.info}
-          >
-            <Info class="size-3.5" strokeWidth={1.8} />
-          </span>
-        {/if}
 
         <!--
           Only on rows that lost something. A chevron on every row is a column
@@ -316,6 +340,8 @@
             />
           </button>
         {/if}
+
+        <RowMenu actions={actionsFor(row)} label={row.label} />
       </span>
     </dd>
   {/each}

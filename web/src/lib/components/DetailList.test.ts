@@ -1,6 +1,6 @@
 import { render } from '@testing-library/svelte'
 import { tick } from 'svelte'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import DetailList from './DetailList.svelte'
 
@@ -78,9 +78,10 @@ describe('DetailList', () => {
       ],
     })
 
-    const buttons = container.querySelectorAll('button')
-    expect(buttons).toHaveLength(1)
-    expect(buttons[0].textContent?.trim()).toBe('node-1')
+    // Scoped to links, because every row now carries a menu control too.
+    const links = container.querySelectorAll('.resource-link')
+    expect(links).toHaveLength(1)
+    expect(links[0].textContent?.trim()).toBe('node-1')
   })
 
   it('offers an expander only for a value that did not fit, and opens the row', async () => {
@@ -101,7 +102,7 @@ describe('DetailList', () => {
         ],
       })
 
-      const toggles = container.querySelectorAll('dd button')
+      const toggles = container.querySelectorAll('[aria-label^="Expand"]')
       expect(toggles).toHaveLength(1)
       expect(toggles[0].getAttribute('aria-label')).toBe('Expand Liveness')
 
@@ -112,9 +113,7 @@ describe('DetailList', () => {
       await tick()
 
       expect(liveness().className).toContain('break-words')
-      expect(container.querySelector('dd button')?.getAttribute('aria-label')).toBe(
-        'Collapse Liveness',
-      )
+      expect(container.querySelectorAll('[aria-label^="Collapse"]')).toHaveLength(1)
     } finally {
       wide()
     }
@@ -130,12 +129,12 @@ describe('DetailList', () => {
         rows: [{ label: 'Annotation', value: 'a'.repeat(200) }],
       })
 
-      container.querySelector('dd button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      container
+        .querySelector('[aria-label^="Expand"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await tick()
 
-      expect(container.querySelector('dd button')?.getAttribute('aria-label')).toBe(
-        'Collapse Annotation',
-      )
+      expect(container.querySelectorAll('[aria-label^="Collapse"]')).toHaveLength(1)
     } finally {
       wide()
     }
@@ -176,43 +175,89 @@ describe('DetailList', () => {
     }
   })
 
-  it("gathers a row's controls at the end of the value column", async () => {
-    // THE ARRANGEMENT THIS GUARDS. The reveal button used to sit wherever the
-    // masked value happened to end and the expander at the far right, so a
-    // column of rows had controls at different distances from the edge and no
-    // two agreed. They are one cluster now, in one order: what the row can
-    // do, what it is, whether it fits.
+  it('offers the same two controls on every row', async () => {
+    // THE ARRANGEMENT THIS GUARDS. The trailing controls were a cluster of up
+    // to three icons that changed from row to row — a reveal here, an
+    // information note there — which had to be learnt one at a time and read
+    // as clutter in a column of values. Now: whether it fits, and what it can
+    // do, in that order, on every row.
     const wide = stubLayout(30)
     try {
       const { container } = render(DetailList, {
         rows: [
-          {
-            label: 'DB_PASSWORD',
-            value: '••••••••',
-            info: "Set to the key 'p' in secret 'db'",
-          },
+          { label: 'Pod IP', value: '10.0.0.1' },
           { label: 'Long', value: 'a'.repeat(200) },
         ],
       })
 
-      // The info button is present only on the row that has a source to name.
-      const cells = container.querySelectorAll('dd')
-      expect(cells[0].querySelectorAll('[title]')).toHaveLength(1)
-      expect(cells[1].querySelectorAll('[title]')).toHaveLength(1)
+      // The menu is on both; the expander only on the one that lost something.
+      expect(container.querySelectorAll('[data-row-menu]')).toHaveLength(2)
+      expect(container.querySelectorAll('[aria-label^="Expand"]')).toHaveLength(1)
 
-      // And every control sits after the value, in the trailing group.
-      const group = cells[0].lastElementChild
-      expect(group?.querySelector('svg')).not.toBeNull()
+      // And the controls are the last thing in the row, after the value.
+      const trailing = container.querySelectorAll('dd')[1].lastElementChild
+      expect(trailing?.querySelector('[data-row-menu]')).not.toBeNull()
     } finally {
       wide()
     }
   })
 
-  it('does not offer a source note on a row that has none', () => {
+  it('offers Reference only when there is somewhere to go', async () => {
     const { container } = render(DetailList, {
-      rows: [{ label: 'Pod IP', value: '10.0.0.1' }],
+      rows: [
+        { label: 'Node', value: 'node-1', onclick: () => {} },
+        { label: 'Pod IP', value: '10.0.0.1' },
+      ],
     })
 
-    expect(container.querySelector('dd')?.querySelectorAll('[title]')).toHaveLength(0)
+    const menus = container.querySelectorAll('[data-row-menu] button')
+    menus[0].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await tick()
+
+    const items = [...container.querySelectorAll('[role="menuitem"]')].map((item) =>
+      item.textContent?.trim(),
+    )
+    // Copy is on every row, because every row has a value and copying it is
+    // what an operator does with a panel more than anything else.
+    expect(items).toEqual(['Reference', 'Copy value'])
+  })
+
+  it("carries the row's own action, worded by the caller", async () => {
+    // Revealing a Secret is a deliberate, audited read whose wording depends
+    // on whether it is currently shown — which the list cannot know.
+    const reveal = vi.fn()
+    const { container } = render(DetailList, {
+      rows: [
+        {
+          label: 'DB_PASSWORD',
+          value: '••••••••',
+          action: { label: 'Reveal value', onclick: reveal },
+        },
+      ],
+    })
+
+    container
+      .querySelector('[data-row-menu] button')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await tick()
+
+    const items = [...container.querySelectorAll('[role="menuitem"]')]
+    expect(items.map((item) => item.textContent?.trim())).toEqual(['Copy value', 'Reveal value'])
+
+    items[1].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(reveal).toHaveBeenCalledOnce()
+  })
+
+  it('puts the source of a resolved value in its tooltip', () => {
+    // A value resolved out of a ConfigMap no longer names its source — that
+    // is the point of resolving it — and a third control to say so was more
+    // to learn than it was worth.
+    const { container } = render(DetailList, {
+      rows: [{ label: 'REDIS_HOST', value: 'redis-master', info: "From the 'redis' config map" }],
+    })
+
+    expect(container.querySelector('dd span')?.getAttribute('title')).toBe(
+      "From the 'redis' config map",
+    )
   })
 })
