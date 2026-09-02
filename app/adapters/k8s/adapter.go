@@ -50,6 +50,10 @@ type Adapter struct {
 	// backends caches metrics-backend discovery, which answers a question
 	// whose value moves in days: a monitoring stack is installed once.
 	backends backendCache
+	// reads coalesce the whole-collection lists a refresh repeats. Unlike the
+	// two caches above it holds nothing for long — it exists to stop the same
+	// request leaving twice in one tick. See readcache.go.
+	reads readCache
 }
 
 // Compile-time proof that the adapter satisfies every outbound port it claims.
@@ -132,4 +136,14 @@ func (a *Adapter) Invalidate(id domain.ClusterID) {
 	// would answer the first assessment of a freshly opened cluster with
 	// numbers from before it was closed.
 	a.filesystems.forget(id)
+	a.reads.forget(id.String())
+}
+
+// forgetReads drops the coalesced lists for one cluster.
+//
+// Called after every write. Two seconds is short, but it is long enough to
+// hand back the list a pod was just deleted from — which reads as the
+// application ignoring what it was told to do rather than as a stale cache.
+func (a *Adapter) forgetReads(id domain.ClusterID) {
+	a.reads.forget(id.String())
 }

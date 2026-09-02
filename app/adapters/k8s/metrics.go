@@ -13,6 +13,17 @@ import (
 	"github.com/podsteer/podsteer/app/ports"
 )
 
+// PodMetrics returns usage keyed by "namespace/name".
+//
+// Cached, because it is the second half of every pod read and is asked for by
+// each of them independently. metrics-server has no watch, so this stays a
+// poll whatever else changes.
+func (a *Adapter) PodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (map[string]domain.PodUsage, error) {
+	return cachedRead(&a.reads, readKey(id.String(), "podmetrics", namespace.String()), func() (map[string]domain.PodUsage, error) {
+		return a.podMetrics(ctx, id, namespace)
+	})
+}
+
 // PodMetrics returns pod usage keyed by "namespace/name".
 //
 // A pod's usage is the sum of its containers': the metrics API reports per
@@ -21,7 +32,7 @@ import (
 // visits every container to add it up — and because the total alone cannot
 // answer the question the total provokes, which is which container is doing
 // it.
-func (a *Adapter) PodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (map[string]domain.PodUsage, error) {
+func (a *Adapter) podMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (map[string]domain.PodUsage, error) {
 	op := fmt.Sprintf("reading pod metrics in %q of %q", namespace, id)
 
 	set, err := a.factory.clientsFor(id)
@@ -54,8 +65,16 @@ func (a *Adapter) PodMetrics(ctx context.Context, id domain.ClusterID, namespace
 	return usage, nil
 }
 
-// NodeMetrics returns node usage keyed by node name.
+// NodeMetrics returns usage keyed by node name. Cached alongside ListNodes,
+// which every caller pairs it with.
 func (a *Adapter) NodeMetrics(ctx context.Context, id domain.ClusterID) (map[string]domain.Metrics, error) {
+	return cachedRead(&a.reads, readKey(id.String(), "nodemetrics"), func() (map[string]domain.Metrics, error) {
+		return a.nodeMetrics(ctx, id)
+	})
+}
+
+// NodeMetrics returns node usage keyed by node name.
+func (a *Adapter) nodeMetrics(ctx context.Context, id domain.ClusterID) (map[string]domain.Metrics, error) {
 	op := fmt.Sprintf("reading node metrics of %q", id)
 
 	set, err := a.factory.clientsFor(id)

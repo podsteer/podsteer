@@ -17,9 +17,21 @@ import (
 	"github.com/podsteer/podsteer/app/domain"
 )
 
+// ListPods returns pods in a namespace, or across every namespace.
+//
+// Shared through the read cache: the assessment lists every pod on every
+// refresh whatever is on screen, and so does the namespace list, and on a
+// controller list the consumption sums do it for one namespace. See
+// readcache.go — identical reads in one tick become one request.
+func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error) {
+	return cachedRead(&a.reads, readKey(id.String(), "pods", namespace.String()), func() ([]domain.Pod, error) {
+		return a.listPods(ctx, id, namespace)
+	})
+}
+
 // ListPods returns the pods in namespace, or across every namespace when it is
 // domain.NamespaceAll.
-func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error) {
+func (a *Adapter) listPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error) {
 	op := fmt.Sprintf("listing pods in %q of %q", namespace, id)
 
 	client, err := a.factory.clientFor(id)
@@ -54,12 +66,23 @@ func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace d
 	return pods, nil
 }
 
+// ListWorkloads returns controllers of one kind.
+//
+// Cached, which is what makes the controller list's meters free: the list and
+// its consumption sums both ask for the same controllers in the same tick,
+// and the assessment asks for all six kinds alongside.
+func (a *Adapter) ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
+	return cachedRead(&a.reads, readKey(id.String(), "workloads", string(kind), namespace.String()), func() ([]domain.Workload, error) {
+		return a.listWorkloads(ctx, id, kind, namespace)
+	})
+}
+
 // ListWorkloads returns controllers of the given kind.
 //
 // One method rather than six because the caller's question is the same in
 // every case, and the typed clients differ only in which List to call. The
 // per-kind translation lives in the mapper.
-func (a *Adapter) ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
+func (a *Adapter) listWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
 	op := fmt.Sprintf("listing %ss in %q of %q", kind, namespace, id)
 
 	client, err := a.factory.clientFor(id)

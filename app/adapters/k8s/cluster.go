@@ -12,8 +12,17 @@ import (
 	"github.com/podsteer/podsteer/app/domain"
 )
 
-// ListNamespaces returns every namespace visible to the configured credentials.
+// ListNamespaces returns every namespace visible to the credentials.
+//
+// Cached: the assessment and the namespace list both ask on the same tick.
 func (a *Adapter) ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
+	return cachedRead(&a.reads, readKey(id.String(), "namespaces"), func() ([]domain.Namespace, error) {
+		return a.listNamespaces(ctx, id)
+	})
+}
+
+// ListNamespaces returns every namespace visible to the configured credentials.
+func (a *Adapter) listNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
 	op := fmt.Sprintf("listing namespaces of %q", id)
 
 	client, err := a.factory.clientFor(id)
@@ -43,7 +52,17 @@ func (a *Adapter) ListNamespaces(ctx context.Context, id domain.ClusterID) ([]do
 }
 
 // ListNodes returns the cluster's nodes.
+//
+// Cached: the assessment reads them on every refresh, and the node list reads
+// them again in the same instant.
 func (a *Adapter) ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
+	return cachedRead(&a.reads, readKey(id.String(), "nodes"), func() ([]domain.Node, error) {
+		return a.listNodes(ctx, id)
+	})
+}
+
+// ListNodes returns the cluster's nodes.
+func (a *Adapter) listNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
 	op := fmt.Sprintf("listing nodes of %q", id)
 
 	client, err := a.factory.clientFor(id)

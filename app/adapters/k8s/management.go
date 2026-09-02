@@ -138,6 +138,11 @@ func (a *Adapter) ExecInPod(ctx context.Context, id domain.ClusterID, namespace 
 
 // DeleteResource deletes a single resource.
 func (a *Adapter) DeleteResource(ctx context.Context, ref domain.ResourceRef) error {
+	// Whatever happens next, the lists this cluster has cached are no longer
+	// the truth the operator just asked for. Dropped on entry rather than on
+	// success, because a delete that times out has usually still happened.
+	defer a.forgetReads(ref.ClusterID)
+
 	client, err := a.factory.clientFor(ref.ClusterID)
 	if err != nil {
 		return err
@@ -231,6 +236,8 @@ func (a *Adapter) DeleteResource(ctx context.Context, ref domain.ResourceRef) er
 
 // ScaleWorkload sets the replica count for a workload.
 func (a *Adapter) ScaleWorkload(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, replicas int32) error {
+	defer a.forgetReads(id)
+
 	client, err := a.factory.clientFor(id)
 	if err != nil {
 		return err
@@ -281,6 +288,8 @@ func (a *Adapter) ScaleWorkload(ctx context.Context, id domain.ClusterID, kind d
 
 // RestartRollout triggers a rolling restart by patching the pod template annotation.
 func (a *Adapter) RestartRollout(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string) error {
+	defer a.forgetReads(id)
+
 	client, err := a.factory.clientFor(id)
 	if err != nil {
 		return err
@@ -335,6 +344,8 @@ func (a *Adapter) RestartRollout(ctx context.Context, id domain.ClusterID, kind 
 
 // UpdateResource applies a YAML manifest to the cluster.
 func (a *Adapter) UpdateResource(ctx context.Context, id domain.ClusterID, manifest string) error {
+	defer a.forgetReads(id)
+
 	client, err := a.factory.clientFor(id)
 	if err != nil {
 		return err

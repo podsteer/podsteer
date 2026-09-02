@@ -58,6 +58,37 @@ section to the UI is an entry there, not a frontend change. Custom resources
 are appended per cluster by `DiscoverCustomKinds` — never globally, because two
 clusters run different operators.
 
+## The polled lists are coalesced, and it is a singleflight not a cache
+
+Every refresh fires the assessment AND the open list at the same instant, and
+they overlap: on the namespace list both want every pod in the cluster; on a
+controller list both want that kind, and the consumption sums want the
+namespace's pods and metrics. Two identical requests leaving together is not a
+caching problem — it is the same request twice.
+
+`readcache.go` wraps the whole-collection reads a poll repeats — `ListPods`,
+`ListWorkloads`, `ListNamespaces`, `ListNodes`, `PodMetrics`, `NodeMetrics`.
+Identical reads in flight share one answer; a repeat within `readTTL` reuses
+the last.
+
+Three rules it holds to, each with a test:
+
+- **The window is shorter than the fastest refresh the application offers**
+  (5s), so it can never serve one tick's data to the next. It collapses a
+  pile-up inside one tick and nothing more. This is the opposite trade from
+  `filesystemCache` (a minute) and `backendCache` (a day), which hold answers
+  because those questions move slowly.
+- **A failure is never reused.** Handing the same refusal to every caller for
+  two seconds turns one denied read into a pane that stays broken after the
+  permission is granted.
+- **Every write drops the cluster's cached reads** (`forgetReads`, deferred on
+  entry in each `ManagementPort` method). Deleting a pod and then being handed
+  the list that still contains it reads as the application ignoring what it
+  was told.
+
+Narrowed reads — one object, one node's pods, one workload's pods — go
+straight through. Nothing on-demand is cached.
+
 ## Counting is `limit=1`, never `len(list)`
 
 Kubernetes has no endpoint that reports how many objects a namespace holds, and
