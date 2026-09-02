@@ -16,6 +16,7 @@
   import NodePods from './NodePods.svelte'
   import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
+  import { follower, type OpenObject, type ServesKind } from '$lib/reference'
   import type { UsageSample } from '$stores/session.svelte'
 
   interface Props {
@@ -44,9 +45,17 @@
     backend?: MetricsBackend | null
     /** Whether this cluster serves a kind, so a link is only offered when
         there is somewhere for it to go. */
-    canOpen?: (kindName: string) => string | null
+    canOpen?: ServesKind
     /** Follows a reference to the object it names. */
-    onopen?: (kindName: string, name: string, namespace: string) => void
+    onopen?: OpenObject
+    /**
+     * Filters the application to a namespace.
+     *
+     * A namespace is not opened the way an object is — following one narrows
+     * every list to it, which is the same thing clicking it in the drawer's
+     * header does.
+     */
+    onnamespace?: (namespace: string) => void
   }
 
   let {
@@ -60,18 +69,16 @@
     clusterId,
     canOpen,
     onopen,
+    onnamespace,
   }: Props = $props()
 
-  /**
-   * Builds the click handler for a reference, or leaves it undefined.
-   *
-   * Undefined is the important half: a Node row on a cluster whose nodes this
-   * account cannot list must render as plain text, not as a link that fails
-   * when followed. Offering a dead link is worse than offering none.
-   */
-  function follow(kindName: string, name: string, namespace = ''): (() => void) | undefined {
-    if (!name || !onopen || !canOpen?.(kindName)) return undefined
-    return () => onopen(kindName, name, namespace)
+  /** Turns a reference into a click handler, or into nothing. See $lib/reference. */
+  const follow = $derived(follower(canOpen, onopen))
+
+  /** Following a namespace narrows the application to it. */
+  function filterTo(namespace: string): (() => void) | undefined {
+    if (!namespace || !onnamespace) return undefined
+    return () => onnamespace(namespace)
   }
 
   let parsedManifest = $derived.by(() => {
@@ -113,10 +120,13 @@
 
   const basicRows = $derived<DetailRow[]>([
     { label: 'Name', value: metadata.name ?? '—' },
-    { label: 'Namespace', value: metadata.namespace ?? '—' },
+    {
+      label: 'Namespace',
+      value: metadata.namespace ?? '—',
+      onclick: filterTo(metadata.namespace ?? ''),
+    },
     { label: 'Created', value: formatAge(metadata.creationTimestamp) },
-    // Truncated: a UID's length is noise, and nobody reads one — they copy it.
-    { label: 'UID', value: metadata.uid ?? '—', truncate: true },
+    { label: 'UID', value: metadata.uid ?? '—' },
   ])
 
   /**
@@ -163,7 +173,15 @@
       rows.push({ label: 'Controlled by', value: 'nothing — this is a bare pod' })
     }
 
-    rows.push({ label: 'Service account', value: spec.serviceAccountName ?? 'default' })
+    // 'default' is not a placeholder here — it is the name of a
+    // ServiceAccount that exists in every namespace, so the link is as real
+    // as any other.
+    const serviceAccount = spec.serviceAccountName ?? 'default'
+    rows.push({
+      label: 'Service account',
+      value: serviceAccount,
+      onclick: follow('ServiceAccount', serviceAccount, metadata.namespace ?? ''),
+    })
     rows.push({ label: 'QoS Class', value: status.qosClass ?? '—' })
 
     return rows
@@ -312,7 +330,13 @@
     }
 
     if (spec.priorityClassName) {
-      rows.push({ label: 'Priority class', value: String(spec.priorityClassName) })
+      // Cluster-scoped, so no namespace: a PriorityClass is one object the
+      // whole cluster shares.
+      rows.push({
+        label: 'Priority class',
+        value: String(spec.priorityClassName),
+        onclick: follow('PriorityClass', String(spec.priorityClassName)),
+      })
     }
     // Only when set: hostNetwork is unusual enough that its presence is the
     // information, and a "false" row on every pod would bury that.
@@ -329,18 +353,27 @@
    * it, and a projected service-account token is present on every pod and
    * interesting on none.
    */
-  const volumeRows = $derived<DetailRow[]>(
-    (volumes as Record<string, any>[]).map((volume) => {
+  const volumeRows = $derived.by<DetailRow[]>(() => {
+    const namespace = metadata.namespace ?? ''
+
+    return (volumes as Record<string, any>[]).map((volume) => {
       let detail = 'Unknown'
+      // The three that name another object are followable. A projected volume
+      // is not: it names several, and a row links to one thing or to nothing.
+      let go: (() => void) | undefined
+
       if (volume.emptyDir) {
         detail = volume.emptyDir.sizeLimit ? `EmptyDir · limit ${volume.emptyDir.sizeLimit}` : 'EmptyDir'
       } else if (volume.configMap) {
         detail = `ConfigMap · ${volume.configMap.name}`
+        go = follow('ConfigMap', volume.configMap.name, namespace)
       } else if (volume.secret) {
         detail = `Secret · ${volume.secret.secretName}`
+        go = follow('Secret', volume.secret.secretName, namespace)
       } else if (volume.persistentVolumeClaim) {
         const claim = volume.persistentVolumeClaim
         detail = `PVC · ${claim.claimName}${claim.readOnly ? ' (ro)' : ''}`
+        go = follow('PersistentVolumeClaim', claim.claimName, namespace)
       } else if (volume.hostPath) {
         // Called out: a hostPath mount reaches out of the container onto the
         // node's own filesystem, which is worth noticing among a list of
@@ -352,9 +385,9 @@
       } else {
         detail = Object.keys(volume).filter((key) => key !== 'name')[0] ?? 'Unknown'
       }
-      return { label: volume.name, value: detail }
-    }),
-  )
+      return { label: volume.name, value: detail, onclick: go }
+    })
+  })
 
   /**
    * A condition as one line, with the reason kubectl throws away.
@@ -380,8 +413,8 @@
   )
 
   /** Turns a metadata map into rows, for labels and annotations. */
-  function pairRows(pairs: [string, unknown][], truncate = false): DetailRow[] {
-    return pairs.map(([key, value]) => ({ label: key, value: String(value), truncate }))
+  function pairRows(pairs: [string, unknown][]): DetailRow[] {
+    return pairs.map(([key, value]) => ({ label: key, value: String(value) }))
   }
 
   function formatAge(timestamp: string): string {
@@ -620,17 +653,17 @@
     <!-- Labels -->
     {#if labels.length > 0}
       <DetailSection level="h3" id="labels" title="Labels" defaultOpen={false} hint={String(labels.length)}>
-        <DetailList rows={pairRows(labels)} wideLabels />
+        <DetailList rows={pairRows(labels)} />
       </DetailSection>
     {/if}
 
     <!-- Annotations -->
     {#if annotations.length > 0}
-      <!-- Truncated, unlike labels: an annotation routinely holds an entire
-           serialised manifest, and letting one wrap turns the pane into a
-           page of JSON. It is still selectable, so copying it works. -->
+      <!-- An annotation routinely holds an entire serialised manifest, which
+           is the case the list's clipping exists for: one line each, and the
+           one somebody wants opens. -->
       <DetailSection level="h3" id="annotations" title="Annotations" defaultOpen={false} hint={String(annotations.length)}>
-        <DetailList rows={pairRows(annotations, true)} wideLabels />
+        <DetailList rows={pairRows(annotations)} />
       </DetailSection>
     {/if}
     <!-- Pod-specific sections -->
@@ -666,6 +699,8 @@
                 podName={metadata.name ?? ''}
                 podUID={metadata.uid ?? ''}
                 labels={metadata.labels ?? {}}
+                {canOpen}
+                {onopen}
               />
             {/each}
           </div>
@@ -690,6 +725,8 @@
                 podName={metadata.name ?? ''}
                 podUID={metadata.uid ?? ''}
                 labels={metadata.labels ?? {}}
+                {canOpen}
+                {onopen}
               />
             {/each}
           </div>
@@ -711,6 +748,8 @@
                 podName={metadata.name ?? ''}
                 podUID={metadata.uid ?? ''}
                 labels={metadata.labels ?? {}}
+                {canOpen}
+                {onopen}
               />
             {/each}
           </div>
@@ -743,7 +782,7 @@
     <!-- Conditions -->
     {#if conditions.length > 0}
       <DetailSection level="h3" id="conditions" title="Conditions" defaultOpen={false} hint={String(conditions.length)}>
-        <DetailList rows={conditionRows} wideLabels />
+        <DetailList rows={conditionRows} />
       </DetailSection>
     {/if}
 

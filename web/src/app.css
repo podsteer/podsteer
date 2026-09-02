@@ -233,6 +233,11 @@
   /* The scrim behind overlays is theme-independent. */
   --color-scrim: #000000;
 
+  /* The label column of every detail pane. Wide enough for "Service account"
+     on one line, which is the longest label that is a phrase rather than an
+     identifier; identifiers are clipped and expanded on request instead. */
+  --detail-label-width: 11rem;
+
   /* ---- MD3 shape scale ------------------------------------------------ */
   /* These deliberately override Tailwind's defaults so that `rounded-lg` and
      friends mean the MD3 shape tokens everywhere in the app. */
@@ -388,6 +393,31 @@
  * inherit. So the name inside a link must NOT set a colour — it takes both
  * from here, and the figures beside it keep theirs by declaring one.
  */
+/*
+ * The two columns every detail pane states a fact in.
+ *
+ * ONE WIDTH FOR THE WHOLE DRAWER, and that is the entire point. The lists
+ * used to choose between a quarter and 40% depending on whether their labels
+ * were words or identifiers, so scrolling one panel crossed three different
+ * left edges and read as three different components stacked up. A panel
+ * should look like one thing from top to bottom.
+ *
+ * A fixed width rather than a percentage, for the same reason: a percentage
+ * column is a different size in a narrow drawer than a wide one, so the same
+ * pane changes shape as the window does. Labels are labels at any width.
+ *
+ * `minmax(0, 1fr)` on the value column, because a grid track's default
+ * minimum is `auto` — the widest thing inside it — and one long unbroken
+ * value would otherwise push the column past the pane instead of being
+ * clipped by it.
+ */
+@utility detail-grid {
+  display: grid;
+  grid-template-columns: var(--detail-label-width) minmax(0, 1fr);
+  column-gap: 1rem;
+  row-gap: 0.5rem;
+}
+
 @utility resource-link {
   color: var(--on-surface);
   cursor: pointer;

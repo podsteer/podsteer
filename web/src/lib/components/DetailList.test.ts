@@ -1,7 +1,38 @@
 import { render } from '@testing-library/svelte'
+import { tick } from 'svelte'
 import { describe, expect, it } from 'vitest'
 
 import DetailList from './DetailList.svelte'
+
+/**
+ * Makes text past `fits` characters report as overflowing its box.
+ *
+ * happy-dom has no layout engine, so every element measures zero by zero and
+ * the clipping branch is unreachable without this. Returns the undo.
+ */
+function stubLayout(fits: number): () => void {
+  // On HTMLElement, not Element: that is where happy-dom defines its own, and
+  // a getter added to the base class is simply shadowed by it — which reads
+  // as "everything overflows" rather than as a stub that did not take.
+  const scroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth')
+  const client = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+
+  Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return (this.textContent ?? '').trim().length
+    },
+  })
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+    configurable: true,
+    get: () => fits,
+  })
+
+  return () => {
+    if (scroll) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', scroll)
+    if (client) Object.defineProperty(HTMLElement.prototype, 'clientWidth', client)
+  }
+}
 
 describe('DetailList', () => {
   it('renders repeated labels without throwing', () => {
@@ -39,18 +70,75 @@ describe('DetailList', () => {
     expect(buttons[0].textContent?.trim()).toBe('node-1')
   })
 
-  it('truncates only the rows that ask for it', () => {
-    // A UID's length is noise and is truncated; a probe string is content and
-    // wraps. Getting this backwards hides the half of a value that matters.
+  it('offers an expander only for a value that did not fit, and opens the row', async () => {
+    // THE REQUIREMENT THIS LIST EXISTS TO MEET: one line per row, and
+    // whatever was cut off is one click away. A chevron on every row would be
+    // a column of controls that mostly do nothing.
+    //
+    // happy-dom performs no layout, so scrollWidth and clientWidth are both
+    // zero and nothing ever appears clipped. They are stubbed to a rule that
+    // stands in for the real one — anything past thirty characters does not
+    // fit — which is what lets the branch be exercised at all.
+    const wide = stubLayout(30)
+    try {
+      const { container } = render(DetailList, {
+        rows: [
+          { label: 'Pod IP', value: '10.0.0.1' },
+          { label: 'Liveness', value: 'http-get http://:8080/healthz delay=10s timeout=1s period=10s' },
+        ],
+      })
+
+      const toggles = container.querySelectorAll('dd button')
+      expect(toggles).toHaveLength(1)
+      expect(toggles[0].getAttribute('aria-label')).toBe('Expand Liveness')
+
+      const liveness = () => container.querySelectorAll('dd')[1].querySelector('span')!
+      expect(liveness().className).toContain('truncate')
+
+      toggles[0].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await tick()
+
+      expect(liveness().className).toContain('break-words')
+      expect(container.querySelector('dd button')?.getAttribute('aria-label')).toBe(
+        'Collapse Liveness',
+      )
+    } finally {
+      wide()
+    }
+  })
+
+  it('keeps the expander on an open row, which no longer overflows', async () => {
+    // The trap in measuring: an open row wraps, so the browser reports it as
+    // fitting, and re-measuring it would remove the control that closes it
+    // again — leaving the row stuck open.
+    const wide = stubLayout(30)
+    try {
+      const { container } = render(DetailList, {
+        rows: [{ label: 'Annotation', value: 'a'.repeat(200) }],
+      })
+
+      container.querySelector('dd button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await tick()
+
+      expect(container.querySelector('dd button')?.getAttribute('aria-label')).toBe(
+        'Collapse Annotation',
+      )
+    } finally {
+      wide()
+    }
+  })
+
+  it('renders a control row from the snippet and never clips it', () => {
+    // A cell holding a button is not text: clipping text loses characters
+    // somebody can ask back, and clipping a control loses the control. The
+    // row is measured on its label alone.
     const { container } = render(DetailList, {
-      rows: [
-        { label: 'UID', value: 'a'.repeat(40), truncate: true },
-        { label: 'Liveness', value: 'http-get http://:8080/healthz delay=10s' },
-      ],
+      rows: [{ label: 'DB_PASSWORD', value: "<set to the key 'p' in secret 'db'>", control: true }],
+      // Svelte 5 snippets cannot be written from a test, so the fallback path
+      // is what is asserted: a control row with nothing to render it falls
+      // back to its own text rather than to an empty cell.
     })
 
-    const values = container.querySelectorAll('dd')
-    expect(values[0].className).toContain('truncate')
-    expect(values[1].className).toContain('break-words')
+    expect(container.textContent).toContain("<set to the key 'p' in secret 'db'>")
   })
 })

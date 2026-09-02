@@ -31,9 +31,17 @@
     /** The Secret holding it, and the key within it. */
     secret: string
     secretKey: string
+    /**
+     * Opens the Secret this value is read from, when the cluster serves them.
+     *
+     * The name is right there in the sentence, and "which Secret is this
+     * coming from" is asked far more often than "what does it say" — often by
+     * somebody who cannot read the value at all and does not need to.
+     */
+    onopen?: () => void
   }
 
-  let { clusterId, namespace, secret, secretKey }: Props = $props()
+  let { clusterId, namespace, secret, secretKey, onopen }: Props = $props()
 
   /**
    * The plaintext, while it is on screen.
@@ -95,7 +103,11 @@
     <span class="min-w-0 font-mono break-all text-on-surface" data-selectable>{value}</span>
   {:else}
     <span class="text-on-surface-variant">
-      &lt;set to the key '{secretKey}' in secret '{secret}'&gt;
+      &lt;set to the key '{secretKey}' in secret {#if onopen}<button
+          type="button"
+          onclick={onopen}
+          class="resource-link"
+          title="Open secret {secret}">'{secret}'</button>{:else}'{secret}'{/if}&gt;
     </span>
   {/if}
 

@@ -25,6 +25,7 @@
   import { iconForKind } from '$lib/kindIcons'
   import DetailSection from './DetailSection.svelte'
   import DetailList, { type DetailRow } from './DetailList.svelte'
+  import { follower, type OpenObject, type ServesKind } from '$lib/reference'
 
   interface InvolvedObject {
     kind: string
@@ -43,26 +44,17 @@
      * the event fired, most obviously — and a node reported by a kubelet is
      * unreachable to an account that cannot list nodes.
      */
-    canOpen?: (kindName: string) => string | null
+    canOpen?: ServesKind
     /** Follows a reference to the object it names. */
-    onopen?: (kindName: string, name: string, namespace: string) => void
+    onopen?: OpenObject
     /** Filters the application to a namespace, as the drawer header does. */
     onnamespace?: (namespace: string) => void
   }
 
   let { event, canOpen, onopen, onnamespace }: Props = $props()
 
-  /**
-   * Builds the click handler for a reference, or leaves it undefined.
-   *
-   * Undefined is the important half: a Node row on a cluster whose nodes this
-   * account cannot list must render as plain text, not as a link that fails
-   * when followed. Offering a dead link is worse than offering none.
-   */
-  function follow(kindName: string, name: string, namespace = ''): (() => void) | undefined {
-    if (!name || !onopen || !canOpen?.(kindName)) return undefined
-    return () => onopen(kindName, name, namespace)
-  }
+  /** Turns a reference into a click handler, or into nothing. See $lib/reference. */
+  const follow = $derived(follower(canOpen, onopen))
 
   const involved = $derived.by((): InvolvedObject | null => {
     const raw = event?.involvedObject as Record<string, string> | undefined

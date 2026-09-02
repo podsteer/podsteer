@@ -12,7 +12,8 @@
 -->
 <script lang="ts">
   import DetailList, { type DetailRow } from './DetailList.svelte'
-  import { formatEnvValue, formatMount, formatPorts, formatProbe, isFromSecret, looksSensitive } from '$lib/container'
+  import { formatEnvValue, formatMount, formatProbe, isFromSecret, looksSensitive } from '$lib/container'
+  import { follower, type OpenObject, type ServesKind } from '$lib/reference'
   import type { Container } from '$lib/api/client'
   import SecretReveal from './SecretReveal.svelte'
   import { forwards } from '$stores/forwards.svelte'
@@ -32,6 +33,10 @@
     namespace: string
     /** The pod's labels, so a forward can find a replacement pod if it dies. */
     labels?: Record<string, string>
+    /** Whether this cluster serves a kind. See $lib/reference. */
+    canOpen?: ServesKind
+    /** Follows a reference to the object it names. */
+    onopen?: OpenObject
   }
 
   let {
@@ -42,7 +47,12 @@
     podName = '',
     podUID = '',
     labels = {},
+    canOpen,
+    onopen,
   }: Props = $props()
+
+  /** Turns a reference into a click handler, or into nothing. */
+  const follow = $derived(follower(canOpen, onopen))
 
   /**
    * The ports that can actually be forwarded.
@@ -66,7 +76,7 @@
    * from the spec whenever a mutable tag has been re-pushed underneath.
    */
   const rows = $derived.by(() => {
-    const out: DetailRow[] = [{ label: 'Image', value: status?.image || spec.image || '—', truncate: true }]
+    const out: DetailRow[] = [{ label: 'Image', value: status?.image || spec.image || '—' }]
 
     if (spec.imagePullPolicy) out.push({ label: 'Pull policy', value: spec.imagePullPolicy })
 
@@ -108,6 +118,46 @@
   })
 
   const env = $derived((spec.env ?? []) as { name: string; value?: string; valueFrom?: unknown }[])
+
+  /** The secret a variable is read from, when it is read from one. */
+  function secretRef(variable: { valueFrom?: unknown }) {
+    return (variable.valueFrom as { secretKeyRef?: { name?: string; key?: string } })?.secretKeyRef
+  }
+
+  /**
+   * Environment as rows, so it sits on the same grid as everything else.
+   *
+   * Two kinds of cell are marked `control` rather than left as text: a value
+   * read from a Secret, whose cell is a reveal button, and a literal that
+   * looks like a credential, whose cell is a mask and a warning. Everything
+   * else is a string, and a string that names a ConfigMap is followable.
+   */
+  const envRows = $derived.by<DetailRow[]>(() =>
+    env.map((variable) => {
+      const secret = secretRef(variable)
+      if (secret?.name && secret?.key) {
+        return {
+          label: variable.name,
+          value: `<set to the key '${secret.key}' in secret '${secret.name}'>`,
+          control: true,
+        }
+      }
+
+      if (looksSensitive(variable as never)) {
+        return { label: variable.name, value: 'literal credential in the pod spec', control: true }
+      }
+
+      const configMap = (
+        variable.valueFrom as { configMapKeyRef?: { name?: string; key?: string } }
+      )?.configMapKeyRef
+
+      return {
+        label: variable.name,
+        value: formatEnvValue(variable as never),
+        onclick: configMap?.name ? follow('ConfigMap', configMap.name, namespace) : undefined,
+      }
+    }),
+  )
 </script>
 
 <div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
@@ -151,7 +201,10 @@
           controls in different places and the column read as ragged. Three
           columns line them up regardless of what is in the middle.
         -->
-        <div class="grid grid-cols-[10rem_1fr_auto] items-center gap-2 text-body-medium">
+        <div
+          class="grid grid-cols-[var(--detail-label-width)_1fr_auto] items-center gap-x-4
+                 gap-y-2 text-body-medium"
+        >
           <span class="min-w-0 truncate text-on-surface-variant">
             {port.name ? `${port.name} ` : ''}{port.containerPort}/{port.protocol ?? 'TCP'}
           </span>
@@ -229,40 +282,40 @@
       resolved here.
     -->
     <p class="mt-3 mb-1 text-body-medium text-on-surface">Environment ({env.length})</p>
-    <!-- Wide labels: these are environment variable names, not prose. -->
-    <dl class="grid grid-cols-[40%_1fr] gap-x-4 gap-y-2">
-      <!-- By position too. Kubernetes does NOT enforce unique environment
-           variable names — a duplicate is legal and the last one wins — so
-           keying by name is the same latent crash DetailList had. -->
-      {#each env as variable, index (index)}
-        {@const ref = (variable.valueFrom as { secretKeyRef?: { name?: string; key?: string } })
-          ?.secretKeyRef}
-        <dt class="min-w-0 break-all text-body-medium text-on-surface" data-selectable>
-          {variable.name}
-        </dt>
-        <dd class="min-w-0 text-body-medium text-on-surface-variant">
-          {#if ref?.name && ref?.key}
-            <!-- Read on request only, never on render. -->
-            <SecretReveal {clusterId} {namespace} secret={ref.name} secretKey={ref.key} />
-          {:else if looksSensitive(variable as never)}
-            <!--
-              A literal that looks like a credential. There is nothing to
-              reveal — it is right there in the manifest tab — so this is not
-              a lock, it is a note that the pod spec is carrying a secret in
-              the clear where anyone with `get pod` can read it.
-            -->
-            <span class="inline-flex items-baseline gap-2">
-              <span class="font-mono">••••••••</span>
-              <span class="text-body-small text-gauge-warn">
-                literal credential in the pod spec
-              </span>
-            </span>
-          {:else}
-            <span class="break-words" data-selectable>{formatEnvValue(variable as never)}</span>
-          {/if}
-        </dd>
-      {/each}
-    </dl>
+
+    <!--
+      The same list as every other section, on the same grid. It used to be a
+      hand-written <dl> at its own proportions, which is exactly how a panel
+      ends up looking like four components stacked rather than one.
+    -->
+    <DetailList rows={envRows} value={envValue} />
+
+    {#snippet envValue(_row: DetailRow, index: number)}
+      {@const variable = env[index]}
+      {@const secret = secretRef(variable)}
+      {#if secret?.name && secret?.key}
+        <!-- Read on request only, never on render. -->
+        <SecretReveal
+          {clusterId}
+          {namespace}
+          secret={secret.name}
+          secretKey={secret.key}
+          onopen={follow('Secret', secret.name, namespace)}
+        />
+      {:else}
+        <!--
+          A literal that looks like a credential. There is nothing to reveal —
+          it is right there in the manifest tab — so this is not a lock, it is
+          a note that the pod spec is carrying a secret in the clear where
+          anyone with `get pod` can read it.
+        -->
+        <span class="inline-flex items-baseline gap-2">
+          <span class="font-mono">••••••••</span>
+          <span class="text-body-small text-gauge-warn">literal credential in the pod spec</span>
+        </span>
+      {/if}
+    {/snippet}
+
     {#if env.some((variable) => isFromSecret(variable as never)) || env.some((variable) => looksSensitive(variable as never))}
       <p class="mt-1.5 flex items-start gap-1.5 text-body-small text-on-surface-variant/70">
         <EyeOff class="mt-0.5 size-3.5 shrink-0" strokeWidth={1.8} />

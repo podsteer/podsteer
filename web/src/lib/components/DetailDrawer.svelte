@@ -776,6 +776,7 @@
           clusterId={session.cluster.id}
           canOpen={kindIdFor}
           onopen={openObject}
+          onnamespace={(namespace) => void session.selectNamespace(namespace)}
         />
       {:else if activeTab === 'logs'}
         {#if maximized === 'logs'}

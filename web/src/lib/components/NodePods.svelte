@@ -104,14 +104,20 @@
       Nothing is scheduled on this node.
     </p>
   {:else}
-    <div class="flex flex-col gap-3">
+    <!--
+      On the drawer's own grid, because that is what this is: a namespace, and
+      what of it is on this machine. It used to set its own left edge with its
+      own heading size, so the one section that answers "who is on this node"
+      looked like a different component from the sections around it.
+    -->
+    <dl class="detail-grid">
       {#each grouped as [namespace, group] (namespace)}
-        <div class="flex flex-col gap-1">
-          <p class="text-label-small text-on-surface-variant/70">
-            {namespace}
-            <span class="text-on-surface-variant/50">· {group.length}</span>
-          </p>
+        <dt class="min-w-0 truncate text-body-medium text-on-surface" data-selectable>
+          {namespace}
+          <span class="text-on-surface-variant/50">· {group.length}</span>
+        </dt>
 
+        <dd class="min-w-0">
           <ul class="flex flex-col divide-y divide-outline-variant/30">
             {#each group as pod (pod.name)}
               <li>
@@ -141,8 +147,8 @@
               </li>
             {/each}
           </ul>
-        </div>
+        </dd>
       {/each}
-    </div>
+    </dl>
   {/if}
 </DetailSection>

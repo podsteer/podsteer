@@ -1,47 +1,51 @@
 <!--
   The label-and-value list every detail pane states its facts in.
 
-  A quarter for the labels and the rest for the values, both aligned left.
-  Values are of wildly different lengths — "Warning" beside a sixty-character
-  event name, "Running" beside a UID — and right-aligning them against a
-  ragged left edge leaves nothing to read down.
+  ONE GRID FOR THE WHOLE DRAWER — see `detail-grid` in app.css. Every section
+  of every panel puts its labels in the same column at the same width, so a
+  panel reads as one thing from top to bottom rather than as a stack of lists
+  that each chose their own proportions.
 
-  THE LABEL CARRIES THE EMPHASIS AND THE VALUE RECEDES, which is the opposite
-  of what several of these panes used to do. The labels are the same on every
-  object of a kind, so they are what the eye navigates by: somebody looking
-  for "Node" is looking for the word, not for the name beside it. Emphasising
-  the values instead made every pane a wall of equally loud text with the
-  signposts greyed out.
+  THE LABEL CARRIES THE EMPHASIS AND THE VALUE RECEDES. The labels are the
+  same on every object of a kind, so they are what the eye navigates by:
+  somebody looking for "Node" is looking for the word, not for the name beside
+  it. Emphasising the values instead made every pane a wall of equally loud
+  text with the signposts greyed out.
+
+  BOTH COLUMNS CLIP TO ONE LINE, AND A ROW THAT IS CLIPPED CAN BE OPENED.
+  This reverses what this list used to do — values wrapped by default, on the
+  reasoning that a value nobody can read in full is a value nobody can act on.
+  That is still true, and is why the expander exists; what wrapping cost was
+  the shape of the pane. A `last-applied-configuration` annotation wrapped to
+  fourteen lines and a probe string to three, so the rows a panel is scanned
+  for were separated by paragraphs of reference material nobody was reading.
+  Clipped, every row is one line and the list is scannable; expanded, the
+  value is there in full. Nothing is hidden that cannot be asked for.
 
   A real <dl>, so the pairing is in the document and not only in the grid.
-  Two columns of stacked label-over-value looked similar and read worse — a
-  four-item section became a 2×2 block where the reading order was ambiguous,
-  and nothing lined up down the pane.
 -->
 <script lang="ts">
+  import type { Snippet } from 'svelte'
+  import { ChevronDown } from '@lucide/svelte'
+
   export interface DetailRow {
     label: string
     /**
      * Already formatted, and already given its own em dash if it is missing.
      * Callers know what an absent value means for their field; this does not.
+     *
+     * On a `control` row this is the value in words rather than what is
+     * rendered — it becomes the cell's tooltip, so a masked value still says
+     * where it comes from.
      */
     value: string
-    /**
-     * Whether the value wraps or is cut off at one line.
-     *
-     * Wrapping by default, because a value that cannot be read in full is a
-     * value nobody can act on. `truncate` is for the ones whose length is
-     * noise rather than content — a UID, a long annotation — where the point
-     * is that the field is present and copying it is what anybody wants
-     * anyway.
-     */
-    truncate?: boolean
     /**
      * Makes the value a link to the object it names.
      *
      * Offered rather than assumed: a Node row is worth following, and the
      * same row on a cluster whose nodes this account cannot list is not. The
      * caller decides, because only it knows whether there is anywhere to go.
+     * See $lib/reference.
      */
     onclick?: () => void
     /**
@@ -54,26 +58,92 @@
      * coloured is a list where none of them are.
      */
     tone?: 'warn' | 'critical'
+    /**
+     * The value cell holds a control rather than text, and is rendered by the
+     * list's `value` snippet.
+     *
+     * Never clipped: clipping text loses a few characters somebody can ask
+     * for back, and clipping a control loses the button. An environment
+     * variable read from a Secret is the case — the cell is a reveal button,
+     * not a string.
+     */
+    control?: boolean
   }
 
   interface Props {
     rows: DetailRow[]
     /**
-     * A wider label column, for lists whose labels are identifiers.
+     * Renders the value cell of every `control` row.
      *
-     * A quarter suits "Liveness" and "Service account". It does not suit
-     * PLT__MONGODB_USERNAME or kubectl.kubernetes.io/last-applied-configuration,
-     * which wrap mid-word into two unreadable halves — the column is not
-     * narrow because the value needs the room, it is narrow because most
-     * labels are short. Lists whose labels are names ask for more.
+     * Optional, because most lists are text throughout. A row marked
+     * `control` with no snippet to render falls back to its text, which is
+     * the safe direction to fail in.
      */
-    wideLabels?: boolean
+    value?: Snippet<[DetailRow, number]>
   }
 
-  let { rows, wideLabels = false }: Props = $props()
+  let { rows, value }: Props = $props()
+
+  let list = $state<HTMLElement | null>(null)
+  /**
+   * The cells themselves, for asking the browser what did not fit.
+   *
+   * Reactive, because `bind:this` into a plain array assigns without telling
+   * anything — the measurement would then run against whatever was bound on
+   * the previous render.
+   */
+  let labelCells = $state<HTMLElement[]>([])
+  let valueCells = $state<HTMLElement[]>([])
+
+  let expanded = $state<number[]>([])
+  /** Which rows lost something to the clip, and so are worth opening. */
+  let clipped = $state<boolean[]>([])
+  /**
+   * The same, held outside the reactive graph.
+   *
+   * `measure` needs the previous answer for a row that is currently open —
+   * an open row wraps, so the browser reports it as fitting, and measuring it
+   * would remove the control that closes it again. Reading the $state version
+   * would make the effect depend on what it writes.
+   */
+  let measured: boolean[] = []
+
+  /** Whether the browser had to cut something off to fit the column. */
+  function cut(cell: HTMLElement | undefined): boolean {
+    return !!cell && cell.scrollWidth > cell.clientWidth + 1
+  }
+
+  function measure(): void {
+    measured = rows.map((_, index) =>
+      expanded.includes(index)
+        ? (measured[index] ?? true)
+        : cut(labelCells[index]) || cut(valueCells[index]),
+    )
+    clipped = measured
+  }
+
+  function toggle(index: number): void {
+    expanded = expanded.includes(index)
+      ? expanded.filter((open) => open !== index)
+      : [...expanded, index]
+  }
+
+  // Re-measured when the content changes, when a row is opened or closed, and
+  // when the drawer is resized — all three change what fits, and only the
+  // first is visible to Svelte on its own.
+  $effect(() => {
+    rows
+    expanded
+    measure()
+
+    if (!list) return
+    const observer = new ResizeObserver(() => measure())
+    observer.observe(list)
+    return () => observer.disconnect()
+  })
 </script>
 
-<dl class="grid {wideLabels ? 'grid-cols-[40%_1fr]' : 'grid-cols-[25%_1fr]'} gap-x-4 gap-y-2">
+<dl class="detail-grid" bind:this={list}>
   <!--
     KEYED BY POSITION, NOT BY LABEL. A label is not unique and was never going
     to be: kubectl prints several "Mounts:" lines for one container and several
@@ -85,49 +155,79 @@
     on each change, so there is no row identity to preserve across renders.
   -->
   {#each rows as row, index (index)}
+    {@const open = expanded.includes(index)}
     <!--
-      break-words on the LABEL as well, because these are not always the short
-      words the events pane's are. A label column also holds annotation keys
-      like kubectl.kubernetes.io/last-applied-configuration, and CSS does not
-      break at a dot or a slash on its own — left alone one of those overflows
-      its column and lands on top of the value beside it.
+      break-all on an opened label, because a label column also holds
+      annotation keys, and an identifier has no word boundaries to break at:
+      kubectl.kubernetes.io/last-applied-configuration is one "word", so
+      break-words leaves it overflowing while break-all wraps it where it
+      must.
 
-      Selectable too: for labels and annotations the key is half of what
+      Selectable, for labels and annotations where the key is half of what
       somebody came to copy.
     -->
-    <!--
-      break-all rather than break-words on a wide-label list. An identifier
-      has no word boundaries to break at — PLT__MONGODB_USERNAME is one
-      "word" — so break-words leaves it overflowing while break-all wraps it
-      where it must. On ordinary labels break-all would hyphenate English
-      mid-word, which is why it is not the default.
-    -->
     <dt
-      class="min-w-0 text-body-medium text-on-surface {wideLabels
-        ? 'break-all'
-        : 'break-words'}"
+      bind:this={labelCells[index]}
+      class="min-w-0 text-body-medium text-on-surface {open ? 'break-all' : 'truncate'}"
       data-selectable
     >
       {row.label}
     </dt>
     <dd
-      class="min-w-0 text-body-medium {row.tone === 'critical'
+      class="flex min-w-0 items-start gap-1 text-body-medium {row.tone === 'critical'
         ? 'text-error'
         : row.tone === 'warn'
           ? 'text-gauge-warn'
-          : 'text-on-surface-variant'} {row.truncate ? 'truncate' : 'break-words'}"
-      data-selectable
+          : 'text-on-surface-variant'}"
     >
-      {#if row.onclick}
-        <!-- A button, not an anchor: this navigates within the application
-             and has no address. Styled as a link because that is what it
-             behaves like, and because a value that is followable should look
-             different from one that is not. -->
-        <button type="button" onclick={row.onclick} class="resource-link max-w-full truncate text-left">
-          {row.value}
-        </button>
+      {#if row.control && value}
+        <!-- The caller's own markup, at its natural size. See `control`. -->
+        <span class="min-w-0" title={row.value}>{@render value(row, index)}</span>
       {:else}
-        {row.value}
+        <span
+          bind:this={valueCells[index]}
+          class="min-w-0 {open ? 'break-words' : 'truncate'}"
+          data-selectable
+        >
+          {#if row.onclick}
+            <!-- A button, not an anchor: this navigates within the
+                 application and has no address. Styled as a link because that
+                 is what it behaves like, and because a value that is
+                 followable should look different from one that is not. It
+                 sets no width of its own — the span around it is what clips,
+                 so a link and a plain value are cut off in the same place. -->
+            <button type="button" onclick={row.onclick} class="resource-link text-left">
+              {row.value}
+            </button>
+          {:else}
+            {row.value}
+          {/if}
+        </span>
+      {/if}
+
+      <!--
+        Only on rows that lost something. A chevron on every row is a column
+        of controls that mostly do nothing, and it would be the loudest thing
+        in a pane whose whole job is the text beside it.
+      -->
+      {#if clipped[index]}
+        <button
+          type="button"
+          onclick={() => toggle(index)}
+          aria-expanded={open}
+          aria-label={open ? `Collapse ${row.label}` : `Expand ${row.label}`}
+          title={open ? 'Show less' : 'Show the whole value'}
+          class="state-layer grid size-5 shrink-0 place-items-center rounded-full
+                 text-on-surface-variant/60 transition-colors duration-100
+                 hover:bg-surface-container hover:text-on-surface"
+        >
+          <ChevronDown
+            class="size-3.5 transition-transform duration-150 ease-standard {open
+              ? 'rotate-180'
+              : ''}"
+            strokeWidth={2}
+          />
+        </button>
       {/if}
     </dd>
   {/each}
