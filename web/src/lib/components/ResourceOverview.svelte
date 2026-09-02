@@ -19,6 +19,7 @@
   import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
+  import { podTemplateOf } from '$lib/podTemplate'
   import type { UsageSample } from '$stores/session.svelte'
 
   interface Props {
@@ -139,6 +140,25 @@
       kind === 'Job' ||
       kind === 'CronJob',
   )
+
+  /**
+   * The pod template a controller carries, if it carries one.
+   *
+   * A CronJob nests it one level deeper, under the Job it creates — which is
+   * the whole difference between the two, and the reason this is a lookup
+   * rather than a field.
+   *
+   * FROM THE MANIFEST, NEVER FROM A LIST. A ReplicaSet read out of the watch
+   * store has had its template stripped to the container images; a panel
+   * sourcing one from there would show a container with no environment, no
+   * volumes and no probes, and be right about the images. See CLAUDE.md.
+   */
+  const podTemplate = $derived(isWorkload ? podTemplateOf(parsedManifest, kind) : null)
+
+  const templateContainers = $derived(podTemplate?.spec?.containers ?? [])
+  const templateInitContainers = $derived(podTemplate?.spec?.initContainers ?? [])
+  const templateVolumes = $derived(podTemplate?.spec?.volumes ?? [])
+
 
   // Deployment-specific information
   const replicas = $derived(spec.replicas ?? 0)
@@ -387,10 +407,13 @@
    * it, and a projected service-account token is present on every pod and
    * interesting on none.
    */
-  const volumeRows = $derived.by<DetailRow[]>(() => {
+  const volumeRows = $derived(volumeRowsFor(volumes))
+  const templateVolumeRows = $derived(volumeRowsFor(templateVolumes))
+
+  function volumeRowsFor(source: unknown[]): DetailRow[] {
     const namespace = metadata.namespace ?? ''
 
-    return (volumes as Record<string, any>[]).map((volume) => {
+    return (source as Record<string, any>[]).map((volume) => {
       let detail = 'Unknown'
       // The three that name another object are followable. A projected volume
       // is not: it names several, and a row links to one thing or to nothing.
@@ -421,7 +444,7 @@
       }
       return { label: volume.name, value: detail, onclick: go }
     })
-  })
+  }
 
   /**
    * A condition as one line, with the reason kubectl throws away.
@@ -885,6 +908,91 @@
       {#if kind === 'Deployment'}
         <DetailSection level="h3" id="strategy" title="Update strategy" defaultOpen={false}>
           <DetailList rows={strategyRows} />
+        </DetailSection>
+      {/if}
+    {/if}
+
+    <!--
+      THE POD TEMPLATE, and it is called that on purpose.
+      
+      A controller has no containers. It has a description of the ones its
+      next pod will get — which is the same thing as a running pod's only
+      until a rollout is in progress, or a ConfigMap has changed since those
+      pods started, or an admission webhook adds a sidecar on the way in.
+      Calling this "Containers", the way the pod panel does, would quietly
+      claim otherwise; calling it what Kubernetes calls it carries the tense
+      without a caveat anybody has to read.
+
+      It earns its place most where there is nothing else to look at: a
+      CronJob between runs has no pods to open, and its template is the only
+      description of what it does.
+    -->
+    {#if isWorkload && templateContainers.length > 0}
+      <DetailSection
+        level="h3"
+        id="pod-template"
+        title="Pod template"
+        hint={String(templateContainers.length)}
+        defaultOpen={kind !== 'ReplicaSet'}
+      >
+        <div class="flex flex-col">
+          {#each templateContainers as container, index (container.name ?? index)}
+            <ContainerDetail
+              spec={container}
+              context="template"
+              clusterId={clusterId ?? ''}
+              namespace={metadata.namespace ?? ''}
+              {canOpen}
+              {onopen}
+            />
+          {/each}
+        </div>
+
+        <!--
+          Said once, under the containers rather than beside every value: what
+          a pod ends up with is not always what its controller asked for, and
+          the difference is invisible from here.
+        -->
+        <p class="mt-4 text-body-small text-on-surface-variant/60">
+          What the next pod will be given. A running pod may differ — from an
+          older revision, or from a webhook that adds to the spec on the way in.
+        </p>
+      </DetailSection>
+
+      {#if templateInitContainers.length > 0}
+        <DetailSection
+          level="h3"
+          id="template-init-containers"
+          title="Template init containers"
+          defaultOpen={false}
+          hint={String(templateInitContainers.length)}
+        >
+          <div class="flex flex-col">
+            {#each templateInitContainers as container, index (container.name ?? index)}
+              <ContainerDetail
+                spec={container}
+                context="template"
+                clusterId={clusterId ?? ''}
+                namespace={metadata.namespace ?? ''}
+                {canOpen}
+                {onopen}
+              />
+            {/each}
+          </div>
+        </DetailSection>
+      {/if}
+
+      <!-- The other half of "what secrets does this reach": a Secret mounted
+           as a volume never appears in the environment. -->
+      {#if templateVolumes.length > 0}
+        <DetailSection
+          level="h3"
+          id="template-volumes"
+          title="Template volumes"
+          defaultOpen={false}
+          hint={String(templateVolumes.length)}
+        >
+          <DetailList rows={templateVolumeRows} />
         </DetailSection>
       {/if}
     {/if}

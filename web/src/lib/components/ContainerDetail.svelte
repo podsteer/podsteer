@@ -61,6 +61,17 @@
      * pod is on screen, so the value is shown rather than the path to it.
      */
     pod?: PodManifest | null
+    /**
+     * Whether this container is running, or is a template for one.
+     *
+     * A CONTROLLER HAS NO CONTAINERS — it has a description of the ones its
+     * next pod will get. Nearly everything about them reads the same either
+     * way, and the handful of things that do not are the handful that must
+     * not lie: there is no live state to report, nothing to forward a port
+     * to, and the note about when environment was injected is in the wrong
+     * tense.
+     */
+    context?: 'pod' | 'template'
     /** Whether this cluster serves a kind. See $lib/reference. */
     canOpen?: ServesKind
     /** Follows a reference to the object it names. */
@@ -76,9 +87,12 @@
     podUID = '',
     labels = {},
     pod,
+    context = 'pod',
     canOpen,
     onopen,
   }: Props = $props()
+
+  const isTemplate = $derived(context === 'template')
 
   /** Turns a reference into a click handler, or into nothing. */
   const follow = $derived(follower(canOpen, onopen))
@@ -303,7 +317,7 @@
 
   <DetailList {rows} />
 
-  {#if forwardable.length > 0 && podName}
+  {#if forwardable.length > 0}
     <!--
       One control per port, next to the port it opens.
 
@@ -368,7 +382,12 @@
 
             <!-- Pushed to the end of the value column rather than given a
                  column of its own: what precedes it is one field's worth of
-                 text, so the controls line up anyway. -->
+                 text, so the controls line up anyway.
+
+                 Absent on a template: there is no pod to forward to. The
+                 ports themselves are still worth listing, because what a
+                 container will listen on is part of what it is. -->
+            {#if podName}
             <button
               type="button"
               disabled={busy}
@@ -399,6 +418,7 @@
               {/if}
               {open ? 'Stop' : 'Forward'}
             </button>
+            {/if}
           </span>
         </div>
       {/each}
@@ -426,9 +446,14 @@
       <p class="mt-5 flex items-start gap-1.5 text-body-small text-on-surface-variant/70">
         <EyeOff class="mt-0.5 size-3.5 shrink-0" strokeWidth={1.8} />
         <span>
-          Secret values are read only when you ask, and hide again shortly after. What a
-          Secret holds now is not necessarily what this container was started with —
-          environment is injected once, at start, and never updated.
+          Secret values are read only when you ask, and hide again shortly after.
+          {#if isTemplate}
+            What a Secret holds now is what the next pod will be given — environment is
+            injected once, at start, so pods already running may hold something older.
+          {:else}
+            What a Secret holds now is not necessarily what this container was started with —
+            environment is injected once, at start, and never updated.
+          {/if}
         </span>
       </p>
     {/if}
