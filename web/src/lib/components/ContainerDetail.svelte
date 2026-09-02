@@ -37,6 +37,7 @@
   import type { Container } from '$lib/api/client'
   import SecretReveal from './SecretReveal.svelte'
   import { forwards } from '$stores/forwards.svelte'
+  import { configMapData } from '$stores/configMaps.svelte'
   import { BrowserOpenURL } from '$lib/wailsjs/runtime/runtime'
   import { EyeOff, ExternalLink, Loader, Plug, Unplug } from '@lucide/svelte'
 
@@ -152,6 +153,45 @@
     return (variable.valueFrom as { secretKeyRef?: { name?: string; key?: string } })?.secretKeyRef
   }
 
+  /** The config map a variable is read from, when it is read from one. */
+  function configRef(variable: { valueFrom?: unknown }) {
+    return (variable.valueFrom as { configMapKeyRef?: { name?: string; key?: string } })
+      ?.configMapKeyRef
+  }
+
+  /**
+   * The contents of every ConfigMap this container reads from.
+   *
+   * Fetched on sight, unlike a Secret: a ConfigMap is not secret, and reading
+   * one is an ordinary read rather than something an audit rule watches for.
+   * Keyed by name, one read per distinct map however many variables cite it.
+   *
+   * Empty until they arrive and empty for any that cannot be read, and the
+   * rows fall back to the reference in both cases — which is what they
+   * printed before, so nothing is lost by a refusal or by a slow answer.
+   */
+  let configMaps = $state<Record<string, Record<string, string>>>({})
+
+  $effect(() => {
+    const names = new Set<string>()
+    for (const variable of env) {
+      const ref = configRef(variable)
+      if (ref?.name && ref?.key) names.add(ref.name)
+    }
+    if (names.size === 0 || !clusterId) return
+
+    let current = true
+    void Promise.all(
+      [...names].map(async (name) => [name, await configMapData(clusterId, namespace, name)] as const),
+    ).then((loaded) => {
+      if (current) configMaps = Object.fromEntries(loaded)
+    })
+
+    return () => {
+      current = false
+    }
+  })
+
   /**
    * Environment as rows, so it sits on the same grid as everything else.
    *
@@ -179,13 +219,24 @@
         return { label: variable.name, value: 'literal credential in the pod spec', control: true }
       }
 
-      const configMap = (
-        variable.valueFrom as { configMapKeyRef?: { name?: string; key?: string } }
-      )?.configMapKeyRef
+      const configMap = configRef(variable)
+      // The value when it has arrived, the reference until then. A key that
+      // is absent from the map is NOT shown as empty: an absent key means the
+      // container failed to start or the map has changed since it did, and
+      // printing nothing would report that as an empty string.
+      const resolved =
+        configMap?.name && configMap?.key ? configMaps[configMap.name]?.[configMap.key] : undefined
 
       return {
         label: variable.name,
-        value: formatEnvValue(variable as never, pod ?? undefined),
+        value: resolved ?? formatEnvValue(variable as never, pod ?? undefined),
+        // Said in the tooltip once the value replaces the reference,
+        // because the value no longer names where it came from — and
+        // following it still goes there.
+        title:
+          resolved !== undefined
+            ? `From the '${configMap?.name}' config map, key '${configMap?.key}'`
+            : undefined,
         onclick: configMap?.name ? follow('ConfigMap', configMap.name, namespace) : undefined,
       }
     }),
@@ -361,7 +412,9 @@
     {/snippet}
 
     {#if env.some((variable) => isFromSecret(variable as never)) || env.some((variable) => looksSensitive(variable as never))}
-      <p class="mt-1.5 flex items-start gap-1.5 text-body-small text-on-surface-variant/70">
+      <!-- Set well clear of the last row. Tucked against it, a note about how
+           the pane behaves read as another variable's value. -->
+      <p class="mt-5 flex items-start gap-1.5 text-body-small text-on-surface-variant/70">
         <EyeOff class="mt-0.5 size-3.5 shrink-0" strokeWidth={1.8} />
         <span>
           Secret values are read only when you ask, and hide again shortly after. What a

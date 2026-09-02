@@ -63,6 +63,15 @@
      */
     tone?: 'warn' | 'critical'
     /**
+     * What the value is, when the value alone does not say.
+     *
+     * For a value that has been RESOLVED from somewhere else: an environment
+     * variable read out of a ConfigMap shows the contents, which is what
+     * somebody wants — and then nothing on screen says where it came from, or
+     * why following it opens a ConfigMap.
+     */
+    title?: string
+    /**
      * The value cell holds a control rather than text, and is rendered by the
      * list's `value` snippet.
      *
@@ -234,6 +243,7 @@
         <span
           bind:this={valueCells[index]}
           class="min-w-0 {open ? 'break-words' : 'truncate'}"
+          title={row.title}
           data-selectable
         >
           {#if row.onclick}
