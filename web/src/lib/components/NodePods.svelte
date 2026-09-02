@@ -126,14 +126,29 @@
           <ul class="flex flex-col divide-y divide-outline-variant/30">
             {#each group as pod (pod.name)}
               <li>
+                <!--
+                  A LINK, NOT A ROW THAT LIGHTS UP. Every other followable
+                  name in the panel — the node a pod is on, the ConfigMap a
+                  volume mounts, a namespace's contents — is a name that turns
+                  colour under the pointer. A filled hover band here made the
+                  one list of followable names in the panel look like a menu
+                  instead, and left it as the only place the gesture had to be
+                  learnt twice.
+
+                  The name sets no colour of its own: resource-link supplies
+                  both the resting one and the hover one, and an element that
+                  declares its own beats what it would otherwise inherit. The
+                  figures beside it keep theirs by declaring one, which is
+                  what stops the whole row changing colour at once.
+                -->
                 <button
                   type="button"
                   onclick={() => onopen?.('Pod', pod.name, pod.namespace)}
                   disabled={!onopen}
-                  class="state-layer flex w-full items-center gap-2 py-1.5 text-left
-                         transition-colors duration-100 disabled:pointer-events-none"
+                  class="resource-link flex w-full items-center gap-2 py-1.5 text-left
+                         disabled:pointer-events-none"
                 >
-                  <span class="min-w-0 flex-1 truncate text-body-small text-on-surface">
+                  <span class="min-w-0 flex-1 truncate text-body-small">
                     {pod.name}
                   </span>
                   <!-- Restarts, but only when there are any: a column of

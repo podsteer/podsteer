@@ -42,12 +42,16 @@
      * often all somebody wanted, and a section that reveals nothing until
      * opened makes them open every one to find out.
      *
-     * WRITTEN AS A VALUE, NOT AS A WHISPER. It sits at the right of the
-     * heading in the heading's own size, one weight lighter and in the
-     * receding colour — which is the same relationship a label has to its
-     * value one line below. Set smaller and tucked against the title it read
-     * as an aside about the heading rather than as the section's own figure,
-     * and a column of them down the panel lined up against nothing.
+     * WRITTEN AS A VALUE, NOT AS A WHISPER. It sits at the RIGHT of the
+     * heading, in the body size every value in the panel below it is set in
+     * and in the same receding colour — so a figure in a heading and a figure
+     * in a row read as the same kind of thing. Tucked against the title it
+     * read as an aside about the heading rather than as the section's own
+     * figure, and a column of them down the panel lined up against nothing.
+     *
+     * The heading's own size was too much: a heading and its figure set the
+     * same size are two headings, and the eye stops being able to tell which
+     * of them names the section.
      */
     hint?: string
     /**
@@ -111,7 +115,11 @@
       />
       <span class="min-w-0 truncate">{title}</span>
       {#if hint}
-        <span class="ml-auto shrink-0 pl-3 font-normal text-on-surface-variant/70">{hint}</span>
+        <span
+          class="ml-auto shrink-0 pl-3 text-body-medium font-normal text-on-surface-variant/70"
+        >
+          {hint}
+        </span>
       {/if}
     </button>
   </svelte:element>
