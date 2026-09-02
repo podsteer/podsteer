@@ -295,6 +295,23 @@ describe('DetailList', () => {
     expect(triggers[0].getAttribute('aria-expanded')).toBe('false')
   })
 
+  it('marks a value that leaves the application', () => {
+    // An Ingress address is handed to the operating system's browser, which
+    // is a different thing from every other link in the panel — those move
+    // the panel. The glyph is the convention for that and is worth more than
+    // a tooltip nobody hovers.
+    const { container } = render(DetailList, {
+      rows: [
+        { label: 'app.example.com', value: 'https://app.example.com/', onclick: () => {}, external: true },
+        { label: 'Node', value: 'node-1', onclick: () => {} },
+      ],
+    })
+
+    const links = container.querySelectorAll('.resource-link')
+    expect(links[0].querySelector('svg')).not.toBeNull()
+    expect(links[1].querySelector('svg')).toBeNull()
+  })
+
   it('puts the source of a resolved value in its tooltip', () => {
     // A value resolved out of a ConfigMap no longer names its source — that
     // is the point of resolving it — and a third control to say so was more

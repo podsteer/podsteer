@@ -292,6 +292,7 @@
       // Opened in the real browser, not the webview: this is somebody else's
       // site, and loading it inside the application would replace PodSteer.
       onclick: isOpenable(route) ? () => BrowserOpenURL(route.url) : undefined,
+      external: isOpenable(route),
       tone: route.secure ? undefined : ('warn' as const),
     })),
   )

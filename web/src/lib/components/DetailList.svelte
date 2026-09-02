@@ -28,7 +28,7 @@
   A real <dl>, so the pairing is in the document and not only in the grid.
 -->
 <script lang="ts">
-  import { ChevronDown } from '@lucide/svelte'
+  import { ChevronDown, ExternalLink } from '@lucide/svelte'
   import RowMenu, { type RowAction } from './RowMenu.svelte'
   import ColumnDivider from './ColumnDivider.svelte'
 
@@ -89,6 +89,15 @@
      * contents are not a link to it.
      */
     reference?: () => void
+    /**
+     * The value leaves the application when followed.
+     *
+     * Marked, because it does something different from every other link in
+     * the panel: those move the panel, this hands the address to the
+     * operating system's own browser. The glyph is the convention for that
+     * and is worth more than a tooltip nobody hovers.
+     */
+    external?: boolean
     /**
      * One more thing this row can do, offered in its menu.
      *
@@ -288,8 +297,15 @@
                look different from one that is not. It sets no width of its
                own — the span around it is what clips, so a link and a plain
                value are cut off in the same place. -->
-          <button type="button" onclick={row.onclick} class="resource-link text-left">
-            {row.value}
+          <button
+            type="button"
+            onclick={row.onclick}
+            class="resource-link inline-flex max-w-full items-baseline gap-1 text-left"
+          >
+            <span class="min-w-0 truncate">{row.value}</span>
+            {#if row.external}
+              <ExternalLink class="size-3 shrink-0 self-center" strokeWidth={1.8} />
+            {/if}
           </button>
         {:else}
           {row.value}
