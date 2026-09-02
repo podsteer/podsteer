@@ -806,6 +806,7 @@
                 podName={metadata.name ?? ''}
                 podUID={metadata.uid ?? ''}
                 labels={metadata.labels ?? {}}
+                pod={parsedManifest}
                 {canOpen}
                 {onopen}
               />
@@ -832,6 +833,7 @@
                 podName={metadata.name ?? ''}
                 podUID={metadata.uid ?? ''}
                 labels={metadata.labels ?? {}}
+                pod={parsedManifest}
                 {canOpen}
                 {onopen}
               />
@@ -855,6 +857,7 @@
                 podName={metadata.name ?? ''}
                 podUID={metadata.uid ?? ''}
                 labels={metadata.labels ?? {}}
+                pod={parsedManifest}
                 {canOpen}
                 {onopen}
               />

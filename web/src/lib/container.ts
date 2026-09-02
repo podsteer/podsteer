@@ -130,11 +130,29 @@ export function formatProbe(probe: Probe | undefined): string {
  * process has never seen. Showing it labelled as the pod's environment is
  * wrong, not merely risky.
  */
-export function formatEnvValue(variable: EnvVar): string {
+export function formatEnvValue(variable: EnvVar, pod?: PodManifest): string {
   if (variable.value !== undefined) return variable.value
 
   const from = variable.valueFrom
   if (!from) return ''
+
+  // The downward API is not a mystery: every path it can carry is a field of
+  // the pod this pane is already showing, so it is RESOLVED rather than
+  // printed as the path. `<metadata.name>` is what kubectl prints because
+  // kubectl is describing a template; this is describing a running pod, and
+  // the running pod knows its own name.
+  //
+  // Still a quotation, not a conclusion — the value is lifted verbatim out of
+  // the manifest on screen. Anything that will not resolve keeps the path, so
+  // an unfamiliar field degrades to what kubectl would have said.
+  if (from.fieldRef?.fieldPath) {
+    const resolved = resolveFieldPath(pod, from.fieldRef.fieldPath)
+    if (resolved !== null) return resolved
+  }
+  if (from.resourceFieldRef?.resource) {
+    const resolved = resolveResourceField(pod, from.resourceFieldRef)
+    if (resolved !== null) return resolved
+  }
 
   if (from.secretKeyRef) {
     // kubectl's exact wording, including the asymmetry with config maps
@@ -154,6 +172,91 @@ export function formatEnvValue(variable: EnvVar): string {
     }>`
   }
   return ''
+}
+
+/** The parts of a pod manifest the downward API can name. */
+export interface PodManifest {
+  metadata?: {
+    name?: string
+    namespace?: string
+    uid?: string
+    labels?: Record<string, string>
+    annotations?: Record<string, string>
+  }
+  spec?: {
+    nodeName?: string
+    serviceAccountName?: string
+    containers?: { name?: string; resources?: ContainerResources }[]
+    initContainers?: { name?: string; resources?: ContainerResources }[]
+  }
+  status?: { podIP?: string; hostIP?: string }
+}
+
+interface ContainerResources {
+  requests?: Record<string, string>
+  limits?: Record<string, string>
+}
+
+/**
+ * The value behind a downward-API field path.
+ *
+ * Only the paths Kubernetes actually allows in a fieldRef, matched exactly
+ * rather than by walking the object: a general path walker would happily
+ * resolve `spec.containers[0].image`, which the API server would have
+ * REFUSED — so the pane would be showing a value the pod could never have
+ * been given. Null for anything unrecognised, which keeps the path on screen.
+ */
+function resolveFieldPath(pod: PodManifest | undefined, path: string): string | null {
+  if (!pod) return null
+
+  const keyed = /^metadata\.(labels|annotations)\['(.+)'\]$/.exec(path)
+  if (keyed) {
+    const source = keyed[1] === 'labels' ? pod.metadata?.labels : pod.metadata?.annotations
+    return source?.[keyed[2]] ?? null
+  }
+
+  switch (path) {
+    case 'metadata.name':
+      return pod.metadata?.name ?? null
+    case 'metadata.namespace':
+      return pod.metadata?.namespace ?? null
+    case 'metadata.uid':
+      return pod.metadata?.uid ?? null
+    case 'spec.nodeName':
+      return pod.spec?.nodeName ?? null
+    case 'spec.serviceAccountName':
+      return pod.spec?.serviceAccountName ?? null
+    case 'status.podIP':
+    case 'status.podIPs':
+      return pod.status?.podIP ?? null
+    case 'status.hostIP':
+      return pod.status?.hostIP ?? null
+    default:
+      return null
+  }
+}
+
+/**
+ * The value behind a resourceFieldRef — a container's own request or limit.
+ *
+ * The container name is optional in the spec and means "this one", but this
+ * has no way to know which one is being rendered, so an unnamed reference is
+ * left as the path rather than guessed at.
+ */
+function resolveResourceField(
+  pod: PodManifest | undefined,
+  ref: { containerName?: string; resource?: string },
+): string | null {
+  if (!pod || !ref.containerName || !ref.resource) return null
+
+  const containers = [...(pod.spec?.containers ?? []), ...(pod.spec?.initContainers ?? [])]
+  const container = containers.find((entry) => entry.name === ref.containerName)
+  if (!container) return null
+
+  const [scope, resource] = ref.resource.split('.')
+  const declared =
+    scope === 'limits' ? container.resources?.limits : container.resources?.requests
+  return declared?.[resource] ?? null
 }
 
 /** Whether a variable's value came from a Secret, for the redaction badge. */

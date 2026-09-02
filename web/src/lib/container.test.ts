@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatEnvValue, formatMount, formatPorts, formatProbe, looksSensitive } from './container'
+import {
+  formatEnvValue,
+  formatMount,
+  formatPorts,
+  formatProbe,
+  looksSensitive,
+  type PodManifest,
+} from './container'
 
 describe('formatProbe', () => {
   it('renders all four handler types', () => {
@@ -88,5 +95,128 @@ describe('formatPorts and formatMount', () => {
     expect(formatMount({ name: 'cfg', mountPath: '/etc/cfg', readOnly: true })).toBe('/etc/cfg from cfg (ro)')
     expect(formatMount({ name: 'data', mountPath: '/data' })).toBe('/data from data (rw)')
     expect(formatMount({ name: 'cfg', mountPath: '/etc/x', subPath: 'a.yaml' })).toContain('path="a.yaml"')
+  })
+})
+
+const pod: PodManifest = {
+  metadata: {
+    name: 'api-7d8f-k76wb',
+    namespace: 'development',
+    uid: 'a1b2c3',
+    labels: { app: 'api' },
+    annotations: { 'app.kubernetes.io/name': 'authentication-identity-service' },
+  },
+  spec: {
+    nodeName: 'node-1',
+    serviceAccountName: 'api',
+    containers: [
+      { name: 'app', resources: { requests: { cpu: '100m' }, limits: { memory: '512Mi' } } },
+    ],
+  },
+  status: { podIP: '10.0.0.1', hostIP: '10.1.0.1' },
+}
+
+describe('the downward API', () => {
+  it('shows the value, not the path to it', () => {
+    // kubectl prints `<metadata.name>` because kubectl is describing a
+    // template. This is describing a running pod, and the running pod knows
+    // its own name — so a column of `<...>` placeholders is a column of
+    // values nobody has been shown.
+    expect(formatEnvValue({ name: 'POD_NAME', valueFrom: { fieldRef: { fieldPath: 'metadata.name' } } }, pod))
+      .toBe('api-7d8f-k76wb')
+    expect(
+      formatEnvValue(
+        { name: 'NS', valueFrom: { fieldRef: { fieldPath: 'metadata.namespace' } } },
+        pod,
+      ),
+    ).toBe('development')
+    expect(
+      formatEnvValue({ name: 'IP', valueFrom: { fieldRef: { fieldPath: 'status.podIP' } } }, pod),
+    ).toBe('10.0.0.1')
+  })
+
+  it('reads a keyed label or annotation', () => {
+    expect(
+      formatEnvValue(
+        {
+          name: 'SERVICE',
+          valueFrom: {
+            fieldRef: { fieldPath: "metadata.annotations['app.kubernetes.io/name']" },
+          },
+        },
+        pod,
+      ),
+    ).toBe('authentication-identity-service')
+
+    expect(
+      formatEnvValue(
+        { name: 'APP', valueFrom: { fieldRef: { fieldPath: "metadata.labels['app']" } } },
+        pod,
+      ),
+    ).toBe('api')
+  })
+
+  it('resolves a container resource against that container', () => {
+    expect(
+      formatEnvValue(
+        {
+          name: 'CPU',
+          valueFrom: { resourceFieldRef: { containerName: 'app', resource: 'requests.cpu' } },
+        },
+        pod,
+      ),
+    ).toBe('100m')
+    expect(
+      formatEnvValue(
+        {
+          name: 'MEM',
+          valueFrom: { resourceFieldRef: { containerName: 'app', resource: 'limits.memory' } },
+        },
+        pod,
+      ),
+    ).toBe('512Mi')
+  })
+
+  it('keeps the path when it cannot resolve one', () => {
+    // THE IMPORTANT HALF. A path this does not recognise, an annotation that
+    // is not set, or a pane with no manifest yet must fall back to what
+    // kubectl would have printed — never to a blank, and never to a guess.
+    expect(
+      formatEnvValue(
+        { name: 'MISSING', valueFrom: { fieldRef: { fieldPath: "metadata.labels['absent']" } } },
+        pod,
+      ),
+    ).toBe('<metadata.labels[\'absent\']>')
+
+    expect(
+      formatEnvValue({ name: 'NEW', valueFrom: { fieldRef: { fieldPath: 'spec.somethingNew' } } }, pod),
+    ).toBe('<spec.somethingNew>')
+
+    expect(
+      formatEnvValue({ name: 'POD_NAME', valueFrom: { fieldRef: { fieldPath: 'metadata.name' } } }),
+    ).toBe('<metadata.name>')
+  })
+
+  it('refuses paths the API server would have refused', () => {
+    // Only the fields a fieldRef may actually name are resolved. A general
+    // path walker would happily answer `spec.containers[0].image` — which
+    // Kubernetes rejects — so the pane would be showing a value the pod could
+    // never have been given.
+    expect(
+      formatEnvValue(
+        { name: 'IMAGE', valueFrom: { fieldRef: { fieldPath: 'spec.containers[0].image' } } },
+        pod,
+      ),
+    ).toBe('<spec.containers[0].image>')
+  })
+
+  it('still names a secret rather than resolving one', () => {
+    // Nothing here ever reads a Secret. See container.ts.
+    expect(
+      formatEnvValue(
+        { name: 'KEY', valueFrom: { secretKeyRef: { name: 'app-secrets', key: 'jwt' } } },
+        pod,
+      ),
+    ).toBe("<set to the key 'jwt' in secret 'app-secrets'>")
   })
 })

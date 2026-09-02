@@ -31,17 +31,9 @@
     /** The Secret holding it, and the key within it. */
     secret: string
     secretKey: string
-    /**
-     * Opens the Secret this value is read from, when the cluster serves them.
-     *
-     * The name is right there in the sentence, and "which Secret is this
-     * coming from" is asked far more often than "what does it say" — often by
-     * somebody who cannot read the value at all and does not need to.
-     */
-    onopen?: () => void
   }
 
-  let { clusterId, namespace, secret, secretKey, onopen }: Props = $props()
+  let { clusterId, namespace, secret, secretKey }: Props = $props()
 
   /**
    * The plaintext, while it is on screen.
@@ -102,12 +94,24 @@
   {:else if value !== null}
     <span class="min-w-0 font-mono break-all text-on-surface" data-selectable>{value}</span>
   {:else}
-    <span class="text-on-surface-variant">
-      &lt;set to the key '{secretKey}' in secret {#if onopen}<button
-          type="button"
-          onclick={onopen}
-          class="resource-link"
-          title="Open secret {secret}">'{secret}'</button>{:else}'{secret}'{/if}&gt;
+    <!--
+      DOTS, NOT A SENTENCE. This used to spell out where the value comes from
+      — "<set to the key 'x' in secret 'y'>" — which is what kubectl prints
+      and is right for kubectl, because kubectl has no second line to put it
+      on. In a list of thirty variables it is thirty repetitions of one
+      secret's name where thirty values should be, and it reads as prose in a
+      column of data.
+      
+      The same mask the literal-credential case uses, so a value that is
+      hidden looks the same however it came to be hidden. Where it comes from
+      is in the tooltip, and the Secret itself is reachable from the volume
+      that mounts it and from the Map.
+    -->
+    <span
+      class="font-mono text-on-surface-variant"
+      title="Set to the key '{secretKey}' in secret '{secret}'"
+    >
+      ••••••••
     </span>
   {/if}
 

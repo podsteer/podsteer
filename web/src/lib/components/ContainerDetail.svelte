@@ -25,7 +25,14 @@
 -->
 <script lang="ts">
   import DetailList, { type DetailRow } from './DetailList.svelte'
-  import { formatEnvValue, formatMount, formatProbe, isFromSecret, looksSensitive } from '$lib/container'
+  import {
+    formatEnvValue,
+    formatMount,
+    formatProbe,
+    isFromSecret,
+    looksSensitive,
+    type PodManifest,
+  } from '$lib/container'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
   import type { Container } from '$lib/api/client'
   import SecretReveal from './SecretReveal.svelte'
@@ -46,6 +53,13 @@
     namespace: string
     /** The pod's labels, so a forward can find a replacement pod if it dies. */
     labels?: Record<string, string>
+    /**
+     * The pod this container belongs to, parsed.
+     *
+     * For the downward API: a `fieldRef` names a field of THIS pod, and the
+     * pod is on screen, so the value is shown rather than the path to it.
+     */
+    pod?: PodManifest | null
     /** Whether this cluster serves a kind. See $lib/reference. */
     canOpen?: ServesKind
     /** Follows a reference to the object it names. */
@@ -60,6 +74,7 @@
     podName = '',
     podUID = '',
     labels = {},
+    pod,
     canOpen,
     onopen,
   }: Props = $props()
@@ -149,9 +164,13 @@
     env.map((variable) => {
       const secret = secretRef(variable)
       if (secret?.name && secret?.key) {
+        // The words are the tooltip now, not the cell. Thirty variables each
+        // spelling out "<set to the key 'x' in secret 'y'>" is thirty lines
+        // of the same sentence where thirty values should be — and the
+        // sentence was mostly one secret's name, repeated.
         return {
           label: variable.name,
-          value: `<set to the key '${secret.key}' in secret '${secret.name}'>`,
+          value: `set to the key '${secret.key}' in secret '${secret.name}'`,
           control: true,
         }
       }
@@ -166,7 +185,7 @@
 
       return {
         label: variable.name,
-        value: formatEnvValue(variable as never),
+        value: formatEnvValue(variable as never, pod ?? undefined),
         onclick: configMap?.name ? follow('ConfigMap', configMap.name, namespace) : undefined,
       }
     }),
@@ -215,81 +234,87 @@
         {@const open = forwards.forPort(namespace, podName, port.containerPort)}
         {@const busy = forwards.isBusy(namespace, podName, port.containerPort)}
         <!--
-          A GRID, not a flex row with a margin pushing the button right. With
-          `ml-auto` the button's position depended on how long the address
-          beside it was, so a forwarded port and an unforwarded one put their
-          controls in different places and the column read as ragged. Three
-          columns line them up regardless of what is in the middle.
+          THE PORT'S NAME IS THE LABEL AND THE PORT IS THE VALUE, so a port
+          row reads like every other row in the panel: what it is on the left,
+          what it says on the right. It used to put the whole thing —
+          "http 8080/TCP" — in the label column and leave the value column
+          empty with the button floating at the far right, which is the one
+          place in the panel where the middle of a row was blank.
+
+          An unnamed port has no name to use, and says so rather than
+          borrowing the number: the number is the value.
         -->
-        <div
-          class="grid grid-cols-[var(--detail-label-width)_1fr_auto] items-center gap-x-4
-                 gap-y-2 text-body-medium"
-        >
-          <span class="min-w-0 truncate text-on-surface-variant">
-            {port.name ? `${port.name} ` : ''}{port.containerPort}/{port.protocol ?? 'TCP'}
+        <div class="detail-grid items-center text-body-medium">
+          <span class="min-w-0 truncate text-on-surface">
+            {port.name || 'Port'}
           </span>
 
-          {#if open?.reconnecting}
-            <!--
-              The pod died and a replacement is being sought. Said out loud
-              rather than shown as still-connected, because the address is
-              still bound and still correct — whatever is pointed at it is
-              stalling, not broken, and that is a different thing to tell
-              somebody than "the forward is fine".
-            -->
-            <span class="flex min-w-0 items-center gap-1.5 text-body-medium text-gauge-warn">
-              <Loader class="size-3.5 shrink-0 animate-spin" strokeWidth={2} />
-              <span class="truncate">holding {open.address} — finding a replacement pod</span>
+          <span class="flex min-w-0 items-center gap-3">
+            <span class="shrink-0 tabular-nums text-on-surface-variant">
+              {port.containerPort}/{port.protocol ?? 'TCP'}
             </span>
-          {:else if open}
-            <!-- The address is opened in the real browser, not the webview:
-                 this is a link to something on the operator's machine, and
-                 loading it inside the application would replace PodSteer. -->
+
+            {#if open?.reconnecting}
+              <!--
+                The pod died and a replacement is being sought. Said out loud
+                rather than shown as still-connected, because the address is
+                still bound and still correct — whatever is pointed at it is
+                stalling, not broken, and that is a different thing to tell
+                somebody than "the forward is fine".
+              -->
+              <span class="flex min-w-0 items-center gap-1.5 text-gauge-warn">
+                <Loader class="size-3.5 shrink-0 animate-spin" strokeWidth={2} />
+                <span class="truncate">holding {open.address} — finding a replacement pod</span>
+              </span>
+            {:else if open}
+              <!-- The address is opened in the real browser, not the webview:
+                   this is a link to something on the operator's machine, and
+                   loading it inside the application would replace PodSteer. -->
+              <button
+                type="button"
+                onclick={() => BrowserOpenURL(open.address)}
+                class="resource-link flex min-w-0 items-center gap-1.5 text-left"
+                title="Open {open.address}"
+              >
+                <span class="truncate">{open.address}</span>
+                <ExternalLink class="size-3.5 shrink-0" strokeWidth={1.8} />
+              </button>
+            {/if}
+
+            <!-- Pushed to the end of the value column rather than given a
+                 column of its own: what precedes it is one field's worth of
+                 text, so the controls line up anyway. -->
             <button
               type="button"
-              onclick={() => BrowserOpenURL(open.address)}
-              class="resource-link flex min-w-0 items-center gap-1.5 text-left"
-              title="Open {open.address}"
+              disabled={busy}
+              onclick={() =>
+                open
+                  ? forwards.stop(open)
+                  : forwards.start(
+                      clusterId,
+                      namespace,
+                      podName,
+                      podUID,
+                      port.containerPort,
+                      port.name ?? '',
+                      port.protocol ?? 'TCP',
+                      labels,
+                    )}
+              class="state-layer ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm
+                     border border-outline-variant px-2 text-label-large
+                     text-on-surface-variant transition-colors duration-100
+                     hover:bg-surface-container hover:text-on-surface disabled:opacity-50"
             >
-              <span class="truncate">{open.address}</span>
-              <ExternalLink class="size-3.5 shrink-0" strokeWidth={1.8} />
+              {#if busy}
+                <Loader class="size-3.5 animate-spin" strokeWidth={2} />
+              {:else if open}
+                <Unplug class="size-3.5" strokeWidth={1.8} />
+              {:else}
+                <Plug class="size-3.5" strokeWidth={1.8} />
+              {/if}
+              {open ? 'Stop' : 'Forward'}
             </button>
-          {:else}
-            <!-- An empty cell holds the column open, so the buttons below and
-                 above this row stay in line. -->
-            <span></span>
-          {/if}
-
-          <button
-            type="button"
-            disabled={busy}
-            onclick={() =>
-              open
-                ? forwards.stop(open)
-                : forwards.start(
-                    clusterId,
-                    namespace,
-                    podName,
-                    podUID,
-                    port.containerPort,
-                    port.name ?? '',
-                    port.protocol ?? 'TCP',
-                    labels,
-                  )}
-            class="state-layer inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm
-                   border border-outline-variant px-2 text-label-large
-                   text-on-surface-variant transition-colors duration-100
-                   hover:bg-surface-container hover:text-on-surface disabled:opacity-50"
-          >
-            {#if busy}
-              <Loader class="size-3.5 animate-spin" strokeWidth={2} />
-            {:else if open}
-              <Unplug class="size-3.5" strokeWidth={1.8} />
-            {:else}
-              <Plug class="size-3.5" strokeWidth={1.8} />
-            {/if}
-            {open ? 'Stop' : 'Forward'}
-          </button>
+          </span>
         </div>
       {/each}
     </div>
@@ -320,7 +345,6 @@
           {namespace}
           secret={secret.name}
           secretKey={secret.key}
-          onopen={follow('Secret', secret.name, namespace)}
         />
       {:else}
         <!--
