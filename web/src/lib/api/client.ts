@@ -35,6 +35,7 @@ import {
   ListPods as bindListPods,
   ListWorkloads as bindListWorkloads,
   ListPodsForWorkload as bindListPodsForWorkload,
+  WorkloadUsage as bindWorkloadUsage,
   ListPodsOnNode as bindListPodsOnNode,
   PodGraph as bindPodGraph,
   WorkloadGraph as bindWorkloadGraph,
@@ -85,6 +86,8 @@ export type PortForward = wails.PortForward
 export type Node = wails.Node
 /** A pod-managing controller. */
 export type Workload = wails.Workload
+
+export type WorkloadUsage = wails.WorkloadUsage
 /** A Kubernetes Event. */
 export type K8sEvent = wails.Event
 /** A browsable kind, as shown in the navigator. */
@@ -332,6 +335,22 @@ export function workloadGraph(
 /** Lists the pods the scheduler has placed on one node, across namespaces. */
 export function listPodsOnNode(clusterId: string, nodeName: string): Promise<Pod[]> {
   return call(() => bindListPodsOnNode(clusterId, nodeName))
+}
+
+/**
+ * Sums what a controller's pods are consuming, against what they reserved.
+ *
+ * Read while a panel is open rather than alongside the list: a controller has
+ * no usage of its own, so this costs that controller's pods and the
+ * namespace's metrics, and the figure is only looked at one at a time.
+ */
+export function workloadUsage(
+  clusterId: string,
+  namespace: string,
+  kind: string,
+  name: string,
+): Promise<WorkloadUsage> {
+  return call(() => bindWorkloadUsage(clusterId, namespace, kind, name))
 }
 
 /** Lists all pods owned by a specific workload. */

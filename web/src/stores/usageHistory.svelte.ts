@@ -34,7 +34,11 @@ import { preferences } from './preferences.svelte'
 const MAX_SAMPLES_PER_OBJECT = 200
 
 /** Identifies one object across refreshes. */
-export function usageKey(kind: 'pod' | 'node', namespace: string, name: string): string {
+export function usageKey(
+  kind: 'pod' | 'node' | 'workload',
+  namespace: string,
+  name: string,
+): string {
   return `${kind}:${namespace}/${name}`
 }
 

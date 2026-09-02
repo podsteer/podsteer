@@ -64,6 +64,33 @@ func (w *WorkloadAPI) ListPods(clusterID, namespace string) ([]Pod, error) {
 	return toPods(pods, time.Now()), nil
 }
 
+// WorkloadUsage sums what a controller's pods are consuming.
+//
+// Read while a panel is open rather than alongside the controller list: it
+// costs that controller's pods and the namespace's metrics, and the figure is
+// only ever looked at one controller at a time.
+func (w *WorkloadAPI) WorkloadUsage(clusterID, namespace, kind, name string) (WorkloadUsage, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return WorkloadUsage{}, apiError(w.logger, "WorkloadUsage", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return WorkloadUsage{}, apiError(w.logger, "WorkloadUsage", err)
+	}
+
+	usage, err := w.workloads.WorkloadUsage(ctx, id, ns, domain.WorkloadKind(kind), name)
+	if err != nil {
+		return WorkloadUsage{}, apiError(w.logger, "WorkloadUsage", err)
+	}
+
+	return toWorkloadUsage(usage), nil
+}
+
 // ListWorkloads returns controllers of the given kind.
 //
 // The kind arrives as its display name — "Deployment", "StatefulSet" — which

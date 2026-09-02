@@ -1596,6 +1596,47 @@ export namespace wails {
 	        this.ageSeconds = source["ageSeconds"];
 	    }
 	}
+	
+	export class WorkloadUsage {
+	    pods: number;
+	    measured: number;
+	    hasMetrics: boolean;
+	    cpu: string;
+	    memory: string;
+	    cpuCores: number;
+	    memoryBytes: number;
+	    requestCores: number;
+	    requestBytes: number;
+	    limitCores: number;
+	    limitBytes: number;
+	    cpuRequest: string;
+	    memoryRequest: string;
+	    cpuLimit: string;
+	    memoryLimit: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkloadUsage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pods = source["pods"];
+	        this.measured = source["measured"];
+	        this.hasMetrics = source["hasMetrics"];
+	        this.cpu = source["cpu"];
+	        this.memory = source["memory"];
+	        this.cpuCores = source["cpuCores"];
+	        this.memoryBytes = source["memoryBytes"];
+	        this.requestCores = source["requestCores"];
+	        this.requestBytes = source["requestBytes"];
+	        this.limitCores = source["limitCores"];
+	        this.limitBytes = source["limitBytes"];
+	        this.cpuRequest = source["cpuRequest"];
+	        this.memoryRequest = source["memoryRequest"];
+	        this.cpuLimit = source["cpuLimit"];
+	        this.memoryLimit = source["memoryLimit"];
+	    }
+	}
 
 }
 

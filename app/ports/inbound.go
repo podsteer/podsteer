@@ -82,6 +82,10 @@ type WorkloadService interface {
 
 	// ListPodsForWorkload returns all pods owned by a specific workload.
 	ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error)
+
+	// WorkloadUsage sums what a controller's pods are consuming, against what
+	// they reserved and what they will be stopped at.
+	WorkloadUsage(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.WorkloadUsage, error)
 }
 
 // EventService is the use-case surface for reading Kubernetes Events.

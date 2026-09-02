@@ -15,6 +15,7 @@
   import MetricsBackendNote from './MetricsBackendNote.svelte'
   import NodePods from './NodePods.svelte'
   import NamespaceContents from './NamespaceContents.svelte'
+  import WorkloadUsage from './WorkloadUsage.svelte'
   import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
@@ -59,6 +60,15 @@
     onnamespace?: (namespace: string) => void
     /** Opens a kind's list, filtered to a namespace. */
     onbrowse?: (kindId: string, namespace: string) => void
+    /**
+     * Changes on every refresh of the list behind the panel.
+     *
+     * The tick a controller's usage samples on. A controller has no usage in
+     * any list, so its series has to be built while its panel is open — and
+     * it follows the operator's own refresh setting rather than a timer of
+     * its own. See WorkloadUsage.
+     */
+    tick?: unknown
   }
 
   let {
@@ -74,6 +84,7 @@
     onopen,
     onnamespace,
     onbrowse,
+    tick,
   }: Props = $props()
 
   /** Turns a reference into a click handler, or into nothing. See $lib/reference. */
@@ -109,6 +120,16 @@
   const initContainers = $derived(spec.initContainers ?? [])
   const volumes = $derived(spec.volumes ?? [])
   const conditions = $derived(status.conditions ?? [])
+
+  /** The six controllers, which are the kinds whose usage is their pods'. */
+  const isWorkload = $derived(
+    kind === 'Deployment' ||
+      kind === 'StatefulSet' ||
+      kind === 'DaemonSet' ||
+      kind === 'ReplicaSet' ||
+      kind === 'Job' ||
+      kind === 'CronJob',
+  )
 
   // Deployment-specific information
   const replicas = $derived(spec.replicas ?? 0)
@@ -602,6 +623,23 @@
     -->
     {#if kind === 'Namespace' && clusterId && metadata.name}
       <NamespaceContents {clusterId} namespace={metadata.name} {onbrowse} />
+    {/if}
+
+    <!--
+      A controller's usage, in the same place a pod's and a node's sit: what
+      is wrong, then what it is doing, then what it is. Unlike those two it is
+      read rather than remembered — nothing polls a controller's pods — which
+      is why it is a component of its own rather than another UsageChart here.
+    -->
+    {#if isWorkload && clusterId && metadata.name}
+      <WorkloadUsage
+        {clusterId}
+        namespace={metadata.namespace ?? ''}
+        kind={kind ?? ''}
+        name={metadata.name}
+        {tick}
+        {backend}
+      />
     {/if}
 
     <!--

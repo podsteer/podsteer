@@ -882,6 +882,7 @@
           onopen={openObject}
           onnamespace={(namespace) => void session.selectNamespace(namespace)}
           onbrowse={(kindId, namespace) => void session.browseKind(kindId, namespace)}
+          tick={session.lastRefreshedAt}
         />
       {:else if activeTab === 'logs'}
         {#if maximized === 'logs'}

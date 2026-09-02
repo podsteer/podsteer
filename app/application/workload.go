@@ -155,6 +155,34 @@ func podsWithUsage(
 	return enriched, true
 }
 
+// WorkloadUsage sums what a controller's pods are consuming.
+//
+// ITS PODS, FETCHED NOW, rather than anything held about the controller. A
+// controller has no usage of its own — it is a template and a replica count —
+// so the only honest answer is the sum over whatever it currently has, which
+// is also why a Deployment scaled to zero and a CronJob between runs both
+// correctly read as nothing.
+//
+// Called while a panel is open rather than alongside the list: summing every
+// controller's pods on every refresh of the controller list would list the
+// namespace's pods once per controller, and the figure is only ever looked at
+// one controller at a time.
+func (s *WorkloadService) WorkloadUsage(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.WorkloadUsage, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return domain.WorkloadUsage{}, fmt.Errorf("reading %s usage: %w", kind, err)
+	}
+
+	pods, err := s.workloads.ListPodsForWorkload(ctx, id, namespace, kind, name)
+	if err != nil {
+		return domain.WorkloadUsage{}, fmt.Errorf(
+			"reading pods of %s/%s in %q: %w", kind, name, namespace, err)
+	}
+
+	pods, _ = podsWithUsage(ctx, s.metrics, s.logger, id, namespace, pods)
+
+	return domain.NewWorkloadUsage(pods), nil
+}
+
 // PodGraph returns the dependency chain around one pod.
 //
 // Thin, and correctly so: the reading is the adapter's and the rules are the

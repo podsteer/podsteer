@@ -25,3 +25,7 @@ export function PodGraph(arg1, arg2, arg3) {
 export function WorkloadGraph(arg1, arg2, arg3, arg4) {
   return window['go']['wails']['WorkloadAPI']['WorkloadGraph'](arg1, arg2, arg3, arg4);
 }
+
+export function WorkloadUsage(arg1, arg2, arg3, arg4) {
+  return window['go']['wails']['WorkloadAPI']['WorkloadUsage'](arg1, arg2, arg3, arg4);
+}
