@@ -557,7 +557,7 @@
         level="h3"
         id="usage"
         title="Usage"
-        hint="cpu {selectedNode.cpu} · memory {selectedNode.memory}"
+        hint="CPU {selectedNode.cpu} · Memory {selectedNode.memory}"
       >
         <div class="flex flex-col gap-4">
           {#each [{ metric: 'cpu' as const, label: 'CPU', allocatable: selectedNode.allocatableCpu }, { metric: 'memory' as const, label: 'Memory', allocatable: selectedNode.allocatableMemory }] as track (track.metric)}
@@ -614,7 +614,7 @@
         level="h3"
         id="usage"
         title="Usage"
-        hint="cpu {selectedPod.cpu} · memory {selectedPod.memory}"
+        hint="CPU {selectedPod.cpu} · Memory {selectedPod.memory}"
       >
         <div class="flex flex-col gap-4">
           {#each [{ metric: 'cpu' as const, label: 'CPU' }, { metric: 'memory' as const, label: 'Memory' }] as track (track.metric)}

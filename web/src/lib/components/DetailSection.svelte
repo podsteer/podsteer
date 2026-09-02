@@ -36,11 +36,18 @@
     /** Whether it starts open, when the operator has expressed no preference. */
     defaultOpen?: boolean
     /**
-     * A short summary shown beside the heading when closed.
+     * A short summary shown beside the heading.
      *
      * The point of a closed section: "3 containers" or "9 annotations" is
      * often all somebody wanted, and a section that reveals nothing until
      * opened makes them open every one to find out.
+     *
+     * WRITTEN AS A VALUE, NOT AS A WHISPER. It sits at the right of the
+     * heading in the heading's own size, one weight lighter and in the
+     * receding colour — which is the same relationship a label has to its
+     * value one line below. Set smaller and tucked against the title it read
+     * as an aside about the heading rather than as the section's own figure,
+     * and a column of them down the panel lined up against nothing.
      */
     hint?: string
     /**
@@ -104,7 +111,7 @@
       />
       <span class="min-w-0 truncate">{title}</span>
       {#if hint}
-        <span class="shrink-0 text-body-small font-normal text-on-surface-variant/70">{hint}</span>
+        <span class="ml-auto shrink-0 pl-3 font-normal text-on-surface-variant/70">{hint}</span>
       {/if}
     </button>
   </svelte:element>

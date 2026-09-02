@@ -19,6 +19,7 @@
   import { namespaceInventory, type NamespaceInventory } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import DetailSection from './DetailSection.svelte'
+  import ColumnDivider from './ColumnDivider.svelte'
 
   interface Props {
     clusterId: string
@@ -29,6 +30,9 @@
   }
 
   let { clusterId, namespace, onbrowse }: Props = $props()
+
+  /** The grid, so the divider between its columns has something to measure. */
+  let pane = $state<HTMLElement | null>(null)
 
   let inventory = $state.raw<NamespaceInventory | null>(null)
   let loading = $state(false)
@@ -85,7 +89,8 @@
   {:else if inventory}
     <!-- The drawer's own grid, so the counts line up with every other fact in
          the panel. See detail-grid in app.css. -->
-    <dl class="detail-grid">
+    <div class="relative">
+      <dl class="detail-grid" bind:this={pane}>
       {#each inventory.counts as count (count.kindId)}
         <dt class="min-w-0 truncate text-body-medium text-on-surface">
           {#if onbrowse}
@@ -112,7 +117,10 @@
           {/if}
         </dd>
       {/each}
-    </dl>
+      </dl>
+
+      <ColumnDivider {pane} />
+    </div>
 
     <!--
       What was NOT counted, said out loud. The number above is a total of the

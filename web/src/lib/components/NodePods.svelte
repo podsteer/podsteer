@@ -18,6 +18,7 @@
   import { listPodsOnNode, type Pod } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import DetailSection from './DetailSection.svelte'
+  import ColumnDivider from './ColumnDivider.svelte'
   import StatusIndicator from './StatusIndicator.svelte'
   import { podTone } from '$lib/format'
 
@@ -29,6 +30,9 @@
   }
 
   let { clusterId, nodeName, onopen }: Props = $props()
+
+  /** The grid, so the divider between its columns has something to measure. */
+  let pane = $state<HTMLElement | null>(null)
 
   let pods = $state.raw<Pod[]>([])
   let loading = $state(false)
@@ -110,7 +114,8 @@
       own heading size, so the one section that answers "who is on this node"
       looked like a different component from the sections around it.
     -->
-    <dl class="detail-grid">
+    <div class="relative">
+      <dl class="detail-grid" bind:this={pane}>
       {#each grouped as [namespace, group] (namespace)}
         <dt class="min-w-0 truncate text-body-medium text-on-surface" data-selectable>
           {namespace}
@@ -149,6 +154,9 @@
           </ul>
         </dd>
       {/each}
-    </dl>
+      </dl>
+
+      <ColumnDivider {pane} />
+    </div>
   {/if}
 </DetailSection>
