@@ -130,7 +130,7 @@
           onclick={() => workspace.focus(session.cluster.id)}
           title="{session.cluster.id} — {session.cluster.host}"
           aria-current={active ? 'page' : undefined}
-          class="no-drag flex h-full max-w-52 items-center gap-2 px-3
+          class="no-drag flex h-full max-w-52 items-center gap-2 pl-3 pr-7
                  text-label-medium transition-all duration-150 ease-standard
                  {active
                    ? 'bg-surface-container border-b-2 border-primary text-on-surface shadow-sm'

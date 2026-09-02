@@ -147,7 +147,10 @@
 
     {@render sep()}
 
-    <!-- App version -->
-    <span class="tabular-nums opacity-60">{appInfo.name} {appInfo.version}</span>
+    <!-- App version. The NAME is not repeated: it is already the window title
+         and the first thing in this bar, and a status bar reading
+         "podsteer v0.1.1" spends a word saying where you are to somebody who
+         is looking at it. -->
+    <span class="tabular-nums opacity-60">{appInfo.version}</span>
   </div>
 </footer>

@@ -534,9 +534,20 @@
                                  lower still and sits below the rule. -->
                             <div class="min-w-0 flex-1">
                               <div class="flex items-center gap-2">
+                                <!--
+                                  NOT data-selectable, unlike a name in a
+                                  detail pane. That attribute sets a text
+                                  cursor, which on a card whose whole surface
+                                  opens the cluster says "select me" where
+                                  the card means "click me" — and these cards
+                                  are draggable, so a text selection would
+                                  fight the drag rather than be useful. The
+                                  title carries a truncated name instead,
+                                  which is what selecting it was for.
+                                -->
                                 <h5
                                   class="truncate text-title-small font-semibold text-on-surface"
-                                  data-selectable
+                                  title={cluster.id}
                                 >
                                   {cluster.id}
                                 </h5>
