@@ -796,7 +796,7 @@
       <!-- Containers -->
       {#if containers.length > 0}
         <DetailSection level="h3" id="containers" title="Containers" hint={String(containers.length)}>
-          <div class="flex flex-col gap-3">
+          <div class="flex flex-col">
             {#each containers as container (container.name)}
               <ContainerDetail
                 spec={container}
@@ -822,7 +822,7 @@
       -->
       {#if ephemeralContainers.length > 0}
         <DetailSection level="h3" id="debug-containers" title="Debug containers" hint={String(ephemeralContainers.length)}>
-          <div class="flex flex-col gap-3">
+          <div class="flex flex-col">
             {#each ephemeralContainers as container (container.name)}
               <ContainerDetail
                 spec={container}
@@ -845,7 +845,7 @@
            four containers of which two are dead. -->
       {#if initContainers.length > 0}
         <DetailSection level="h3" id="init-containers" title="Init containers" defaultOpen={false} hint={String(initContainers.length)}>
-          <div class="flex flex-col gap-3">
+          <div class="flex flex-col">
             {#each initContainers as container (container.name)}
               <ContainerDetail
                 spec={container}

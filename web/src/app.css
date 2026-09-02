@@ -375,13 +375,22 @@
     border-color: var(--color-outline);
   }
 
-  /* Focus is a ring drawn on the border rather than an outline offset from it,
-     so a focused field does not grow and shift the row it sits in. */
+  /* Focus darkens the border and nothing else.
+   *
+   * It used to be the border in the primary colour PLUS a ring of the same
+   * colour drawn on top of it — two pixels of blue around every search box
+   * the moment it was clicked, which is a lot of emphasis for the control an
+   * operator's cursor sits in most of the time.
+   *
+   * An indicator remains, deliberately: a keyboard user has no other way to
+   * tell where focus is, and a field with no focus state at all is a real
+   * accessibility failure rather than a tidier one. This is neutral instead
+   * of blue, and one pixel instead of two — still plainly darker than the
+   * resting border and than hover's. */
   &:focus,
   &:focus-visible {
     outline: none;
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 1px var(--color-primary);
+    border-color: var(--color-on-surface-variant);
   }
 
   &:disabled {

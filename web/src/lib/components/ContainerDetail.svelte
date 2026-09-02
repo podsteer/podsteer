@@ -1,9 +1,22 @@
 <!--
   One container, in full.
 
-  A card per container rather than a flat list, because a pod's containers are
-  peers and the fields repeat: without the grouping, "Image" appears four
-  times in one pane with nothing saying which is which.
+  NOT A CARD. It was one — a bordered, tinted box per container — and that
+  made the Containers section the only part of the panel that looked like
+  something else: everywhere around it, a section is a heading, a rule and
+  rows on the drawer's grid, and this was a heading, a rule and a stack of
+  boxes.
+
+  The inset cost something real as well as visual. A card's own padding
+  narrows the grid inside it, so the label column in a container's rows was a
+  few pixels off the one in every section above and below — the shared column
+  is a share of its container, and the container was different.
+
+  The grouping the card provided is still needed, because a pod's containers
+  are peers and their fields repeat: without it, "Image" appears four times in
+  one pane with nothing saying which is which. A name, and a rule between one
+  container and the next, does that — which is exactly how the panel
+  separates everything else.
 
   Everything here is a QUOTATION of the spec — ports, probes, mounts,
   environment — composed into the strings kubectl prints. Nothing on this card
@@ -160,7 +173,14 @@
   )
 </script>
 
-<div class="rounded-sm border border-outline-variant bg-surface-container-low p-3">
+<!--
+  The rule and the space above it belong to every container but the first, so
+  the section's own heading rule is not immediately followed by another.
+-->
+<div
+  class="flex flex-col [&:not(:first-child)]:mt-4 [&:not(:first-child)]:border-t
+         [&:not(:first-child)]:border-outline-variant/40 [&:not(:first-child)]:pt-4"
+>
   <p class="mb-2 flex items-baseline gap-2 text-body-medium">
     <span class="font-medium text-on-surface" data-selectable>{spec.name}</span>
     {#if status}
