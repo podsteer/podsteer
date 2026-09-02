@@ -77,9 +77,12 @@
    * saying which controller any of them belonged to. Grouped by API group
    * they arrive already sorted into the things that installed them.
    *
-   * The subgroup is the project that publishes the group, decided in the Go
-   * domain — see domain.GroupOwner, including why it names a project and
-   * never a product.
+   * The subgroup is the RAW API GROUP. A curated table of project names was
+   * tried and removed: it covered five of the twenty-five groups on a real
+   * cluster, which left the navigator speaking two vocabularies at once with
+   * no way to tell which kind of thing a heading was. The group is the only
+   * label that can never be wrong and never needs a maintainer, and it is
+   * what `kubectl api-resources` prints.
    */
   const sections = $derived.by(() => {
     const grouped = new Map<string, ResourceKind[]>()
@@ -113,6 +116,16 @@
       else grouped.set(kind.subcategory, [kind])
     }
     return [...grouped.entries()].map(([name, entries]) => ({ name, kinds: entries }))
+  }
+
+  /**
+   * The kinds in a category that belong to no group, shown above the groups.
+   *
+   * One entry today: the CustomResourceDefinitions themselves, which are
+   * Kubernetes' own and are the index to everything below them.
+   */
+  function ungroupedIn(section: { groups: { name: string; kinds: ResourceKind[] }[] | null }) {
+    return section.groups?.find((group) => group.name === '')?.kinds ?? []
   }
 
   // --- Resize logic ---
@@ -287,25 +300,19 @@
           <div class="mt-0.5 border-l border-outline-variant/30 pl-2">
             {#if section.groups}
               <!--
-                One heading per publisher, for a category whose members come
-                from several. Only Custom Resources ever has more than one,
-                and on a cluster running Argo CD, cert-manager and a
-                Prometheus Operator that is the difference between sixty
-                alphabetised entries and three short lists.
+                One collapsible heading per API group. Twenty-five of them on
+                a cluster running Elastic, cert-manager, Argo and KEDA — a
+                flat list of that inside an already-open section is a wall,
+                and each one folds so somebody can keep open only the
+                operators they are working with.
 
-                Not collapsible: these are already inside a section somebody
-                opened, and a second level of folding is a second thing to
-                remember the state of.
+                Folded state goes through the same store the categories use,
+                keyed "Custom Resources/<group>" — a namespaced key in a
+                mechanism that was already there, rather than a second thing
+                to persist and migrate.
               -->
-              {#each section.groups as group (group.name)}
-                <p
-                  class="mt-2 px-2 pb-0.5 text-label-small font-semibold uppercase tracking-wider
-                         text-on-surface-variant/50 first:mt-0"
-                >
-                  {group.name}
-                </p>
-                <ul>
-                  {#each group.kinds as kind (kind.id)}
+              <ul>
+                {#each ungroupedIn(section) as kind (kind.id)}
                   {@const selected = kind.id === session.selectedKindId}
                   {@const KindIcon = iconForKind(kind)}
                   <li>
@@ -338,8 +345,69 @@
                       {/if}
                     </button>
                   </li>
-                  {/each}
-                </ul>
+                {/each}
+              </ul>
+
+              {#each section.groups.filter((group) => group.name !== '') as group (group.name)}
+                {@const groupKey = `${section.category}/${group.name}`}
+                {@const groupOpen = preferences.isCategoryExpanded(groupKey)}
+                <button
+                  type="button"
+                  onclick={() => preferences.toggleCategory(groupKey)}
+                  aria-expanded={groupOpen}
+                  class="state-layer mt-1 flex w-full items-center gap-1.5 rounded-sm px-2 py-1
+                         text-left text-on-surface-variant/70 transition-colors duration-100
+                         hover:bg-surface-container hover:text-on-surface-variant"
+                >
+                  <ChevronDown
+                    class="size-3 shrink-0 transition-transform duration-150 ease-standard
+                           {groupOpen ? '' : '-rotate-90'}"
+                    strokeWidth={2.5}
+                  />
+                  <span class="flex-1 truncate text-body-small">{group.name}</span>
+                  <span class="shrink-0 text-label-small tabular-nums text-on-surface-variant/50">
+                    {group.kinds.length}
+                  </span>
+                </button>
+
+                {#if groupOpen}
+                  <ul class="ml-1.5 border-l border-outline-variant/20 pl-1.5">
+                    {#each group.kinds as kind (kind.id)}
+                  {@const selected = kind.id === session.selectedKindId}
+                  {@const KindIcon = iconForKind(kind)}
+                  <li>
+                    <button
+                      type="button"
+                      onclick={() => session.selectKind(kind.id)}
+                      aria-current={selected ? 'page' : undefined}
+                      title={kind.group ? `${kind.kind} · ${kind.group}/${kind.version}` : kind.kind}
+                      class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
+                             transition-all duration-100 ease-standard
+                             {selected
+                               ? 'bg-primary/12 text-primary'
+                               : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+                    >
+                      <span class="w-1.5 shrink-0" aria-hidden="true"></span>
+                      <KindIcon
+                        class="size-4 shrink-0 transition-colors duration-100
+                               {selected ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+                        strokeWidth={1.8}
+                      />
+                      <span class="flex-1 truncate text-body-medium">{kind.title}</span>
+                      {#if !kind.namespaced}
+                        <span
+                          class="rounded bg-surface-container-high px-1 py-px text-label-small uppercase
+                                 text-on-surface-variant/50"
+                          title="Cluster-scoped"
+                        >
+                          C
+                        </span>
+                      {/if}
+                    </button>
+                  </li>
+                    {/each}
+                  </ul>
+                {/if}
               {/each}
             {:else}
               <ul>

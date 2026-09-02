@@ -102,6 +102,18 @@ var builtInKinds = []ResourceKind{
 	{Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses", Kind: "StorageClass",
 		Namespaced: false, Category: CategoryStorage, Title: "Storage Classes", Singular: "Storage Class"},
 
+	// --- Custom Resources ---
+	// The definitions themselves, pinned above the resources they define.
+	// Kept as a static entry rather than discovered, because it is the one
+	// kind in this category that belongs to Kubernetes: everything else here
+	// is present only because somebody installed it.
+	//
+	// Its Subcategory is empty, which is what sorts it above every API group
+	// — see the ordering in BrowseService.Kinds.
+	{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions",
+		Kind: "CustomResourceDefinition", Namespaced: false, Category: CategoryCustomResources,
+		Title: "Definitions", Singular: "Definition"},
+
 	// --- Access Control ---
 	{Version: "v1", Resource: "serviceaccounts", Kind: "ServiceAccount",
 		Namespaced: true, Category: CategoryAccessControl, Title: "Service Accounts", Singular: "Service Account"},

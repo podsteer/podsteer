@@ -153,13 +153,25 @@ func (a *Adapter) DiscoverCustomKinds(ctx context.Context, id domain.ClusterID) 
 			}
 
 			kind := domain.ResourceKind{
-				Group:       groupName,
-				Version:     version,
-				Resource:    resource.Name,
-				Kind:        resource.Kind,
-				Namespaced:  resource.Namespaced,
-				Category:    domain.CategoryCustomResources,
-				Subcategory: domain.GroupOwner(groupName),
+				Group:      groupName,
+				Version:    version,
+				Resource:   resource.Name,
+				Kind:       resource.Kind,
+				Namespaced: resource.Namespaced,
+				Category:   domain.CategoryCustomResources,
+				// THE RAW API GROUP, and it took a curated table of project
+				// names to find out why. A table naming "Argo" for
+				// argoproj.io and "cert-manager" for cert-manager.io covered
+				// five groups of the twenty-five on a real cluster, which
+				// produced a navigator speaking two vocabularies at once —
+				// five friendly names among twenty raw ones, with no way for
+				// a reader to tell which kind of thing a heading was.
+				//
+				// The group is the only label that can never be wrong, never
+				// needs a maintainer, and can be grepped straight out of
+				// `kubectl api-resources`. Its cost is real and smaller: a
+				// project publishing eleven groups gets eleven headings.
+				Subcategory: groupName,
 				Title:       resource.Kind,
 				Singular:    resource.Kind,
 			}
