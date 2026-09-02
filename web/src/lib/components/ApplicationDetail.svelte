@@ -16,6 +16,7 @@
   import DetailList, { type DetailRow } from './DetailList.svelte'
   import UsageChart from './UsageChart.svelte'
   import type { UsageSample } from '$stores/session.svelte'
+  import { countedKind } from '$lib/plural'
 
   interface Props {
     application: Application
@@ -94,7 +95,9 @@
 
   const memberRows = $derived.by<DetailRow[]>(() =>
     application.members.map((member) => ({
-      label: member.kind,
+      // Named for how many there are: "Pods 4", "Pod 1". A count and a noun
+      // that disagree read as a label somebody forgot to finish.
+      label: countedKind(member.kind, member.count),
       value: String(member.count),
       reference:
         onbrowse && KIND_IDS[member.kind]

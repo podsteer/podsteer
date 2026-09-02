@@ -355,17 +355,26 @@
                   type="button"
                   onclick={() => preferences.toggleCategory(groupKey)}
                   aria-expanded={groupOpen}
-                  class="state-layer mt-1 flex w-full items-center gap-1.5 rounded-sm px-2 py-1
-                         text-left text-on-surface-variant/70 transition-colors duration-100
-                         hover:bg-surface-container hover:text-on-surface-variant"
+                  class="state-layer mt-0.5 flex w-full items-center gap-2 rounded-sm px-2
+                         py-[5px] text-left text-on-surface-variant transition-colors duration-100
+                         hover:bg-surface-container hover:text-on-surface"
                 >
+                  <!-- The same leading spacer every kind row carries, so this
+                       chevron lands in the column their icons are in. Without
+                       it the fold controls sat a whole icon-width to the left
+                       of the rows they fold, which reads as two lists rather
+                       than as one indented under the other. -->
+                  <span class="w-1.5 shrink-0" aria-hidden="true"></span>
                   <ChevronDown
-                    class="size-3 shrink-0 transition-transform duration-150 ease-standard
-                           {groupOpen ? '' : '-rotate-90'}"
-                    strokeWidth={2.5}
+                    class="size-4 shrink-0 text-on-surface-variant/60 transition-transform
+                           duration-150 ease-standard {groupOpen ? '' : '-rotate-90'}"
+                    strokeWidth={2}
                   />
-                  <span class="flex-1 truncate text-body-small">{group.name}</span>
-                  <span class="shrink-0 text-label-small tabular-nums text-on-surface-variant/50">
+                  <!-- The kind rows' own size. A group heading naming an API
+                       group is read as often as the kinds under it, and set
+                       smaller it read as a caption on them. -->
+                  <span class="flex-1 truncate text-body-medium">{group.name}</span>
+                  <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant/50">
                     {group.kinds.length}
                   </span>
                 </button>

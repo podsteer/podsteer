@@ -805,7 +805,11 @@ export class ClusterSession {
     this.selectedNamespaceRow = null
     this.manifest = null
     this.manifestStatus = 'ready'
-    this.usage = []
+    // Seeded from what the list has been recording since the tab opened, the
+    // same way a pod's and a node's are.
+    this.usage = usageHistory.since(
+      usageKey('application', application.namespace, application.instance),
+    )
   }
 
   /**
@@ -1160,6 +1164,20 @@ export class ClusterSession {
   #retainUsage(): void {
     const at = Date.now()
 
+    // Applications, on the same terms: the row carries a measurement for
+    // every application on screen, so a panel opened after a few refreshes
+    // has a line in it rather than an empty frame. Without this the charts
+    // never filled at all — the panel was being handed a series nothing had
+    // ever written to.
+    for (const application of this.applications) {
+      if (!application.hasMetrics) continue
+      usageHistory.record(usageKey('application', application.namespace, application.instance), {
+        at,
+        cpuCores: application.cpuCores,
+        memoryBytes: application.memoryBytes,
+      })
+    }
+
     // Namespaces, on the same terms and for the same reason: the row already
     // carries a measurement for every namespace on screen, so a panel opened
     // after a few refreshes has a line in it rather than an empty frame.
@@ -1239,6 +1257,29 @@ export class ClusterSession {
    */
   #refreshSelection(): void {
     if (!this.selectedName) return
+
+    // An open application, refreshed from the list behind it and appended to
+    // its chart. Without this the panel showed whatever had been recorded
+    // when it opened and never moved again — the series is written by the
+    // list, and the open panel has to keep taking from it.
+    if (this.selectedApplication) {
+      const fresh = this.applications.find(
+        (application) =>
+          application.instance === this.selectedName &&
+          application.namespace === this.selectedNamespace,
+      )
+      if (fresh) {
+        this.selectedApplication = fresh
+        if (fresh.hasMetrics) {
+          this.#append({
+            at: Date.now(),
+            cpuCores: fresh.cpuCores,
+            memoryBytes: fresh.memoryBytes,
+          })
+        }
+      }
+      return
+    }
 
     if (this.selectedPod) {
       const fresh = this.pods.find(

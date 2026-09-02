@@ -19,6 +19,7 @@
   import { cpuMeter, cpuTitle, memoryMeter, memoryTitle } from '$lib/meter'
   import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
+  import { countedKind } from '$lib/plural'
   import { Boxes } from '@lucide/svelte'
 
   interface Props {
@@ -137,7 +138,9 @@
                  application at a glance, which is the reason to group at
                  all. -->
             <td class="truncate px-3 py-1.5 text-on-surface-variant">
-              {application.members.map((member) => `${member.count} ${member.kind}`).join(' · ')}
+              {application.members
+                .map((member) => `${member.count} ${countedKind(member.kind, member.count)}`)
+                .join(' · ')}
             </td>
           {/if}
           <td></td>

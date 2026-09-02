@@ -35,7 +35,7 @@ const MAX_SAMPLES_PER_OBJECT = 200
 
 /** Identifies one object across refreshes. */
 export function usageKey(
-  kind: 'pod' | 'node' | 'workload' | 'namespace',
+  kind: 'pod' | 'node' | 'workload' | 'namespace' | 'application',
   namespace: string,
   name: string,
 ): string {
