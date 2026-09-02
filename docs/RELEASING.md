@@ -142,6 +142,22 @@ Linux and Windows have no package-manager channel at all — they are
 download-and-unzip, which is why the release notes and the checksums matter more
 there.
 
+**macOS publishes two assets, and neither is spare.** The `.dmg` is what
+podsteer.com links from its download button, because a zip unpacks to a `.app`
+in `~/Downloads` that most people then run from there. The `.zip` is what the
+cask job fetches **by exact name** to compute its checksum — so removing it to
+promote the image would leave `brew install --cask podsteer` pointing at an
+asset that is not there, and it would fail on the upgrade path rather than at
+release time. Both are signed, notarised and stapled; the image is assessed
+with `spctl --type open`, because `--type execute` reports a disk image as
+rejected whatever its state.
+
+One universal image, not one per architecture. Browsers on Apple Silicon
+report `Intel Mac OS X` in the user-agent for compatibility, so a download page
+cannot detect a visitor's chip — splitting would mean asking people to know
+their own hardware, and getting it wrong produces an application that will not
+launch.
+
 After a production tag, verify rather than assume: the cask's `version` should
 name the new release and its `sha256` should match the published asset. Both are
 one `curl` away, and a silently stale cask is invisible from this repository.
