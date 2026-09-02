@@ -875,6 +875,7 @@
           manifest={session.manifest}
           selectedPod={selectedPod}
           selectedNode={session.selectedNode}
+          selectedNamespaceRow={session.selectedNamespaceRow}
           selectedWorkload={selectedWorkload}
           kind={session.selectedKind?.kind}
           usage={session.usage}

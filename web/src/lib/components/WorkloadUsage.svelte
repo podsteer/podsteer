@@ -20,7 +20,7 @@
   its request.
 -->
 <script lang="ts">
-  import { workloadUsage, type WorkloadUsage } from '$lib/api/client'
+  import { workloadUsage, type Consumption } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import { usageHistory, usageKey } from '$stores/usageHistory.svelte'
   import type { UsageSample } from '$stores/session.svelte'
@@ -51,7 +51,7 @@
 
   let { clusterId, namespace, kind, name, tick, backend }: Props = $props()
 
-  let reading = $state.raw<WorkloadUsage | null>(null)
+  let reading = $state.raw<Consumption | null>(null)
   let failure = $state('')
   let samples = $state.raw<UsageSample[]>([])
 
@@ -151,9 +151,9 @@
            twenty pods where metrics-server answered for eighteen is showing
            less than it is using, and a figure that does not say so is an
            understatement presented as a measurement. -->
-      {#if reading.measured < reading.pods}
+      {#if reading.measuredPods < reading.pods}
         <p class="text-body-small text-gauge-warn">
-          Summed over {reading.measured} of {reading.pods} pods — the rest reported no usage,
+          Summed over {reading.measuredPods} of {reading.pods} pods — the rest reported no usage,
           so this is less than the whole.
         </p>
       {/if}

@@ -16,6 +16,7 @@ import {
   listKinds,
   listNamespaces,
   listNamespaceSummaries,
+  workloadConsumption,
   listNodes,
   listPods,
   listTable,
@@ -27,6 +28,7 @@ import {
   type K8sEvent,
   type Namespace,
   type NamespaceSummary,
+  type Consumption,
   type Node,
   type Overview,
   type Pod,
@@ -199,10 +201,14 @@ const NAMESPACE_SORT: SortAccessors<NamespaceSummary> = {
   notReady: (namespace) => namespace.notReady,
   // Sorted on the numbers rather than on the formatted strings beside them:
   // "1.5" and "900m" compare as text in the wrong order entirely.
-  cpu: (namespace) => (namespace.hasMetrics ? namespace.cpuMilli : null),
-  memory: (namespace) => (namespace.hasMetrics ? namespace.memoryBytes : null),
-  cpuRequests: (namespace) => namespace.cpuRequestsMilli,
-  memoryRequests: (namespace) => namespace.memoryRequestsBytes,
+  // Sorted on how FULL the reservation is rather than on bytes: a namespace
+  // using 8GiB of 16 and one using 1GiB of 1 are ordered by volume one way
+  // and by urgency the other, and urgency is what this column is scanned for.
+  cpu: (namespace) => (namespace.hasMetrics && namespace.hasCpuRequest ? namespace.cpuPercent : null),
+  memory: (namespace) =>
+    namespace.hasMetrics && namespace.hasMemoryRequest ? namespace.memoryPercent : null,
+  cpuRequests: (namespace) => namespace.requestCores,
+  memoryRequests: (namespace) => namespace.requestBytes,
   age: (namespace) => namespace.ageSeconds,
 }
 
@@ -286,6 +292,18 @@ export class ClusterSession {
    * view is the one on screen.
    */
   namespaceRows = $state.raw<NamespaceSummary[]>([])
+
+  /**
+   * What each controller in the open list is consuming, keyed by
+   * "namespace/name".
+   *
+   * Fetched ALONGSIDE the list rather than as part of it, and allowed to
+   * fail: the controllers are one cheap read and this is the namespace's pods
+   * and their metrics, so a cluster with no metrics API — or an account that
+   * may list Deployments and not pods — still gets its list, with the meters
+   * reading "not measured" rather than nothing at all.
+   */
+  workloadUsage = $state.raw<Record<string, Consumption>>({})
   table = $state.raw<ResourceTable | null>(null)
   overview = $state.raw<Overview | null>(null)
 
@@ -307,6 +325,8 @@ export class ClusterSession {
   /** The node the drawer is open on, when it is a node. */
   selectedNode = $state<Node | null>(null)
   selectedWorkload = $state<Workload | null>(null)
+  /** The open namespace's row, which is where its usage figures live. */
+  selectedNamespaceRow = $state<NamespaceSummary | null>(null)
   manifest = $state<string | null>(null)
   manifestStatus = $state<LoadStatus>('idle')
 
@@ -654,6 +674,11 @@ export class ClusterSession {
     return this.pods.find((pod) => pod.name === name && pod.namespace === namespace) ?? null
   }
 
+  #findNamespace(name: string): NamespaceSummary | null {
+    if (this.viewMode !== 'namespaces') return null
+    return this.namespaceRows.find((row) => row.name === name) ?? null
+  }
+
   #findNode(name: string): Node | null {
     if (this.viewMode !== 'nodes') return null
     return this.nodes.find((node) => node.name === name) ?? null
@@ -968,8 +993,21 @@ export class ClusterSession {
         return listEvents(id, namespace)
       case 'namespaces':
         return listNamespaceSummaries(id)
-      case 'workloads':
-        return listWorkloads(id, WORKLOAD_KIND_BY_ID[this.selectedKindId], namespace)
+      case 'workloads': {
+        const kind = WORKLOAD_KIND_BY_ID[this.selectedKindId]
+        // Not awaited, so a slow pod list never delays the rows themselves.
+        // The guard is the usual one: a response for a list the operator has
+        // already navigated away from must not land on the new one.
+        const requested = this.selectedKindId
+        void workloadConsumption(id, kind, namespace)
+          .then((usage) => {
+            if (this.selectedKindId === requested) this.workloadUsage = usage
+          })
+          .catch(() => {
+            if (this.selectedKindId === requested) this.workloadUsage = {}
+          })
+        return listWorkloads(id, kind, namespace)
+      }
       default:
         return listTable(id, this.selectedKindId, namespace)
     }
@@ -985,6 +1023,9 @@ export class ClusterSession {
     this.events = []
     this.namespaceRows = []
     this.table = null
+    // NOT cleared: it arrives a beat after the rows it belongs to, and
+    // clearing it here would blank every meter for one frame on each refresh.
+    // A response for another list is turned away where it lands instead.
     // The overview is deliberately NOT cleared here. It is a cached assessment
     // rather than one of the mutually exclusive row buffers, and the navigator
     // badge reads from it: clearing it would blank the "3 issues" badge the
@@ -1030,6 +1071,20 @@ export class ClusterSession {
    */
   #retainUsage(): void {
     const at = Date.now()
+
+    // Namespaces, on the same terms and for the same reason: the row already
+    // carries a measurement for every namespace on screen, so a panel opened
+    // after a few refreshes has a line in it rather than an empty frame.
+    // Raw numbers rather than the formatted strings the pods loop parses —
+    // the row carries both, and the formatted CPU is rounded to two decimals.
+    for (const row of this.namespaceRows) {
+      if (!row.hasMetrics) continue
+      usageHistory.record(usageKey('namespace', '', row.name), {
+        at,
+        cpuCores: row.cpuCores,
+        memoryBytes: row.memoryBytes,
+      })
+    }
 
     for (const pod of this.pods) {
       if (!pod.hasMetrics) continue
@@ -1209,6 +1264,7 @@ export class ClusterSession {
     this.selectedPod = pod ?? this.#findPod(name, namespace)
     this.selectedNode = node ?? this.#findNode(name)
     this.selectedWorkload = workload ?? this.#findWorkload(name, namespace)
+    this.selectedNamespaceRow = this.#findNamespace(name)
     this.manifest = null
     this.manifestStatus = 'loading'
     // SEEDED FROM WHAT WAS ALREADY WATCHED, rather than starting empty. The
@@ -1223,7 +1279,9 @@ export class ClusterSession {
       ? usageHistory.since(usageKey('pod', namespace, name))
       : this.selectedNode
         ? usageHistory.since(usageKey('node', '', name))
-        : []
+        : this.selectedNamespaceRow
+          ? usageHistory.since(usageKey('namespace', '', name))
+          : []
     // Every open starts hidden. A reveal is a decision about one object, and
     // carrying it to the next one is how Freelens ends up showing a value
     // somebody unmasked in private on the pod they open in a meeting.

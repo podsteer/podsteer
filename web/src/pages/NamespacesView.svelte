@@ -8,16 +8,20 @@
   which is knowable without looking inside, so PodSteer looks: see
   domain.NewNamespaceSummaries.
 
-  Requests rather than usage as the default columns. Reservations are what
-  fill a cluster and are readable whether or not anything is measured, so they
-  are the pair that is always there; measured usage sits beside them for the
-  clusters that serve it.
+  The meters are the pod list's, drawn from the same fields and the same rules
+  — see $lib/meter. A namespace's usage IS the sum of its pods', so measuring
+  it against the sum of their requests or their limits is the same question
+  the pod list asks one pod at a time, and it deserves the same answer rather
+  than two numbers in a column of text.
 -->
 <script lang="ts">
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
+  import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { formatAge } from '$lib/format'
+  import { cpuMeter, cpuTitle, memoryMeter, memoryTitle } from '$lib/meter'
+  import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import { Boxes, CircleDot } from '@lucide/svelte'
 
@@ -27,15 +31,31 @@
 
   let { session }: Props = $props()
 
+  /**
+   * The same denominator the pod list is set to.
+   *
+   * One setting for both, because it is one question — is this measured
+   * against what was reserved, or against what it will be stopped at — and a
+   * namespace's answer is the sum of its pods'. Two settings would let the
+   * two lists disagree about the same figure.
+   */
+  const byLimit = $derived(preferences.podMeasure === 'limits')
+
   const COLUMNS: Column[] = [
     { id: 'status', label: 'Status', width: 44, icon: CircleDot },
     { id: 'name', label: 'Name', width: 320, pinned: true },
     { id: 'pods', label: 'Pods', width: 90, numeric: true },
     { id: 'notReady', label: 'Not ready', width: 100, numeric: true },
-    { id: 'cpuRequests', label: 'CPU requested', width: 130, numeric: true },
-    { id: 'memoryRequests', label: 'Memory requested', width: 150, numeric: true },
-    { id: 'cpu', label: 'CPU used', width: 110, numeric: true, defaultHidden: true },
-    { id: 'memory', label: 'Memory used', width: 130, numeric: true, defaultHidden: true },
+    { id: 'cpu', label: 'CPU', width: 220, minWidth: 200 },
+    { id: 'memory', label: 'Memory', width: 220, minWidth: 200 },
+    { id: 'cpuRequests', label: 'CPU requested', width: 130, numeric: true, defaultHidden: true },
+    {
+      id: 'memoryRequests',
+      label: 'Memory requested',
+      width: 150,
+      numeric: true,
+      defaultHidden: true,
+    },
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
 </script>
@@ -99,43 +119,55 @@
             {namespace.notReady}
           </td>
         {/if}
+        <!--
+          THE SAME METER THE POD AND NODE LISTS DRAW, from the same fields and
+          the same rules — see $lib/meter. A namespace's usage is the sum of
+          its pods', so it is measured against the sum of their requests or
+          their limits, whichever the pod list is set to. A namespace whose
+          pods declared nothing has no denominator and SAYS SO where the bar
+          would be, rather than being metered against something invented.
+        -->
+        {#if isVisible('cpu')}
+          {@const cpu = cpuMeter(namespace, byLimit)}
+          <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
+            <MeterBar
+              label={namespace.hasMetrics ? namespace.cpu : '—'}
+              scope="pods"
+              name="CPU"
+              valueWidth="7ch"
+              percent={cpu.percent}
+              measured={namespace.hasMetrics}
+              thresholds={cpu.thresholds}
+              absent={cpu.absent}
+              severity={cpu.severity}
+              title={cpuTitle(namespace)}
+            />
+          </td>
+        {/if}
+        {#if isVisible('memory')}
+          {@const memory = memoryMeter(namespace, byLimit)}
+          <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
+            <MeterBar
+              label={namespace.hasMetrics ? namespace.memory : '—'}
+              scope="pods"
+              name="Memory"
+              percent={memory.percent}
+              measured={namespace.hasMetrics}
+              thresholds={memory.thresholds}
+              absent={memory.absent}
+              severity={memory.severity}
+              title={memoryTitle(namespace)}
+            />
+          </td>
+        {/if}
         {#if isVisible('cpuRequests')}
           <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
-            {namespace.cpuRequests}
+            {namespace.cpuRequest}
           </td>
         {/if}
         {#if isVisible('memoryRequests')}
           <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
-            {namespace.memoryRequests}
-          </td>
-        {/if}
-        <!--
-          Unmeasured prints a dimmed dash and explains itself in the tooltip
-          rather than spelling "no metrics" out on every row — the same
-          treatment the pod and node lists give the same absence.
-        -->
-        {#if isVisible('cpu')}
-          <td
-            class="truncate px-3 py-1.5 text-right tabular-nums {namespace.hasMetrics
-              ? 'text-on-surface-variant'
-              : 'text-on-surface-variant/40'}"
-            title={namespace.hasMetrics
-              ? `${namespace.cpu} measured across this namespace's pods`
-              : 'Not measured — this cluster has no metrics source'}
-          >
-            {namespace.hasMetrics ? namespace.cpu : '—'}
-          </td>
-        {/if}
-        {#if isVisible('memory')}
-          <td
-            class="truncate px-3 py-1.5 text-right tabular-nums {namespace.hasMetrics
-              ? 'text-on-surface-variant'
-              : 'text-on-surface-variant/40'}"
-            title={namespace.hasMetrics
-              ? `${namespace.memory} measured across this namespace's pods`
-              : 'Not measured — this cluster has no metrics source'}
-          >
-            {namespace.hasMetrics ? namespace.memory : '—'}
+            {namespace.memoryRequest}
           </td>
         {/if}
         {#if isVisible('age')}

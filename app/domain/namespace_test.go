@@ -102,7 +102,7 @@ func TestEveryNamespaceGetsARowIncludingTheEmptyOnes(t *testing.T) {
 
 	summaries := domain.NewNamespaceSummaries(namespaces, []domain.Pod{
 		mustSummaryPod(t, "web", "api-1", domain.PodPhaseRunning),
-	}, false)
+	})
 
 	if len(summaries) != 2 {
 		t.Fatalf("summarised %d namespaces, want 2", len(summaries))
@@ -112,10 +112,10 @@ func TestEveryNamespaceGetsARowIncludingTheEmptyOnes(t *testing.T) {
 		t.Fatalf("led with %q, want abandoned", summaries[0].Namespace.Name())
 	}
 	if !summaries[0].IsEmpty() {
-		t.Fatalf("abandoned reported %d pods, want none", summaries[0].Pods)
+		t.Fatalf("abandoned reported %d pods, want none", summaries[0].Pods())
 	}
-	if summaries[1].Pods != 1 {
-		t.Fatalf("web reported %d pods, want 1", summaries[1].Pods)
+	if summaries[1].Pods() != 1 {
+		t.Fatalf("web reported %d pods, want 1", summaries[1].Pods())
 	}
 }
 
@@ -129,13 +129,13 @@ func TestCompletedPodsAreCountedButReserveNothing(t *testing.T) {
 	summaries := domain.NewNamespaceSummaries(namespaces, []domain.Pod{
 		mustSummaryPod(t, "batch", "nightly-1", domain.PodPhaseSucceeded),
 		mustSummaryPod(t, "batch", "nightly-2", domain.PodPhaseRunning),
-	}, false)
+	})
 
-	if summaries[0].Pods != 2 {
-		t.Fatalf("counted %d pods, want both", summaries[0].Pods)
+	if summaries[0].Usage.Pods != 2 {
+		t.Fatalf("counted %d pods, want both", summaries[0].Usage.Pods)
 	}
-	if summaries[0].CPURequests != 100 {
-		t.Fatalf("CPURequests = %d, want only the running pod's 100", summaries[0].CPURequests)
+	if summaries[0].Usage.Requests.CPUMilli != 100 {
+		t.Fatalf("CPURequests = %d, want only the running pod's 100", summaries[0].Usage.Requests.CPUMilli)
 	}
 }
 
@@ -148,13 +148,13 @@ func TestAPodInAnInvisibleNamespaceIsNotInvented(t *testing.T) {
 	summaries := domain.NewNamespaceSummaries(namespaces, []domain.Pod{
 		mustSummaryPod(t, "web", "api-1", domain.PodPhaseRunning),
 		mustSummaryPod(t, "kube-system", "coredns-1", domain.PodPhaseRunning),
-	}, false)
+	})
 
 	if len(summaries) != 1 {
 		t.Fatalf("summarised %d namespaces, want only the visible one", len(summaries))
 	}
-	if summaries[0].Pods != 1 {
-		t.Fatalf("counted %d pods, want only the one in a known namespace", summaries[0].Pods)
+	if summaries[0].Usage.Pods != 1 {
+		t.Fatalf("counted %d pods, want only the one in a known namespace", summaries[0].Pods())
 	}
 }
 

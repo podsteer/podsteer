@@ -235,54 +235,82 @@ func toWorkloads(workloads []domain.Workload, now time.Time) []Workload {
 	return out
 }
 
-// WorkloadUsage is a controller's pods' consumption, as presented to the UI.
+// Consumption is what a set of pods is using, against what they reserved.
 //
-// Both formatted and raw. The strings are what a caption prints; the numbers
-// are what the chart plots and what its reference lines sit at, and they are
-// carried separately because the formatted CPU is rounded to two decimals —
-// enough for a caption, and wrong to plot with.
-type WorkloadUsage struct {
-	// Pods is how many pods the figures cover, Measured how many of those
-	// reported a measurement. Measured < Pods means the total is short.
-	Pods     int `json:"pods"`
-	Measured int `json:"measured"`
-	// HasMetrics is whether anything measured at all.
-	HasMetrics bool `json:"hasMetrics"`
+// SHARED BY EVERY ROW THAT AGGREGATES PODS — a namespace and a controller —
+// so the two lists draw the same meter as the pod list, from the same fields,
+// with the same rules about what an absent denominator means. Three lists
+// each inventing their own shape is how three lists end up disagreeing about
+// what 85% is a percentage of.
+//
+// Both formatted and raw. The strings are what a cell and a caption print;
+// the numbers are what a chart plots and what its reference lines sit at, and
+// they are carried separately because the formatted CPU is rounded to two
+// decimals — enough to read, and wrong to plot or to add up.
+type Consumption struct {
+	// Pods is how many pods the figures cover, MeasuredPods how many of those
+	// reported a measurement. Fewer measured than pods means the total is
+	// real and short.
+	Pods         int  `json:"pods"`
+	MeasuredPods int  `json:"measuredPods"`
+	HasMetrics   bool `json:"hasMetrics"`
 	// CPU and Memory are what the pods are using, formatted.
 	CPU    string `json:"cpu"`
 	Memory string `json:"memory"`
-	// The same, and the two reference lines, as raw numbers: CPU in cores and
-	// memory in bytes, which is the unit the charts plot in.
+	// The reference figures, formatted.
+	CPURequest    string `json:"cpuRequest"`
+	MemoryRequest string `json:"memoryRequest"`
+	CPULimit      string `json:"cpuLimit"`
+	MemoryLimit   string `json:"memoryLimit"`
+	// Whether there is a denominator at all. A zero percentage cannot stand
+	// in for these: a set of pods that DID reserve CPU and is idle also reads
+	// 0%, and the two must not draw the same thing.
+	HasCPURequest    bool `json:"hasCpuRequest"`
+	HasMemoryRequest bool `json:"hasMemoryRequest"`
+	HasCPULimit      bool `json:"hasCpuLimit"`
+	HasMemoryLimit   bool `json:"hasMemoryLimit"`
+	// Usage as a percentage of the request, and of the limit. The first says
+	// whether the reservation was right; only the second predicts throttling
+	// or a kill.
+	CPUPercent         float64 `json:"cpuPercent"`
+	MemoryPercent      float64 `json:"memoryPercent"`
+	CPULimitPercent    float64 `json:"cpuLimitPercent"`
+	MemoryLimitPercent float64 `json:"memoryLimitPercent"`
+	// The same figures raw, for sorting a column and plotting a chart: CPU in
+	// cores, memory in bytes.
 	CPUCores     float64 `json:"cpuCores"`
 	MemoryBytes  int64   `json:"memoryBytes"`
 	RequestCores float64 `json:"requestCores"`
 	RequestBytes int64   `json:"requestBytes"`
 	LimitCores   float64 `json:"limitCores"`
 	LimitBytes   int64   `json:"limitBytes"`
-	// The reference lines formatted, for a caption that says what they are.
-	CPURequest    string `json:"cpuRequest"`
-	MemoryRequest string `json:"memoryRequest"`
-	CPULimit      string `json:"cpuLimit"`
-	MemoryLimit   string `json:"memoryLimit"`
 }
 
-func toWorkloadUsage(usage domain.WorkloadUsage) WorkloadUsage {
-	return WorkloadUsage{
-		Pods:          usage.Pods,
-		Measured:      usage.Measured,
-		HasMetrics:    usage.HasMetrics(),
-		CPU:           formatMilliCores(usage.Usage.CPUMilli),
-		Memory:        formatBytes(usage.Usage.MemoryBytes),
-		CPUCores:      float64(usage.Usage.CPUMilli) / 1000,
-		MemoryBytes:   usage.Usage.MemoryBytes,
-		RequestCores:  float64(usage.Requests.CPUMilli) / 1000,
-		RequestBytes:  usage.Requests.MemoryBytes,
-		LimitCores:    float64(usage.Limits.CPUMilli) / 1000,
-		LimitBytes:    usage.Limits.MemoryBytes,
-		CPURequest:    formatMilliCores(usage.Requests.CPUMilli),
-		MemoryRequest: formatBytes(usage.Requests.MemoryBytes),
-		CPULimit:      formatMilliCores(usage.Limits.CPUMilli),
-		MemoryLimit:   formatBytes(usage.Limits.MemoryBytes),
+func toConsumption(usage domain.AggregateUsage) Consumption {
+	return Consumption{
+		Pods:               usage.Pods,
+		MeasuredPods:       usage.Measured,
+		HasMetrics:         usage.HasMetrics(),
+		CPU:                formatMilliCores(usage.Usage.CPUMilli),
+		Memory:             formatBytes(usage.Usage.MemoryBytes),
+		CPURequest:         formatMilliCores(usage.Requests.CPUMilli),
+		MemoryRequest:      formatBytes(usage.Requests.MemoryBytes),
+		CPULimit:           formatMilliCores(usage.Limits.CPUMilli),
+		MemoryLimit:        formatBytes(usage.Limits.MemoryBytes),
+		HasCPURequest:      usage.HasCPURequest(),
+		HasMemoryRequest:   usage.HasMemoryRequest(),
+		HasCPULimit:        usage.HasCPULimit(),
+		HasMemoryLimit:     usage.HasMemoryLimit(),
+		CPUPercent:         usage.CPUPercent(),
+		MemoryPercent:      usage.MemoryPercent(),
+		CPULimitPercent:    usage.CPULimitPercent(),
+		MemoryLimitPercent: usage.MemoryLimitPercent(),
+		CPUCores:           float64(usage.Usage.CPUMilli) / 1000,
+		MemoryBytes:        usage.Usage.MemoryBytes,
+		RequestCores:       float64(usage.Requests.CPUMilli) / 1000,
+		RequestBytes:       usage.Requests.MemoryBytes,
+		LimitCores:         float64(usage.Limits.CPUMilli) / 1000,
+		LimitBytes:         usage.Limits.MemoryBytes,
 	}
 }
 

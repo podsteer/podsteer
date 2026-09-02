@@ -69,26 +69,60 @@ func (w *WorkloadAPI) ListPods(clusterID, namespace string) ([]Pod, error) {
 // Read while a panel is open rather than alongside the controller list: it
 // costs that controller's pods and the namespace's metrics, and the figure is
 // only ever looked at one controller at a time.
-func (w *WorkloadAPI) WorkloadUsage(clusterID, namespace, kind, name string) (WorkloadUsage, error) {
+func (w *WorkloadAPI) WorkloadUsage(clusterID, namespace, kind, name string) (Consumption, error) {
 	ctx, cancel := w.app.requestContext()
 	defer cancel()
 
 	id, err := domain.NewClusterID(clusterID)
 	if err != nil {
-		return WorkloadUsage{}, apiError(w.logger, "WorkloadUsage", err)
+		return Consumption{}, apiError(w.logger, "WorkloadUsage", err)
 	}
 
 	ns, err := domain.NewNamespaceName(namespace)
 	if err != nil {
-		return WorkloadUsage{}, apiError(w.logger, "WorkloadUsage", err)
+		return Consumption{}, apiError(w.logger, "WorkloadUsage", err)
 	}
 
 	usage, err := w.workloads.WorkloadUsage(ctx, id, ns, domain.WorkloadKind(kind), name)
 	if err != nil {
-		return WorkloadUsage{}, apiError(w.logger, "WorkloadUsage", err)
+		return Consumption{}, apiError(w.logger, "WorkloadUsage", err)
 	}
 
-	return toWorkloadUsage(usage), nil
+	return toConsumption(usage), nil
+}
+
+// WorkloadConsumption sums what each controller in a list is using, keyed by
+// "namespace/name".
+//
+// A SECOND CALL BESIDE ListWorkloads rather than part of it. The controllers
+// are one cheap read and this is the namespace's pods and their metrics, so a
+// cluster with no metrics API, or an account that may list Deployments and
+// not pods, still gets its list — with the meters reading "not measured"
+// rather than nothing at all.
+func (w *WorkloadAPI) WorkloadConsumption(clusterID, kind, namespace string) (map[string]Consumption, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(w.logger, "WorkloadConsumption", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return nil, apiError(w.logger, "WorkloadConsumption", err)
+	}
+
+	usage, err := w.workloads.WorkloadConsumption(ctx, id, domain.WorkloadKind(kind), ns)
+	if err != nil {
+		return nil, apiError(w.logger, "WorkloadConsumption", err)
+	}
+
+	out := make(map[string]Consumption, len(usage))
+	for key, one := range usage {
+		out[key] = toConsumption(one)
+	}
+	return out, nil
 }
 
 // ListWorkloads returns controllers of the given kind.

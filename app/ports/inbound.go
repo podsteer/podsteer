@@ -85,7 +85,15 @@ type WorkloadService interface {
 
 	// WorkloadUsage sums what a controller's pods are consuming, against what
 	// they reserved and what they will be stopped at.
-	WorkloadUsage(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.WorkloadUsage, error)
+	WorkloadUsage(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.AggregateUsage, error)
+
+	// WorkloadConsumption does the same for a whole list, keyed by
+	// "namespace/name".
+	//
+	// Separate from ListWorkloads so a list still renders on a cluster with
+	// no metrics API, or for an account that cannot list pods: the
+	// controllers are one cheap read, and this is the namespace's pods.
+	WorkloadConsumption(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) (map[string]domain.AggregateUsage, error)
 }
 
 // EventService is the use-case surface for reading Kubernetes Events.

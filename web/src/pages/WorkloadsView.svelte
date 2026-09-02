@@ -8,8 +8,11 @@
 <script lang="ts">
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
+  import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { formatAge } from '$lib/format'
+  import { cpuMeter, cpuTitle, memoryMeter, memoryTitle, type Measured } from '$lib/meter'
+  import { preferences } from '$stores/preferences.svelte'
   import type { Tone } from '$lib/format'
   import type { ClusterSession } from '$stores/session.svelte'
   import type { Workload } from '$lib/api/client'
@@ -18,11 +21,32 @@
   import { gitOpsOwner } from '$lib/gitops'
   import GitOpsBadge from '$lib/components/GitOpsBadge.svelte'
 
+  const UNMEASURED: Measured = {
+    hasMetrics: false,
+    cpu: '',
+    memory: '',
+    cpuRequest: '',
+    memoryRequest: '',
+    cpuLimit: '',
+    memoryLimit: '',
+    hasCpuRequest: false,
+    hasMemoryRequest: false,
+    hasCpuLimit: false,
+    hasMemoryLimit: false,
+    cpuPercent: 0,
+    memoryPercent: 0,
+    cpuLimitPercent: 0,
+    memoryLimitPercent: 0,
+  }
+
   interface Props {
     session: ClusterSession
   }
 
   let { session }: Props = $props()
+
+  /** The same denominator the pod list is set to. See NamespacesView. */
+  const byLimit = $derived(preferences.podMeasure === 'limits')
 
   const isCronJob = $derived(session.selectedKindId === 'batch/v1/cronjobs')
 
@@ -40,6 +64,12 @@
           { id: 'updated', label: 'Up-to-date', width: 116, numeric: true },
           { id: 'available', label: 'Available', width: 110, numeric: true, defaultHidden: true },
         ]),
+    // The same meters the pod and namespace lists draw. A controller has no
+    // usage of its own — the figures are the sum over the pods it currently
+    // has — which is why they arrive a beat after the rows and are allowed to
+    // be absent entirely on a cluster with no metrics API.
+    { id: 'cpu', label: 'CPU', width: 220, minWidth: 200 },
+    { id: 'memory', label: 'Memory', width: 220, minWidth: 200 },
     { id: 'images', label: 'Images', width: 300 },
     // Hidden until asked for. A cluster with no GitOps controller would
     // otherwise carry an always-empty column, and one with a controller
@@ -78,6 +108,14 @@
     {#each session.pagedWorkloads as workload (workload.namespace + '/' + workload.name)}
       {@const selected =
         session.selectedName === workload.name && session.selectedNamespace === workload.namespace}
+      <!--
+        Absent until the sums arrive, and absent for good on a cluster with no
+        metrics API or an account that cannot list pods. UNMEASURED, not
+        empty: a controller measured at zero and one nobody could measure are
+        different facts, and the meter draws them differently.
+      -->
+      {@const usage =
+        session.workloadUsage[`${workload.namespace}/${workload.name}`] ?? UNMEASURED}
       <tr
         class="group cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
                {selected ? 'bg-primary/8' : 'hover:bg-surface-container-low'}"
@@ -123,6 +161,39 @@
         {/if}
         {#if isVisible('available')}
           <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">{workload.available}</td>
+        {/if}
+        {#if isVisible('cpu')}
+          {@const cpu = cpuMeter(usage, byLimit)}
+          <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
+            <MeterBar
+              label={usage.hasMetrics ? usage.cpu : '—'}
+              scope="pods"
+              name="CPU"
+              valueWidth="7ch"
+              percent={cpu.percent}
+              measured={usage.hasMetrics}
+              thresholds={cpu.thresholds}
+              absent={cpu.absent}
+              severity={cpu.severity}
+              title={cpuTitle(usage)}
+            />
+          </td>
+        {/if}
+        {#if isVisible('memory')}
+          {@const memory = memoryMeter(usage, byLimit)}
+          <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
+            <MeterBar
+              label={usage.hasMetrics ? usage.memory : '—'}
+              scope="pods"
+              name="Memory"
+              percent={memory.percent}
+              measured={usage.hasMetrics}
+              thresholds={memory.thresholds}
+              absent={memory.absent}
+              severity={memory.severity}
+              title={memoryTitle(usage)}
+            />
+          </td>
         {/if}
         {#if isVisible('images')}
           <td class="truncate px-3 py-1.5" title={workload.images.join(', ')}>

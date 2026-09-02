@@ -7,7 +7,7 @@
 -->
 <script lang="ts">
   import { parse } from 'yaml'
-  import type { Node, Pod, Workload } from '$lib/api/client'
+  import type { NamespaceSummary, Node, Pod, Workload } from '$lib/api/client'
   import DetailSection from './DetailSection.svelte'
   import DetailList, { type DetailRow } from './DetailList.svelte'
   import ContainerDetail from './ContainerDetail.svelte'
@@ -30,6 +30,14 @@
     usage?: UsageSample[]
     /** The node the drawer is open on, when it is a node. */
     selectedNode?: Node | null
+    /**
+     * The namespace row the drawer is open on, when it is a namespace.
+     *
+     * The figures live on the row rather than in the manifest, exactly as a
+     * node's and a pod's do — a namespace object says nothing about what is
+     * inside it.
+     */
+    selectedNamespaceRow?: NamespaceSummary | null
     /**
      * The cluster the open object belongs to.
      *
@@ -75,6 +83,7 @@
     manifest,
     selectedPod,
     selectedNode,
+    selectedNamespaceRow,
     selectedWorkload,
     kind,
     usage = [],
@@ -621,6 +630,51 @@
       empty" is the question that decides whether anything else here is worth
       reading.
     -->
+    <!--
+      A namespace's usage, on the same terms as a node's: the row carries the
+      figures, the series comes from what the list has been recording since
+      the tab opened, and the reference lines are the SUM of its pods'
+      requests and limits. A namespace has no capacity of its own to measure
+      against — only what the things inside it asked for.
+    -->
+    {#if selectedNamespaceRow?.hasMetrics}
+      <DetailSection
+        level="h3"
+        id="namespace-usage"
+        title="Usage"
+        hint="CPU {selectedNamespaceRow.cpu} · Memory {selectedNamespaceRow.memory}"
+      >
+        <div class="flex flex-col gap-4">
+          {#each [{ metric: 'cpu' as const, label: 'CPU', used: selectedNamespaceRow.cpu, request: selectedNamespaceRow.requestCores, limit: selectedNamespaceRow.limitCores }, { metric: 'memory' as const, label: 'Memory', used: selectedNamespaceRow.memory, request: selectedNamespaceRow.requestBytes, limit: selectedNamespaceRow.limitBytes }] as track (track.metric)}
+            <div class="flex flex-col gap-1">
+              <p class="flex items-baseline justify-between text-body-small text-on-surface-variant">
+                <span>{track.label}</span>
+                <span class="tabular-nums">{track.used}</span>
+              </p>
+              <UsageChart
+                samples={usage}
+                metric={track.metric}
+                markers={[
+                  { value: track.request, label: 'Request', tone: 'warn' },
+                  { value: track.limit, label: 'Limit', tone: 'critical' },
+                ]}
+                format={track.metric === 'cpu' ? formatCores : formatBytes}
+              />
+            </div>
+          {/each}
+
+          {#if selectedNamespaceRow.measuredPods < selectedNamespaceRow.pods}
+            <p class="text-body-small text-gauge-warn">
+              Summed over {selectedNamespaceRow.measuredPods} of {selectedNamespaceRow.pods} pods —
+              the rest reported no usage, so this is less than the whole.
+            </p>
+          {/if}
+
+          <MetricsBackendNote {backend} />
+        </div>
+      </DetailSection>
+    {/if}
+
     {#if kind === 'Namespace' && clusterId && metadata.name}
       <NamespaceContents {clusterId} namespace={metadata.name} {onbrowse} />
     {/if}

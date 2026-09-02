@@ -108,6 +108,51 @@ func (s *WorkloadService) ListWorkloads(ctx context.Context, id domain.ClusterID
 	return workloads, nil
 }
 
+// WorkloadConsumption sums what each controller in a list is using.
+//
+// SEPARATE FROM ListWorkloads, and called alongside it rather than inside it.
+// The controllers themselves are one cheap read; this is the namespace's pods
+// and their metrics, and on a cluster where the metrics API is missing or the
+// account cannot list pods the list must still render. Folding it in would
+// make a column cost the page.
+//
+// A pod is attributed by the controller's own label selector — see
+// domain.WorkloadConsumption for why that rather than the ownerReference
+// chain. CronJobs have no selector, so their Jobs are read as the missing
+// hop; nothing else needs a second list.
+func (s *WorkloadService) WorkloadConsumption(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) (map[string]domain.AggregateUsage, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return nil, fmt.Errorf("reading %s usage: %w", kind, err)
+	}
+
+	workloads, err := s.workloads.ListWorkloads(ctx, id, kind, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("listing %ss in %q of %q: %w", kind, namespace, id, err)
+	}
+
+	pods, err := s.workloads.ListPods(ctx, id, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("listing pods in %q of %q: %w", namespace, id, err)
+	}
+	pods, _ = podsWithUsage(ctx, s.metrics, s.logger, id, namespace, pods)
+
+	var intermediates []domain.Workload
+	if kind == domain.WorkloadCronJob {
+		jobs, err := s.workloads.ListWorkloads(ctx, id, domain.WorkloadJob, namespace)
+		if err != nil {
+			// The Jobs are the only way a CronJob reaches its pods. Without
+			// them every CronJob reads as running nothing, which is also its
+			// ordinary state between runs — so the two would be
+			// indistinguishable, and the honest answer is to fail rather than
+			// to report "idle" for a cluster that would not say.
+			return nil, fmt.Errorf("listing jobs in %q of %q: %w", namespace, id, err)
+		}
+		intermediates = jobs
+	}
+
+	return domain.WorkloadConsumption(workloads, pods, intermediates), nil
+}
+
 // withPodMetrics attaches usage to pods, degrading silently when the cluster
 // serves no metrics API. See ClusterService.withNodeMetrics for why silently.
 func (s *WorkloadService) withPodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, pods []domain.Pod) []domain.Pod {
@@ -167,20 +212,20 @@ func podsWithUsage(
 // controller's pods on every refresh of the controller list would list the
 // namespace's pods once per controller, and the figure is only ever looked at
 // one controller at a time.
-func (s *WorkloadService) WorkloadUsage(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.WorkloadUsage, error) {
+func (s *WorkloadService) WorkloadUsage(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.AggregateUsage, error) {
 	if _, err := s.registry.Get(id); err != nil {
-		return domain.WorkloadUsage{}, fmt.Errorf("reading %s usage: %w", kind, err)
+		return domain.AggregateUsage{}, fmt.Errorf("reading %s usage: %w", kind, err)
 	}
 
 	pods, err := s.workloads.ListPodsForWorkload(ctx, id, namespace, kind, name)
 	if err != nil {
-		return domain.WorkloadUsage{}, fmt.Errorf(
+		return domain.AggregateUsage{}, fmt.Errorf(
 			"reading pods of %s/%s in %q: %w", kind, name, namespace, err)
 	}
 
 	pods, _ = podsWithUsage(ctx, s.metrics, s.logger, id, namespace, pods)
 
-	return domain.NewWorkloadUsage(pods), nil
+	return domain.NewAggregateUsage(pods), nil
 }
 
 // PodGraph returns the dependency chain around one pod.

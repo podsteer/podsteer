@@ -290,9 +290,9 @@ func (s *ClusterService) ListNamespaceSummaries(ctx context.Context, id domain.C
 		return nil, fmt.Errorf("summarising namespaces: %w", err)
 	}
 
-	pods, measured := podsWithUsage(ctx, s.metrics, s.logger, id, domain.NamespaceAll, pods)
+	pods, _ = podsWithUsage(ctx, s.metrics, s.logger, id, domain.NamespaceAll, pods)
 
-	return domain.NewNamespaceSummaries(namespaces, pods, measured), nil
+	return domain.NewNamespaceSummaries(namespaces, pods), nil
 }
 
 // ListNodes returns the nodes of a connected cluster, enriched with usage.

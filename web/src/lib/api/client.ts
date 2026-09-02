@@ -36,6 +36,7 @@ import {
   ListWorkloads as bindListWorkloads,
   ListPodsForWorkload as bindListPodsForWorkload,
   WorkloadUsage as bindWorkloadUsage,
+  WorkloadConsumption as bindWorkloadConsumption,
   ListPodsOnNode as bindListPodsOnNode,
   PodGraph as bindPodGraph,
   WorkloadGraph as bindWorkloadGraph,
@@ -87,7 +88,7 @@ export type Node = wails.Node
 /** A pod-managing controller. */
 export type Workload = wails.Workload
 
-export type WorkloadUsage = wails.WorkloadUsage
+export type Consumption = wails.Consumption
 /** A Kubernetes Event. */
 export type K8sEvent = wails.Event
 /** A browsable kind, as shown in the navigator. */
@@ -349,8 +350,23 @@ export function workloadUsage(
   namespace: string,
   kind: string,
   name: string,
-): Promise<WorkloadUsage> {
+): Promise<Consumption> {
   return call(() => bindWorkloadUsage(clusterId, namespace, kind, name))
+}
+
+/**
+ * Sums what every controller in a list is using, keyed by "namespace/name".
+ *
+ * Fetched beside the list rather than as part of it: the controllers are one
+ * cheap read and this is the namespace's pods and their metrics, so a cluster
+ * without a metrics API still gets its list.
+ */
+export function workloadConsumption(
+  clusterId: string,
+  kind: string,
+  namespace: string,
+): Promise<Record<string, Consumption>> {
+  return call(() => bindWorkloadConsumption(clusterId, kind, namespace))
 }
 
 /** Lists all pods owned by a specific workload. */

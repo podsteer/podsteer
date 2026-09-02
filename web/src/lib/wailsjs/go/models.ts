@@ -214,6 +214,62 @@ export namespace wails {
 	        this.percent = source["percent"];
 	    }
 	}
+	export class Consumption {
+	    pods: number;
+	    measuredPods: number;
+	    hasMetrics: boolean;
+	    cpu: string;
+	    memory: string;
+	    cpuRequest: string;
+	    memoryRequest: string;
+	    cpuLimit: string;
+	    memoryLimit: string;
+	    hasCpuRequest: boolean;
+	    hasMemoryRequest: boolean;
+	    hasCpuLimit: boolean;
+	    hasMemoryLimit: boolean;
+	    cpuPercent: number;
+	    memoryPercent: number;
+	    cpuLimitPercent: number;
+	    memoryLimitPercent: number;
+	    cpuCores: number;
+	    memoryBytes: number;
+	    requestCores: number;
+	    requestBytes: number;
+	    limitCores: number;
+	    limitBytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Consumption(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pods = source["pods"];
+	        this.measuredPods = source["measuredPods"];
+	        this.hasMetrics = source["hasMetrics"];
+	        this.cpu = source["cpu"];
+	        this.memory = source["memory"];
+	        this.cpuRequest = source["cpuRequest"];
+	        this.memoryRequest = source["memoryRequest"];
+	        this.cpuLimit = source["cpuLimit"];
+	        this.memoryLimit = source["memoryLimit"];
+	        this.hasCpuRequest = source["hasCpuRequest"];
+	        this.hasMemoryRequest = source["hasMemoryRequest"];
+	        this.hasCpuLimit = source["hasCpuLimit"];
+	        this.hasMemoryLimit = source["hasMemoryLimit"];
+	        this.cpuPercent = source["cpuPercent"];
+	        this.memoryPercent = source["memoryPercent"];
+	        this.cpuLimitPercent = source["cpuLimitPercent"];
+	        this.memoryLimitPercent = source["memoryLimitPercent"];
+	        this.cpuCores = source["cpuCores"];
+	        this.memoryBytes = source["memoryBytes"];
+	        this.requestCores = source["requestCores"];
+	        this.requestBytes = source["requestBytes"];
+	        this.limitCores = source["limitCores"];
+	        this.limitBytes = source["limitBytes"];
+	    }
+	}
 	export class Termination {
 	    exitCode: number;
 	    signal: number;
@@ -658,17 +714,30 @@ export namespace wails {
 	    isActive: boolean;
 	    createdAt: string;
 	    ageSeconds: number;
-	    pods: number;
 	    notReady: number;
+	    pods: number;
+	    measuredPods: number;
+	    hasMetrics: boolean;
 	    cpu: string;
 	    memory: string;
-	    hasMetrics: boolean;
-	    cpuRequests: string;
-	    memoryRequests: string;
-	    cpuRequestsMilli: number;
-	    memoryRequestsBytes: number;
-	    cpuMilli: number;
+	    cpuRequest: string;
+	    memoryRequest: string;
+	    cpuLimit: string;
+	    memoryLimit: string;
+	    hasCpuRequest: boolean;
+	    hasMemoryRequest: boolean;
+	    hasCpuLimit: boolean;
+	    hasMemoryLimit: boolean;
+	    cpuPercent: number;
+	    memoryPercent: number;
+	    cpuLimitPercent: number;
+	    memoryLimitPercent: number;
+	    cpuCores: number;
 	    memoryBytes: number;
+	    requestCores: number;
+	    requestBytes: number;
+	    limitCores: number;
+	    limitBytes: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new NamespaceSummary(source);
@@ -681,17 +750,30 @@ export namespace wails {
 	        this.isActive = source["isActive"];
 	        this.createdAt = source["createdAt"];
 	        this.ageSeconds = source["ageSeconds"];
-	        this.pods = source["pods"];
 	        this.notReady = source["notReady"];
+	        this.pods = source["pods"];
+	        this.measuredPods = source["measuredPods"];
+	        this.hasMetrics = source["hasMetrics"];
 	        this.cpu = source["cpu"];
 	        this.memory = source["memory"];
-	        this.hasMetrics = source["hasMetrics"];
-	        this.cpuRequests = source["cpuRequests"];
-	        this.memoryRequests = source["memoryRequests"];
-	        this.cpuRequestsMilli = source["cpuRequestsMilli"];
-	        this.memoryRequestsBytes = source["memoryRequestsBytes"];
-	        this.cpuMilli = source["cpuMilli"];
+	        this.cpuRequest = source["cpuRequest"];
+	        this.memoryRequest = source["memoryRequest"];
+	        this.cpuLimit = source["cpuLimit"];
+	        this.memoryLimit = source["memoryLimit"];
+	        this.hasCpuRequest = source["hasCpuRequest"];
+	        this.hasMemoryRequest = source["hasMemoryRequest"];
+	        this.hasCpuLimit = source["hasCpuLimit"];
+	        this.hasMemoryLimit = source["hasMemoryLimit"];
+	        this.cpuPercent = source["cpuPercent"];
+	        this.memoryPercent = source["memoryPercent"];
+	        this.cpuLimitPercent = source["cpuLimitPercent"];
+	        this.memoryLimitPercent = source["memoryLimitPercent"];
+	        this.cpuCores = source["cpuCores"];
 	        this.memoryBytes = source["memoryBytes"];
+	        this.requestCores = source["requestCores"];
+	        this.requestBytes = source["requestBytes"];
+	        this.limitCores = source["limitCores"];
+	        this.limitBytes = source["limitBytes"];
 	    }
 	}
 	export class Node {
@@ -1594,47 +1676,6 @@ export namespace wails {
 	        this.annotations = source["annotations"];
 	        this.createdAt = source["createdAt"];
 	        this.ageSeconds = source["ageSeconds"];
-	    }
-	}
-	
-	export class WorkloadUsage {
-	    pods: number;
-	    measured: number;
-	    hasMetrics: boolean;
-	    cpu: string;
-	    memory: string;
-	    cpuCores: number;
-	    memoryBytes: number;
-	    requestCores: number;
-	    requestBytes: number;
-	    limitCores: number;
-	    limitBytes: number;
-	    cpuRequest: string;
-	    memoryRequest: string;
-	    cpuLimit: string;
-	    memoryLimit: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new WorkloadUsage(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.pods = source["pods"];
-	        this.measured = source["measured"];
-	        this.hasMetrics = source["hasMetrics"];
-	        this.cpu = source["cpu"];
-	        this.memory = source["memory"];
-	        this.cpuCores = source["cpuCores"];
-	        this.memoryBytes = source["memoryBytes"];
-	        this.requestCores = source["requestCores"];
-	        this.requestBytes = source["requestBytes"];
-	        this.limitCores = source["limitCores"];
-	        this.limitBytes = source["limitBytes"];
-	        this.cpuRequest = source["cpuRequest"];
-	        this.memoryRequest = source["memoryRequest"];
-	        this.cpuLimit = source["cpuLimit"];
-	        this.memoryLimit = source["memoryLimit"];
 	    }
 	}
 

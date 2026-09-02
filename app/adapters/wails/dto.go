@@ -98,53 +98,20 @@ func toNamespaces(namespaces []domain.Namespace, now time.Time) []Namespace {
 // NamespaceSummary is a namespace with what is running in it.
 type NamespaceSummary struct {
 	Namespace
-	// Pods is every pod in the namespace, completed ones included — the same
-	// count the pod list shows when filtered to it.
-	Pods int `json:"pods"`
-	// NotReady is how many of those are not doing their job.
+	// NotReady is how many of its pods are not doing their job.
 	NotReady int `json:"notReady"`
-	// CPU and Memory are what the namespace is MEASURED to be using, formatted
-	// the way the pod list formats the same figures. Empty when unmeasured.
-	CPU    string `json:"cpu"`
-	Memory string `json:"memory"`
-	// HasMetrics reports whether those two are figures or absences. A
-	// namespace using nothing and a cluster measuring nothing both read as
-	// zero otherwise.
-	HasMetrics bool `json:"hasMetrics"`
-	// CPURequests and MemoryRequests are what its pods RESERVED, which is
-	// what actually fills a cluster and is available whether or not anything
-	// is measured.
-	CPURequests    string `json:"cpuRequests"`
-	MemoryRequests string `json:"memoryRequests"`
-	// The same two as numbers, so the table can sort by them without parsing
-	// the strings above back into quantities.
-	CPURequestsMilli    int64 `json:"cpuRequestsMilli"`
-	MemoryRequestsBytes int64 `json:"memoryRequestsBytes"`
-	CPUMilli            int64 `json:"cpuMilli"`
-	MemoryBytes         int64 `json:"memoryBytes"`
+	// What those pods are using, on exactly the terms a controller's row and
+	// the pod list use. See Consumption.
+	Consumption
 }
 
 // toNamespaceSummary converts one summary, using now as the age reference.
 func toNamespaceSummary(summary domain.NamespaceSummary, now time.Time) NamespaceSummary {
-	out := NamespaceSummary{
-		Namespace:           toNamespace(summary.Namespace, now),
-		Pods:                summary.Pods,
-		NotReady:            summary.NotReady,
-		HasMetrics:          summary.Measured,
-		CPURequests:         formatMilliCores(summary.CPURequests),
-		MemoryRequests:      formatBytes(summary.MemoryRequests),
-		CPURequestsMilli:    summary.CPURequests,
-		MemoryRequestsBytes: summary.MemoryRequests,
+	return NamespaceSummary{
+		Namespace:   toNamespace(summary.Namespace, now),
+		NotReady:    summary.NotReady,
+		Consumption: toConsumption(summary.Usage),
 	}
-
-	if summary.Measured {
-		out.CPU = formatMilliCores(summary.CPUUsage)
-		out.Memory = formatBytes(summary.MemoryUsage)
-		out.CPUMilli = summary.CPUUsage
-		out.MemoryBytes = summary.MemoryUsage
-	}
-
-	return out
 }
 
 // toNamespaceSummaries converts a slice of summaries.

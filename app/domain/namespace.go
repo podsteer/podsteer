@@ -157,34 +157,24 @@ func (n Namespace) Age(now time.Time) time.Duration {
 // the cluster is it holding — is only knowable by looking at what is inside.
 type NamespaceSummary struct {
 	Namespace Namespace
-	// Pods is EVERY pod in the namespace, including the completed ones.
-	//
-	// The same count the pod list shows when filtered to this namespace,
-	// deliberately: a row that says 29 and links to a list of 34 is a bug
-	// somebody has to go and disprove.
-	Pods int
-	// NotReady is how many of those are not doing their job.
+	// NotReady is how many of its pods are not doing their job.
 	NotReady int
-	// CPURequests is in millicores, MemoryRequests in bytes.
+	// Usage is what its pods are consuming, against what they reserved and
+	// what they will be stopped at. The same type a controller's row and a
+	// controller's panel carry, so all three draw the same meter.
 	//
-	// SUMMED OVER THE PODS THAT OCCUPY A NODE, which is not every pod. A
-	// Succeeded pod still exists and is still counted above, but it has given
-	// its reservation back — counting it here would report a namespace of
-	// finished Jobs as holding capacity nobody can reclaim.
-	CPURequests    int64
-	MemoryRequests int64
-	// CPUUsage and MemoryUsage are measured rather than declared, and are
-	// meaningful only when Measured is true.
-	CPUUsage    int64
-	MemoryUsage int64
-	// Measured reports whether the cluster served metrics at all. Zero usage
-	// on an unmeasured cluster is the absence of a figure, not an idle
-	// namespace.
-	Measured bool
+	// Its Pods count is EVERY pod in the namespace, completed ones included —
+	// the same count the pod list shows when filtered to it, deliberately: a
+	// row that says 29 and links to a list of 34 is a bug somebody has to go
+	// and disprove.
+	Usage AggregateUsage
 }
 
+// Pods is how many pods are in the namespace.
+func (s NamespaceSummary) Pods() int { return s.Usage.Pods }
+
 // IsEmpty reports whether nothing is running in the namespace.
-func (s NamespaceSummary) IsEmpty() bool { return s.Pods == 0 }
+func (s NamespaceSummary) IsEmpty() bool { return s.Usage.Pods == 0 }
 
 // NewNamespaceSummaries pairs each namespace with what is running in it.
 //
@@ -195,41 +185,39 @@ func (s NamespaceSummary) IsEmpty() bool { return s.Pods == 0 }
 // Ordered by name. A namespace list is read by looking one up, not by ranking
 // them — the ranking that matters, by what they reserve, is the overview's
 // job and is already there.
-func NewNamespaceSummaries(namespaces []Namespace, pods []Pod, measured bool) []NamespaceSummary {
-	byName := make(map[NamespaceName]*NamespaceSummary, len(namespaces))
-	summaries := make([]NamespaceSummary, len(namespaces))
-
-	for index, namespace := range namespaces {
-		summaries[index] = NamespaceSummary{Namespace: namespace, Measured: measured}
-		byName[namespace.Name()] = &summaries[index]
+func NewNamespaceSummaries(namespaces []Namespace, pods []Pod) []NamespaceSummary {
+	byName := make(map[NamespaceName][]Pod, len(namespaces))
+	for _, namespace := range namespaces {
+		byName[namespace.Name()] = nil
 	}
 
 	for _, pod := range pods {
-		summary, known := byName[pod.Namespace()]
-		if !known {
-			// A pod in a namespace the caller cannot see. It happens: an
-			// account may be allowed to list pods across the cluster and not
-			// to list namespaces. Inventing a row for it would put a
-			// namespace on screen that nothing else in the application knows
-			// about, so it is left out and its pods are simply not counted.
+		// A pod in a namespace the caller cannot see. It happens: an account
+		// may be allowed to list pods across the cluster and not to list
+		// namespaces. Inventing a row for it would put a namespace on screen
+		// that nothing else in the application knows about.
+		if _, known := byName[pod.Namespace()]; !known {
 			continue
 		}
+		byName[pod.Namespace()] = append(byName[pod.Namespace()], pod)
+	}
 
-		summary.Pods++
-		if !pod.IsHealthy() {
-			summary.NotReady++
-		}
-		if !pod.OccupiesNode() {
-			continue
+	summaries := make([]NamespaceSummary, 0, len(namespaces))
+	for _, namespace := range namespaces {
+		held := byName[namespace.Name()]
+
+		notReady := 0
+		for _, pod := range held {
+			if !pod.IsHealthy() {
+				notReady++
+			}
 		}
 
-		requests := pod.Requests()
-		summary.CPURequests += requests.CPUMilli
-		summary.MemoryRequests += requests.MemoryBytes
-		if usage := pod.Usage(); usage.Measured {
-			summary.CPUUsage += usage.CPUMilli
-			summary.MemoryUsage += usage.MemoryBytes
-		}
+		summaries = append(summaries, NamespaceSummary{
+			Namespace: namespace,
+			NotReady:  notReady,
+			Usage:     NewAggregateUsage(held),
+		})
 	}
 
 	slices.SortStableFunc(summaries, func(a, b NamespaceSummary) int {

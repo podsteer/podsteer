@@ -12,6 +12,8 @@ export function ListWorkloads(arg1:string,arg2:string,arg3:string):Promise<Array
 
 export function PodGraph(arg1:string,arg2:string,arg3:string):Promise<wails.PodGraph>;
 
+export function WorkloadConsumption(arg1:string,arg2:string,arg3:string):Promise<Record<string, wails.Consumption>>;
+
 export function WorkloadGraph(arg1:string,arg2:string,arg3:string,arg4:string):Promise<wails.PodGraph>;
 
-export function WorkloadUsage(arg1:string,arg2:string,arg3:string,arg4:string):Promise<wails.WorkloadUsage>;
+export function WorkloadUsage(arg1:string,arg2:string,arg3:string,arg4:string):Promise<wails.Consumption>;

@@ -22,6 +22,10 @@ export function PodGraph(arg1, arg2, arg3) {
   return window['go']['wails']['WorkloadAPI']['PodGraph'](arg1, arg2, arg3);
 }
 
+export function WorkloadConsumption(arg1, arg2, arg3) {
+  return window['go']['wails']['WorkloadAPI']['WorkloadConsumption'](arg1, arg2, arg3);
+}
+
 export function WorkloadGraph(arg1, arg2, arg3, arg4) {
   return window['go']['wails']['WorkloadAPI']['WorkloadGraph'](arg1, arg2, arg3, arg4);
 }
