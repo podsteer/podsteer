@@ -169,20 +169,32 @@ currently has. Pretending they are one shape would mean a pod field that is
 sometimes a list, and edges that mean different things depending on which it
 was.
 
-Four rules there are load-bearing and were each found the hard way:
+**EVERY EDGE IS A RELATIONSHIP KUBERNETES ACTUALLY HAS.** That rule is worth
+stating on its own, because breaking it is always the convenient thing to do
+and the map is used to reason about a cluster. A Service selects PODS and knows
+nothing about what created them; a ReplicaSet does not read a Secret, it
+carries a template declaring what the pods it creates will read. Both were once
+drawn to the controller — one edge instead of one per replica — and both were
+false. Connecting to the pods also surfaces the case the shortcut hid: a
+Service reaching only SOME of a workload's pods, which is what a half-finished
+rollout looks like.
+
+The one exception is a workload with NO pods, where nothing is mounting
+anything and the only true statement left is that the template declares them.
+The edge from the subject means that, and only in that case.
+
+Four more rules there are load-bearing and were each found the hard way:
 
 - **An empty selector matches nothing.** In the Kubernetes API an empty
   selector on a Service means it has none at all — an ExternalName, or
   Endpoints managed by hand. Read as "matches everything" it draws an edge to
   every pod in the namespace.
-- **A Service connects to the WORKLOAD, not to each replica.** A fan of edges
-  from one Service into thirty pods says the same thing thirty times.
 - **Container boxes are keyed by pod.** Every replica runs containers with the
   same names, so keying on the name alone collapses three replicas' containers
   into one box with three edges into it.
-- **Attached config hangs off the workload once.** It comes from the pod
-  template, so every replica reads the same ConfigMap; an edge per pod draws
-  one dependency three times and says nothing extra.
+- **One box per attached resource, however many pods read it.** Every replica
+  mounts the same ConfigMap, so the node is added once and each pod draws an
+  edge to it — three replicas must not produce three identical boxes.
 
 **A CronJob does not own pods.** It owns Jobs and those own pods, so its map
 carries the Job tier between them — anything else draws a relationship

@@ -269,8 +269,16 @@ func (g *PodGraph) addContainers(pod Pod, podID string) {
 
 // addAttached hangs what the pod consumes off to one side.
 func (g *PodGraph) addAttached(attached []AttachedRef, podID string) {
-	seen := make(map[string]bool)
+	// ONE BOX PER RESOURCE, HOWEVER MANY PODS READ IT. Every replica of a
+	// workload mounts the same ConfigMap, so this is called once per pod and
+	// must add the node only the first time — otherwise three replicas draw
+	// three identical boxes for one object.
+	drawn := make(map[string]bool)
+	for _, node := range g.Nodes {
+		drawn[node.ID] = true
+	}
 
+	seen := make(map[string]bool)
 	for _, ref := range attached {
 		id := string(ref.Kind) + "/" + ref.Name
 		if seen[id] {
@@ -278,10 +286,13 @@ func (g *PodGraph) addAttached(attached []AttachedRef, podID string) {
 		}
 		seen[id] = true
 
-		g.Nodes = append(g.Nodes, GraphNode{
-			ID: id, Kind: ref.Kind, APIKind: apiKindOf(ref.Kind), Name: ref.Name,
-			Tier: TierAttached, Detail: ref.Via, Healthy: true,
-		})
+		if !drawn[id] {
+			g.Nodes = append(g.Nodes, GraphNode{
+				ID: id, Kind: ref.Kind, APIKind: apiKindOf(ref.Kind), Name: ref.Name,
+				Tier: TierAttached, Detail: ref.Via, Healthy: true,
+			})
+			drawn[id] = true
+		}
 		g.Edges = append(g.Edges, GraphEdge{From: podID, To: id, Label: ref.Via})
 	}
 }
@@ -492,11 +503,24 @@ func NewWorkloadGraph(input WorkloadGraphInput) PodGraph {
 
 	graph.addWorkloadServices(input)
 
-	// ATTACHED HANGS OFF THE WORKLOAD, not off each pod. Config and secrets
-	// come from the pod TEMPLATE, so every replica reads the same ones — an
-	// edge per pod would draw the same dependency three times and say nothing
-	// the one edge does not.
-	graph.addAttached(input.Attached, subjectID)
+	// ATTACHED BELONGS TO THE PODS, because the pod is what mounts it. A
+	// ReplicaSet does not read a Secret: it carries a template that DECLARES
+	// what the pods it creates will read, and drawing an edge from the
+	// controller asserts a relationship Kubernetes does not have. It was
+	// convenient — one edge instead of one per replica — and convenience is
+	// not a reason to draw something untrue on a diagram people use to reason
+	// about a cluster.
+	//
+	// With no pods there is nothing mounting anything, and the only true
+	// statement left is that the workload's template declares them. That is
+	// what the edge from the subject means in that case, and only that case.
+	if len(input.Pods) == 0 {
+		graph.addAttached(input.Attached, subjectID)
+	} else {
+		for _, pod := range input.Pods {
+			graph.addAttached(input.Attached, "pod/"+pod.Name())
+		}
+	}
 
 	graph.sort()
 	return graph
@@ -504,20 +528,26 @@ func NewWorkloadGraph(input WorkloadGraphInput) PodGraph {
 
 // addWorkloadServices connects services selecting any pod of the workload.
 func (g *PodGraph) addWorkloadServices(input WorkloadGraphInput) {
-	subjectID := strings.ToLower(input.Kind) + "/" + input.Name
 	routed := make(map[string]string)
 
 	for _, service := range input.Services {
-		// ANY pod matching is enough. A Service selects pods; if it reaches
-		// one of this workload's, it reaches the workload.
-		matches := false
+		// TO THE PODS IT SELECTS, not to the workload above them. A Service
+		// matches labels on PODS and knows nothing about what created them —
+		// so an edge to the controller is a relationship Kubernetes does not
+		// have, and it hides the case that matters most: a Service that
+		// reaches only SOME of a workload's pods, which is what a half-failed
+		// rollout looks like.
+		var selected []string
 		for _, pod := range input.Pods {
 			if selectorMatches(service.Selector, pod.Labels()) {
-				matches = true
-				break
+				selected = append(selected, "pod/"+pod.Name())
 			}
 		}
-		if !matches {
+
+		// With no pods there is nothing to select, and a Service drawn against
+		// a workload it cannot currently reach would assert a path that does
+		// not exist.
+		if len(selected) == 0 {
 			continue
 		}
 
@@ -529,10 +559,9 @@ func (g *PodGraph) addWorkloadServices(input WorkloadGraphInput) {
 			Namespace: service.Namespace, Tier: TierService,
 			Detail: strings.Join(service.Ports, ", "), Healthy: true,
 		})
-		// To the WORKLOAD rather than to each pod: a fan of edges from one
-		// service into every replica says the same thing several times and
-		// makes the map unreadable at three replicas, let alone thirty.
-		g.Edges = append(g.Edges, GraphEdge{From: id, To: subjectID, Label: "selects"})
+		for _, podID := range selected {
+			g.Edges = append(g.Edges, GraphEdge{From: id, To: podID, Label: "selects"})
+		}
 	}
 
 	for _, ingress := range input.Ingresses {

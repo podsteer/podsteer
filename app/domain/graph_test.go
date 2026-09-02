@@ -252,9 +252,10 @@ func TestAWorkloadMapFansOutToItsPods(t *testing.T) {
 	}
 }
 
-func TestAServiceConnectsToTheWorkloadNotEveryReplica(t *testing.T) {
-	// A fan of edges from one Service into every replica says the same thing
-	// several times, and is unreadable at three replicas let alone thirty.
+func TestAServiceConnectsToThePodsItSelects(t *testing.T) {
+	// A SERVICE SELECTS PODS AND KNOWS NOTHING ABOUT WHAT CREATED THEM. An
+	// edge to the controller was convenient — one line instead of one per
+	// replica — and asserted a relationship Kubernetes does not have.
 	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
 		Kind: "Deployment", Name: "api", Namespace: "default",
 		Pods: []domain.Pod{
@@ -264,11 +265,35 @@ func TestAServiceConnectsToTheWorkloadNotEveryReplica(t *testing.T) {
 		Services: []domain.ServiceRef{{Name: "api", Selector: map[string]string{"app": "api"}}},
 	})
 
-	if !hasEdge(graph, "service/api", "deployment/api") {
-		t.Fatal("the service is not connected to the workload")
+	if !hasEdge(graph, "service/api", "pod/api-1") ||
+		!hasEdge(graph, "service/api", "pod/api-2") {
+		t.Error("the service does not reach the pods it selects")
 	}
-	if hasEdge(graph, "service/api", "pod/api-1") {
-		t.Error("the service was also wired to an individual replica")
+	if hasEdge(graph, "service/api", "deployment/api") {
+		t.Error("the service was wired to the controller, which does not select anything")
+	}
+}
+
+func TestAServiceReachingOnlySomePodsSaysSo(t *testing.T) {
+	// THE CASE THAT MATTERS MOST, and the one an edge to the controller hides:
+	// a Service reaching some of a workload's pods and not others is what a
+	// half-finished rollout looks like, and the map should show it.
+	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
+		Kind: "Deployment", Name: "api", Namespace: "default",
+		Pods: []domain.Pod{
+			graphPod(t, "api-old", "default", map[string]string{"app": "api", "rev": "1"}),
+			graphPod(t, "api-new", "default", map[string]string{"app": "api", "rev": "2"}),
+		},
+		Services: []domain.ServiceRef{
+			{Name: "api", Selector: map[string]string{"app": "api", "rev": "2"}},
+		},
+	})
+
+	if !hasEdge(graph, "service/api", "pod/api-new") {
+		t.Error("the service does not reach the pod it selects")
+	}
+	if hasEdge(graph, "service/api", "pod/api-old") {
+		t.Error("the service was drawn reaching a pod its selector does not match")
 	}
 }
 
@@ -306,9 +331,10 @@ func TestReplicaContainersAreNotCollapsedTogether(t *testing.T) {
 	}
 }
 
-func TestAttachedResourcesHangOffTheWorkloadOnce(t *testing.T) {
-	// Config and secrets come from the pod TEMPLATE, so every replica reads
-	// the same ones: an edge per pod would draw one dependency three times.
+func TestAttachedResourcesBelongToThePodsThatMountThem(t *testing.T) {
+	// A REPLICASET DOES NOT READ A SECRET. It carries a template declaring
+	// what the pods it creates will read, and an edge from the controller
+	// asserts a relationship Kubernetes does not have.
 	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
 		Kind: "Deployment", Name: "api", Namespace: "default",
 		Pods: []domain.Pod{
@@ -318,14 +344,50 @@ func TestAttachedResourcesHangOffTheWorkloadOnce(t *testing.T) {
 		Attached: []domain.AttachedRef{{Kind: domain.GraphConfig, Name: "settings"}},
 	})
 
-	edges := 0
-	for _, edge := range graph.Edges {
-		if edge.To == "config/settings" {
-			edges++
+	if !hasEdge(graph, "pod/api-1", "config/settings") ||
+		!hasEdge(graph, "pod/api-2", "config/settings") {
+		t.Error("the pods that mount the ConfigMap are not connected to it")
+	}
+	if hasEdge(graph, "deployment/api", "config/settings") {
+		t.Error("the controller was wired to a ConfigMap it does not read")
+	}
+}
+
+func TestOneBoxPerAttachedResourceHoweverManyPodsReadIt(t *testing.T) {
+	// Every replica mounts the same ConfigMap, so the object is drawn once
+	// with an edge from each pod — not once per pod.
+	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
+		Kind: "Deployment", Name: "api", Namespace: "default",
+		Pods: []domain.Pod{
+			graphPod(t, "api-1", "default", nil),
+			graphPod(t, "api-2", "default", nil),
+			graphPod(t, "api-3", "default", nil),
+		},
+		Attached: []domain.AttachedRef{{Kind: domain.GraphConfig, Name: "settings"}},
+	})
+
+	boxes := 0
+	for _, node := range graph.Nodes {
+		if node.ID == "config/settings" {
+			boxes++
 		}
 	}
-	if edges != 1 {
-		t.Fatalf("the ConfigMap was connected %d times, want once", edges)
+	if boxes != 1 {
+		t.Fatalf("the ConfigMap was drawn %d times, want one box", boxes)
+	}
+}
+
+func TestAWorkloadWithNoPodsDeclaresItsConfigItself(t *testing.T) {
+	// With nothing running there is nothing mounting anything, and the only
+	// true statement left is that the template declares them. A CronJob
+	// between runs would otherwise show no configuration at all.
+	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
+		Kind: "CronJob", Name: "nightly", Namespace: "default",
+		Attached: []domain.AttachedRef{{Kind: domain.GraphSecret, Name: "creds"}},
+	})
+
+	if !hasEdge(graph, "cronjob/nightly", "secret/creds") {
+		t.Error("a workload with no pods does not show the config its template declares")
 	}
 }
 
