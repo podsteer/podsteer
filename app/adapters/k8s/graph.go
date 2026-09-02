@@ -169,18 +169,39 @@ func ownerChain(ctx context.Context, client kubernetes.Interface, namespace stri
 	}
 
 	chain := []domain.OwnerReference{{Kind: controller.Kind, Name: controller.Name, Controller: true}}
-	if controller.Kind != "ReplicaSet" {
+
+	// TWO SHAPES OF CHAIN, both one hop. A pod's controller is a ReplicaSet
+	// and the ReplicaSet's is a Deployment; a scheduled pod's controller is a
+	// Job and the Job's is a CronJob. Nothing owns a Deployment or a CronJob,
+	// so there is no third hop to look for.
+	var above *metav1.OwnerReference
+
+	switch controller.Kind {
+	case "ReplicaSet":
+		replicaSet, err := client.AppsV1().ReplicaSets(namespace).Get(ctx, controller.Name, metav1.GetOptions{})
+		if err != nil {
+			logger.DebugContext(ctx, "graph owner chain stopped at the replicaset",
+				slog.String("name", controller.Name), slog.String("error", err.Error()))
+			return chain
+		}
+		above = controllerOf(replicaSet.OwnerReferences)
+
+	case "Job":
+		// Without this a pod from a scheduled task showed its Job and stopped,
+		// leaving the thing that actually schedules it off the map.
+		job, err := client.BatchV1().Jobs(namespace).Get(ctx, controller.Name, metav1.GetOptions{})
+		if err != nil {
+			logger.DebugContext(ctx, "graph owner chain stopped at the job",
+				slog.String("name", controller.Name), slog.String("error", err.Error()))
+			return chain
+		}
+		above = controllerOf(job.OwnerReferences)
+
+	default:
 		return chain
 	}
 
-	replicaSet, err := client.AppsV1().ReplicaSets(namespace).Get(ctx, controller.Name, metav1.GetOptions{})
-	if err != nil {
-		logger.DebugContext(ctx, "graph owner chain stopped at the replicaset",
-			slog.String("name", controller.Name), slog.String("error", err.Error()))
-		return chain
-	}
-
-	if above := controllerOf(replicaSet.OwnerReferences); above != nil {
+	if above != nil {
 		chain = append(chain, domain.OwnerReference{Kind: above.Kind, Name: above.Name, Controller: true})
 	}
 	return chain
@@ -202,20 +223,60 @@ func controllerOf(owners []metav1.OwnerReference) *metav1.OwnerReference {
 // every bit as much a dependency as one mounted at a path — and it is the one
 // people forget, since nothing in the pod's volume list mentions it.
 func attachedRefs(pod *corev1.Pod) []domain.AttachedRef {
+	return attachedFromSpec(&pod.Spec)
+}
+
+// attachedFromSpec lists what a PodSpec consumes, whether it came from a
+// running pod or from the template a workload creates them with.
+func attachedFromSpec(spec *corev1.PodSpec) []domain.AttachedRef {
 	var refs []domain.AttachedRef
 
-	for _, volume := range pod.Spec.Volumes {
+	for _, volume := range spec.Volumes {
 		switch {
 		case volume.ConfigMap != nil:
-			refs = append(refs, domain.AttachedRef{Kind: domain.GraphConfig, Name: volume.ConfigMap.Name, Via: mountPath(pod, volume.Name)})
+			refs = append(refs, domain.AttachedRef{Kind: domain.GraphConfig, Name: volume.ConfigMap.Name, Via: mountPath(spec, volume.Name)})
 		case volume.Secret != nil:
-			refs = append(refs, domain.AttachedRef{Kind: domain.GraphSecret, Name: volume.Secret.SecretName, Via: mountPath(pod, volume.Name)})
+			refs = append(refs, domain.AttachedRef{Kind: domain.GraphSecret, Name: volume.Secret.SecretName, Via: mountPath(spec, volume.Name)})
 		case volume.PersistentVolumeClaim != nil:
-			refs = append(refs, domain.AttachedRef{Kind: domain.GraphClaim, Name: volume.PersistentVolumeClaim.ClaimName, Via: mountPath(pod, volume.Name)})
+			refs = append(refs, domain.AttachedRef{Kind: domain.GraphClaim, Name: volume.PersistentVolumeClaim.ClaimName, Via: mountPath(spec, volume.Name)})
+
+		case volume.Projected != nil:
+			// A PROJECTED VOLUME IS SEVERAL SOURCES IN ONE MOUNT, and it is
+			// how a great many pods actually read their configuration — a
+			// service-account token, a CA bundle and a ConfigMap under one
+			// path. Matching only on `volume.ConfigMap` missed every one of
+			// them, so those dependencies were invisible.
+			for _, source := range volume.Projected.Sources {
+				if source.ConfigMap != nil {
+					refs = append(refs, domain.AttachedRef{Kind: domain.GraphConfig, Name: source.ConfigMap.Name, Via: mountPath(spec, volume.Name)})
+				}
+				if source.Secret != nil {
+					refs = append(refs, domain.AttachedRef{Kind: domain.GraphSecret, Name: source.Secret.Name, Via: mountPath(spec, volume.Name)})
+				}
+			}
+
+		case volume.Ephemeral != nil:
+			// A generic ephemeral volume creates a PVC named for the pod and
+			// the volume. It is storage the pod depends on like any other, and
+			// the name is the one that will appear in the namespace.
+			refs = append(refs, domain.AttachedRef{Kind: domain.GraphClaim, Name: volume.Name, Via: mountPath(spec, volume.Name)})
+
+		case volume.CSI != nil && volume.CSI.NodePublishSecretRef != nil:
+			// A secrets-store driver reads its credentials from here, and a
+			// pod whose CSI secret is missing fails to start exactly as one
+			// with a missing mount does.
+			refs = append(refs, domain.AttachedRef{Kind: domain.GraphSecret, Name: volume.CSI.NodePublishSecretRef.Name, Via: mountPath(spec, volume.Name)})
 		}
 	}
 
-	for _, container := range append(pod.Spec.InitContainers, pod.Spec.Containers...) {
+	// IMAGE PULL SECRETS ARE A DEPENDENCY, and one of the few whose absence
+	// stops a pod before any of its own configuration is even read. Nothing in
+	// the volume list mentions them.
+	for _, pull := range spec.ImagePullSecrets {
+		refs = append(refs, domain.AttachedRef{Kind: domain.GraphSecret, Name: pull.Name, Via: "pulls images"})
+	}
+
+	for _, container := range append(spec.InitContainers, spec.Containers...) {
 		for _, source := range container.EnvFrom {
 			if source.ConfigMapRef != nil {
 				refs = append(refs, domain.AttachedRef{Kind: domain.GraphConfig, Name: source.ConfigMapRef.Name, Via: "environment"})
@@ -239,15 +300,15 @@ func attachedRefs(pod *corev1.Pod) []domain.AttachedRef {
 
 	// The service account is a dependency the pod did not ask for in its
 	// volumes and cannot run without.
-	if name := pod.Spec.ServiceAccountName; name != "" && name != "default" {
+	if name := spec.ServiceAccountName; name != "" && name != "default" {
 		refs = append(refs, domain.AttachedRef{Kind: domain.GraphServiceAccount, Name: name, Via: "runs as"})
 	}
 	return refs
 }
 
 // mountPath finds where a volume is mounted, for the edge label.
-func mountPath(pod *corev1.Pod, volume string) string {
-	for _, container := range append(pod.Spec.InitContainers, pod.Spec.Containers...) {
+func mountPath(spec *corev1.PodSpec, volume string) string {
+	for _, container := range append(spec.InitContainers, spec.Containers...) {
 		for _, mount := range container.VolumeMounts {
 			if mount.Name == volume {
 				return mount.MountPath
@@ -289,20 +350,24 @@ func (a *Adapter) WorkloadGraphSources(ctx context.Context, id domain.ClusterID,
 		Healthy: allHealthy(pods),
 	}
 
-	// FROM ONE POD'S SPEC, not from the workload's template. Reading the
-	// template means a typed read per workload kind — six of them, each with
-	// its own path to a PodSpec — where any running pod carries the template
-	// already resolved. A workload with no pods has nothing attached to show,
-	// which is the honest answer for something scaled to zero.
-	if len(pods) > 0 {
-		raw, err := client.CoreV1().Pods(namespace.String()).
-			Get(ctx, pods[0].Name(), metav1.GetOptions{})
-		if err == nil {
-			input.Attached = attachedRefs(raw)
-			input.Owner = ownerChainAbove(ctx, client, namespace.String(), kind, name, a.logger)
-		} else {
-			input.Unreadable = append(input.Unreadable, "the pod template")
-		}
+	// FROM THE WORKLOAD'S OWN TEMPLATE. See podTemplateOf for why not from a
+	// running pod: a CronJob between runs has none to sample, and a pod left
+	// from a previous revision carries the old one.
+	if spec, err := podTemplateOf(ctx, client, namespace.String(), kind, name); err == nil {
+		input.Attached = attachedFromSpec(spec)
+	} else {
+		input.Unreadable = append(input.Unreadable, "the pod template")
+		a.logger.DebugContext(ctx, "graph pod template unavailable",
+			slog.String("workload", name), slog.String("error", err.Error()))
+	}
+
+	input.Owner = ownerChainAbove(ctx, client, namespace.String(), kind, name, a.logger)
+
+	// A CronJob's pods belong to the Jobs it created, not to the CronJob, so
+	// the map needs that tier to draw the relationship Kubernetes actually
+	// has — and to say which run each pod came from.
+	if kind == domain.WorkloadCronJob {
+		input.Intermediates = jobsOf(ctx, client, namespace.String(), name, pods, a.logger)
 	}
 
 	var (
@@ -383,4 +448,108 @@ func allHealthy(pods []domain.Pod) bool {
 		}
 	}
 	return true
+}
+
+// podTemplateOf reads the PodSpec a workload creates its pods from.
+//
+// FROM THE WORKLOAD ITSELF, NOT FROM A RUNNING POD. Sampling a pod was
+// cheaper — one read instead of a typed one per kind — and wrong twice over:
+// a CronJob between runs and a Deployment scaled to zero have no pod to
+// sample, so their ConfigMaps and Secrets simply did not appear; and a pod
+// left over from a previous revision carries the OLD template, so the map
+// would name the config the workload used to read rather than the one it
+// reads now.
+//
+// A CronJob nests one level deeper than the rest — its template is inside the
+// job template — which is the sort of detail that is invisible until somebody
+// asks why their scheduled task shows no configuration.
+func podTemplateOf(ctx context.Context, client kubernetes.Interface, namespace string, kind domain.WorkloadKind, name string) (*corev1.PodSpec, error) {
+	switch kind {
+	case domain.WorkloadDeployment:
+		found, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		return &found.Spec.Template.Spec, nil
+
+	case domain.WorkloadStatefulSet:
+		found, err := client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		return &found.Spec.Template.Spec, nil
+
+	case domain.WorkloadDaemonSet:
+		found, err := client.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		return &found.Spec.Template.Spec, nil
+
+	case domain.WorkloadReplicaSet:
+		found, err := client.AppsV1().ReplicaSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		return &found.Spec.Template.Spec, nil
+
+	case domain.WorkloadJob:
+		found, err := client.BatchV1().Jobs(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		return &found.Spec.Template.Spec, nil
+
+	case domain.WorkloadCronJob:
+		found, err := client.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		return &found.Spec.JobTemplate.Spec.Template.Spec, nil
+
+	default:
+		return nil, fmt.Errorf("no pod template for kind %q", kind)
+	}
+}
+
+// jobsOf finds the Jobs a CronJob created, and which pods belong to each.
+func jobsOf(ctx context.Context, client kubernetes.Interface, namespace, cronJob string, pods []domain.Pod, logger *slog.Logger) []domain.IntermediateRef {
+	list, err := client.BatchV1().Jobs(namespace).
+		List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
+	if err != nil {
+		// The pods are already known; without the Jobs they simply hang off
+		// the CronJob, which is less precise rather than wrong.
+		logger.DebugContext(ctx, "graph could not read the cronjob's jobs",
+			slog.String("cronjob", cronJob), slog.String("error", err.Error()))
+		return nil
+	}
+
+	byPod := make(map[string]string, len(pods))
+	for _, pod := range pods {
+		for _, owner := range pod.Owners() {
+			if owner.Kind == "Job" {
+				byPod[pod.Name()] = owner.Name
+			}
+		}
+	}
+
+	var refs []domain.IntermediateRef
+	for i := range list.Items {
+		job := &list.Items[i]
+		if !ownedBy(job.OwnerReferences, "CronJob", cronJob) {
+			continue
+		}
+
+		ref := domain.IntermediateRef{Kind: "Job", Name: job.Name}
+		for pod, owner := range byPod {
+			if owner == job.Name {
+				ref.Pods = append(ref.Pods, pod)
+			}
+		}
+
+		// A Job with no pods left is still worth drawing: a completed run
+		// whose pods were reaped is part of the history the map shows.
+		refs = append(refs, ref)
+	}
+	return refs
 }

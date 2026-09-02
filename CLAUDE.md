@@ -184,6 +184,30 @@ Four rules there are load-bearing and were each found the hard way:
   template, so every replica reads the same ConfigMap; an edge per pod draws
   one dependency three times and says nothing extra.
 
+**A CronJob does not own pods.** It owns Jobs and those own pods, so its map
+carries the Job tier between them — anything else draws a relationship
+Kubernetes does not have, and loses the only thing that says which run a pod
+belongs to. `ListPodsForWorkload` finds them by **ownerReference, not by the
+`job-name` label**: the label is just a label, and a pod relabelled by hand
+would be claimed by a Job that never created it.
+
+**Attached resources come from the workload's own template, never from a
+running pod.** Sampling a pod is one read instead of a typed one per kind, and
+wrong twice: a CronJob between runs and a Deployment scaled to zero have no pod
+to sample, so their configuration did not appear at all; and a pod left from a
+previous revision carries the OLD template. A CronJob nests one level deeper
+than the rest — `spec.jobTemplate.spec.template.spec`.
+
+**What counts as a dependency is wider than the volume list.** `attachedFromSpec`
+reads volumes, **projected volume sources** (how most pods actually mount a CA
+bundle beside a ConfigMap), `envFrom` and `valueFrom`, generic **ephemeral**
+volumes, a CSI driver's `nodePublishSecretRef`, and **imagePullSecrets** — the
+last being one of the few whose absence stops a pod before its own
+configuration is read. Init containers count, because one that cannot find its
+Secret stops the pod before the application starts. The `default` service
+account is deliberately not drawn: every pod has one, so it would add a box to
+every map that distinguishes nothing.
+
 **The layout is dagre's, and that is deliberate.** `web/src/lib/graphLayout.ts`
 hand-rolled a layered layout and an orthogonal edge router for several
 iterations, and every fix traded one geometric case for another — siblings

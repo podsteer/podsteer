@@ -301,6 +301,17 @@ func (a *Adapter) ListPodsOnNode(ctx context.Context, id domain.ClusterID, nodeN
 	return pods, nil
 }
 
+// ownedBy reports whether an owner of the given kind and name controls this
+// object.
+func ownedBy(owners []metav1.OwnerReference, kind, name string) bool {
+	for _, owner := range owners {
+		if owner.Kind == kind && owner.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error) {
 	client, err := a.factory.clientFor(id)
 	if err != nil {
@@ -380,10 +391,57 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 		}
 		podList.Items = filteredPods
 
-	case domain.WorkloadJob, domain.WorkloadCronJob:
-		// Jobs and CronJobs don't have the same pod ownership model
-		// For now, return empty list
-		return []domain.Pod{}, nil
+	case domain.WorkloadJob:
+		// BY OWNER REFERENCE, not by the `job-name` label. The label is set by
+		// the Job controller and is the usual shortcut, but it is also just a
+		// label: anything may carry it, and a pod relabelled by hand would be
+		// claimed by a Job that never created it. The ownerReference is what
+		// the controller itself uses to decide what is its.
+		all, err := client.CoreV1().Pods(namespace.String()).
+			List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
+		if err != nil {
+			return nil, classify(fmt.Sprintf("listing pods for job %q", name), err)
+		}
+
+		podList = &corev1.PodList{}
+		for i := range all.Items {
+			if ownedBy(all.Items[i].OwnerReferences, "Job", name) {
+				podList.Items = append(podList.Items, all.Items[i])
+			}
+		}
+
+	case domain.WorkloadCronJob:
+		// TWO HOPS. A CronJob owns Jobs and a Job owns Pods; nothing links a
+		// CronJob to a pod directly, which is why this used to return nothing
+		// at all and a CronJob's map drew a box over empty space.
+		jobs, err := client.BatchV1().Jobs(namespace.String()).
+			List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
+		if err != nil {
+			return nil, classify(fmt.Sprintf("listing jobs for cronjob %q", name), err)
+		}
+
+		owned := make(map[string]bool)
+		for i := range jobs.Items {
+			if ownedBy(jobs.Items[i].OwnerReferences, "CronJob", name) {
+				owned[jobs.Items[i].Name] = true
+			}
+		}
+
+		all, err := client.CoreV1().Pods(namespace.String()).
+			List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
+		if err != nil {
+			return nil, classify(fmt.Sprintf("listing pods for cronjob %q", name), err)
+		}
+
+		podList = &corev1.PodList{}
+		for i := range all.Items {
+			for _, owner := range all.Items[i].OwnerReferences {
+				if owner.Kind == "Job" && owned[owner.Name] {
+					podList.Items = append(podList.Items, all.Items[i])
+					break
+				}
+			}
+		}
 
 	default:
 		return nil, fmt.Errorf("unsupported workload kind: %s", kind)

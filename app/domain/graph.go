@@ -387,6 +387,14 @@ type WorkloadGraphInput struct {
 	// zero Deployment, or a CronJob between runs — and draws a workload with
 	// nothing under it rather than an error.
 	Pods []Pod
+	// Intermediates are the controllers BETWEEN the workload and its pods: the
+	// Jobs a CronJob has created.
+	//
+	// A CronJob does not own pods. It owns Jobs, and those own pods, so a map
+	// that hung pods straight off the CronJob would draw a relationship
+	// Kubernetes does not have — and would lose the only thing that says which
+	// run a pod belongs to.
+	Intermediates []IntermediateRef
 	// Services and Ingresses in the namespace, filtered here.
 	Services  []ServiceRef
 	Ingresses []IngressRef
@@ -396,6 +404,14 @@ type WorkloadGraphInput struct {
 	Attached []AttachedRef
 	// Unreadable names sources that failed.
 	Unreadable []string
+}
+
+// IntermediateRef is a controller between a workload and its pods.
+type IntermediateRef struct {
+	Kind string
+	Name string
+	// Pods names the pods this one owns.
+	Pods []string
 }
 
 // NewWorkloadGraph assembles the map around a workload.
@@ -422,6 +438,22 @@ func NewWorkloadGraph(input WorkloadGraphInput) PodGraph {
 
 	graph.addOwners(input.Owner, subjectID, input.Namespace.String())
 
+	// The controllers between, when there are any, and which pod belongs to
+	// which of them.
+	parentOf := make(map[string]string)
+	for _, mid := range input.Intermediates {
+		id := strings.ToLower(mid.Kind) + "/" + mid.Name
+		graph.Nodes = append(graph.Nodes, GraphNode{
+			ID: id, Kind: GraphReplicaSet, APIKind: mid.Kind, Name: mid.Name,
+			Namespace: input.Namespace.String(), Tier: TierOwner, Healthy: true,
+		})
+		graph.Edges = append(graph.Edges, GraphEdge{From: subjectID, To: id, Label: "creates"})
+
+		for _, pod := range mid.Pods {
+			parentOf[pod] = id
+		}
+	}
+
 	// The pods, and their containers under them.
 	for _, pod := range input.Pods {
 		podID := "pod/" + pod.Name()
@@ -435,7 +467,13 @@ func NewWorkloadGraph(input WorkloadGraphInput) PodGraph {
 			Detail:    string(pod.Phase()),
 			Healthy:   pod.IsHealthy(),
 		})
-		graph.Edges = append(graph.Edges, GraphEdge{From: subjectID, To: podID, Label: "manages"})
+		// From whatever actually created it: the Job for a CronJob's pods, the
+		// workload itself for everything else.
+		from := subjectID
+		if parent, ok := parentOf[pod.Name()]; ok {
+			from = parent
+		}
+		graph.Edges = append(graph.Edges, GraphEdge{From: from, To: podID, Label: "manages"})
 
 		// CONTAINERS ARE KEYED BY POD, unlike a pod's own map. Every replica
 		// of a Deployment runs containers with the same names, so keying on

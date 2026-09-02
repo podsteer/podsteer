@@ -344,3 +344,56 @@ func TestAWorkloadWithNoPodsStillDraws(t *testing.T) {
 		t.Errorf("detail is %q; it should say the workload has none", subject.Detail)
 	}
 }
+
+func TestACronJobReachesItsPodsThroughItsJobs(t *testing.T) {
+	// A CRONJOB DOES NOT OWN PODS. It owns Jobs, and those own pods. Hanging
+	// pods straight off the CronJob would draw a relationship Kubernetes does
+	// not have, and would lose the only thing that says which run a pod
+	// belongs to.
+	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
+		Kind: "CronJob", Name: "nightly", Namespace: "default",
+		Pods: []domain.Pod{
+			graphPod(t, "nightly-28-abc", "default", nil),
+			graphPod(t, "nightly-29-def", "default", nil),
+		},
+		Intermediates: []domain.IntermediateRef{
+			{Kind: "Job", Name: "nightly-28", Pods: []string{"nightly-28-abc"}},
+			{Kind: "Job", Name: "nightly-29", Pods: []string{"nightly-29-def"}},
+		},
+	})
+
+	if !hasEdge(graph, "cronjob/nightly", "job/nightly-28") {
+		t.Error("the cronjob does not reach the job it created")
+	}
+	if !hasEdge(graph, "job/nightly-28", "pod/nightly-28-abc") {
+		t.Error("the job does not reach its own pod")
+	}
+	if hasEdge(graph, "cronjob/nightly", "pod/nightly-28-abc") {
+		t.Error("a pod was hung directly off the cronjob, skipping its job")
+	}
+}
+
+func TestAJobWithNoPodsLeftIsStillDrawn(t *testing.T) {
+	// A completed run whose pods were reaped is part of the history the map
+	// shows: dropping it would make a CronJob look like it had never run.
+	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
+		Kind: "CronJob", Name: "nightly", Namespace: "default",
+		Intermediates: []domain.IntermediateRef{{Kind: "Job", Name: "nightly-27"}},
+	})
+
+	if _, drawn := nodeIDs(graph)["job/nightly-27"]; !drawn {
+		t.Error("a job whose pods have been reaped was dropped from the map")
+	}
+}
+
+func TestAWorkloadThatOwnsItsPodsDirectlyStillDoes(t *testing.T) {
+	// Everything but a CronJob owns its pods, and must not grow a tier.
+	graph := domain.NewWorkloadGraph(domain.WorkloadGraphInput{
+		Kind: "DaemonSet", Name: "agent", Namespace: "default",
+		Pods: []domain.Pod{graphPod(t, "agent-xyz", "default", nil)},
+	})
+
+	if !hasEdge(graph, "daemonset/agent", "pod/agent-xyz") {
+		t.Error("the daemonset does not reach its pod directly")
+	}
+}
