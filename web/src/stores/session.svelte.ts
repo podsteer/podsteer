@@ -1316,6 +1316,25 @@ export class ClusterSession {
     await this.#loadManifest(this.selectedName, this.selectedNamespace)
   }
 
+  /**
+   * Puts the values back behind their placeholders.
+   *
+   * THERE WAS NO WAY BACK, which was an oversight rather than a policy:
+   * revealing swapped the Reveal control for nothing, so the only way to
+   * re-mask a Secret was to close the panel and open it again. Everything
+   * else about revealing a value here says it should be re-hideable —
+   * including the reveal on an environment variable, which hides itself.
+   *
+   * Not an audited read: masking asks the API server for the same object with
+   * the values replaced by their sizes, which is what an unprivileged read
+   * looks like anyway.
+   */
+  hideManifestSecrets = async (): Promise<void> => {
+    if (!this.selectedName || !this.secretsRevealed) return
+    this.secretsRevealed = false
+    await this.#loadManifest(this.selectedName, this.selectedNamespace)
+  }
+
   async #loadManifest(name: string, namespace: string): Promise<void> {
     this.manifestStatus = 'loading'
     try {

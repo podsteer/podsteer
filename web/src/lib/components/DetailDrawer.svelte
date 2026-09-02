@@ -60,6 +60,7 @@
     Maximize2,
     TriangleAlert,
     Eye,
+    EyeOff,
     Plug,
     Loader,
   } from '@lucide/svelte'
@@ -104,6 +105,7 @@
   const isPod = $derived(session.selectedKindId === 'core/v1/pods')
 
   const isEvent = $derived(session.selectedKindId === 'core/v1/events')
+  const isSecret = $derived(session.selectedKindId === 'core/v1/secrets')
 
   /**
    * The manifest as shown, which is not always the manifest as fetched.
@@ -603,6 +605,19 @@
           title="Read this Secret's values. This is an audited read."
           onclick={() => session.revealManifestSecrets()}
         />
+      {:else if isSecret && session.secretsRevealed}
+        <!--
+          And the way back. Revealing used to replace this control with
+          nothing, so re-masking a Secret meant closing the panel and opening
+          it again — an oversight rather than a policy, and one the reveal on
+          an environment variable does not share.
+        -->
+        <ToolbarButton
+          icon={EyeOff}
+          label="Hide values"
+          title="Put the values back behind their placeholders"
+          onclick={() => session.hideManifestSecrets()}
+        />
       {/if}
       <ToolbarToggle
         icon={Pencil}
@@ -632,7 +647,27 @@
   </YamlPane>
 {/snippet}
 
-<svelte:window onkeydown={onKeydown} />
+<!--
+  Masks a revealed Secret when the window stops being looked at — which in
+  practice is the moment somebody alt-tabs to start a screen share or accepts
+  a call. The same rule the environment-variable reveal follows.
+
+  NOT WHILE EDITING. Re-masking re-reads the manifest, so doing it under
+  somebody mid-edit would throw their work away to hide a value they are
+  deliberately working with. A revealed Secret behind an unsaved edit is the
+  one case where leaving it on screen is the lesser harm.
+
+  No timer, deliberately, unlike the environment-variable reveal: that hides
+  one value somebody glanced at, while this is a manifest being read, and
+  expiring it every thirty seconds would mean repeatedly re-asking — turning
+  one audited read into a dozen.
+-->
+<svelte:window
+  onkeydown={onKeydown}
+  onblur={() => {
+    if (isSecret && session.secretsRevealed && !editing) void session.hideManifestSecrets()
+  }}
+/>
 
 {#if session.selectedName}
   <!-- Scrim: dimmed, not blurred.

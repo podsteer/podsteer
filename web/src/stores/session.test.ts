@@ -23,6 +23,39 @@ function session(): ClusterSession {
   return new ClusterSession(cluster)
 }
 
+describe('a revealed Secret', () => {
+  it('can be put back, without closing the panel', async () => {
+    // THE GAP THIS FILLS. Revealing swapped the control for nothing, so the
+    // only way to re-mask a Secret was to close the panel and open it again
+    // — which is not a policy, it is a missing button, and the reveal on an
+    // environment variable does not share it.
+    const open = session()
+    open.selectedKindId = 'core/v1/secrets'
+    open.selectedName = 'db-secrets'
+
+    await open.revealManifestSecrets()
+    expect(open.secretsRevealed).toBe(true)
+
+    await open.hideManifestSecrets()
+    expect(open.secretsRevealed).toBe(false)
+  })
+
+  it('starts hidden on every object', async () => {
+    // A reveal is a decision about ONE object. Carrying it to the next is how
+    // a client ends up showing a value somebody unmasked in private on the
+    // object they open in a meeting.
+    const open = session()
+    open.selectedKindId = 'core/v1/secrets'
+
+    await open.openDetail('db-secrets', 'web')
+    await open.revealManifestSecrets()
+    expect(open.secretsRevealed).toBe(true)
+
+    await open.openDetail('other-secrets', 'web')
+    expect(open.secretsRevealed).toBe(false)
+  })
+})
+
 describe('opening an object that was not clicked', () => {
   let open: ClusterSession
 
