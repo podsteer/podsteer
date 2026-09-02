@@ -33,6 +33,7 @@
 </script>
 
 <script lang="ts">
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import type { Component } from 'svelte'
   import { Check, Copy, Eye, EyeOff, Link2, MoreVertical } from '@lucide/svelte'
 
@@ -97,7 +98,14 @@
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && open) openMenu = null
+    if (event.key !== 'Escape' || !open) return
+    // ONE ESCAPE, ONE LAYER. A menu open inside the detail drawer used to see
+    // one keystroke close the menu AND the drawer — and the drawer's Escape
+    // discards an unsaved YAML draft, so a keystroke aimed at a menu could
+    // throw somebody's work away. stopPropagation cannot help: every one of
+    // these listeners is on the window, so nothing propagates between them.
+    if (!escape?.owns()) return
+    openMenu = null
   }
 
   /**
@@ -120,6 +128,20 @@
     return () => {
       window.removeEventListener('pointerdown', onWindowPointerDown)
       window.removeEventListener('keydown', onKeydown)
+    }
+  })
+
+  /**
+   * Escape belongs to the innermost open layer. See $lib/escape.
+   */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
     }
   })
 </script>

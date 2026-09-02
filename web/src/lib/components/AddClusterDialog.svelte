@@ -13,6 +13,7 @@
   the same code that performs the write rather than by a second guess at it.
 -->
 <script lang="ts">
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
   import Button from './Button.svelte'
   import {
@@ -126,12 +127,26 @@
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && open) close()
+    if (event.key !== 'Escape' || !open) return
+    if (!escape?.owns()) return
+    close()
   }
 
   const canAdd = $derived(
     !busy && preview !== null && preview.added.length > 0 && preview.conflicts.length === 0,
   )
+
+  /** Escape belongs to the innermost open layer. See $lib/escape. */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
 </script>
 
 <svelte:window onkeydown={onKeydown} />

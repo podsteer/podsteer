@@ -332,6 +332,7 @@ export namespace wails {
 	export class ConditionRef {
 	    type: string;
 	    status: string;
+	    phase: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ConditionRef(source);
@@ -341,6 +342,7 @@ export namespace wails {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.type = source["type"];
 	        this.status = source["status"];
+	        this.phase = source["phase"];
 	    }
 	}
 	export class Consumer {

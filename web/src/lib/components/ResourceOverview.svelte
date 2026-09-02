@@ -699,6 +699,11 @@
     const asked = (conditions as Record<string, string>[]).map((condition) => ({
       type: condition.type,
       status: condition.status,
+      // The subject's own phase, because a finished pod carries Ready=False
+      // and ContainersReady=False for ever — correctly, since a container
+      // that has exited is not ready — and without it every healthy completed
+      // Job's panel showed two warnings.
+      phase: (status.phase as string) ?? '',
     }))
     // CLEARED BEFORE THE NEW ONES ARRIVE, and the reason is that the tones
     // are paired with the conditions BY INDEX. Opening pod A's drawer and

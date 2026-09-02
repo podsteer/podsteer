@@ -17,6 +17,7 @@
   it back.
 -->
 <script lang="ts">
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
   import type { Snippet } from 'svelte'
   import type { Component } from 'svelte'
@@ -43,8 +44,22 @@
   function onKeydown(event: KeyboardEvent): void {
     // Only when nothing nearer has claimed it — a search box with something in
     // it stops the event before it reaches here.
-    if (event.key === 'Escape' && open) onclose()
+    if (event.key !== 'Escape' || !open) return
+    if (!escape?.owns()) return
+    onclose()
   }
+
+  /** Escape belongs to the innermost open layer. See $lib/escape. */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
 </script>
 
 <svelte:window onkeydown={onKeydown} />

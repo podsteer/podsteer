@@ -396,6 +396,14 @@ func toApplicationInventory(inventory domain.ApplicationInventory) ApplicationIn
 type ConditionRef struct {
 	Type   string `json:"type"`
 	Status string `json:"status"`
+	// Phase is the subject's own phase, where it has one — a pod's.
+	//
+	// The only context the classification takes, and it takes it because a
+	// finished pod carries Ready=False and ContainersReady=False for ever,
+	// correctly, so a rule reading type and status alone put two warnings on
+	// the panel of every healthy completed Job. Empty for everything that has
+	// no phase, which is most kinds.
+	Phase string `json:"phase"`
 }
 
 // ResourceCount is how many objects of one kind a namespace holds.

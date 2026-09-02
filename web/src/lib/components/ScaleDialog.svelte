@@ -2,6 +2,7 @@
   Dialog for scaling a deployment or statefulset.
 -->
 <script lang="ts">
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
   import Button from './Button.svelte'
 
@@ -42,6 +43,7 @@
   function onKeydown(event: KeyboardEvent): void {
     if (!open) return
     if (event.key === 'Escape') {
+      if (!escape?.owns()) return
       onclose()
       return
     }
@@ -49,6 +51,18 @@
     if ((event.target as HTMLElement | null)?.closest('button, a, [role="button"]')) return
     handleSubmit()
   }
+
+  /** Escape belongs to the innermost open layer. See $lib/escape. */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
 </script>
 
 <svelte:window onkeydown={onKeydown} />

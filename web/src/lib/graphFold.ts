@@ -149,9 +149,6 @@ export function fold(graph: FoldableGraph, expanded: Set<string>): FoldedGraph {
 
   for (const group of groups) {
     if (expanded.has(group.id)) continue
-    const [parent, ...rest] = group.id.slice('fold/'.length).split('/')
-    void parent
-    void rest
 
     nodes.push({
       id: group.id,

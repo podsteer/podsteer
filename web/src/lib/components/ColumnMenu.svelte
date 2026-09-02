@@ -10,6 +10,7 @@
   leave rows nothing can identify them by.
 -->
 <script lang="ts">
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { preferences } from '$stores/preferences.svelte'
   import type { Column } from './DataTable.svelte'
   import { Columns3, RotateCcw, Pin } from '@lucide/svelte'
@@ -36,8 +37,25 @@
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') open = false
+    if (event.key !== 'Escape') return
+    // One Escape, one layer. See $lib/escape.
+    if (!escape?.owns()) return
+    open = false
   }
+
+  /**
+   * Escape belongs to the innermost open layer. See $lib/escape.
+   */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
 </script>
 
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onKeydown} />

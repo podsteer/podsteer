@@ -62,3 +62,28 @@ func TestUnknownIsNotAProblemBeingReported(t *testing.T) {
 		t.Fatalf("Ready=Unknown coloured %q", tone)
 	}
 }
+
+func TestAFinishedPodIsNotAFailingOne(t *testing.T) {
+	// TWO WARNINGS ON EVERY HEALTHY COMPLETED JOB, which is how a panel
+	// teaches people to stop reading it. A Succeeded pod carries Ready=False
+	// and ContainersReady=False for ever, correctly — a container that has
+	// exited is not ready — and by type and status alone both look like
+	// problems. Pod.IsHealthy already special-cases the same thing.
+	for _, conditionType := range []string{"Ready", "ContainersReady"} {
+		if tone := domain.ClassifyConditionOf(conditionType, "False", "Succeeded"); tone != domain.ConditionNormal {
+			t.Errorf("ClassifyConditionOf(%q, False, Succeeded) = %q, want no colour", conditionType, tone)
+		}
+	}
+
+	// Still a problem on a pod that is supposed to be running.
+	if tone := domain.ClassifyConditionOf("Ready", "False", "Running"); tone != domain.ConditionWarning {
+		t.Errorf("ClassifyConditionOf(Ready, False, Running) = %q, want a warning", tone)
+	}
+
+	// And a terminal pod's OTHER conditions are still worth colouring: only
+	// readiness is expected to be False once a pod has finished, so a pod
+	// that never got scheduled still says so.
+	if tone := domain.ClassifyConditionOf("PodScheduled", "False", "Failed"); tone != domain.ConditionWarning {
+		t.Errorf("ClassifyConditionOf(PodScheduled, False, Failed) = %q, want a warning", tone)
+	}
+}

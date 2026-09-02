@@ -9,6 +9,7 @@
   Action buttons in the header allow delete, scale, restart, and edit.
 -->
 <script lang="ts">
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import type { ClusterSession } from '$stores/session.svelte'
   import { WORKLOAD_KIND_BY_ID } from '$stores/session.svelte'
   import LogViewer from './LogViewer.svelte'
@@ -492,7 +493,12 @@
   })
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && session.selectedName) session.closeDetail()
+    if (event.key !== 'Escape' || !session.selectedName) return
+    // Only when nothing nearer holds it. A row menu open inside the drawer
+    // used to be closed by the same keystroke that closed the drawer — which
+    // ALSO stops an edit, and stopping an edit discards the draft.
+    if (!escape?.owns()) return
+    session.closeDetail()
   }
 
   const tabs: { id: Tab; label: string; icon: typeof Info; show: () => boolean }[] = [
@@ -563,6 +569,23 @@
     draggedWidth = null
     resizing = false
   }
+
+  /**
+   * The drawer's claim on Escape, so a menu opened inside it wins.
+   *
+   * It matters more here than anywhere: this Escape also stops an edit, and
+   * stopping an edit discards the draft.
+   */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!session.selectedName) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
 </script>
 
 <!--

@@ -187,7 +187,7 @@ func (b *BrowseAPI) NamespaceInventory(clusterID, namespace string) (NamespaceIn
 func (b *BrowseAPI) ClassifyConditions(conditions []ConditionRef) []string {
 	tones := make([]string, 0, len(conditions))
 	for _, condition := range conditions {
-		tones = append(tones, string(domain.ClassifyCondition(condition.Type, condition.Status)))
+		tones = append(tones, string(domain.ClassifyConditionOf(condition.Type, condition.Status, condition.Phase)))
 	}
 	return tones
 }

@@ -82,6 +82,44 @@ var affirmativeIsGood = map[string]bool{
 // reported; it is a problem being unreportable, and the row's own text says
 // so better than a colour would.
 func ClassifyCondition(conditionType, status string) ConditionTone {
+	return ClassifyConditionOf(conditionType, status, "")
+}
+
+// terminalPhases are the pod phases after which nothing is expected to run.
+//
+// A POD THAT FINISHED IS NOT A POD THAT FAILED, and forgetting that put two
+// warnings on the panel of every healthy completed Job. A Succeeded pod
+// carries Ready=False and ContainersReady=False for ever, correctly and by
+// design — a container that has exited is not ready — and read by type and
+// status alone both classify as problems.
+//
+// Pod.IsHealthy already special-cases this for exactly the same reason (see
+// CLAUDE.md). A panel that always has something to say is one people stop
+// reading, which is the cost of getting this wrong.
+var terminalPhases = map[string]bool{
+	"Succeeded": true,
+	"Failed":    true,
+}
+
+// readinessTypes are the conditions a terminal pod is entitled to report
+// False on. Anything else it says is still worth colouring: a pod that was
+// never scheduled and then failed is still reporting why.
+var readinessTypes = map[string]bool{
+	"Ready":           true,
+	"ContainersReady": true,
+}
+
+// ClassifyConditionOf is ClassifyCondition with the subject's phase, where
+// there is one.
+//
+// The phase is the only context this takes, and it takes it because the same
+// condition on the same kind means different things before and after the pod
+// has finished. Everything else stays a property of the type.
+func ClassifyConditionOf(conditionType, status, phase string) ConditionTone {
+	if terminalPhases[phase] && readinessTypes[conditionType] {
+		return ConditionNormal
+	}
+
 	switch status {
 	case "True":
 		if affirmativeIsBad[conditionType] {

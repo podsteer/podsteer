@@ -156,12 +156,28 @@
    * the same as everywhere else.
    */
   const flatTone = $derived.by(() => {
-    if (severity === null) return 'bg-primary'
+    if (crossed === 'critical') return 'bg-gauge-critical'
+    if (crossed === 'warn') return 'bg-gauge-warn'
+    return 'bg-primary'
+  })
+
+  /**
+   * Which line the SEVERITY has crossed, if any.
+   *
+   * Separate from the colour because the colour cannot be the only signal.
+   * In the default "against request" mode the number printed beside the bar
+   * is the request ratio while `severity` is the LIMIT ratio, so a container
+   * about to be throttled or killed announced itself by turning amber and in
+   * no other way — invisible to a red/green colour-blind reader, and absent
+   * entirely to a screen reader.
+   */
+  const crossed = $derived.by<'critical' | 'warn' | null>(() => {
+    if (severity === null) return null
 
     const lines = preferences.thresholdsFor(scope)
-    if (lines.criticalEnabled && severity >= lines.critical) return 'bg-gauge-critical'
-    if (lines.warnEnabled && severity >= lines.warn) return 'bg-gauge-warn'
-    return 'bg-primary'
+    if (lines.criticalEnabled && severity >= lines.critical) return 'critical'
+    if (lines.warnEnabled && severity >= lines.warn) return 'warn'
+    return null
   })
 </script>
 
@@ -210,6 +226,13 @@
     <span class="w-12 shrink-0 text-right tabular-nums text-on-surface-variant/70">
       {Math.round(percent)}%
     </span>
+    {#if crossed}
+      <!-- The colour says it too, and for most readers says it faster. This
+           is here because the colour cannot be the only place it is said. -->
+      <span class="sr-only">
+        {crossed === 'critical' ? 'over the critical threshold' : 'over the warning threshold'}
+      </span>
+    {/if}
   {:else if measured && absent}
     <!--
       Set in the muted colour and given no track of its own, so it reads as a

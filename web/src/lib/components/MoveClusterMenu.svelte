@@ -14,6 +14,7 @@
   contract the rest of the application's transient surfaces keep.
 -->
 <script lang="ts">
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import {
     DEFAULT_GROUP_ID,
     DEFAULT_PROJECT_ID,
@@ -104,7 +105,10 @@
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && open) open = false
+    if (event.key !== 'Escape' || !open) return
+    // One Escape, one layer. See $lib/escape.
+    if (!escape?.owns()) return
+    open = false
   }
 
   /**
@@ -119,6 +123,20 @@
     return () => {
       window.removeEventListener('keydown', onKeydown)
       window.removeEventListener('pointerdown', onPointerDown)
+    }
+  })
+
+  /**
+   * Escape belongs to the innermost open layer. See $lib/escape.
+   */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
     }
   })
 </script>

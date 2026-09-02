@@ -8,6 +8,7 @@
   no room below it for a dropdown to open into.
 -->
 <script lang="ts">
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import type { Component } from 'svelte'
   import { openURL } from '$lib/api/client'
   import { Share2, Mail, Copy, Check } from '@lucide/svelte'
@@ -84,8 +85,25 @@
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') open = false
+    if (event.key !== 'Escape') return
+    // One Escape, one layer. See $lib/escape.
+    if (!escape?.owns()) return
+    open = false
   }
+
+  /**
+   * Escape belongs to the innermost open layer. See $lib/escape.
+   */
+  let escape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (!open) return
+    const held = escapeLayer()
+    escape = held
+    return () => {
+      held.release()
+      escape = null
+    }
+  })
 </script>
 
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onKeydown} />
