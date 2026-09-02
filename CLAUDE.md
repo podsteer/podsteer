@@ -77,6 +77,12 @@ the cost of finding out is one refused request per connection.
 
 Three things to know before touching it:
 
+- **Anything rendering a pod TEMPLATE must read the object's own manifest,
+  never the watch store.** A ReplicaSet in the store has had its template
+  stripped to the container images — that is most of why watching it is worth
+  anything — so a panel sourcing a template from there would show a container
+  with no environment, no volumes and no probes, and would be right about the
+  images. The drawer already fetches the full manifest; use that.
 - **Every transform has a contract test, and they are not optional.** The
   stores hold stripped objects, so anything a mapper reads that its transform
   removes goes quietly blank on clusters where the watch happens to be serving
