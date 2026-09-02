@@ -97,10 +97,16 @@ ReplicaSet carries a whole pod template, which is not the intuition anybody
 starts with. Metrics can never be watched: `metrics.k8s.io` serves no watch
 verb, which sets the floor on what a refresh can cost.
 
-Off by default (`PODSTEER_LIVE_WATCH=true`). Off is not an approximation of
-the old behaviour — it is the same code path. `live_test.go` exercises the real
-streaming list against the current kubeconfig context, which the fake
-clientset cannot.
+On by default; `PODSTEER_LIVE_WATCH=false` is the way back, and it is not an
+approximation of the old behaviour — it is the same code path. One consequence
+worth knowing: a watch is a background stream, so an operator who set refresh
+to "manual only" still has one open once they have read a list. It carries
+only changes and is strictly less traffic than the polling it replaces, but it
+is a connection they did not press a button for.
+
+`live_test.go` exercises the real streaming list against the current
+kubeconfig context, which the fake clientset cannot — every other test in the
+package pins the fallback.
 
 ## The polled lists are coalesced, and it is a singleflight not a cache
 

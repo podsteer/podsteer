@@ -214,7 +214,7 @@ Everything is optional and prefixed `PODSTEER_`:
 | `PODSTEER_LOG_LEVEL`        | `info`                          | `debug`/`info`/`warn`/`error`                   |
 | `PODSTEER_LOG_SOURCE`       | `false`                         | Include source file and line                    |
 | `PODSTEER_UPDATE_CHECK`     | `true`                          | `false` disables the update check machine-wide  |
-| `PODSTEER_LIVE_WATCH`       | `false`                         | `true` watches pods instead of re-listing them  |
+| `PODSTEER_LIVE_WATCH`       | `true`                          | `false` re-lists pods instead of watching them  |
 
 &nbsp;
 

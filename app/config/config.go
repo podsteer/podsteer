@@ -63,12 +63,14 @@ type KubernetesConfig struct {
 	// LiveWatch mirrors a cluster's pods locally rather than re-listing them
 	// on every refresh.
 	//
-	// OFF UNTIL IT HAS BEEN RUN AGAINST REAL CLUSTERS. It changes how
-	// PodSteer talks to somebody's API server — one long-lived watch instead
-	// of a list every few seconds — and that is the kind of change that
-	// should arrive switchable and default-off for a release before it
-	// arrives as the default. Off is not an approximation of the old
-	// behaviour; it is the same code path, because the fallback IS that path.
+	// ON, AND SWITCHABLE. It changes how PodSteer talks to somebody's API
+	// server — one long-lived watch instead of a list every few seconds — so
+	// it keeps a way back, and `false` is not an approximation of the old
+	// behaviour but the same code path, because the fallback IS that path.
+	//
+	// It is safe as a default for the reason the whole design rests on: a
+	// read is never blocked on the store, and an account that may not watch
+	// degrades to polling on its own. See app/adapters/k8s/watch.go.
 	LiveWatch bool
 }
 
@@ -114,6 +116,7 @@ func Default() Config {
 			QPS:            50,
 			Burst:          100,
 			RequestTimeout: 30 * time.Second,
+			LiveWatch:      true,
 		},
 		Log: LogConfig{
 			Level: slog.LevelInfo,
