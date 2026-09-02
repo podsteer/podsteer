@@ -28,8 +28,11 @@
   import GitOpsBadge from './GitOpsBadge.svelte'
   import {
     preferences,
+    detailWidthBounds,
+    DEFAULT_DETAIL_FRACTION,
     DETAIL_MIN_REM,
     DETAIL_MAX_REM,
+    DETAIL_MAX_SHARE,
   } from '$stores/preferences.svelte'
   import DeleteDialog from './DeleteDialog.svelte'
   import ScaleDialog from './ScaleDialog.svelte'
@@ -424,6 +427,55 @@
     { id: 'events', label: 'Events', icon: Activity, show: () => !isEvent },
     { id: 'yaml', label: 'YAML', icon: FileCode, show: () => true },
   ]
+
+  // --- Resizing ------------------------------------------------------------
+  //
+  // The same gesture as the navigator's, mirrored: this panel is anchored to
+  // the right, so dragging its left edge LEFTWARD makes it wider.
+
+  let resizing = $state(false)
+  /**
+   * The width during a drag, in pixels, before it becomes a share.
+   *
+   * Pixels only while the pointer is down, because that is what a pointer
+   * gives: the moment the drag ends it is divided by the window width and
+   * stored as a share, which is what survives a different screen. Writing to
+   * preferences on every pointermove would serialise the whole preferences
+   * payload into a synchronous localStorage.setItem sixty times a second, and
+   * the gesture has one outcome worth keeping — where it ended.
+   */
+  let draggedWidth = $state<number | null>(null)
+
+  /** The root font size, since the panel's floor and ceiling are in rem. */
+  function rootFontSize(): number {
+    const size = parseFloat(getComputedStyle(document.documentElement).fontSize)
+    return Number.isFinite(size) && size > 0 ? size : 16
+  }
+
+  function startResize(event: PointerEvent): void {
+    event.preventDefault()
+    resizing = true
+    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  }
+
+  function onResizeMove(event: PointerEvent): void {
+    if (!resizing) return
+
+    // From the window's right edge to the pointer. Taken from the pointer's
+    // absolute position rather than from a delta against where the drag
+    // started: the two diverge as soon as a clamp bites, and the panel then
+    // stops following the pointer until it has been dragged all the way back.
+    const { min, max } = detailWidthBounds(window.innerWidth, rootFontSize())
+    draggedWidth = Math.min(max, Math.max(min, window.innerWidth - event.clientX))
+  }
+
+  function endResize(): void {
+    if (draggedWidth !== null && window.innerWidth > 0) {
+      preferences.setDetailWidth(draggedWidth / window.innerWidth)
+    }
+    draggedWidth = null
+    resizing = false
+  }
 </script>
 
 <!--
@@ -597,20 +649,54 @@
     A SHARE OF THE WINDOW, CLAMPED AT BOTH ENDS. The panel used to be a fixed
     44rem, which is about half a laptop and about a fifth of an ultrawide — and
     the complaint it answers is relative, because what matters is how much of
-    the list behind it is still readable.
+    the list behind it is still readable. A share is also what transfers
+    between people: the same setting means the same thing on a 13-inch laptop
+    and on a 34-inch monitor, which a pixel width does not.
 
     A share alone breaks in the other direction, which is what the clamp is
     for: a quarter of a small laptop is narrower than one row of this panel's
     own two columns, and half an ultrawide is a page of whitespace. `min` with
     90vw on top of that, so a very narrow window still shows the list is there.
+
+    In CSS rather than measured in JavaScript, so the panel keeps its share
+    when the window is resized without anything listening for it. A drag in
+    progress is the one time a pixel width is used — see draggedWidth.
   -->
   <aside
-    style="width: min(90vw, clamp({DETAIL_MIN_REM}rem, {preferences.detailWidthFraction *
-      100}vw, {DETAIL_MAX_REM}rem))"
+    style="width: {draggedWidth !== null
+      ? `${draggedWidth}px`
+      : `min(${DETAIL_MAX_SHARE * 100}vw, clamp(${DETAIL_MIN_REM}rem, ${
+          preferences.detailWidthFraction * 100
+        }vw, ${DETAIL_MAX_REM}rem))`}"
     class="fixed top-0 right-0 bottom-0 z-50 flex flex-col
            border-l border-outline-variant/60 bg-surface shadow-level-3"
     aria-label="Object details"
   >
+    <!--
+      Drag the edge to resize, the same gesture and the same handle as the
+      navigator on the other side of the window — one of these being
+      draggable and the other not would be two ideas about the same thing.
+
+      What is STORED is still a share, so a width chosen here means the same
+      on somebody else's screen. Double-click restores the default.
+    -->
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the detail panel"
+      tabindex="-1"
+      class="absolute top-0 -left-1 z-20 h-full w-2 cursor-col-resize
+             after:absolute after:top-0 after:left-1/2 after:h-full after:w-px
+             after:-translate-x-1/2 after:bg-transparent after:transition-colors
+             after:duration-100 hover:after:bg-primary/50 {resizing
+        ? 'after:w-0.5 after:bg-primary'
+        : ''}"
+      onpointerdown={startResize}
+      onpointermove={onResizeMove}
+      onpointerup={endResize}
+      onpointercancel={endResize}
+      ondblclick={() => preferences.setDetailWidth(DEFAULT_DETAIL_FRACTION)}
+    ></span>
     <!-- Header.
          The kind's own icon and a path, the same way the event pane addresses
          the object it is about — so a drawer says what it is holding before

@@ -18,6 +18,7 @@
     preferences,
     REFRESH_INTERVALS,
     DETAIL_MAX_REM,
+  DETAIL_MAX_SHARE,
   DETAIL_MIN_REM,
   DETAIL_WIDTHS,
   PAGE_SIZES,
@@ -124,6 +125,18 @@
   type SectionID = (typeof SECTIONS)[number]['id']
 
   let section = $state<SectionID>('refresh')
+
+  /**
+   * Whether the stored share is one of the presets.
+   *
+   * A tolerance rather than equality, because a third is 0.3333… and because
+   * a width set by dragging lands wherever the pointer was — within a
+   * percentage point of a preset is that preset as far as anybody looking at
+   * the panel is concerned.
+   */
+  function matchesPreset(fraction: number): boolean {
+    return Math.abs(preferences.detailWidthFraction - fraction) < 0.01
+  }
 
   /** Loads the history settings the first time Settings is opened. */
   $effect(() => {
@@ -414,7 +427,9 @@
               <h3 class="text-title-medium text-on-surface">Detail panel width</h3>
               <p class="mt-0.5 text-body-small text-on-surface-variant">
                 How much of the window the panel covers when an object is opened. Narrower
-                leaves more of the list readable behind it.
+                leaves more of the list readable behind it. A share rather than a size, so
+                it means the same on any screen — and the panel's own left edge can be
+                dragged to anything between, which is what these three set.
               </p>
 
               <div class="mt-3 flex gap-2">
@@ -422,11 +437,11 @@
                   <button
                     type="button"
                     onclick={() => preferences.setDetailWidth(choice.fraction)}
-                    aria-pressed={Math.abs(preferences.detailWidthFraction - choice.fraction) < 0.01}
+                    aria-pressed={matchesPreset(choice.fraction)}
                     title={choice.detail}
                     class="state-layer h-9 min-w-24 rounded-xs border px-4 text-label-large
                            transition-colors duration-150 ease-standard
-                           {Math.abs(preferences.detailWidthFraction - choice.fraction) < 0.01
+                           {matchesPreset(choice.fraction)
                              ? 'border-transparent bg-secondary-container text-on-secondary-container'
                              : 'border-outline text-on-surface-variant'}"
                   >
@@ -435,13 +450,24 @@
                 {/each}
               </div>
 
+              <!-- A dragged width lands between the presets, and none of them
+                   then reads as pressed. Saying what it currently is beats
+                   three unlit buttons, which look like the setting is unset. -->
+              {#if !DETAIL_WIDTHS.some((choice) => matchesPreset(choice.fraction))}
+                <p class="mt-2 text-body-small text-on-surface-variant">
+                  Currently {Math.round(preferences.detailWidthFraction * 100)}% of the
+                  window, set by dragging the panel's edge.
+                </p>
+              {/if}
+
               <!-- The clamp said out loud, because it is why a small window
                    may not visibly change when this does: a quarter of a narrow
                    laptop is already below the floor. -->
               <p class="mt-2 text-body-small text-on-surface-variant/70">
                 Clamped either way — never under {DETAIL_MIN_REM * 16}px, which is the
                 narrowest that still fits a label and its value, and never over
-                {DETAIL_MAX_REM * 16}px, past which a detail panel is mostly space.
+                {DETAIL_MAX_REM * 16}px or {DETAIL_MAX_SHARE * 100}% of the window,
+                whichever comes first.
               </p>
             </div>
 

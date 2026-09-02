@@ -92,9 +92,48 @@ export const DETAIL_WIDTHS = [
   { id: 'compact', label: 'Compact', fraction: 0.25, detail: 'About a quarter' },
 ] as const
 
+/**
+ * The share the panel opens at until somebody changes it.
+ *
+ * Half, which is what it already was on a laptop: it opened at a fixed 44rem,
+ * and 704 of a 1440-wide window is very close to this. Somebody who never
+ * touches the setting sees no change. It is also what a double-click on the
+ * panel's edge restores.
+ */
+export const DEFAULT_DETAIL_FRACTION = 0.5
+
 /** The detail panel's width bounds, in rem, applied whatever the share says. */
 export const DETAIL_MIN_REM = 26
 export const DETAIL_MAX_REM = 72
+
+/** The most of the window the panel may ever cover, dragged or not. */
+export const DETAIL_MAX_SHARE = 0.9
+
+/**
+ * What the panel may actually be, in pixels, on a window this wide.
+ *
+ * ONE FUNCTION FOR BOTH the resting width and a drag in progress. They have to
+ * agree exactly: a drag that could be released outside what the resting style
+ * allows would let go of the pointer and snap somewhere else, which reads as
+ * the application refusing the size rather than as a limit.
+ *
+ * rootFontSize is passed rather than assumed, because the bounds are in rem
+ * and a user who has scaled their interface up has scaled the floor up with
+ * it — the floor exists to fit a row of text, and that is what changed.
+ */
+export function detailWidthBounds(
+  windowWidth: number,
+  rootFontSize: number,
+): { min: number; max: number } {
+  const ceiling = windowWidth * DETAIL_MAX_SHARE
+  // The floor gives way to the ceiling on a very narrow window rather than
+  // the other way round: a panel wider than the window it is in has covered
+  // the list completely, and the whole point of the setting is what is left
+  // of the list.
+  const min = Math.min(DETAIL_MIN_REM * rootFontSize, ceiling)
+  const max = Math.max(min, Math.min(DETAIL_MAX_REM * rootFontSize, ceiling))
+  return { min, max }
+}
 
 const STORAGE_KEY = 'podsteer.preferences.v1'
 
@@ -361,10 +400,7 @@ const DEFAULTS: PersistedShape = {
   autoRefresh: true,
   navigatorCollapsed: false,
   navigatorWidth: 240,
-  // Half, which is what the panel already was on a laptop: it opened at a
-  // fixed 704px, and 704 of a 1440-wide window is very close to this. Somebody
-  // who never touches the setting sees no change.
-  detailWidthFraction: 0.5,
+  detailWidthFraction: DEFAULT_DETAIL_FRACTION,
   expandedCategories: [],
   findingsExpanded: false,
   wrapLines: true,
@@ -541,7 +577,12 @@ class Preferences {
    * window or reduce it to a sliver.
    */
   setDetailWidth = (fraction: number): void => {
-    this.detailWidthFraction = Math.min(0.75, Math.max(0.2, fraction))
+    // Sanity only. What the panel may actually be is decided per window by
+    // detailWidthBounds, in pixels — clamping the SHARE narrowly here as well
+    // would fight it: 90% of a small laptop is a legitimate drag and 0.9 is
+    // not a legitimate share of an ultrawide, and the same number cannot be
+    // wrong in one place and right in the other.
+    this.detailWidthFraction = Math.min(0.95, Math.max(0.05, fraction))
     this.#save()
   }
 
@@ -906,8 +947,8 @@ class Preferences {
       }
       if (
         typeof stored.detailWidthFraction === 'number' &&
-        stored.detailWidthFraction >= 0.2 &&
-        stored.detailWidthFraction <= 0.75
+        stored.detailWidthFraction >= 0.05 &&
+        stored.detailWidthFraction <= 0.95
       ) {
         this.detailWidthFraction = stored.detailWidthFraction
       }
