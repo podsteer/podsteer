@@ -111,18 +111,37 @@ func (s *WorkloadService) ListWorkloads(ctx context.Context, id domain.ClusterID
 // withPodMetrics attaches usage to pods, degrading silently when the cluster
 // serves no metrics API. See ClusterService.withNodeMetrics for why silently.
 func (s *WorkloadService) withPodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, pods []domain.Pod) []domain.Pod {
+	enriched, _ := podsWithUsage(ctx, s.metrics, s.logger, id, namespace, pods)
+	return enriched
+}
+
+// podsWithUsage attaches measured usage to pods and reports whether the
+// cluster answered at all.
+//
+// Shared by the two use cases that need pods with figures on them. The BOOLEAN
+// is the reason it is not simply a slice: zero usage on a cluster with no
+// metrics API is the absence of a measurement, and a caller that cannot tell
+// the two apart reports an unmeasured namespace as an idle one.
+func podsWithUsage(
+	ctx context.Context,
+	metrics ports.MetricsPort,
+	logger *slog.Logger,
+	id domain.ClusterID,
+	namespace domain.NamespaceName,
+	pods []domain.Pod,
+) ([]domain.Pod, bool) {
 	if len(pods) == 0 {
-		return pods
+		return pods, false
 	}
 
-	usage, err := s.metrics.PodMetrics(ctx, id, namespace)
+	usage, err := metrics.PodMetrics(ctx, id, namespace)
 	if err != nil {
 		if !errors.Is(err, ports.ErrMetricsUnavailable) {
-			s.logger.WarnContext(ctx, "pod metrics unavailable",
+			logger.WarnContext(ctx, "pod metrics unavailable",
 				slog.String("cluster", id.String()),
 				slog.String("error", err.Error()))
 		}
-		return pods
+		return pods, false
 	}
 
 	enriched := make([]domain.Pod, 0, len(pods))
@@ -133,7 +152,7 @@ func (s *WorkloadService) withPodMetrics(ctx context.Context, id domain.ClusterI
 		enriched = append(enriched, pod)
 	}
 
-	return enriched
+	return enriched, true
 }
 
 // PodGraph returns the dependency chain around one pod.

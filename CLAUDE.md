@@ -58,6 +58,35 @@ section to the UI is an entry there, not a frontend change. Custom resources
 are appended per cluster by `DiscoverCustomKinds` — never globally, because two
 clusters run different operators.
 
+## Counting is `limit=1`, never `len(list)`
+
+Kubernetes has no endpoint that reports how many objects a namespace holds, and
+two places here need one: the namespace list's Pods column and the namespace
+panel's Contents section.
+
+`ResourcePort.CountResources` asks for **one** object and reads
+`metadata.remainingItemCount` — the server's own count of what it did not send.
+One request, constant payload, and no Secret's contents cross the wire to
+arrive at a number. `len(ListTable(...))` would be all three of those things
+wrong, and would silently cap at `tableListLimit`.
+
+Two rules that fall out of it, both tested:
+
+- **A refused count is not zero.** An account with `list pods` and without
+  `list secrets` must be told the Secrets count is unknown. `ResourceCount`
+  carries `Unreadable` for that, and the UI renders it *instead of* a number.
+- **The total is of built-in kinds.** Custom resources are excluded by
+  `domain.CountableKinds` because their number is unbounded — a cluster with
+  200 CRDs would make one panel 200 requests — so anything showing the total
+  says what it counted.
+
+The namespace LIST is different again: it counts pods by listing them
+cluster-wide once (`ClusterService.ListNamespaceSummaries`), because a count
+per namespace would be one request per row. That is the same cost the pod list
+already pays with the namespace filter on "all", and it is why
+`ListNamespaces` — which feeds the filter — stays a cheap read of names and is
+a separate call.
+
 ## The overview is analysis, and it lives in the domain
 
 `app/domain/overview.go` turns a cluster snapshot into a verdict: grouped

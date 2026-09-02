@@ -25,6 +25,7 @@ func newClusterService(
 	service, err := application.NewClusterService(application.ClusterServiceDeps{
 		Kubeconfig: kubeconfig,
 		Cluster:    kubernetes,
+		Workloads:  kubernetes,
 		Metrics:    kubernetes,
 		Events:     events,
 		Registry:   registry,
@@ -45,6 +46,7 @@ func TestNewClusterServiceRejectsMissingDependencies(t *testing.T) {
 	full := application.ClusterServiceDeps{
 		Kubeconfig: &fakeKubeconfig{},
 		Cluster:    shared,
+		Workloads:  shared,
 		Metrics:    shared,
 		Events:     &recordingPublisher{},
 		Registry:   application.NewRegistry(),
@@ -54,6 +56,7 @@ func TestNewClusterServiceRejectsMissingDependencies(t *testing.T) {
 	tests := map[string]func(*application.ClusterServiceDeps){
 		"no kubeconfig port": func(d *application.ClusterServiceDeps) { d.Kubeconfig = nil },
 		"no cluster port":    func(d *application.ClusterServiceDeps) { d.Cluster = nil },
+		"no workload port":   func(d *application.ClusterServiceDeps) { d.Workloads = nil },
 		"no metrics port":    func(d *application.ClusterServiceDeps) { d.Metrics = nil },
 		"no event publisher": func(d *application.ClusterServiceDeps) { d.Events = nil },
 		"no registry":        func(d *application.ClusterServiceDeps) { d.Registry = nil },

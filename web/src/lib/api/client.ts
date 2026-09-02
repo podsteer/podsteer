@@ -17,6 +17,7 @@ import {
   Disconnect as bindDisconnect,
   ListClusters as bindListClusters,
   ListNamespaces as bindListNamespaces,
+  ListNamespaceSummaries as bindListNamespaceSummaries,
   ListNodes as bindListNodes,
   PreviewKubeconfig as bindPreviewKubeconfig,
   ReadKubeconfigFile as bindReadKubeconfigFile,
@@ -72,6 +73,8 @@ export type Cluster = wails.Cluster
 export type KubeconfigMerge = wails.KubeconfigMerge
 /** A namespace in a connected cluster. */
 export type Namespace = wails.Namespace
+
+export type NamespaceSummary = wails.NamespaceSummary
 /** A pod, with derived status and measured usage. */
 export type Pod = wails.Pod
 /** One container within a pod. */
@@ -212,6 +215,16 @@ export function connections(): Promise<Cluster[]> {
 /** Lists the namespaces of a connected cluster. */
 export function listNamespaces(clusterId: string): Promise<Namespace[]> {
   return call(() => bindListNamespaces(clusterId))
+}
+
+/**
+ * Lists every namespace with what is running in it.
+ *
+ * Separate from listNamespaces, which feeds the namespace filter and stays a
+ * cheap read of names: this one counts pods, which means listing them.
+ */
+export function listNamespaceSummaries(clusterId: string): Promise<NamespaceSummary[]> {
+  return call(() => bindListNamespaceSummaries(clusterId))
 }
 
 /** Lists the nodes of a connected cluster, with usage where available. */

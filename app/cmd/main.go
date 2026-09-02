@@ -128,6 +128,7 @@ func run() error {
 	clusterService, err := application.NewClusterService(application.ClusterServiceDeps{
 		Kubeconfig: kubernetes,
 		Cluster:    kubernetes,
+		Workloads:  kubernetes,
 		Metrics:    kubernetes,
 		Events:     desktop,
 		Registry:   registry,

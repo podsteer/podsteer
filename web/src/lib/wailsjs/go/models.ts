@@ -652,6 +652,48 @@ export namespace wails {
 	        this.measured = source["measured"];
 	    }
 	}
+	export class NamespaceSummary {
+	    name: string;
+	    phase: string;
+	    isActive: boolean;
+	    createdAt: string;
+	    ageSeconds: number;
+	    pods: number;
+	    notReady: number;
+	    cpu: string;
+	    memory: string;
+	    hasMetrics: boolean;
+	    cpuRequests: string;
+	    memoryRequests: string;
+	    cpuRequestsMilli: number;
+	    memoryRequestsBytes: number;
+	    cpuMilli: number;
+	    memoryBytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new NamespaceSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.phase = source["phase"];
+	        this.isActive = source["isActive"];
+	        this.createdAt = source["createdAt"];
+	        this.ageSeconds = source["ageSeconds"];
+	        this.pods = source["pods"];
+	        this.notReady = source["notReady"];
+	        this.cpu = source["cpu"];
+	        this.memory = source["memory"];
+	        this.hasMetrics = source["hasMetrics"];
+	        this.cpuRequests = source["cpuRequests"];
+	        this.memoryRequests = source["memoryRequests"];
+	        this.cpuRequestsMilli = source["cpuRequestsMilli"];
+	        this.memoryRequestsBytes = source["memoryRequestsBytes"];
+	        this.cpuMilli = source["cpuMilli"];
+	        this.memoryBytes = source["memoryBytes"];
+	    }
+	}
 	export class Node {
 	    name: string;
 	    status: string;

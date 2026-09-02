@@ -32,6 +32,10 @@ type ClusterService interface {
 	// ListNamespaces returns the namespaces of a connected cluster.
 	ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error)
 
+	// ListNamespaceSummaries returns the same namespaces with what is running
+	// in each — the list view, where ListNamespaces serves the filter.
+	ListNamespaceSummaries(ctx context.Context, id domain.ClusterID) ([]domain.NamespaceSummary, error)
+
 	// ListNodes returns the nodes of a connected cluster.
 	ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error)
 

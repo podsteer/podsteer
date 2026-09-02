@@ -15,6 +15,7 @@ import {
   listEvents,
   listKinds,
   listNamespaces,
+  listNamespaceSummaries,
   listNodes,
   listPods,
   listTable,
@@ -25,6 +26,7 @@ import {
   type Finding,
   type K8sEvent,
   type Namespace,
+  type NamespaceSummary,
   type Node,
   type Overview,
   type Pod,
@@ -142,7 +144,14 @@ export const WORKLOAD_KIND_BY_ID: Record<string, string> = {
 }
 
 /** What the content pane should render for the selected kind. */
-export type ViewMode = 'overview' | 'pods' | 'nodes' | 'events' | 'workloads' | 'table'
+export type ViewMode =
+  | 'overview'
+  | 'pods'
+  | 'nodes'
+  | 'events'
+  | 'namespaces'
+  | 'workloads'
+  | 'table'
 
 /*
  * Sort accessors per view, keyed by the column ids the views declare. Values
@@ -181,6 +190,20 @@ const NODE_SORT: SortAccessors<Node> = {
   pods: (node) => node.maxPods,
   taints: (node) => node.taints,
   age: (node) => node.ageSeconds,
+}
+
+const NAMESPACE_SORT: SortAccessors<NamespaceSummary> = {
+  status: (namespace) => namespace.phase,
+  name: (namespace) => namespace.name,
+  pods: (namespace) => namespace.pods,
+  notReady: (namespace) => namespace.notReady,
+  // Sorted on the numbers rather than on the formatted strings beside them:
+  // "1.5" and "900m" compare as text in the wrong order entirely.
+  cpu: (namespace) => (namespace.hasMetrics ? namespace.cpuMilli : null),
+  memory: (namespace) => (namespace.hasMetrics ? namespace.memoryBytes : null),
+  cpuRequests: (namespace) => namespace.cpuRequestsMilli,
+  memoryRequests: (namespace) => namespace.memoryRequestsBytes,
+  age: (namespace) => namespace.ageSeconds,
 }
 
 const WORKLOAD_SORT: SortAccessors<Workload> = {
@@ -253,6 +276,16 @@ export class ClusterSession {
   nodes = $state.raw<Node[]>([])
   workloads = $state.raw<Workload[]>([])
   events = $state.raw<K8sEvent[]>([])
+
+  /**
+   * The namespace list view's rows.
+   *
+   * Distinct from `namespaces`, which is the filter's list of names and is
+   * read on connect. These carry what is IN each namespace and cost a
+   * cluster-wide pod list to produce, so they are fetched only while this
+   * view is the one on screen.
+   */
+  namespaceRows = $state.raw<NamespaceSummary[]>([])
   table = $state.raw<ResourceTable | null>(null)
   overview = $state.raw<Overview | null>(null)
 
@@ -326,6 +359,7 @@ export class ClusterSession {
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
     if (id === RICH_KIND_IDS.events) return 'events'
+    if (id === RICH_KIND_IDS.namespaces) return 'namespaces'
     if (id in WORKLOAD_KIND_BY_ID) return 'workloads'
     return 'table'
   })
@@ -357,6 +391,9 @@ export class ClusterSession {
       workload.status,
     ]),
   )
+  readonly visibleNamespaces = $derived(
+    filterRows(this.namespaceRows, this.search, (namespace) => [namespace.name, namespace.phase]),
+  )
   readonly visibleEvents = $derived(
     filterRows(this.events, this.search, (event) => [
       event.reason,
@@ -382,6 +419,8 @@ export class ClusterSession {
         return this.visibleWorkloads.length
       case 'events':
         return this.visibleEvents.length
+      case 'namespaces':
+        return this.visibleNamespaces.length
       default:
         return this.visibleTableRows.length
     }
@@ -412,6 +451,9 @@ export class ClusterSession {
   readonly sortedNodes = $derived(sortRows(this.visibleNodes, this.sort, NODE_SORT))
   readonly sortedWorkloads = $derived(sortRows(this.visibleWorkloads, this.sort, WORKLOAD_SORT))
   readonly sortedEvents = $derived(sortRows(this.visibleEvents, this.sort, EVENT_SORT))
+  readonly sortedNamespaces = $derived(
+    sortRows(this.visibleNamespaces, this.sort, NAMESPACE_SORT),
+  )
 
   /**
    * Generic table rows after sorting. The column ids are positional ("c0"),
@@ -448,6 +490,7 @@ export class ClusterSession {
   readonly pagedNodes = $derived(this.#slice(this.sortedNodes))
   readonly pagedWorkloads = $derived(this.#slice(this.sortedWorkloads))
   readonly pagedEvents = $derived(this.#slice(this.sortedEvents))
+  readonly pagedNamespaces = $derived(this.#slice(this.sortedNamespaces))
   readonly pagedTableRows = $derived(this.#slice(this.sortedTableRows))
 
   /**
@@ -859,6 +902,8 @@ export class ClusterSession {
         return listNodes(id)
       case 'events':
         return listEvents(id, namespace)
+      case 'namespaces':
+        return listNamespaceSummaries(id)
       case 'workloads':
         return listWorkloads(id, WORKLOAD_KIND_BY_ID[this.selectedKindId], namespace)
       default:
@@ -874,6 +919,7 @@ export class ClusterSession {
     this.nodes = []
     this.workloads = []
     this.events = []
+    this.namespaceRows = []
     this.table = null
     // The overview is deliberately NOT cleared here. It is a cached assessment
     // rather than one of the mutually exclusive row buffers, and the navigator
@@ -892,6 +938,9 @@ export class ClusterSession {
         break
       case 'events':
         this.events = rows as K8sEvent[]
+        break
+      case 'namespaces':
+        this.namespaceRows = rows as NamespaceSummary[]
         break
       case 'workloads':
         this.workloads = rows as Workload[]

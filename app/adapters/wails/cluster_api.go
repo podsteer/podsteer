@@ -140,6 +140,28 @@ func (c *ClusterAPI) ListNamespaces(clusterID string) ([]Namespace, error) {
 	return toNamespaces(namespaces, time.Now()), nil
 }
 
+// ListNamespaceSummaries returns every namespace with what is running in it.
+//
+// Separate from ListNamespaces, which feeds the namespace filter and must stay
+// a cheap read of names: this one lists every pod in the cluster to count
+// them, and only the namespace list view is worth that.
+func (c *ClusterAPI) ListNamespaceSummaries(clusterID string) ([]NamespaceSummary, error) {
+	ctx, cancel := c.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(c.logger, "ListNamespaceSummaries", err)
+	}
+
+	summaries, err := c.clusters.ListNamespaceSummaries(ctx, id)
+	if err != nil {
+		return nil, apiError(c.logger, "ListNamespaceSummaries", err)
+	}
+
+	return toNamespaceSummaries(summaries, time.Now()), nil
+}
+
 // ListNodes returns the nodes of a connected cluster, with usage where the
 // cluster provides metrics.
 func (c *ClusterAPI) ListNodes(clusterID string) ([]Node, error) {

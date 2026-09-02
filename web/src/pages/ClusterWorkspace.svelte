@@ -9,6 +9,7 @@
 -->
 <script lang="ts">
   import DetailDrawer from '$lib/components/DetailDrawer.svelte'
+  import NamespacesView from './NamespacesView.svelte'
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
   import Navigator from '$lib/components/Navigator.svelte'
   import Pagination from '$lib/components/Pagination.svelte'
@@ -179,6 +180,8 @@
       <NodesView {session} />
     {:else if session.viewMode === 'events'}
       <EventsView {session} />
+    {:else if session.viewMode === 'namespaces'}
+      <NamespacesView {session} />
     {:else if session.viewMode === 'workloads'}
       <WorkloadsView {session} />
     {:else}
