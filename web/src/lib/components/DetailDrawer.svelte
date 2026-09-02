@@ -777,7 +777,15 @@
              link because it is somewhere to go: it filters the whole
              application to that namespace, which is what somebody reading a
              detail usually wants next. -->
-        <p class="flex min-w-0 items-baseline gap-1.5 text-body-small text-on-surface-variant/70">
+        <!--
+          CENTRED, NOT BASELINED. A flex container's baseline is its first
+          item's, and the badge beside this text is itself a flex box whose
+          first item is an icon — so an SVG's bottom edge was being lined up
+          with the text's baseline, which sat the whole pill a few pixels
+          high. Every item on this line is the same size, so centring reads
+          identically for the text and correctly for the pill.
+        -->
+        <p class="flex min-w-0 items-center gap-1.5 text-body-small text-on-surface-variant/70">
           <span class="shrink-0">{session.selectedKind?.singular ?? 'Object'}</span>
           {#if session.selectedNamespace}
             <span class="shrink-0 text-on-surface-variant/40" aria-hidden="true">/</span>

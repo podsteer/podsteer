@@ -115,8 +115,18 @@
       />
       <span class="min-w-0 truncate">{title}</span>
       {#if hint}
+        <!--
+          Ends where the rows' trailing icons end.
+          
+          Those sit in a 20px control around a 14px glyph, so the glyph's box
+          stops 3px short of the panel's edge while this text ran all the way
+          to it — a few pixels, but enough that a heading's figure and the
+          column of controls under it did not share an edge. The inset is
+          that difference, not a number somebody liked.
+        -->
         <span
-          class="ml-auto shrink-0 pl-3 text-body-medium font-normal text-on-surface-variant/70"
+          class="ml-auto shrink-0 pr-[3px] pl-3 text-body-medium font-normal
+                 text-on-surface-variant/70"
         >
           {hint}
         </span>
