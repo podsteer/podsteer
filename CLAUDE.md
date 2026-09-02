@@ -91,7 +91,18 @@ Three things to know before touching it:
   `TestStripping…ChangesNothing…` fails.
 - **A set is never reused.** `Invalidate` cancels and *waits*, and a reconnect
   builds a fresh set against the fresh client, so a reflector from before a
-  disconnect cannot write into a store a later read answers from.
+  disconnect cannot write into a store a later read answers from. The client
+  is invalidated FIRST and the watch forgotten second; reversing that opens a
+  window in which a racing read ensures a set against the stale client and the
+  reconnect keeps it.
+- **A transient error demotes a store, and a supervisor promotes it back.**
+  There is no "the watch recovered" callback in client-go, so recovery is
+  detected from the reflector's last synced resource version moving past the
+  one recorded when the error arrived — evidence, never a timer. A cluster too
+  quiet to advance it stays on the network path, which costs a cluster that
+  quiet nothing. Promotion is a compare-and-swap in both places, because an
+  account with `list` and without `watch` can otherwise have its condemnation
+  overwritten by the sync that preceded it.
 - **The read cache stays in front of the store.** Reading it is free on the
   wire and not free in CPU — five thousand pods mapped into domain values —
   and the assessment and the open list still want them in the same instant.
@@ -150,6 +161,15 @@ Three rules it holds to, each with a test:
 - **A failure is never reused.** Handing the same refusal to every caller for
   two seconds turns one denied read into a pane that stays broken after the
   permission is granted.
+- **The shared fetch is detached from whoever started it.** Whoever arrives
+  first runs it and everyone else waits, so running it on that caller's
+  context makes one caller's cancellation everybody's —
+  `ListNamespaceSummaries` runs the namespace list and the cluster-wide pod
+  list under one errgroup, and on an account without `list namespaces` the
+  403 killed a pod list that account was permitted. The DEADLINE is kept and
+  the cancellation is not: how long an answer is worth waiting for is as true
+  for the second caller as the first. Waiters leave on their own context, so
+  a wedged fetch cannot pin them.
 - **Every write drops the cluster's cached reads** (`forgetReads`, deferred on
   entry in each `ManagementPort` method). Deleting a pod and then being handed
   the list that still contains it reads as the application ignoring what it
@@ -575,6 +595,12 @@ Two deviations, both forced by Wails rather than chosen:
 
 ## Licensing, and why the seam matters
 
+`web/src/lib/escape.ts` is the same shape of rule for the frontend: seventeen
+components listen for Escape on the window, so `stopPropagation` between them
+is meaningless — they share a target. Each layer claims while open and only
+the innermost claim acts. Add a claim to anything new that closes on Escape,
+or it will close alongside whatever is underneath it.
+
 The application is Apache-2.0 and is intended to stay that way, whole — not an
 open core with features held back. Contributions come in under the same licence
 with a DCO sign-off (`git commit -s`); there is deliberately no CLA, because a
@@ -633,6 +659,12 @@ The local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`) and the API servers
 it names — plus, since v0.1.2, `api.github.com` for the update check, and
 nothing else. No telemetry, no account, and still no network access from the
 webview (see the CSP in `web/index.html`).
+
+The webview's own policy is tightened at BUILD time, not in `index.html`:
+`connect-src 'self' ws: wss:` is what Vite's hot reload needs, and a bare
+scheme source permits a WebSocket to any host. A Vite plugin strips it from
+the shipped page and `app/adapters/assets/csp_test.go` asserts the result on
+the embedded bundle, so dev keeps what it needs and the two cannot drift.
 
 **The update check is the only outbound call that is not a cluster**, and the
 constraints on it are not negotiable style preferences. It sends no identifier
