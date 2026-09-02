@@ -455,6 +455,22 @@ the rest in the adapter; and a Secret's values in the YAML tab are replaced
 with their decoded size before the object is serialised, because base64 is an
 encoding and not a cipher.
 
+## Escape belongs to one layer, and the layers say which
+
+Seventeen components listen for Escape on the window, so `stopPropagation`
+between them is meaningless — they share a target, and nothing propagates.
+`web/src/lib/escape.ts` holds a stack instead: each layer claims while it is
+open and only the innermost claim acts. Add a claim to anything new that
+closes on Escape, or it will close alongside whatever is underneath it — which
+is how one keystroke aimed at a row menu used to close the drawer and discard
+an unsaved YAML draft with it.
+
+The dialogs are the other half of the same idea. `aria-modal` without a focus
+trap is worse than neither: it tells assistive technology the background does
+not exist while Tab walks straight into it. `use:modal` (`web/src/lib/modal.ts`)
+is what makes the claim true — focus in, focus trapped, focus restored, and the
+background marked `inert`. Anything carrying `aria-modal` must use it.
+
 ## Two structural facts that look like mistakes
 
 **`main.go` sits at the repository root.** The Wails CLI runs `go build` with
@@ -594,12 +610,6 @@ Two deviations, both forced by Wails rather than chosen:
   domain models.
 
 ## Licensing, and why the seam matters
-
-`web/src/lib/escape.ts` is the same shape of rule for the frontend: seventeen
-components listen for Escape on the window, so `stopPropagation` between them
-is meaningless — they share a target. Each layer claims while open and only
-the innermost claim acts. Add a claim to anything new that closes on Escape,
-or it will close alongside whatever is underneath it.
 
 The application is Apache-2.0 and is intended to stay that way, whole — not an
 open core with features held back. Contributions come in under the same licence
