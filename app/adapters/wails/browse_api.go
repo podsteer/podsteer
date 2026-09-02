@@ -173,6 +173,25 @@ func (b *BrowseAPI) NamespaceInventory(clusterID, namespace string) (NamespaceIn
 	return toNamespaceInventory(inventory), nil
 }
 
+// ClassifyConditions says which of an object's status conditions report a
+// problem.
+//
+// A PURE CALL — it reaches no cluster and cannot fail. It exists because the
+// polarity of a condition is a verdict and verdicts live in the domain (see
+// CLAUDE.md), and because getting one backwards is invisible until somebody
+// is reading the wrong colour during an incident: the rule it replaced
+// coloured every healthy node as a warning.
+//
+// Takes the whole list rather than one condition, so a panel showing eight of
+// them crosses the boundary once.
+func (b *BrowseAPI) ClassifyConditions(conditions []ConditionRef) []string {
+	tones := make([]string, 0, len(conditions))
+	for _, condition := range conditions {
+		tones = append(tones, string(domain.ClassifyCondition(condition.Type, condition.Status)))
+	}
+	return tones
+}
+
 // GetManifest returns one object as YAML, for the detail view.
 //
 // revealSecrets applies to core/v1 Secrets and nothing else: false replaces

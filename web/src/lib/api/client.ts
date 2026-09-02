@@ -30,6 +30,7 @@ import {
   ListKinds as bindListKinds,
   ListTable as bindListTable,
   NamespaceInventory as bindNamespaceInventory,
+  ClassifyConditions as bindClassifyConditions,
 } from '$lib/wailsjs/go/wails/BrowseAPI'
 import {
   ListPods as bindListPods,
@@ -97,6 +98,7 @@ export type ResourceKind = wails.ResourceKind
 export type ResourceTable = wails.ResourceTable
 
 export type NamespaceInventory = wails.NamespaceInventory
+export type ConditionRef = wails.ConditionRef
 export type ResourceCount = wails.ResourceCount
 /** One column of a generic table. */
 export type TableColumn = wails.TableColumn
@@ -229,6 +231,17 @@ export function listNamespaces(clusterId: string): Promise<Namespace[]> {
  */
 export function listNamespaceSummaries(clusterId: string): Promise<NamespaceSummary[]> {
   return call(() => bindListNamespaceSummaries(clusterId))
+}
+
+/**
+ * Says which status conditions report a problem, in order.
+ *
+ * A pure call that reaches no cluster: the polarity of a condition is a
+ * verdict, verdicts live in the Go domain, and getting one backwards is
+ * invisible until somebody reads the wrong colour during an incident.
+ */
+export function classifyConditions(conditions: ConditionRef[]): Promise<string[]> {
+  return call(() => bindClassifyConditions(conditions))
 }
 
 /** Lists the nodes of a connected cluster, with usage where available. */

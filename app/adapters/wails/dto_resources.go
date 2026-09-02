@@ -328,6 +328,12 @@ func toConsumption(usage domain.AggregateUsage) Consumption {
 	}
 }
 
+// ConditionRef is one status condition, for classification.
+type ConditionRef struct {
+	Type   string `json:"type"`
+	Status string `json:"status"`
+}
+
 // ResourceCount is how many objects of one kind a namespace holds.
 type ResourceCount struct {
 	// KindID is the navigator handle, so the UI can open the list this

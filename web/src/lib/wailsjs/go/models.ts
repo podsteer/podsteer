@@ -188,6 +188,20 @@ export namespace wails {
 	        this.nodes = source["nodes"];
 	    }
 	}
+	export class ConditionRef {
+	    type: string;
+	    status: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConditionRef(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.status = source["status"];
+	    }
+	}
 	export class Consumer {
 	    namespace: string;
 	    name: string;

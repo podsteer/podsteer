@@ -20,6 +20,7 @@
   import { parseQuantity } from '$lib/sort'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
   import { podTemplateOf } from '$lib/podTemplate'
+  import { classifyConditions, type ConditionRef } from '$lib/api/client'
   import type { UsageSample } from '$stores/session.svelte'
 
   interface Props {
@@ -141,6 +142,46 @@
       kind === 'CronJob',
   )
 
+  /** Whether the panel is showing a pod. */
+  const isPodPanel = $derived(kind === 'Pod' || !!selectedPod)
+
+  /**
+   * A kind with no purpose-built sections at all — a CRD, or anything served
+   * by the generic table.
+   *
+   * Its panel is otherwise Identity, Labels and Annotations, all collapsed,
+   * which opens on three closed headers and nothing else and reads as a panel
+   * that failed to load.
+   */
+  const isGenericKind = $derived(
+    !isPodPanel && !isWorkload && !selectedNode && !selectedNamespaceRow && kind !== 'Namespace',
+  )
+
+  /**
+   * Whether this kind's conditions are its verdict or its receipts.
+   *
+   * A controller's are the rollout's state, a node's are the kubelet's own
+   * alarms, and a custom resource's are usually the whole of its status. A
+   * pod's are a transcript that Status and the findings already summarise,
+   * and a namespace's exist only when a deletion is stuck — where their mere
+   * presence is the signal.
+   */
+  const conditionsLead = $derived(
+    !isPodPanel && (kind !== 'Namespace' || conditions.length > 0),
+  )
+
+  /** Whether this kind has anything above Identity to look at. */
+  const identityLeads = $derived(isGenericKind)
+
+  /**
+   * The kind, for the section ids that now differ by it.
+   *
+   * DetailSection remembers what an operator opened or closed against its id,
+   * so one shared "conditions" id would carry a pod's collapsed choice onto a
+   * Deployment where the section is open by design.
+   */
+  const conditionsKey = $derived((kind ?? 'object').toLowerCase())
+
   /**
    * The pod template a controller carries, if it carries one.
    *
@@ -172,16 +213,24 @@
   // value is applied at this boundary: what "absent" means is per-field
   // knowledge, and DetailList has none of it.
 
-  const basicRows = $derived<DetailRow[]>([
-    { label: 'Name', value: metadata.name ?? '—' },
-    {
-      label: 'Namespace',
-      value: metadata.namespace ?? '—',
-      onclick: filterTo(metadata.namespace ?? ''),
-    },
-    { label: 'Created', value: formatAge(metadata.creationTimestamp) },
-    { label: 'UID', value: metadata.uid ?? '—' },
-  ])
+  const basicRows = $derived.by<DetailRow[]>(() => {
+    const rows: DetailRow[] = [{ label: 'Name', value: metadata.name ?? '—' }]
+
+    // Absent for a cluster-scoped kind rather than an em dash. A Node has no
+    // namespace, and a row saying so is a row asserting that something is
+    // missing from an object that never had it.
+    if (metadata.namespace) {
+      rows.push({
+        label: 'Namespace',
+        value: metadata.namespace,
+        onclick: filterTo(metadata.namespace),
+      })
+    }
+
+    rows.push({ label: 'Created', value: formatAge(metadata.creationTimestamp) })
+    rows.push({ label: 'UID', value: metadata.uid ?? '—' })
+    return rows
+  })
 
   /**
    * The pod's controller, as kubectl prints it.
@@ -458,13 +507,58 @@
    * ContainersReady, PodReadyToStartContainers. Colouring both would leave a
    * list where every row is coloured and none of them stands out.
    */
-  const conditionRows = $derived<DetailRow[]>(
-    (conditions as Record<string, string>[]).map((condition) => {
+  /**
+   * Which conditions are reporting a problem, from the domain.
+   *
+   * ASKED RATHER THAN ASSUMED. This used to colour any condition whose status
+   * was False, which is right for a pod and backwards for a node: every
+   * healthy node showed its three pressure conditions as warnings, and a node
+   * genuinely under MemoryPressure rendered as though nothing were wrong. The
+   * polarity is a verdict, so it lives in Go with a test — see
+   * domain.ClassifyCondition.
+   */
+  let conditionTones = $state.raw<string[]>([])
+
+  $effect(() => {
+    const asked = (conditions as Record<string, string>[]).map((condition) => ({
+      type: condition.type,
+      status: condition.status,
+    }))
+    if (asked.length === 0) {
+      conditionTones = []
+      return
+    }
+
+    let current = true
+    void classifyConditions(asked as ConditionRef[])
+      .then((tones) => {
+        if (current) conditionTones = tones
+      })
+      // Uncoloured is the safe failure: a row with no tone still says what
+      // the condition is, while a wrong tone says something untrue about it.
+      .catch(() => {
+        if (current) conditionTones = []
+      })
+
+    return () => {
+      current = false
+    }
+  })
+
+  /**
+   * A condition as one line, with the reason kubectl throws away.
+   *
+   * `kubectl describe` prints conditions as Type and Status only, which
+   * discards the half that explains anything: PodScheduled=False is a fact,
+   * and its reason and message are the scheduler's own account of why.
+   */
+  const conditionRows = $derived(
+    (conditions as Record<string, string>[]).map((condition, index) => {
       const explanation = [condition.reason, condition.message].filter(Boolean).join(' — ')
       return {
         label: condition.type,
         value: explanation ? `${condition.status} · ${explanation}` : condition.status,
-        tone: condition.status === 'False' ? ('warn' as const) : undefined,
+        tone: (conditionTones[index] || undefined) as 'warn' | 'critical' | undefined,
       }
     }),
   )
@@ -757,45 +851,6 @@
       </DetailSection>
     {/if}
 
-    <!--
-      THE CANONICAL ORDER, and it is the same on every pane so that moving
-      between kinds does not mean relearning where anything is:
-
-        what is wrong  ·  usage  ·  identity  ·  labels  ·  annotations
-        ·  then whatever this kind specifically is
-
-      Identity, labels and annotations sat at the very bottom, which is where
-      a property list ends up when sections are added in front of it one at a
-      time. They are what an object IS, and burying them under six sections of
-      what it is doing meant scrolling past everything to answer "which one is
-      this". They are still closed by default — reference material somebody
-      looks up rather than reads — but they are now where somebody looks.
-
-      Findings stay above usage when there are any, which is the one departure
-      from "usage first". A chart is what a healthy object has to say; a pod
-      that is crash-looping has something more urgent, and putting a graph
-      above it would bury the reason the pane was opened.
-    -->
-    <DetailSection level="h3" id="identity" title="Identity" defaultOpen={false}>
-      <DetailList rows={basicRows} />
-    </DetailSection>
-
-    <!-- Labels -->
-    {#if labels.length > 0}
-      <DetailSection level="h3" id="labels" title="Labels" defaultOpen={false} hint={String(labels.length)}>
-        <DetailList rows={pairRows(labels)} />
-      </DetailSection>
-    {/if}
-
-    <!-- Annotations -->
-    {#if annotations.length > 0}
-      <!-- An annotation routinely holds an entire serialised manifest, which
-           is the case the list's clipping exists for: one line each, and the
-           one somebody wants opens. -->
-      <DetailSection level="h3" id="annotations" title="Annotations" defaultOpen={false} hint={String(annotations.length)}>
-        <DetailList rows={pairRows(annotations)} />
-      </DetailSection>
-    {/if}
     <!-- Pod-specific sections -->
     {#if kind === 'Pod' || selectedPod}
 
@@ -898,13 +953,20 @@
     {/if}
 
     <!-- Deployment/StatefulSet-specific sections -->
-    {#if selectedWorkload && (kind === 'Deployment' || kind === 'StatefulSet' || kind === 'DaemonSet')}
-      <!-- Replicas -->
+    <!--
+      Replicas, and it is the most-read section a controller has: desired
+      against ready is the question the panel was opened with. It sat below
+      Identity and Labels, which is a lookup people do occasionally.
+
+      A ReplicaSet is included now. It has the same desired and ready numbers
+      as the Deployment above it and was excluded for no reason anybody
+      recorded.
+    -->
+    {#if selectedWorkload && kind !== 'Job' && kind !== 'CronJob'}
       <DetailSection level="h3" id="replicas" title="Replicas">
         <DetailList rows={replicaRows} />
       </DetailSection>
 
-      <!-- Strategy -->
       {#if kind === 'Deployment'}
         <DetailSection level="h3" id="strategy" title="Update strategy" defaultOpen={false}>
           <DetailList rows={strategyRows} />
@@ -997,9 +1059,67 @@
       {/if}
     {/if}
 
-    <!-- Conditions -->
-    {#if conditions.length > 0}
-      <DetailSection level="h3" id="conditions" title="Conditions" defaultOpen={false} hint={String(conditions.length)}>
+    <!--
+      CONDITIONS ARE NOT ONE THING, which is why they are not in one place.
+
+      On a pod they are a transcript that Status and the findings above
+      already summarise — receipts, worth keeping and worth keeping out of the
+      way. On a controller they are the ROLLOUT VERDICT: ReplicaFailure
+      carries the quota message that explains a stuck rollout and nothing else
+      in this panel does. On a node they are the kubelet's own alarms. And on
+      a custom resource they are usually the whole of its status — a
+      cert-manager Certificate or a Flux Kustomization says Ready=False with a
+      message, and that is the entire reason somebody opened the panel.
+    -->
+    {#if conditions.length > 0 && conditionsLead}
+      <DetailSection level="h3" id="{conditionsKey}-conditions" title="Conditions" hint={String(conditions.length)}>
+        <DetailList rows={conditionRows} />
+      </DetailSection>
+    {/if}
+
+    <!--
+      REFERENCE, IN A FIXED FOOTER, ON EVERY KIND.
+      
+      These sat at the very bottom once, were moved up here because "which one
+      is this" meant scrolling past everything, and are back at the bottom
+      because that diagnosis solved a real problem on the wrong axis. What
+      makes a section findable is being in the SAME PLACE on every kind, not
+      being early; and the drawer's header already answers which object this
+      is, in the two lines above the tabs.
+      
+      What the middle position cost was the reading order: on every pod open,
+      three closed headers sat between the usage chart and the status and
+      containers people came for, interrupting the flow from "what is it
+      doing" to "what was it told to be" in order to optimise a lookup that
+      happens occasionally.
+    -->
+    <DetailSection level="h3" id="identity" title="Identity" defaultOpen={identityLeads}>
+      <DetailList rows={basicRows} />
+    </DetailSection>
+
+    {#if labels.length > 0}
+      <DetailSection level="h3" id="labels" title="Labels" defaultOpen={false} hint={String(labels.length)}>
+        <DetailList rows={pairRows(labels)} />
+      </DetailSection>
+    {/if}
+
+    {#if annotations.length > 0}
+      <!-- An annotation routinely holds an entire serialised manifest, which
+           is the case the list's clipping exists for: one line each, and the
+           one somebody wants opens. -->
+      <DetailSection level="h3" id="annotations" title="Annotations" defaultOpen={false} hint={String(annotations.length)}>
+        <DetailList rows={pairRows(annotations)} />
+      </DetailSection>
+    {/if}
+
+    {#if conditions.length > 0 && !conditionsLead}
+      <DetailSection
+        level="h3"
+        id="{conditionsKey}-conditions"
+        title="Conditions"
+        defaultOpen={false}
+        hint={String(conditions.length)}
+      >
         <DetailList rows={conditionRows} />
       </DetailSection>
     {/if}
