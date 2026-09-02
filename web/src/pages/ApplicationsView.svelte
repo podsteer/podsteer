@@ -20,7 +20,7 @@
   import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import { countedKind } from '$lib/plural'
-  import { Boxes } from '@lucide/svelte'
+  import { Blocks } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -73,7 +73,7 @@
         >
           <td class="px-3 py-1.5" title={application.instance}>
             <span class="flex items-center gap-2">
-              <Boxes class="size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
+              <Blocks class="size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
               <span class="truncate font-medium text-on-surface">{application.instance}</span>
             </span>
           </td>

@@ -265,8 +265,11 @@
     >
       {row.label}
     </dt>
+    <!--
+      `group/row`, for controls that appear when the pointer is on the row.
+    -->
     <dd
-      class="flex min-w-0 items-start gap-1 text-body-medium {row.tone === 'critical'
+      class="group/row flex min-w-0 items-start gap-1 text-body-medium {row.tone === 'critical'
         ? 'text-error'
         : row.tone === 'warn'
           ? 'text-gauge-warn'
@@ -334,6 +337,14 @@
         state layer as well, which on a small glyph reads as the icon itself
         thickening — three effects where one says the same thing, in a column
         whose whole job is the text beside them.
+
+        AND THEY APPEAR WHEN THE POINTER IS ON THE ROW. A panel of thirty
+        rows carried sixty controls that were mostly not wanted, which is
+        more furniture than text. Faded rather than removed from the
+        document: they stay focusable, so a keyboard reaches them in order —
+        `group-focus-within` shows the pair the moment one is tabbed to, and
+        `focus-visible` on the control itself covers the case where the row
+        has nothing else focusable.
       -->
       <span class="ml-auto flex shrink-0 items-center gap-0.5">
 
@@ -350,8 +361,9 @@
             aria-label={open ? `Collapse ${row.label}` : `Expand ${row.label}`}
             title={open ? 'Show less' : 'Show the whole value'}
             class="grid size-5 shrink-0 cursor-pointer place-items-center rounded-full
-                   text-on-surface-variant/60 transition-colors duration-100
-                   hover:text-on-surface"
+                   text-on-surface-variant/60 opacity-0 transition-all duration-100
+                   group-hover/row:opacity-100 group-focus-within/row:opacity-100
+                   hover:text-on-surface focus-visible:opacity-100"
           >
             <ChevronDown
               class="size-3.5 transition-transform duration-150 ease-standard {open

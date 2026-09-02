@@ -312,6 +312,52 @@ describe('DetailList', () => {
     expect(links[1].querySelector('svg')).toBeNull()
   })
 
+  it('keeps its controls focusable while they are out of sight', async () => {
+    // THE ACCESSIBILITY HALF OF HIDING THEM. They are faded, not removed
+    // from the document, so a keyboard still reaches them in order — and
+    // `group-focus-within` is what brings the pair back into view the moment
+    // one is tabbed to. Removing them until hover would make a panel of
+    // thirty rows unreachable without a pointer.
+    const wide = stubLayout(30)
+    try {
+      const { container } = render(DetailList, {
+        rows: [{ label: 'Long', value: 'a'.repeat(200) }],
+      })
+
+      const expander = container.querySelector('[aria-label^="Expand"]')!
+      const menu = container.querySelector('[data-row-menu] button')!
+
+      // Present and operable, not display:none or hidden.
+      expect(expander.getAttribute('hidden')).toBeNull()
+      expect(menu.getAttribute('hidden')).toBeNull()
+      expect(expander.className).toContain('group-focus-within/row:opacity-100')
+      expect(menu.className).toContain('group-focus-within/row:opacity-100')
+
+      // And still work while faded.
+      expander.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await tick()
+      expect(container.querySelectorAll('[aria-label^="Collapse"]')).toHaveLength(1)
+    } finally {
+      wide()
+    }
+  })
+
+  it('keeps the menu control visible while its menu is open', async () => {
+    // Otherwise moving the pointer off the row to reach the menu would fade
+    // the control the menu is hanging from.
+    const { container } = render(DetailList, {
+      rows: [{ label: 'Pod IP', value: '10.0.0.1' }],
+    })
+
+    const menu = container.querySelector('[data-row-menu] button')!
+    expect(menu.className).toContain('opacity-0')
+
+    menu.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await tick()
+
+    expect(container.querySelector('[data-row-menu] button')?.className).toContain('opacity-100')
+  })
+
   it('puts the source of a resolved value in its tooltip', () => {
     // A value resolved out of a ConfigMap no longer names its source — that
     // is the point of resolving it — and a third control to say so was more

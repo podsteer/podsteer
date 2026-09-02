@@ -26,7 +26,7 @@
   import { clampNavigatorWidth, preferences } from '$stores/preferences.svelte'
   import { categoryMeta, iconForKind } from '$lib/kindIcons'
   import Select from './Select.svelte'
-  import { Boxes, ChevronDown, LayoutDashboard, AlertTriangle } from '@lucide/svelte'
+  import { Blocks, ChevronDown, LayoutDashboard, AlertTriangle } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -251,7 +251,11 @@
                  ? 'bg-primary/12 text-primary'
                  : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
       >
-        <Boxes
+        <!-- Not the stacked boxes: those mark the Workloads category two
+             entries below, and an application is not a workload — it is
+             several of them agreeing about a label. Two entries wearing one
+             glyph is a navigator asking to be misread. -->
+        <Blocks
           class="size-4 shrink-0 transition-colors duration-100
                  {onApplications ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
           strokeWidth={1.8}

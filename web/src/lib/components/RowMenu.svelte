@@ -7,6 +7,12 @@
   this" is now one menu: the reader sees two controls on every row, always the
   same two, and finds out what a particular row offers by opening it.
 
+  Shown when the pointer is on its row, and kept shown while it is OPEN —
+  otherwise moving the pointer off the row to reach the menu would fade the
+  control the menu is hanging from. The popover is a descendant of the row, so
+  hovering it keeps the row hovered; the override covers the case where the
+  menu was opened and the pointer then left entirely.
+
   Closed by an outside pointer or by Escape, like every other menu here. It
   does NOT close on scroll: the panel scrolls under the pointer while somebody
   reads the menu, and a menu that vanishes when the list moves is a menu that
@@ -106,8 +112,10 @@
       aria-label="More for {label}"
       title="More"
       class="grid size-5 shrink-0 cursor-pointer place-items-center rounded-full
-             transition-colors duration-100 hover:text-on-surface
-             {open ? 'text-on-surface' : 'text-on-surface-variant/60'}"
+             transition-all duration-100 hover:text-on-surface
+             group-hover/row:opacity-100 group-focus-within/row:opacity-100
+             focus-visible:opacity-100
+             {open ? 'text-on-surface opacity-100' : 'text-on-surface-variant/60 opacity-0'}"
     >
       <MoreVertical class="size-3.5" strokeWidth={2} />
     </button>
