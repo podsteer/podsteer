@@ -30,6 +30,11 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
   import { ChevronDown } from '@lucide/svelte'
+  import {
+    preferences,
+    detailLabelBounds,
+    DEFAULT_DETAIL_LABEL_SHARE,
+  } from '$stores/preferences.svelte'
 
   export interface DetailRow {
     label: string
@@ -156,6 +161,57 @@
     clipped = measured
   }
 
+  // --- The divider between the columns -------------------------------------
+  //
+  // ONE DIVIDER, SHOWN ONCE PER LIST. Dragging the one in Identity moves the
+  // one in Labels and in Annotations and in every container card, because
+  // there is only one column width and every section reads it. That is the
+  // point: a panel whose sections could disagree about where the columns
+  // divide would stop being a panel and start being a stack of tables.
+  //
+  // What is dragged is a SHARE of the pane rather than a pixel width, so a
+  // list inside a container card — which is narrower than the sections around
+  // it — stays in proportion while the pointer moves rather than jumping into
+  // proportion when it is released.
+
+  let dividing = $state(false)
+
+  /** The gap between the columns, which the divider sits in the middle of. */
+  function gap(): number {
+    const size = parseFloat(getComputedStyle(document.documentElement).fontSize)
+    return Number.isFinite(size) && size > 0 ? size : 16
+  }
+
+  function startDivide(event: PointerEvent): void {
+    event.preventDefault()
+    dividing = true
+    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  }
+
+  function onDivideMove(event: PointerEvent): void {
+    if (!dividing || !list) return
+
+    const pane = list.getBoundingClientRect()
+    if (pane.width <= 0) return
+
+    const rootFontSize = gap()
+    const { min, max } = detailLabelBounds(pane.width, rootFontSize)
+    // The divider sits in the middle of the gap, so the column ends half a
+    // gap before the pointer. Measured from the pane's own left edge rather
+    // than from where the drag started: the two diverge the moment a bound
+    // bites, and the divider then stops following the pointer until it has
+    // been dragged all the way back.
+    const width = Math.min(max, Math.max(min, event.clientX - pane.left - rootFontSize / 2))
+    preferences.labelShareDrag = width / pane.width
+  }
+
+  function endDivide(): void {
+    if (preferences.labelShareDrag !== null) {
+      preferences.setDetailLabelShare(preferences.labelShareDrag)
+    }
+    dividing = false
+  }
+
   function toggle(index: number): void {
     expanded = expanded.includes(index)
       ? expanded.filter((open) => open !== index)
@@ -177,7 +233,8 @@
   })
 </script>
 
-<dl class="detail-grid" bind:this={list}>
+<div class="relative">
+  <dl class="detail-grid" bind:this={list}>
   <!--
     KEYED BY POSITION, NOT BY LABEL. A label is not unique and was never going
     to be: kubectl prints several "Mounts:" lines for one container and several
@@ -276,4 +333,33 @@
       {/if}
     </dd>
   {/each}
-</dl>
+  </dl>
+
+  <!--
+    The divider. Invisible until the pointer is near it, like the navigator's
+    edge and the panel's own — a permanent rule between every label and every
+    value would draw a line down a pane whose whole job is the text.
+
+    Positioned from the column width rather than measured, so it stays on the
+    boundary as the panel is resized with nothing listening. Double-click
+    restores the default.
+  -->
+  <span
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize the label column"
+    tabindex="-1"
+    style="left: calc(var(--detail-label-width) + 0.5rem)"
+    class="absolute top-0 z-10 h-full w-2 -translate-x-1/2 cursor-col-resize
+           after:absolute after:top-0 after:left-1/2 after:h-full after:w-px
+           after:-translate-x-1/2 after:bg-transparent after:transition-colors
+           after:duration-100 hover:after:bg-primary/50 {dividing
+      ? 'after:w-0.5 after:bg-primary'
+      : ''}"
+    onpointerdown={startDivide}
+    onpointermove={onDivideMove}
+    onpointerup={endDivide}
+    onpointercancel={endDivide}
+    ondblclick={() => preferences.setDetailLabelShare(DEFAULT_DETAIL_LABEL_SHARE)}
+  ></span>
+</div>

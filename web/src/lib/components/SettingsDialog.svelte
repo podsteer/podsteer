@@ -431,6 +431,10 @@
                 it means the same on any screen — and the panel's own left edge can be
                 dragged to anything between, which is what these three set.
               </p>
+              <p class="mt-1 text-body-small text-on-surface-variant/70">
+                The divider between a section's two columns drags too, and moves every
+                section at once. Double-click either edge to put it back.
+              </p>
 
               <div class="mt-3 flex gap-2">
                 {#each DETAIL_WIDTHS as choice (choice.id)}

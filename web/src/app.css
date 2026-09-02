@@ -250,7 +250,10 @@
    * upper is where a longer label stops being worth more room and the value
    * beside it starts wanting it back. 26% is what the fixed 11rem worked out
    * to at the default width, so a panel nobody has dragged looks unchanged. */
-  --detail-label-width: clamp(7rem, 26%, 18rem);
+  /* The panel overrides this inline from the stored share — see
+     detailLabelWidthCSS. This is the same expression at the default share,
+     so anything using the grid outside the panel matches it. */
+  --detail-label-width: min(60%, clamp(5rem, 26%, 24rem));
 
   /* ---- MD3 shape scale ------------------------------------------------ */
   /* These deliberately override Tailwind's defaults so that `rounded-lg` and

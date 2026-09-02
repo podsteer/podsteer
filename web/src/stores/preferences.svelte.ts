@@ -102,6 +102,47 @@ export const DETAIL_WIDTHS = [
  */
 export const DEFAULT_DETAIL_FRACTION = 0.5
 
+/**
+ * The label column's share of a detail pane, until somebody drags it.
+ *
+ * 26% is what the fixed 11rem this column used to be worked out to at the
+ * panel's own default width, so a panel nobody has touched looks unchanged.
+ */
+export const DEFAULT_DETAIL_LABEL_SHARE = 0.26
+
+/** The label column's bounds, in rem, and as a share of the pane. */
+export const DETAIL_LABEL_MIN_REM = 5
+export const DETAIL_LABEL_MAX_REM = 24
+export const DETAIL_LABEL_MAX_SHARE = 0.6
+
+/**
+ * What the label column may be, in pixels, in a pane this wide.
+ *
+ * The same shape as detailWidthBounds and for the same reason: the drag and
+ * the resting style must agree exactly, or a divider dropped at the end of its
+ * travel would let go of the pointer and land somewhere else.
+ *
+ * The ceiling is a share rather than a length because it is about the OTHER
+ * column: past 60% the values have less room than their labels, which is the
+ * wrong way round whatever the pane is.
+ */
+export function detailLabelBounds(
+  paneWidth: number,
+  rootFontSize: number,
+): { min: number; max: number } {
+  const ceiling = paneWidth * DETAIL_LABEL_MAX_SHARE
+  const min = Math.min(DETAIL_LABEL_MIN_REM * rootFontSize, ceiling)
+  const max = Math.max(min, Math.min(DETAIL_LABEL_MAX_REM * rootFontSize, ceiling))
+  return { min, max }
+}
+
+/** The CSS this share becomes, matching detailLabelBounds exactly. */
+export function detailLabelWidthCSS(share: number): string {
+  return `min(${DETAIL_LABEL_MAX_SHARE * 100}%, clamp(${DETAIL_LABEL_MIN_REM}rem, ${
+    share * 100
+  }%, ${DETAIL_LABEL_MAX_REM}rem))`
+}
+
 /** The detail panel's width bounds, in rem, applied whatever the share says. */
 export const DETAIL_MIN_REM = 26
 export const DETAIL_MAX_REM = 72
@@ -316,6 +357,8 @@ interface PersistedShape {
   navigatorWidth: number
   /** How wide the detail panel opens, as a share of the window. */
   detailWidthFraction: number
+  /** How wide the label column is, as a share of a detail pane. */
+  detailLabelFraction: number
   /** Category names the operator has expanded in the navigator tree. */
   expandedCategories: string[]
   /** Whether the overview's verdict card shows its findings. */
@@ -401,6 +444,7 @@ const DEFAULTS: PersistedShape = {
   navigatorCollapsed: false,
   navigatorWidth: 240,
   detailWidthFraction: DEFAULT_DETAIL_FRACTION,
+  detailLabelFraction: DEFAULT_DETAIL_LABEL_SHARE,
   expandedCategories: [],
   findingsExpanded: false,
   wrapLines: true,
@@ -447,6 +491,21 @@ class Preferences {
   navigatorCollapsed = $state<boolean>(DEFAULTS.navigatorCollapsed)
   navigatorWidth = $state<number>(DEFAULTS.navigatorWidth)
   detailWidthFraction = $state<number>(DEFAULTS.detailWidthFraction)
+  detailLabelFraction = $state<number>(DEFAULTS.detailLabelFraction)
+
+  /**
+   * The label column's share while a divider is being dragged.
+   *
+   * DELIBERATELY NOT PERSISTED, and deliberately here rather than in the list
+   * holding the pointer. Every pane's divider is the same divider — dragging
+   * one has to move all of them, which is the whole point of the gesture —
+   * and the element that carries the width is the panel, not the list. This
+   * is the only place both can see. It holds a share rather than a pixel
+   * width for the same reason: a pane nested inside a card is narrower than
+   * the one around it, and both have to stay in proportion while the pointer
+   * moves, not only after it is released.
+   */
+  labelShareDrag = $state<number | null>(null)
 
   /**
    * Category names currently expanded in the navigator.
@@ -576,6 +635,16 @@ class Preferences {
    * or a hand-edited one, must not be able to open a panel over the whole
    * window or reduce it to a sliver.
    */
+  /** The label column's share, live while a divider is being dragged. */
+  readonly detailLabelShare = $derived(this.labelShareDrag ?? this.detailLabelFraction)
+
+  /** Stores the label column's share. See setDetailWidth on why loosely. */
+  setDetailLabelShare = (fraction: number): void => {
+    this.detailLabelFraction = Math.min(0.9, Math.max(0.05, fraction))
+    this.labelShareDrag = null
+    this.#save()
+  }
+
   setDetailWidth = (fraction: number): void => {
     // Sanity only. What the panel may actually be is decided per window by
     // detailWidthBounds, in pixels — clamping the SHARE narrowly here as well
@@ -952,6 +1021,13 @@ class Preferences {
       ) {
         this.detailWidthFraction = stored.detailWidthFraction
       }
+      if (
+        typeof stored.detailLabelFraction === 'number' &&
+        stored.detailLabelFraction >= 0.05 &&
+        stored.detailLabelFraction <= 0.9
+      ) {
+        this.detailLabelFraction = stored.detailLabelFraction
+      }
       if (Array.isArray(stored.expandedCategories)) {
         this.expandedCategories = stored.expandedCategories.filter(
           (entry): entry is string => typeof entry === 'string',
@@ -1039,6 +1115,7 @@ class Preferences {
         themePreference: this.themePreference,
         pageSize: this.pageSize,
         detailWidthFraction: this.detailWidthFraction,
+        detailLabelFraction: this.detailLabelFraction,
         refreshIntervalMs: this.refreshIntervalMs,
         autoRefresh: this.autoRefresh,
         navigatorCollapsed: this.navigatorCollapsed,

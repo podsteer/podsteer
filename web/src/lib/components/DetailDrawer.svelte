@@ -29,6 +29,7 @@
   import {
     preferences,
     detailWidthBounds,
+    detailLabelWidthCSS,
     DEFAULT_DETAIL_FRACTION,
     DETAIL_MIN_REM,
     DETAIL_MAX_REM,
@@ -663,7 +664,7 @@
     progress is the one time a pixel width is used — see draggedWidth.
   -->
   <aside
-    style="width: {draggedWidth !== null
+    style="--detail-label-width: {detailLabelWidthCSS(preferences.detailLabelShare)}; width: {draggedWidth !== null
       ? `${draggedWidth}px`
       : `min(${DETAIL_MAX_SHARE * 100}vw, clamp(${DETAIL_MIN_REM}rem, ${
           preferences.detailWidthFraction * 100
