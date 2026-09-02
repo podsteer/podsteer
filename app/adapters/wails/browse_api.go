@@ -146,6 +146,33 @@ func (b *BrowseAPI) ListTable(clusterID, kindID, namespace string) (ResourceTabl
 	return toResourceTable(table), nil
 }
 
+// NamespaceInventory reports what one namespace holds, kind by kind.
+//
+// One request per built-in namespaced kind, so it is called when a panel's
+// section is opened rather than on every refresh — the counts are cheap
+// individually and there are twenty of them.
+func (b *BrowseAPI) NamespaceInventory(clusterID, namespace string) (NamespaceInventory, error) {
+	ctx, cancel := b.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return NamespaceInventory{}, apiError(b.logger, "NamespaceInventory", err)
+	}
+
+	name, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return NamespaceInventory{}, apiError(b.logger, "NamespaceInventory", err)
+	}
+
+	inventory, err := b.resources.NamespaceInventory(ctx, id, name)
+	if err != nil {
+		return NamespaceInventory{}, apiError(b.logger, "NamespaceInventory", err)
+	}
+
+	return toNamespaceInventory(inventory), nil
+}
+
 // GetManifest returns one object as YAML, for the detail view.
 //
 // revealSecrets applies to core/v1 Secrets and nothing else: false replaces

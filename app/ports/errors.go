@@ -78,6 +78,15 @@ var (
 	// somebody to check a VPN.
 	ErrCredentialPluginMissing = errors.New("credential plugin not found")
 
+	// ErrCountUnavailable means the API server did not report how many objects
+	// a list holds.
+	//
+	// Counting asks for one object and reads the server's own count of the
+	// rest, which every server since Kubernetes 1.15 reports. One that does
+	// not leaves the caller holding a single object and no idea whether it is
+	// the only one — so this is returned rather than the 1 that would imply.
+	ErrCountUnavailable = errors.New("list total unavailable")
+
 	// ErrMetricsUnavailable means the cluster serves no metrics API.
 	//
 	// This is an ordinary condition, not a fault: metrics-server is an add-on

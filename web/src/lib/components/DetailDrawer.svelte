@@ -777,6 +777,7 @@
           canOpen={kindIdFor}
           onopen={openObject}
           onnamespace={(namespace) => void session.selectNamespace(namespace)}
+          onbrowse={(kindId, namespace) => void session.browseKind(kindId, namespace)}
         />
       {:else if activeTab === 'logs'}
         {#if maximized === 'logs'}

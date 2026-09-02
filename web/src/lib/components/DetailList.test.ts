@@ -128,6 +128,41 @@ describe('DetailList', () => {
     }
   })
 
+  it('lays out a JSON value when the row is opened, and leaves other text alone', async () => {
+    // The annotation case: what operators write is one line of minified JSON,
+    // and expanding one line of minified JSON produces a longer line.
+    const wide = stubLayout(30)
+    try {
+      const { container } = render(DetailList, {
+        rows: [
+          {
+            label: 'kubectl.kubernetes.io/last-applied-configuration',
+            value: '{"apiVersion":"v1","metadata":{"name":"web","labels":{"app":"web"}}}',
+          },
+          { label: 'deployment.kubernetes.io/revision', value: '000000000000000000000004' },
+        ],
+      })
+
+      const open = async (row: number) => {
+        container.querySelectorAll('dd')[row]
+          .querySelector('button')
+          ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await tick()
+      }
+
+      await open(0)
+      const laidOut = container.querySelector('pre')
+      expect(laidOut?.textContent).toContain('\n  "apiVersion": "v1"')
+
+      // A long value that is not JSON stays text: laying out is for structure,
+      // and there is none here to lay out.
+      await open(1)
+      expect(container.querySelectorAll('pre')).toHaveLength(1)
+    } finally {
+      wide()
+    }
+  })
+
   it('renders a control row from the snippet and never clips it', () => {
     // A cell holding a button is not text: clipping text loses characters
     // somebody can ask back, and clipping a control loses the control. The

@@ -192,6 +192,18 @@ type ResourcePort interface {
 	// the API server itself prints.
 	ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName) (domain.ResourceTable, error)
 
+	// CountResources reports how many objects of kind exist in namespace.
+	//
+	// ONE OBJECT IS FETCHED, NOT ALL OF THEM. The API server reports how many
+	// more it did not send, so a namespace holding ten thousand Secrets costs
+	// the same to count as one holding none — and, just as importantly, their
+	// contents never leave the cluster to be counted here.
+	//
+	// Wraps ErrCountUnavailable when the server did not report a total, which
+	// is the honest answer for one too old to (before Kubernetes 1.15) rather
+	// than the "1" the single fetched object would otherwise imply.
+	CountResources(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName) (int, error)
+
 	// GetManifest returns one object serialised as YAML, for the detail view.
 	GetManifest(ctx context.Context, ref domain.ResourceRef, revealSecrets bool) (string, error)
 

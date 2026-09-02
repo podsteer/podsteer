@@ -138,6 +138,14 @@ type ResourceService interface {
 	// named by its ResourceKind.ID, which is what the navigator hands back.
 	ListTable(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName) (domain.ResourceTable, error)
 
+	// NamespaceInventory reports what one namespace holds, kind by kind.
+	//
+	// A use case rather than a port method because the answer is assembled:
+	// Kubernetes has no endpoint that counts a namespace's contents, so this
+	// is one count per kind, and which kinds are worth counting is a decision
+	// the domain makes.
+	NamespaceInventory(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.NamespaceInventory, error)
+
 	// GetManifest returns one object as YAML.
 	GetManifest(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, name string, revealSecrets bool) (string, error)
 

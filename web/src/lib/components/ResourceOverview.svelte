@@ -14,6 +14,7 @@
   import UsageChart from './UsageChart.svelte'
   import MetricsBackendNote from './MetricsBackendNote.svelte'
   import NodePods from './NodePods.svelte'
+  import NamespaceContents from './NamespaceContents.svelte'
   import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
@@ -56,6 +57,8 @@
      * header does.
      */
     onnamespace?: (namespace: string) => void
+    /** Opens a kind's list, filtered to a namespace. */
+    onbrowse?: (kindId: string, namespace: string) => void
   }
 
   let {
@@ -70,6 +73,7 @@
     canOpen,
     onopen,
     onnamespace,
+    onbrowse,
   }: Props = $props()
 
   /** Turns a reference into a click handler, or into nothing. See $lib/reference. */
@@ -588,6 +592,16 @@
     -->
     {#if selectedNode && clusterId}
       <NodePods {clusterId} nodeName={selectedNode.name} {onopen} />
+    {/if}
+
+    <!--
+      What is in a namespace, for the same reason and in the same place: the
+      panel's own labels matter less than its contents, and "is this namespace
+      empty" is the question that decides whether anything else here is worth
+      reading.
+    -->
+    {#if kind === 'Namespace' && clusterId && metadata.name}
+      <NamespaceContents {clusterId} namespace={metadata.name} {onbrowse} />
     {/if}
 
     <!--

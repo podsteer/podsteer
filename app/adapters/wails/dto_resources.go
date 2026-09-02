@@ -235,6 +235,61 @@ func toWorkloads(workloads []domain.Workload, now time.Time) []Workload {
 	return out
 }
 
+// ResourceCount is how many objects of one kind a namespace holds.
+type ResourceCount struct {
+	// KindID is the navigator handle, so the UI can open the list this
+	// counted without looking a kind up by name.
+	KindID string `json:"kindId"`
+	// Kind is the CamelCase singular, e.g. "ConfigMap".
+	Kind string `json:"kind"`
+	// Title is the plural display name, e.g. "ConfigMaps".
+	Title string `json:"title"`
+	// Count is how many exist. Meaningless when Unreadable is set.
+	Count int `json:"count"`
+	// Unreadable says, shortly, why the count is unknown.
+	//
+	// The UI must render this instead of the number rather than beside it: an
+	// unknown count shown as 0 tells somebody a namespace is empty when it
+	// may be full.
+	Unreadable string `json:"unreadable"`
+}
+
+// NamespaceInventory is what a namespace holds, as presented to the UI.
+type NamespaceInventory struct {
+	Namespace string `json:"namespace"`
+	// Counts holds the kinds that hold something, largest first, followed by
+	// any that could not be read.
+	Counts []ResourceCount `json:"counts"`
+	// Empty is how many kinds were counted and hold nothing.
+	Empty int `json:"empty"`
+	// Total is the sum of the known counts — of the built-in kinds only. The
+	// UI says so; custom resources are not counted.
+	Total int `json:"total"`
+	// Unreadable is how many kinds were refused.
+	Unreadable int `json:"unreadable"`
+}
+
+func toNamespaceInventory(inventory domain.NamespaceInventory) NamespaceInventory {
+	counts := make([]ResourceCount, 0, len(inventory.Counts))
+	for _, count := range inventory.Counts {
+		counts = append(counts, ResourceCount{
+			KindID:     count.Kind.ID(),
+			Kind:       count.Kind.Kind,
+			Title:      count.Kind.Title,
+			Count:      count.Count,
+			Unreadable: count.Unreadable,
+		})
+	}
+
+	return NamespaceInventory{
+		Namespace:  inventory.Namespace.String(),
+		Counts:     counts,
+		Empty:      inventory.Empty,
+		Total:      inventory.Total,
+		Unreadable: inventory.Unreadable,
+	}
+}
+
 // Event is a Kubernetes Event as presented to the UI.
 type Event struct {
 	Name      string `json:"name"`

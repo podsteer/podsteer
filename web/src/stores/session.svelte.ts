@@ -601,6 +601,29 @@ export class ClusterSession {
     await this.refresh()
   }
 
+  /**
+   * Opens a kind's list, filtered to one namespace.
+   *
+   * Both at once and ONE reload. Calling selectKind and selectNamespace in
+   * turn does the same thing in two refreshes, the first of which loads the
+   * new kind across whatever namespace was previously selected — a flash of
+   * the wrong list, and on a large cluster an expensive one.
+   */
+  browseKind = async (kindId: string, namespace: string): Promise<void> => {
+    const changed = kindId !== this.selectedKindId || namespace !== this.namespace
+
+    this.selectedKindId = kindId
+    this.namespace = namespace
+    preferences.setClusterNamespace(this.cluster.id, namespace)
+    this.page = 1
+    // Closed either way: the drawer is open on the namespace that was just
+    // navigated away from, and leaving it there over a list of something else
+    // is a panel describing an object nothing on screen refers to.
+    this.closeDetail()
+
+    if (changed) await this.refresh()
+  }
+
   /** Changes the namespace filter, remembers it for this cluster, and reloads. */
   selectNamespace = async (namespace: string): Promise<void> => {
     if (namespace === this.namespace) return

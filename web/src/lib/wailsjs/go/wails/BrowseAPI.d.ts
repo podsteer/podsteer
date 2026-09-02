@@ -12,4 +12,6 @@ export function ListKinds(arg1:string):Promise<Array<wails.ResourceKind>>;
 
 export function ListTable(arg1:string,arg2:string,arg3:string):Promise<wails.ResourceTable>;
 
+export function NamespaceInventory(arg1:string,arg2:string):Promise<wails.NamespaceInventory>;
+
 export function RevealSecretKey(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;

@@ -108,6 +108,37 @@
    */
   let measured: boolean[] = []
 
+  /**
+   * The same value, laid out, when it is JSON.
+   *
+   * Annotations are the reason: `last-applied-configuration` and most of what
+   * operators write is a single line of minified JSON, and a single line of
+   * minified JSON opened to its full width is no more readable than it was
+   * clipped — it is just longer. Indented, it is a document.
+   *
+   * Objects and arrays only. `"true"`, `"3"` and `"null"` are all valid JSON
+   * and formatting them changes nothing, so a value that merely parses is not
+   * enough; it has to have structure to lay out.
+   *
+   * PARSED AND RE-PRINTED, which is worth being explicit about: the text
+   * shown is this application's rendering of the value, not the value's own
+   * bytes. Key order is preserved and nothing is dropped, but whitespace is
+   * ours. The YAML tab remains the place the object is quoted exactly.
+   */
+  function laidOut(value: string): string | null {
+    const text = value.trim()
+    if (!text.startsWith('{') && !text.startsWith('[')) return null
+
+    try {
+      const parsed: unknown = JSON.parse(text)
+      if (parsed === null || typeof parsed !== 'object') return null
+      return JSON.stringify(parsed, null, 2)
+    } catch {
+      // Not JSON, or JSON this browser will not parse. Either way it is text.
+      return null
+    }
+  }
+
   /** Whether the browser had to cut something off to fit the column. */
   function cut(cell: HTMLElement | undefined): boolean {
     return !!cell && cell.scrollWidth > cell.clientWidth + 1
@@ -183,6 +214,17 @@
       {#if row.control && value}
         <!-- The caller's own markup, at its natural size. See `control`. -->
         <span class="min-w-0" title={row.value}>{@render value(row, index)}</span>
+      {:else if open && laidOut(row.value)}
+        <!--
+          Laid out, in the monospace face indentation needs to mean anything.
+          `pre-wrap` rather than `pre`: a long string value inside the JSON
+          would otherwise scroll the pane sideways, and a detail panel that
+          scrolls horizontally has lost.
+        -->
+        <pre
+          class="min-w-0 flex-1 font-mono text-body-small leading-relaxed break-words
+                 whitespace-pre-wrap"
+          data-selectable>{laidOut(row.value)}</pre>
       {:else}
         <span
           bind:this={valueCells[index]}

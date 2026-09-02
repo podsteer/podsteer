@@ -28,6 +28,7 @@ import {
   ListEventsForResource as bindListEventsForResource,
   ListKinds as bindListKinds,
   ListTable as bindListTable,
+  NamespaceInventory as bindNamespaceInventory,
 } from '$lib/wailsjs/go/wails/BrowseAPI'
 import {
   ListPods as bindListPods,
@@ -87,6 +88,9 @@ export type K8sEvent = wails.Event
 export type ResourceKind = wails.ResourceKind
 /** A generically browsed kind, with server-printed columns. */
 export type ResourceTable = wails.ResourceTable
+
+export type NamespaceInventory = wails.NamespaceInventory
+export type ResourceCount = wails.ResourceCount
 /** One column of a generic table. */
 export type TableColumn = wails.TableColumn
 /** One row of a generic table. */
@@ -353,6 +357,19 @@ export function listTable(
   namespace: string,
 ): Promise<ResourceTable> {
   return call(() => bindListTable(clusterId, kindId, namespace))
+}
+
+/**
+ * Counts what one namespace holds, kind by kind.
+ *
+ * One request per built-in namespaced kind on the Go side, so this is asked
+ * when a panel section is opened rather than on every refresh.
+ */
+export function namespaceInventory(
+  clusterId: string,
+  namespace: string,
+): Promise<NamespaceInventory> {
+  return call(() => bindNamespaceInventory(clusterId, namespace))
 }
 
 /**
