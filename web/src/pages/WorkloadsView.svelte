@@ -111,6 +111,8 @@
 
   function copyKubectl(command: string): void {
     void navigator.clipboard?.writeText(command).catch(() => {})
+  }
+
   /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
       repeated here rather than asked of either. */
   function isColumnVisible(column: Column): boolean {
