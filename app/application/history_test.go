@@ -76,6 +76,10 @@ func (stubOverview) Overview(context.Context, domain.ClusterID) (domain.Overview
 	}, nil
 }
 
+func (s stubOverview) OverviewForTarget(ctx context.Context, id domain.ClusterID, _ string) (domain.Overview, error) {
+	return s.Overview(ctx, id)
+}
+
 // newHistoryService wires a service around the fakes, with one cluster open.
 func newHistoryService(t *testing.T, store ports.HistoryPort, settingsPath string) *application.HistoryService {
 	t.Helper()

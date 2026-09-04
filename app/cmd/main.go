@@ -171,6 +171,7 @@ func run() error {
 		Workloads: kubernetes,
 		Events:    kubernetes,
 		Metrics:   kubernetes,
+		APIs:      kubernetes,
 		Registry:  registry,
 		Logger:    logger,
 	})

@@ -124,6 +124,9 @@ const (
 	CategoryFindingConfiguration FindingCategory = "Configuration"
 	// CategoryFindingStorage covers persistent volumes and the claims on them.
 	CategoryFindingStorage FindingCategory = "Storage"
+	// CategoryFindingUpgrade covers API versions the cluster serves today
+	// that a future Kubernetes minor removes — see deprecations.go.
+	CategoryFindingUpgrade FindingCategory = "Upgrade"
 )
 
 // Thresholds for the rules below. They are named constants rather than magic
@@ -898,6 +901,28 @@ type OverviewInput struct {
 	// Backend is a monitoring system found running in the cluster, if any.
 	// Zero means none was found, which is the ordinary case.
 	Backend MetricsBackend
+	// ServedAPIs is every group/version discovery reports the cluster
+	// serves, straight from the API server rather than from the catalog:
+	// the catalog only ever holds the CURRENT version PodSteer targets for
+	// each kind, so it can never contain a deprecated one for UpgradeImpact
+	// to match against.
+	ServedAPIs []APIGroupVersion
+	// APIsKnown reports whether ServedAPIs could be read at all. False —
+	// discovery failed — means nothing is assessed: Upgrade stays zero and
+	// no upgrade findings are produced, whatever TargetVersion says, because
+	// a target compared against an unknown served set cannot honestly say
+	// anything either broke or survived.
+	APIsKnown bool
+	// APIUsage reports, per served, deprecation-table-matched group/version,
+	// who is still writing through it — keyed by Deprecation.ResourceKind().
+	// ID(). See UpgradeImpact's own doc comment for what an absent key means.
+	APIUsage map[string]APIUsage
+	// TargetVersion is the Kubernetes minor to assess an upgrade against,
+	// e.g. "1.33". Blank defaults to the minor immediately after Version —
+	// the question an operator actually opens this for is "what happens at
+	// the next upgrade", not an arbitrarily distant one, though the UI may
+	// ask about a later one explicitly.
+	TargetVersion string
 	// Now is the reference time. Passed rather than read so the rules are
 	// testable, the same reason every Age method takes it.
 	Now time.Time
@@ -933,6 +958,24 @@ type Overview struct {
 	// keeps minutes of, rather than pretending its own window is the whole
 	// picture.
 	Backend MetricsBackend
+	// Upgrade summarises what UpgradeImpact found against TargetVersion.
+	// Zero (TargetMinor == "") means no target could be placed — Version was
+	// unparseable, or too new for even NextMinor to reason about — which is
+	// distinct from a target that was assessed and found nothing wrong: the
+	// UI must be able to tell "not assessed" from "assessed, clean".
+	Upgrade UpgradeSummary
+}
+
+// UpgradeSummary is the one-line version of what UpgradeImpact found, for the
+// overview header — "Next minor: 1.33 — 2 APIs to migrate" — without the UI
+// having to filter Findings by category and count them itself.
+type UpgradeSummary struct {
+	// TargetMinor is the Kubernetes minor the assessment was made against.
+	TargetMinor string
+	// Count is how many upgrade-impact findings were raised, at any
+	// severity: an API about to break, one served but unused, or one merely
+	// deprecated that survives this target regardless.
+	Count int
 }
 
 // NewOverview assesses a cluster snapshot.
@@ -956,6 +999,29 @@ func NewOverview(input OverviewInput) Overview {
 
 	support := SupportFor(input.Version, now)
 
+	// The target defaults to the next minor rather than being left unset:
+	// "what happens at the next upgrade" is the question this exists to
+	// answer, and requiring the caller to compute that default themselves
+	// would be one more place it could be gotten wrong. A caller that wants
+	// a different, UI-selected target sets TargetVersion explicitly.
+	targetMinor := input.TargetVersion
+	if targetMinor == "" {
+		targetMinor, _ = nextMinor(input.Version)
+	}
+
+	// APIsKnown false means discovery could not be read: served is unknown,
+	// so nothing can be honestly compared against target either way. Upgrade
+	// stays zero (TargetMinor "") and no upgrade findings are produced,
+	// whatever target was asked for — the UI reads TargetMinor == "" as "not
+	// assessed", not as "assessed, clean".
+	var upgradeFindings []Finding
+	upgrade := UpgradeSummary{}
+	if targetMinor != "" && input.APIsKnown {
+		target := ServerVersion{GitVersion: "v" + targetMinor}
+		upgradeFindings = UpgradeImpact(input.ServedAPIs, input.Version, target, input.APIUsage)
+		upgrade = UpgradeSummary{TargetMinor: targetMinor, Count: len(upgradeFindings)}
+	}
+
 	findings := make([]Finding, 0, 16)
 	findings = append(findings, podFindings(input.Pods, owners, now)...)
 	findings = append(findings, workloadFindings(input.Workloads, findings, now)...)
@@ -971,6 +1037,7 @@ func NewOverview(input OverviewInput) Overview {
 	findings = append(findings, sizingFindings(input.Pods, owners, input.MetricsMeasured, now)...)
 	findings = append(findings, imageDriftFindings(input.Pods)...)
 	findings = append(findings, eventFindings(input.Events, findings, now)...)
+	findings = append(findings, upgradeFindings...)
 	rankFindings(findings)
 
 	return Overview{
@@ -992,6 +1059,7 @@ func NewOverview(input OverviewInput) Overview {
 		Unavailable: slices.Clone(input.Unavailable),
 		Metrics:     input.Metrics,
 		Backend:     input.Backend,
+		Upgrade:     upgrade,
 	}
 }
 

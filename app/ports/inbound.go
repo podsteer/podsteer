@@ -151,6 +151,15 @@ type OverviewService interface {
 	// returned as an error. An error means the whole assessment failed, which
 	// in practice means the cluster is not connected.
 	Overview(ctx context.Context, id domain.ClusterID) (domain.Overview, error)
+
+	// OverviewForTarget assesses a connected cluster the same way, but scores
+	// the upgrade-impact findings against a specific Kubernetes minor rather
+	// than the default of the next one after the cluster's current version —
+	// what the overview's "check against" selector asks for. targetMinor is
+	// e.g. "1.33"; an unparseable or out-of-range one degrades to no
+	// upgrade-impact findings rather than an error, the same way an unknown
+	// version degrades everywhere else in this package.
+	OverviewForTarget(ctx context.Context, id domain.ClusterID, targetMinor string) (domain.Overview, error)
 }
 
 // HistoryService is the use-case surface for a cluster's recorded history.

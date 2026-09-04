@@ -3,3 +3,5 @@
 import {wails} from '../models';
 
 export function GetOverview(arg1:string):Promise<wails.Overview>;
+
+export function GetOverviewForTarget(arg1:string,arg2:string):Promise<wails.Overview>;

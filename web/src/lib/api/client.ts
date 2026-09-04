@@ -71,7 +71,10 @@ import {
   FreeLocalPort as bindFreeLocalPort,
   RollbackWorkload as bindRollbackWorkload,
 } from '$lib/wailsjs/go/wails/ManagementAPI'
-import { GetOverview as bindGetOverview } from '$lib/wailsjs/go/wails/OverviewAPI'
+import {
+  GetOverview as bindGetOverview,
+  GetOverviewForTarget as bindGetOverviewForTarget,
+} from '$lib/wailsjs/go/wails/OverviewAPI'
 import {
   GetSettings as bindGetHistorySettings,
   GetSeries as bindGetSeries,
@@ -322,6 +325,16 @@ export function listNodes(clusterId: string): Promise<Node[]> {
  */
 export function getOverview(clusterId: string): Promise<Overview> {
   return call(() => bindGetOverview(clusterId))
+}
+
+/**
+ * Assesses a connected cluster the way `getOverview` does, but scores the
+ * upgrade-impact findings against `targetMinor` (e.g. `"1.33"`) instead of
+ * the default of the next minor after the cluster's current version — what
+ * the overview header's "check against" selector calls.
+ */
+export function getOverviewForTarget(clusterId: string, targetMinor: string): Promise<Overview> {
+  return call(() => bindGetOverviewForTarget(clusterId, targetMinor))
 }
 
 // --- History ----------------------------------------------------------------

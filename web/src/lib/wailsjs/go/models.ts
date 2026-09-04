@@ -1341,6 +1341,20 @@ export namespace wails {
 		    return a;
 		}
 	}
+	export class UpgradeSummary {
+	    targetMinor: string;
+	    count: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpgradeSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.targetMinor = source["targetMinor"];
+	        this.count = source["count"];
+	    }
+	}
 	export class RestartHotspot {
 	    namespace: string;
 	    name: string;
@@ -1580,6 +1594,8 @@ export namespace wails {
 	    criticalCount: number;
 	    warningCount: number;
 	    infoCount: number;
+	    upgrade: UpgradeSummary;
+	    knownMinors: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Overview(source);
@@ -1609,6 +1625,8 @@ export namespace wails {
 	        this.criticalCount = source["criticalCount"];
 	        this.warningCount = source["warningCount"];
 	        this.infoCount = source["infoCount"];
+	        this.upgrade = this.convertValues(source["upgrade"], UpgradeSummary);
+	        this.knownMinors = source["knownMinors"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -2056,6 +2074,7 @@ export namespace wails {
 	        this.url = source["url"];
 	    }
 	}
+	
 	
 	export class Workload {
 	    kind: string;

@@ -22,6 +22,7 @@
   import NodeLoadGrid from '$lib/components/NodeLoadGrid.svelte'
   import MetricsBackendNote from '$lib/components/MetricsBackendNote.svelte'
   import TrendChart from '$lib/components/TrendChart.svelte'
+  import Select from '$lib/components/Select.svelte'
   import { formatAge } from '$lib/format'
   import { ClusterHistory, TREND_WINDOWS } from '$stores/history.svelte'
   import { preferences } from '$stores/preferences.svelte'
@@ -51,6 +52,40 @@
   let { session }: Props = $props()
 
   const overview = $derived(session.overview)
+
+  /**
+   * "Check against" — the range of Kubernetes minors the upgrade-impact
+   * findings can be scored against, next minor first.
+   *
+   * Bounded to what the support-window table knows (`overview.knownMinors`)
+   * rather than a free-text field: asking about a version neither table has
+   * heard of would only ever come back silent, with nothing on screen to say
+   * why.
+   */
+  function nextMinorOf(minor: string): string {
+    const [major, small] = minor.split('.').map(Number)
+    return `${major}.${small + 1}`
+  }
+
+  function compareMinor(a: string, b: string): number {
+    const [aMajor, aMinor] = a.split('.').map(Number)
+    const [bMajor, bMinor] = b.split('.').map(Number)
+    return aMajor !== bMajor ? aMajor - bMajor : aMinor - bMinor
+  }
+
+  const upgradeTargetOptions = $derived.by(() => {
+    const current = overview?.support.minor
+    if (!current) return []
+    const next = nextMinorOf(current)
+    return (overview?.knownMinors ?? [])
+      .filter((minor) => compareMinor(minor, next) >= 0)
+      .map((minor) => ({ value: minor, label: minor === next ? `${minor} (next)` : minor }))
+  })
+
+  // What the selector shows: the operator's explicit choice, or whatever
+  // TargetVersion the backend actually assessed against by default — never
+  // invented client-side, so the two can never disagree.
+  const upgradeTargetValue = $derived(session.upgradeTarget ?? overview?.upgrade.targetMinor ?? '')
 
   /**
    * Findings the operator should act on, and the rest.
@@ -456,6 +491,29 @@
               {/if}
             </dd>
           </div>
+          {#if upgradeTargetOptions.length > 0}
+            <div class="flex flex-col">
+              <dt class="opacity-70">Check against</dt>
+              <dd class="flex items-center gap-1.5">
+                <Select
+                  label="Check against"
+                  accessibleName="Check upgrade impact against Kubernetes version"
+                  value={upgradeTargetValue}
+                  options={upgradeTargetOptions}
+                  compact
+                  onchange={(minor) => void session.setUpgradeTarget(minor)}
+                />
+                {#if overview.upgrade.count > 0}
+                  <span
+                    class="rounded-full bg-warning-container px-1.5 py-0.5 text-label-small text-on-warning-container"
+                    title="{overview.upgrade.count} {overview.upgrade.count === 1 ? 'API needs' : 'APIs need'} migrating before {overview.upgrade.targetMinor}"
+                  >
+                    {overview.upgrade.count} to migrate
+                  </span>
+                {/if}
+              </dd>
+            </div>
+          {/if}
           <div class="flex flex-col">
             <dt class="opacity-70">Nodes</dt>
             <dd class="tabular-nums">{overview.nodes.total}</dd>

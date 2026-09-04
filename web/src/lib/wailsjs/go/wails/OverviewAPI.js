@@ -5,3 +5,7 @@
 export function GetOverview(arg1) {
   return window['go']['wails']['OverviewAPI']['GetOverview'](arg1);
 }
+
+export function GetOverviewForTarget(arg1, arg2) {
+  return window['go']['wails']['OverviewAPI']['GetOverviewForTarget'](arg1, arg2);
+}

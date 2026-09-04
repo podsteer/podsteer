@@ -342,6 +342,46 @@ about before adding a fourth:
   `app/domain/release.go`. It goes stale by construction, so a release it does
   not cover is reported as `SupportUnknown` and produces nothing. Never make an
   unknown version default to unsupported.
+- **API deprecations and removals are a second hand-compiled table**, in
+  `app/domain/deprecations.go`, transcribed from the Kubernetes deprecated API
+  migration guide rather than typed out from memory — the file comment names
+  which entries it could confirm and which it deliberately left out because
+  the guide did not state them. `UpgradeImpact` matches a cluster's served
+  group/versions against it, and those come from **discovery's own group
+  list** (`Adapter.ServedAPIs`), never from `domain/catalog.go`: the catalogue
+  holds only the CURRENT version PodSteer targets for each kind, so it can
+  never contain a deprecated one for this table to match against. It goes
+  stale the same way the support table does: an API this table does not cover
+  produces no finding, never a guess, and a CRD can never match because
+  Kubernetes reserves its own API groups.
+  **An object does not use an API version — a WRITER does.** Kubernetes
+  stores one copy of an object and serves it through every version the API
+  server offers, so a `limit=1` count under a deprecated version would equal
+  the count under its replacement and could never distinguish them — an
+  earlier version of this feature counted objects this way and it would have
+  marked every 1.29–1.31 cluster critical for its own default FlowSchemas,
+  which every such cluster carries and nobody wrote. What actually breaks at
+  removal is whoever keeps WRITING through the old version, which Kubernetes
+  already records per object in `metadata.managedFields[].apiVersion`.
+  `Adapter.APIWriters` (`app/adapters/k8s/upgrade.go`) reads exactly that,
+  through the metadata client (`k8s.io/client-go/metadata`) rather than the
+  typed or dynamic ones — it lists `PartialObjectMetadata` only, names,
+  labels and managedFields, never an object's body or a Secret's contents —
+  bounded to `apiWriterScanLimit` (2000) objects so a busy old cluster's
+  Events cannot turn into a full scan, and cached for five minutes
+  (`upgradeCacheTTL`) with a refusal (403/401) cached too, the same discipline
+  `DiscoverMetricsBackend` follows and for the same reason: an account that
+  may never list something should not have that retried into its audit log
+  every poll.
+  An object annotated `apf.kubernetes.io/autoupdate-spec=true` is the control
+  plane's own — a default FlowSchema or PriorityLevelConfiguration it
+  bootstraps and keeps current — and keeps a stale `managedFields` entry from
+  an OLDER producer for a while after an upgrade even once the running
+  producer has moved on. That exclusion is made in the domain
+  (`operatorWriters`, `deprecations.go`), never filtered out in the adapter:
+  the adapter reports every writer it finds, annotation included, so the
+  exclusion is a rule `deprecations_test.go` can argue with rather than a
+  silent drop nothing tests.
 - **A monitoring stack already in the cluster is discovered, and only pointed
   at** — `app/adapters/k8s/prometheus.go` lists Services by two label selectors
   and ranks the matches by name, because a kube-prometheus-stack install

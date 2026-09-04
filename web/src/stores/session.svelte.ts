@@ -12,6 +12,7 @@ import {
   ALL_NAMESPACES,
   getManifest,
   getOverview,
+  getOverviewForTarget,
   listEvents,
   listKinds,
   listNamespaces,
@@ -429,6 +430,15 @@ export class ClusterSession {
    */
   #autoscalerTables = new Map<string, Promise<ResourceTable>>()
   overview = $state.raw<Overview | null>(null)
+
+  /**
+   * The Kubernetes minor the overview's "check against" selector chose, or
+   * null for the default (the next minor after the cluster's current
+   * version, decided in Go). Session-scoped rather than persisted: asking
+   * what a specific future upgrade breaks is a question about one visit, not
+   * a standing preference like a page size or a sort order.
+   */
+  upgradeTarget = $state<string | null>(null)
 
   /**
    * The non-info finding ids of the previous assessment, or null before the
@@ -988,6 +998,20 @@ export class ClusterSession {
   }
 
   /**
+   * Changes what the overview's upgrade-impact findings are checked against,
+   * and reloads. `null` returns to the default (the next minor).
+   *
+   * Not remembered across tabs or sessions like the namespace filter is:
+   * comparing against a specific future version is a question about this
+   * visit, and a choice made checking one cluster has no bearing on another.
+   */
+  setUpgradeTarget = async (minor: string | null): Promise<void> => {
+    if (minor === this.upgradeTarget) return
+    this.upgradeTarget = minor
+    await this.refresh()
+  }
+
+  /**
    * Sets the search term.
    *
    * Resets to the first page: narrowing a search while on page 4 otherwise
@@ -1223,7 +1247,13 @@ export class ClusterSession {
 
     switch (this.viewMode) {
       case 'overview':
-        return getOverview(id)
+        // The explicit target only applies to the view an operator is
+        // actually looking at. #refreshAssessment (below) always asks for
+        // the default, so a comparison chosen here never changes the
+        // navigator badge or the alert a different tab's poll would raise.
+        return this.upgradeTarget
+          ? getOverviewForTarget(id, this.upgradeTarget)
+          : getOverview(id)
       case 'pods':
         return listPods(id, namespace)
       case 'nodes':

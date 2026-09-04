@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
 )
@@ -76,6 +77,18 @@ type fakeKubernetes struct {
 	volumes         []domain.PersistentVolume
 	claims          []domain.PersistentVolumeClaim
 
+	// servedAPIs is what ServedAPIs reports. Absent from most tests: the
+	// upgrade-impact wiring simply finds no candidates and moves on.
+	servedAPIs    []domain.APIGroupVersion
+	servedAPIsErr error
+
+	// apiUsage keys by ResourceKind.ID(), for the upgrade-impact writer
+	// scan. Absent from most tests, for the same reason resourceCounts used
+	// to be: the served set they configure has no table match, so
+	// APIWriters is never actually called.
+	apiUsage    map[string]domain.APIUsage
+	apiUsageErr map[string]error
+
 	revisions    []domain.Revision
 	revisionsErr error
 
@@ -86,9 +99,10 @@ type fakeKubernetes struct {
 }
 
 var (
-	_ ports.ClusterPort  = (*fakeKubernetes)(nil)
-	_ ports.WorkloadPort = (*fakeKubernetes)(nil)
-	_ ports.MetricsPort  = (*fakeKubernetes)(nil)
+	_ ports.ClusterPort        = (*fakeKubernetes)(nil)
+	_ ports.WorkloadPort       = (*fakeKubernetes)(nil)
+	_ ports.MetricsPort        = (*fakeKubernetes)(nil)
+	_ application.APIInspector = (*fakeKubernetes)(nil)
 )
 
 func (f *fakeKubernetes) ServerVersion(_ context.Context, id domain.ClusterID) (domain.ServerVersion, error) {
@@ -223,6 +237,26 @@ func (f *fakeKubernetes) NodeFilesystems(_ context.Context, _ domain.ClusterID) 
 
 func (f *fakeKubernetes) DiscoverMetricsBackend(_ context.Context, _ domain.ClusterID) (domain.MetricsBackend, error) {
 	return f.metricsBackend, nil
+}
+
+// ServedAPIs answers from servedAPIs, or servedAPIsErr when set.
+func (f *fakeKubernetes) ServedAPIs(_ context.Context, _ domain.ClusterID) ([]domain.APIGroupVersion, error) {
+	if f.servedAPIsErr != nil {
+		return nil, f.servedAPIsErr
+	}
+	return append([]domain.APIGroupVersion(nil), f.servedAPIs...), nil
+}
+
+// APIWriters answers from apiUsage, keyed by ResourceKind.ID(); a kind with
+// no entry reports zero writers rather than an error, matching the ordinary
+// case of a kind nothing has written through the deprecated version yet.
+// apiUsageErr overrides that per kind, for the tests that need a scan to
+// fail.
+func (f *fakeKubernetes) APIWriters(_ context.Context, _ domain.ClusterID, kind domain.ResourceKind, _ int) (domain.APIUsage, error) {
+	if err := f.apiUsageErr[kind.ID()]; err != nil {
+		return domain.APIUsage{}, err
+	}
+	return f.apiUsage[kind.ID()], nil
 }
 
 func (f *fakeKubernetes) RolloutHistory(_ context.Context, id domain.ClusterID, _ domain.WorkloadKind, namespace domain.NamespaceName, _ string) ([]domain.Revision, error) {
