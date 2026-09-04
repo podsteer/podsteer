@@ -798,6 +798,77 @@ suggested name's extension: it was pinned to CSV, and macOS enforces a filter
 as the extension, so a `.json` document would have been written as
 `.json.csv` — which the log download was already quietly suffering.
 
+## The session timeline is in memory, and that is the design
+
+`web/src/stores/timeline.svelte.ts` keeps, per cluster and per object, what
+happened while the tab was open: the Kubernetes Events an object produced, the
+findings that appeared and cleared underneath it, and the writes PodSteer
+itself made. It is shown as a Timeline tab in the detail drawer and as a
+fourth pinned pseudo-entry beside the overview, Applications and All clusters
+— `podsteer/timeline`, a record rather than a kind, and absent from
+`domain/catalog.go` for the reason the other three are.
+
+**It is in the frontend, and it costs nothing on the wire.** Everything it
+records had already crossed the bridge for another reason: the assessment is
+fetched on every refresh whatever view is open, a pod's findings ride every
+row of the pod list (`Pod.findings`), the event lists are the rows of the
+views that show them, and a write's outcome is resolved in
+`web/src/lib/api/client.ts` before anything is recorded. So there is no
+backend state, no extra request, no goroutine, and no Wails event to wait on
+— the same trade `usageHistory` makes with the measurements a list response
+was already carrying.
+
+**Nothing reaches disk, deliberately.** A timeline is made almost entirely of
+object names, and object names are not on the list of things SECURITY.md says
+PodSteer writes on an operator's behalf — the same commitment
+`ClusterSession.recentObjects` keeps for the navigator's Recent section and
+the sampled capacity history keeps by carrying no names at all. Do not add a
+preference that would persist it. What that buys is that there is nothing to
+leak, nothing to clean up and no retention policy to get wrong; what it costs
+is honest and has to be SAID rather than implied, so the panel carries one
+line stating that it covers this session only and goes when the tab closes —
+the same job `SeriesResult.spanSeconds` does for the sampled charts. The
+durable version, backed by storage that outlives the process, is the planned
+paid tier, and the seam belongs where `HistoryPort` puts it rather than in a
+file this process writes.
+
+Four rules there are load-bearing, each with a test in
+`web/src/lib/timeline.test.ts` or `web/src/stores/timeline.test.ts`:
+
+- **A finding appearing or clearing is DERIVED, and "gone" is not "not looked
+  at".** `diffFindings` compares one assessment against the last, and a
+  refresh that produced nothing passes `null` rather than an empty set: read
+  as an assessment it reports every outstanding problem in the cluster
+  clearing in the same instant. The same trap has a second shape for pod
+  findings, which are scoped to a POD rather than to the cluster — the row
+  buffers are mutually exclusive and the namespace filter narrows them, so a
+  pod missing from a list has not been looked at, and only pods a list
+  actually carried are diffed. A pod finding has no id, so its TITLE is the
+  identity; that holds because the per-container rules put the container name
+  in their title, and it lets the detail's numbers move without the finding
+  reading as cleared and raised again.
+- **Repeats are grouped, and grouping is a VIEW decision.** An event carries
+  the API server's own `count`, so one entry is recorded per Event object
+  however many refreshes re-read it, and `groupTimeline` collapses identical
+  entries into one row carrying the summed count and the span. Every entry is
+  in exactly one group and the count is on the row — the completeness rule
+  `graphFold.ts` already holds the folded dependency map to.
+- **It is bounded at both ends.** `MAX_ENTRIES_PER_OBJECT` (200) so one pod in
+  CrashLoopBackOff cannot crowd out every other object, and
+  `MAX_ENTRIES_PER_CLUSTER` (2000) so a session left open over a weekend
+  cannot grow without limit. Oldest first, and an evicted event's observation
+  identity is dropped with it or it could never be recorded again.
+- **Every write is recorded in one place.** `writing` in
+  `web/src/lib/api/client.ts` wraps each `ManagementAPI` call, so a dialog
+  added later cannot forget — the same discipline that makes
+  `ClusterSession.#recordRecent` the only place an object becomes recently
+  opened. A refusal is recorded too, because "I pressed delete and nothing
+  happened" is exactly the question this answers. Nothing that leaves the
+  cluster unchanged goes through it — `ValidateResource`, `PlanDrain`,
+  `PlanBulk` and a dry-run rollback are reads — and **no value is ever
+  recorded**: writing one key of a Secret records the key, never what was
+  written, exactly as `ManagementService`'s own audit line does.
+
 ## Licences are policy, and the build enforces it
 
 The policy lives in two halves that must be edited together:

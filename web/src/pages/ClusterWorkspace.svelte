@@ -16,6 +16,7 @@
   import { escapeUnclaimed } from '$lib/escape'
   import type { BulkActionId } from '$lib/bulk'
   import NamespacesView from './NamespacesView.svelte'
+import TimelineView from './TimelineView.svelte'
   import ApplicationsView from './ApplicationsView.svelte'
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
   import Navigator from '$lib/components/Navigator.svelte'
@@ -280,9 +281,11 @@
           <h2 class="truncate text-title-medium font-semibold text-on-surface">
             {session.viewMode === 'fleet'
               ? 'All clusters'
-              : session.isList
-                ? (session.selectedKind?.title ?? 'Resources')
-                : session.cluster.id}
+              : session.viewMode === 'timeline'
+                ? 'Timeline'
+                : session.isList
+                  ? (session.selectedKind?.title ?? 'Resources')
+                  : session.cluster.id}
           </h2>
           {#if session.isList}
             <span class="rounded-full bg-surface-container-high px-2 py-0.5 text-label-small
@@ -416,6 +419,8 @@
       <OverviewView {session} />
     {:else if session.viewMode === 'fleet'}
       <FleetView {session} />
+    {:else if session.viewMode === 'timeline'}
+      <TimelineView {session} />
     {:else if session.viewMode === 'pods'}
       <PodsView {session} />
     {:else if session.viewMode === 'nodes'}

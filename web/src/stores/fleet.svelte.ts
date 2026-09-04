@@ -46,6 +46,7 @@ import {
   type FleetTab,
 } from '$lib/fleet'
 import type { LoadStatus } from './session.svelte'
+import { timeline } from './timeline.svelte'
 
 /** Lifts a per-kind wire answer into the shape the merge rules read. */
 function asRead<T>(
@@ -150,6 +151,13 @@ class Fleet {
         case 'events': {
           const answers = await listFleetEvents(ids, namespace)
           if (generation !== this.#generation) return
+          // Filed on each cluster's own timeline on the way past. The merged
+          // table is the one view that reads events for a cluster whose tab
+          // is not in front, and these already crossed the bridge — so a tab
+          // switched back to later finds what happened while it was behind.
+          for (const answer of answers) {
+            timeline.recordEvents(answer.cluster, answer.events ?? [])
+          }
           this.events = mergeFleet(
             this.events,
             answers.map((answer: ClusterEvents) => asRead(answer, answer.events)),
