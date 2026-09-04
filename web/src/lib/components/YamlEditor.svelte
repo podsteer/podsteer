@@ -86,6 +86,10 @@
     findNext: () => void
     /** Moves the selection to the previous match, wrapping at the start. */
     findPrevious: () => void
+    /** Selects the text between two character offsets and scrolls it into
+        view — for seeding a fresh document with the caret already on the
+        field somebody is expected to fill in, rather than at offset zero. */
+    select: (from: number, to: number) => void
   }
 
   let {
@@ -426,6 +430,14 @@
     onready?.({
       findNext: () => step(1),
       findPrevious: () => step(-1),
+      select: (from, to) => {
+        if (!editor) return
+        editor.focus()
+        editor.dispatch({
+          selection: { anchor: from, head: to },
+          effects: EditorView.scrollIntoView(from, { y: 'center' }),
+        })
+      },
     })
 
     updateMarkers()

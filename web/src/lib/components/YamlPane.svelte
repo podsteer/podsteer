@@ -34,6 +34,10 @@
     managedFieldsDisabledReason?: string
     /** The actions for this pane — edit, copy — at the trailing edge. */
     actions?: Snippet
+    /** Hands the caller the editor's own controls — see YamlEditor's
+        `EditorApi`. Only a fresh document being seeded needs this; the
+        drawer's own tab has never used it. */
+    onready?: (api: EditorApi) => void
   }
 
   let {
@@ -44,6 +48,7 @@
     managedFieldsDisabled = false,
     managedFieldsDisabledReason,
     actions,
+    onready,
   }: Props = $props()
 
   let query = $state('')
@@ -96,6 +101,15 @@
   </PaneToolbar>
 
   <div class="min-h-0 flex-1">
-    <YamlEditor {content} {readonly} {onchange} {query} onready={(a) => (api = a)} />
+    <YamlEditor
+      {content}
+      {readonly}
+      {onchange}
+      {query}
+      onready={(a) => {
+        api = a
+        onready?.(a)
+      }}
+    />
   </div>
 </div>

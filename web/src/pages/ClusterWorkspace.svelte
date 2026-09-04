@@ -9,6 +9,7 @@
 -->
 <script lang="ts">
   import DetailDrawer from '$lib/components/DetailDrawer.svelte'
+  import CreateResourceDialog from '$lib/components/CreateResourceDialog.svelte'
   import NamespacesView from './NamespacesView.svelte'
   import ApplicationsView from './ApplicationsView.svelte'
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
@@ -21,13 +22,16 @@
   import { focusFirstRow } from '$lib/components/DataTable.svelte'
   import SearchField from '$lib/components/SearchField.svelte'
   import { preferences } from '$stores/preferences.svelte'
+  import { organisation } from '$stores/organisation.svelte'
   import { formatClockTime } from '$lib/format'
   import { shortcut } from '$lib/shortcuts'
   import { toCSV } from '$lib/csv'
   import { buildExportFilename } from '$lib/exportFilename'
-  import { saveTextFile } from '$lib/api/client'
+  import { ALL_NAMESPACES, saveTextFile } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import { flash } from '$lib/flash.svelte'
+  import { skeletonFor } from '$lib/manifestTemplates'
+  import { iconForKind } from '$lib/kindIcons'
   import type { ClusterSession } from '$stores/session.svelte'
   import EventsView from './EventsView.svelte'
   import GenericTableView from './GenericTableView.svelte'
@@ -35,7 +39,7 @@
   import NodesView from './NodesView.svelte'
   import PodsView from './PodsView.svelte'
   import WorkloadsView from './WorkloadsView.svelte'
-  import { PanelLeft, AlertTriangle, Download, Check } from '@lucide/svelte'
+  import { PanelLeft, AlertTriangle, Download, Check, Plus } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -50,6 +54,75 @@
       falls back to it below being a small kindness, not a promise. */
   let exportedPath = $state('')
   const exported = flash(2000)
+
+  /**
+   * The guardrails for the group this cluster sits in.
+   *
+   * Read fresh on every access rather than cached on connect — same
+   * reasoning as DetailDrawer's own copy of this, which this deliberately
+   * matches: an operator can change a group's environment or read-only flag
+   * in Organise while this tab is open, and the disabled New button has to
+   * follow that immediately.
+   */
+  const groupPlacement = $derived(organisation.placementOf(session.cluster.id))
+  const groupName = $derived(
+    organisation
+      .groupsIn(groupPlacement.project)
+      .find((group) => group.id === groupPlacement.group)?.name ?? 'Default',
+  )
+  const groupSettings = $derived(
+    organisation.settingsFor(groupPlacement.project, groupPlacement.group),
+  )
+  const isProduction = $derived(groupSettings.environment === 'production')
+  const productionGroup = $derived(isProduction ? groupName : null)
+  const isReadOnly = $derived(groupSettings.readOnly)
+  // Matches DetailDrawer's own wording, and the backend's — see
+  // app/adapters/wails/errors.go's CodeReadOnly.
+  const readOnlyReason = 'This cluster is marked read-only in PodSteer. Change that under Organise.'
+
+  /** The "New <Singular>" dialog, open on whichever kind is currently
+      selected — closing it and switching kinds never leaves it pointed at
+      the wrong one, since it is only ever opened from the kind it names. */
+  let newDialogOpen = $state(false)
+  const created = flash(2000)
+
+  /**
+   * The skeleton the dialog opens with.
+   *
+   * Live here, but the dialog itself only reads its `seed` prop at the
+   * instant `open` becomes true (the same convention ScaleDialog seeds
+   * `replicas` from `currentReplicas` with) — so a namespace filter changing
+   * while the dialog is already open rewrites what a NEXT opening would seed,
+   * never a draft somebody is midway through editing.
+   */
+  const newSkeleton = $derived(
+    session.selectedKind ? skeletonFor(session.selectedKind, session.namespace) : '',
+  )
+
+  /** The namespace the kubectl hint shows a `-n` flag for — the same
+      "concrete namespace, and only when this kind carries one" rule
+      `skeletonFor` itself applies to `metadata.namespace`, so the hint never
+      claims a flag the manifest does not actually need. */
+  const newNamespaceHint = $derived(
+    session.selectedKind?.namespaced && session.namespace !== ALL_NAMESPACES
+      ? session.namespace
+      : undefined,
+  )
+
+  /**
+   * Opens the object just created, the same way clicking a fresh row would.
+   *
+   * Refresh runs BEFORE openDetail: the drawer's own live sections (a
+   * workload's replica figures, a pod's findings) come from the list row
+   * rather than the manifest alone — see `session.openDetail` — so opening
+   * before the list has seen the new object would show a panel missing
+   * everything the row supplies.
+   */
+  async function onResourceCreated(name: string, namespace: string): Promise<void> {
+    created.show()
+    await session.refresh()
+    if (name) await session.openDetail(name, namespace)
+  }
 
   /**
    * Exports whichever table is on screen as CSV, through the same native
@@ -207,6 +280,28 @@
           onpage={session.goToPage}
         />
 
+        <!-- Create, for every kind the navigator can select — including a
+             custom resource and anything served by the generic table, since
+             both go through the same `updateResource` apply path as an edit.
+             Gated on `selectedKind` rather than on `activeTable.present`
+             (Export CSV's own gate): a table registers its export only once
+             mounted, but creating an object needs nothing from the table
+             that is about to show it. Applications and the overview have no
+             `selectedKind` — they are pinned ids, not catalog entries — so
+             neither offers this; Namespaces IS a catalog entry and does. -->
+        {#if session.selectedKind}
+          <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+
+          <ToolbarButton
+            icon={created.on ? Check : Plus}
+            label="New {session.selectedKind.singular}"
+            title={isReadOnly ? readOnlyReason : created.on ? 'Created' : 'New ' + session.selectedKind.singular}
+            active={created.on}
+            disabled={isReadOnly}
+            onclick={() => (newDialogOpen = true)}
+          />
+        {/if}
+
         <!-- The column chooser, moved out of the table header's trailing cell.
              There it scrolled away with a wide table, which is the one case it
              is wanted in. Behind its own divider because it is not part of the
@@ -269,3 +364,20 @@
 </div>
 
 <DetailDrawer {session} />
+
+{#if session.selectedKind}
+  <CreateResourceDialog
+    open={newDialogOpen}
+    icon={iconForKind(session.selectedKind)}
+    kindLabel={session.selectedKind.singular}
+    verb="New"
+    seed={newSkeleton}
+    clusterId={session.cluster.id}
+    namespace={newNamespaceHint}
+    {productionGroup}
+    {isReadOnly}
+    {readOnlyReason}
+    onclose={() => (newDialogOpen = false)}
+    oncreated={onResourceCreated}
+  />
+{/if}
