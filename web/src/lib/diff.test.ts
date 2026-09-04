@@ -338,7 +338,9 @@ describe('large inputs', () => {
       { kind: 'delete', aLine: 2500, bLine: null, text: 'line 2500' },
       { kind: 'insert', aLine: null, bLine: 2500, text: 'line 2500 changed' },
     ])
-    expect(ops[4999]).toEqual({ kind: 'equal', aLine: 4999, bLine: 4999, text: 'line 4999' })
+    // 2,500 shared lines, one delete, one insert, 2,499 shared lines: 5,001 ops.
+    expect(ops).toHaveLength(5001)
+    expect(ops[ops.length - 1]).toEqual({ kind: 'equal', aLine: 4999, bLine: 4999, text: 'line 4999' })
   })
 
   it('falls back to a block replacement when the differing middle exceeds the budget', () => {
