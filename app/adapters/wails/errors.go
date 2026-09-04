@@ -87,9 +87,30 @@ const (
 	// operator did nothing wrong: the transfer was simply bigger than the
 	// default allows, and the message names the setting that raises it.
 	CodeTransferLimit ErrorCode = "transfer_limit"
+	// CodeProbeToolMissing means an in-cluster reachability probe found
+	// nothing in the container to probe with. The direct sibling of
+	// CodeTarMissing and it exists for the same reason: nothing about the
+	// cluster or the credentials is wrong, retrying cannot help, and — the
+	// part that matters here — it is NOT an answer about the target. Folded
+	// into a failed probe it would draw a red cross against somebody's
+	// Service on the strength of somebody else's image.
+	CodeProbeToolMissing ErrorCode = "probe_tool_missing"
+	// CodeProbeUnavailable means the probe was never attempted, because the
+	// object or the vantage cannot answer: an ExternalName Service has no
+	// cluster address, a UDP port cannot be connected to, an Ingress host is
+	// not something PodSteer will open a connection to. Its own code because
+	// the panel renders these where the result would have gone rather than as
+	// a failure — they are facts that stay true however many times the button
+	// is pressed, the same Bounded-not-Unreadable distinction the dependency
+	// map already makes.
+	CodeProbeUnavailable ErrorCode = "probe_unavailable"
 	// CodeInternal is the fallback for anything unclassified.
 	CodeInternal ErrorCode = "internal"
 )
+
+// errProbeNoContainer is raised when a probe or an image report is asked for
+// without naming the pod and container it runs in or describes.
+var errProbeNoContainer = errors.New("a pod and a container are required")
 
 // errNoLocalPath is raised when a file copy names a local path that does not
 // exist, or is not the kind of thing the direction needs — a file where a
@@ -217,6 +238,22 @@ func classifyError(err error) (ErrorCode, string) {
 	case errors.Is(err, ports.ErrTarMissing):
 		return CodeTarMissing, "The container has no tar binary, and copying files runs tar inside it — the same way kubectl cp does. Add tar to the image, or copy through a container that has it."
 
+	// BEFORE THE TRANSPORT CASES for the same reason tar's sentinel is: the
+	// exec reached the container perfectly well, and the container simply has
+	// no tool in it.
+	case errors.Is(err, ports.ErrProbeToolMissing):
+		return CodeProbeToolMissing, "This container has nothing to probe with — no nc, curl or wget. That says nothing about whether the target is reachable; probe from a container that has one of them."
+
+	// BEFORE THE INVALID-INPUT CASES: these are facts about the object, and
+	// their own sentences are already the explanation, so they travel
+	// verbatim rather than being replaced by a generic one.
+	case errors.Is(err, domain.ErrProbeNoPort),
+		errors.Is(err, domain.ErrProbeNotTCP),
+		errors.Is(err, domain.ErrProbeNoAddress),
+		errors.Is(err, domain.ErrProbeVantageUnavailable),
+		errors.Is(err, domain.ErrProbeOutputUnreadable):
+		return CodeProbeUnavailable, err.Error()
+
 	// Verbatim, because the message is what tar wrote to stderr and that
 	// is the diagnosis — see ports.ErrCommandFailed.
 	case errors.Is(err, ports.ErrCommandFailed):
@@ -319,6 +356,7 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, errInvalidBulkAction),
 		errors.Is(err, domain.ErrEmptyResourceName),
 		errors.Is(err, errNoLocalPath),
+		errors.Is(err, errProbeNoContainer),
 		errors.Is(err, ports.ErrInvalidPort):
 		return CodeInvalidInput, err.Error()
 

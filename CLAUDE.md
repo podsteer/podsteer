@@ -646,6 +646,100 @@ certificate itself is public material, but it lives beside the private key in
 the same object, so it is parsed only on the same deliberate, per-Secret
 request `RevealSecretKey` requires, never when the Secret pane opens.
 
+## A reachability probe says WHERE it was answered from, or it says nothing
+
+`app/domain/reachability.go` plans a probe of a Service, a pod or an Ingress
+and shapes what came back; `app/adapters/k8s/reachability.go` opens the
+sockets; `application.InspectService` guards and audits it. **Two vantages, and
+the difference between them is the entire feature**, so `ProbeResult` carries
+its vantage and its ROUTE and no surface renders an outcome without both. From
+this machine, a Service goes through the API server's own service proxy — a
+success means the endpoints answer *the API server*, which is subject to no
+NetworkPolicy — and a pod goes through an **ephemeral port-forward**, reusing
+`StartPortForward`/`StopPortForward` rather than a second SPDY dialer and torn
+down in a defer so a cancelled probe cannot leak a bound socket. From inside
+the cluster, `domain.ProbeCommand` is one `sh -c` in a container the operator
+names, so cluster DNS, the CNI and every policy in the path are exercised as a
+workload experiences them. **An Ingress has no local vantage at all**, and that
+is a product rule rather than a gap: reaching a public host means connecting to
+something that is not an API server, which is the one thing "External systems"
+below forbids — the panel says so and points at a browser.
+
+Five rules, each with a test:
+
+- **DNS and connect are separate steps and always will be.** A name that does
+  not resolve and an address that refuses need opposite next steps, so
+  `OutcomeNameNotResolved` is its own outcome and a failed resolution
+  short-circuits rather than reporting a connect that never happened. `skipped`
+  is a third status because an address literal has nothing to resolve, and
+  rendering that as a failure sends somebody to look at cluster DNS.
+- **A refusal is an ordinary answer, never an error dialog.** Only a probe that
+  could not be PERFORMED rejects — an ExternalName or headless Service, a UDP
+  port, an Ingress from here — and each of those is a fact about the object that
+  `CodeProbeUnavailable` carries verbatim into the panel where the result would
+  have gone. A container with no `nc`, `curl` or `wget` is
+  `ports.ErrProbeToolMissing` / `probe_tool_missing`, the direct sibling of
+  `ErrTarMissing` and for the same reason: it says nothing about the target.
+- **Every probe is explicit, one-shot and bounded.** `domain.ProbeTimeout` (5s)
+  is a hard ceiling carried on the plan so no adapter invents its own, and
+  nothing on this path is ever called by the refresh tick — that rule is written
+  on `ports.InspectPort` and `ports.InspectService` and is why both live behind
+  one interface.
+- **The in-cluster probe is write-shaped and treated as one.** It runs something
+  in somebody's container, so it goes through the read-only guard and leaves one
+  audit line naming cluster, namespace, pod, container and target — and **never
+  the output**, exactly as a file transfer's line never carries a file's
+  contents. The local probe is not guarded, on the same line `StreamLogs` and
+  `DownloadFromPod` sit on.
+- **The command and the parser are one protocol**, so `ProbeCommand` and
+  `ParseProbeOutput` live together in the domain with a test asserting the
+  script emits what the parser reads. Host and port are vetted by `PlanProbe`
+  and single-quoted regardless.
+
+## An image is described from what Kubernetes reports, and says what it did not read
+
+`app/domain/imagereport.go` describes a container's image using the resolved
+reference and digest the kubelet recorded, the size and names of the node that
+pulled it (`status.images`), the pull policy, and the NAMES of any
+`imagePullSecrets`. Two GETs — the pod and its node — on request, never on a
+tick.
+
+**No registry is contacted, and that is a decision rather than an omission.**
+The layers, their creation commands, the entrypoint, the exposed ports and the
+labels live in the image's manifest and config blob in a registry; reading them
+is a new outbound destination for every image an operator opens, and for a
+private one an authenticated read whose credential is a pull Secret the Secrets
+doctrine says is read on explicit request and never on render. "External
+systems" below is the commitment on the other side of that, and the update-check
+ADR's rule applies unchanged: a new client-side call does not get to reuse an
+existing one, and needs its own record in `podsteer/business-docs`. Until then
+`domain.ImageDetailBounded` is on **every** report and the panel always shows
+it — a `Bounded` line, not an `Unreadable` one, because no read was attempted
+and no permission changes that, and empty space where layers would be is a
+claim nothing checked. A pod that pulls with credentials gets
+`domain.ImageCredentialNote`, which names the Secret and states that it was not
+read.
+
+Three rules there are load-bearing:
+
+- **The node's digest and the container status's digest routinely differ**, and
+  that is what a multi-platform image looks like: one names the index and the
+  other the manifest for that node's architecture. So `matchNodeImage` tries the
+  digest FIRST and falls back to repository-and-tag, and the disagreement is
+  stated in `DigestNote` rather than hidden — matching on the digest alone
+  reports "the node does not list this image" for an image the node is plainly
+  running.
+- **A size that was not measured is a dash with a reason, never a nought.**
+  `ImageSizeStatus` separates measured from not-reported (the kubelet garbage-
+  collects images) from unreadable (an account without `get nodes`, or an
+  unscheduled pod), modelled on `MetricsStatus` and for the same reason; a
+  refused node is carried INSIDE the facts rather than failing the call, so the
+  digest and references still render.
+- **The resolved reference is the subject, not the declared one.** What the
+  kubelet says it is running is a fact; what the manifest asks for is an
+  intention, and `Drift` is the comparison — made in the domain, like every
+  other comparison here.
+
 ## Files are copied by tar, and unpacked only in Go
 
 Copying a file to or from a container (`FileCopyAPI`, from the pod drawer) is
@@ -1180,6 +1274,27 @@ silently broken in k9s, Terraform, dotnet, JetBrains and Docker Desktop.
 
 If a future paid tier wants a client-side call, **it does not get to reuse this
 one.** That is the creep path this ADR exists to make visible.
+
+**A container REGISTRY is the destination most recently declined**, and it is
+worth recording so the question is not re-derived. The image pane
+(`app/domain/imagereport.go`) would show layers, creation commands, the
+entrypoint and the labels if it read an image's manifest and config blob, and
+those are only in a registry. That is a new outbound host per image an operator
+opens — plural, arbitrary, and third-party — and for a private image an
+authenticated read whose credential is a pull Secret in the cluster, which the
+Secrets doctrine says is read on an explicit per-key request and never as a side
+effect of opening a pane. Even a strictly anonymous, per-image, off-by-default
+read is a destination this file's first sentence does not list, so it needs a
+decision recorded in `podsteer/business-docs` and an amendment here and in
+SECURITY.md — the same bar the update check cleared. What shipped instead is
+everything Kubernetes already reports, with the pane stating what it did not
+look at.
+
+**The reachability probes add no destination at all**, deliberately. The local
+vantage reaches a cluster only through the API server named in the kubeconfig —
+its service proxy, or a port-forward tunnelled through it — and the in-cluster
+vantage opens no socket from this machine whatsoever. An Ingress's public host
+is refused for exactly this reason; see the reachability section above.
 
 The kubeconfig is **read on every call and written in exactly one place**:
 `KubeconfigPort.Merge`, behind Add cluster. Everything about that write is

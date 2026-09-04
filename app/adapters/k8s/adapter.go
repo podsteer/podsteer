@@ -83,6 +83,7 @@ var (
 	_ ports.ManagementPort  = (*Adapter)(nil)
 	_ ports.PortForwardPort = (*Adapter)(nil)
 	_ ports.NodeShellPort   = (*Adapter)(nil)
+	_ ports.InspectPort     = (*Adapter)(nil)
 )
 
 // New returns a Kubernetes adapter configured by cfg.

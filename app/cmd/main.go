@@ -267,6 +267,20 @@ func run() error {
 		return fmt.Errorf("wiring management service: %w", err)
 	}
 
+	// The on-request inspections: a reachability probe, and an image report.
+	// The registry goes in for one method only — an in-cluster probe runs a
+	// command in somebody's container, which is write-shaped whatever it
+	// reads, so it is refused on a cluster the operator marked read-only and
+	// audited like every other exec here.
+	inspectService, err := application.NewInspectService(application.InspectServiceDeps{
+		Inspect:  kubernetes,
+		Registry: registry,
+		Logger:   logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring inspect service: %w", err)
+	}
+
 	// --- Driving (inbound) adapters ---------------------------------------
 	//
 	// These depend on the inbound ports, not on the concrete services: the
@@ -320,6 +334,11 @@ func run() error {
 	fileCopyAPI, err := wailsadapter.NewFileCopyAPI(managementService, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring file copy API: %w", err)
+	}
+
+	inspectAPI, err := wailsadapter.NewInspectAPI(inspectService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring inspect API: %w", err)
 	}
 
 	historyAPI, err := wailsadapter.NewHistoryAPI(historyService, desktop, logger)
@@ -413,6 +432,7 @@ func run() error {
 			managementAPI,
 			terminalAPI,
 			fileCopyAPI,
+			inspectAPI,
 			systemAPI,
 			updateAPI,
 		},

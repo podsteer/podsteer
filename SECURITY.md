@@ -41,6 +41,19 @@ remains in the pod's spec until the pod is deleted — and it can create a
 root shell on that node (the equivalent of `kubectl node-shell`); PodSteer
 deletes that pod when its terminal closes or when it exits, and the pod carries
 a one-hour `activeDeadlineSeconds` as a backstop for the case PodSteer cannot.
+It can also **run one bounded connect attempt inside a container you name**, as
+a reachability probe: a single `sh -c` that resolves a name and tries a TCP
+connection, using whatever `nc`, `curl` or `wget` the image already has.
+Nothing is created for it — no pod, no sidecar, no file — and it exits within
+five seconds. It reads nothing and writes nothing, but it is an **exec into
+somebody's container**, which is the same subresource a shell uses and appears
+in your cluster's audit log as one, so it is treated as a write here: it is
+refused on a cluster you marked read-only, and it leaves one line in PodSteer's
+own log naming the cluster, namespace, pod, container and the address that was
+probed — never what the probe found. The other half of that feature reaches your
+cluster only through the API server your kubeconfig names, either through its
+own service proxy or through a port-forward PodSteer opens and closes again.
+
 It does all of this with the credentials your kubeconfig already grants, using
 the same client library `kubectl` uses.
 
@@ -100,6 +113,18 @@ What the check does and does not do:
 - **PodSteer never installs anything.** The badge opens the release page in
   your browser. It does not download, replace its own binary, or run an
   installer.
+
+**No container registry is contacted, and that is worth saying explicitly**
+because the feature it would serve exists. The image pane in a pod's drawer
+describes a container's image — its reference, its digest, its size on the node
+that pulled it, the other names that node knows it by — entirely from what
+Kubernetes itself reports. The layers, the entrypoint and the labels are only in
+the image's own manifest in a registry, and reading those would mean PodSteer
+opening connections to third-party hosts and, for a private image, using a pull
+Secret from your cluster to authenticate them. Neither is on the list above, so
+neither happens: the pane states what it did not look at rather than quietly
+looking. If that ever changes it will be off by default, per image, initiated by
+you, and described here before it ships.
 
 The webview still has no network access at all: a content security
 policy in `web/index.html` forbids every remote origin, and all cluster traffic
@@ -254,6 +279,12 @@ the control is absent and says why, rather than failing when pressed.
   annotations, log output or an API server's table columns rendered in a way
   that executes, or that escapes into the terminal or the manifest editor.
 - Code execution from opening a manifest, a log stream, or an exec session.
+- A reachability probe running anything in a container other than the bounded
+  connect attempt described above, running one in a container you did not name,
+  or a probe's target reaching the shell as syntax rather than as data.
+- PodSteer opening a connection to anything that is not an API server your
+  kubeconfig names or, for the update check, `api.github.com` — a container
+  registry included.
 - The local terminal starting anything other than the shell or agent you chose,
   or the environment it is given carrying more than the variables listed above
   — in particular a kubeconfig being written, copied to disk, or having its
