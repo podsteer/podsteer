@@ -27,6 +27,11 @@ const (
 	GraphSecret         GraphKind = "secret"
 	GraphClaim          GraphKind = "claim"
 	GraphServiceAccount GraphKind = "serviceaccount"
+	// GraphObject is anything the map has no category for — a CRD instance, a
+	// StorageClass, an IngressClass. Drawn as a plain box rather than borrowed
+	// onto a category it does not belong to: a Deployment's icon on something
+	// that is not one is worse than a neutral one.
+	GraphObject GraphKind = "object"
 )
 
 // GraphTier is how far down the request path a node sits.
@@ -70,6 +75,15 @@ type GraphNode struct {
 	// Subject marks the object the map was opened from, so it can be drawn as
 	// the centre rather than as one box among twenty.
 	Subject bool
+	// Missing marks a reference that was resolved against the cluster and
+	// found to name nothing.
+	//
+	// DISTINCT FROM Healthy, which a missing node also carries as false. An
+	// unwell object exists and is failing; a missing one was named by
+	// something and is not there. They call for opposite next steps — read the
+	// object's events, or fix whatever names it — so the map draws them
+	// differently rather than as one shade of "wrong".
+	Missing bool
 	// Group names the node whose children this is one of — the workload that
 	// manages a pod, the pod that runs a container.
 	//
@@ -104,6 +118,17 @@ type PodGraph struct {
 	// without ingress permissions gets a map with no ingress tier, and must be
 	// told that is what happened.
 	Unreadable []string
+	// Bounded is one short line saying why nothing is drawn BELOW the subject,
+	// on a map whose subject has no cheap downward answer.
+	//
+	// NOT THE SAME THING AS Unreadable, and collapsing the two would be the
+	// mistake this codebase keeps refusing to make elsewhere: Unreadable means
+	// a read was attempted and refused, so a permission would fix it; this
+	// means no read was attempted, deliberately, because the only way to
+	// answer would be to list every kind in the namespace every time a drawer
+	// opens. Empty on the pod and workload maps, whose shapes are complete by
+	// construction.
+	Bounded string
 }
 
 // ServiceRef is the little of a Service the map needs.
