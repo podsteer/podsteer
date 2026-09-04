@@ -79,6 +79,14 @@ describe('the accelerator matcher', () => {
     expect(shortcut('shortcut-sheet').matches(keydown({ key: '/', metaKey: true }))).toBe(true)
   })
 
+  it('opens the command palette on both ⌘P and ⌘⇧P', () => {
+    const palette = shortcut('command-palette')
+    expect(palette.matches(keydown({ key: 'p', metaKey: true }))).toBe(true)
+    expect(palette.matches(keydown({ key: 'p', metaKey: true, shiftKey: true }))).toBe(true)
+    expect(palette.matches(keydown({ key: 'P', ctrlKey: true, shiftKey: true }))).toBe(true)
+    expect(palette.matches(keydown({ key: 'p' }))).toBe(false)
+  })
+
   it('recognises every digit 1 through 9 for switching tabs', () => {
     const switchTab = shortcut('switch-tab')
     for (const digit of '123456789') {

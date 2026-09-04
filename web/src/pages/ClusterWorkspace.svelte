@@ -19,6 +19,7 @@
   import InfoHint from '$lib/components/InfoHint.svelte'
   import ToolbarButton from '$lib/components/ToolbarButton.svelte'
   import { activeTable } from '$stores/activeTable.svelte'
+  import { newResourceDialog } from '$stores/newResourceDialog.svelte'
   import { focusFirstRow } from '$lib/components/DataTable.svelte'
   import SearchField from '$lib/components/SearchField.svelte'
   import { preferences } from '$stores/preferences.svelte'
@@ -80,10 +81,16 @@
   // app/adapters/wails/errors.go's CodeReadOnly.
   const readOnlyReason = 'This cluster is marked read-only in PodSteer. Change that under Organise.'
 
-  /** The "New <Singular>" dialog, open on whichever kind is currently
-      selected — closing it and switching kinds never leaves it pointed at
-      the wrong one, since it is only ever opened from the kind it names. */
-  let newDialogOpen = $state(false)
+  /**
+   * The "New <Singular>" dialog, open on whichever kind is currently
+   * selected — closing it and switching kinds never leaves it pointed at
+   * the wrong one, since it is only ever opened from the kind it names.
+   *
+   * Visibility lives in $stores/newResourceDialog, not a local `let` —
+   * the command palette's own "New <kind>" command is a sibling of this
+   * component, not a descendant of it, and needs to open the same dialog.
+   */
+  const newDialogOpen = $derived(newResourceDialog.open)
   const created = flash(2000)
 
   /**
@@ -298,7 +305,7 @@
             title={isReadOnly ? readOnlyReason : created.on ? 'Created' : 'New ' + session.selectedKind.singular}
             active={created.on}
             disabled={isReadOnly}
-            onclick={() => (newDialogOpen = true)}
+            onclick={newResourceDialog.show}
           />
         {/if}
 
@@ -377,7 +384,7 @@
     {productionGroup}
     {isReadOnly}
     {readOnlyReason}
-    onclose={() => (newDialogOpen = false)}
+    onclose={newResourceDialog.hide}
     oncreated={onResourceCreated}
   />
 {/if}

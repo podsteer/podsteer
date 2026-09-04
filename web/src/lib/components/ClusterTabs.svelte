@@ -45,11 +45,23 @@
   import { groupBgClass } from '$lib/groupColour'
   import { preferences, THEME_LABELS } from '$stores/preferences.svelte'
   import { windowState } from '$stores/windowState.svelte'
+  import { settingsDialog } from '$stores/settingsDialog.svelte'
+  import { palette } from '$stores/palette.svelte'
   import SettingsDialog from './SettingsDialog.svelte'
   import UpdateBadge from './UpdateBadge.svelte'
-  import { Home, Server, Plus, X, RefreshCw, Moon, Sun, Monitor, Settings, Lock } from '@lucide/svelte'
-
-  let settingsOpen = $state(false)
+  import {
+    Home,
+    Server,
+    Plus,
+    X,
+    RefreshCw,
+    Moon,
+    Sun,
+    Monitor,
+    Settings,
+    Lock,
+    Search,
+  } from '@lucide/svelte'
 
   /**
    * Cmd+, opens Settings, which is the macOS convention every application
@@ -60,12 +72,16 @@
    * application-wide: it must open from the cluster picker as well, where no
    * workspace is mounted. Matched against $lib/shortcuts so this handler and
    * ShortcutSheet.svelte cannot disagree about what the combo is.
+   *
+   * Visibility lives in $stores/settingsDialog, not a local `let` here, so
+   * the command palette — a sibling of this bar, not a descendant of it —
+   * can open the same dialog from its own "Open Settings" command.
    */
   function onKeydown(event: KeyboardEvent): void {
     if (!shortcut('settings').matches(event)) return
 
     event.preventDefault()
-    settingsOpen = !settingsOpen
+    settingsDialog.toggle()
   }
 
   /** Dot colour by connection health, so a dead tab is visible at a glance. */
@@ -234,9 +250,27 @@
 
   <div class="mx-1 h-5 w-px shrink-0 self-center bg-outline-variant/60" aria-hidden="true"></div>
 
-  <!-- Between the separator and Refresh, and ABSENT unless there is genuinely
-       a newer release. See UpdateBadge.svelte for why the quiet states show
-       nothing at all. -->
+  <!-- Command palette: global search across kinds and open clusters — works
+       from any tab and from the picker, which is why it lives in this bar
+       rather than in ClusterWorkspace's own toolbar (that one remounts per
+       tab; this control must not). ⌘K stays "focus the table search" —
+       this is a different box for a different question, so it gets its own
+       glyph rather than sharing the search icon SearchField already owns. -->
+  <button
+    type="button"
+    onclick={palette.show}
+    aria-label="Command palette"
+    title="Search kinds, objects and clusters  {shortcut('command-palette').keys}"
+    class="state-layer no-drag grid size-8 shrink-0 self-center place-items-center rounded-full
+           text-on-surface-variant transition-colors duration-100
+           hover:bg-surface-container-high hover:text-on-surface"
+  >
+    <Search class="size-4" strokeWidth={1.8} />
+  </button>
+
+  <!-- Between the palette button and Refresh, and ABSENT unless there is
+       genuinely a newer release. See UpdateBadge.svelte for why the quiet
+       states show nothing at all. -->
   <UpdateBadge />
 
   <!-- Refresh: acts on whichever tab is in front. Nothing to refresh on the
@@ -284,7 +318,7 @@
   <!-- Settings -->
   <button
     type="button"
-    onclick={() => (settingsOpen = true)}
+    onclick={settingsDialog.show}
     aria-label="Settings"
     title="Settings  {shortcut('settings').keys}"
     class="state-layer no-drag grid size-8 shrink-0 self-center place-items-center rounded-full
@@ -296,7 +330,7 @@
 </div>
 
 <SettingsDialog
-  open={settingsOpen}
-  onclose={() => (settingsOpen = false)}
+  open={settingsDialog.open}
+  onclose={settingsDialog.hide}
   onrefresh={() => void workspace.active?.refresh()}
 />

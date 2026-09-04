@@ -42,6 +42,7 @@
   import MoveClusterMenu from '$lib/components/MoveClusterMenu.svelte'
   import { formatConnection, formatConnectionTitle } from '$lib/format'
   import { clusterActivity } from '$stores/activity.svelte'
+  import { organiseDialog } from '$stores/organiseDialog.svelte'
   import { groupKey, organisation } from '$stores/organisation.svelte'
   import { groupBgClass } from '$lib/groupColour'
   import { workspace } from '$stores/workspace.svelte'
@@ -59,7 +60,11 @@
     User,
   } from '@lucide/svelte'
 
-  let organiseOpen = $state(false)
+  // Organise's visibility lives in $stores/organiseDialog, not a local
+  // `let` — the command palette needs to open the SAME dialog from any tab,
+  // not only from this page, which a variable local to this component could
+  // never do. See that module's own comment.
+  const organiseOpen = $derived(organiseDialog.open)
   let addOpen = $state(false)
 
   /**
@@ -346,7 +351,7 @@
           class="w-72"
         />
       {/if}
-      <Button variant="tonal" onclick={() => (organiseOpen = true)}>
+      <Button variant="tonal" onclick={organiseDialog.show}>
         <FolderTree class="size-4" strokeWidth={1.8} />
         Organise
       </Button>
@@ -761,5 +766,5 @@
   {/if}
 </div>
 
-<OrganiseDialog open={organiseOpen} onclose={() => (organiseOpen = false)} />
+<OrganiseDialog open={organiseOpen} onclose={organiseDialog.hide} />
 <AddClusterDialog open={addOpen} onclose={() => (addOpen = false)} />

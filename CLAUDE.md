@@ -524,6 +524,30 @@ not exist while Tab walks straight into it. `use:modal` (`web/src/lib/modal.ts`)
 is what makes the claim true — focus in, focus trapped, focus restored, and the
 background marked `inert`. Anything carrying `aria-modal` must use it.
 
+## The command palette searches memory first, and never fans out
+
+⌘⇧P / ⌘P (`web/src/stores/palette.svelte.ts`, `web/src/lib/components/
+CommandPalette.svelte`) is global search across kinds, objects and open
+clusters, and it is bound by the same rule as the poll it sits beside: **a
+keystroke must never turn into a cluster-wide LIST of every kind.** Every
+group but one is built from data the application already has — the catalogue
+and namespace list `buildCommands` (`web/src/lib/palette/commands.ts`) is
+handed, the current view's own already-polled rows (pods, workloads, nodes,
+namespaces, events — whichever `ClusterSession` is holding), and
+`session.recentObjects`. None of that costs a request.
+
+The one exception is a `kind:` pill — or typing a kind's own name followed by
+a space, which is read the same way (see `web/src/lib/palette/parse.ts`) —
+naming a kind OTHER than the one on screen. That is an explicit ask to search
+something nothing has polled, and it costs exactly **one** `ListTable` read,
+in the tab's current namespace, debounced behind the keyboard and cached for
+as long as that palette instance stays open — never one call per keystroke,
+never re-fetched for a scope already answered. Scoping to the kind already
+displayed costs nothing at all: its rows are already in memory. A second open
+cluster's objects are never fetched either; if its tab is open, that tab's own
+poll is already the source, and the palette only ever reads what a tab already
+has — it does not open one.
+
 ## Two structural facts that look like mistakes
 
 **`main.go` sits at the repository root.** The Wails CLI runs `go build` with
