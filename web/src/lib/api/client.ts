@@ -101,6 +101,7 @@ import {
   Info as bindInfo,
   LicenceText as bindLicenceText,
   OpenURL as bindOpenURL,
+  ReadTextFile as bindReadTextFile,
   SaveTextFile as bindSaveTextFile,
 } from '$lib/wailsjs/go/wails/SystemAPI'
 import {
@@ -859,6 +860,19 @@ export function chooseDirectory(title: string): Promise<string> {
 /** Opens the native file picker; "" means cancelled. See chooseDirectory. */
 export function chooseFile(title: string): Promise<string> {
   return call(() => bindChooseFile(title))
+}
+
+/**
+ * Opens the native file picker and returns what the chosen file CONTAINS.
+ *
+ * Distinct from chooseFile, which returns a path: a path is only useful to a
+ * Go method that will act on it, and the webview cannot open a file itself.
+ * The settings import is the caller. An empty string means cancelled, as
+ * everywhere else here; an empty or oversized file is an error instead, so
+ * the two cannot be confused.
+ */
+export function readTextFile(title: string): Promise<string> {
+  return call(() => bindReadTextFile(title))
 }
 
 // --- File copy --------------------------------------------------------------

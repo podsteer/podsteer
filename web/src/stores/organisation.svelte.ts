@@ -20,6 +20,16 @@
  */
 
 import type { Cluster } from '$lib/api/client'
+import {
+  describeValue,
+  entryFor,
+  mergeRecord,
+  mergeValue,
+  outcomeOf,
+  type FieldRead,
+  type ImportEntry,
+  type ImportMode,
+} from '$lib/settingsDiff'
 
 /** One operator-created project. The default project is implicit. */
 export interface Project {
@@ -166,6 +176,33 @@ const DEFAULTS: PersistedShape = {
 
 /** Where anything unassigned, or assigned to something deleted, ends up. */
 const HOME: Placement = { project: DEFAULT_PROJECT_ID, group: DEFAULT_GROUP_ID }
+
+/**
+ * The organisation half of a settings file — the whole persisted shape, and
+ * unlike the preferences half nothing is held back.
+ *
+ * That is worth stating rather than assuming, because this half is the one
+ * that names clusters: `assignments` is keyed by kubeconfig CONTEXT NAME, and
+ * it has to be, since "staging is read-only" cannot be said without saying
+ * which cluster staging is. A context name is a handle the recipient's own
+ * kubeconfig already gives them and it identifies nothing INSIDE a cluster —
+ * no namespace, no workload, no pod — so it is on the right side of
+ * SECURITY.md's no-object-names line. It is still a fact about somebody's
+ * estate, which is why the document says so in its own header.
+ *
+ * Nothing here carries a server URL, a credential or a cluster's identity
+ * beyond that name: the store never holds one. See `$lib/settingsFile`.
+ */
+export interface ExportedOrganisation {
+  projects: Project[]
+  groups: Group[]
+  defaultProjectName: string
+  defaultGroupNames: Record<string, string>
+  defaultGroupSettings: Record<string, GroupSettings>
+  /** Context name -> where it sits. The one place a cluster is named. */
+  assignments: Record<string, Placement>
+  collapsed: string[]
+}
 
 class Organisation {
   projects = $state<Project[]>(DEFAULTS.projects)
@@ -678,6 +715,42 @@ class Organisation {
     this.collapsed = next
   }
 
+  // --- Settings file --------------------------------------------------------
+
+  /** What travels in a settings file. See ExportedOrganisation. */
+  exportable = (): ExportedOrganisation =>
+    detached({
+      projects: this.projects,
+      groups: this.groups,
+      defaultProjectName: this.defaultProjectName,
+      defaultGroupNames: this.defaultGroupNames,
+      defaultGroupSettings: this.defaultGroupSettings,
+      assignments: this.assignments,
+      collapsed: [...this.collapsed],
+    })
+
+  /**
+   * Adopts an imported organisation wholesale, then persists once.
+   *
+   * The caller passes the COMPLETE result of the merge — see
+   * `mergeExportedOrganisation` — so nothing here decides anything about
+   * merge versus replace. Placements are not validated on the way in for the
+   * same reason `#adopt` does not validate them: `placementOf` repairs on
+   * every read, so a placement naming a project the file did not carry drops
+   * to a Default rather than making a cluster vanish.
+   */
+  applyExported = (next: ExportedOrganisation): void => {
+    const copy = detached(next)
+    this.projects = copy.projects
+    this.groups = copy.groups
+    this.defaultProjectName = copy.defaultProjectName
+    this.defaultGroupNames = copy.defaultGroupNames
+    this.defaultGroupSettings = copy.defaultGroupSettings
+    this.assignments = copy.assignments
+    this.collapsed = new Set(copy.collapsed)
+    this.#save()
+  }
+
   // --- Persistence ----------------------------------------------------------
 
   #load(): void {
@@ -921,6 +994,303 @@ function newId(kind: 'project' | 'group'): string {
     return `${kind}-${crypto.randomUUID()}`
   }
   return `${kind}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+// --- Settings file ----------------------------------------------------------
+
+/**
+ * A plain, detached copy of a JSON-safe value.
+ *
+ * A round trip rather than `structuredClone`: the fields being copied are
+ * `$state` PROXIES, and an exported document has to be a snapshot rather than
+ * a live view into the store — renaming a group after an export must not
+ * change a file already written.
+ */
+function detached<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+/** Every field of the organisation half, in the order a review lists them. */
+export const EXPORTED_ORGANISATION_FIELDS = [
+  'projects',
+  'groups',
+  'defaultProjectName',
+  'defaultGroupNames',
+  'defaultGroupSettings',
+  'assignments',
+  'collapsed',
+] as const satisfies readonly (keyof ExportedOrganisation)[]
+
+/** What this build sets when a replacing document does not mention a field. */
+export function defaultExportedOrganisation(): ExportedOrganisation {
+  return {
+    projects: [],
+    groups: [],
+    defaultProjectName: DEFAULT_PROJECT_NAME,
+    defaultGroupNames: {},
+    defaultGroupSettings: {},
+    assignments: {},
+    collapsed: [],
+  }
+}
+
+/**
+ * Reads a project out of a document.
+ *
+ * The Default project is REFUSED as a record: "default is absence" is the
+ * invariant everything else here depends on, and a file carrying an explicit
+ * `default-project` row would materialise it into two indistinguishable
+ * entries in the picker. Its NAME travels, in `defaultProjectName`, which is
+ * the field that exists for exactly this.
+ */
+function readProject(raw: unknown): Project | undefined {
+  if (!isNamedRecord(raw) || raw.id === DEFAULT_PROJECT_ID) return undefined
+  return { id: raw.id, name: raw.name }
+}
+
+/** Reads a group, refusing the shared Default id for the same reason. */
+function readGroup(raw: unknown): Group | undefined {
+  if (!isNamedRecord(raw) || raw.id === DEFAULT_GROUP_ID) return undefined
+  const projectId = (raw as { projectId?: unknown }).projectId
+  if (typeof projectId !== 'string' || projectId === '') return undefined
+  return {
+    id: raw.id,
+    name: raw.name,
+    projectId,
+    ...normaliseSettings(raw as Partial<GroupSettings>),
+  }
+}
+
+/** Reads one cluster's placement; both halves must be strings to mean anything. */
+function readPlacement(raw: unknown): Placement | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const placement = raw as Partial<Placement>
+  if (typeof placement.project !== 'string' || typeof placement.group !== 'string') return undefined
+  return { project: placement.project, group: placement.group }
+}
+
+/** A list whose bad entries are dropped rather than costing the whole field. */
+function readList<T>(raw: unknown, read: (entry: unknown) => T | undefined): T[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const out: T[] = []
+  for (const entry of raw) {
+    const value = read(entry)
+    if (value !== undefined) out.push(value)
+  }
+  return out
+}
+
+/** A keyed map whose bad entries are dropped, for the same reason. */
+function readMap<V>(raw: unknown, read: (entry: unknown) => V | undefined): Record<string, V> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const out: Record<string, V> = {}
+  for (const [key, entry] of Object.entries(raw as Record<string, unknown>)) {
+    const value = read(entry)
+    if (value !== undefined) out[key] = value
+  }
+  return out
+}
+
+/** How each field of the organisation half is read out of a document. */
+const ORGANISATION_READERS: {
+  [K in keyof ExportedOrganisation]: (raw: unknown) => ExportedOrganisation[K] | undefined
+} = {
+  projects: (raw) => readList(raw, readProject),
+  groups: (raw) => readList(raw, readGroup),
+  defaultProjectName: (raw) => (typeof raw === 'string' && raw.trim() !== '' ? raw : undefined),
+  defaultGroupNames: (raw) =>
+    readMap(raw, (entry) => (typeof entry === 'string' && entry.trim() !== '' ? entry : undefined)),
+  defaultGroupSettings: (raw) =>
+    readMap(raw, (entry) =>
+      entry && typeof entry === 'object' && !Array.isArray(entry)
+        ? normaliseSettings(entry as Partial<GroupSettings>)
+        : undefined,
+    ),
+  assignments: (raw) => readMap(raw, readPlacement),
+  collapsed: (raw) =>
+    Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string') : undefined,
+}
+
+/** Reads the organisation half, reporting what it did not know or accept. */
+export function readExportedOrganisation(raw: unknown): FieldRead<ExportedOrganisation> {
+  const value: Record<string, unknown> = {}
+  const unknown: string[] = []
+  const invalid: string[] = []
+
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { value: {}, unknown, invalid }
+  }
+
+  const known = new Set<string>(EXPORTED_ORGANISATION_FIELDS)
+  for (const [field, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (!known.has(field)) {
+      unknown.push(field)
+      continue
+    }
+    const read = (ORGANISATION_READERS[field as keyof ExportedOrganisation] as (raw: unknown) => unknown)(
+      entry,
+    )
+    if (read === undefined) invalid.push(field)
+    else value[field] = read
+  }
+
+  return { value: value as Partial<ExportedOrganisation>, unknown, invalid }
+}
+
+/**
+ * Combines two id-keyed lists, keeping the local order.
+ *
+ * An incoming entry whose id is already here REPLACES it where it sits rather
+ * than moving it to the end: importing a colleague's guardrails for a group
+ * both people have should not also reorder the picker. New entries append, in
+ * the file's own order.
+ */
+function mergeById<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  const arriving = new Map(incoming.map((entry) => [entry.id, entry]))
+  const merged = current.map((entry) => arriving.get(entry.id) ?? entry)
+  const seen = new Set(current.map((entry) => entry.id))
+  return [...merged, ...incoming.filter((entry) => !seen.has(entry.id))]
+}
+
+/**
+ * Combines the current organisation with a document's, under an import mode.
+ *
+ * Merge unions: a colleague's projects and groups arrive beside the ones here,
+ * their placements win on a cluster both files mention, and neither person's
+ * arrangement is erased. Replace makes it exactly the file's, so a project
+ * only this machine had is gone — which is the point of asking for replace.
+ */
+export function mergeExportedOrganisation(
+  current: ExportedOrganisation,
+  incoming: Partial<ExportedOrganisation>,
+  mode: ImportMode,
+): ExportedOrganisation {
+  const defaults = defaultExportedOrganisation()
+
+  if (mode === 'replace') {
+    return detached({
+      projects: incoming.projects ?? defaults.projects,
+      groups: incoming.groups ?? defaults.groups,
+      defaultProjectName: incoming.defaultProjectName ?? defaults.defaultProjectName,
+      defaultGroupNames: incoming.defaultGroupNames ?? defaults.defaultGroupNames,
+      defaultGroupSettings: incoming.defaultGroupSettings ?? defaults.defaultGroupSettings,
+      assignments: incoming.assignments ?? defaults.assignments,
+      collapsed: incoming.collapsed ?? defaults.collapsed,
+    })
+  }
+
+  return detached({
+    projects: mergeById(current.projects, incoming.projects ?? []),
+    groups: mergeById(current.groups, incoming.groups ?? []),
+    defaultProjectName: mergeValue(
+      current.defaultProjectName,
+      incoming.defaultProjectName,
+      mode,
+      defaults.defaultProjectName,
+    ),
+    defaultGroupNames: mergeRecord(current.defaultGroupNames, incoming.defaultGroupNames, mode),
+    defaultGroupSettings: mergeRecord(
+      current.defaultGroupSettings,
+      incoming.defaultGroupSettings,
+      mode,
+    ),
+    assignments: mergeRecord(current.assignments, incoming.assignments, mode),
+    // A set of what is SHUT, so combining two people's is a union — the same
+    // reasoning expandedCategories follows on the preferences side.
+    collapsed: [...new Set([...current.collapsed, ...(incoming.collapsed ?? [])])],
+  })
+}
+
+/** "production · red · read-only", or "not marked" when nothing is set. */
+function describeSettings(settings: GroupSettings): string {
+  const parts = [settings.environment, settings.colour, settings.readOnly ? 'read-only' : '']
+  const marked = parts.filter((part) => part !== '')
+  return marked.length > 0 ? marked.join(' · ') : 'not marked'
+}
+
+/** One group, named by its project so two "staging" groups read apart. */
+function describeGroup(group: Group, projectName: string): string {
+  return `${projectName} / ${group.name} — ${describeSettings(group)}`
+}
+
+/** What a project id is called in one payload, Default and all. */
+function projectNameIn(payload: ExportedOrganisation, projectId: string): string {
+  if (projectId === DEFAULT_PROJECT_ID) return payload.defaultProjectName
+  return payload.projects.find((project) => project.id === projectId)?.name ?? projectId
+}
+
+/**
+ * One review line per project, per group, and one per remaining field.
+ *
+ * Projects and groups are listed INDIVIDUALLY because they are the part an
+ * operator named themselves and will recognise; the rest are counted, for the
+ * reason `describeValue` gives. Ids the two payloads share are listed in the
+ * current order, then whatever the import adds.
+ */
+export function describeOrganisationChanges(
+  current: ExportedOrganisation,
+  next: ExportedOrganisation,
+): ImportEntry[] {
+  const entries: ImportEntry[] = []
+
+  const projectIds = [
+    ...current.projects.map((project) => project.id),
+    ...next.projects.map((project) => project.id).filter((id) => !current.projects.some((p) => p.id === id)),
+  ]
+  for (const id of projectIds) {
+    const before = current.projects.find((project) => project.id === id)
+    const after = next.projects.find((project) => project.id === id)
+    entries.push(
+      entryFor('Organisation', 'Project', before?.name, after?.name, (value) => String(value)),
+    )
+  }
+
+  const groupIds = [
+    ...current.groups.map((group) => group.id),
+    ...next.groups.map((group) => group.id).filter((id) => !current.groups.some((g) => g.id === id)),
+  ]
+  for (const id of groupIds) {
+    const before = current.groups.find((group) => group.id === id)
+    const after = next.groups.find((group) => group.id === id)
+    entries.push({
+      section: 'Organisation',
+      label: 'Group',
+      outcome: outcomeOf(before, after),
+      from: before ? describeGroup(before, projectNameIn(current, before.projectId)) : '',
+      to: after ? describeGroup(after, projectNameIn(next, after.projectId)) : '',
+    })
+  }
+
+  entries.push(
+    entryFor(
+      'Organisation',
+      'Default project name',
+      current.defaultProjectName,
+      next.defaultProjectName,
+    ),
+    entryFor(
+      'Organisation',
+      'Renamed default groups',
+      current.defaultGroupNames,
+      next.defaultGroupNames,
+      (value) => describeValue(value, 'projects'),
+    ),
+    entryFor(
+      'Organisation',
+      'Default group guardrails',
+      current.defaultGroupSettings,
+      next.defaultGroupSettings,
+      (value) => describeValue(value, 'projects'),
+    ),
+    entryFor('Organisation', 'Cluster placements', current.assignments, next.assignments, (value) =>
+      describeValue(value, 'clusters'),
+    ),
+    entryFor('Organisation', 'Collapsed containers', current.collapsed, next.collapsed, (value) =>
+      describeValue(value, 'containers'),
+    ),
+  )
+
+  return entries
 }
 
 /** The application-wide organisation, shared by the picker and the organiser. */
