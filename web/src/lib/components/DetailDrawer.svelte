@@ -16,6 +16,8 @@
   import LogViewer from './LogViewer.svelte'
   import ResourceOverview from './ResourceOverview.svelte'
   import EventsView from './EventsView.svelte'
+  import TimelinePanel from './TimelinePanel.svelte'
+  import { timeline } from '$stores/timeline.svelte'
   import EventDetail from './EventDetail.svelte'
   import ApplicationDetail from './ApplicationDetail.svelte'
   import { iconForKind } from '$lib/kindIcons'
@@ -92,6 +94,7 @@
     Ban,
     LogOut,
     History as HistoryIcon,
+    Clock,
   } from '@lucide/svelte'
 
   interface Props {
@@ -100,7 +103,15 @@
 
   let { session }: Props = $props()
 
-  type Tab = 'overview' | 'logs' | 'terminal' | 'map' | 'history' | 'events' | 'yaml'
+  type Tab =
+    | 'overview'
+    | 'logs'
+    | 'terminal'
+    | 'map'
+    | 'history'
+    | 'events'
+    | 'timeline'
+    | 'yaml'
   let activeTab = $state<Tab>('overview')
   const copied = flash(1500)
   let deleteDialogOpen = $state(false)
@@ -194,6 +205,23 @@
   )
 
   const isPod = $derived(session.selectedKindId === 'core/v1/pods')
+
+  /**
+   * What the session timeline holds about the object on screen.
+   *
+   * Keyed by the Kubernetes Kind rather than the catalogue id, because that
+   * is what an entry carries: an event names its involved object's kind, and
+   * a recorded write names the kind the write was made against. Empty until
+   * something happens, which is the ordinary state of a quiet object.
+   */
+  const objectTimeline = $derived(
+    timeline.forObject(
+      session.cluster.id,
+      session.selectedKind?.kind ?? '',
+      session.selectedKind?.namespaced ? session.selectedNamespace : '',
+      session.selectedName ?? '',
+    ),
+  )
 
   const isEvent = $derived(session.selectedKindId === 'core/v1/events')
   const isApplication = $derived(!!session.selectedApplication)
@@ -934,6 +962,12 @@
     // empty list that means "nothing recent" — which reads as a fault here
     // rather than as the tautology it is.
     { id: 'events', label: 'Events', icon: Activity, show: () => !isEvent && !isApplication },
+    // What happened to THIS object while the tab has been open: its events,
+    // its findings appearing and clearing, and the writes PodSteer made to
+    // it. Hidden on the same two as Events and for the same reason — an
+    // Event is not a thing things happen to, and an application is not an
+    // object at all. See $stores/timeline for why it is in memory only.
+    { id: 'timeline', label: 'Timeline', icon: Clock, show: () => !isEvent && !isApplication },
     // AN APPLICATION HAS NO MANIFEST. It is a set of objects that agree about
     // a label, so there is nothing to GET by that name, nothing to edit and
     // nothing to delete — and a YAML tab offering to show one would be an
@@ -1870,6 +1904,11 @@
           namespace={session.selectedNamespace}
           kind={session.selectedKind?.kind ?? ''}
           name={session.selectedName ?? ''}
+        />
+      {:else if activeTab === 'timeline'}
+        <TimelinePanel
+          entries={objectTimeline}
+          startedAt={timeline.startedAt(session.cluster.id)}
         />
       {:else if activeTab === 'yaml'}
         <div class="h-full">
