@@ -20,4 +20,8 @@ export function StopPortForward(arg1:string):Promise<void>;
 
 export function StreamLogs(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean,arg6:number):Promise<string>;
 
+export function SuspendWorkload(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
+
+export function TriggerCronJob(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function UpdateResource(arg1:string,arg2:string):Promise<void>;

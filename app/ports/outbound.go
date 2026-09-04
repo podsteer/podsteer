@@ -290,6 +290,24 @@ type ManagementPort interface {
 	// not support this operation.
 	RestartRollout(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string) error
 
+	// TriggerCronJob creates a Job from a CronJob's template right now, the
+	// way `kubectl create job --from=cronjob/NAME` does: labels and
+	// annotations copied from spec.jobTemplate, the manual-instantiate
+	// annotation added, and an owner reference back to the CronJob so its
+	// controller adopts the Job, counts it as active, and applies history
+	// limits to it exactly as it would a scheduled run.
+	//
+	// A suspended CronJob may still be triggered — kubectl allows it, and an
+	// operator reaching for this wants exactly one run regardless of the
+	// schedule. Returns the created Job's name, so the caller can show it.
+	TriggerCronJob(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (string, error)
+
+	// SuspendWorkload sets or clears spec.suspend on a CronJob or a Job —
+	// pausing a CronJob's schedule, or pausing a running Job's pods. Only
+	// those two kinds support it; the application layer rejects any other
+	// kind before this is reached.
+	SuspendWorkload(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, suspend bool) error
+
 	// UpdateResource applies a YAML manifest to the cluster, creating or
 	// updating the resource. The manifest must be valid YAML for a Kubernetes
 	// object; the kind and namespace in the manifest override the parameters.

@@ -48,6 +48,8 @@ import {
   UpdateResource as bindUpdateResource,
   DeleteResource as bindDeleteResource,
   RestartRollout as bindRestartRollout,
+  TriggerCronJob as bindTriggerCronJob,
+  SuspendWorkload as bindSuspendWorkload,
   StreamLogs as bindStreamLogs,
   StopLogStream as bindStopLogStream,
   StartPortForward as bindStartPortForward,
@@ -610,6 +612,25 @@ export function restartRollout(
   name: string,
 ): Promise<void> {
   return call(() => bindRestartRollout(clusterId, kind, namespace, name))
+}
+
+/**
+ * Creates a Job from a CronJob's template right now, outside its schedule.
+ * Resolves to the created Job's name.
+ */
+export function triggerCronJob(clusterId: string, namespace: string, name: string): Promise<string> {
+  return call(() => bindTriggerCronJob(clusterId, namespace, name))
+}
+
+/** Suspends or resumes a CronJob's schedule, or a Job's pods. */
+export function suspendWorkload(
+  clusterId: string,
+  kind: string,
+  namespace: string,
+  name: string,
+  suspend: boolean,
+): Promise<void> {
+  return call(() => bindSuspendWorkload(clusterId, kind, namespace, name, suspend))
 }
 
 /** Streams logs from a pod container. Returns a stream ID for stopping. */

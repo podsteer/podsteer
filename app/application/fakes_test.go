@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"io"
 	"maps"
 	"sync"
 	"testing"
@@ -349,4 +350,82 @@ func (f *fakeKubeconfig) Merge(_ context.Context, raw string) (domain.Kubeconfig
 	}
 	f.merged = raw
 	return f.merge, nil
+}
+
+// fakeManagementPort is a stand-in for the write side of a cluster.
+//
+// Every method not exercised by a given test is still implemented, so the
+// fake satisfies ports.ManagementPort in full — a Go interface has no partial
+// implementations, and a test for TriggerCronJob must not have to know
+// anything about StreamLogs to compile.
+type fakeManagementPort struct {
+	mu sync.Mutex
+
+	triggerJobName string
+	triggerErr     error
+	triggeredID    domain.ClusterID
+	triggeredNS    domain.NamespaceName
+	triggeredName  string
+
+	suspendErr     error
+	suspendCalled  bool
+	suspendedID    domain.ClusterID
+	suspendedKind  domain.WorkloadKind
+	suspendedNS    domain.NamespaceName
+	suspendedName  string
+	suspendedValue bool
+}
+
+var _ ports.ManagementPort = (*fakeManagementPort)(nil)
+
+func (f *fakeManagementPort) StreamLogs(context.Context, domain.ClusterID, domain.NamespaceName, string, string, bool, int64, chan<- string) error {
+	return nil
+}
+
+func (f *fakeManagementPort) DeleteResource(context.Context, domain.ResourceRef) error {
+	return nil
+}
+
+func (f *fakeManagementPort) ScaleWorkload(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, int32) error {
+	return nil
+}
+
+func (f *fakeManagementPort) RestartRollout(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string) error {
+	return nil
+}
+
+func (f *fakeManagementPort) UpdateResource(context.Context, domain.ClusterID, string) error {
+	return nil
+}
+
+func (f *fakeManagementPort) ExecInPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, bool) error {
+	return nil
+}
+
+func (f *fakeManagementPort) ExecInPodWithTTY(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, ports.TerminalSizeQueue) error {
+	return nil
+}
+
+func (f *fakeManagementPort) TriggerCronJob(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.triggeredID = id
+	f.triggeredNS = namespace
+	f.triggeredName = name
+	if f.triggerErr != nil {
+		return "", f.triggerErr
+	}
+	return f.triggerJobName, nil
+}
+
+func (f *fakeManagementPort) SuspendWorkload(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, suspend bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.suspendCalled = true
+	f.suspendedID = id
+	f.suspendedKind = kind
+	f.suspendedNS = namespace
+	f.suspendedName = name
+	f.suspendedValue = suspend
+	return f.suspendErr
 }
