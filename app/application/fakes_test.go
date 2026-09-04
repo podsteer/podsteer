@@ -443,7 +443,7 @@ type fakeManagementPort struct {
 
 var _ ports.ManagementPort = (*fakeManagementPort)(nil)
 
-func (f *fakeManagementPort) StreamLogs(context.Context, domain.ClusterID, domain.NamespaceName, string, string, bool, int64, chan<- string) error {
+func (f *fakeManagementPort) StreamLogs(context.Context, domain.ClusterID, domain.NamespaceName, string, string, domain.LogOptions, chan<- string) error {
 	f.record("StreamLogs")
 	return f.err
 }

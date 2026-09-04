@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildExportFilename } from './exportFilename'
+import { buildExportFilename, buildLogFilename } from './exportFilename'
 
 const FIXED = new Date(2026, 0, 5, 9, 3, 7) // 2026-01-05 09:03:07 local time
 
@@ -30,6 +30,20 @@ describe('buildExportFilename', () => {
     // and spaces have all been seen in the wild.
     expect(buildExportFilename('gke_my-proj_us-east1/cluster', 'Pod', 'kube system', FIXED)).toBe(
       'gke_my-proj_us-east1_cluster-Pod-kube_system-20260105-090307.csv',
+    )
+  })
+})
+
+describe('buildLogFilename', () => {
+  it('joins pod, container and a timestamp with a .log extension', () => {
+    expect(buildLogFilename('web-6f7b9d-abcde', 'app', FIXED)).toBe(
+      'web-6f7b9d-abcde-app-20260105-090307.log',
+    )
+  })
+
+  it('replaces characters unsafe for a filename', () => {
+    expect(buildLogFilename('pod/with:bad chars', 'sidecar proxy', FIXED)).toBe(
+      'pod_with_bad_chars-sidecar_proxy-20260105-090307.log',
     )
   })
 })

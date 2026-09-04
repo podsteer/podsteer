@@ -308,9 +308,8 @@ type ManagementPort interface {
 	// error occurs). The caller must drain the channel.
 	//
 	// If containerName is empty, logs are streamed from the first container.
-	// If tailLines is 0, all available logs are streamed.
-	// If follow is true, the stream remains open for new log lines.
-	StreamLogs(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, containerName string, follow bool, tailLines int64, out chan<- string) error
+	// See domain.LogOptions for what each field of opts does.
+	StreamLogs(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, containerName string, opts domain.LogOptions, out chan<- string) error
 
 	// DeleteResource deletes a single resource. It returns nil if the resource
 	// was deleted or already absent; a non-nil error otherwise.

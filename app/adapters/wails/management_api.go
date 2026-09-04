@@ -79,7 +79,14 @@ func NewManagementAPI(management *application.ManagementService, forwards ports.
 // batcher below for why they are not sent one at a time.
 // The stream ends when the pod terminates, the context is cancelled, or an
 // error occurs. A "log:end" event is emitted when the stream closes.
-func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName string, follow bool, tailLines int) (string, error) {
+//
+// sinceSeconds and limitBytes of 0 mean unset, matching domain.LogOptions —
+// see its doc comment for what each parameter does. timestamps is always
+// sent true by the frontend today: it decides whether to DISPLAY a
+// timestamp at render time rather than by re-opening the stream, so the
+// parameter exists here for the same reason it exists on domain.LogOptions,
+// not because any caller currently varies it.
+func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName string, follow bool, tailLines int, sinceSeconds int, previous bool, timestamps bool, limitBytes int) (string, error) {
 	// Through the accessor, not the field — see runtimeContext. Reading
 	// app.ctx bare races OnShutdown's write of nil, and WithCancel(nil)
 	// panics rather than failing.
@@ -99,6 +106,15 @@ func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName 
 	if err != nil {
 		cancel()
 		return "", err
+	}
+
+	opts := domain.LogOptions{
+		Follow:       follow,
+		TailLines:    int64(tailLines),
+		SinceSeconds: int64(sinceSeconds),
+		Previous:     previous,
+		Timestamps:   timestamps,
+		LimitBytes:   int64(limitBytes),
 	}
 
 	// Generate a stream ID so the frontend can cancel if needed.
@@ -125,7 +141,7 @@ func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName 
 
 		// Start the stream.
 		go func() {
-			err := m.management.StreamLogs(ctx, id, ns, podName, containerName, follow, int64(tailLines), out)
+			err := m.management.StreamLogs(ctx, id, ns, podName, containerName, opts, out)
 			if err != nil && ctx.Err() == nil {
 				m.logger.ErrorContext(ctx, "log stream error",
 					slog.String("cluster", clusterID),

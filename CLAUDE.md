@@ -846,6 +846,18 @@ same as one already in the explicit file.
   for different credentials. It is the only error `DrainNode` ever retries —
   every other failure during a drain is recorded as a `DrainFailure` and the
   rest of the node continues draining around it.
+- **Log timestamps are always requested; the mode is a frontend display
+  choice, not a stream option.** `domain.LogOptions.Timestamps` is sent
+  `true` by every caller of `StreamLogs` regardless of what
+  `LogViewer.svelte`'s timestamp control (off/local/UTC/relative) is set
+  to — the mode only decides how `logTimestamps.ts` formats the RFC 3339
+  prefix Kubernetes already wrote onto each line, never whether the API
+  server is asked to write one. Re-opening the whole stream to add or
+  remove a column would cost a fresh tail read for what is purely a
+  rendering preference. `SinceSeconds` and `Previous` are the opposite case
+  on the same struct: both change what the API server is actually asked
+  for, so the frontend re-opens the stream when either changes, the same
+  as it already did for `Follow` and `TailLines`.
 
 ## Configuration
 
