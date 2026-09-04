@@ -290,9 +290,18 @@ export function listNamespaces(clusterId: string): Promise<Namespace[]> {
  *
  * Separate from listNamespaces, which feeds the namespace filter and stays a
  * cheap read of names: this one counts pods, which means listing them.
+ *
+ * `annotationKeys` names the annotations each row should carry — the ones on
+ * the kind's custom columns (see $lib/customColumns). Every list call takes
+ * the same parameter, for the same reason: nothing else of an object's
+ * annotations crosses the bridge, because kubectl's last-applied manifest
+ * alone is tens of kilobytes per row. Labels always come along.
  */
-export function listNamespaceSummaries(clusterId: string): Promise<NamespaceSummary[]> {
-  return call(() => bindListNamespaceSummaries(clusterId))
+export function listNamespaceSummaries(
+  clusterId: string,
+  annotationKeys: string[] = [],
+): Promise<NamespaceSummary[]> {
+  return call(() => bindListNamespaceSummaries(clusterId, annotationKeys))
 }
 
 /**
@@ -306,9 +315,10 @@ export function classifyConditions(conditions: ConditionRef[]): Promise<string[]
   return call(() => bindClassifyConditions(conditions))
 }
 
-/** Lists the nodes of a connected cluster, with usage where available. */
-export function listNodes(clusterId: string): Promise<Node[]> {
-  return call(() => bindListNodes(clusterId))
+/** Lists the nodes of a connected cluster, with usage where available.
+    `annotationKeys` is the projection listNamespaceSummaries describes. */
+export function listNodes(clusterId: string, annotationKeys: string[] = []): Promise<Node[]> {
+  return call(() => bindListNodes(clusterId, annotationKeys))
 }
 
 // --- Overview ---------------------------------------------------------------
@@ -389,18 +399,25 @@ export function listKinds(clusterId: string): Promise<ResourceKind[]> {
 
 // --- Workloads --------------------------------------------------------------
 
-/** Lists pods. An empty namespace means every namespace. */
-export function listPods(clusterId: string, namespace: string): Promise<Pod[]> {
-  return call(() => bindListPods(clusterId, namespace))
+/** Lists pods. An empty namespace means every namespace. `annotationKeys` is
+    the projection listNamespaceSummaries describes. */
+export function listPods(
+  clusterId: string,
+  namespace: string,
+  annotationKeys: string[] = [],
+): Promise<Pod[]> {
+  return call(() => bindListPods(clusterId, namespace, annotationKeys))
 }
 
-/** Lists controllers of one kind, named as "Deployment", "StatefulSet", etc. */
+/** Lists controllers of one kind, named as "Deployment", "StatefulSet", etc.
+    `annotationKeys` is the projection listNamespaceSummaries describes. */
 export function listWorkloads(
   clusterId: string,
   kind: string,
   namespace: string,
+  annotationKeys: string[] = [],
 ): Promise<Workload[]> {
-  return call(() => bindListWorkloads(clusterId, kind, namespace))
+  return call(() => bindListWorkloads(clusterId, kind, namespace, annotationKeys))
 }
 
 /** The dependency chain around one pod, from what routes to it to what it needs. */
@@ -494,9 +511,14 @@ export function listPodsForWorkload(
 
 // --- Events -----------------------------------------------------------------
 
-/** Lists events, warnings first and most recent first. */
-export function listEvents(clusterId: string, namespace: string): Promise<K8sEvent[]> {
-  return call(() => bindListEvents(clusterId, namespace))
+/** Lists events, warnings first and most recent first. `annotationKeys` is
+    the projection listNamespaceSummaries describes. */
+export function listEvents(
+  clusterId: string,
+  namespace: string,
+  annotationKeys: string[] = [],
+): Promise<K8sEvent[]> {
+  return call(() => bindListEvents(clusterId, namespace, annotationKeys))
 }
 
 /** Lists events for one specific object — what the detail drawer's Events tab shows. */
@@ -511,13 +533,17 @@ export function listEventsForResource(
 
 // --- Generic browsing -------------------------------------------------------
 
-/** Lists any kind as a table with the columns the API server prints. */
+/** Lists any kind as a table with the columns the API server prints. Every
+    row also carries its labels and the `annotationKeys` asked for — the
+    projection listNamespaceSummaries describes — read from the metadata the
+    server attaches to the row, never from a request per object. */
 export function listTable(
   clusterId: string,
   kindId: string,
   namespace: string,
+  annotationKeys: string[] = [],
 ): Promise<ResourceTable> {
-  return call(() => bindListTable(clusterId, kindId, namespace))
+  return call(() => bindListTable(clusterId, kindId, namespace, annotationKeys))
 }
 
 /**

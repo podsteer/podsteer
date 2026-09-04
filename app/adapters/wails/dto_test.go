@@ -151,3 +151,72 @@ func TestToCertificateChainCarriesIntermediatesAndInsights(t *testing.T) {
 		t.Errorf("Insights = %+v, want a critical severity for an expired leaf", got.Insights)
 	}
 }
+
+// TestRowsNeverSendNullLabelsOrAnnotations pins the shape every list view
+// indexes without a guard: a row with no metadata arrives as {} on both
+// fields, never as null, for every kind that carries them.
+func TestRowsNeverSendNullLabelsOrAnnotations(t *testing.T) {
+	t.Parallel()
+
+	pod, err := domain.NewPod(domain.PodSpec{Name: "web-0", Namespace: "default", ClusterID: "dev"})
+	if err != nil {
+		t.Fatalf("NewPod() error = %v", err)
+	}
+	node, err := domain.NewNode(domain.NodeSpec{Name: "node-1", ClusterID: "dev"})
+	if err != nil {
+		t.Fatalf("NewNode() error = %v", err)
+	}
+	namespace, err := domain.NewNamespace("default", domain.NamespacePhaseActive, dtoNow)
+	if err != nil {
+		t.Fatalf("NewNamespace() error = %v", err)
+	}
+	event, err := domain.NewEvent(domain.EventSpec{Name: "web-0.1", Namespace: "default", ClusterID: "dev"})
+	if err != nil {
+		t.Fatalf("NewEvent() error = %v", err)
+	}
+
+	for name, pair := range map[string][2]map[string]string{
+		"pod":       {toPod(pod, dtoNow).Labels, toPod(pod, dtoNow).Annotations},
+		"node":      {toNode(node, dtoNow).Labels, toNode(node, dtoNow).Annotations},
+		"namespace": {toNamespace(namespace, dtoNow).Labels, toNamespace(namespace, dtoNow).Annotations},
+		"event":     {toEvent(event, dtoNow).Labels, toEvent(event, dtoNow).Annotations},
+	} {
+		if pair[0] == nil || pair[1] == nil {
+			t.Errorf("%s: labels/annotations = %v/%v, want {} for both", name, pair[0], pair[1])
+		}
+	}
+}
+
+// TestToResourceTableCarriesRowLabelsAndProjectedAnnotations pins that the
+// generic path ships what the adapter read from each row's own metadata —
+// which is what lets a CRD grow a custom column with no code written for it.
+func TestToResourceTableCarriesRowLabelsAndProjectedAnnotations(t *testing.T) {
+	t.Parallel()
+
+	kind := domain.ResourceKind{Version: "v1", Resource: "configmaps", Kind: "ConfigMap", Namespaced: true, Title: "Config Maps"}
+	table := domain.NewResourceTable(kind,
+		[]domain.TableColumn{{Name: "Name", Type: "string"}},
+		[]domain.TableRow{
+			{
+				Name:        "app-config",
+				Namespace:   "platform",
+				Cells:       []string{"app-config"},
+				Labels:      map[string]string{"app": "web"},
+				Annotations: map[string]string{"team": "payments"},
+			},
+			{Name: "bare", Namespace: "platform", Cells: []string{"bare"}},
+		},
+	)
+
+	dto := toResourceTable(table)
+	if len(dto.Rows) != 2 {
+		t.Fatalf("Rows = %d, want 2", len(dto.Rows))
+	}
+	if dto.Rows[0].Labels["app"] != "web" || dto.Rows[0].Annotations["team"] != "payments" {
+		t.Errorf("Rows[0] labels/annotations = %v/%v, want app=web / team=payments",
+			dto.Rows[0].Labels, dto.Rows[0].Annotations)
+	}
+	if dto.Rows[1].Labels == nil || dto.Rows[1].Annotations == nil {
+		t.Errorf("Rows[1] labels/annotations = %v/%v, want {} for both", dto.Rows[1].Labels, dto.Rows[1].Annotations)
+	}
+}

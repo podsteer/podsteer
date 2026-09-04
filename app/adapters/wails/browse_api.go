@@ -76,7 +76,10 @@ func (b *BrowseAPI) ListKinds(clusterID string) ([]ResourceKind, error) {
 }
 
 // ListEvents returns a cluster's events, warnings first and most recent first.
-func (b *BrowseAPI) ListEvents(clusterID, namespace string) ([]Event, error) {
+//
+// annotationKeys names the annotations each row should carry — the same
+// projection WorkloadAPI.ListPods takes, for the same reason.
+func (b *BrowseAPI) ListEvents(clusterID, namespace string, annotationKeys []string) ([]Event, error) {
 	ctx, cancel := b.app.requestContext()
 	defer cancel()
 
@@ -90,7 +93,7 @@ func (b *BrowseAPI) ListEvents(clusterID, namespace string) ([]Event, error) {
 		return nil, apiError(b.logger, "ListEvents", err)
 	}
 
-	events, err := b.events.ListEvents(ctx, id, name)
+	events, err := b.events.ListEvents(ctx, id, name, domain.NewProjection(annotationKeys))
 	if err != nil {
 		return nil, apiError(b.logger, "ListEvents", err)
 	}
@@ -124,7 +127,10 @@ func (b *BrowseAPI) ListEventsForResource(clusterID, namespace, kind, name strin
 // ListTable returns objects of any kind as a table, with the columns the API
 // server prints. This is the generic path behind Config, Network, Storage,
 // Access Control and Custom Resources.
-func (b *BrowseAPI) ListTable(clusterID, kindID, namespace string) (ResourceTable, error) {
+//
+// annotationKeys is the same projection ListEvents takes; every row also
+// carries its labels, read from the table's own row metadata.
+func (b *BrowseAPI) ListTable(clusterID, kindID, namespace string, annotationKeys []string) (ResourceTable, error) {
 	ctx, cancel := b.app.requestContext()
 	defer cancel()
 
@@ -138,7 +144,7 @@ func (b *BrowseAPI) ListTable(clusterID, kindID, namespace string) (ResourceTabl
 		return ResourceTable{}, apiError(b.logger, "ListTable", err)
 	}
 
-	table, err := b.resources.ListTable(ctx, id, kindID, name)
+	table, err := b.resources.ListTable(ctx, id, kindID, name, domain.NewProjection(annotationKeys))
 	if err != nil {
 		return ResourceTable{}, apiError(b.logger, "ListTable", err)
 	}

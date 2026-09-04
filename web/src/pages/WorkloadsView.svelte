@@ -12,6 +12,8 @@
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
+  import CustomCells from '$lib/components/CustomCells.svelte'
+  import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
   import { formatAge } from '$lib/format'
   import { cpuMeter, cpuTitle, memoryMeter, memoryTitle, type Measured } from '$lib/meter'
   import { preferences } from '$stores/preferences.svelte'
@@ -81,6 +83,8 @@
     { id: 'gitops', label: 'GitOps', width: 150, defaultHidden: true },
     { id: 'controlledBy', label: 'Controlled By', width: 200, defaultHidden: true },
     { id: 'age', label: 'Age', width: 80, numeric: true },
+    // The operator's own, after the built-in set — see $lib/customColumns.
+    ...toColumns(session.customColumns),
   ])
 
   function tone(workload: Workload): Tone {
@@ -128,6 +132,8 @@
     const visible = columns.filter(isColumnVisible)
 
     function cell(workload: Workload, id: string): string {
+      const custom = parseCustomColumnId(id)
+      if (custom) return customCell(workload, custom)
       const usage = session.workloadUsage[`${workload.namespace}/${workload.name}`] ?? UNMEASURED
       switch (id) {
         case 'status':
@@ -311,6 +317,7 @@
             {formatAge(workload.ageSeconds)}
           </td>
         {/if}
+        <CustomCells specs={session.customColumns} row={workload} {isVisible} />
         <!-- Stops the click here: the row itself opens the detail drawer,
              and a click aimed at the menu — or at one of its items — must
              not also do that. -->

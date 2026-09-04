@@ -12,11 +12,11 @@ export function Disconnect(arg1:string):Promise<void>;
 
 export function ListClusters():Promise<Array<wails.Cluster>>;
 
-export function ListNamespaceSummaries(arg1:string):Promise<Array<wails.NamespaceSummary>>;
+export function ListNamespaceSummaries(arg1:string,arg2:Array<string>):Promise<Array<wails.NamespaceSummary>>;
 
 export function ListNamespaces(arg1:string):Promise<Array<wails.Namespace>>;
 
-export function ListNodes(arg1:string):Promise<Array<wails.Node>>;
+export function ListNodes(arg1:string,arg2:Array<string>):Promise<Array<wails.Node>>;
 
 export function PreviewKubeconfig(arg1:string):Promise<wails.KubeconfigMerge>;
 

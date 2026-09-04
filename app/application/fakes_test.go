@@ -96,6 +96,15 @@ type fakeKubernetes struct {
 	requestedCluster domain.ClusterID
 	requestedNS      domain.NamespaceName
 	requestedKind    map[domain.WorkloadKind]bool
+	// requestedProjections records every projection a list was asked for,
+	// in call order, so a test can assert what reached the port.
+	requestedProjections []domain.Projection
+}
+
+func (f *fakeKubernetes) recordProjection(projection domain.Projection) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.requestedProjections = append(f.requestedProjections, projection)
 }
 
 var (
@@ -113,24 +122,27 @@ func (f *fakeKubernetes) ServerVersion(_ context.Context, id domain.ClusterID) (
 	return f.version, nil
 }
 
-func (f *fakeKubernetes) ListNamespaces(_ context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
+func (f *fakeKubernetes) ListNamespaces(_ context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Namespace, error) {
 	f.record(id, "")
+	f.recordProjection(projection)
 	if f.namespacesErr != nil {
 		return nil, f.namespacesErr
 	}
 	return append([]domain.Namespace(nil), f.namespaces...), nil
 }
 
-func (f *fakeKubernetes) ListPods(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error) {
+func (f *fakeKubernetes) ListPods(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error) {
 	f.record(id, namespace)
+	f.recordProjection(projection)
 	if f.podsErr != nil {
 		return nil, f.podsErr
 	}
 	return append([]domain.Pod(nil), f.pods...), nil
 }
 
-func (f *fakeKubernetes) ListNodes(_ context.Context, id domain.ClusterID) ([]domain.Node, error) {
+func (f *fakeKubernetes) ListNodes(_ context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Node, error) {
 	f.record(id, "")
+	f.recordProjection(projection)
 	return append([]domain.Node(nil), f.nodes...), nil
 }
 
@@ -139,9 +151,10 @@ func (f *fakeKubernetes) DiscoverCustomKinds(_ context.Context, id domain.Cluste
 	return append([]domain.ResourceKind(nil), f.customKinds...), nil
 }
 
-func (f *fakeKubernetes) ListWorkloads(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
+func (f *fakeKubernetes) ListWorkloads(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Workload, error) {
 	f.record(id, namespace)
 	f.recordKind(kind)
+	f.recordProjection(projection)
 	if f.workloadsErr != nil {
 		return nil, f.workloadsErr
 	}
@@ -381,7 +394,7 @@ type fakeEvents struct {
 
 var _ ports.EventPort = (*fakeEvents)(nil)
 
-func (f *fakeEvents) ListEvents(context.Context, domain.ClusterID, domain.NamespaceName) ([]domain.Event, error) {
+func (f *fakeEvents) ListEvents(context.Context, domain.ClusterID, domain.NamespaceName, domain.Projection) ([]domain.Event, error) {
 	if f.err != nil {
 		return nil, f.err
 	}

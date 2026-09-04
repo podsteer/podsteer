@@ -788,6 +788,8 @@ export namespace wails {
 	    firstSeen: string;
 	    lastSeen: string;
 	    ageSeconds: number;
+	    labels: Record<string, string>;
+	    annotations: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
 	        return new Event(source);
@@ -809,6 +811,8 @@ export namespace wails {
 	        this.firstSeen = source["firstSeen"];
 	        this.lastSeen = source["lastSeen"];
 	        this.ageSeconds = source["ageSeconds"];
+	        this.labels = source["labels"];
+	        this.annotations = source["annotations"];
 	    }
 	}
 	export class Subject {
@@ -985,6 +989,8 @@ export namespace wails {
 	    name: string;
 	    phase: string;
 	    isActive: boolean;
+	    labels: Record<string, string>;
+	    annotations: Record<string, string>;
 	    createdAt: string;
 	    ageSeconds: number;
 	
@@ -997,6 +1003,8 @@ export namespace wails {
 	        this.name = source["name"];
 	        this.phase = source["phase"];
 	        this.isActive = source["isActive"];
+	        this.labels = source["labels"];
+	        this.annotations = source["annotations"];
 	        this.createdAt = source["createdAt"];
 	        this.ageSeconds = source["ageSeconds"];
 	    }
@@ -1093,6 +1101,8 @@ export namespace wails {
 	    name: string;
 	    phase: string;
 	    isActive: boolean;
+	    labels: Record<string, string>;
+	    annotations: Record<string, string>;
 	    createdAt: string;
 	    ageSeconds: number;
 	    notReady: number;
@@ -1131,6 +1141,8 @@ export namespace wails {
 	        this.name = source["name"];
 	        this.phase = source["phase"];
 	        this.isActive = source["isActive"];
+	        this.labels = source["labels"];
+	        this.annotations = source["annotations"];
 	        this.createdAt = source["createdAt"];
 	        this.ageSeconds = source["ageSeconds"];
 	        this.notReady = source["notReady"];
@@ -1185,6 +1197,8 @@ export namespace wails {
 	    diskPercent: number;
 	    hasDisk: boolean;
 	    maxPods: number;
+	    labels: Record<string, string>;
+	    annotations: Record<string, string>;
 	    createdAt: string;
 	    ageSeconds: number;
 	
@@ -1217,6 +1231,8 @@ export namespace wails {
 	        this.diskPercent = source["diskPercent"];
 	        this.hasDisk = source["hasDisk"];
 	        this.maxPods = source["maxPods"];
+	        this.labels = source["labels"];
+	        this.annotations = source["annotations"];
 	        this.createdAt = source["createdAt"];
 	        this.ageSeconds = source["ageSeconds"];
 	    }
@@ -1700,6 +1716,7 @@ export namespace wails {
 	    containers: Container[];
 	    findings: PodFinding[];
 	    labels: Record<string, string>;
+	    annotations: Record<string, string>;
 	    createdAt: string;
 	    ageSeconds: number;
 	
@@ -1742,6 +1759,7 @@ export namespace wails {
 	        this.containers = this.convertValues(source["containers"], Container);
 	        this.findings = this.convertValues(source["findings"], PodFinding);
 	        this.labels = source["labels"];
+	        this.annotations = source["annotations"];
 	        this.createdAt = source["createdAt"];
 	        this.ageSeconds = source["ageSeconds"];
 	    }
@@ -1865,6 +1883,8 @@ export namespace wails {
 	    name: string;
 	    namespace: string;
 	    cells: string[];
+	    labels: Record<string, string>;
+	    annotations: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
 	        return new TableRow(source);
@@ -1875,6 +1895,8 @@ export namespace wails {
 	        this.name = source["name"];
 	        this.namespace = source["namespace"];
 	        this.cells = source["cells"];
+	        this.labels = source["labels"];
+	        this.annotations = source["annotations"];
 	    }
 	}
 	export class TableColumn {

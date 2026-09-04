@@ -266,6 +266,10 @@ type PodSpec struct {
 	Containers []Container
 	// Labels are the pod's labels.
 	Labels map[string]string
+	// Annotations are the pod's annotations, populated SELECTIVELY by the
+	// adapter — only the keys a Projection asked for. See Projection for why
+	// the whole map never travels.
+	Annotations map[string]string
 	// Owners are the pod's owner references. The controlling one is what the
 	// "Controlled By" column shows.
 	Owners []OwnerReference
@@ -321,24 +325,25 @@ func (c PodCondition) True() bool { return c.Status == "True" }
 // The value is a read-only snapshot: it is never written back to the cluster,
 // so it carries observed status rather than desired spec.
 type Pod struct {
-	uid        string
-	name       string
-	namespace  NamespaceName
-	clusterID  ClusterID
-	phase      PodPhase
-	nodeName   string
-	podIP      string
-	containers []Container
-	labels     map[string]string
-	owners     []OwnerReference
-	qosClass   QoSClass
-	usage      Metrics
-	reason     string
-	message    string
-	createdAt  time.Time
-	deletedAt  time.Time
-	finalizers []string
-	conditions []PodCondition
+	uid         string
+	name        string
+	namespace   NamespaceName
+	clusterID   ClusterID
+	phase       PodPhase
+	nodeName    string
+	podIP       string
+	containers  []Container
+	labels      map[string]string
+	annotations map[string]string
+	owners      []OwnerReference
+	qosClass    QoSClass
+	usage       Metrics
+	reason      string
+	message     string
+	createdAt   time.Time
+	deletedAt   time.Time
+	finalizers  []string
+	conditions  []PodCondition
 }
 
 // NewPod validates spec and returns the corresponding Pod.
@@ -373,24 +378,25 @@ func NewPod(spec PodSpec) (Pod, error) {
 	}
 
 	return Pod{
-		uid:        spec.UID,
-		name:       name,
-		namespace:  spec.Namespace,
-		clusterID:  spec.ClusterID,
-		phase:      phase,
-		nodeName:   spec.NodeName,
-		podIP:      spec.PodIP,
-		containers: containers,
-		labels:     maps.Clone(spec.Labels),
-		owners:     slices.Clone(spec.Owners),
-		qosClass:   spec.QoSClass,
-		usage:      spec.Usage,
-		reason:     strings.TrimSpace(spec.Reason),
-		message:    strings.TrimSpace(spec.Message),
-		createdAt:  spec.CreatedAt.UTC(),
-		deletedAt:  spec.DeletedAt.UTC(),
-		finalizers: slices.Clone(spec.Finalizers),
-		conditions: slices.Clone(spec.Conditions),
+		uid:         spec.UID,
+		name:        name,
+		namespace:   spec.Namespace,
+		clusterID:   spec.ClusterID,
+		phase:       phase,
+		nodeName:    spec.NodeName,
+		podIP:       spec.PodIP,
+		containers:  containers,
+		labels:      maps.Clone(spec.Labels),
+		annotations: maps.Clone(spec.Annotations),
+		owners:      slices.Clone(spec.Owners),
+		qosClass:    spec.QoSClass,
+		usage:       spec.Usage,
+		reason:      strings.TrimSpace(spec.Reason),
+		message:     strings.TrimSpace(spec.Message),
+		createdAt:   spec.CreatedAt.UTC(),
+		deletedAt:   spec.DeletedAt.UTC(),
+		finalizers:  slices.Clone(spec.Finalizers),
+		conditions:  slices.Clone(spec.Conditions),
 	}, nil
 }
 
@@ -422,6 +428,10 @@ func (p Pod) Containers() []Container {
 
 // Labels returns a copy of the pod's labels, preserving immutability.
 func (p Pod) Labels() map[string]string { return maps.Clone(p.labels) }
+
+// Annotations returns a copy of the projected annotations — only the keys
+// that were asked for when the pod was read. See PodSpec.Annotations.
+func (p Pod) Annotations() map[string]string { return maps.Clone(p.annotations) }
 
 // Owners returns a copy of the pod's owner references.
 func (p Pod) Owners() []OwnerReference { return slices.Clone(p.owners) }

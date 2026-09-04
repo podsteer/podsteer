@@ -109,10 +109,14 @@ type Node struct {
 	// HasDisk distinguishes a node that reported an empty disk from one never
 	// asked. Disk occupancy needs nodes/proxy, which plenty of clusters do
 	// not grant, so absent is the ordinary case rather than a fault.
-	HasDisk    bool   `json:"hasDisk"`
-	MaxPods    int64  `json:"maxPods"`
-	CreatedAt  string `json:"createdAt"`
-	AgeSeconds int64  `json:"ageSeconds"`
+	HasDisk bool  `json:"hasDisk"`
+	MaxPods int64 `json:"maxPods"`
+	// Labels are the node's labels.
+	Labels map[string]string `json:"labels"`
+	// Annotations are only the projected keys — see Pod.Annotations.
+	Annotations map[string]string `json:"annotations"`
+	CreatedAt   string            `json:"createdAt"`
+	AgeSeconds  int64             `json:"ageSeconds"`
 }
 
 func toNode(node domain.Node, now time.Time) Node {
@@ -121,6 +125,8 @@ func toNode(node domain.Node, now time.Time) Node {
 
 	return Node{
 		Name:           node.Name(),
+		Labels:         emptyIfNil(node.Labels()),
+		Annotations:    emptyIfNil(node.Annotations()),
 		Status:         node.Status(),
 		Roles:          node.Roles(),
 		IsControlPlane: node.IsControlPlane(),
@@ -479,12 +485,18 @@ type Event struct {
 	FirstSeen      string `json:"firstSeen"`
 	LastSeen       string `json:"lastSeen"`
 	AgeSeconds     int64  `json:"ageSeconds"`
+	// Labels are the event object's own labels, almost always empty.
+	Labels map[string]string `json:"labels"`
+	// Annotations are only the projected keys — see Pod.Annotations.
+	Annotations map[string]string `json:"annotations"`
 }
 
 func toEvent(event domain.Event, now time.Time) Event {
 	return Event{
 		Name:           event.Name(),
 		Namespace:      event.Namespace().String(),
+		Labels:         emptyIfNil(event.Labels()),
+		Annotations:    emptyIfNil(event.Annotations()),
 		Type:           string(event.Type()),
 		IsWarning:      event.IsWarning(),
 		Reason:         event.Reason(),
@@ -537,6 +549,10 @@ type TableRow struct {
 	Name      string   `json:"name"`
 	Namespace string   `json:"namespace"`
 	Cells     []string `json:"cells"`
+	// Labels are the object's labels, from the row's own metadata.
+	Labels map[string]string `json:"labels"`
+	// Annotations are only the projected keys — see Pod.Annotations.
+	Annotations map[string]string `json:"annotations"`
 }
 
 func toResourceTable(table domain.ResourceTable) ResourceTable {
@@ -559,9 +575,11 @@ func toResourceTable(table domain.ResourceTable) ResourceTable {
 			cells = []string{}
 		}
 		rows = append(rows, TableRow{
-			Name:      row.Name,
-			Namespace: row.Namespace.String(),
-			Cells:     cells,
+			Name:        row.Name,
+			Namespace:   row.Namespace.String(),
+			Cells:       cells,
+			Labels:      emptyIfNil(row.Labels),
+			Annotations: emptyIfNil(row.Annotations),
 		})
 	}
 
