@@ -453,6 +453,16 @@ type fakeManagementPort struct {
 	suspendedName  string
 	suspendedValue bool
 
+	// The Argo Rollouts controls. Recorded rather than counted, so the
+	// read-only tests can assert that a refused promote never reached the
+	// port at all rather than merely returned an error.
+	rolloutErr       error
+	promoteCalled    bool
+	abortCalled      bool
+	rolloutID        domain.ClusterID
+	rolloutNamespace domain.NamespaceName
+	rolloutName      string
+
 	setSecretKeyErr    error
 	setSecretKeyCalled bool
 	setSecretID        domain.ClusterID
@@ -727,6 +737,28 @@ func (f *fakeManagementPort) SuspendWorkload(_ context.Context, id domain.Cluste
 	f.suspendedName = name
 	f.suspendedValue = suspend
 	return f.suspendErr
+}
+
+func (f *fakeManagementPort) PromoteRollout(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "PromoteRollout")
+	f.promoteCalled = true
+	f.rolloutID = id
+	f.rolloutNamespace = namespace
+	f.rolloutName = name
+	return f.rolloutErr
+}
+
+func (f *fakeManagementPort) AbortRollout(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "AbortRollout")
+	f.abortCalled = true
+	f.rolloutID = id
+	f.rolloutNamespace = namespace
+	f.rolloutName = name
+	return f.rolloutErr
 }
 
 func (f *fakeManagementPort) SetSecretKey(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string, value []byte) error {

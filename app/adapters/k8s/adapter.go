@@ -57,6 +57,10 @@ type Adapter struct {
 	// upgrades caches served API discovery and the writer scans found for
 	// deprecated versions of it — see upgrade.go.
 	upgrades upgradeCache
+	// vulnerabilities caches what a scanner already running in the cluster
+	// wrote, per cluster and namespace. Its whole point is being OFF the
+	// refresh tick — see trivy.go.
+	vulnerabilities vulnerabilityCache
 	// watches mirror a cluster's pods locally, so a refresh reads memory
 	// rather than the network. An optimisation: see watch.go, where the
 	// governing sentence is that polling remains the truth.
@@ -178,6 +182,10 @@ func (a *Adapter) Invalidate(id domain.ClusterID) {
 	// numbers from before it was closed.
 	a.filesystems.forget(id)
 	a.upgrades.forget(id)
+	// Scanner reports go the same way, and for the same reason as the disk
+	// sweep: a ten-minute answer carried across a reconnect would put the
+	// previous connection's findings on the first pod list of the new one.
+	a.vulnerabilities.forget(id)
 	a.reads.forget(id.String())
 }
 

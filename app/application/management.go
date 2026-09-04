@@ -264,6 +264,60 @@ func (s *ManagementService) SuspendWorkload(ctx context.Context, id domain.Clust
 	return nil
 }
 
+// PromoteRollout advances a paused Argo Rollouts Rollout by one step.
+//
+// A WRITE LIKE ANY OTHER, and it goes through the same three things every
+// write here does: the read-only guard first, one audit line naming the
+// cluster, namespace and object, and the port beneath deciding nothing about
+// policy. What makes it unusual is only the object — the Rollout controller
+// owns the fields being patched, so the adapter reads the live object and
+// asks domain.PlanRolloutPromote which patch to send.
+func (s *ManagementService) PromoteRollout(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) error {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return err
+	}
+
+	s.logger.InfoContext(ctx, "promoting rollout",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.String("name", name))
+
+	if err := s.management.PromoteRollout(ctx, id, namespace, name); err != nil {
+		s.logger.ErrorContext(ctx, "failed to promote rollout",
+			slog.String("cluster", id.String()),
+			slog.String("namespace", namespace.String()),
+			slog.String("name", name),
+			slog.String("error", err.Error()))
+		return err
+	}
+
+	return nil
+}
+
+// AbortRollout abandons the update an Argo Rollouts Rollout is part way
+// through, returning traffic to the stable ReplicaSet.
+func (s *ManagementService) AbortRollout(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) error {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return err
+	}
+
+	s.logger.InfoContext(ctx, "aborting rollout",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.String("name", name))
+
+	if err := s.management.AbortRollout(ctx, id, namespace, name); err != nil {
+		s.logger.ErrorContext(ctx, "failed to abort rollout",
+			slog.String("cluster", id.String()),
+			slog.String("namespace", namespace.String()),
+			slog.String("name", name),
+			slog.String("error", err.Error()))
+		return err
+	}
+
+	return nil
+}
+
 // UpdateResource applies a YAML manifest of any kind to the cluster.
 //
 // dryRun is NOT gated by the read-only check below. A dry run asks the API

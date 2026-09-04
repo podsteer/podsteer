@@ -423,6 +423,25 @@ export function applyDryRun(ctx: string, ns?: string): string {
 }
 
 /**
+ * `kubectl argo rollouts <verb> <name> -n <ns> --context <ctx>`.
+ *
+ * THE ONE BUILDER THAT DOES NOT USE `base`, and the exception is not a style
+ * choice. `kubectl argo rollouts` is a PLUGIN: kubectl resolves it from the
+ * first non-flag arguments and hands everything after them to
+ * `kubectl-argo-rollouts`, so the global flags have to come after the
+ * subcommand rather than before it. `kubectl --context c argo rollouts …`
+ * is not the same command and is not what the plugin's own documentation
+ * shows — and a hint that teaches an invocation which does not run is worse
+ * than no hint.
+ *
+ * PodSteer performs the promotion through the API itself, as it does every
+ * other write; this is the transcript, never a thing that is executed.
+ */
+export function argoRollouts(verb: 'promote' | 'abort', ctx: string, name: string, ns: string): string {
+  return ['kubectl', 'argo', 'rollouts', verb, name, '-n', ns, '--context', shellQuote(ctx)].join(' ')
+}
+
+/**
  * `kubectl --context c -n ns get secret <name> -o jsonpath='{.data.<key>}' |
  * base64 -d`.
  *

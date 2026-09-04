@@ -1844,6 +1844,17 @@
           clusterId={session.cluster.id}
           canOpen={kindIdFor}
           onopen={openObject}
+          {productionGroup}
+          {isReadOnly}
+          {readOnlyReason}
+          onchanged={async () => {
+            // The Rollout controls are the one write a detail PANEL makes.
+            // The controller rewrites the status within the second, so the
+            // panel has to re-read rather than wait for the next poll — the
+            // same reload an apply performs, and for the same reason.
+            await session.reloadManifest()
+            await session.refresh()
+          }}
           onnamespace={(namespace) => void session.selectNamespace(namespace)}
           onbrowse={(kindId, namespace) => void session.browseKind(kindId, namespace)}
           tick={session.lastRefreshedAt}

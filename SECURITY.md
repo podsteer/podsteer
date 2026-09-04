@@ -30,8 +30,11 @@ vulnerability.
 **PodSteer both reads and writes.** It lists and inspects resources, and it can
 also delete objects, scale and restart workloads, apply edited manifests, write
 a single decoded key of a Secret or a ConfigMap, open an interactive shell
-inside a container, and copy files into and out of one. It can add an
-**ephemeral debug container** to a running pod (the equivalent of `kubectl
+inside a container, and copy files into and out of one. It can **promote or
+abort an Argo Rollouts `Rollout`** where that operator is installed — the
+equivalent of `kubectl argo rollouts promote|abort`, sent as a merge patch of
+the fields the controller reads, which changes what is serving traffic. It can
+add an **ephemeral debug container** to a running pod (the equivalent of `kubectl
 debug`) — which, being a Kubernetes ephemeral container, cannot be removed and
 remains in the pod's spec until the pod is deleted — and it can create a
 **privileged node-shell pod** that enters a node's host namespaces to open a

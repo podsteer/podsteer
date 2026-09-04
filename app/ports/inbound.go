@@ -293,4 +293,12 @@ type ResourceService interface {
 	// InspectTLSSecret returns one Secret's parsed certificate chain, on
 	// explicit request — the certificate equivalent of RevealSecretKey.
 	InspectTLSSecret(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (domain.CertificateChain, error)
+
+	// VulnerabilitySummaries returns what a vulnerability scanner already
+	// running in the cluster has recorded about one namespace's workloads.
+	//
+	// An empty answer is the ordinary one — most clusters run no scanner —
+	// and is never an error. See ports.ResourcePort for why this is not part
+	// of any list call.
+	VulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.VulnerabilitySummary, error)
 }

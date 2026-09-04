@@ -68,6 +68,7 @@ import {
 } from '$lib/sort'
 import { alertPlayer } from './alerts.svelte'
 import { forgetConfigMaps } from './configMaps.svelte'
+import { forgetVulnerabilities } from './vulnerabilities.svelte'
 import { timeline } from './timeline.svelte'
 import { usageHistory, usageKey } from './usageHistory.svelte'
 import { preferences } from './preferences.svelte'
@@ -2224,6 +2225,7 @@ export class ClusterSession {
     // it re-read ConfigMaps it already has.
     usageHistory.forget(this.cluster.id)
     forgetConfigMaps(this.cluster.id)
+    forgetVulnerabilities(this.cluster.id)
     // The timeline goes with the tab, like the Recent section below and for
     // the same reason: it is made of object names, it was never written
     // anywhere, and a reconnect starts a fresh record rather than resuming

@@ -19,6 +19,8 @@
   import CertificateInspector from './CertificateInspector.svelte'
   import GitOpsDetail from './GitOpsDetail.svelte'
   import { gitOpsPanelFor } from '$lib/gitops/panel'
+  import OperatorDetail from './OperatorDetail.svelte'
+  import { operatorPanelFor } from '$lib/operators/panel'
   import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
@@ -39,7 +41,9 @@
      *
      * Needed by the sections a Kind alone cannot select: "Application" is a
      * kind in argoproj.io, app.k8s.io and core.oam.dev, and only the first
-     * carries the status the GitOps panel reads. See $lib/gitops/panel.
+     * carries the status the GitOps panel reads; "Certificate" is a kind in
+     * cert-manager.io and in cert.gardener.cloud with a different spec
+     * entirely. See $lib/gitops/panel and $lib/operators/panel.
      */
     group?: string
     /** The open object's recent usage, accumulated while the drawer is open. */
@@ -75,6 +79,21 @@
     /** Follows a reference to the object it names. */
     onopen?: OpenObject
     /**
+     * The group's name when this cluster is marked production, else null,
+     * and whether writes are refused for it.
+     *
+     * Only the Argo Rollouts panel reads them — it is the one panel here that
+     * offers a write — but they are passed to the pane rather than held by
+     * it, for the same reason every other dialog takes them: the source of
+     * truth is the group's current setting, which an operator can change in
+     * Organise while this drawer is open.
+     */
+    productionGroup?: string | null
+    isReadOnly?: boolean
+    readOnlyReason?: string
+    /** Re-reads the open object after a panel wrote to it. */
+    onchanged?: () => void
+    /**
      * Filters the application to a namespace.
      *
      * A namespace is not opened the way an object is — following one narrows
@@ -108,6 +127,10 @@
     clusterId,
     canOpen,
     onopen,
+    productionGroup = null,
+    isReadOnly = false,
+    readOnlyReason = '',
+    onchanged,
     onnamespace,
     onbrowse,
     tick,
@@ -336,6 +359,16 @@
   const gitOpsPanel = $derived(gitOpsPanelFor(group, kind))
 
   /**
+   * The operator whose custom resource this is, if it is one.
+   *
+   * The same mechanism as the GitOps panel above and selected the same way,
+   * by group AND kind — see $lib/operators/panel. Null on every cluster that
+   * does not run these operators, because their kinds only reach the
+   * navigator when discovery found their groups.
+   */
+  const operatorPanel = $derived(operatorPanelFor(group, kind))
+
+  /**
    * Whether the GitOps panel renders the conditions itself.
    *
    * Argo CD's conditions carry a type and a message and NO status, so the
@@ -376,6 +409,7 @@
       !isWorkload &&
       !isIngress &&
       !gitOpsPanel &&
+      !operatorPanel &&
       !selectedNode &&
       !selectedNamespaceRow &&
       kind !== 'Namespace',
@@ -1361,6 +1395,31 @@
         {readyTone}
         {canOpen}
         {onopen}
+      />
+    {/if}
+
+    <!--
+      WHAT THE OPERATOR'S CONTROLLER SAYS, in its own words — the typed
+      panels PodSteer ships in place of the extension API it deliberately
+      does not have. Quoted from the one manifest already here; the single
+      exception is a cert-manager Certificate's expiry, which is a comparison
+      against the clock and is asked of the Go domain. See
+      $lib/operators/panel.
+    -->
+    {#if operatorPanel}
+      <OperatorDetail
+        panel={operatorPanel}
+        manifest={parsedManifest}
+        namespace={metadata.namespace ?? ''}
+        name={metadata.name ?? ''}
+        {readyTone}
+        {canOpen}
+        {onopen}
+        clusterId={clusterId ?? ''}
+        {productionGroup}
+        {isReadOnly}
+        {readOnlyReason}
+        {onchanged}
       />
     {/if}
 

@@ -581,6 +581,28 @@ export namespace wails {
 		}
 	}
 	
+	export class CertificateRenewalRef {
+	    notAfter: string;
+	    renewalTime: string;
+	    readyStatus: string;
+	    readyReason: string;
+	    issuingStatus: string;
+	    failedIssuanceAttempts: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CertificateRenewalRef(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.notAfter = source["notAfter"];
+	        this.renewalTime = source["renewalTime"];
+	        this.readyStatus = source["readyStatus"];
+	        this.readyReason = source["readyReason"];
+	        this.issuingStatus = source["issuingStatus"];
+	        this.failedIssuanceAttempts = source["failedIssuanceAttempts"];
+	    }
+	}
 	export class Cluster {
 	    id: string;
 	    server: string;
@@ -2694,6 +2716,30 @@ export namespace wails {
 	}
 	
 	
+	export class VulnerabilitySummary {
+	    subject: string;
+	    critical: number;
+	    high: number;
+	    medium: number;
+	    low: number;
+	    unknown: number;
+	    reports: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new VulnerabilitySummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.subject = source["subject"];
+	        this.critical = source["critical"];
+	        this.high = source["high"];
+	        this.medium = source["medium"];
+	        this.low = source["low"];
+	        this.unknown = source["unknown"];
+	        this.reports = source["reports"];
+	    }
+	}
 	
 
 }
