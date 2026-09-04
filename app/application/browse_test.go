@@ -71,7 +71,7 @@ func (f *fakeResources) CountResources(_ context.Context, _ domain.ClusterID, ki
 	return f.counts[kind.Resource], nil
 }
 
-func (f *fakeResources) ListTable(context.Context, domain.ClusterID, domain.ResourceKind, domain.NamespaceName) (domain.ResourceTable, error) {
+func (f *fakeResources) ListTable(context.Context, domain.ClusterID, domain.ResourceKind, domain.NamespaceName, domain.Projection) (domain.ResourceTable, error) {
 	return domain.ResourceTable{}, nil
 }
 

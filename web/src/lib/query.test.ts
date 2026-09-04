@@ -168,3 +168,46 @@ describe('describeQuery', () => {
     expect(describeQuery(parseQuery('re:(unterminated'))).toBe('1 term: invalid regex')
   })
 })
+
+describe('cluster: terms', () => {
+  /** A row that came from a named cluster. */
+  function from(cluster: string, text = 'web-0'): Row {
+    return { text, cluster }
+  }
+
+  it("matches a case-insensitive substring of the row's cluster, never of its text", () => {
+    expect(hit('cluster:prod', from('gke_acme_europe-west1_prod'))).toBe(true)
+    expect(hit('cluster:PROD', from('prod'))).toBe(true)
+    // The text carries the word and the cluster does not: no match.
+    expect(hit('cluster:prod', from('staging', 'prod-web-0'))).toBe(false)
+  })
+
+  it('keeps everything after the prefix as the name, colons and slashes included', () => {
+    const arn = 'arn:aws:eks:eu-west-1:123456789012:cluster/prod'
+    expect(hit(`cluster:${arn}`, from(arn))).toBe(true)
+    expect(hit('cluster:cluster/prod', from(arn))).toBe(true)
+  })
+
+  it('accepts a quoted name, for a context name with a space in it', () => {
+    expect(hit('cluster:"my cluster"', from('my cluster'))).toBe(true)
+    expect(hit('cluster:"my cluster"', from('my-cluster'))).toBe(false)
+  })
+
+  it('never matches a row that belongs to no cluster, and always matches it negated', () => {
+    expect(hit('cluster:prod', row('web-0'))).toBe(false)
+    expect(hit('-cluster:prod', row('web-0'))).toBe(true)
+  })
+
+  it('negates like any other term and ANDs with the rest', () => {
+    expect(hit('-cluster:prod', from('prod'))).toBe(false)
+    expect(hit('-cluster:prod', from('dev'))).toBe(true)
+    expect(hit('cluster:prod web', from('prod'))).toBe(true)
+    expect(hit('cluster:prod db', from('prod'))).toBe(false)
+  })
+
+  it('is described as a cluster term', () => {
+    expect(describeQuery(parseQuery('cluster:prod -cluster:dev'))).toBe(
+      '2 terms: cluster, not cluster',
+    )
+  })
+})

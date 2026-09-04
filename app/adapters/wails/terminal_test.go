@@ -170,6 +170,12 @@ func (stubNodeShellPort) StartNodeShell(context.Context, domain.ClusterID, domai
 func (stubNodeShellPort) StopNodeShell(string) error         { return nil }
 func (stubNodeShellPort) ListNodeShells() []domain.NodeShell { return nil }
 func (stubNodeShellPort) StopAllNodeShells()                 {}
+func (stubManagementPort) CopyFromPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, string, io.Writer) error {
+	return nil
+}
+func (stubManagementPort) CopyToPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, string, io.Reader) error {
+	return errors.New("CopyToPod reached: a refused StartUpload must never get this far")
+}
 
 // TestStartSessionRefusesOnReadOnlyCluster pins the fast path CLAUDE.md's
 // read-only section promises: an interactive shell refuses synchronously,

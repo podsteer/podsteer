@@ -235,7 +235,9 @@ func (s *ClusterService) ListNamespaces(ctx context.Context, id domain.ClusterID
 		return nil, fmt.Errorf("listing namespaces: %w", err)
 	}
 
-	namespaces, err := s.cluster.ListNamespaces(ctx, id)
+	// The filter wants names only, so no projection — which also keeps this
+	// read coalesced with the assessment's.
+	namespaces, err := s.cluster.ListNamespaces(ctx, id, domain.Projection{})
 	if err != nil {
 		return nil, fmt.Errorf("listing namespaces of %q: %w", id, err)
 	}
@@ -258,7 +260,7 @@ func (s *ClusterService) ListNamespaces(ctx context.Context, id domain.ClusterID
 // shows, and it answers nothing: the questions actually asked of one are
 // whether a namespace is still in use, whether anything in it is broken, and
 // which of them is holding the cluster.
-func (s *ClusterService) ListNamespaceSummaries(ctx context.Context, id domain.ClusterID) ([]domain.NamespaceSummary, error) {
+func (s *ClusterService) ListNamespaceSummaries(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.NamespaceSummary, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("summarising namespaces: %w", err)
 	}
@@ -270,7 +272,10 @@ func (s *ClusterService) ListNamespaceSummaries(ctx context.Context, id domain.C
 
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.Go(func() error {
-		result, err := s.cluster.ListNamespaces(groupCtx, id)
+		// The projection applies to the namespaces, which are the rows; the
+		// pods below are only counted, so they carry none and stay coalesced
+		// with the assessment's cluster-wide read.
+		result, err := s.cluster.ListNamespaces(groupCtx, id, projection)
 		if err != nil {
 			return fmt.Errorf("listing namespaces of %q: %w", id, err)
 		}
@@ -278,7 +283,7 @@ func (s *ClusterService) ListNamespaceSummaries(ctx context.Context, id domain.C
 		return nil
 	})
 	group.Go(func() error {
-		result, err := s.workloads.ListPods(groupCtx, id, domain.NamespaceAll)
+		result, err := s.workloads.ListPods(groupCtx, id, domain.NamespaceAll, domain.Projection{})
 		if err != nil {
 			return fmt.Errorf("listing pods of %q: %w", id, err)
 		}
@@ -348,12 +353,12 @@ func (s *ClusterService) SetReadOnly(ctx context.Context, id domain.ClusterID, r
 	return nil
 }
 
-func (s *ClusterService) ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
+func (s *ClusterService) ListNodes(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Node, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("listing nodes: %w", err)
 	}
 
-	nodes, err := s.cluster.ListNodes(ctx, id)
+	nodes, err := s.cluster.ListNodes(ctx, id, projection)
 	if err != nil {
 		return nil, fmt.Errorf("listing nodes of %q: %w", id, err)
 	}

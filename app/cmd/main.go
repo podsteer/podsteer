@@ -26,6 +26,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 
+	"github.com/podsteer/podsteer/app/adapters/archive"
 	"github.com/podsteer/podsteer/app/adapters/assets"
 	historystore "github.com/podsteer/podsteer/app/adapters/history"
 	"github.com/podsteer/podsteer/app/adapters/k8s"
@@ -166,6 +167,19 @@ func run() error {
 		return fmt.Errorf("wiring browse service: %w", err)
 	}
 
+	// The fleet reads through the two services above rather than the
+	// adapter, so a cross-cluster row is exactly the row that cluster's own
+	// tab would show, and the read cache coalesces the two.
+	fleetService, err := application.NewFleetService(application.FleetServiceDeps{
+		Workloads: workloadService,
+		Events:    browseService,
+		Registry:  registry,
+		Logger:    logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring fleet service: %w", err)
+	}
+
 	overviewService, err := application.NewOverviewService(application.OverviewServiceDeps{
 		Cluster:   kubernetes,
 		Workloads: kubernetes,
@@ -211,6 +225,15 @@ func run() error {
 		// writes issued through this service.
 		Registry: registry,
 		Logger:   logger,
+		// The local half of a file copy. Everything that decides what a
+		// container's tar stream may do to this machine lives behind it,
+		// and the ceilings come from configuration so an operator who
+		// means to move more can say so.
+		Archive: archive.Local{},
+		TransferLimits: domain.TransferLimits{
+			MaxBytes:   cfg.FileCopy.MaxBytes,
+			MaxEntries: cfg.FileCopy.MaxEntries,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("wiring management service: %w", err)
@@ -242,6 +265,11 @@ func run() error {
 		return fmt.Errorf("wiring overview API: %w", err)
 	}
 
+	fleetAPI, err := wailsadapter.NewFleetAPI(fleetService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring fleet API: %w", err)
+	}
+
 	// The Kubernetes adapter is the port-forward AND the node-shell transport:
 	// both track a resource PodSteer created (a bound socket, a privileged
 	// pod) and both must tear it down where the record lives, so they share
@@ -254,6 +282,11 @@ func run() error {
 	terminalAPI, err := wailsadapter.NewTerminalAPI(managementService, kubernetes, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring terminal API: %w", err)
+	}
+
+	fileCopyAPI, err := wailsadapter.NewFileCopyAPI(managementService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring file copy API: %w", err)
 	}
 
 	historyAPI, err := wailsadapter.NewHistoryAPI(historyService, desktop, logger)
@@ -335,9 +368,11 @@ func run() error {
 			workloadAPI,
 			browseAPI,
 			overviewAPI,
+			fleetAPI,
 			historyAPI,
 			managementAPI,
 			terminalAPI,
+			fileCopyAPI,
 			systemAPI,
 			updateAPI,
 		},

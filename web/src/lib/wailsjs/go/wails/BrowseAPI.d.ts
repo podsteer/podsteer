@@ -8,13 +8,13 @@ export function GetManifest(arg1:string,arg2:string,arg3:string,arg4:string,arg5
 
 export function InspectTLSSecret(arg1:string,arg2:string,arg3:string):Promise<wails.CertificateChainDTO>;
 
-export function ListEvents(arg1:string,arg2:string):Promise<Array<wails.Event>>;
+export function ListEvents(arg1:string,arg2:string,arg3:Array<string>):Promise<Array<wails.Event>>;
 
 export function ListEventsForResource(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Array<wails.Event>>;
 
 export function ListKinds(arg1:string):Promise<Array<wails.ResourceKind>>;
 
-export function ListTable(arg1:string,arg2:string,arg3:string):Promise<wails.ResourceTable>;
+export function ListTable(arg1:string,arg2:string,arg3:string,arg4:Array<string>):Promise<wails.ResourceTable>;
 
 export function NamespaceInventory(arg1:string,arg2:string):Promise<wails.NamespaceInventory>;
 

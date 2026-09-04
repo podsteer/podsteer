@@ -164,6 +164,83 @@ export function del(ctx: string, resource: string, name: string, ns?: string): s
   return [...base(ctx, ns), 'delete', resource, name].join(' ')
 }
 
+/** One object a bulk command names. `ns` is omitted for a cluster-scoped object. */
+export interface BulkTarget {
+  name: string
+  ns?: string
+}
+
+/**
+ * Targets grouped by namespace, in the order each namespace first appears.
+ *
+ * kubectl takes ONE `-n` per invocation, so a selection made under "All
+ * namespaces" that spans three of them is three commands, not one with three
+ * flags. The builders below emit one line per group; a selection within a
+ * single namespace — the common case — stays one line.
+ */
+function byNamespace(targets: BulkTarget[]): [string | undefined, string[]][] {
+  const groups = new Map<string | undefined, string[]>()
+  for (const target of targets) {
+    const names = groups.get(target.ns)
+    if (names) names.push(target.name)
+    else groups.set(target.ns, [target.name])
+  }
+  return [...groups.entries()]
+}
+
+/**
+ * `kubectl --context c [-n ns] delete <resource> <a> <b> <c>` — one line per
+ * namespace the selection spans. The equivalent of a bulk delete, which is
+ * what the review dialog shows before running one.
+ */
+export function delMany(ctx: string, resource: string, targets: BulkTarget[]): string {
+  return byNamespace(targets)
+    .map(([ns, names]) => [...base(ctx, ns), 'delete', resource, ...names].join(' '))
+    .join('\n')
+}
+
+/**
+ * `kubectl --context c -n ns scale <kind>/<a> <kind>/<b> --replicas=N` — one
+ * line per namespace. Always namespaced, for the same reason `scale` is.
+ */
+export function scaleMany(ctx: string, kind: string, targets: BulkTarget[], replicas: number): string {
+  return byNamespace(targets)
+    .map(([ns, names]) =>
+      [
+        ...base(ctx, ns),
+        'scale',
+        ...names.map((name) => `${kind.toLowerCase()}/${name}`),
+        `--replicas=${replicas}`,
+      ].join(' '),
+    )
+    .join('\n')
+}
+
+/**
+ * `kubectl --context c -n ns rollout restart <kind>/<a> <kind>/<b>` — one
+ * line per namespace. Always namespaced, for the same reason `scale` is.
+ */
+export function rolloutRestartMany(ctx: string, kind: string, targets: BulkTarget[]): string {
+  return byNamespace(targets)
+    .map(([ns, names]) =>
+      [...base(ctx, ns), 'rollout', 'restart', ...names.map((name) => `${kind.toLowerCase()}/${name}`)].join(
+        ' ',
+      ),
+    )
+    .join('\n')
+}
+
+/**
+ * `kubectl --context c cordon <a> <b>` or `... uncordon <a> <b>`.
+ *
+ * Nodes are cluster-scoped, so there is never a `-n` and never more than one
+ * line. kubectl accepts several nodes in one invocation, which is what makes
+ * this the honest equivalent of a bulk cordon rather than a shorthand.
+ */
+export function cordon(ctx: string, names: string[], on: boolean): string {
+  return [...base(ctx), on ? 'cordon' : 'uncordon', ...names].join(' ')
+}
+
 /** Options `logs` accepts, each contributing one flag only when it is set. */
 export interface LogsOptions {
   container?: string
@@ -245,6 +322,29 @@ export function debug(
 }
 
 /**
+ * `kubectl --context c -n ns cp <pod>:<remote> <local> [-c container]`.
+ *
+ * `local` is the FULL destination path — `~/Downloads/nginx`, not
+ * `~/Downloads` — because that is what kubectl's second argument means and
+ * what PodSteer's own download produces: the remote entry lands under the
+ * chosen folder by its own name. Both paths are an operator's to type, so
+ * both go through `shellQuote`; the pod name is a DNS label and needs
+ * nothing.
+ */
+export function cpFromPod(
+  ctx: string,
+  pod: string,
+  ns: string,
+  remotePath: string,
+  localPath: string,
+  container?: string,
+): string {
+  const parts = [...base(ctx, ns), 'cp', shellQuote(`${pod}:${remotePath}`), shellQuote(localPath)]
+  if (container) parts.push('-c', container)
+  return parts.join(' ')
+}
+
+/**
  * `kubectl debug node/<node> -it --image=<image> --profile=sysadmin`.
  *
  * What the node shell APPROXIMATES — it is not exactly this. `kubectl debug
@@ -265,6 +365,26 @@ export function debugNode(ctx: string, node: string, image: string): string {
     `--image=${shellQuote(image)}`,
     '--profile=sysadmin',
   ].join(' ')
+}
+
+/**
+ * `kubectl --context c -n ns cp <local> <pod>:<remote> [-c container]`.
+ *
+ * `remote` is again the full destination — `/app/config`, not `/app` —
+ * for the same reason as `cpFromPod`: kubectl names the result, and an
+ * upload lands inside the chosen directory under the local entry's name.
+ */
+export function cpToPod(
+  ctx: string,
+  pod: string,
+  ns: string,
+  localPath: string,
+  remotePath: string,
+  container?: string,
+): string {
+  const parts = [...base(ctx, ns), 'cp', shellQuote(localPath), shellQuote(`${pod}:${remotePath}`)]
+  if (container) parts.push('-c', container)
+  return parts.join(' ')
 }
 
 /** `kubectl --context c -n ns port-forward pod/<pod> <local>:<remote>`. */

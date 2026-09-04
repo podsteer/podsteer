@@ -17,6 +17,7 @@ import {
   DEFAULT_NODE_SHELL_IMAGE,
   DEFAULT_NODE_SHELL_NAMESPACE,
 } from './preferences.svelte'
+import { LAST_APPLIED_ANNOTATION, type CustomColumnSpec } from '$lib/customColumns'
 
 const STORAGE_KEY = 'podsteer.preferences.v1'
 
@@ -319,8 +320,86 @@ describe('remembered debug and node-shell inputs', () => {
       expect(raw).toContain('busybox:1.36')
       expect(raw).toContain('ops')
     } finally {
-      vi.unstubAllGlobals()
+      // Restore the file-level storage rather than unstubbing every global:
+      // happy-dom has no localStorage of its own, so unstubbing would leave
+      // the tests after this one with an undefined global.
+      vi.stubGlobal('localStorage', memoryStorage())
     }
+  })
+})
+
+describe('custom columns', () => {
+  const kindId = 'apps/v1/deployments'
+  const team: CustomColumnSpec = { source: 'label', key: 'team' }
+  const owner: CustomColumnSpec = { source: 'annotation', key: 'acme.io/owner' }
+
+  beforeEach(() => {
+    for (const spec of preferences.customColumnsFor(kindId)) {
+      preferences.removeCustomColumn(kindId, spec)
+    }
+  })
+
+  it('adds columns per kind, in order, and refuses a duplicate', () => {
+    expect(preferences.addCustomColumn(kindId, team)).toBe(true)
+    expect(preferences.addCustomColumn(kindId, owner)).toBe(true)
+    expect(preferences.addCustomColumn(kindId, { ...team })).toBe(false)
+
+    expect(preferences.customColumnsFor(kindId)).toEqual([team, owner])
+    // Per KIND, not per cluster and not global: a Pods list has its own.
+    expect(preferences.customColumnsFor('core/v1/pods')).toEqual([])
+  })
+
+  it('refuses an invalid key at the storage layer, whatever the picker did', () => {
+    expect(preferences.addCustomColumn(kindId, { source: 'label', key: 'bad key' })).toBe(false)
+    expect(
+      preferences.addCustomColumn(kindId, { source: 'annotation', key: LAST_APPLIED_ANNOTATION }),
+    ).toBe(false)
+    expect(preferences.customColumnsFor(kindId)).toEqual([])
+  })
+
+  it('reorders by index, ignores an index off the end, and drops an emptied kind', () => {
+    preferences.addCustomColumn(kindId, team)
+    preferences.addCustomColumn(kindId, owner)
+
+    preferences.moveCustomColumn(kindId, 1, 0)
+    expect(preferences.customColumnsFor(kindId)).toEqual([owner, team])
+
+    // A stale index from a menu open across a change must not reorder
+    // something else.
+    preferences.moveCustomColumn(kindId, 0, 5)
+    expect(preferences.customColumnsFor(kindId)).toEqual([owner, team])
+
+    preferences.removeCustomColumn(kindId, owner)
+    preferences.removeCustomColumn(kindId, team)
+    expect(kindId in preferences.customColumns).toBe(false)
+  })
+
+  it('persists them under the kind id — a catalogue id and a key, never an object name', () => {
+    preferences.addCustomColumn(kindId, team)
+
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    expect(stored.customColumns).toEqual({ [kindId]: [team] })
+  })
+
+  it('validates every stored entry on a fresh load and defaults a missing key to {}', async () => {
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    raw.customColumns = {
+      [kindId]: [team, { source: 'spec', key: 'replicas' }, 'label:team', { ...team }],
+      'core/v1/pods': 'not a list',
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(raw))
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.customColumnsFor(kindId)).toEqual([team])
+    expect(reloaded.customColumnsFor('core/v1/pods')).toEqual([])
+
+    // BACKWARD COMPATIBILITY, as for pinnedKinds: a blob written before this
+    // setting existed loads with no custom columns anywhere.
+    delete raw.customColumns
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(raw))
+
+    const { preferences: fresh } = await reimportPreferences()
+    expect(fresh.customColumns).toEqual({})
   })
 })
 

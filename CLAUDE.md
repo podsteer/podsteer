@@ -216,6 +216,35 @@ Three rules it holds to, each with a test:
 Narrowed reads — one object, one node's pods, one workload's pods — go
 straight through. Nothing on-demand is cached.
 
+## Custom columns quote metadata, and annotations travel by projection
+
+An operator can put any label or annotation key on any list as a column
+(`web/src/lib/customColumns.ts`, persisted per KIND in
+`preferences.svelte.ts` — a catalogue id and a key, never an object name).
+Labels ship on every row of every kind, rich and generic alike. **Annotations
+do not: only the keys somebody has put on a column travel**, passed as a
+`domain.Projection` through every list call — `ListPods`, `ListWorkloads`,
+`ListNodes`, `ListNamespaces`, `ListEvents`, `ListTable` — and the empty
+projection is what every non-list caller (the assessment, the sampler, the
+consumption sums) passes. The reason is one key: kubectl's
+`last-applied-configuration` is a copy of the whole manifest, tens of
+kilobytes on a Deployment, and shipping the map wholesale would re-send it on
+every row of every refresh. That key is refused outright by `NewProjection`,
+and not only for its size — the watch store strips it, so a column of it
+would read blank on a cluster the watch is serving and the manifest on one it
+is not, two answers decided by something the operator cannot see.
+
+Two consequences. **The projection is part of the read-cache key**: a mapped
+pod carries only what it was asked for, so a list view with an annotation
+column reads beside the assessment's list rather than sharing it — one extra
+list per refresh, paid only by whoever configured such a column, and only CPU
+where the watch is serving. And **the mappers take the projection as a
+parameter** rather than reading it off the adapter, so the stripping contract
+tests in `watch_test.go` can map a stored object and its original under the
+same projection and compare them. The generic table reads both labels and the
+projected annotations from the `PartialObjectMetadata` the server already
+attaches to each row (`includeObject=Metadata`) — never a GET per row.
+
 ## Counting is `limit=1`, never `len(list)`
 
 Kubernetes has no endpoint that reports how many objects a namespace holds, and
@@ -548,6 +577,32 @@ certificate itself is public material, but it lives beside the private key in
 the same object, so it is parsed only on the same deliberate, per-Secret
 request `RevealSecretKey` requires, never when the Secret pane opens.
 
+## Files are copied by tar, and unpacked only in Go
+
+Copying a file to or from a container (`FileCopyAPI`, from the pod drawer) is
+`kubectl cp`'s mechanism and nothing more: the container runs
+`tar cf - -C <dir> <base>` or `tar xf - -C <dir>` over a non-TTY exec session
+(`Adapter.CopyFromPod`/`CopyToPod`, sharing `execCommand` with `ExecInPod`),
+and `app/adapters/archive` packs or unpacks the local side. **The local side
+is written by Go and never delegated to the webview**, and that is not an
+implementation preference: the stream is produced by an image somebody else
+built, and tar has carried path-traversal attacks for as long as it has
+existed. `archive.Local.Extract` refuses absolute names, any `..` component
+and any symlink whose target leaves the chosen directory, writes through
+`os.Root` so a link already sitting in that directory cannot be followed out
+of it either, drops setuid/setgid/sticky bits, and enforces
+`domain.TransferLimits` as bytes arrive — each with a test that tries the
+attack. A webview handed a path and a blob could check none of that, and
+would have to be trusted, unauthenticated, to land content wherever it said.
+`ArchivePort` is a port rather than a helper so `ManagementService`'s
+orchestration — the pipe between exec and archive, the read-only refusal on
+upload only, the one audit line per transfer, and `transferOutcome`'s rule
+for which of two simultaneous failures to report — is tested against fakes
+while the real archive is tested on a temp directory. A container without
+`tar` is the ordinary failure and has its own sentinel (`ports.ErrTarMissing`)
+and code (`tar_missing`); tar's stderr is never discarded — carried verbatim in
+`ports.ErrCommandFailed` on failure, logged on success.
+
 ## Escape belongs to one layer, and the layers say which
 
 Seventeen components listen for Escape on the window, so `stopPropagation`
@@ -587,6 +642,48 @@ displayed costs nothing at all: its rows are already in memory. A second open
 cluster's objects are never fetched either; if its tab is open, that tab's own
 poll is already the source, and the palette only ever reads what a tab already
 has — it does not open one.
+
+## The All-clusters view is a pseudo-entry, renders what answered, and polls only on screen
+
+`podsteer/fleet` is the third pinned pseudo-entry beside the overview and
+Applications, and for the same reason: it is every open tab's pods, workloads
+or events in ONE table — an aggregation, not a kind — so it is deliberately
+absent from `domain/catalog.go`. A catalogue entry is offered to every
+consumer that expects to GET what it names, from one cluster, and no cluster
+knows what the other tabs are. The fan-out lives in Go —
+`application.FleetService`, bound as `FleetAPI` — so a tick is one bridge call
+however many clusters are open. Each cluster is read through the same
+`WorkloadService`/`EventService` call its own tab makes, so `readcache.go`
+coalesces the two when they land together; at most `fleetConcurrency`
+clusters are read at once; results follow the registry's tab order whatever
+order the frontend named them in; and the only error is naming a cluster that
+is not open. Workloads are every controller kind but ReplicaSet
+(`domain.FleetWorkloadKinds`), one request per cluster per kind.
+
+**Partial results are mandatory, not a nicety.** Every cluster answers for
+itself: `domain.ClusterRead` carries its own `ClusterReadStatus`, modelled on
+`MetricsStatus` and for the same reason — forbidden, unreachable and slow call
+for opposite actions, and a merged table that showed the same nothing for all
+three would send somebody to check a VPN over a permission problem. A cluster
+still unanswered at `fleetReadBudget` is reported slow and NOT waited for; its
+read carries on, freed of the bridge call's cancellation but not its deadline,
+and what it eventually returns is handed to the next read of the same thing.
+That is what makes "slow" true rather than permanent: a merely slow cluster's
+rows arrive a tick late instead of never, and one that is down is reported
+unreachable once its dial has timed out instead of slow for ever. The frontend
+keeps a slow or unreachable cluster's last rows, marked stale in the status
+strip, and drops a refused one's — stale rows under a "forbidden" mark would
+claim a view the account does not have. Refusing the whole call because one
+cluster refused is the bug this section exists to prevent.
+
+**Nothing polls off screen.** `$stores/fleet` holds the rows — they are the
+workspace's, not any one tab's, so switching tabs does not refetch them — and
+has no timer of its own. `ClusterSession.#fetch` calls `fleet.refresh` only
+when the session's own poll fires with the fleet view selected, and a session
+polls only while its tab is in front; select another kind, or another tab,
+and the fan-out simply stops. The command palette reads the merged rows the
+way it reads any view's own: only while that view is on screen, never by
+fetching across clusters for a keystroke.
 
 ## Two structural facts that look like mistakes
 
@@ -900,6 +997,22 @@ same as one already in the explicit file.
   worse outcome than refusing to start, because a caller cannot tell "capacity
   freed" from "capacity freed except for the pod that mattered" without
   reading the report closely.
+- **A bulk action is planned in the domain and executed in the application
+  layer, and the two share one function.** `domain.PlanBulk`
+  (`app/domain/bulk.go`) decides act/skip per selected object from facts the
+  list rows already carry — the controlling `ownerReference` (never a label),
+  a workload's desired count, a node's cordoned flag, the cluster's read-only
+  flag — so planning a selection costs no read. `ManagementAPI.PlanBulk`
+  shows that plan in the review dialog, and `ManagementService.BulkDelete`,
+  `BulkRestart`, `BulkScale` and `BulkCordon` run the SAME function again
+  before fanning the acting lines out over the single-object
+  `ManagementPort` methods (bounded errgroup, no shared context), so what was
+  reviewed is what runs. Unlike a drain, **a failure never aborts the rest**:
+  one forbidden delete is a per-object result beside forty-nine successes,
+  classified exactly as a single write's error would be, because a run that
+  stopped halfway would leave the operator unable to tell from the list which
+  rows were touched. The read-only guard runs once, up front, for the whole
+  selection.
 - **Eviction, never deletion, is what a drain and the pod drawer's Evict both
   use.** `ManagementPort.EvictPod` goes through the policy/v1 Eviction
   subresource specifically because it is the one request a PodDisruptionBudget
@@ -947,6 +1060,28 @@ same as one already in the explicit file.
   on the same struct: both change what the API server is actually asked
   for, so the frontend re-opens the stream when either changes, the same
   as it already did for `Follow` and `TailLines`.
+- **A GitOps object's members are quoted from the controller's own status,
+  never inferred from labels.** The Argo CD Application and Flux
+  Kustomization/HelmRelease panels (`web/src/lib/gitops/`, rendered by
+  `GitOpsDetail.svelte`) list `status.resources` and
+  `status.inventory.entries` as followable rows — a label-based
+  "applications" view was rejected on 2026-09-02 because a label is weaker
+  than a selector (overlaps double-count, unlabelled workloads vanish, every
+  line drawn is a relationship Kubernetes does not have), it needs a
+  cluster-wide LIST per kind per refresh, and on an unlabelled cluster the
+  UI cannot say why it is empty; the controller's status is the membership
+  it acts on, costs the one GET the drawer already makes, and reads no
+  Secret. The panel is selected by group AND kind ("Application" exists in
+  three API groups), and it complements the bottom-up `gitops.ts` badge
+  rather than replacing it. A Flux inventory id is
+  `<namespace>_<name>_<group>_<kind>` as `sigs.k8s.io/cli-utils`'s
+  `ObjMetadata` writes it: a core kind has an EMPTY group segment
+  (`shop_web__Service`), a cluster-scoped object an empty namespace
+  (`_shop__Namespace`), and a colon in an RBAC name is transcoded as `__` —
+  so `parseInventoryId` reads the fields from the outside in and never
+  splits on `_`. A HelmRelease carries no inventory at all (the objects are
+  in the Helm release Secret, which is not read), and the panel says so
+  rather than showing an empty list.
 
 ## A node shell is a pod PodSteer owns, and must be deleted like one
 
@@ -974,5 +1109,7 @@ which the dialog states plainly.
 
 ## Configuration
 
-All optional, all prefixed `PODSTEER_`: `KUBECONFIG`, `QPS`, `BURST`,
-`REQUEST_TIMEOUT`, `LOG_LEVEL`, `LOG_SOURCE`. See `app/config/config.go`.
+All optional, all prefixed `PODSTEER_`: `KUBECONFIG`, `KUBECONFIG_DIR`, `QPS`,
+`BURST`, `REQUEST_TIMEOUT`, `LOG_LEVEL`, `LOG_SOURCE`, `LIVE_WATCH`,
+`UPDATE_CHECK`, `COPY_MAX_BYTES`, `COPY_MAX_ENTRIES`. See
+`app/config/config.go`.

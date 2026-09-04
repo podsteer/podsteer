@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -41,6 +42,12 @@ type NodeSpec struct {
 	Name string
 	// ClusterID is the cluster the node belongs to. Required.
 	ClusterID ClusterID
+	// Labels are the node's labels — all of them. A node carries a few dozen
+	// at most and the node list is small, so they ship on every row.
+	Labels map[string]string
+	// Annotations are the node's annotations, populated SELECTIVELY by the
+	// adapter — only the keys a Projection asked for. See Projection.
+	Annotations map[string]string
 	// Roles are the node's roles, derived from its labels, e.g. "control-plane".
 	Roles []string
 	// Ready reports whether the Ready condition is true.
@@ -83,6 +90,8 @@ type NodeSpec struct {
 type Node struct {
 	name             string
 	clusterID        ClusterID
+	labels           map[string]string
+	annotations      map[string]string
 	roles            []string
 	ready            bool
 	activeConditions []NodeCondition
@@ -113,6 +122,8 @@ func NewNode(spec NodeSpec) (Node, error) {
 	return Node{
 		name:             name,
 		clusterID:        spec.ClusterID,
+		labels:           maps.Clone(spec.Labels),
+		annotations:      maps.Clone(spec.Annotations),
 		roles:            slices.Clone(spec.Roles),
 		ready:            spec.Ready,
 		activeConditions: slices.Clone(spec.ActiveConditions),
@@ -135,6 +146,13 @@ func (n Node) Name() string { return n.name }
 
 // ClusterID returns the cluster the node belongs to.
 func (n Node) ClusterID() ClusterID { return n.clusterID }
+
+// Labels returns a copy of the node's labels.
+func (n Node) Labels() map[string]string { return maps.Clone(n.labels) }
+
+// Annotations returns a copy of the projected annotations — only the keys
+// that were asked for when the node was read. See NodeSpec.Annotations.
+func (n Node) Annotations() map[string]string { return maps.Clone(n.annotations) }
 
 // Roles returns a copy of the node's roles.
 func (n Node) Roles() []string { return slices.Clone(n.roles) }

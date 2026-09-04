@@ -5,7 +5,11 @@ import {
   applyDryRun,
   debug,
   debugNode,
+  cordon,
+  cpFromPod,
+  cpToPod,
   del,
+  delMany,
   describe as describeCmd,
   exec,
   get,
@@ -16,8 +20,10 @@ import {
   resourceArgForKind,
   revealSecretKey,
   rolloutRestart,
+  rolloutRestartMany,
   rolloutUndo,
   scale,
+  scaleMany,
   setImage,
   shellQuote,
 } from './kubectl'
@@ -200,6 +206,65 @@ describe('del', () => {
   })
 })
 
+describe('delMany', () => {
+  it('names every object on one line within a namespace', () => {
+    expect(
+      delMany('prod', 'pods', [
+        { name: 'a', ns: 'default' },
+        { name: 'b', ns: 'default' },
+        { name: 'c', ns: 'default' },
+      ]),
+    ).toBe('kubectl --context prod -n default delete pods a b c')
+  })
+
+  it('emits one line per namespace, in the order each first appears', () => {
+    // kubectl takes one -n per invocation: a selection made under "All
+    // namespaces" is one command per namespace it spans, never one command
+    // with three flags.
+    expect(
+      delMany('prod', 'pods', [
+        { name: 'a', ns: 'web' },
+        { name: 'b', ns: 'data' },
+        { name: 'c', ns: 'web' },
+      ]),
+    ).toBe('kubectl --context prod -n web delete pods a c\nkubectl --context prod -n data delete pods b')
+  })
+
+  it('omits -n for cluster-scoped objects', () => {
+    expect(delMany('prod', 'nodes', [{ name: 'node-1' }, { name: 'node-2' }])).toBe(
+      'kubectl --context prod delete nodes node-1 node-2',
+    )
+  })
+})
+
+describe('scaleMany', () => {
+  it('names every workload as kind/name with one --replicas flag', () => {
+    expect(
+      scaleMany('prod', 'Deployment', [{ name: 'web', ns: 'default' }, { name: 'api', ns: 'default' }], 0),
+    ).toBe('kubectl --context prod -n default scale deployment/web deployment/api --replicas=0')
+  })
+})
+
+describe('rolloutRestartMany', () => {
+  it('names every workload as kind/name, one line per namespace', () => {
+    expect(
+      rolloutRestartMany('prod', 'StatefulSet', [{ name: 'db', ns: 'data' }, { name: 'cache', ns: 'web' }]),
+    ).toBe(
+      'kubectl --context prod -n data rollout restart statefulset/db\nkubectl --context prod -n web rollout restart statefulset/cache',
+    )
+  })
+})
+
+describe('cordon', () => {
+  it('names every node on one line, with no namespace', () => {
+    expect(cordon('prod', ['node-1', 'node-2'], true)).toBe('kubectl --context prod cordon node-1 node-2')
+  })
+
+  it('is uncordon when switched off', () => {
+    expect(cordon('prod', ['node-1'], false)).toBe('kubectl --context prod uncordon node-1')
+  })
+})
+
 describe('logs', () => {
   it('emits nothing beyond the base command when no option is set', () => {
     expect(logs('prod', 'web-1', 'default')).toBe('kubectl --context prod -n default logs web-1')
@@ -343,6 +408,42 @@ describe('revealSecretKey', () => {
     // teaches the wrong lesson.
     expect(revealSecretKey('prod', 'ingress-tls', 'web', 'tls.crt')).toBe(
       "kubectl --context prod -n web get secret ingress-tls -o jsonpath='{.data.tls\\.crt}' | base64 -d",
+    )
+  })
+})
+
+describe('cpFromPod', () => {
+  it('names the pod-side source and the full local destination', () => {
+    expect(cpFromPod('prod', 'web-0', 'default', '/etc/nginx', '/Users/me/Downloads/nginx', 'app')).toBe(
+      'kubectl --context prod -n default cp web-0:/etc/nginx /Users/me/Downloads/nginx -c app',
+    )
+  })
+
+  it('omits -c when no container is named', () => {
+    expect(cpFromPod('prod', 'web-0', 'default', '/etc/hosts', '/tmp/hosts')).toBe(
+      'kubectl --context prod -n default cp web-0:/etc/hosts /tmp/hosts',
+    )
+  })
+
+  it('quotes a local path with a space in it', () => {
+    // A Downloads folder called "My Files" is the ordinary case on a
+    // desktop, and unquoted it would be two arguments.
+    expect(cpFromPod('prod', 'web-0', 'default', '/etc/hosts', '/Users/me/My Files/hosts')).toBe(
+      "kubectl --context prod -n default cp web-0:/etc/hosts '/Users/me/My Files/hosts'",
+    )
+  })
+})
+
+describe('cpToPod', () => {
+  it('names the local source and the full pod-side destination', () => {
+    expect(cpToPod('prod', 'web-0', 'default', '/Users/me/config.yaml', '/app/config.yaml', 'app')).toBe(
+      'kubectl --context prod -n default cp /Users/me/config.yaml web-0:/app/config.yaml -c app',
+    )
+  })
+
+  it('quotes a remote path with a space in it', () => {
+    expect(cpToPod('prod', 'web-0', 'default', '/tmp/x', '/data/my dir/x')).toBe(
+      "kubectl --context prod -n default cp /tmp/x 'web-0:/data/my dir/x'",
     )
   })
 })

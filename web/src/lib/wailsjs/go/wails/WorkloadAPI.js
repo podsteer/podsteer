@@ -6,8 +6,8 @@ export function ListApplications(arg1, arg2) {
   return window['go']['wails']['WorkloadAPI']['ListApplications'](arg1, arg2);
 }
 
-export function ListPods(arg1, arg2) {
-  return window['go']['wails']['WorkloadAPI']['ListPods'](arg1, arg2);
+export function ListPods(arg1, arg2, arg3) {
+  return window['go']['wails']['WorkloadAPI']['ListPods'](arg1, arg2, arg3);
 }
 
 export function ListPodsForWorkload(arg1, arg2, arg3, arg4) {
@@ -18,8 +18,8 @@ export function ListPodsOnNode(arg1, arg2) {
   return window['go']['wails']['WorkloadAPI']['ListPodsOnNode'](arg1, arg2);
 }
 
-export function ListWorkloads(arg1, arg2, arg3) {
-  return window['go']['wails']['WorkloadAPI']['ListWorkloads'](arg1, arg2, arg3);
+export function ListWorkloads(arg1, arg2, arg3, arg4) {
+  return window['go']['wails']['WorkloadAPI']['ListWorkloads'](arg1, arg2, arg3, arg4);
 }
 
 export function PodGraph(arg1, arg2, arg3) {

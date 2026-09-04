@@ -45,6 +45,12 @@ type SystemAPI struct {
 	// test can stub the chosen path instead of popping a real dialog — which
 	// would hang `go test` waiting for an operator who is not there.
 	chooseSavePath func(suggestedName string) (string, error)
+
+	// chooseDirectory and chooseFile are the open-directory and open-file
+	// dialogs behind ChooseDirectory and ChooseFile, seams for the same
+	// reason chooseSavePath is one.
+	chooseDirectory func(title string) (string, error)
+	chooseFile      func(title string) (string, error)
 }
 
 // NewSystemAPI returns the bound system API.
@@ -67,6 +73,8 @@ func NewSystemAPI(name, version string, app *App, logger *slog.Logger) (*SystemA
 		logger: logger.With(slog.String("api", "system")),
 	}
 	s.chooseSavePath = s.showSaveDialog
+	s.chooseDirectory = s.showDirectoryDialog
+	s.chooseFile = s.showOpenDialog
 	return s, nil
 }
 
@@ -187,6 +195,72 @@ func (s *SystemAPI) SaveTextFile(suggestedName, content string) (string, error) 
 		return "", apiError(s.logger, "SaveTextFile", err)
 	}
 
+	return path, nil
+}
+
+// showDirectoryDialog is chooseDirectory's real implementation: the native
+// folder picker, allowed to create a folder on the way, because "a new
+// folder for this download" is the commonest answer to the question.
+func (s *SystemAPI) showDirectoryDialog(title string) (string, error) {
+	ctx, ok := s.app.runtimeContext()
+	if !ok {
+		return "", fmt.Errorf("the window is not running")
+	}
+
+	return wailsruntime.OpenDirectoryDialog(ctx, wailsruntime.OpenDialogOptions{
+		Title:                title,
+		CanCreateDirectories: true,
+	})
+}
+
+// showOpenDialog is chooseFile's real implementation: the native file
+// picker, unfiltered, because anything can be copied into a container.
+func (s *SystemAPI) showOpenDialog(title string) (string, error) {
+	ctx, ok := s.app.runtimeContext()
+	if !ok {
+		return "", fmt.Errorf("the window is not running")
+	}
+
+	return wailsruntime.OpenFileDialog(ctx, wailsruntime.OpenDialogOptions{
+		Title: title,
+	})
+}
+
+// ChooseDirectory opens the native folder picker and returns the operator's
+// choice — the destination of a download, or a folder to upload.
+//
+// The path is returned to the frontend rather than acted on here, unlike
+// SaveTextFile, because the thing that will use it — FileCopyAPI — is a
+// transfer the operator has yet to start and may still change their mind
+// about. Handing a path back is safe in this direction: the frontend can
+// only ever pass it to a Go method that checks it is a directory and writes
+// nothing but what the container sent through the ArchivePort's rules. An
+// empty path means the operator cancelled, which is not an error.
+func (s *SystemAPI) ChooseDirectory(title string) (string, error) {
+	if strings.TrimSpace(title) == "" {
+		title = "Choose a folder"
+	}
+
+	path, err := s.chooseDirectory(title)
+	if err != nil {
+		return "", apiError(s.logger, "ChooseDirectory", err)
+	}
+	return path, nil
+}
+
+// ChooseFile opens the native file picker and returns the operator's
+// choice — a file to upload into a container. The same conventions as
+// ChooseDirectory: the path is only ever consumed by FileCopyAPI, which
+// reads it through the ArchivePort, and "" means cancelled.
+func (s *SystemAPI) ChooseFile(title string) (string, error) {
+	if strings.TrimSpace(title) == "" {
+		title = "Choose a file"
+	}
+
+	path, err := s.chooseFile(title)
+	if err != nil {
+		return "", apiError(s.logger, "ChooseFile", err)
+	}
 	return path, nil
 }
 

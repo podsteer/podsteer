@@ -29,6 +29,11 @@ type ManagementService struct {
 	management ports.ManagementPort
 	registry   *Registry
 	logger     *slog.Logger
+	// archive and limits serve the file copy in filecopy.go; archive is nil
+	// when nothing was wired, and the copy methods refuse rather than the
+	// service failing to construct.
+	archive ports.ArchivePort
+	limits  domain.TransferLimits
 }
 
 // ManagementServiceDeps are the dependencies required to build a ManagementService.
@@ -41,6 +46,14 @@ type ManagementServiceDeps struct {
 	// through whichever service happened to be asked first.
 	Registry *Registry
 	Logger   *slog.Logger
+	// Archive packs and unpacks the LOCAL side of a file copy — see
+	// ports.ArchivePort for the rules it enforces. Optional: without it
+	// DownloadFromPod and UploadToPod refuse, and every other method is
+	// unaffected, so a caller that never copies files need not wire one.
+	Archive ports.ArchivePort
+	// TransferLimits caps a copy in either direction; the zero value means
+	// the domain's defaults (1 GiB, 100k entries).
+	TransferLimits domain.TransferLimits
 }
 
 // NewManagementService returns a management service wired with its dependencies.
@@ -61,6 +74,8 @@ func NewManagementService(deps ManagementServiceDeps) (*ManagementService, error
 		management: deps.Management,
 		registry:   deps.Registry,
 		logger:     logger.With(slog.String("service", "management")),
+		archive:    deps.Archive,
+		limits:     deps.TransferLimits.WithDefaults(),
 	}, nil
 }
 

@@ -20,6 +20,7 @@ import {
   isAlertSound,
   type AlertSeverity,
 } from './alerts.svelte'
+import { customColumnId, normaliseSpecs, type CustomColumnSpec } from '$lib/customColumns'
 
 /** Page sizes offered. 25 is the default; 100 is the ceiling. */
 export const PAGE_SIZES = [10, 25, 50, 100] as const
@@ -481,6 +482,16 @@ interface PersistedShape {
   alertSound?: string
   /** kindId -> columnId -> preference */
   columns: Record<string, Record<string, ColumnPreference>>
+  /**
+   * kindId -> the operator's own columns, in the order they are shown.
+   *
+   * Per KIND and not per cluster: a label key means the same thing on every
+   * cluster, and somebody who wants `team` beside every Deployment wants it
+   * on the staging tab too. A kind id and a label key are the same order of
+   * fact as pinnedKinds above — never an object name — which is what lets
+   * them live here. See $lib/customColumns.
+   */
+  customColumns: Record<string, CustomColumnSpec[]>
 }
 
 const DEFAULTS: PersistedShape = {
@@ -532,6 +543,7 @@ const DEFAULTS: PersistedShape = {
   alertSoundsEnabled: false,
   alertSounds: DEFAULT_ALERT_SOUNDS,
   columns: {},
+  customColumns: {},
 }
 
 class Preferences {
@@ -695,6 +707,7 @@ class Preferences {
 
   /** kindId -> columnId -> preference. */
   columns = $state<Record<string, Record<string, ColumnPreference>>>({})
+  customColumns = $state<Record<string, CustomColumnSpec[]>>({})
 
   constructor() {
     this.#load()
@@ -1143,6 +1156,55 @@ class Preferences {
     this.#save()
   }
 
+  // --- Custom columns -------------------------------------------------------
+
+  /** The operator's own columns for a kind, in display order. */
+  customColumnsFor = (kindId: string): CustomColumnSpec[] => this.customColumns[kindId] ?? []
+
+  /**
+   * Adds a column to a kind, at the end. Adding one that already exists is
+   * a no-op rather than a duplicate, and an invalid key is refused the same
+   * way — the picker validates too, but storage is the layer that has to
+   * hold.
+   */
+  addCustomColumn = (kindId: string, spec: CustomColumnSpec): boolean => {
+    const next = normaliseSpecs([...this.customColumnsFor(kindId), spec])
+    if (next.length === this.customColumnsFor(kindId).length) return false
+    this.#setCustomColumns(kindId, next)
+    return true
+  }
+
+  removeCustomColumn = (kindId: string, spec: CustomColumnSpec): void => {
+    const id = customColumnId(spec)
+    this.#setCustomColumns(
+      kindId,
+      this.customColumnsFor(kindId).filter((existing) => customColumnId(existing) !== id),
+    )
+  }
+
+  /**
+   * Moves a column from one position to another within a kind. Indices
+   * outside the list are ignored rather than clamped: a stale index from a
+   * menu that was open across a change must not silently reorder something.
+   */
+  moveCustomColumn = (kindId: string, from: number, to: number): void => {
+    const existing = this.customColumnsFor(kindId)
+    if (from === to || from < 0 || to < 0 || from >= existing.length || to >= existing.length) return
+    const next = [...existing]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    this.#setCustomColumns(kindId, next)
+  }
+
+  #setCustomColumns(kindId: string, specs: CustomColumnSpec[]): void {
+    // Reassign rather than mutate, for the reason #mutateColumn gives. A
+    // kind with no columns left loses its key entirely, so the stored
+    // object does not grow one empty list per kind ever visited.
+    const { [kindId]: _dropped, ...rest } = this.customColumns
+    this.customColumns = specs.length > 0 ? { ...rest, [kindId]: specs } : rest
+    this.#save()
+  }
+
   #mutateColumn(kindId: string, columnId: string, mutate: (preference: ColumnPreference) => void) {
     // Reassign rather than mutate in place: $state tracks the root reference,
     // and a nested write would not notify anything reading a derived value.
@@ -1316,6 +1378,17 @@ class Preferences {
         this.alertSounds = restored
       }
       if (stored.columns && typeof stored.columns === 'object') this.columns = stored.columns
+      // Validated entry by entry — see normaliseSpecs — because these are
+      // read straight into column definitions, and a malformed one would
+      // otherwise put a column on screen that nothing can read a value for.
+      if (stored.customColumns && typeof stored.customColumns === 'object') {
+        const cleaned: Record<string, CustomColumnSpec[]> = {}
+        for (const [kindId, specs] of Object.entries(stored.customColumns)) {
+          const valid = normaliseSpecs(specs)
+          if (valid.length > 0) cleaned[kindId] = valid
+        }
+        this.customColumns = cleaned
+      }
     } catch {
       // Corrupt or unavailable storage must not stop the app starting. The
       // defaults are perfectly usable, and the next save repairs the entry.
@@ -1356,6 +1429,7 @@ class Preferences {
         alertSoundsEnabled: this.alertSoundsEnabled,
         alertSounds: this.alertSounds,
         columns: this.columns,
+        customColumns: this.customColumns,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
     } catch {

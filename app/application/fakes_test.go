@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"maps"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -96,6 +97,15 @@ type fakeKubernetes struct {
 	requestedCluster domain.ClusterID
 	requestedNS      domain.NamespaceName
 	requestedKind    map[domain.WorkloadKind]bool
+	// requestedProjections records every projection a list was asked for,
+	// in call order, so a test can assert what reached the port.
+	requestedProjections []domain.Projection
+}
+
+func (f *fakeKubernetes) recordProjection(projection domain.Projection) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.requestedProjections = append(f.requestedProjections, projection)
 }
 
 var (
@@ -113,24 +123,27 @@ func (f *fakeKubernetes) ServerVersion(_ context.Context, id domain.ClusterID) (
 	return f.version, nil
 }
 
-func (f *fakeKubernetes) ListNamespaces(_ context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
+func (f *fakeKubernetes) ListNamespaces(_ context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Namespace, error) {
 	f.record(id, "")
+	f.recordProjection(projection)
 	if f.namespacesErr != nil {
 		return nil, f.namespacesErr
 	}
 	return append([]domain.Namespace(nil), f.namespaces...), nil
 }
 
-func (f *fakeKubernetes) ListPods(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error) {
+func (f *fakeKubernetes) ListPods(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error) {
 	f.record(id, namespace)
+	f.recordProjection(projection)
 	if f.podsErr != nil {
 		return nil, f.podsErr
 	}
 	return append([]domain.Pod(nil), f.pods...), nil
 }
 
-func (f *fakeKubernetes) ListNodes(_ context.Context, id domain.ClusterID) ([]domain.Node, error) {
+func (f *fakeKubernetes) ListNodes(_ context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Node, error) {
 	f.record(id, "")
+	f.recordProjection(projection)
 	return append([]domain.Node(nil), f.nodes...), nil
 }
 
@@ -139,9 +152,10 @@ func (f *fakeKubernetes) DiscoverCustomKinds(_ context.Context, id domain.Cluste
 	return append([]domain.ResourceKind(nil), f.customKinds...), nil
 }
 
-func (f *fakeKubernetes) ListWorkloads(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
+func (f *fakeKubernetes) ListWorkloads(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Workload, error) {
 	f.record(id, namespace)
 	f.recordKind(kind)
+	f.recordProjection(projection)
 	if f.workloadsErr != nil {
 		return nil, f.workloadsErr
 	}
@@ -381,7 +395,7 @@ type fakeEvents struct {
 
 var _ ports.EventPort = (*fakeEvents)(nil)
 
-func (f *fakeEvents) ListEvents(context.Context, domain.ClusterID, domain.NamespaceName) ([]domain.Event, error) {
+func (f *fakeEvents) ListEvents(context.Context, domain.ClusterID, domain.NamespaceName, domain.Projection) ([]domain.Event, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -502,6 +516,78 @@ type fakeManagementPort struct {
 	debugPod           string
 	debugSpec          domain.DebugContainerSpec
 	debugContainerName string
+	// What the bulk methods' concurrent fan-out reached, per object.
+	//
+	// Names are recorded per write so a test can assert exactly which
+	// objects were attempted; bulkFailFor fails ONE name while its
+	// neighbours succeed, which is the partial outcome the bulk methods
+	// exist to report rather than abort on; the in-flight high-water mark is
+	// how bounded concurrency is observed rather than assumed. bulkDelay
+	// holds each write open long enough for the overlap to be seen.
+	bulkNames         []string
+	bulkFailFor       map[string]error
+	bulkDelay         time.Duration
+	bulkInFlight      int
+	bulkMaxInFlight   int
+	copyFromErr       error
+	copyFromPayload   []byte
+	copyFromCalled    bool
+	copyFromID        domain.ClusterID
+	copyFromNS        domain.NamespaceName
+	copyFromPod       string
+	copyFromContainer string
+	copyFromRemote    string
+
+	copyToErr       error
+	copyToReceived  []byte
+	copyToCalled    bool
+	copyToID        domain.ClusterID
+	copyToNS        domain.NamespaceName
+	copyToPod       string
+	copyToContainer string
+	copyToRemote    string
+}
+
+// bulkWrite is what every single-object write the bulk methods fan out over
+// funnels through: it counts itself in and out, records the name, and fails
+// it if a test asked for that name to fail — else falls back to err, the
+// every-write failure the older tests configure.
+func (f *fakeManagementPort) bulkWrite(name string) error {
+	f.mu.Lock()
+	f.bulkInFlight++
+	if f.bulkInFlight > f.bulkMaxInFlight {
+		f.bulkMaxInFlight = f.bulkInFlight
+	}
+	delay := f.bulkDelay
+	f.mu.Unlock()
+
+	time.Sleep(delay)
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bulkInFlight--
+	f.bulkNames = append(f.bulkNames, name)
+	if err := f.bulkFailFor[name]; err != nil {
+		return err
+	}
+	return f.err
+}
+
+// bulkAttempted returns the names every write reached, sorted — the writes
+// run concurrently, so their arrival order says nothing a test should assert.
+func (f *fakeManagementPort) bulkAttempted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	names := append([]string(nil), f.bulkNames...)
+	slices.Sort(names)
+	return names
+}
+
+// maxInFlight reports the most writes that were ever open at once.
+func (f *fakeManagementPort) maxInFlight() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.bulkMaxInFlight
 }
 
 var _ ports.ManagementPort = (*fakeManagementPort)(nil)
@@ -511,19 +597,19 @@ func (f *fakeManagementPort) StreamLogs(context.Context, domain.ClusterID, domai
 	return f.err
 }
 
-func (f *fakeManagementPort) DeleteResource(context.Context, domain.ResourceRef) error {
+func (f *fakeManagementPort) DeleteResource(_ context.Context, ref domain.ResourceRef) error {
 	f.record("DeleteResource")
-	return f.err
+	return f.bulkWrite(ref.Name)
 }
 
-func (f *fakeManagementPort) ScaleWorkload(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, int32) error {
+func (f *fakeManagementPort) ScaleWorkload(_ context.Context, _ domain.ClusterID, _ domain.WorkloadKind, _ domain.NamespaceName, name string, _ int32) error {
 	f.record("ScaleWorkload")
-	return f.err
+	return f.bulkWrite(name)
 }
 
-func (f *fakeManagementPort) RestartRollout(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string) error {
+func (f *fakeManagementPort) RestartRollout(_ context.Context, _ domain.ClusterID, _ domain.WorkloadKind, _ domain.NamespaceName, name string) error {
 	f.record("RestartRollout")
-	return f.err
+	return f.bulkWrite(name)
 }
 
 func (f *fakeManagementPort) UpdateResource(context.Context, domain.ClusterID, string, bool) (domain.ApplyOutcome, error) {
@@ -564,6 +650,59 @@ func (f *fakeManagementPort) AddEphemeralContainer(_ context.Context, id domain.
 func (f *fakeManagementPort) WaitForEphemeralContainerRunning(context.Context, domain.ClusterID, domain.NamespaceName, string, string) error {
 	f.record("WaitForEphemeralContainerRunning")
 	return f.err
+}
+
+// CopyFromPod plays the container's side of a download: it writes
+// copyFromPayload to out — in pieces, so a reader that has stopped is
+// noticed mid-stream the way a real exec's is — and then fails with
+// copyFromErr, if set.
+func (f *fakeManagementPort) CopyFromPod(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, pod, container, remotePath string, out io.Writer) error {
+	f.mu.Lock()
+	f.copyFromCalled = true
+	f.copyFromID = id
+	f.copyFromNS = namespace
+	f.copyFromPod = pod
+	f.copyFromContainer = container
+	f.copyFromRemote = remotePath
+	payload, failure := f.copyFromPayload, f.copyFromErr
+	f.mu.Unlock()
+
+	for len(payload) > 0 {
+		chunk := payload
+		if len(chunk) > 4 {
+			chunk = chunk[:4]
+		}
+		if _, err := out.Write(chunk); err != nil {
+			return err
+		}
+		payload = payload[len(chunk):]
+	}
+	return failure
+}
+
+// CopyToPod plays the container's side of an upload: it drains in into
+// copyToReceived unless copyToErr is set, in which case it fails at once
+// without reading — the shape of tar refusing a destination.
+func (f *fakeManagementPort) CopyToPod(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, pod, container, remoteDir string, in io.Reader) error {
+	f.mu.Lock()
+	f.copyToCalled = true
+	f.copyToID = id
+	f.copyToNS = namespace
+	f.copyToPod = pod
+	f.copyToContainer = container
+	f.copyToRemote = remoteDir
+	failure := f.copyToErr
+	f.mu.Unlock()
+
+	if failure != nil {
+		return failure
+	}
+
+	received, err := io.ReadAll(in)
+	f.mu.Lock()
+	f.copyToReceived = received
+	f.mu.Unlock()
+	return err
 }
 
 func (f *fakeManagementPort) TriggerCronJob(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (string, error) {
@@ -630,12 +769,20 @@ func (f *fakeManagementPort) SetImage(_ context.Context, id domain.ClusterID, ki
 
 func (f *fakeManagementPort) CordonNode(_ context.Context, id domain.ClusterID, name string, cordon bool) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.cordonCalled = true
 	f.cordonedID = id
 	f.cordonedName = name
 	f.cordonedValue = cordon
-	return f.cordonErr
+	cordonErr := f.cordonErr
+	f.mu.Unlock()
+
+	// Through bulkWrite like the other writes BulkCordon fans out over, so
+	// the same per-name failure and in-flight accounting apply; cordonErr
+	// stays the every-call failure the single-node tests configure.
+	if err := f.bulkWrite(name); err != nil {
+		return err
+	}
+	return cordonErr
 }
 func (f *fakeManagementPort) EvictPod(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string, gracePeriodSeconds int) error {
 	f.mu.Lock()

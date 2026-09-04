@@ -47,6 +47,11 @@ import {
   RolloutHistory as bindRolloutHistory,
 } from '$lib/wailsjs/go/wails/WorkloadAPI'
 import {
+  ListEvents as bindListFleetEvents,
+  ListPods as bindListFleetPods,
+  ListWorkloads as bindListFleetWorkloads,
+} from '$lib/wailsjs/go/wails/FleetAPI'
+import {
   ScaleWorkload as bindScaleWorkload,
   UpdateResource as bindUpdateResource,
   ValidateResource as bindValidateResource,
@@ -73,6 +78,11 @@ import {
   ListNodeShells as bindListNodeShells,
   StopNodeShell as bindStopNodeShell,
   StopAllNodeShells as bindStopAllNodeShells,
+  PlanBulk as bindPlanBulk,
+  BulkDelete as bindBulkDelete,
+  BulkRestart as bindBulkRestart,
+  BulkScale as bindBulkScale,
+  BulkCordon as bindBulkCordon,
 } from '$lib/wailsjs/go/wails/ManagementAPI'
 import {
   GetOverview as bindGetOverview,
@@ -85,12 +95,19 @@ import {
   SetSamplingInterval as bindSetSamplingInterval,
 } from '$lib/wailsjs/go/wails/HistoryAPI'
 import {
+  ChooseDirectory as bindChooseDirectory,
+  ChooseFile as bindChooseFile,
   Credits as bindCredits,
   Info as bindInfo,
   LicenceText as bindLicenceText,
   OpenURL as bindOpenURL,
   SaveTextFile as bindSaveTextFile,
 } from '$lib/wailsjs/go/wails/SystemAPI'
+import {
+  Cancel as bindCancelFileCopy,
+  StartDownload as bindStartDownload,
+  StartUpload as bindStartUpload,
+} from '$lib/wailsjs/go/wails/FileCopyAPI'
 import { EventsOn } from '$lib/wailsjs/runtime/runtime'
 import type { wails } from '$lib/wailsjs/go/models'
 import { toApiError } from './errors'
@@ -122,6 +139,11 @@ export type ApplicationInventory = wails.ApplicationInventory
 export type Application = wails.Application
 /** A Kubernetes Event. */
 export type K8sEvent = wails.Event
+/** One cluster's share of a cross-cluster list, with its own verdict — see
+    app/domain/fleet.go for the statuses. */
+export type ClusterPods = wails.ClusterPods
+export type ClusterWorkloads = wails.ClusterWorkloads
+export type ClusterEvents = wails.ClusterEvents
 /** A browsable kind, as shown in the navigator. */
 export type ResourceKind = wails.ResourceKind
 /** A generically browsed kind, with server-printed columns. */
@@ -180,6 +202,11 @@ export type DrainSkip = wails.DrainSkip
 export type DrainFailure = wails.DrainFailure
 /** What a drain would do, previewed before it runs. */
 export type DrainPlan = wails.DrainPlanDTO
+/** One selected row, as a bulk action's plan and run take it. See $lib/bulk. */
+export type BulkItemDTO = wails.BulkItemDTO
+export type BulkLine = wails.BulkLineDTO
+export type BulkPlan = wails.BulkPlanDTO
+export type BulkResult = wails.BulkResultDTO
 /** What happened when a drain ran. */
 export type DrainReport = wails.DrainReportDTO
 /** What an apply — real or a dry-run Validate — actually did. */
@@ -205,6 +232,31 @@ export interface ClusterUnreachableEvent {
   clusterId: string
   reason: string
   at: string
+}
+
+/** Payload of the `filecopy:progress` event: bytes moved so far. */
+export interface FileCopyProgressEvent {
+  transferId: string
+  bytes: number
+}
+
+/**
+ * Payload of the `filecopy:done` event, sent once per transfer however it
+ * ended. `error` is the same `[code] message` envelope a rejected call
+ * carries, so `toApiError` parses it; `cancelled` is the operator's own
+ * Cancel and carries no error.
+ */
+export interface FileCopyDoneEvent {
+  transferId: string
+  direction: 'download' | 'upload'
+  files: number
+  entries: number
+  bytes: number
+  durationMs: number
+  notes: string[]
+  localPath: string
+  cancelled: boolean
+  error: string
 }
 
 /** Removes an event subscription. */
@@ -295,9 +347,18 @@ export function listNamespaces(clusterId: string): Promise<Namespace[]> {
  *
  * Separate from listNamespaces, which feeds the namespace filter and stays a
  * cheap read of names: this one counts pods, which means listing them.
+ *
+ * `annotationKeys` names the annotations each row should carry — the ones on
+ * the kind's custom columns (see $lib/customColumns). Every list call takes
+ * the same parameter, for the same reason: nothing else of an object's
+ * annotations crosses the bridge, because kubectl's last-applied manifest
+ * alone is tens of kilobytes per row. Labels always come along.
  */
-export function listNamespaceSummaries(clusterId: string): Promise<NamespaceSummary[]> {
-  return call(() => bindListNamespaceSummaries(clusterId))
+export function listNamespaceSummaries(
+  clusterId: string,
+  annotationKeys: string[] = [],
+): Promise<NamespaceSummary[]> {
+  return call(() => bindListNamespaceSummaries(clusterId, annotationKeys))
 }
 
 /**
@@ -311,9 +372,10 @@ export function classifyConditions(conditions: ConditionRef[]): Promise<string[]
   return call(() => bindClassifyConditions(conditions))
 }
 
-/** Lists the nodes of a connected cluster, with usage where available. */
-export function listNodes(clusterId: string): Promise<Node[]> {
-  return call(() => bindListNodes(clusterId))
+/** Lists the nodes of a connected cluster, with usage where available.
+    `annotationKeys` is the projection listNamespaceSummaries describes. */
+export function listNodes(clusterId: string, annotationKeys: string[] = []): Promise<Node[]> {
+  return call(() => bindListNodes(clusterId, annotationKeys))
 }
 
 // --- Overview ---------------------------------------------------------------
@@ -394,18 +456,25 @@ export function listKinds(clusterId: string): Promise<ResourceKind[]> {
 
 // --- Workloads --------------------------------------------------------------
 
-/** Lists pods. An empty namespace means every namespace. */
-export function listPods(clusterId: string, namespace: string): Promise<Pod[]> {
-  return call(() => bindListPods(clusterId, namespace))
+/** Lists pods. An empty namespace means every namespace. `annotationKeys` is
+    the projection listNamespaceSummaries describes. */
+export function listPods(
+  clusterId: string,
+  namespace: string,
+  annotationKeys: string[] = [],
+): Promise<Pod[]> {
+  return call(() => bindListPods(clusterId, namespace, annotationKeys))
 }
 
-/** Lists controllers of one kind, named as "Deployment", "StatefulSet", etc. */
+/** Lists controllers of one kind, named as "Deployment", "StatefulSet", etc.
+    `annotationKeys` is the projection listNamespaceSummaries describes. */
 export function listWorkloads(
   clusterId: string,
   kind: string,
   namespace: string,
+  annotationKeys: string[] = [],
 ): Promise<Workload[]> {
-  return call(() => bindListWorkloads(clusterId, kind, namespace))
+  return call(() => bindListWorkloads(clusterId, kind, namespace, annotationKeys))
 }
 
 /** The dependency chain around one pod, from what routes to it to what it needs. */
@@ -497,11 +566,42 @@ export function listPodsForWorkload(
   return call(() => bindListPodsForWorkload(clusterId, namespace, kind, name))
 }
 
+// --- Fleet ------------------------------------------------------------------
+//
+// One call per tick however many clusters are open. The fan-out is in Go —
+// application.FleetService — and every cluster comes back with its own
+// verdict, so a refused or unreachable cluster is a row in the answer, never
+// a rejection of it. The rejection cases are the caller's own: naming a
+// cluster that is not open, or an unusable namespace.
+
+/** Lists pods across the named open clusters, grouped per cluster in tab order. */
+export function listFleetPods(clusterIds: string[], namespace: string): Promise<ClusterPods[]> {
+  return call(() => bindListFleetPods(clusterIds, namespace))
+}
+
+/** Lists every controller kind but ReplicaSet across the named open clusters. */
+export function listFleetWorkloads(
+  clusterIds: string[],
+  namespace: string,
+): Promise<ClusterWorkloads[]> {
+  return call(() => bindListFleetWorkloads(clusterIds, namespace))
+}
+
+/** Lists events across the named open clusters. */
+export function listFleetEvents(clusterIds: string[], namespace: string): Promise<ClusterEvents[]> {
+  return call(() => bindListFleetEvents(clusterIds, namespace))
+}
+
 // --- Events -----------------------------------------------------------------
 
-/** Lists events, warnings first and most recent first. */
-export function listEvents(clusterId: string, namespace: string): Promise<K8sEvent[]> {
-  return call(() => bindListEvents(clusterId, namespace))
+/** Lists events, warnings first and most recent first. `annotationKeys` is
+    the projection listNamespaceSummaries describes. */
+export function listEvents(
+  clusterId: string,
+  namespace: string,
+  annotationKeys: string[] = [],
+): Promise<K8sEvent[]> {
+  return call(() => bindListEvents(clusterId, namespace, annotationKeys))
 }
 
 /** Lists events for one specific object — what the detail drawer's Events tab shows. */
@@ -516,13 +616,17 @@ export function listEventsForResource(
 
 // --- Generic browsing -------------------------------------------------------
 
-/** Lists any kind as a table with the columns the API server prints. */
+/** Lists any kind as a table with the columns the API server prints. Every
+    row also carries its labels and the `annotationKeys` asked for — the
+    projection listNamespaceSummaries describes — read from the metadata the
+    server attaches to the row, never from a request per object. */
 export function listTable(
   clusterId: string,
   kindId: string,
   namespace: string,
+  annotationKeys: string[] = [],
 ): Promise<ResourceTable> {
-  return call(() => bindListTable(clusterId, kindId, namespace))
+  return call(() => bindListTable(clusterId, kindId, namespace, annotationKeys))
 }
 
 /**
@@ -741,6 +845,67 @@ export function saveTextFile(name: string, content: string): Promise<string> {
   return call(() => bindSaveTextFile(name, content))
 }
 
+/**
+ * Opens the native folder picker and returns the chosen path, or "" if the
+ * operator cancelled — the same convention as readKubeconfigFile.
+ *
+ * Only ever handed back to startDownload or startUpload, which check it
+ * again in Go; the webview itself can do nothing with a path.
+ */
+export function chooseDirectory(title: string): Promise<string> {
+  return call(() => bindChooseDirectory(title))
+}
+
+/** Opens the native file picker; "" means cancelled. See chooseDirectory. */
+export function chooseFile(title: string): Promise<string> {
+  return call(() => bindChooseFile(title))
+}
+
+// --- File copy --------------------------------------------------------------
+
+/**
+ * Starts copying `remotePath` out of a container into `localDir`, a folder
+ * from chooseDirectory. Returns the transfer id; progress and completion
+ * arrive as events (onFileCopyProgress, onFileCopyDone).
+ *
+ * The download lands under localDir by the remote entry's own name, exactly
+ * as `kubectl cp pod:/etc/nginx localDir/nginx` would.
+ */
+export function startDownload(
+  clusterId: string,
+  namespace: string,
+  podName: string,
+  containerName: string,
+  remotePath: string,
+  localDir: string,
+): Promise<string> {
+  return call(() =>
+    bindStartDownload(clusterId, namespace, podName, containerName, remotePath, localDir),
+  )
+}
+
+/**
+ * Starts copying `localPath` — a file or folder from the pickers — into
+ * `remoteDir` inside a container. A write, refused on a read-only cluster.
+ */
+export function startUpload(
+  clusterId: string,
+  namespace: string,
+  podName: string,
+  containerName: string,
+  localPath: string,
+  remoteDir: string,
+): Promise<string> {
+  return call(() =>
+    bindStartUpload(clusterId, namespace, podName, containerName, localPath, remoteDir),
+  )
+}
+
+/** Stops a running transfer. A no-op for one that has already finished. */
+export function cancelFileCopy(transferId: string): Promise<void> {
+  return call(() => bindCancelFileCopy(transferId))
+}
+
 // --- Management -------------------------------------------------------------
 
 /** Scales a workload to the specified number of replicas. */
@@ -952,6 +1117,61 @@ export function drainNode(
   )
 }
 
+// --- Bulk actions -----------------------------------------------------------
+
+/**
+ * Previews what a bulk action would do to each selected row, without
+ * touching the cluster.
+ *
+ * The same domain function the run itself goes through — see
+ * app/domain/bulk.go — so the review dialog and the outcome can never
+ * disagree. Call it when the dialog opens and again whenever the target
+ * replica count changes; it costs no cluster read at all, since every fact
+ * it needs is on the rows already on screen. `replicas` is read for the
+ * scale action only.
+ */
+export function planBulk(
+  clusterId: string,
+  action: string,
+  items: BulkItemDTO[],
+  replicas = 0,
+): Promise<BulkPlan> {
+  return call(() => bindPlanBulk(clusterId, action, items, replicas))
+}
+
+/**
+ * Deletes every selected row the plan allows. Resolves to one result per
+ * row whether it was skipped, deleted or failed — a per-object failure is a
+ * result, never a rejected promise; only what stops the whole action (a
+ * read-only cluster, an unusable argument) rejects.
+ */
+export function bulkDelete(clusterId: string, items: BulkItemDTO[]): Promise<BulkResult[]> {
+  return call(() => bindBulkDelete(clusterId, items))
+}
+
+/** Rolling-restarts every selected Deployment, StatefulSet and DaemonSet. Resolves like bulkDelete. */
+export function bulkRestart(clusterId: string, items: BulkItemDTO[]): Promise<BulkResult[]> {
+  return call(() => bindBulkRestart(clusterId, items))
+}
+
+/** Scales every selected Deployment, StatefulSet and ReplicaSet to `replicas`. Resolves like bulkDelete. */
+export function bulkScale(
+  clusterId: string,
+  items: BulkItemDTO[],
+  replicas: number,
+): Promise<BulkResult[]> {
+  return call(() => bindBulkScale(clusterId, items, replicas))
+}
+
+/** Cordons (`cordon` true) or uncordons every selected node. Resolves like bulkDelete. */
+export function bulkCordon(
+  clusterId: string,
+  items: BulkItemDTO[],
+  cordon: boolean,
+): Promise<BulkResult[]> {
+  return call(() => bindBulkCordon(clusterId, items, cordon))
+}
+
 /**
  * Streams logs from a pod container. Returns a stream ID for stopping.
  *
@@ -1006,4 +1226,16 @@ export function onClusterUnreachable(
   handler: (event: ClusterUnreachableEvent) => void,
 ): Unsubscribe {
   return EventsOn('cluster:unreachable', (event: ClusterUnreachableEvent) => handler(event))
+}
+
+/** Subscribes to a file copy's byte count, throttled by the backend. */
+export function onFileCopyProgress(
+  handler: (event: FileCopyProgressEvent) => void,
+): Unsubscribe {
+  return EventsOn('filecopy:progress', (event: FileCopyProgressEvent) => handler(event))
+}
+
+/** Subscribes to file copies ending, however they end. */
+export function onFileCopyDone(handler: (event: FileCopyDoneEvent) => void): Unsubscribe {
+  return EventsOn('filecopy:done', (event: FileCopyDoneEvent) => handler(event))
 }

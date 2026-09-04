@@ -25,6 +25,9 @@ export const API_ERROR_CODES = [
   'disruption_budget',
   'conflict',
   'ephemeral_unsupported',
+  'tar_missing',
+  'command_failed',
+  'transfer_limit',
   'internal',
 ] as const
 

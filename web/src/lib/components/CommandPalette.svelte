@@ -57,6 +57,7 @@
       workspace.active ?? null,
       workspace.sessions.map((session) => ({ id: session.cluster.id })),
       workspace.focus,
+      workspace.openInCluster,
     )
   })
 
