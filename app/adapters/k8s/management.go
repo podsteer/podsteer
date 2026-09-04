@@ -116,33 +116,7 @@ func podLogOptions(containerName string, opts domain.LogOptions) *corev1.PodLogO
 // This uses the Kubernetes exec API to run commands inside a running container.
 // The stdin, stdout, and stderr are streamed through the provided readers/writers.
 func (a *Adapter) ExecInPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, command []string, stdin io.Reader, stdout, stderr io.Writer, tty bool) error {
-	client, err := a.factory.clientFor(id)
-	if err != nil {
-		return err
-	}
-
-	// Build the exec request
-	req := client.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(podName).
-		Namespace(namespace.String()).
-		SubResource("exec").
-		VersionedParams(&corev1.PodExecOptions{
-			Container: containerName,
-			Command:   command,
-			Stdin:     stdin != nil,
-			Stdout:    stdout != nil,
-			Stderr:    stderr != nil,
-			TTY:       tty,
-		}, scheme.ParameterCodec)
-
-	// Get the REST config for the cluster
-	config, err := a.factory.restConfig(id)
-	if err != nil {
-		return fmt.Errorf("getting REST config: %w", err)
-	}
-
-	exec, err := newRemoteCommand(ctx, config, req)
+	exec, err := a.execCommand(ctx, id, namespace, podName, containerName, command, stdin != nil, stdout != nil, stderr != nil, tty)
 	if err != nil {
 		return err
 	}
@@ -159,6 +133,41 @@ func (a *Adapter) ExecInPod(ctx context.Context, id domain.ClusterID, namespace 
 	}
 
 	return nil
+}
+
+// execCommand builds the executor for one exec of command in a container.
+//
+// Shared by ExecInPod and the file copy in filecopy.go: the two differ only
+// in what they do with the streams once they have them, and the request —
+// which streams are attached, and whether a TTY is asked for — is what a
+// test against a fake API server can actually observe, so it is built in
+// exactly one place.
+func (a *Adapter) execCommand(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, command []string, hasStdin, hasStdout, hasStderr, tty bool) (remotecommand.Executor, error) {
+	client, err := a.factory.clientFor(id)
+	if err != nil {
+		return nil, err
+	}
+
+	req := client.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(namespace.String()).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: containerName,
+			Command:   command,
+			Stdin:     hasStdin,
+			Stdout:    hasStdout,
+			Stderr:    hasStderr,
+			TTY:       tty,
+		}, scheme.ParameterCodec)
+
+	config, err := a.factory.restConfig(id)
+	if err != nil {
+		return nil, fmt.Errorf("getting REST config: %w", err)
+	}
+
+	return newRemoteCommand(ctx, config, req)
 }
 
 // DeleteResource deletes a single resource.

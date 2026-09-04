@@ -87,12 +87,19 @@ import {
   SetSamplingInterval as bindSetSamplingInterval,
 } from '$lib/wailsjs/go/wails/HistoryAPI'
 import {
+  ChooseDirectory as bindChooseDirectory,
+  ChooseFile as bindChooseFile,
   Credits as bindCredits,
   Info as bindInfo,
   LicenceText as bindLicenceText,
   OpenURL as bindOpenURL,
   SaveTextFile as bindSaveTextFile,
 } from '$lib/wailsjs/go/wails/SystemAPI'
+import {
+  Cancel as bindCancelFileCopy,
+  StartDownload as bindStartDownload,
+  StartUpload as bindStartUpload,
+} from '$lib/wailsjs/go/wails/FileCopyAPI'
 import { EventsOn } from '$lib/wailsjs/runtime/runtime'
 import type { wails } from '$lib/wailsjs/go/models'
 import { toApiError } from './errors'
@@ -210,6 +217,31 @@ export interface ClusterUnreachableEvent {
   clusterId: string
   reason: string
   at: string
+}
+
+/** Payload of the `filecopy:progress` event: bytes moved so far. */
+export interface FileCopyProgressEvent {
+  transferId: string
+  bytes: number
+}
+
+/**
+ * Payload of the `filecopy:done` event, sent once per transfer however it
+ * ended. `error` is the same `[code] message` envelope a rejected call
+ * carries, so `toApiError` parses it; `cancelled` is the operator's own
+ * Cancel and carries no error.
+ */
+export interface FileCopyDoneEvent {
+  transferId: string
+  direction: 'download' | 'upload'
+  files: number
+  entries: number
+  bytes: number
+  durationMs: number
+  notes: string[]
+  localPath: string
+  cancelled: boolean
+  error: string
 }
 
 /** Removes an event subscription. */
@@ -756,6 +788,67 @@ export function saveTextFile(name: string, content: string): Promise<string> {
   return call(() => bindSaveTextFile(name, content))
 }
 
+/**
+ * Opens the native folder picker and returns the chosen path, or "" if the
+ * operator cancelled — the same convention as readKubeconfigFile.
+ *
+ * Only ever handed back to startDownload or startUpload, which check it
+ * again in Go; the webview itself can do nothing with a path.
+ */
+export function chooseDirectory(title: string): Promise<string> {
+  return call(() => bindChooseDirectory(title))
+}
+
+/** Opens the native file picker; "" means cancelled. See chooseDirectory. */
+export function chooseFile(title: string): Promise<string> {
+  return call(() => bindChooseFile(title))
+}
+
+// --- File copy --------------------------------------------------------------
+
+/**
+ * Starts copying `remotePath` out of a container into `localDir`, a folder
+ * from chooseDirectory. Returns the transfer id; progress and completion
+ * arrive as events (onFileCopyProgress, onFileCopyDone).
+ *
+ * The download lands under localDir by the remote entry's own name, exactly
+ * as `kubectl cp pod:/etc/nginx localDir/nginx` would.
+ */
+export function startDownload(
+  clusterId: string,
+  namespace: string,
+  podName: string,
+  containerName: string,
+  remotePath: string,
+  localDir: string,
+): Promise<string> {
+  return call(() =>
+    bindStartDownload(clusterId, namespace, podName, containerName, remotePath, localDir),
+  )
+}
+
+/**
+ * Starts copying `localPath` — a file or folder from the pickers — into
+ * `remoteDir` inside a container. A write, refused on a read-only cluster.
+ */
+export function startUpload(
+  clusterId: string,
+  namespace: string,
+  podName: string,
+  containerName: string,
+  localPath: string,
+  remoteDir: string,
+): Promise<string> {
+  return call(() =>
+    bindStartUpload(clusterId, namespace, podName, containerName, localPath, remoteDir),
+  )
+}
+
+/** Stops a running transfer. A no-op for one that has already finished. */
+export function cancelFileCopy(transferId: string): Promise<void> {
+  return call(() => bindCancelFileCopy(transferId))
+}
+
 // --- Management -------------------------------------------------------------
 
 /** Scales a workload to the specified number of replicas. */
@@ -1076,4 +1169,16 @@ export function onClusterUnreachable(
   handler: (event: ClusterUnreachableEvent) => void,
 ): Unsubscribe {
   return EventsOn('cluster:unreachable', (event: ClusterUnreachableEvent) => handler(event))
+}
+
+/** Subscribes to a file copy's byte count, throttled by the backend. */
+export function onFileCopyProgress(
+  handler: (event: FileCopyProgressEvent) => void,
+): Unsubscribe {
+  return EventsOn('filecopy:progress', (event: FileCopyProgressEvent) => handler(event))
+}
+
+/** Subscribes to file copies ending, however they end. */
+export function onFileCopyDone(handler: (event: FileCopyDoneEvent) => void): Unsubscribe {
+  return EventsOn('filecopy:done', (event: FileCopyDoneEvent) => handler(event))
 }

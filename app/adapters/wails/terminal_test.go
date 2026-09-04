@@ -150,6 +150,12 @@ func (stubManagementPort) ExecInPodWithTTY(context.Context, domain.ClusterID, do
 func (stubManagementPort) AttachToPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, io.Reader, io.Writer, io.Writer, ports.TerminalSizeQueue) error {
 	return errors.New("AttachToPod reached: a refused StartAttachSession must never get this far")
 }
+func (stubManagementPort) CopyFromPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, string, io.Writer) error {
+	return nil
+}
+func (stubManagementPort) CopyToPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, string, io.Reader) error {
+	return errors.New("CopyToPod reached: a refused StartUpload must never get this far")
+}
 
 // TestStartSessionRefusesOnReadOnlyCluster pins the fast path CLAUDE.md's
 // read-only section promises: an interactive shell refuses synchronously,

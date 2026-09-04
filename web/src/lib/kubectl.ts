@@ -297,6 +297,49 @@ export function attach(ctx: string, pod: string, ns: string, container?: string)
   return parts.join(' ')
 }
 
+/**
+ * `kubectl --context c -n ns cp <pod>:<remote> <local> [-c container]`.
+ *
+ * `local` is the FULL destination path — `~/Downloads/nginx`, not
+ * `~/Downloads` — because that is what kubectl's second argument means and
+ * what PodSteer's own download produces: the remote entry lands under the
+ * chosen folder by its own name. Both paths are an operator's to type, so
+ * both go through `shellQuote`; the pod name is a DNS label and needs
+ * nothing.
+ */
+export function cpFromPod(
+  ctx: string,
+  pod: string,
+  ns: string,
+  remotePath: string,
+  localPath: string,
+  container?: string,
+): string {
+  const parts = [...base(ctx, ns), 'cp', shellQuote(`${pod}:${remotePath}`), shellQuote(localPath)]
+  if (container) parts.push('-c', container)
+  return parts.join(' ')
+}
+
+/**
+ * `kubectl --context c -n ns cp <local> <pod>:<remote> [-c container]`.
+ *
+ * `remote` is again the full destination — `/app/config`, not `/app` —
+ * for the same reason as `cpFromPod`: kubectl names the result, and an
+ * upload lands inside the chosen directory under the local entry's name.
+ */
+export function cpToPod(
+  ctx: string,
+  pod: string,
+  ns: string,
+  localPath: string,
+  remotePath: string,
+  container?: string,
+): string {
+  const parts = [...base(ctx, ns), 'cp', shellQuote(localPath), shellQuote(`${pod}:${remotePath}`)]
+  if (container) parts.push('-c', container)
+  return parts.join(' ')
+}
+
 /** `kubectl --context c -n ns port-forward pod/<pod> <local>:<remote>`. */
 export function portForward(
   ctx: string,

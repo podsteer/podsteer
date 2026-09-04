@@ -577,6 +577,32 @@ certificate itself is public material, but it lives beside the private key in
 the same object, so it is parsed only on the same deliberate, per-Secret
 request `RevealSecretKey` requires, never when the Secret pane opens.
 
+## Files are copied by tar, and unpacked only in Go
+
+Copying a file to or from a container (`FileCopyAPI`, from the pod drawer) is
+`kubectl cp`'s mechanism and nothing more: the container runs
+`tar cf - -C <dir> <base>` or `tar xf - -C <dir>` over a non-TTY exec session
+(`Adapter.CopyFromPod`/`CopyToPod`, sharing `execCommand` with `ExecInPod`),
+and `app/adapters/archive` packs or unpacks the local side. **The local side
+is written by Go and never delegated to the webview**, and that is not an
+implementation preference: the stream is produced by an image somebody else
+built, and tar has carried path-traversal attacks for as long as it has
+existed. `archive.Local.Extract` refuses absolute names, any `..` component
+and any symlink whose target leaves the chosen directory, writes through
+`os.Root` so a link already sitting in that directory cannot be followed out
+of it either, drops setuid/setgid/sticky bits, and enforces
+`domain.TransferLimits` as bytes arrive — each with a test that tries the
+attack. A webview handed a path and a blob could check none of that, and
+would have to be trusted, unauthenticated, to land content wherever it said.
+`ArchivePort` is a port rather than a helper so `ManagementService`'s
+orchestration — the pipe between exec and archive, the read-only refusal on
+upload only, the one audit line per transfer, and `transferOutcome`'s rule
+for which of two simultaneous failures to report — is tested against fakes
+while the real archive is tested on a temp directory. A container without
+`tar` is the ordinary failure and has its own sentinel (`ports.ErrTarMissing`)
+and code (`tar_missing`); tar's stderr is never discarded — carried verbatim in
+`ports.ErrCommandFailed` on failure, logged on success.
+
 ## Escape belongs to one layer, and the layers say which
 
 Seventeen components listen for Escape on the window, so `stopPropagation`
@@ -1017,5 +1043,7 @@ same as one already in the explicit file.
 
 ## Configuration
 
-All optional, all prefixed `PODSTEER_`: `KUBECONFIG`, `QPS`, `BURST`,
-`REQUEST_TIMEOUT`, `LOG_LEVEL`, `LOG_SOURCE`. See `app/config/config.go`.
+All optional, all prefixed `PODSTEER_`: `KUBECONFIG`, `KUBECONFIG_DIR`, `QPS`,
+`BURST`, `REQUEST_TIMEOUT`, `LOG_LEVEL`, `LOG_SOURCE`, `LIVE_WATCH`,
+`UPDATE_CHECK`, `COPY_MAX_BYTES`, `COPY_MAX_ENTRIES`. See
+`app/config/config.go`.

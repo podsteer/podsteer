@@ -517,11 +517,28 @@ type fakeManagementPort struct {
 	// exist to report rather than abort on; the in-flight high-water mark is
 	// how bounded concurrency is observed rather than assumed. bulkDelay
 	// holds each write open long enough for the overlap to be seen.
-	bulkNames       []string
-	bulkFailFor     map[string]error
-	bulkDelay       time.Duration
-	bulkInFlight    int
-	bulkMaxInFlight int
+	bulkNames         []string
+	bulkFailFor       map[string]error
+	bulkDelay         time.Duration
+	bulkInFlight      int
+	bulkMaxInFlight   int
+	copyFromErr       error
+	copyFromPayload   []byte
+	copyFromCalled    bool
+	copyFromID        domain.ClusterID
+	copyFromNS        domain.NamespaceName
+	copyFromPod       string
+	copyFromContainer string
+	copyFromRemote    string
+
+	copyToErr       error
+	copyToReceived  []byte
+	copyToCalled    bool
+	copyToID        domain.ClusterID
+	copyToNS        domain.NamespaceName
+	copyToPod       string
+	copyToContainer string
+	copyToRemote    string
 }
 
 // bulkWrite is what every single-object write the bulk methods fan out over
@@ -606,6 +623,59 @@ func (f *fakeManagementPort) ExecInPodWithTTY(context.Context, domain.ClusterID,
 func (f *fakeManagementPort) AttachToPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, io.Reader, io.Writer, io.Writer, ports.TerminalSizeQueue) error {
 	f.record("AttachToPod")
 	return f.err
+}
+
+// CopyFromPod plays the container's side of a download: it writes
+// copyFromPayload to out — in pieces, so a reader that has stopped is
+// noticed mid-stream the way a real exec's is — and then fails with
+// copyFromErr, if set.
+func (f *fakeManagementPort) CopyFromPod(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, pod, container, remotePath string, out io.Writer) error {
+	f.mu.Lock()
+	f.copyFromCalled = true
+	f.copyFromID = id
+	f.copyFromNS = namespace
+	f.copyFromPod = pod
+	f.copyFromContainer = container
+	f.copyFromRemote = remotePath
+	payload, failure := f.copyFromPayload, f.copyFromErr
+	f.mu.Unlock()
+
+	for len(payload) > 0 {
+		chunk := payload
+		if len(chunk) > 4 {
+			chunk = chunk[:4]
+		}
+		if _, err := out.Write(chunk); err != nil {
+			return err
+		}
+		payload = payload[len(chunk):]
+	}
+	return failure
+}
+
+// CopyToPod plays the container's side of an upload: it drains in into
+// copyToReceived unless copyToErr is set, in which case it fails at once
+// without reading — the shape of tar refusing a destination.
+func (f *fakeManagementPort) CopyToPod(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, pod, container, remoteDir string, in io.Reader) error {
+	f.mu.Lock()
+	f.copyToCalled = true
+	f.copyToID = id
+	f.copyToNS = namespace
+	f.copyToPod = pod
+	f.copyToContainer = container
+	f.copyToRemote = remoteDir
+	failure := f.copyToErr
+	f.mu.Unlock()
+
+	if failure != nil {
+		return failure
+	}
+
+	received, err := io.ReadAll(in)
+	f.mu.Lock()
+	f.copyToReceived = received
+	f.mu.Unlock()
+	return err
 }
 
 func (f *fakeManagementPort) TriggerCronJob(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (string, error) {

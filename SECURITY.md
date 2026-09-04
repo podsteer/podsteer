@@ -29,9 +29,10 @@ vulnerability.
 
 **PodSteer both reads and writes.** It lists and inspects resources, and it can
 also delete objects, scale and restart workloads, apply edited manifests, write
-a single decoded key of a Secret or a ConfigMap, and open an interactive shell
-inside a container. It does all of this with the credentials your kubeconfig
-already grants, using the same client library `kubectl` uses.
+a single decoded key of a Secret or a ConfigMap, open an interactive shell
+inside a container, and copy files into and out of one. It does all of this
+with the credentials your kubeconfig already grants, using the same client
+library `kubectl` uses.
 
 **PodSteer enforces no permissions of its own, and cannot.** It is a client. If
 an account should not be able to delete a namespace, that has to be true in the
@@ -95,6 +96,28 @@ same native save dialog `kubectl` and every other desktop tool uses, is
 written at mode 0600 like everything else here, and is never written anywhere
 PodSteer chose on its own.
 
+A fourth kind of write is a **file downloaded from a container** —
+`kubectl cp`, from the pod drawer. It is worth more words than
+the others, because what gets written is decided by the container, not by
+you: the container runs `tar` and PodSteer unpacks the stream it sends. That
+stream lands only inside a folder you chose in the native dialog, and only
+after every entry has been checked in Go, never in the interface: an absolute
+name, a `..` component or a symlink pointing outside the chosen folder ends
+the transfer with an error naming the entry; a file is never written through
+a symlink already in that folder; setuid and setgid bits are never
+reproduced; and a transfer stops at 1 GiB or 100,000 entries unless
+`PODSTEER_COPY_MAX_BYTES` and `PODSTEER_COPY_MAX_ENTRIES` say otherwise. The
+tests for each of those are in `app/adapters/archive/archive_test.go`.
+
+The same feature is also the **one thing PodSteer reads from your disk that is
+not a kubeconfig**: a file or folder you chose in the native dialog, uploaded
+into a container. It follows no symlink that leaves what you chose, and it is
+refused on a cluster marked read-only, like every other write into a cluster.
+Each transfer, either way, leaves one line in PodSteer's log naming the
+cluster, namespace, pod, container, the path inside the container, the
+direction and the byte count — never a file's contents, and never the local
+path.
+
 ### In scope
 
 - Anything that lets PodSteer act on a cluster beyond what the loaded
@@ -111,6 +134,9 @@ PodSteer chose on its own.
   annotations, log output or an API server's table columns rendered in a way
   that executes, or that escapes into the terminal or the manifest editor.
 - Code execution from opening a manifest, a log stream, or an exec session.
+- A file downloaded from a container landing anywhere outside the folder you
+  chose, or keeping a setuid or setgid bit — however the archive the
+  container sent was crafted.
 - Supply-chain problems in what we ship: a compromised dependency in the
   inventory, or a release artefact that does not match its source.
 
