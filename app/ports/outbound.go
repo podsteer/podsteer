@@ -53,10 +53,15 @@ type ClusterPort interface {
 	ServerVersion(ctx context.Context, id domain.ClusterID) (domain.ServerVersion, error)
 
 	// ListNamespaces returns every namespace visible to the credentials.
-	ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error)
+	//
+	// projection names the annotation keys each namespace should carry —
+	// see domain.Projection. The zero value carries none, and is what every
+	// caller that is not the namespace list view passes.
+	ListNamespaces(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Namespace, error)
 
-	// ListNodes returns the cluster's nodes.
-	ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error)
+	// ListNodes returns the cluster's nodes, each carrying the annotations
+	// projection asks for.
+	ListNodes(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Node, error)
 
 	// ListPersistentVolumes returns the cluster's provisioned volumes.
 	ListPersistentVolumes(ctx context.Context, id domain.ClusterID) ([]domain.PersistentVolume, error)
@@ -76,10 +81,19 @@ type ClusterPort interface {
 type WorkloadPort interface {
 	// ListPods returns pods in the given namespace, or across every namespace
 	// when it is domain.NamespaceAll.
-	ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error)
+	//
+	// projection names the annotation keys each pod should carry — see
+	// domain.Projection. THE PROJECTION IS PART OF THE READ: two calls with
+	// different projections are different reads and are not coalesced with
+	// each other, so an operator who has put an annotation on a column pays
+	// one list per refresh beside the assessment's own instead of sharing
+	// it. Labels are unaffected and always carried.
+	ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error)
 
-	// ListWorkloads returns controllers of the given kind.
-	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error)
+	// ListWorkloads returns controllers of the given kind, each carrying the
+	// annotations projection asks for on top of the GitOps keys every row
+	// carries anyway.
+	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Workload, error)
 
 	// PodGraphSources reads what one pod's dependency map is drawn from.
 	//
@@ -130,8 +144,9 @@ type WorkloadPort interface {
 // EventPort reads Kubernetes Events.
 type EventPort interface {
 	// ListEvents returns events in the given namespace, or across every
-	// namespace when it is domain.NamespaceAll.
-	ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Event, error)
+	// namespace when it is domain.NamespaceAll, each carrying the
+	// annotations projection asks for.
+	ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Event, error)
 
 	// ListEventsForResource returns events for a specific resource.
 	ListEventsForResource(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind, name string) ([]domain.Event, error)
@@ -208,8 +223,10 @@ type HistoryPort interface {
 // browsable the moment discovery notices them.
 type ResourcePort interface {
 	// ListTable returns objects of the given kind as a table, with the columns
-	// the API server itself prints.
-	ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName) (domain.ResourceTable, error)
+	// the API server itself prints. Each row also carries the object's labels
+	// and the annotations projection asks for, read from the metadata the
+	// server attaches to the row — never from a further request per object.
+	ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName, projection domain.Projection) (domain.ResourceTable, error)
 
 	// CountResources reports how many objects of kind exist in namespace.
 	//
@@ -442,6 +459,27 @@ type ManagementPort interface {
 	// process exits, or an error occurs.
 	AttachToPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, stdin io.Reader, stdout, stderr io.Writer, sizeQueue TerminalSizeQueue) error
 
+	// CopyFromPod streams a tar archive of one file or directory out of a
+	// container, exactly as `kubectl cp pod:path .` does: it runs
+	// `tar cf - -C <dir> <base>` over a non-TTY exec session and writes the
+	// command's stdout to out, unmodified. Nothing is written to disk here
+	// — unpacking, with every check on where an entry may land, is the
+	// ArchivePort's job, so that the process reading the stream and the
+	// rules governing it can be tested apart.
+	//
+	// remotePath must satisfy domain.SplitRemotePath. Stderr from tar is
+	// captured: on failure it is carried in the returned error verbatim
+	// (wrapping ErrCommandFailed), and a container with no tar binary at
+	// all is reported as ErrTarMissing rather than as an opaque exit code.
+	CopyFromPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName, remotePath string, out io.Writer) error
+
+	// CopyToPod streams a tar archive INTO a container, as `kubectl cp
+	// . pod:dir` does: it runs `tar xf - -C <dir>` over a non-TTY exec
+	// session with in as the command's stdin. The archive is packed by the
+	// ArchivePort from a path the operator chose; this only carries it.
+	// Failures are reported exactly as CopyFromPod's are.
+	CopyToPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName, remoteDir string, in io.Reader) error
+
 	// CordonNode marks a node schedulable or unschedulable, without touching
 	// anything already running on it — cordoning removes the node from
 	// consideration for NEW pods only. A merge patch of spec.unschedulable,
@@ -495,6 +533,37 @@ type ManagementPort interface {
 	// without persisting anything, the same convention UpdateResource's own
 	// dry run uses.
 	RollbackWorkload(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, toRevision int64, dryRun bool) (domain.RollbackOutcome, error)
+}
+
+// ArchivePort is the LOCAL side of a file copy: the tar stream a container
+// produces is unpacked into a directory the operator chose, and the tar
+// stream a container receives is packed from a path they chose.
+//
+// A port rather than a helper the application calls directly, for the usual
+// reason the arrows point inward — and for one specific to this feature.
+// Everything that decides what a stream from a container may do to the
+// operator's machine lives behind this interface: an entry may not escape the
+// chosen directory, a symlink may not point outside it, setuid bits are never
+// preserved, and TransferLimits are enforced as the bytes arrive. Those are
+// the properties SECURITY.md promises, and a fake implementation here is
+// what lets ManagementService's orchestration be tested without touching a
+// filesystem while the real one is tested on nothing but a temp directory.
+type ArchivePort interface {
+	// Extract unpacks the tar stream r into dest, an existing directory,
+	// applying every rule above. progress, when non-nil, is called with the
+	// number of file-content bytes written by each write; it is how the UI
+	// shows a transfer moving. Refuses with domain.ErrUnsafeArchiveEntry or
+	// domain.ErrTransferTooLarge, leaving whatever had already landed in
+	// place rather than attempting to undo a partial extraction.
+	Extract(ctx context.Context, r io.Reader, dest string, limits domain.TransferLimits, progress func(int64)) (domain.TransferSummary, error)
+
+	// Pack writes source — one file or a directory tree — to w as a tar
+	// stream whose entries are rooted at source's own base name, so the
+	// container unpacks `nginx.conf` or `config/…`, never the operator's
+	// full local path. Symlinks are never followed: one pointing inside the
+	// selection is archived as a link, one pointing outside is left out and
+	// named in the summary's Notes. The same limits apply as on Extract.
+	Pack(ctx context.Context, w io.Writer, source string, limits domain.TransferLimits, progress func(int64)) (domain.TransferSummary, error)
 }
 
 // EventPublisher delivers domain events to whatever is observing the

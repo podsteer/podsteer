@@ -216,6 +216,8 @@ Everything is optional and prefixed `PODSTEER_`:
 | `PODSTEER_LOG_SOURCE`       | `false`                         | Include source file and line                    |
 | `PODSTEER_UPDATE_CHECK`     | `true`                          | `false` disables the update check machine-wide  |
 | `PODSTEER_LIVE_WATCH`       | `true`                          | `false` re-lists pods instead of watching them  |
+| `PODSTEER_COPY_MAX_BYTES`   | `1073741824`                    | Ceiling on one file copy to or from a container |
+| `PODSTEER_COPY_MAX_ENTRIES` | `100000`                        | Ceiling on entries in one such copy             |
 
 &nbsp;
 

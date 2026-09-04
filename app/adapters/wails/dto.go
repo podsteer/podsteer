@@ -2,8 +2,10 @@ package wails
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
 )
 
@@ -69,6 +71,10 @@ type Namespace struct {
 	Phase string `json:"phase"`
 	// IsActive reports whether the namespace accepts new objects.
 	IsActive bool `json:"isActive"`
+	// Labels are the namespace's labels.
+	Labels map[string]string `json:"labels"`
+	// Annotations are only the projected keys — see Pod.Annotations.
+	Annotations map[string]string `json:"annotations"`
 	// CreatedAt is the creation timestamp in RFC 3339, empty if unknown.
 	CreatedAt string `json:"createdAt"`
 	// AgeSeconds is the age at the time of the call.
@@ -78,11 +84,13 @@ type Namespace struct {
 // toNamespace converts a domain namespace, using now as the age reference.
 func toNamespace(namespace domain.Namespace, now time.Time) Namespace {
 	return Namespace{
-		Name:       namespace.Name().String(),
-		Phase:      string(namespace.Phase()),
-		IsActive:   namespace.IsActive(),
-		CreatedAt:  formatTime(namespace.CreatedAt()),
-		AgeSeconds: int64(namespace.Age(now).Seconds()),
+		Name:        namespace.Name().String(),
+		Phase:       string(namespace.Phase()),
+		IsActive:    namespace.IsActive(),
+		Labels:      emptyIfNil(namespace.Labels()),
+		Annotations: emptyIfNil(namespace.Annotations()),
+		CreatedAt:   formatTime(namespace.CreatedAt()),
+		AgeSeconds:  int64(namespace.Age(now).Seconds()),
 	}
 }
 
@@ -283,10 +291,22 @@ type Pod struct {
 	Findings []PodFinding `json:"findings"`
 	// Labels are the pod's labels.
 	Labels map[string]string `json:"labels"`
+	// Annotations are ONLY the keys the list was asked for — the custom
+	// columns' — never the whole map. See domain.Projection.
+	Annotations map[string]string `json:"annotations"`
 	// CreatedAt is the creation timestamp in RFC 3339, empty if unknown.
 	CreatedAt string `json:"createdAt"`
 	// AgeSeconds is the age at the time of the call.
 	AgeSeconds int64 `json:"ageSeconds"`
+}
+
+// emptyIfNil hands the frontend {} rather than null for an absent map, so
+// every row's labels and annotations can be indexed without a guard.
+func emptyIfNil(values map[string]string) map[string]string {
+	if values == nil {
+		return map[string]string{}
+	}
+	return values
 }
 
 // toPod converts a domain pod, using now as the age reference.
@@ -311,11 +331,6 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 			HasMetrics:      !container.Usage.IsZero(),
 			LastTermination: toTermination(container.LastTermination),
 		})
-	}
-
-	labels := pod.Labels()
-	if labels == nil {
-		labels = map[string]string{}
 	}
 
 	requests := pod.Requests()
@@ -356,7 +371,8 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 		HasMemoryLimit:     limits.MemoryBytes > 0,
 		Containers:         containers,
 		Findings:           toPodFindings(domain.AssessPod(pod, now)),
-		Labels:             labels,
+		Labels:             emptyIfNil(pod.Labels()),
+		Annotations:        emptyIfNil(pod.Annotations()),
 		CreatedAt:          formatTime(pod.CreatedAt()),
 		AgeSeconds:         int64(pod.Age(now).Seconds()),
 	}
@@ -856,4 +872,170 @@ func toCertificateChain(chain domain.CertificateChain, now time.Time) Certificat
 		KeyMatches:    chain.KeyMatches,
 		Insights:      toCertificateInsights(domain.CertificateFindings(chain, now)),
 	}
+}
+
+// --- Bulk actions -----------------------------------------------------------
+
+// BulkItemDTO is one selected row, as the frontend hands it back for a bulk
+// action: the object's coordinates plus the facts domain.PlanBulk reads.
+//
+// Each fact is a QUOTATION of a field the row already carries — a pod's
+// "Controlled By" split back into kind and name, a workload's desired count,
+// a node's cordoned flag — so planning a selection costs no read at all.
+// Absent facts (a generic table row knows no owner) arrive as their zero
+// values and produce no note, never a guess.
+type BulkItemDTO struct {
+	// Group, Version and Kind identify the object's kind; the core group is
+	// empty, per domain.ResourceKind.
+	Group   string `json:"group"`
+	Version string `json:"version"`
+	Kind    string `json:"kind"`
+	// Namespace is empty for a cluster-scoped object.
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	// ControllerKind and ControllerName are the controlling ownerReference,
+	// both empty when the object has none or the row did not know.
+	ControllerKind string `json:"controllerKind"`
+	ControllerName string `json:"controllerName"`
+	// Replicas is the current desired replica count, read for scale only.
+	Replicas int `json:"replicas"`
+	// Unschedulable reports a node is cordoned, read for cordon only.
+	Unschedulable bool `json:"unschedulable"`
+}
+
+// toBulkCandidates converts the frontend's rows into what PlanBulk decides
+// over, pinning every ref to id. A row with no name is refused: there is no
+// object for a plan line to describe.
+func toBulkCandidates(id domain.ClusterID, items []BulkItemDTO) ([]domain.BulkCandidate, error) {
+	candidates := make([]domain.BulkCandidate, 0, len(items))
+	for _, item := range items {
+		ns, err := domain.NewNamespaceName(item.Namespace)
+		if err != nil {
+			return nil, err
+		}
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			return nil, domain.ErrEmptyResourceName
+		}
+
+		var controller domain.OwnerReference
+		if item.ControllerName != "" {
+			controller = domain.OwnerReference{Kind: item.ControllerKind, Name: item.ControllerName, Controller: true}
+		}
+
+		candidates = append(candidates, domain.BulkCandidate{
+			Ref: domain.ResourceRef{
+				ClusterID: id,
+				Kind:      domain.ResourceKind{Group: item.Group, Version: item.Version, Kind: item.Kind},
+				Namespace: ns,
+				Name:      name,
+			},
+			Controller:    controller,
+			Replicas:      int32(item.Replicas),
+			Unschedulable: item.Unschedulable,
+		})
+	}
+	return candidates, nil
+}
+
+// BulkLineDTO is one object's verdict in a bulk plan — what PlanBulk decided
+// for it, over the wire.
+type BulkLineDTO struct {
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	// Act reports whether the action will be attempted on this object.
+	Act bool `json:"act"`
+	// Reason says why the object is skipped; empty when Act is true.
+	Reason string `json:"reason"`
+	// Note is what else happens when it acts — a controller that will
+	// recreate a deleted object, the count a scale moves from and to. Empty
+	// when there is nothing to add.
+	Note string `json:"note"`
+}
+
+// BulkPlanDTO previews what a bulk action would do, without doing it — what
+// PlanBulk returns, over the wire. Acting and Skipped are counted here rather
+// than re-derived from Lines by the frontend, so the domain's own rule is the
+// one place that decides.
+type BulkPlanDTO struct {
+	Action  string        `json:"action"`
+	Lines   []BulkLineDTO `json:"lines"`
+	Acting  int           `json:"acting"`
+	Skipped int           `json:"skipped"`
+}
+
+// toBulkPlan converts a domain bulk plan for the review dialog.
+func toBulkPlan(plan domain.BulkPlan) BulkPlanDTO {
+	lines := make([]BulkLineDTO, 0, len(plan.Lines))
+	for _, line := range plan.Lines {
+		lines = append(lines, BulkLineDTO{
+			Kind:      line.Ref.Kind.Kind,
+			Namespace: line.Ref.Namespace.String(),
+			Name:      line.Ref.Name,
+			Act:       line.Act,
+			Reason:    line.Reason,
+			Note:      line.Note,
+		})
+	}
+	return BulkPlanDTO{
+		Action:  string(plan.Action),
+		Lines:   lines,
+		Acting:  len(plan.Acting()),
+		Skipped: plan.Skipped(),
+	}
+}
+
+// BulkResultDTO is what happened to one object when a bulk action ran — one
+// per selected row, in the selection's order, whether it was skipped, done,
+// or failed.
+type BulkResultDTO struct {
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	// Skipped reports the plan left the object alone; Reason says why.
+	Skipped bool `json:"skipped"`
+	// Done reports the write succeeded. False with Skipped false means it
+	// failed, and Code and Reason say how.
+	Done bool `json:"done"`
+	// Reason is the skip reason, or the failure's operator-facing message —
+	// the same sentence a single write's error would carry, produced by the
+	// same classification.
+	Reason string `json:"reason"`
+	// Note carries the plan line's note through.
+	Note string `json:"note"`
+	// Code is the failure's ErrorCode, the same the frontend parses out of a
+	// single write's rejected promise; empty unless the write failed.
+	Code string `json:"code"`
+}
+
+// toBulkResults converts the application's per-object outcomes, classifying
+// each failure exactly as apiError classifies a single write's — so a
+// forbidden delete inside a bulk delete reaches the operator with the same
+// code and the same advice as one on its own. The full error chain has
+// already been logged by the application layer, per object.
+func toBulkResults(results []application.BulkResult) []BulkResultDTO {
+	out := make([]BulkResultDTO, 0, len(results))
+	for _, result := range results {
+		dto := BulkResultDTO{
+			Kind:      result.Ref.Kind.Kind,
+			Namespace: result.Ref.Namespace.String(),
+			Name:      result.Ref.Name,
+			Skipped:   result.Skipped,
+			Reason:    result.Reason,
+			Note:      result.Note,
+		}
+		switch {
+		case result.Skipped:
+			// Nothing to add: Reason already says why.
+		case result.Err != nil:
+			code, message := classifyError(result.Err)
+			dto.Code = string(code)
+			dto.Reason = message
+		default:
+			dto.Done = true
+		}
+		out = append(out, dto)
+	}
+	return out
 }

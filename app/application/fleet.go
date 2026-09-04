@@ -123,10 +123,17 @@ func NewFleetService(deps FleetServiceDeps) (*FleetService, error) {
 	}, nil
 }
 
+// FLEET READS CARRY NO ANNOTATION PROJECTION. Custom columns are configured
+// per KIND (see domain.Projection and the navigator's own lists), and the
+// merged tables are not a kind — they hold three kinds' rows side by side
+// under one id. Reading with the zero projection also keeps a fleet read
+// sharing the read cache's answer with the tab's own poll, which a
+// projected read would be keyed apart from. Labels ride every row already,
+// so `label:` works here exactly as it does on a single cluster.
 // ListPods lists pods in the given namespace of each cluster.
 func (s *FleetService) ListPods(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Pod], error) {
 	return fanOut(ctx, s, "pods", namespace, ids, func(ctx context.Context, id domain.ClusterID) ([]domain.Pod, []string, error) {
-		pods, err := s.workloads.ListPods(ctx, id, namespace)
+		pods, err := s.workloads.ListPods(ctx, id, namespace, domain.Projection{})
 		return pods, nil, err
 	})
 }
@@ -142,7 +149,7 @@ func (s *FleetService) ListWorkloads(ctx context.Context, ids []domain.ClusterID
 // ListEvents lists events in the given namespace of each cluster.
 func (s *FleetService) ListEvents(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Event], error) {
 	return fanOut(ctx, s, "events", namespace, ids, func(ctx context.Context, id domain.ClusterID) ([]domain.Event, []string, error) {
-		events, err := s.events.ListEvents(ctx, id, namespace)
+		events, err := s.events.ListEvents(ctx, id, namespace, domain.Projection{})
 		return events, nil, err
 	})
 }
@@ -164,7 +171,7 @@ func (s *FleetService) readWorkloads(ctx context.Context, id domain.ClusterID, n
 	var wg sync.WaitGroup
 	for i, kind := range kinds {
 		wg.Go(func() {
-			results[i], errs[i] = s.workloads.ListWorkloads(ctx, id, kind, namespace)
+			results[i], errs[i] = s.workloads.ListWorkloads(ctx, id, kind, namespace, domain.Projection{})
 		})
 	}
 	wg.Wait()

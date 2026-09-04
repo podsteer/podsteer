@@ -15,14 +15,16 @@ import (
 // ListNamespaces returns every namespace visible to the credentials.
 //
 // Cached: the assessment and the namespace list both ask on the same tick.
-func (a *Adapter) ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
-	return cachedSlice(&a.reads, ctx, readKey(id.String(), "namespaces"), func(ctx context.Context) ([]domain.Namespace, error) {
-		return a.listNamespaces(ctx, id)
+//
+// The projection keys the read for the reason ListPods gives.
+func (a *Adapter) ListNamespaces(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Namespace, error) {
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "namespaces", projection.String()), func(ctx context.Context) ([]domain.Namespace, error) {
+		return a.listNamespaces(ctx, id, projection)
 	})
 }
 
 // ListNamespaces returns every namespace visible to the configured credentials.
-func (a *Adapter) listNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
+func (a *Adapter) listNamespaces(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Namespace, error) {
 	op := fmt.Sprintf("listing namespaces of %q", id)
 
 	client, err := a.factory.clientFor(id)
@@ -37,7 +39,7 @@ func (a *Adapter) listNamespaces(ctx context.Context, id domain.ClusterID) ([]do
 
 	namespaces := make([]domain.Namespace, 0, len(list.Items))
 	for i := range list.Items {
-		namespace, err := mapNamespace(&list.Items[i])
+		namespace, err := mapNamespace(&list.Items[i], projection)
 		if err != nil {
 			a.logger.WarnContext(ctx, "skipping unmappable namespace",
 				slog.String("cluster", id.String()),
@@ -55,14 +57,14 @@ func (a *Adapter) listNamespaces(ctx context.Context, id domain.ClusterID) ([]do
 //
 // Cached: the assessment reads them on every refresh, and the node list reads
 // them again in the same instant.
-func (a *Adapter) ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
-	return cachedSlice(&a.reads, ctx, readKey(id.String(), "nodes"), func(ctx context.Context) ([]domain.Node, error) {
-		return a.listNodes(ctx, id)
+func (a *Adapter) ListNodes(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Node, error) {
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "nodes", projection.String()), func(ctx context.Context) ([]domain.Node, error) {
+		return a.listNodes(ctx, id, projection)
 	})
 }
 
 // ListNodes returns the cluster's nodes.
-func (a *Adapter) listNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
+func (a *Adapter) listNodes(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Node, error) {
 	op := fmt.Sprintf("listing nodes of %q", id)
 
 	client, err := a.factory.clientFor(id)
@@ -77,7 +79,7 @@ func (a *Adapter) listNodes(ctx context.Context, id domain.ClusterID) ([]domain.
 
 	nodes := make([]domain.Node, 0, len(list.Items))
 	for i := range list.Items {
-		node, err := mapNode(id, &list.Items[i])
+		node, err := mapNode(id, &list.Items[i], projection)
 		if err != nil {
 			a.logger.WarnContext(ctx, "skipping unmappable node",
 				slog.String("cluster", id.String()),

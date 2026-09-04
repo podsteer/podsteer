@@ -3,6 +3,7 @@ package domain
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -100,9 +101,11 @@ func NewNamespacePhase(raw string) NamespacePhase {
 
 // Namespace is a namespace as observed in a cluster at a point in time.
 type Namespace struct {
-	name      NamespaceName
-	phase     NamespacePhase
-	createdAt time.Time
+	name        NamespaceName
+	phase       NamespacePhase
+	labels      map[string]string
+	annotations map[string]string
+	createdAt   time.Time
 }
 
 // NewNamespace builds a Namespace, validating its name.
@@ -125,11 +128,31 @@ func NewNamespace(name string, phase NamespacePhase, createdAt time.Time) (Names
 	}, nil
 }
 
+// WithMetadata returns a copy of the namespace carrying its labels and the
+// projected subset of its annotations.
+//
+// A copy method rather than a fourth constructor argument, for the reason
+// Workload.WithSuspension gives: metadata is incidental to what a namespace
+// IS, and every existing caller of NewNamespace — including the tests that
+// argue over phases — has no business naming it.
+func (n Namespace) WithMetadata(labels, annotations map[string]string) Namespace {
+	n.labels = maps.Clone(labels)
+	n.annotations = maps.Clone(annotations)
+	return n
+}
+
 // Name returns the namespace name.
 func (n Namespace) Name() NamespaceName { return n.name }
 
 // Phase returns the lifecycle phase.
 func (n Namespace) Phase() NamespacePhase { return n.phase }
+
+// Labels returns a copy of the namespace's labels.
+func (n Namespace) Labels() map[string]string { return maps.Clone(n.labels) }
+
+// Annotations returns a copy of the projected annotations — only the keys
+// that were asked for when the namespace was read. See Projection.
+func (n Namespace) Annotations() map[string]string { return maps.Clone(n.annotations) }
 
 // CreatedAt returns the creation timestamp in UTC.
 func (n Namespace) CreatedAt() time.Time { return n.createdAt }

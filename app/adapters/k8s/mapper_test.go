@@ -1,9 +1,11 @@
 package k8s
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -44,7 +46,7 @@ func TestMapPodTranslatesIdentityAndStatus(t *testing.T) {
 		},
 	}
 
-	pod, err := mapPod("dev", source)
+	pod, err := mapPod("dev", source, domain.Projection{})
 	if err != nil {
 		t.Fatalf("mapPod() error = %v", err)
 	}
@@ -91,7 +93,7 @@ func TestMapPodReportsDeletionAsTerminating(t *testing.T) {
 		Status:            corev1.PodStatus{Phase: corev1.PodRunning},
 	}
 
-	pod, err := mapPod("dev", source)
+	pod, err := mapPod("dev", source, domain.Projection{})
 	if err != nil {
 		t.Fatalf("mapPod() error = %v", err)
 	}
@@ -121,7 +123,7 @@ func TestMapContainersIncludesContainersWithoutStatus(t *testing.T) {
 		},
 	}
 
-	pod, err := mapPod("dev", source)
+	pod, err := mapPod("dev", source, domain.Projection{})
 	if err != nil {
 		t.Fatalf("mapPod() error = %v", err)
 	}
@@ -162,7 +164,7 @@ func TestMapContainersCarriesTTYAndStdin(t *testing.T) {
 		}},
 	}
 
-	pod, err := mapPod("dev", source)
+	pod, err := mapPod("dev", source, domain.Projection{})
 	if err != nil {
 		t.Fatalf("mapPod() error = %v", err)
 	}
@@ -236,7 +238,7 @@ func TestMapNamespace(t *testing.T) {
 	namespace, err := mapNamespace(&corev1.Namespace{
 		Name: "argocd", CreationTimestamp: metav1.NewTime(created),
 		Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive},
-	})
+	}, domain.Projection{})
 	if err != nil {
 		t.Fatalf("mapNamespace() error = %v", err)
 	}
@@ -315,7 +317,7 @@ func TestMapEventCountsBothGenerations(t *testing.T) {
 			event.Reason = "Probing"
 			event.InvolvedObject = corev1.ObjectReference{Kind: "Pod", Name: "app-1"}
 
-			mapped, err := mapEvent("dev", &event)
+			mapped, err := mapEvent("dev", &event, domain.Projection{})
 			if err != nil {
 				t.Fatalf("mapEvent() error = %v", err)
 			}
@@ -362,5 +364,156 @@ func TestAdoptedGroupsSurviveTheSuffixRule(t *testing.T) {
 		if isKubernetesGroup(group) {
 			t.Fatalf("%q was hidden, though it is only present when installed", group)
 		}
+	}
+}
+
+// --- Projection ---------------------------------------------------------------
+//
+// A list row carries all of its labels and ONLY the annotations it was asked
+// for. These pin both halves for every rich kind, because the failure mode is
+// silent either way: a mapper that forgot the projection would ship nothing
+// and a column would read blank; one that shipped the whole map would re-send
+// kubectl's last-applied manifest on every row of every refresh.
+
+// projectionFixtureMeta is the metadata every projection test maps: two
+// ordinary annotations and the manifest kubectl leaves behind.
+func projectionFixtureMeta(name, namespace string) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
+		Name:      name,
+		Namespace: namespace,
+		Labels:    map[string]string{"app": name, "tier": "web"},
+		Annotations: map[string]string{
+			"team":                             "payments",
+			"owner":                            "alice",
+			corev1.LastAppliedConfigAnnotation: `{"whole":"manifest"}`,
+		},
+	}
+}
+
+func TestMapPodCarriesOnlyProjectedAnnotations(t *testing.T) {
+	t.Parallel()
+
+	source := &corev1.Pod{ObjectMeta: projectionFixtureMeta("api", "platform")}
+
+	bare, err := mapPod("dev", source, domain.Projection{})
+	if err != nil {
+		t.Fatalf("mapPod() error = %v", err)
+	}
+	if bare.Annotations() != nil {
+		t.Errorf("with no projection Annotations() = %v, want nil", bare.Annotations())
+	}
+
+	projected, err := mapPod("dev", source, domain.NewProjection([]string{"team", "absent"}))
+	if err != nil {
+		t.Fatalf("mapPod() error = %v", err)
+	}
+	if got, want := projected.Annotations(), map[string]string{"team": "payments"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Annotations() = %v, want %v", got, want)
+	}
+	// Labels are not projected: every row carries all of them, projection
+	// or not.
+	if got, want := projected.Labels(), map[string]string{"app": "api", "tier": "web"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Labels() = %v, want %v", got, want)
+	}
+}
+
+func TestMapWorkloadKeepsGitOpsAnnotationsBesideProjectedOnes(t *testing.T) {
+	t.Parallel()
+
+	meta := projectionFixtureMeta("web", "platform")
+	meta.Annotations["argocd.argoproj.io/tracking-id"] = "web:apps/Deployment:platform/web"
+	item := &appsv1.Deployment{ObjectMeta: meta}
+
+	bare, err := mapDeployment("dev", item, domain.Projection{})
+	if err != nil {
+		t.Fatalf("mapDeployment() error = %v", err)
+	}
+	// The GitOps allowlist was there before projections and is what the
+	// badge reads; an empty projection must not take it away.
+	if got, want := bare.Annotations(), map[string]string{"argocd.argoproj.io/tracking-id": "web:apps/Deployment:platform/web"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("with no projection Annotations() = %v, want %v", got, want)
+	}
+
+	projected, err := mapDeployment("dev", item, domain.NewProjection([]string{"team"}))
+	if err != nil {
+		t.Fatalf("mapDeployment() error = %v", err)
+	}
+	want := map[string]string{
+		"argocd.argoproj.io/tracking-id": "web:apps/Deployment:platform/web",
+		"team":                           "payments",
+	}
+	if got := projected.Annotations(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Annotations() = %v, want %v", got, want)
+	}
+	if projected.Annotations()[corev1.LastAppliedConfigAnnotation] != "" {
+		t.Error("the last-applied manifest reached the domain")
+	}
+}
+
+func TestMapNodeCarriesLabelsAndProjectedAnnotations(t *testing.T) {
+	t.Parallel()
+
+	meta := projectionFixtureMeta("node-1", "")
+	meta.Labels["node-role.kubernetes.io/control-plane"] = ""
+	node := &corev1.Node{ObjectMeta: meta}
+
+	mapped, err := mapNode("dev", node, domain.NewProjection([]string{"owner"}))
+	if err != nil {
+		t.Fatalf("mapNode() error = %v", err)
+	}
+	if got := mapped.Labels()["node-role.kubernetes.io/control-plane"]; got != "" || len(mapped.Labels()) != 3 {
+		t.Errorf("Labels() = %v, want all three of the node's", mapped.Labels())
+	}
+	if got, want := mapped.Annotations(), map[string]string{"owner": "alice"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Annotations() = %v, want %v", got, want)
+	}
+	// Roles are still derived from the labels the way they always were.
+	if got := mapped.Roles(); len(got) != 1 || got[0] != "control-plane" {
+		t.Errorf("Roles() = %v, want [control-plane]", got)
+	}
+}
+
+func TestMapNamespaceCarriesLabelsAndProjectedAnnotations(t *testing.T) {
+	t.Parallel()
+
+	namespace := &corev1.Namespace{
+		ObjectMeta: projectionFixtureMeta("platform", ""),
+		Status:     corev1.NamespaceStatus{Phase: corev1.NamespaceActive},
+	}
+
+	mapped, err := mapNamespace(namespace, domain.NewProjection([]string{"team"}))
+	if err != nil {
+		t.Fatalf("mapNamespace() error = %v", err)
+	}
+	if mapped.Name() != "platform" || !mapped.IsActive() {
+		t.Errorf("identity/phase = %q/%v, want platform/active", mapped.Name(), mapped.IsActive())
+	}
+	if got, want := mapped.Labels(), map[string]string{"app": "platform", "tier": "web"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Labels() = %v, want %v", got, want)
+	}
+	if got, want := mapped.Annotations(), map[string]string{"team": "payments"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Annotations() = %v, want %v", got, want)
+	}
+}
+
+func TestMapEventCarriesLabelsAndProjectedAnnotations(t *testing.T) {
+	t.Parallel()
+
+	event := &corev1.Event{
+		ObjectMeta:     projectionFixtureMeta("web.1", "platform"),
+		Type:           "Warning",
+		Reason:         "BackOff",
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Name: "web-1"},
+	}
+
+	mapped, err := mapEvent("dev", event, domain.NewProjection([]string{"owner"}))
+	if err != nil {
+		t.Fatalf("mapEvent() error = %v", err)
+	}
+	if got, want := mapped.Labels(), map[string]string{"app": "web.1", "tier": "web"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Labels() = %v, want %v", got, want)
+	}
+	if got, want := mapped.Annotations(), map[string]string{"owner": "alice"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Annotations() = %v, want %v", got, want)
 	}
 }

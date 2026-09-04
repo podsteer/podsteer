@@ -4,13 +4,13 @@ import {wails} from '../models';
 
 export function ListApplications(arg1:string,arg2:string):Promise<wails.ApplicationInventory>;
 
-export function ListPods(arg1:string,arg2:string):Promise<Array<wails.Pod>>;
+export function ListPods(arg1:string,arg2:string,arg3:Array<string>):Promise<Array<wails.Pod>>;
 
 export function ListPodsForWorkload(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Array<wails.Pod>>;
 
 export function ListPodsOnNode(arg1:string,arg2:string):Promise<Array<wails.Pod>>;
 
-export function ListWorkloads(arg1:string,arg2:string,arg3:string):Promise<Array<wails.Workload>>;
+export function ListWorkloads(arg1:string,arg2:string,arg3:string,arg4:Array<string>):Promise<Array<wails.Workload>>;
 
 export function PodGraph(arg1:string,arg2:string,arg3:string):Promise<wails.PodGraph>;
 

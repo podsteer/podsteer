@@ -44,6 +44,19 @@ export type AutoscalerCheck =
   | { status: 'known'; autoscalers: AutoscalerRef[] }
   | { status: 'unknown'; reason: string }
 
+/**
+ * "HorizontalPodAutoscaler, min 2, max 10" — the kind and only the bounds
+ * the server printed. Shared by the Scale dialog and the bulk review so the
+ * same autoscaler reads the same way wherever the warning appears.
+ */
+export function describeAutoscaler(ref: AutoscalerRef): string {
+  const bounds = [
+    ref.minReplicas ? `min ${ref.minReplicas}` : null,
+    ref.maxReplicas ? `max ${ref.maxReplicas}` : null,
+  ].filter((part): part is string => part !== null)
+  return bounds.length ? `${ref.kind}, ${bounds.join(', ')}` : ref.kind
+}
+
 /** Finds a column by its header, case-insensitively. -1 when the server did not print it. */
 function columnIndex(table: ResourceTable, header: string): number {
   return table.columns.findIndex((column) => column.name.toLowerCase() === header.toLowerCase())

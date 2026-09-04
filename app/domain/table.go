@@ -1,6 +1,9 @@
 package domain
 
-import "slices"
+import (
+	"maps"
+	"slices"
+)
 
 // ResourceTable is a generic tabular projection of a set of objects.
 //
@@ -49,6 +52,12 @@ type TableRow struct {
 	Namespace NamespaceName
 	// Cells are the rendered values, positionally matching the columns.
 	Cells []string
+	// Labels are the object's labels, read from the metadata the server
+	// attaches to each row — never from a second request per object.
+	Labels map[string]string
+	// Annotations are the projected subset of the object's annotations, from
+	// the same row metadata. See Projection for why it is a subset.
+	Annotations map[string]string
 }
 
 // NewResourceTable assembles a table, guaranteeing every row has exactly one
@@ -71,9 +80,11 @@ func NewResourceTable(kind ResourceKind, columns []TableColumn, rows []TableRow)
 			cells = cells[:len(columns)]
 		}
 		normalised = append(normalised, TableRow{
-			Name:      row.Name,
-			Namespace: row.Namespace,
-			Cells:     cells,
+			Name:        row.Name,
+			Namespace:   row.Namespace,
+			Cells:       cells,
+			Labels:      maps.Clone(row.Labels),
+			Annotations: maps.Clone(row.Annotations),
 		})
 	}
 

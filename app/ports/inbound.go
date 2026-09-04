@@ -33,11 +33,13 @@ type ClusterService interface {
 	ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error)
 
 	// ListNamespaceSummaries returns the same namespaces with what is running
-	// in each — the list view, where ListNamespaces serves the filter.
-	ListNamespaceSummaries(ctx context.Context, id domain.ClusterID) ([]domain.NamespaceSummary, error)
+	// in each — the list view, where ListNamespaces serves the filter. Each
+	// carries the annotations projection asks for; see domain.Projection.
+	ListNamespaceSummaries(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.NamespaceSummary, error)
 
-	// ListNodes returns the nodes of a connected cluster.
-	ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error)
+	// ListNodes returns the nodes of a connected cluster, each carrying the
+	// annotations projection asks for.
+	ListNodes(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Node, error)
 
 	// PreviewKubeconfig reports what adding raw to the kubeconfig would
 	// change, without touching the file.
@@ -71,11 +73,13 @@ type NavigationService interface {
 // WorkloadService is the use-case surface for reading workloads.
 type WorkloadService interface {
 	// ListPods returns pods in the given namespace of a connected cluster,
-	// enriched with metrics where the cluster provides them.
-	ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error)
+	// enriched with metrics where the cluster provides them, each carrying
+	// the annotations projection asks for — see domain.Projection.
+	ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error)
 
-	// ListWorkloads returns controllers of the given kind.
-	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error)
+	// ListWorkloads returns controllers of the given kind, each carrying the
+	// annotations projection asks for.
+	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Workload, error)
 
 	// PodGraph returns the dependency chain around one pod, from whatever
 	// routes to it down to its containers and what it consumes.
@@ -130,8 +134,9 @@ type WorkloadService interface {
 // EventService is the use-case surface for reading Kubernetes Events.
 type EventService interface {
 	// ListEvents returns events most-recent first, since an event list is
-	// almost always read from the top.
-	ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Event, error)
+	// almost always read from the top, each carrying the annotations
+	// projection asks for.
+	ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Event, error)
 
 	// ListEventsForResource returns events for a specific resource.
 	ListEventsForResource(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind, name string) ([]domain.Event, error)
@@ -219,7 +224,8 @@ type HistoryService interface {
 type ResourceService interface {
 	// ListTable returns objects of the given kind as a table. The kind is
 	// named by its ResourceKind.ID, which is what the navigator hands back.
-	ListTable(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName) (domain.ResourceTable, error)
+	// Each row carries its labels and the annotations projection asks for.
+	ListTable(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, projection domain.Projection) (domain.ResourceTable, error)
 
 	// NamespaceInventory reports what one namespace holds, kind by kind.
 	//

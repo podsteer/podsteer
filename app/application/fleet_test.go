@@ -86,7 +86,7 @@ func (f *fakeFleetSource) hold(id domain.ClusterID, gate chan struct{}) {
 	f.gates[id] = gate
 }
 
-func (f *fakeFleetSource) ListPods(_ context.Context, id domain.ClusterID, _ domain.NamespaceName) ([]domain.Pod, error) {
+func (f *fakeFleetSource) ListPods(_ context.Context, id domain.ClusterID, _ domain.NamespaceName, _ domain.Projection) ([]domain.Pod, error) {
 	f.enter(id)
 	defer f.leave()
 	if err := f.errs[id]; err != nil {
@@ -95,7 +95,7 @@ func (f *fakeFleetSource) ListPods(_ context.Context, id domain.ClusterID, _ dom
 	return append([]domain.Pod(nil), f.pods[id]...), nil
 }
 
-func (f *fakeFleetSource) ListWorkloads(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, _ domain.NamespaceName) ([]domain.Workload, error) {
+func (f *fakeFleetSource) ListWorkloads(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, _ domain.NamespaceName, _ domain.Projection) ([]domain.Workload, error) {
 	f.enter(id)
 	defer f.leave()
 
@@ -118,7 +118,7 @@ func (f *fakeFleetSource) ListWorkloads(_ context.Context, id domain.ClusterID, 
 	return out, nil
 }
 
-func (f *fakeFleetSource) ListEvents(_ context.Context, id domain.ClusterID, _ domain.NamespaceName) ([]domain.Event, error) {
+func (f *fakeFleetSource) ListEvents(_ context.Context, id domain.ClusterID, _ domain.NamespaceName, _ domain.Projection) ([]domain.Event, error) {
 	f.enter(id)
 	defer f.leave()
 	if err := f.errs[id]; err != nil {

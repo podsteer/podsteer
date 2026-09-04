@@ -22,16 +22,16 @@ export function ListClusters() {
   return window['go']['wails']['ClusterAPI']['ListClusters']();
 }
 
-export function ListNamespaceSummaries(arg1) {
-  return window['go']['wails']['ClusterAPI']['ListNamespaceSummaries'](arg1);
+export function ListNamespaceSummaries(arg1, arg2) {
+  return window['go']['wails']['ClusterAPI']['ListNamespaceSummaries'](arg1, arg2);
 }
 
 export function ListNamespaces(arg1) {
   return window['go']['wails']['ClusterAPI']['ListNamespaces'](arg1);
 }
 
-export function ListNodes(arg1) {
-  return window['go']['wails']['ClusterAPI']['ListNodes'](arg1);
+export function ListNodes(arg1, arg2) {
+  return window['go']['wails']['ClusterAPI']['ListNodes'](arg1, arg2);
 }
 
 export function PreviewKubeconfig(arg1) {

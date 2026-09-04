@@ -438,20 +438,23 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID, targe
 		return err
 	})
 
+	// Every list here carries the empty projection: the assessment reads no
+	// annotations, and the empty projection is what lets these reads
+	// coalesce with the open list view's in the same tick.
 	run("nodes", func() error {
-		result, err := s.cluster.ListNodes(ctx, id)
+		result, err := s.cluster.ListNodes(ctx, id, domain.Projection{})
 		nodes = result
 		return err
 	})
 
 	run("pods", func() error {
-		result, err := s.workloads.ListPods(ctx, id, domain.NamespaceAll)
+		result, err := s.workloads.ListPods(ctx, id, domain.NamespaceAll, domain.Projection{})
 		pods = result
 		return err
 	})
 
 	run("namespaces", func() error {
-		result, err := s.cluster.ListNamespaces(ctx, id)
+		result, err := s.cluster.ListNamespaces(ctx, id, domain.Projection{})
 		namespaces = result
 		return err
 	})
@@ -471,7 +474,7 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID, targe
 	})
 
 	run("events", func() error {
-		result, err := s.events.ListEvents(ctx, id, domain.NamespaceAll)
+		result, err := s.events.ListEvents(ctx, id, domain.NamespaceAll, domain.Projection{})
 		events = result
 		return err
 	})
@@ -593,7 +596,7 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID, targe
 	// reports.
 	for _, kind := range controllerKinds {
 		run("workloads/"+string(kind), func() error {
-			result, err := s.workloads.ListWorkloads(ctx, id, kind, domain.NamespaceAll)
+			result, err := s.workloads.ListWorkloads(ctx, id, kind, domain.NamespaceAll, domain.Projection{})
 			if err != nil {
 				return err
 			}

@@ -26,6 +26,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 
+	"github.com/podsteer/podsteer/app/adapters/archive"
 	"github.com/podsteer/podsteer/app/adapters/assets"
 	historystore "github.com/podsteer/podsteer/app/adapters/history"
 	"github.com/podsteer/podsteer/app/adapters/k8s"
@@ -224,6 +225,15 @@ func run() error {
 		// writes issued through this service.
 		Registry: registry,
 		Logger:   logger,
+		// The local half of a file copy. Everything that decides what a
+		// container's tar stream may do to this machine lives behind it,
+		// and the ceilings come from configuration so an operator who
+		// means to move more can say so.
+		Archive: archive.Local{},
+		TransferLimits: domain.TransferLimits{
+			MaxBytes:   cfg.FileCopy.MaxBytes,
+			MaxEntries: cfg.FileCopy.MaxEntries,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("wiring management service: %w", err)
@@ -268,6 +278,11 @@ func run() error {
 	terminalAPI, err := wailsadapter.NewTerminalAPI(managementService, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring terminal API: %w", err)
+	}
+
+	fileCopyAPI, err := wailsadapter.NewFileCopyAPI(managementService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring file copy API: %w", err)
 	}
 
 	historyAPI, err := wailsadapter.NewHistoryAPI(historyService, desktop, logger)
@@ -347,6 +362,7 @@ func run() error {
 			historyAPI,
 			managementAPI,
 			terminalAPI,
+			fileCopyAPI,
 			systemAPI,
 			updateAPI,
 		},

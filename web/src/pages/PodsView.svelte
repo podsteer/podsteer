@@ -16,6 +16,10 @@
   import { cpuMeter, cpuTitle, memoryMeter, memoryTitle } from '$lib/meter'
   import { POD_STATUS_CHIPS } from '$lib/podStatusFilters'
   import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
+  import CustomCells from '$lib/components/CustomCells.svelte'
+  import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
+  import RowSelect from '$lib/components/RowSelect.svelte'
+  import { rowKey } from '$lib/bulk'
   import { get as kubectlGet } from '$lib/kubectl'
   import type { ClusterSession } from '$stores/session.svelte'
   import type { Pod } from '$lib/api/client'
@@ -50,6 +54,7 @@
   })
 
   const COLUMNS: Column[] = [
+    { id: 'select', label: 'Select', width: 40, pinned: true, select: true },
     { id: 'status', label: 'Status', width: 44, icon: CircleDot },
     { id: 'name', label: 'Name', width: 320, pinned: true },
     { id: 'namespace', label: 'Namespace', width: 150 },
@@ -63,6 +68,9 @@
     { id: 'ip', label: 'IP', width: 120, defaultHidden: true },
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
+
+  /** The built-in columns, then the operator's own — see $lib/customColumns. */
+  const columns = $derived<Column[]>([...COLUMNS, ...toColumns(session.customColumns)])
 
   /**
    * The findings worth marking a row for.
@@ -106,6 +114,18 @@
 
   const byLimit = $derived(preferences.podMeasure === 'limits')
 
+  /**
+   * Which rows are on screen, in display order — what a shift-click ranges
+   * across and the header checkbox selects. Published from here because only
+   * the view knows the page it is drawing; see $lib/selection.
+   */
+  $effect(() => {
+    session.selection.visible = session.pagedPods.map((pod) => rowKey(pod.namespace, pod.name))
+    return () => {
+      session.selection.visible = []
+    }
+  })
+
   /** Whether an operator has not hidden this column — the same rule
       ColumnMenu and DataTable itself apply, repeated here rather than asked
       of either: the export has to decide it independently of what is
@@ -124,9 +144,12 @@
    * operator would have to re-derive what the column meant.
    */
   function exportCSV(): CSVExport {
-    const visible = COLUMNS.filter(isColumnVisible)
+    // The tick box is a control, not a column with text in it.
+    const visible = columns.filter((column) => !column.select && isColumnVisible(column))
 
     function cell(pod: Pod, id: string): string {
+      const custom = parseCustomColumnId(id)
+      if (custom) return customCell(pod, custom)
       switch (id) {
         case 'status':
           return podStatusLabel(pod)
@@ -207,11 +230,16 @@
 
   <DataTable
     kindId={session.selectedKindId}
-    columns={COLUMNS}
+    {columns}
     isEmpty={session.pagedPods.length === 0}
     sort={session.sort}
     onsort={session.toggleSort}
     exportRows={exportCSV}
+    selectAll={{
+      checked: session.selection.allVisibleSelected,
+      indeterminate: session.selection.someVisibleSelected,
+      ontoggle: () => session.selection.toggleAllVisible(),
+    }}
   >
     {#snippet empty()}
       <EmptyState
@@ -226,11 +254,19 @@
       {#each session.pagedPods as pod (pod.namespace + '/' + pod.name)}
         {@const selected =
           session.selectedName === pod.name && session.selectedNamespace === pod.namespace}
+        {@const key = rowKey(pod.namespace, pod.name)}
+        {@const ticked = session.selection.has(key)}
         <tr
           class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
-                 {selected ? 'bg-primary/8' : 'hover:bg-surface-container-low'}"
+                 {selected ? 'bg-primary/8' : ticked ? 'bg-primary/5' : 'hover:bg-surface-container-low'}"
+          aria-selected={ticked}
           onclick={() => session.openDetail(pod.name, pod.namespace, pod)}
         >
+          <RowSelect
+            selected={ticked}
+            label={pod.name}
+            ontoggle={(range) => session.selection.toggle(key, range)}
+          />
           {#if isVisible('status')}
             <td class="overflow-hidden py-1.5 pr-3 pl-5">
               <StatusIndicator
@@ -391,6 +427,7 @@
               {formatAge(pod.ageSeconds)}
             </td>
           {/if}
+          <CustomCells specs={session.customColumns} row={pod} {isVisible} />
           <!-- Stops the click here: the row itself opens the detail drawer,
                and a click aimed at the menu — or at one of its items — must
                not also do that. -->

@@ -42,6 +42,7 @@
   import { secretReveals } from '$stores/secretReveals.svelte'
   import ForwardAddress from './ForwardAddress.svelte'
   import PortForwardStart from './PortForwardStart.svelte'
+  import FileTransfer from './FileTransfer.svelte'
   import { EyeOff, Loader, Unplug } from '@lucide/svelte'
 
   interface Props {
@@ -493,6 +494,21 @@
         </div>
       {/each}
     </div>
+  {/if}
+
+  {#if podName && !isTemplate}
+    <!--
+      Copying files in and out, kubectl cp's way. Absent on a template for
+      the same reason the port controls are: there is no container to copy
+      from, only a description of the one the next pod will get.
+    -->
+    <FileTransfer
+      {clusterId}
+      {namespace}
+      {podName}
+      containerName={spec.name}
+      workingDir={spec.workingDir}
+    />
   {/if}
 
   {#if env.length > 0}

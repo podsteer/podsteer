@@ -24,6 +24,9 @@ export const API_ERROR_CODES = [
   'invalid_input',
   'disruption_budget',
   'conflict',
+  'tar_missing',
+  'command_failed',
+  'transfer_limit',
   'internal',
 ] as const
 

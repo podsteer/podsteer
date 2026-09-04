@@ -241,7 +241,7 @@ func (a *Adapter) findReplacementPod(forward domain.Forward) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pods, err := a.ListPods(ctx, forward.ClusterID, forward.Namespace)
+	pods, err := a.ListPods(ctx, forward.ClusterID, forward.Namespace, domain.Projection{})
 	if err != nil {
 		return "", err
 	}

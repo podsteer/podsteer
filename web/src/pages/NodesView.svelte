@@ -12,6 +12,9 @@
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
+  import CustomCells from '$lib/components/CustomCells.svelte'
+  import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
+  import RowSelect from '$lib/components/RowSelect.svelte'
   import { formatAge } from '$lib/format'
   import { get as kubectlGet } from '$lib/kubectl'
   import { preferences } from '$stores/preferences.svelte'
@@ -41,6 +44,7 @@
   }
 
   const COLUMNS: Column[] = [
+    { id: 'select', label: 'Select', width: 40, pinned: true, select: true },
     { id: 'status', label: 'Status', width: 44, icon: CircleDot },
     { id: 'name', label: 'Name', width: 300, pinned: true },
     { id: 'roles', label: 'Roles', width: 140 },
@@ -55,6 +59,9 @@
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
 
+  /** The built-in columns, then the operator's own — see $lib/customColumns. */
+  const columns = $derived<Column[]>([...COLUMNS, ...toColumns(session.customColumns)])
+
   /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
       repeated here rather than asked of either. */
   function isColumnVisible(column: Column): boolean {
@@ -62,11 +69,23 @@
     return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
   }
 
+  /** The rows on screen, in display order, for range and select-all. See
+      PodsView. Nodes are cluster-scoped, so the key is the bare name. */
+  $effect(() => {
+    session.selection.visible = session.pagedNodes.map((node) => node.name)
+    return () => {
+      session.selection.visible = []
+    }
+  })
+
   /** The node list's CSV export, mirroring exactly what each cell shows. */
   function exportCSV(): CSVExport {
-    const visible = COLUMNS.filter(isColumnVisible)
+    // The tick box is a control, not a column with text in it.
+    const visible = columns.filter((column) => !column.select && isColumnVisible(column))
 
     function cell(node: Node, id: string): string {
+      const custom = parseCustomColumnId(id)
+      if (custom) return customCell(node, custom)
       switch (id) {
         case 'status':
           return node.status
@@ -106,11 +125,16 @@
 
 <DataTable
   kindId={session.selectedKindId}
-  columns={COLUMNS}
+  {columns}
   isEmpty={session.pagedNodes.length === 0}
   sort={session.sort}
   onsort={session.toggleSort}
   exportRows={exportCSV}
+  selectAll={{
+    checked: session.selection.allVisibleSelected,
+    indeterminate: session.selection.someVisibleSelected,
+    ontoggle: () => session.selection.toggleAllVisible(),
+  }}
 >
   {#snippet empty()}
     <EmptyState title="No nodes" description="This cluster reports no nodes you can see." />
@@ -119,11 +143,18 @@
   {#snippet rows(isVisible)}
     {#each session.pagedNodes as node (node.name)}
       {@const selected = session.selectedName === node.name}
+      {@const ticked = session.selection.has(node.name)}
       <tr
         class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
-               {selected ? 'bg-primary/8' : 'hover:bg-surface-container-low'}"
+               {selected ? 'bg-primary/8' : ticked ? 'bg-primary/5' : 'hover:bg-surface-container-low'}"
+        aria-selected={ticked}
         onclick={() => session.openDetail(node.name, '', undefined, undefined, node)}
       >
+        <RowSelect
+          selected={ticked}
+          label={node.name}
+          ontoggle={(range) => session.selection.toggle(node.name, range)}
+        />
         {#if isVisible('status')}
           <td class="overflow-hidden py-1.5 pr-3 pl-5">
             <StatusIndicator
@@ -254,6 +285,7 @@
             {formatAge(node.ageSeconds)}
           </td>
         {/if}
+        <CustomCells specs={session.customColumns} row={node} {isVisible} />
         <!-- Stops the click here: the row itself opens the detail drawer,
              and a click aimed at the menu — or at one of its items — must
              not also do that. -->

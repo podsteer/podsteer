@@ -45,10 +45,20 @@ import {
 } from '$lib/api/client'
 import { ApiError, toApiError } from '$lib/api/errors'
 import { findAutoscalers, type AutoscalerCheck } from '$lib/autoscalers'
+import { RowSelection } from '$lib/selection.svelte'
+import { nodeItem, podItem, rowKey, tableRowItem, workloadItem, type BulkItem } from '$lib/bulk'
 import { podStatusLabel } from '$lib/format'
 import { matchesPodStatusChips } from '$lib/podStatusFilters'
 import { EVENT_CHIPS, WORKLOAD_CHIPS, matchesChips, type FleetRow, type FleetTab } from '$lib/fleet'
 import { describeQuery, matches, parseQuery, type Query, type Row } from '$lib/query'
+import {
+  annotationKeysOf,
+  customSearchText,
+  customSortAccessor,
+  keysOnScreen,
+  type MetadataKeys,
+  type MetadataRow,
+} from '$lib/customColumns'
 import {
   parseAgeSeconds,
   parseQuantity,
@@ -532,6 +542,16 @@ export class ClusterSession {
   manifestStatus = $state<LoadStatus>('idle')
 
   /**
+   * The rows ticked for a bulk action — a different thing from the row the
+   * drawer is open on above: that is one object being read, this is a set
+   * about to be acted on together, and ticking five pods then opening a
+   * sixth to check something must leave the five ticked. Cleared whenever
+   * the list underneath changes kind or namespace, because a tick made on
+   * one list means nothing on another. See $lib/selection.
+   */
+  readonly selection = new RowSelection()
+
+  /**
    * Monotonic request counter.
    *
    * A slow response must never overwrite a newer one. Clicking through three
@@ -634,6 +654,22 @@ export class ClusterSession {
   readonly searchDescription = $derived(describeQuery(this.typedQuery))
 
   /**
+   * The operator's own columns for the selected kind — see $lib/customColumns.
+   *
+   * Read from preferences HERE, once, so the filter, the sort, the fetch and
+   * the views all see one list: a column added while a refresh is in flight
+   * must not leave the search knowing about it and the request not.
+   */
+  readonly customColumns = $derived(preferences.customColumnsFor(this.selectedKindId))
+
+  /**
+   * The annotation keys the current view's list is asked for — the
+   * projection every list call takes. Label columns cost nothing here: every
+   * row carries its labels already.
+   */
+  readonly annotationKeys = $derived(annotationKeysOf(this.customColumns))
+
+  /**
    * Pods after the search filter alone, BEFORE the status quick-filter chips.
    *
    * Kept separate from `visiblePods` so the chip row can count how many of
@@ -646,7 +682,7 @@ export class ClusterSession {
     filterRows(
       this.pods,
       this.query,
-      (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase],
+      (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase, ...this.#customText(pod)],
       (pod) => pod.labels,
       () => this.cluster.id,
     ),
@@ -662,12 +698,15 @@ export class ClusterSession {
   readonly visiblePods = $derived(
     this.searchedPods.filter((pod) => matchesPodStatusChips(pod, this.podStatusFilters)),
   )
+  // Every kind's rows carry labels now, so `label:key` and `key=value` in
+  // the search box mean the same thing on the node list as on the pod list
+  // — and a custom column's value is searchable the way a built-in one's is.
   readonly visibleNodes = $derived(
     filterRows(
       this.nodes,
       this.query,
-      (node) => [node.name, node.status, ...node.roles],
-      undefined,
+      (node) => [node.name, node.status, ...node.roles, ...this.#customText(node)],
+      (node) => node.labels,
       () => this.cluster.id,
     ),
   )
@@ -675,7 +714,7 @@ export class ClusterSession {
     filterRows(
       this.workloads,
       this.query,
-      (workload) => [workload.name, workload.namespace, workload.status],
+      (workload) => [workload.name, workload.namespace, workload.status, ...this.#customText(workload)],
       (workload) => workload.labels,
       () => this.cluster.id,
     ),
@@ -698,8 +737,8 @@ export class ClusterSession {
     filterRows(
       this.namespaceRows,
       this.query,
-      (namespace) => [namespace.name, namespace.phase],
-      undefined,
+      (namespace) => [namespace.name, namespace.phase, ...this.#customText(namespace)],
+      (namespace) => namespace.labels,
       () => this.cluster.id,
     ),
   )
@@ -707,8 +746,14 @@ export class ClusterSession {
     filterRows(
       this.events,
       this.query,
-      (event) => [event.reason, event.message, event.involvedObject, event.namespace],
-      undefined,
+      (event) => [
+        event.reason,
+        event.message,
+        event.involvedObject,
+        event.namespace,
+        ...this.#customText(event),
+      ],
+      (event) => event.labels,
       () => this.cluster.id,
     ),
   )
@@ -716,8 +761,8 @@ export class ClusterSession {
     filterRows(
       this.table?.rows ?? [],
       this.query,
-      (row) => [row.name, row.namespace, ...row.cells],
-      undefined,
+      (row) => [row.name, row.namespace, ...row.cells, ...this.#customText(row)],
+      (row) => row.labels,
       () => this.cluster.id,
     ),
   )
@@ -782,6 +827,11 @@ export class ClusterSession {
     }
   })
 
+  /** What a row's custom columns add to the searchable text. */
+  #customText(row: MetadataRow): string[] {
+    return customSearchText(row, this.customColumns)
+  }
+
   /** Total rows after filtering, before pagination. */
   readonly visibleCount = $derived.by(() => {
     switch (this.viewMode) {
@@ -833,23 +883,41 @@ export class ClusterSession {
   readonly sort = $derived(this.sorts[this.sortKey] ?? null)
 
   /** Filtered rows after sorting, per view. */
-  readonly sortedPods = $derived(sortRows(this.visiblePods, this.sort, POD_SORT))
-  readonly sortedNodes = $derived(sortRows(this.visibleNodes, this.sort, NODE_SORT))
-  readonly sortedWorkloads = $derived(sortRows(this.visibleWorkloads, this.sort, WORKLOAD_SORT))
-  readonly sortedEvents = $derived(sortRows(this.visibleEvents, this.sort, EVENT_SORT))
-  readonly sortedNamespaces = $derived(
-    sortRows(this.visibleNamespaces, this.sort, NAMESPACE_SORT),
+  readonly sortedPods = $derived(sortRows(this.visiblePods, this.sort, this.#accessors(POD_SORT)))
+  readonly sortedNodes = $derived(sortRows(this.visibleNodes, this.sort, this.#accessors(NODE_SORT)))
+  readonly sortedWorkloads = $derived(
+    sortRows(this.visibleWorkloads, this.sort, this.#accessors(WORKLOAD_SORT)),
   )
+  readonly sortedEvents = $derived(sortRows(this.visibleEvents, this.sort, this.#accessors(EVENT_SORT)))
+  readonly sortedNamespaces = $derived(
+    sortRows(this.visibleNamespaces, this.sort, this.#accessors(NAMESPACE_SORT)),
+  )
+
+  /**
+   * A view's sort accessors, with the custom column's added when that is
+   * what the sort names. Built per sort rather than per view: the custom
+   * columns are the operator's and the built-in tables above are not, so
+   * the two are joined only at the one id being sorted on.
+   */
+  #accessors<T extends MetadataRow>(base: SortAccessors<T>): SortAccessors<T> {
+    const sort = this.sort
+    const custom = sort ? customSortAccessor<T>(sort.columnId) : null
+    return sort && custom ? { ...base, [sort.columnId]: custom } : base
+  }
 
   /**
    * Generic table rows after sorting. The column ids are positional ("c0"),
    * so the accessor is built from the table's own column definitions: numeric
    * columns compare as numbers, date columns as parsed ages, everything else
-   * as text.
+   * as text. A custom column is neither: it reads the row's own metadata.
    */
   readonly sortedTableRows = $derived.by(() => {
     const state = this.sort
     const table = this.table
+    const custom = state ? customSortAccessor<TableRow>(state.columnId) : null
+    if (state && custom) {
+      return sortRows(this.visibleTableRows, state, { [state.columnId]: custom })
+    }
     const index = state ? /^c(\d+)$/.exec(state.columnId)?.[1] : undefined
     if (!state || !table || index === undefined) return this.visibleTableRows
 
@@ -980,6 +1048,44 @@ export class ClusterSession {
     restarts: this.pods.reduce((sum, pod) => sum + pod.restarts, 0),
   })
 
+  /**
+   * The ticked rows as a bulk action's plan needs them.
+   *
+   * Resolved against the rows held NOW rather than remembered at tick time:
+   * a row deleted by somebody else between the tick and the action drops
+   * out here instead of being sent to the cluster by name alone, and the
+   * count the action bar shows is of objects that still exist. Every fact
+   * on an item is a quotation of a field the row already carries — the
+   * controller a pod's "Controlled By" names, a workload's desired count, a
+   * node's cordoned flag — so planning costs no read at all. See $lib/bulk.
+   */
+  readonly bulkItems = $derived.by((): BulkItem[] => {
+    const kind = this.selectedKind
+    const keys = this.selection.keys
+    if (!kind || keys.size === 0) return []
+
+    switch (this.viewMode) {
+      case 'pods':
+        return this.pods
+          .filter((pod) => keys.has(rowKey(pod.namespace, pod.name)))
+          .map((pod) => podItem(kind, pod))
+      case 'workloads':
+        return this.workloads
+          .filter((workload) => keys.has(rowKey(workload.namespace, workload.name)))
+          .map((workload) => workloadItem(kind, workload))
+      case 'nodes':
+        return this.nodes.filter((node) => keys.has(node.name)).map((node) => nodeItem(kind, node))
+      case 'table':
+        return (this.table?.rows ?? [])
+          .filter(
+            (row) => row.name && keys.has(rowKey(kind.namespaced ? row.namespace : '', row.name)),
+          )
+          .map((row) => tableRowItem(kind, row))
+      default:
+        return []
+    }
+  })
+
   /** Loads the navigator tree and namespace list, then the default view. */
   initialise = async (): Promise<void> => {
     await Promise.all([this.loadKinds(), this.loadNamespaces()])
@@ -1043,6 +1149,7 @@ export class ClusterSession {
     this.selectedKindId = kindId
     this.page = 1
     this.closeDetail()
+    this.selection.clear()
     await this.refresh()
   }
 
@@ -1109,6 +1216,7 @@ export class ClusterSession {
       }
       this.page = 1
       this.closeDetail()
+      this.selection.clear()
       await this.refresh()
     }
 
@@ -1158,6 +1266,7 @@ export class ClusterSession {
     // navigated away from, and leaving it there over a list of something else
     // is a panel describing an object nothing on screen refers to.
     this.closeDetail()
+    if (changed) this.selection.clear()
 
     if (changed) await this.refresh()
   }
@@ -1168,6 +1277,7 @@ export class ClusterSession {
     this.namespace = namespace
     preferences.setClusterNamespace(this.cluster.id, namespace)
     this.page = 1
+    this.selection.clear()
     await this.refresh()
   }
 
@@ -1459,14 +1569,17 @@ export class ClusterSession {
         // while this view is the one on screen, because this switch is the
         // only thing that ever calls it. See $stores/fleet.
         return fleet.refresh(namespace)
+      // Every list carries the kind's annotation projection — the keys on
+      // its custom columns — and nothing else of the annotation map. See
+      // $lib/customColumns and the client's listNamespaceSummaries note.
       case 'pods':
-        return listPods(id, namespace)
+        return listPods(id, namespace, this.annotationKeys)
       case 'nodes':
-        return listNodes(id)
+        return listNodes(id, this.annotationKeys)
       case 'events':
-        return listEvents(id, namespace)
+        return listEvents(id, namespace, this.annotationKeys)
       case 'namespaces':
-        return listNamespaceSummaries(id)
+        return listNamespaceSummaries(id, this.annotationKeys)
       case 'applications':
         return listApplications(id, namespace)
       case 'workloads': {
@@ -1486,10 +1599,38 @@ export class ClusterSession {
           .catch(() => {
             if (generation === this.#usageGeneration) this.workloadUsage = {}
           })
-        return listWorkloads(id, kind, namespace)
+        return listWorkloads(id, kind, namespace, this.annotationKeys)
       }
       default:
-        return listTable(id, this.selectedKindId, namespace)
+        return listTable(id, this.selectedKindId, namespace, this.annotationKeys)
+    }
+  }
+
+  /**
+   * The label and annotation keys the current view's rows carry — what the
+   * column picker offers, so a column is chosen from keys this cluster
+   * actually uses rather than typed from memory.
+   *
+   * A method rather than a derived: it walks every row's metadata, and the
+   * menu is opened far less often than the list refreshes. Over the filtered
+   * rows, not the page, so a key on row 40 of 25-per-page is still offered.
+   */
+  metadataKeysOnScreen = (): MetadataKeys => {
+    switch (this.viewMode) {
+      case 'pods':
+        return keysOnScreen(this.visiblePods)
+      case 'nodes':
+        return keysOnScreen(this.visibleNodes)
+      case 'workloads':
+        return keysOnScreen(this.visibleWorkloads)
+      case 'events':
+        return keysOnScreen(this.visibleEvents)
+      case 'namespaces':
+        return keysOnScreen(this.visibleNamespaces)
+      case 'table':
+        return keysOnScreen(this.visibleTableRows)
+      default:
+        return { labels: [], annotations: [] }
     }
   }
 

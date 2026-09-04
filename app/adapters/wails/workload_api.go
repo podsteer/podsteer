@@ -40,7 +40,11 @@ func NewWorkloadAPI(workloads ports.WorkloadService, app *App, logger *slog.Logg
 //
 // An empty namespace lists across all of them, mirroring
 // `kubectl get pods --all-namespaces`.
-func (w *WorkloadAPI) ListPods(clusterID, namespace string) ([]Pod, error) {
+//
+// annotationKeys names the annotations each row should carry — the ones the
+// operator has put on a custom column of this kind. Nothing else of the
+// annotation map crosses the bridge; see domain.Projection for why.
+func (w *WorkloadAPI) ListPods(clusterID, namespace string, annotationKeys []string) ([]Pod, error) {
 	ctx, cancel := w.app.requestContext()
 	defer cancel()
 
@@ -54,7 +58,7 @@ func (w *WorkloadAPI) ListPods(clusterID, namespace string) ([]Pod, error) {
 		return nil, apiError(w.logger, "ListPods", err)
 	}
 
-	pods, err := w.workloads.ListPods(ctx, id, name)
+	pods, err := w.workloads.ListPods(ctx, id, name, domain.NewProjection(annotationKeys))
 	if err != nil {
 		return nil, apiError(w.logger, "ListPods", err)
 	}
@@ -158,7 +162,9 @@ func (w *WorkloadAPI) WorkloadConsumption(clusterID, kind, namespace string) (ma
 // The kind arrives as its display name — "Deployment", "StatefulSet" — which
 // is what the navigator already holds, so the frontend needs no second
 // vocabulary for the same six things.
-func (w *WorkloadAPI) ListWorkloads(clusterID, kind, namespace string) ([]Workload, error) {
+//
+// annotationKeys is the same projection ListPods takes.
+func (w *WorkloadAPI) ListWorkloads(clusterID, kind, namespace string, annotationKeys []string) ([]Workload, error) {
 	ctx, cancel := w.app.requestContext()
 	defer cancel()
 
@@ -172,7 +178,7 @@ func (w *WorkloadAPI) ListWorkloads(clusterID, kind, namespace string) ([]Worklo
 		return nil, apiError(w.logger, "ListWorkloads", err)
 	}
 
-	workloads, err := w.workloads.ListWorkloads(ctx, id, domain.WorkloadKind(kind), name)
+	workloads, err := w.workloads.ListWorkloads(ctx, id, domain.WorkloadKind(kind), name, domain.NewProjection(annotationKeys))
 	if err != nil {
 		return nil, apiError(w.logger, "ListWorkloads", err)
 	}

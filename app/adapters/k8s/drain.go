@@ -166,7 +166,7 @@ func (a *Adapter) DrainCandidates(ctx context.Context, id domain.ClusterID, node
 	for i := range list.Items {
 		raw := &list.Items[i]
 
-		pod, err := mapPod(id, raw)
+		pod, err := mapPod(id, raw, domain.Projection{})
 		if err != nil {
 			a.logger.WarnContext(ctx, "skipping unmappable pod",
 				slog.String("cluster", id.String()),

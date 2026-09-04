@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -21,30 +22,37 @@ import (
 // decides.
 
 // mapPod translates a Kubernetes pod into the domain model.
-func mapPod(clusterID domain.ClusterID, pod *corev1.Pod) (domain.Pod, error) {
+//
+// projection decides which annotations come along — the whole map never
+// does, see domain.Projection. It is a parameter rather than something read
+// off the adapter because the watch store hands stripped objects to this
+// same function, and the contract test in watch_test.go has to be able to
+// map both copies with the same projection and compare the results.
+func mapPod(clusterID domain.ClusterID, pod *corev1.Pod, projection domain.Projection) (domain.Pod, error) {
 	namespace, err := domain.NewNamespaceName(pod.Namespace)
 	if err != nil {
 		return domain.Pod{}, err
 	}
 
 	return domain.NewPod(domain.PodSpec{
-		UID:        string(pod.UID),
-		Name:       pod.Name,
-		Namespace:  namespace,
-		ClusterID:  clusterID,
-		Phase:      mapPodPhase(pod),
-		NodeName:   pod.Spec.NodeName,
-		PodIP:      pod.Status.PodIP,
-		Containers: mapContainers(pod),
-		Labels:     pod.Labels,
-		Owners:     mapOwnerReferences(pod.OwnerReferences),
-		QoSClass:   domain.NewQoSClass(string(pod.Status.QOSClass)),
-		Reason:     podReason(pod),
-		Message:    podMessage(pod),
-		CreatedAt:  pod.CreationTimestamp.Time,
-		DeletedAt:  deletionTime(pod),
-		Finalizers: pod.Finalizers,
-		Conditions: mapConditions(pod.Status.Conditions),
+		UID:         string(pod.UID),
+		Name:        pod.Name,
+		Namespace:   namespace,
+		ClusterID:   clusterID,
+		Phase:       mapPodPhase(pod),
+		NodeName:    pod.Spec.NodeName,
+		PodIP:       pod.Status.PodIP,
+		Containers:  mapContainers(pod),
+		Labels:      pod.Labels,
+		Annotations: projection.Annotations(pod.Annotations),
+		Owners:      mapOwnerReferences(pod.OwnerReferences),
+		QoSClass:    domain.NewQoSClass(string(pod.Status.QOSClass)),
+		Reason:      podReason(pod),
+		Message:     podMessage(pod),
+		CreatedAt:   pod.CreationTimestamp.Time,
+		DeletedAt:   deletionTime(pod),
+		Finalizers:  pod.Finalizers,
+		Conditions:  mapConditions(pod.Status.Conditions),
 	})
 }
 
@@ -220,12 +228,16 @@ func mapContainerState(state corev1.ContainerState) (domain.ContainerState, stri
 }
 
 // mapNamespace translates a Kubernetes namespace into the domain model.
-func mapNamespace(namespace *corev1.Namespace) (domain.Namespace, error) {
-	return domain.NewNamespace(
+func mapNamespace(namespace *corev1.Namespace, projection domain.Projection) (domain.Namespace, error) {
+	mapped, err := domain.NewNamespace(
 		namespace.Name,
 		domain.NewNamespacePhase(string(namespace.Status.Phase)),
 		namespace.CreationTimestamp.Time,
 	)
+	if err != nil {
+		return domain.Namespace{}, err
+	}
+	return mapped.WithMetadata(namespace.Labels, projection.Annotations(namespace.Annotations)), nil
 }
 
 // mapServerVersion translates the API server's version report.
@@ -244,7 +256,7 @@ func mapServerVersion(info *apiversion.Info) domain.ServerVersion {
 // --- Nodes ------------------------------------------------------------------
 
 // mapNode translates a Kubernetes node into the domain model.
-func mapNode(clusterID domain.ClusterID, node *corev1.Node) (domain.Node, error) {
+func mapNode(clusterID domain.ClusterID, node *corev1.Node, projection domain.Projection) (domain.Node, error) {
 	ready := false
 	active := make([]domain.NodeCondition, 0, 2)
 
@@ -268,6 +280,8 @@ func mapNode(clusterID domain.ClusterID, node *corev1.Node) (domain.Node, error)
 	return domain.NewNode(domain.NodeSpec{
 		Name:             node.Name,
 		ClusterID:        clusterID,
+		Labels:           node.Labels,
+		Annotations:      projection.Annotations(node.Annotations),
 		Roles:            nodeRoles(node),
 		Ready:            ready,
 		ActiveConditions: active,
@@ -331,57 +345,57 @@ func mapCapacity(list corev1.ResourceList) domain.Capacity {
 // --- Workloads --------------------------------------------------------------
 
 // mapDeployment translates a Deployment.
-func mapDeployment(clusterID domain.ClusterID, item *appsv1.Deployment) (domain.Workload, error) {
+func mapDeployment(clusterID domain.ClusterID, item *appsv1.Deployment, projection domain.Projection) (domain.Workload, error) {
 	return newWorkload(clusterID, domain.WorkloadDeployment, item.ObjectMeta, workloadCounts{
 		Desired:   derefInt32(item.Spec.Replicas, 1),
 		Ready:     item.Status.ReadyReplicas,
 		Current:   item.Status.Replicas,
 		Updated:   item.Status.UpdatedReplicas,
 		Available: item.Status.AvailableReplicas,
-	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector))
+	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection)
 }
 
 // mapStatefulSet translates a StatefulSet.
-func mapStatefulSet(clusterID domain.ClusterID, item *appsv1.StatefulSet) (domain.Workload, error) {
+func mapStatefulSet(clusterID domain.ClusterID, item *appsv1.StatefulSet, projection domain.Projection) (domain.Workload, error) {
 	return newWorkload(clusterID, domain.WorkloadStatefulSet, item.ObjectMeta, workloadCounts{
 		Desired:   derefInt32(item.Spec.Replicas, 1),
 		Ready:     item.Status.ReadyReplicas,
 		Current:   item.Status.Replicas,
 		Updated:   item.Status.UpdatedReplicas,
 		Available: item.Status.AvailableReplicas,
-	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector))
+	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection)
 }
 
 // mapDaemonSet translates a DaemonSet.
 //
 // A DaemonSet has no replica count: its "desired" is however many nodes match
 // its selector, which the controller reports in status.
-func mapDaemonSet(clusterID domain.ClusterID, item *appsv1.DaemonSet) (domain.Workload, error) {
+func mapDaemonSet(clusterID domain.ClusterID, item *appsv1.DaemonSet, projection domain.Projection) (domain.Workload, error) {
 	return newWorkload(clusterID, domain.WorkloadDaemonSet, item.ObjectMeta, workloadCounts{
 		Desired:   item.Status.DesiredNumberScheduled,
 		Ready:     item.Status.NumberReady,
 		Current:   item.Status.CurrentNumberScheduled,
 		Updated:   item.Status.UpdatedNumberScheduled,
 		Available: item.Status.NumberAvailable,
-	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector))
+	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection)
 }
 
 // mapReplicaSet translates a ReplicaSet.
-func mapReplicaSet(clusterID domain.ClusterID, item *appsv1.ReplicaSet) (domain.Workload, error) {
+func mapReplicaSet(clusterID domain.ClusterID, item *appsv1.ReplicaSet, projection domain.Projection) (domain.Workload, error) {
 	return newWorkload(clusterID, domain.WorkloadReplicaSet, item.ObjectMeta, workloadCounts{
 		Desired:   derefInt32(item.Spec.Replicas, 1),
 		Ready:     item.Status.ReadyReplicas,
 		Current:   item.Status.Replicas,
 		Updated:   item.Status.FullyLabeledReplicas,
 		Available: item.Status.AvailableReplicas,
-	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector))
+	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection)
 }
 
 // mapJob translates a Job.
 //
 // "Desired" is the completion count: a Job is done when that many pods have
 // succeeded, so succeeded-versus-completions is the progress an operator reads.
-func mapJob(clusterID domain.ClusterID, item *batchv1.Job) (domain.Workload, error) {
+func mapJob(clusterID domain.ClusterID, item *batchv1.Job, projection domain.Projection) (domain.Workload, error) {
 	workload, err := newWorkload(clusterID, domain.WorkloadJob, item.ObjectMeta, workloadCounts{
 		Desired:   derefInt32(item.Spec.Completions, 1),
 		Ready:     item.Status.Succeeded,
@@ -389,7 +403,7 @@ func mapJob(clusterID domain.ClusterID, item *batchv1.Job) (domain.Workload, err
 		Updated:   item.Status.Succeeded,
 		Available: item.Status.Active,
 		Failed:    item.Status.Failed,
-	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector))
+	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection)
 	if err != nil {
 		return domain.Workload{}, err
 	}
@@ -397,7 +411,7 @@ func mapJob(clusterID domain.ClusterID, item *batchv1.Job) (domain.Workload, err
 }
 
 // mapCronJob translates a CronJob.
-func mapCronJob(clusterID domain.ClusterID, item *batchv1.CronJob) (domain.Workload, error) {
+func mapCronJob(clusterID domain.ClusterID, item *batchv1.CronJob, projection domain.Projection) (domain.Workload, error) {
 	var lastScheduled time.Time
 	if item.Status.LastScheduleTime != nil {
 		lastScheduled = item.Status.LastScheduleTime.Time
@@ -416,7 +430,7 @@ func mapCronJob(clusterID domain.ClusterID, item *batchv1.CronJob) (domain.Workl
 		Current:       int32(len(item.Status.Active)),
 		Images:        podTemplateImages(item.Spec.JobTemplate.Spec.Template),
 		Labels:        item.Labels,
-		Annotations:   gitOpsAnnotations(item.Annotations),
+		Annotations:   projectAnnotations(item.Annotations, projection),
 		Owner:         domain.Controller(mapOwnerReferences(item.OwnerReferences)),
 		Suspended:     derefBool(item.Spec.Suspend),
 		Schedule:      item.Spec.Schedule,
@@ -441,6 +455,7 @@ func newWorkload(
 	counts workloadCounts,
 	images []string,
 	selector map[string]string,
+	projection domain.Projection,
 ) (domain.Workload, error) {
 	namespace, err := domain.NewNamespaceName(meta.Namespace)
 	if err != nil {
@@ -461,10 +476,28 @@ func newWorkload(
 		Images:      images,
 		Selector:    selector,
 		Labels:      meta.Labels,
-		Annotations: gitOpsAnnotations(meta.Annotations),
+		Annotations: projectAnnotations(meta.Annotations, projection),
 		Owner:       domain.Controller(mapOwnerReferences(meta.OwnerReferences)),
 		CreatedAt:   meta.CreationTimestamp.Time,
 	})
+}
+
+// projectAnnotations is what a controller's row carries: the GitOps keys
+// every row needs for its badge, plus whatever the projection asked for. Nil
+// when neither found anything, for the equality rule
+// domain.Projection.Annotations describes.
+func projectAnnotations(all map[string]string, projection domain.Projection) map[string]string {
+	kept := gitOpsAnnotations(all)
+	projected := projection.Annotations(all)
+	switch {
+	case projected == nil:
+		return kept
+	case kept == nil:
+		return projected
+	default:
+		maps.Copy(kept, projected)
+		return kept
+	}
 }
 
 // gitOpsAnnotationPrefixes are the annotation keys worth carrying to the UI.
@@ -532,7 +565,7 @@ func matchLabels(selector *metav1.LabelSelector) map[string]string {
 // --- Events -----------------------------------------------------------------
 
 // mapEvent translates a Kubernetes Event.
-func mapEvent(clusterID domain.ClusterID, event *corev1.Event) (domain.Event, error) {
+func mapEvent(clusterID domain.ClusterID, event *corev1.Event, projection domain.Projection) (domain.Event, error) {
 	namespace, err := domain.NewNamespaceName(event.Namespace)
 	if err != nil {
 		return domain.Event{}, err
@@ -551,6 +584,8 @@ func mapEvent(clusterID domain.ClusterID, event *corev1.Event) (domain.Event, er
 		Count:        eventCount(event),
 		FirstSeen:    event.FirstTimestamp.Time,
 		LastSeen:     eventLastSeen(event),
+		Labels:       event.Labels,
+		Annotations:  projection.Annotations(event.Annotations),
 	})
 }
 
