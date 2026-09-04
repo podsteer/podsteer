@@ -374,6 +374,22 @@ type fakeManagementPort struct {
 	suspendedNS    domain.NamespaceName
 	suspendedName  string
 	suspendedValue bool
+
+	setSecretKeyErr    error
+	setSecretKeyCalled bool
+	setSecretID        domain.ClusterID
+	setSecretNS        domain.NamespaceName
+	setSecretName      string
+	setSecretKeyName   string
+	setSecretValue     []byte
+
+	setConfigMapKeyErr    error
+	setConfigMapKeyCalled bool
+	setConfigMapID        domain.ClusterID
+	setConfigMapNS        domain.NamespaceName
+	setConfigMapName      string
+	setConfigMapKeyName   string
+	setConfigMapValue     string
 }
 
 var _ ports.ManagementPort = (*fakeManagementPort)(nil)
@@ -428,4 +444,28 @@ func (f *fakeManagementPort) SuspendWorkload(_ context.Context, id domain.Cluste
 	f.suspendedName = name
 	f.suspendedValue = suspend
 	return f.suspendErr
+}
+
+func (f *fakeManagementPort) SetSecretKey(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string, value []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.setSecretKeyCalled = true
+	f.setSecretID = id
+	f.setSecretNS = namespace
+	f.setSecretName = name
+	f.setSecretKeyName = key
+	f.setSecretValue = value
+	return f.setSecretKeyErr
+}
+
+func (f *fakeManagementPort) SetConfigMapKey(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key, value string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.setConfigMapKeyCalled = true
+	f.setConfigMapID = id
+	f.setConfigMapNS = namespace
+	f.setConfigMapName = name
+	f.setConfigMapKeyName = key
+	f.setConfigMapValue = value
+	return f.setConfigMapKeyErr
 }

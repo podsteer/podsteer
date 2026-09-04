@@ -50,6 +50,8 @@ import {
   RestartRollout as bindRestartRollout,
   TriggerCronJob as bindTriggerCronJob,
   SuspendWorkload as bindSuspendWorkload,
+  SetSecretKey as bindSetSecretKey,
+  SetConfigMapKey as bindSetConfigMapKey,
   StreamLogs as bindStreamLogs,
   StopLogStream as bindStopLogStream,
   StartPortForward as bindStartPortForward,
@@ -620,6 +622,38 @@ export function restartRollout(
  */
 export function triggerCronJob(clusterId: string, namespace: string, name: string): Promise<string> {
   return call(() => bindTriggerCronJob(clusterId, namespace, name))
+}
+
+/**
+ * Writes one key of one Secret, decoded — the plaintext an operator typed,
+ * not base64. The backend converts it to bytes; nothing here encodes
+ * anything.
+ *
+ * The same deliberate act as revealSecretKey, in the other direction: this
+ * is only ever called from a Save on a key that has already been revealed
+ * (see $lib/components/ContainerDetail.svelte), which is what keeps a
+ * cluster's audit log meaningful — one entry per click, never a side effect
+ * of anything else.
+ */
+export function setSecretKey(
+  clusterId: string,
+  namespace: string,
+  name: string,
+  key: string,
+  value: string,
+): Promise<void> {
+  return call(() => bindSetSecretKey(clusterId, namespace, name, key, value))
+}
+
+/** Writes one key of one ConfigMap. */
+export function setConfigMapKey(
+  clusterId: string,
+  namespace: string,
+  name: string,
+  key: string,
+  value: string,
+): Promise<void> {
+  return call(() => bindSetConfigMapKey(clusterId, namespace, name, key, value))
 }
 
 /** Suspends or resumes a CronJob's schedule, or a Job's pods. */

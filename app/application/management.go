@@ -212,6 +212,70 @@ func (s *ManagementService) UpdateResource(ctx context.Context, id domain.Cluste
 	return nil
 }
 
+// SetSecretKey writes one key of one Secret.
+//
+// The audit line below is what an entry in a cluster's audit log should be:
+// cluster, namespace, name and key — and NEVER the value, and never its
+// length, which is why slog.String("value", ...) does not appear anywhere in
+// this method. RevealSecretKey's own doc comment is the reason a write of
+// this shape exists at all; logging the material it decodes would undo it.
+func (s *ManagementService) SetSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string, value []byte) error {
+	s.logger.InfoContext(ctx, "writing secret key",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.String("name", name),
+		slog.String("key", key))
+
+	if !domain.ValidDataKey(key) {
+		return fmt.Errorf("%w: %q", domain.ErrInvalidKey, key)
+	}
+
+	err := s.management.SetSecretKey(ctx, id, namespace, name, key, value)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to write secret key",
+			slog.String("cluster", id.String()),
+			slog.String("namespace", namespace.String()),
+			slog.String("name", name),
+			slog.String("key", key),
+			slog.String("error", err.Error()))
+		return err
+	}
+
+	return nil
+}
+
+// SetConfigMapKey writes one key of one ConfigMap.
+//
+// A ConfigMap is not secret, so this exists for the same reason
+// SetSecretKey does — fixing a value already on screen without hand-rolling
+// anything — rather than for confidentiality. The audit line still omits the
+// value, matching every other write here: what changed is cluster,
+// namespace, name and key, not the contents.
+func (s *ManagementService) SetConfigMapKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key, value string) error {
+	s.logger.InfoContext(ctx, "writing configmap key",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.String("name", name),
+		slog.String("key", key))
+
+	if !domain.ValidDataKey(key) {
+		return fmt.Errorf("%w: %q", domain.ErrInvalidKey, key)
+	}
+
+	err := s.management.SetConfigMapKey(ctx, id, namespace, name, key, value)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to write configmap key",
+			slog.String("cluster", id.String()),
+			slog.String("namespace", namespace.String()),
+			slog.String("name", name),
+			slog.String("key", key),
+			slog.String("error", err.Error()))
+		return err
+	}
+
+	return nil
+}
+
 // ExecInPod executes a command in a pod container.
 func (s *ManagementService) ExecInPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, command []string, stdin io.Reader, stdout, stderr io.Writer, tty bool) error {
 	return s.management.ExecInPod(ctx, id, namespace, podName, containerName, command, stdin, stdout, stderr, tty)

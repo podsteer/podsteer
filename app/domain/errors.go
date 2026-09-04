@@ -65,4 +65,15 @@ var (
 	// Deployment, say. The application layer checks this before an adapter is
 	// ever reached, mirroring how ScaleWorkload validates its replica count.
 	ErrUnsupportedWorkloadKind = errors.New("unsupported workload kind")
+
+	// ErrInvalidKey is returned when a Secret or ConfigMap data key is empty,
+	// contains characters Kubernetes does not allow in one, or — for a
+	// ConfigMap — names a key that currently holds binary data rather than
+	// text.
+	//
+	// The application layer checks the format before an adapter is ever
+	// reached, mirroring ErrUnsupportedWorkloadKind above; the binaryData
+	// case can only be checked in the adapter, because it requires reading
+	// the object first.
+	ErrInvalidKey = errors.New("invalid key")
 )
