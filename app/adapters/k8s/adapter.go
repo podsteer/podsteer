@@ -82,8 +82,12 @@ func New(cfg Config, logger *slog.Logger) *Adapter {
 		logger = slog.Default()
 	}
 	scoped := logger.With(slog.String("adapter", "k8s"))
+
+	factory := newClientFactory(cfg)
+	factory.logger = scoped
+
 	return &Adapter{
-		factory:  newClientFactory(cfg),
+		factory:  factory,
 		logger:   scoped,
 		watches:  newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery, recheckEvery),
 		forwards: portForwards{byID: make(map[string]*forwarder)},

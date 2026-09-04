@@ -1,10 +1,16 @@
 package k8s
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 
-	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -52,6 +58,13 @@ type Config struct {
 	// KubeconfigPath overrides the kubeconfig location. Empty means the
 	// standard client-go resolution order: $KUBECONFIG, then ~/.kube/config.
 	KubeconfigPath string
+
+	// KubeconfigDir, when set, names a directory whose kubeconfig files are
+	// merged into the loading precedence AFTER KubeconfigPath (or, when that
+	// is unset, after whatever the standard resolution already produced).
+	// Empty means no directory is read. See loadingRules and
+	// kubeconfigDirFiles for what that merge does and what it skips.
+	KubeconfigDir string
 
 	// QPS is the sustained request rate allowed per cluster. Zero means
 	// defaultQPS.
@@ -141,16 +154,34 @@ type clients struct {
 //
 // It is safe for concurrent use.
 type clientFactory struct {
-	cfg Config
+	cfg    Config
+	logger *slog.Logger
 
 	mu      sync.RWMutex
 	clients map[domain.ClusterID]*clients
+
+	// dirWarnOnce guards the one warning an unreadable KubeconfigDir produces.
+	// See kubeconfigDirFiles: every call re-scans the directory, and an
+	// unreadable one fails the same way each time, so logging it more than
+	// once would just repeat the same fact on every refresh.
+	dirWarnOnce sync.Once
+	// warnedFiles holds the directory files already reported as unparsable,
+	// so a junk file is named once rather than on every one of the reads the
+	// kubeconfig gets — several a second under a 5-second refresh. An entry
+	// is dropped the moment the file parses again, so a fixed file that
+	// breaks a second time is reported a second time.
+	warnedFiles sync.Map
 }
 
 // newClientFactory returns a factory that builds clients according to cfg.
+//
+// logger defaults to slog.Default(); New overwrites it with the adapter's own
+// scoped logger once one is available, so a factory built directly in a test
+// still has somewhere to log without every test needing to supply one.
 func newClientFactory(cfg Config) *clientFactory {
 	return &clientFactory{
 		cfg:     cfg.withDefaults(),
+		logger:  slog.Default(),
 		clients: make(map[domain.ClusterID]*clients),
 	}
 }
@@ -167,31 +198,130 @@ func (f *clientFactory) awaitEnv() {
 	<-f.cfg.EnvReady
 }
 
-// configFlags returns a cli-runtime loader scoped to one kubeconfig context.
+// loadingRules returns the kubeconfig loading rules shared by rawConfig and
+// restConfig.
 //
-// Persistent config is disabled: it would add cli-runtime's own on-disk
-// discovery cache and a memoised client config, both of which duplicate the
-// caching this factory already does — and the on-disk cache would keep serving
-// a stale API surface after a cluster upgrade.
-func (f *clientFactory) configFlags(id domain.ClusterID) *genericclioptions.ConfigFlags {
-	flags := genericclioptions.NewConfigFlags(false)
-
+// Built directly rather than through genericclioptions.ConfigFlags (the
+// package's own config_flags.go used to do exactly that): routing
+// KubeconfigPath through ConfigFlags.KubeConfig sets
+// clientcmd.ClientConfigLoadingRules.ExplicitPath, and
+// (*ClientConfigLoadingRules).Load ignores Precedence ENTIRELY once
+// ExplicitPath is set — which would silently drop every file
+// PODSTEER_KUBECONFIG_DIR names whenever PODSTEER_KUBECONFIG is also set.
+// Building Precedence ourselves is what lets both be read through the one
+// merge.
+//
+// Precedence[0] is always KubeconfigPath, or — when that is unset — whatever
+// clientcmd.NewDefaultClientConfigLoadingRules already resolved from
+// $KUBECONFIG (itself possibly a path list) or ~/.kube/config. Directory
+// files are appended AFTER, sorted by filename, so a context name one of them
+// shares with anything already in Precedence never wins: client-go's merge
+// keeps the first file's definition of a map key (confirmed empirically —
+// see kubeconfig_dir_test.go — because the doc comment on
+// (*ClientConfigLoadingRules).Load is easy to misread against the generic
+// merge() it now delegates to).
+func (f *clientFactory) loadingRules() *clientcmd.ClientConfigLoadingRules {
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if f.cfg.KubeconfigPath != "" {
-		path := f.cfg.KubeconfigPath
-		flags.KubeConfig = &path
+		// An explicit override REPLACES the default chain rather than adding
+		// to it — the same "this is the one file" meaning it has always had —
+		// so it, not the untouched default Precedence, is what the directory
+		// is appended after.
+		rules.Precedence = []string{f.cfg.KubeconfigPath}
 	}
+	rules.Precedence = append(rules.Precedence, f.kubeconfigDirFiles()...)
+	return rules
+}
+
+// clientConfig returns a client-go ClientConfig scoped to id's context, or to
+// whatever current-context the merged kubeconfig itself names when id is
+// zero.
+func (f *clientFactory) clientConfig(id domain.ClusterID) clientcmd.ClientConfig {
+	overrides := &clientcmd.ConfigOverrides{ClusterDefaults: clientcmd.ClusterDefaults}
 	if !id.IsZero() {
-		name := id.String()
-		flags.Context = &name
+		overrides.CurrentContext = id.String()
+	}
+	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(f.loadingRules(), overrides)
+}
+
+// kubeconfigDirFiles returns the kubeconfig files found directly inside
+// KubeconfigDir, sorted by filename, for appending to the loading precedence.
+//
+// RE-SCANNED ON EVERY CALL, consistent with the kubeconfig itself never being
+// cached (see Clusters' doc comment): this runs only when the cluster picker
+// opens or a client is (re)built, the directory holds a handful of files at
+// most, and re-scanning is what makes a file dropped into the folder appear
+// without restarting PodSteer.
+//
+// A directory that does not exist is the ordinary state of a machine that has
+// not set PODSTEER_KUBECONFIG_DIR up, and is not logged. One that exists but
+// cannot be listed is logged once per process rather than on every call —
+// dirWarnOnce — because the cluster picker and every connection attempt would
+// otherwise repeat the same fact for the same unchanging reason.
+//
+// Dotfiles, subdirectories, and anything that is not a regular file after
+// following at most one symlink hop (the shape a synced folder or a password
+// manager's export leaves behind) are skipped without comment: those are
+// ordinary directory contents, not malformed kubeconfigs. A file that IS
+// considered but fails to parse as one is skipped and logged at warn, naming
+// only its path — never its contents — the same discipline Clusters already
+// applies to one bad context inside a single file.
+func (f *clientFactory) kubeconfigDirFiles() []string {
+	dir := f.cfg.KubeconfigDir
+	if dir == "" {
+		return nil
 	}
 
-	return flags
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			f.dirWarnOnce.Do(func() {
+				f.logger.Warn("kubeconfig directory cannot be listed",
+					slog.String("path", dir), slog.String("error", err.Error()))
+			})
+		}
+		return nil
+	}
+
+	candidates := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+
+		path := filepath.Join(dir, name)
+		// os.Stat follows a symlink to its target — the one hop a synced
+		// folder or a password manager's export needs. A symlink to a
+		// directory is excluded the same way a plain subdirectory is, by the
+		// IsDir check below; a broken link is excluded by the error check.
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() || !info.Mode().IsRegular() {
+			continue
+		}
+		candidates = append(candidates, path)
+	}
+	sort.Strings(candidates)
+
+	files := make([]string, 0, len(candidates))
+	for _, path := range candidates {
+		if _, err := clientcmd.LoadFromFile(path); err != nil {
+			if _, already := f.warnedFiles.LoadOrStore(path, struct{}{}); !already {
+				f.logger.Warn("skipping unparsable file in the kubeconfig directory",
+					slog.String("path", path), slog.String("error", err.Error()))
+			}
+			continue
+		}
+		f.warnedFiles.Delete(path)
+		files = append(files, path)
+	}
+	return files
 }
 
 // rawConfig returns the parsed kubeconfig, merged across $KUBECONFIG entries
-// exactly as kubectl would merge them.
+// and PODSTEER_KUBECONFIG_DIR exactly as loadingRules orders them.
 func (f *clientFactory) rawConfig() (clientcmdapi.Config, error) {
-	loader := f.configFlags("").ToRawKubeConfigLoader()
+	loader := f.clientConfig(domain.ClusterID(""))
 
 	raw, err := loader.RawConfig()
 	if err != nil {
@@ -230,7 +360,7 @@ func (f *clientFactory) kubeconfigPath(loader clientcmd.ClientConfig) string {
 
 // restConfig builds a tuned REST configuration for one cluster.
 func (f *clientFactory) restConfig(id domain.ClusterID) (*rest.Config, error) {
-	cfg, err := f.configFlags(id).ToRESTConfig()
+	cfg, err := f.clientConfig(id).ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("building client config for %q: %w: %w",
 			id, ports.ErrKubeconfigUnavailable, err)

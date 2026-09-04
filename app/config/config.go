@@ -54,6 +54,14 @@ type KubernetesConfig struct {
 	// KubeconfigPath overrides the kubeconfig location. Empty means the
 	// standard resolution order: $KUBECONFIG, then ~/.kube/config.
 	KubeconfigPath string
+	// KubeconfigDir, when set, names a directory whose kubeconfig files are
+	// merged into the loading precedence AFTER KubeconfigPath (or, when that
+	// is unset, after whatever $KUBECONFIG/~/.kube/config already resolved
+	// to) — one file per cluster, the shape `--kubeconfig-dir` in Radar and a
+	// synced Lens folder both support, for an operator who would otherwise
+	// maintain $KUBECONFIG as a path list by hand. Empty means no directory
+	// is read. See app/adapters/k8s/client.go for what gets skipped and why.
+	KubeconfigDir string
 	// QPS is the sustained request rate allowed per cluster.
 	QPS float32
 	// Burst is how far a momentary spike may exceed QPS.
@@ -133,6 +141,10 @@ func Load() (Config, error) {
 
 	if value, ok := lookup("KUBECONFIG"); ok {
 		cfg.Kubernetes.KubeconfigPath = value
+	}
+
+	if value, ok := lookup("KUBECONFIG_DIR"); ok {
+		cfg.Kubernetes.KubeconfigDir = value
 	}
 
 	if value, ok := lookup("QPS"); ok {

@@ -208,6 +208,7 @@ Everything is optional and prefixed `PODSTEER_`:
 | Variable                    | Default                         | Purpose                                         |
 | :---                        | :---                            | :---                                            |
 | `PODSTEER_KUBECONFIG`       | `$KUBECONFIG`, `~/.kube/config` | Alternative kubeconfig                          |
+| `PODSTEER_KUBECONFIG_DIR`   | unset                           | Directory of kubeconfigs, merged in after       |
 | `PODSTEER_QPS`              | `50`                            | Sustained request rate                          |
 | `PODSTEER_BURST`            | `100`                           | Burst allowance                                 |
 | `PODSTEER_REQUEST_TIMEOUT`  | `30s`                           | Per-call deadline                               |
