@@ -41,6 +41,8 @@
   import DeleteDialog from './DeleteDialog.svelte'
   import ScaleDialog from './ScaleDialog.svelte'
   import RestartDialog from './RestartDialog.svelte'
+  import KubectlHint from './KubectlHint.svelte'
+  import { apply as kubectlApply, resourceArgForKind } from '$lib/kubectl'
   import Terminal from './Terminal.svelte'
   import DependencyMap from './DependencyMap.svelte'
   import { DeleteResource, RestartRollout } from '$lib/wailsjs/go/wails/ManagementAPI'
@@ -171,6 +173,15 @@
         : session.manifest
           ? 'Edit YAML'
           : 'Nothing loaded yet',
+  )
+
+  /**
+   * The kubectl equivalent of Apply: what PodSteer actually sends is the
+   * edited manifest itself, so the only thing worth showing is the
+   * invocation that would read it from stdin — see $lib/kubectl.apply.
+   */
+  const applyCommand = $derived(
+    kubectlApply(session.cluster.id, session.selectedKind?.namespaced ? session.selectedNamespace : undefined),
   )
 
   /**
@@ -1232,6 +1243,7 @@
                bg-surface-container-low px-4 py-3"
       >
         {@render revertNotice()}
+        <KubectlHint command={applyCommand} />
         <div class="flex items-center justify-end gap-3">
           <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
           <Button variant="filled" onclick={applyEdit}>Apply</Button>
@@ -1245,14 +1257,21 @@
     open={deleteDialogOpen}
     resourceName={session.selectedName}
     resourceKind={session.selectedKind?.singular ?? 'resource'}
+    ctx={session.cluster.id}
+    resource={session.selectedKind ? resourceArgForKind(session.selectedKind) : ''}
+    namespace={session.selectedNamespace}
     onclose={() => (deleteDialogOpen = false)}
     onconfirm={handleDelete}
   />
 
-  {#if selectedWorkload}
+  {#if selectedWorkload && mappedWorkloadKind}
     <ScaleDialog
       open={scaleDialogOpen}
       currentReplicas={selectedWorkload.desired}
+      ctx={session.cluster.id}
+      kind={mappedWorkloadKind}
+      name={selectedWorkload.name}
+      namespace={selectedWorkload.namespace}
       onclose={() => (scaleDialogOpen = false)}
       onconfirm={handleScale}
     />
@@ -1273,6 +1292,12 @@
     {#snippet footer()}
       {#if editing}
         {@render revertNotice()}
+        <!-- flex-1, the same as revertNotice: this row is justify-end, so
+             whatever is not a button has to claim the leading space itself
+             or the row centres on nothing. -->
+        <div class="min-w-0 flex-1">
+          <KubectlHint command={applyCommand} />
+        </div>
         <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
         <Button variant="filled" onclick={applyEdit}>Apply</Button>
       {/if}
@@ -1317,6 +1342,8 @@
       open={restartDialogOpen}
       workloadName={selectedWorkload.name}
       workloadKind={session.selectedKind?.singular ?? 'workload'}
+      ctx={session.cluster.id}
+      namespace={selectedWorkload.namespace}
       onclose={() => (restartDialogOpen = false)}
       onconfirm={async () => {
         restartDialogOpen = false

@@ -4,16 +4,24 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import { scale } from '$lib/kubectl'
   import Button from './Button.svelte'
+  import KubectlHint from './KubectlHint.svelte'
 
   interface Props {
     open: boolean
     currentReplicas: number
     onclose: () => void
     onconfirm: (replicas: number) => void
+    /** The kubeconfig context this cluster connects through. See $lib/kubectl. */
+    ctx: string
+    /** "Deployment" or "StatefulSet" — the only two kinds this dialog scales. */
+    kind: string
+    name: string
+    namespace: string
   }
 
-  let { open, currentReplicas, onclose, onconfirm }: Props = $props()
+  let { open, currentReplicas, onclose, onconfirm, ctx, kind, name, namespace }: Props = $props()
 
   // Seeded by the effect below rather than from the prop directly: reading a
   // prop into $state() captures only its initial value, and the dialog is kept
@@ -99,6 +107,13 @@
         class="field mt-1 w-full px-3 py-2 text-body-medium"
       />
     </label>
+
+    <!-- Live: reflects whatever is currently typed above, not the value the
+         dialog opened with — the hint is a preview of what Scale is about to
+         do, not a record of what it used to say. -->
+    <div class="mt-4">
+      <KubectlHint command={scale(ctx, kind, name, namespace, replicas)} />
+    </div>
 
     <div class="mt-6 flex justify-end gap-3">
       <Button variant="outlined" onclick={onclose}>Cancel</Button>

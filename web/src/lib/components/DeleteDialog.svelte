@@ -4,7 +4,9 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import { del } from '$lib/kubectl'
   import Button from './Button.svelte'
+  import KubectlHint from './KubectlHint.svelte'
 
   interface Props {
     open: boolean
@@ -12,9 +14,16 @@
     resourceKind: string
     onclose: () => void
     onconfirm: () => void
+    /** The kubeconfig context this cluster connects through. See $lib/kubectl. */
+    ctx: string
+    /** The kubectl API resource argument, e.g. "pods" or "deployments.apps". */
+    resource: string
+    /** Empty for a cluster-scoped object. */
+    namespace: string
   }
 
-  let { open, resourceName, resourceKind, onclose, onconfirm }: Props = $props()
+  let { open, resourceName, resourceKind, onclose, onconfirm, ctx, resource, namespace }: Props =
+    $props()
 
   function onKeydown(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || !open) return
@@ -60,6 +69,12 @@
       Are you sure you want to delete <strong class="text-on-surface" data-selectable>{resourceName}</strong>?
       This action cannot be undone.
     </p>
+
+    {#if resourceName}
+      <div class="mt-4">
+        <KubectlHint command={del(ctx, resource, resourceName, namespace || undefined)} />
+      </div>
+    {/if}
 
     <div class="mt-6 flex justify-end gap-3">
       <Button variant="outlined" onclick={onclose}>Cancel</Button>

@@ -10,9 +10,11 @@
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
+  import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
   import { formatAge } from '$lib/format'
   import { cpuMeter, cpuTitle, memoryMeter, memoryTitle, type Measured } from '$lib/meter'
   import { preferences } from '$stores/preferences.svelte'
+  import { get as kubectlGet, resourceArgForKind } from '$lib/kubectl'
   import type { Tone } from '$lib/format'
   import type { ClusterSession } from '$stores/session.svelte'
   import type { Workload } from '$lib/api/client'
@@ -86,6 +88,29 @@
     if (workload.isRolling) return 'info'
     return 'success'
   }
+
+  /**
+   * The kind is the SAME for every row of this table — WorkloadsView shows
+   * one kind at a time — so it is computed once rather than re-derived per
+   * row.
+   */
+  const resource = $derived(session.selectedKind ? resourceArgForKind(session.selectedKind) : null)
+
+  function actionsFor(workload: Workload): RowAction[] {
+    if (!resource) return []
+    return [
+      {
+        label: 'Copy as kubectl',
+        kind: 'copy',
+        onclick: () =>
+          copyKubectl(kubectlGet(session.cluster.id, resource, workload.name, workload.namespace)),
+      },
+    ]
+  }
+
+  function copyKubectl(command: string): void {
+    void navigator.clipboard?.writeText(command).catch(() => {})
+  }
 </script>
 
 <DataTable
@@ -117,7 +142,7 @@
       {@const usage =
         session.workloadUsage[`${workload.namespace}/${workload.name}`] ?? UNMEASURED}
       <tr
-        class="group cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
+        class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
                {selected ? 'bg-primary/8' : 'hover:bg-surface-container-low'}"
         onclick={() => session.openDetail(workload.name, workload.namespace, undefined, workload)}
       >
@@ -223,7 +248,14 @@
             {formatAge(workload.ageSeconds)}
           </td>
         {/if}
-        <td></td>
+        <!-- Stops the click here: the row itself opens the detail drawer,
+             and a click aimed at the menu — or at one of its items — must
+             not also do that. -->
+        <td class="px-2" onclick={(event) => event.stopPropagation()}>
+          <div class="flex justify-end">
+            <RowMenu actions={actionsFor(workload)} label={workload.name} />
+          </div>
+        </td>
       </tr>
     {/each}
   {/snippet}

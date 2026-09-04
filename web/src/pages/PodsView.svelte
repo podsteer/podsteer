@@ -10,9 +10,11 @@
   import MeterBar from '$lib/components/MeterBar.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
+  import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
   import { formatAge, podStatusLabel, podTone } from '$lib/format'
   import { preferences } from '$stores/preferences.svelte'
   import { cpuMeter, cpuTitle, memoryMeter, memoryTitle } from '$lib/meter'
+  import { get as kubectlGet } from '$lib/kubectl'
   import type { ClusterSession } from '$stores/session.svelte'
   import type { Pod } from '$lib/api/client'
   import { Box, CircleDot, TriangleAlert, Plug, Loader } from '@lucide/svelte'
@@ -50,6 +52,26 @@
     return (pod.findings ?? []).filter((finding) => finding.severity !== 'info')
   }
 
+  /** What every pod row offers from its menu — just the one thing so far. */
+  function actionsFor(pod: Pod): RowAction[] {
+    return [
+      {
+        label: 'Copy as kubectl',
+        kind: 'copy',
+        onclick: () => copyKubectl(kubectlGet(session.cluster.id, 'pods', pod.name, pod.namespace)),
+      },
+    ]
+  }
+
+  /**
+   * Silent about failure, like every other copy control in the application:
+   * the clipboard is a permissioned API that can simply refuse, and there is
+   * nothing useful to say about that here.
+   */
+  function copyKubectl(command: string): void {
+    void navigator.clipboard?.writeText(command).catch(() => {})
+  }
+
   /**
    * Whether the bars divide by limits rather than requests.
    *
@@ -83,7 +105,7 @@
       {@const selected =
         session.selectedName === pod.name && session.selectedNamespace === pod.namespace}
       <tr
-        class="group cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
+        class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
                {selected ? 'bg-primary/8' : 'hover:bg-surface-container-low'}"
         onclick={() => session.openDetail(pod.name, pod.namespace, pod)}
       >
@@ -245,7 +267,14 @@
             {formatAge(pod.ageSeconds)}
           </td>
         {/if}
-        <td></td>
+        <!-- Stops the click here: the row itself opens the detail drawer,
+             and a click aimed at the menu — or at one of its items — must
+             not also do that. -->
+        <td class="px-2" onclick={(event) => event.stopPropagation()}>
+          <div class="flex justify-end">
+            <RowMenu actions={actionsFor(pod)} label={pod.name} />
+          </div>
+        </td>
       </tr>
     {/each}
   {/snippet}

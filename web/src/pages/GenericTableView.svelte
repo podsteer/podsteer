@@ -13,15 +13,45 @@
 <script lang="ts">
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
+  import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
   import { iconForKind } from '$lib/kindIcons'
+  import { get as kubectlGet, resourceArgForKind } from '$lib/kubectl'
   import { CircleDot } from '@lucide/svelte'
   import type { ClusterSession } from '$stores/session.svelte'
+  import type { TableRow } from '$lib/api/client'
 
   interface Props {
     session: ClusterSession
   }
 
   let { session }: Props = $props()
+
+  /**
+   * The kind is the SAME for every row of this table — one kind is browsed
+   * at a time — so it is computed once rather than re-derived per row.
+   */
+  const resource = $derived(session.selectedKind ? resourceArgForKind(session.selectedKind) : null)
+
+  /**
+   * Absent for a row with no name — the header-ish placeholder rows the
+   * server's own table printer occasionally sends, which the click handler
+   * already treats as unopenable. There is no object to name a command for.
+   */
+  function actionsFor(row: TableRow): RowAction[] {
+    if (!resource || !row.name) return []
+    const namespace = session.selectedKind?.namespaced ? row.namespace : undefined
+    return [
+      {
+        label: 'Copy as kubectl',
+        kind: 'copy',
+        onclick: () => copyKubectl(kubectlGet(session.cluster.id, resource, row.name, namespace)),
+      },
+    ]
+  }
+
+  function copyKubectl(command: string): void {
+    void navigator.clipboard?.writeText(command).catch(() => {})
+  }
 
   const table = $derived(session.table)
 
@@ -84,7 +114,7 @@
       {@const selected =
         session.selectedName === row.name && session.selectedNamespace === row.namespace}
       <tr
-        class="border-t border-outline-variant/40 transition-colors duration-100
+        class="group/row border-t border-outline-variant/40 transition-colors duration-100
                {row.name ? 'cursor-pointer' : ''}
                {selected ? 'bg-secondary-container/40' : 'hover:bg-surface-container-low'}"
         onclick={() => row.name && session.openDetail(row.name, row.namespace)}
@@ -108,7 +138,16 @@
             </td>
           {/if}
         {/each}
-        <td></td>
+        <!-- Stops the click here: the row itself opens the detail drawer,
+             and a click aimed at the menu — or at one of its items — must
+             not also do that. -->
+        <td class="px-2" onclick={(event) => event.stopPropagation()}>
+          {#if row.name}
+            <div class="flex justify-end">
+              <RowMenu actions={actionsFor(row)} label={row.name} />
+            </div>
+          {/if}
+        </td>
       </tr>
     {/each}
   {/snippet}
