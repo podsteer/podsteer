@@ -47,6 +47,11 @@ const (
 	CodeCancelled ErrorCode = "cancelled"
 	// CodeInvalidInput means the frontend sent an unusable argument.
 	CodeInvalidInput ErrorCode = "invalid_input"
+	// CodeDisruptionBudget means a PodDisruptionBudget refused an eviction.
+	// Its own code rather than forbidden: RBAC allowed the request, and the
+	// OBJECT'S OWN POLICY declined it — which calls for waiting and trying
+	// again, not for different credentials.
+	CodeDisruptionBudget ErrorCode = "disruption_budget"
 	// CodeInternal is the fallback for anything unclassified.
 	CodeInternal ErrorCode = "internal"
 )
@@ -153,6 +158,13 @@ func classifyError(err error) (ErrorCode, string) {
 
 	case errors.Is(err, ports.ErrNotFound):
 		return CodeNotFound, "The requested resource no longer exists"
+
+	// BEFORE ErrForbidden's message would apply: a 429 from the eviction
+	// subresource is not RBAC, and telling an operator their account is not
+	// allowed to evict a pod sends them to ask for a permission they already
+	// have.
+	case errors.Is(err, ports.ErrDisruptionBudget):
+		return CodeDisruptionBudget, "A PodDisruptionBudget refused the eviction: it would leave the workload below its minimum."
 
 	// The three transport failures are ONE code and three messages. The code is
 	// the category the UI branches on — including whether to offer Retry — and

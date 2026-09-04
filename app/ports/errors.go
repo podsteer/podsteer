@@ -93,4 +93,19 @@ var (
 	// and plenty of clusters run without it. Callers are expected to carry on
 	// and render usage columns as unmeasured.
 	ErrMetricsUnavailable = errors.New("metrics API unavailable")
+
+	// ErrDisruptionBudget means a PodDisruptionBudget refused an eviction
+	// (HTTP 429). Its own sentinel rather than folding into ErrForbidden:
+	// RBAC allowed the request and the object's OWN policy declined it,
+	// which calls for waiting and retrying rather than for different
+	// credentials — the two look identical as a bare "denied" otherwise.
+	ErrDisruptionBudget = errors.New("disruption budget refused eviction")
+
+	// ErrDrainRefused means PlanDrain found at least one pod DrainNode may
+	// not evict as the caller asked. Mirrors kubectl's own behaviour:
+	// draining stops before anything is evicted rather than doing part of a
+	// drain and leaving the rest, because a caller cannot tell "capacity
+	// freed" from "capacity freed except for the pods that mattered" without
+	// reading the report.
+	ErrDrainRefused = errors.New("drain refused: at least one pod cannot be evicted as asked")
 )

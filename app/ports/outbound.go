@@ -106,6 +106,16 @@ type WorkloadPort interface {
 
 	// ListPodsForWorkload returns all pods owned by a specific workload.
 	ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error)
+
+	// DrainCandidates returns the pods on a node with the extra facts a
+	// drain plan needs — whether each is a mirror pod the API server cannot
+	// delete, and whether it holds local storage a plan should not discard
+	// without being told to. See domain.DrainCandidate.
+	//
+	// Reuses the same field-selected listing as ListPodsOnNode rather than
+	// filtering a cluster-wide list, for the same reason: "what is on this
+	// machine" costs one indexed request, not every pod in the cluster.
+	DrainCandidates(ctx context.Context, id domain.ClusterID, nodeName string) ([]domain.DrainCandidate, error)
 }
 
 // EventPort reads Kubernetes Events.
@@ -346,6 +356,33 @@ type ManagementPort interface {
 	// The sizeQueue delivers resize events to the running process. The session
 	// runs until the context is cancelled, the command exits, or an error occurs.
 	ExecInPodWithTTY(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, command []string, stdin io.Reader, stdout, stderr io.Writer, sizeQueue TerminalSizeQueue) error
+
+	// CordonNode marks a node schedulable or unschedulable, without touching
+	// anything already running on it — cordoning removes the node from
+	// consideration for NEW pods only. A merge patch of spec.unschedulable,
+	// the same field `kubectl cordon`/`uncordon` sets.
+	CordonNode(ctx context.Context, id domain.ClusterID, name string, cordon bool) error
+
+	// EvictPod evicts one pod through the policy/v1 Eviction subresource,
+	// never a plain delete: an eviction is the one request a
+	// PodDisruptionBudget can refuse, which is the entire reason the
+	// subresource exists rather than every drain just deleting pods
+	// directly. A refusal is reported as ErrDisruptionBudget.
+	//
+	// gracePeriodSeconds is passed to the eviction's DeleteOptions; negative
+	// means "use the pod's own terminationGracePeriodSeconds".
+	EvictPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string, gracePeriodSeconds int) error
+
+	// DrainNode cordons a node, plans the drain with domain.PlanDrain, and —
+	// if the plan is runnable — evicts every pod it allows, retrying only a
+	// PodDisruptionBudget refusal until opts.Timeout elapses.
+	//
+	// Always returns a report, even when the returned error is non-nil:
+	// cordoned, refused and partially evicted are all outcomes worth
+	// showing exactly as they happened. Wraps ErrDrainRefused when the plan
+	// is not runnable, in which case the node was cordoned but nothing was
+	// evicted.
+	DrainNode(ctx context.Context, id domain.ClusterID, name string, opts domain.DrainOptions) (domain.DrainReport, error)
 }
 
 // EventPublisher delivers domain events to whatever is observing the

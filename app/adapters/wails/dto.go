@@ -385,6 +385,123 @@ func toPods(pods []domain.Pod, now time.Time) []Pod {
 	return out
 }
 
+// podRef names a pod as "namespace/name" for the drain DTOs below — a plan or
+// a report names many pods across a node's namespaces, so a bare Pod struct
+// per entry would repeat every one of its fifty-odd fields for one line of
+// UI copy.
+func podRef(pod domain.Pod) string {
+	return pod.Namespace().String() + "/" + pod.Name()
+}
+
+// DrainSkip is one pod a drain plan or report leaves alone, or refuses to
+// touch, and why. Reason is shown verbatim: domain.DrainReason values are
+// already written as sentences, not codes the frontend has to map.
+type DrainSkip struct {
+	Pod    string `json:"pod"`
+	Reason string `json:"reason"`
+}
+
+// DrainFailure is one pod a drain attempted and could not evict, or could not
+// confirm gone.
+type DrainFailure struct {
+	Pod    string `json:"pod"`
+	Reason string `json:"reason"`
+}
+
+// DrainPlanDTO previews what a drain would do, without doing it — what
+// PlanDrain returns, over the wire.
+type DrainPlanDTO struct {
+	// Evict names the pods the drain would evict.
+	Evict []string `json:"evict"`
+	// Skipped are pods the drain leaves alone regardless of options.
+	Skipped []DrainSkip `json:"skipped"`
+	// Refused are pods that block the plan until an option changes.
+	Refused []DrainSkip `json:"refused"`
+	// Runnable is false the moment Refused is non-empty. The frontend
+	// disables its confirm button on this rather than re-deriving it from
+	// len(Refused), so the domain's own rule is the one place that decides.
+	Runnable bool `json:"runnable"`
+}
+
+// toDrainPlan converts a domain drain plan for the preview the UI shows
+// before a drain runs.
+func toDrainPlan(plan domain.DrainPlan) DrainPlanDTO {
+	evict := make([]string, 0, len(plan.Evict))
+	for _, pod := range plan.Evict {
+		evict = append(evict, podRef(pod))
+	}
+
+	skipped := make([]DrainSkip, 0, len(plan.Skipped))
+	for _, skip := range plan.Skipped {
+		skipped = append(skipped, DrainSkip{Pod: podRef(skip.Pod), Reason: string(skip.Reason)})
+	}
+
+	refused := make([]DrainSkip, 0, len(plan.Refused))
+	for _, refusal := range plan.Refused {
+		refused = append(refused, DrainSkip{Pod: podRef(refusal.Pod), Reason: string(refusal.Reason)})
+	}
+
+	return DrainPlanDTO{
+		Evict:    evict,
+		Skipped:  skipped,
+		Refused:  refused,
+		Runnable: plan.Runnable(),
+	}
+}
+
+// DrainReportDTO is what happened when a drain ran, whether or not it
+// finished cleanly — what DrainNode returns, over the wire.
+type DrainReportDTO struct {
+	// Cordoned reports whether the node was marked unschedulable, true even
+	// when everything after it failed.
+	Cordoned bool `json:"cordoned"`
+	// Evicted names the pods successfully evicted and confirmed gone.
+	Evicted []string `json:"evicted"`
+	// Skipped mirrors the plan's own Skipped.
+	Skipped []DrainSkip `json:"skipped"`
+	// Refused mirrors the plan's own Refused. Non-empty only when the drain
+	// stopped before evicting anything.
+	Refused []DrainSkip `json:"refused"`
+	// Failed are pods the drain could not evict or could not confirm gone,
+	// for a reason other than a timeout.
+	Failed []DrainFailure `json:"failed"`
+	// TimedOut reports whether the timeout was reached while still waiting
+	// on a PodDisruptionBudget or a pod's termination.
+	TimedOut bool `json:"timedOut"`
+}
+
+// toDrainReport converts a domain drain report for the frontend.
+func toDrainReport(report domain.DrainReport) DrainReportDTO {
+	evicted := make([]string, 0, len(report.Evicted))
+	for _, pod := range report.Evicted {
+		evicted = append(evicted, podRef(pod))
+	}
+
+	skipped := make([]DrainSkip, 0, len(report.Skipped))
+	for _, skip := range report.Skipped {
+		skipped = append(skipped, DrainSkip{Pod: podRef(skip.Pod), Reason: string(skip.Reason)})
+	}
+
+	refused := make([]DrainSkip, 0, len(report.Refused))
+	for _, refusal := range report.Refused {
+		refused = append(refused, DrainSkip{Pod: podRef(refusal.Pod), Reason: string(refusal.Reason)})
+	}
+
+	failed := make([]DrainFailure, 0, len(report.Failed))
+	for _, failure := range report.Failed {
+		failed = append(failed, DrainFailure{Pod: failure.Pod, Reason: failure.Reason})
+	}
+
+	return DrainReportDTO{
+		Cordoned: report.Cordoned,
+		Evicted:  evicted,
+		Skipped:  skipped,
+		Refused:  refused,
+		Failed:   failed,
+		TimedOut: report.TimedOut,
+	}
+}
+
 // ClusterConnectedEvent is the payload of the "cluster:connected" event.
 type ClusterConnectedEvent struct {
 	// Cluster is the cluster that was reached.

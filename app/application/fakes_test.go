@@ -197,6 +197,20 @@ func (f *fakeKubernetes) ListPodsOnNode(_ context.Context, _ domain.ClusterID, n
 	return on, nil
 }
 
+// DrainCandidates returns the fake's pods on node as candidates with no
+// Mirror or LocalStorage set: the k8s adapter is what fills those from raw
+// corev1.Pod fields the port-level fake has no equivalent of, so a test that
+// needs one true builds its own domain.DrainCandidate directly.
+func (f *fakeKubernetes) DrainCandidates(_ context.Context, _ domain.ClusterID, node string) ([]domain.DrainCandidate, error) {
+	var candidates []domain.DrainCandidate
+	for _, pod := range f.pods {
+		if pod.NodeName() == node {
+			candidates = append(candidates, domain.DrainCandidate{Pod: pod})
+		}
+	}
+	return candidates, nil
+}
+
 func (f *fakeKubernetes) NodeFilesystems(_ context.Context, _ domain.ClusterID) (map[string]domain.NodeFilesystems, error) {
 	if f.nodeFilesystems == nil {
 		return nil, ports.ErrMetricsUnavailable
@@ -390,6 +404,25 @@ type fakeManagementPort struct {
 	setConfigMapName      string
 	setConfigMapKeyName   string
 	setConfigMapValue     string
+	cordonErr             error
+	cordonCalled          bool
+	cordonedID            domain.ClusterID
+	cordonedName          string
+	cordonedValue         bool
+
+	evictErr     error
+	evictCalled  bool
+	evictedID    domain.ClusterID
+	evictedNS    domain.NamespaceName
+	evictedName  string
+	evictedGrace int
+
+	drainErr    error
+	drainCalled bool
+	drainedID   domain.ClusterID
+	drainedName string
+	drainedOpts domain.DrainOptions
+	drainReport domain.DrainReport
 }
 
 var _ ports.ManagementPort = (*fakeManagementPort)(nil)
@@ -468,4 +501,33 @@ func (f *fakeManagementPort) SetConfigMapKey(_ context.Context, id domain.Cluste
 	f.setConfigMapKeyName = key
 	f.setConfigMapValue = value
 	return f.setConfigMapKeyErr
+}
+
+func (f *fakeManagementPort) CordonNode(_ context.Context, id domain.ClusterID, name string, cordon bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cordonCalled = true
+	f.cordonedID = id
+	f.cordonedName = name
+	f.cordonedValue = cordon
+	return f.cordonErr
+}
+func (f *fakeManagementPort) EvictPod(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string, gracePeriodSeconds int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.evictCalled = true
+	f.evictedID = id
+	f.evictedNS = namespace
+	f.evictedName = name
+	f.evictedGrace = gracePeriodSeconds
+	return f.evictErr
+}
+func (f *fakeManagementPort) DrainNode(_ context.Context, id domain.ClusterID, name string, opts domain.DrainOptions) (domain.DrainReport, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.drainCalled = true
+	f.drainedID = id
+	f.drainedName = name
+	f.drainedOpts = opts
+	return f.drainReport, f.drainErr
 }

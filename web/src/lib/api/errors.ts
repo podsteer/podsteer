@@ -21,6 +21,7 @@ export const API_ERROR_CODES = [
   'credential_plugin_missing',
   'cancelled',
   'invalid_input',
+  'disruption_budget',
   'internal',
 ] as const
 
@@ -43,6 +44,10 @@ const RETRYABLE: ReadonlySet<ApiErrorCode> = new Set<ApiErrorCode>([
   'cancelled',
   'internal',
   'unknown',
+  // A PodDisruptionBudget refusal is not permanent: the budget's own
+  // disruptions-allowed count moves as other pods finish rolling, so the
+  // same eviction can succeed a minute later with nothing else changed.
+  'disruption_budget',
 ])
 
 /** An error returned by a PodSteer backend call. */

@@ -57,6 +57,10 @@ import {
   StartPortForward as bindStartPortForward,
   StopPortForward as bindStopPortForward,
   ListPortForwards as bindListPortForwards,
+  CordonNode as bindCordonNode,
+  EvictPod as bindEvictPod,
+  PlanDrain as bindPlanDrain,
+  DrainNode as bindDrainNode,
 } from '$lib/wailsjs/go/wails/ManagementAPI'
 import { GetOverview as bindGetOverview } from '$lib/wailsjs/go/wails/OverviewAPI'
 import {
@@ -145,6 +149,15 @@ export type NamespaceLoad = wails.NamespaceLoad
 export type RestartHotspot = wails.RestartHotspot
 /** Counts for one controller kind. */
 export type WorkloadKindSummary = wails.WorkloadKindSummary
+
+/** One pod a drain plan or report leaves alone, or refuses to touch, and why. */
+export type DrainSkip = wails.DrainSkip
+/** One pod a drain attempted and could not evict, or could not confirm gone. */
+export type DrainFailure = wails.DrainFailure
+/** What a drain would do, previewed before it runs. */
+export type DrainPlan = wails.DrainPlanDTO
+/** What happened when a drain ran. */
+export type DrainReport = wails.DrainReportDTO
 
 /** Selects every namespace. Matches the backend's empty-string convention. */
 export const ALL_NAMESPACES = ''
@@ -679,6 +692,71 @@ export function suspendWorkload(
   suspend: boolean,
 ): Promise<void> {
   return call(() => bindSuspendWorkload(clusterId, kind, namespace, name, suspend))
+}
+
+/**
+ * Marks a node schedulable or unschedulable.
+ *
+ * Cordoning only affects NEW pods — nothing already running on the node is
+ * touched. Uncordoning is immediate; the caller is expected to confirm
+ * cordoning first, since it changes where the scheduler is willing to place
+ * work.
+ */
+export function cordonNode(clusterId: string, name: string, cordon: boolean): Promise<void> {
+  return call(() => bindCordonNode(clusterId, name, cordon))
+}
+
+/**
+ * Evicts one pod through the eviction subresource, distinct from deleting it:
+ * a PodDisruptionBudget may refuse this and not a delete, which is what makes
+ * it the respectful way to remove a pod from a running workload.
+ *
+ * gracePeriodSeconds negative means "use the pod's own
+ * terminationGracePeriodSeconds".
+ */
+export function evictPod(
+  clusterId: string,
+  namespace: string,
+  name: string,
+  gracePeriodSeconds: number,
+): Promise<void> {
+  return call(() => bindEvictPod(clusterId, namespace, name, gracePeriodSeconds))
+}
+
+/**
+ * Previews what draining a node would do, without touching the cluster.
+ *
+ * Call this when a drain dialog opens and again whenever force or
+ * deleteEmptyDirData changes — it is cheap (one field-selected pod list) and
+ * is what the confirm button's enabled state is built from.
+ */
+export function planDrain(
+  clusterId: string,
+  name: string,
+  force: boolean,
+  deleteEmptyDirData: boolean,
+): Promise<DrainPlan> {
+  return call(() => bindPlanDrain(clusterId, name, force, deleteEmptyDirData))
+}
+
+/**
+ * Cordons a node and evicts every pod the drain plan allows.
+ *
+ * timeoutSeconds of 0 means the backend's own default (5 minutes).
+ * gracePeriodSeconds negative means "use each pod's own
+ * terminationGracePeriodSeconds".
+ */
+export function drainNode(
+  clusterId: string,
+  name: string,
+  force: boolean,
+  deleteEmptyDirData: boolean,
+  gracePeriodSeconds: number,
+  timeoutSeconds: number,
+): Promise<DrainReport> {
+  return call(() =>
+    bindDrainNode(clusterId, name, force, deleteEmptyDirData, gracePeriodSeconds, timeoutSeconds),
+  )
 }
 
 /** Streams logs from a pod container. Returns a stream ID for stopping. */

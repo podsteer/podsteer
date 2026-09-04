@@ -42,3 +42,23 @@ func TestClassifyErrorPrefersThePluginOverTheTransport(t *testing.T) {
 		t.Fatalf("code %q, want %q", code, CodeCredentialPlugin)
 	}
 }
+
+func TestClassifyErrorDistinguishesADisruptionBudgetFromForbidden(t *testing.T) {
+	// A PodDisruptionBudget refusal must read as its own code, not as
+	// forbidden — the two send an operator to fix opposite things.
+	err := fmt.Errorf("evicting pod: %w: some error", ports.ErrDisruptionBudget)
+
+	code, message := classifyError(err)
+	if code != CodeDisruptionBudget {
+		t.Fatalf("code %q, want %q", code, CodeDisruptionBudget)
+	}
+	if !strings.Contains(message, "PodDisruptionBudget") {
+		t.Fatalf("message does not mention a PodDisruptionBudget: %q", message)
+	}
+
+	// And must never be told apart as forbidden — the RBAC message would
+	// send the operator to ask for a permission they already have.
+	if forbiddenCode, _ := classifyError(ports.ErrForbidden); forbiddenCode == code {
+		t.Fatal("CodeDisruptionBudget must differ from CodeForbidden")
+	}
+}

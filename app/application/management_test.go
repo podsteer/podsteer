@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"fmt"
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // newManagementService wires a management service over a fake port.
@@ -291,5 +293,139 @@ func TestSetConfigMapKeyPropagatesTheAdapterError(t *testing.T) {
 	err := service.SetConfigMapKey(context.Background(), "dev", "app", "settings", "greeting", "hi")
 	if !errors.Is(err, wantErr) {
 		t.Errorf("SetConfigMapKey() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestCordonNodePassesArgumentsThrough(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management)
+
+	if err := service.CordonNode(context.Background(), "dev", "node-1", true); err != nil {
+		t.Fatalf("CordonNode() error = %v", err)
+	}
+
+	if !management.cordonCalled {
+		t.Fatal("CordonNode() never reached the adapter")
+	}
+	if management.cordonedID != "dev" {
+		t.Errorf("cordoned cluster = %q, want %q", management.cordonedID, "dev")
+	}
+	if management.cordonedName != "node-1" {
+		t.Errorf("cordoned name = %q, want %q", management.cordonedName, "node-1")
+	}
+	if !management.cordonedValue {
+		t.Error("cordoned value = false, want true")
+	}
+}
+func TestCordonNodePropagatesTheAdapterError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("boom")
+	management := &fakeManagementPort{cordonErr: wantErr}
+	service := newManagementService(t, management)
+
+	err := service.CordonNode(context.Background(), "dev", "node-1", false)
+	if !errors.Is(err, wantErr) {
+		t.Errorf("CordonNode() error = %v, want %v", err, wantErr)
+	}
+}
+func TestEvictPodPassesArgumentsThrough(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management)
+
+	if err := service.EvictPod(context.Background(), "dev", "batch", "worker-1", 30); err != nil {
+		t.Fatalf("EvictPod() error = %v", err)
+	}
+
+	if !management.evictCalled {
+		t.Fatal("EvictPod() never reached the adapter")
+	}
+	if management.evictedID != "dev" {
+		t.Errorf("evicted cluster = %q, want %q", management.evictedID, "dev")
+	}
+	if management.evictedNS != "batch" {
+		t.Errorf("evicted namespace = %q, want %q", management.evictedNS, "batch")
+	}
+	if management.evictedName != "worker-1" {
+		t.Errorf("evicted name = %q, want %q", management.evictedName, "worker-1")
+	}
+	if management.evictedGrace != 30 {
+		t.Errorf("evicted grace period = %d, want 30", management.evictedGrace)
+	}
+}
+func TestEvictPodPropagatesTheAdapterError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("boom")
+	management := &fakeManagementPort{evictErr: wantErr}
+	service := newManagementService(t, management)
+
+	err := service.EvictPod(context.Background(), "dev", "batch", "worker-1", -1)
+	if !errors.Is(err, wantErr) {
+		t.Errorf("EvictPod() error = %v, want %v", err, wantErr)
+	}
+}
+func TestDrainNodePassesArgumentsThroughAndReturnsTheReport(t *testing.T) {
+	t.Parallel()
+
+	wantReport := domain.DrainReport{Cordoned: true, Evicted: []domain.Pod{mustPod(t, "batch", "worker-1")}}
+	opts := domain.DrainOptions{Force: true, DeleteEmptyDirData: true, GracePeriodSeconds: 5}
+	management := &fakeManagementPort{drainReport: wantReport}
+	service := newManagementService(t, management)
+
+	report, err := service.DrainNode(context.Background(), "dev", "node-1", opts)
+	if err != nil {
+		t.Fatalf("DrainNode() error = %v", err)
+	}
+	if len(report.Evicted) != 1 || report.Evicted[0].Name() != "worker-1" {
+		t.Errorf("DrainNode() report = %+v, want the fake's report", report)
+	}
+	if !report.Cordoned {
+		t.Error("report.Cordoned = false, want true")
+	}
+
+	if !management.drainCalled {
+		t.Fatal("DrainNode() never reached the adapter")
+	}
+	if management.drainedID != "dev" {
+		t.Errorf("drained cluster = %q, want %q", management.drainedID, "dev")
+	}
+	if management.drainedName != "node-1" {
+		t.Errorf("drained name = %q, want %q", management.drainedName, "node-1")
+	}
+	if management.drainedOpts != opts {
+		t.Errorf("drained opts = %+v, want %+v", management.drainedOpts, opts)
+	}
+}
+
+// TestDrainNodeReturnsTheReportEvenWhenRefused proves the report is not
+// discarded just because the call also failed — an ErrDrainRefused still
+// cordoned the node, and the caller needs to see what was refused and why.
+func TestDrainNodeReturnsTheReportEvenWhenRefused(t *testing.T) {
+	t.Parallel()
+
+	wantReport := domain.DrainReport{
+		Cordoned: true,
+		Refused:  []domain.DrainRefusal{{Pod: mustPod(t, "batch", "standalone"), Reason: domain.DrainReasonBarePod}},
+	}
+	management := &fakeManagementPort{
+		drainReport: wantReport,
+		drainErr:    fmt.Errorf("draining node %q: %w", "node-1", ports.ErrDrainRefused),
+	}
+	service := newManagementService(t, management)
+
+	report, err := service.DrainNode(context.Background(), "dev", "node-1", domain.DrainOptions{})
+	if !errors.Is(err, ports.ErrDrainRefused) {
+		t.Errorf("DrainNode() error = %v, want %v", err, ports.ErrDrainRefused)
+	}
+	if !report.Cordoned {
+		t.Error("report.Cordoned = false, want true even on refusal")
+	}
+	if len(report.Refused) != 1 {
+		t.Errorf("report.Refused = %+v, want exactly 1", report.Refused)
 	}
 }

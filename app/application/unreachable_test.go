@@ -113,6 +113,10 @@ func (g *goneCluster) ListPodsOnNode(context.Context, domain.ClusterID, string) 
 	return nil, g.err(false)
 }
 
+func (g *goneCluster) DrainCandidates(context.Context, domain.ClusterID, string) ([]domain.DrainCandidate, error) {
+	return nil, g.err(false)
+}
+
 func (g *goneCluster) NodeFilesystems(context.Context, domain.ClusterID) (map[string]domain.NodeFilesystems, error) {
 	return nil, g.err(false)
 }
