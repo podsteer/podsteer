@@ -12,8 +12,10 @@
 -->
 <script lang="ts">
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { iconForKind } from '$lib/kindIcons'
+  import { preferences } from '$stores/preferences.svelte'
   import { CircleDot } from '@lucide/svelte'
   import type { ClusterSession } from '$stores/session.svelte'
 
@@ -61,6 +63,28 @@
       ? [{ id: 'kind', label: 'Kind', width: 44, icon: CircleDot, pinned: true }, ...printed]
       : printed,
   )
+
+  /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
+      repeated here rather than asked of either. */
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[session.selectedKindId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /**
+   * The generic table's CSV export: the server's own printed column names,
+   * exactly as it named them — not the icon column, which carries no text of
+   * its own, only a mark this view drew in front of the kind's rows.
+   */
+  function exportCSV(): CSVExport {
+    const visible = printed.filter(isColumnVisible)
+    const indices = visible.map((column) => Number(column.id.slice(1)))
+
+    return {
+      columns: visible.map((column) => column.label),
+      rows: session.sortedTableRows.map((row) => indices.map((index) => row.cells[index] ?? '')),
+    }
+  }
 </script>
 
 <DataTable
@@ -69,6 +93,7 @@
   isEmpty={session.pagedTableRows.length === 0}
   sort={session.sort}
   onsort={session.toggleSort}
+  exportRows={exportCSV}
 >
   {#snippet empty()}
     <EmptyState

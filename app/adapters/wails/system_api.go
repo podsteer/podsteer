@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"runtime"
 	"strings"
 
@@ -36,6 +37,14 @@ type SystemAPI struct {
 	info   AppInfo
 	app    *App
 	logger *slog.Logger
+
+	// chooseSavePath opens the native save dialog and returns the operator's
+	// choice, or "" if they cancelled.
+	//
+	// A field rather than a direct call to wailsruntime.SaveFileDialog, so a
+	// test can stub the chosen path instead of popping a real dialog — which
+	// would hang `go test` waiting for an operator who is not there.
+	chooseSavePath func(suggestedName string) (string, error)
 }
 
 // NewSystemAPI returns the bound system API.
@@ -47,7 +56,7 @@ func NewSystemAPI(name, version string, app *App, logger *slog.Logger) (*SystemA
 		logger = slog.Default()
 	}
 
-	return &SystemAPI{
+	s := &SystemAPI{
 		info: AppInfo{
 			Name:     name,
 			Version:  version,
@@ -56,7 +65,9 @@ func NewSystemAPI(name, version string, app *App, logger *slog.Logger) (*SystemA
 		},
 		app:    app,
 		logger: logger.With(slog.String("api", "system")),
-	}, nil
+	}
+	s.chooseSavePath = s.showSaveDialog
+	return s, nil
 }
 
 // Info returns the running application's identity.
@@ -123,6 +134,60 @@ func (s *SystemAPI) LicenceText(textID string) (string, error) {
 			errNotFound, textID))
 	}
 	return text, nil
+}
+
+// showSaveDialog is chooseSavePath's real implementation: the native save
+// dialog, seeded with the suggested filename and restricted to CSV.
+func (s *SystemAPI) showSaveDialog(suggestedName string) (string, error) {
+	ctx, ok := s.app.runtimeContext()
+	if !ok {
+		return "", fmt.Errorf("the window is not running")
+	}
+
+	return wailsruntime.SaveFileDialog(ctx, wailsruntime.SaveDialogOptions{
+		Title:           "Export CSV",
+		DefaultFilename: suggestedName,
+		Filters: []wailsruntime.FileFilter{
+			{DisplayName: "CSV (*.csv)", Pattern: "*.csv"},
+		},
+	})
+}
+
+// SaveTextFile opens a native save dialog seeded with suggestedName and
+// writes content to wherever the operator chose.
+//
+// This is the one place PodSteer writes a file the OPERATOR picked the
+// location for, rather than one of the fixed per-user paths — history and
+// display preferences — everything else in SECURITY.md enumerates. The write
+// happens here, in Go, because the webview cannot touch the filesystem and
+// should not be able to: handing the frontend a path instead would mean
+// trusting whatever content it sent, unauthenticated, to land wherever it
+// said.
+//
+// An empty returned path means the operator cancelled the dialog, which is
+// not an error — see ReadKubeconfigFile for the same convention on the way
+// in.
+func (s *SystemAPI) SaveTextFile(suggestedName, content string) (string, error) {
+	if strings.TrimSpace(suggestedName) == "" {
+		return "", apiError(s.logger, "SaveTextFile", errEmptySuggestedName)
+	}
+
+	path, err := s.chooseSavePath(suggestedName)
+	if err != nil {
+		return "", apiError(s.logger, "SaveTextFile", err)
+	}
+	if path == "" {
+		return "", nil
+	}
+
+	// 0o600: the export can hold whatever the cluster returned, including
+	// values another local account has no business reading — the same reasoning
+	// behind every other write in SECURITY.md's enumeration.
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		return "", apiError(s.logger, "SaveTextFile", err)
+	}
+
+	return path, nil
 }
 
 // allowedURLSchemes are the only schemes OpenURL will hand to the OS.

@@ -17,3 +17,7 @@ export function LicenceText(arg1) {
 export function OpenURL(arg1) {
   return window['go']['wails']['SystemAPI']['OpenURL'](arg1);
 }
+
+export function SaveTextFile(arg1, arg2) {
+  return window['go']['wails']['SystemAPI']['SaveTextFile'](arg1, arg2);
+}

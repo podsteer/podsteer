@@ -7,11 +7,14 @@
 -->
 <script lang="ts">
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { formatAge } from '$lib/format'
+  import { preferences } from '$stores/preferences.svelte'
   import { Activity, CircleDot } from '@lucide/svelte'
   import type { ClusterSession } from '$stores/session.svelte'
+  import type { K8sEvent } from '$lib/api/client'
 
   interface Props {
     session: ClusterSession
@@ -29,6 +32,46 @@
     { id: 'count', label: 'Count', width: 96, numeric: true },
     { id: 'age', label: 'Last seen', width: 116, numeric: true },
   ]
+
+  /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
+      repeated here rather than asked of either. */
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[session.selectedKindId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /** The event list's CSV export, mirroring exactly what each cell shows. */
+  function exportCSV(): CSVExport {
+    const visible = COLUMNS.filter(isColumnVisible)
+
+    function cell(event: K8sEvent, id: string): string {
+      switch (id) {
+        case 'type':
+          return event.type
+        case 'reason':
+          return event.reason
+        case 'object':
+          return event.involvedObject
+        case 'namespace':
+          return event.namespace
+        case 'message':
+          return event.message
+        case 'source':
+          return event.source || '—'
+        case 'count':
+          return String(event.count)
+        case 'age':
+          return formatAge(event.ageSeconds)
+        default:
+          return ''
+      }
+    }
+
+    return {
+      columns: visible.map((column) => column.label),
+      rows: session.sortedEvents.map((event) => visible.map((column) => cell(event, column.id))),
+    }
+  }
 </script>
 
 <DataTable
@@ -37,6 +80,7 @@
   isEmpty={session.pagedEvents.length === 0}
   sort={session.sort}
   onsort={session.toggleSort}
+  exportRows={exportCSV}
 >
   {#snippet empty()}
     <EmptyState

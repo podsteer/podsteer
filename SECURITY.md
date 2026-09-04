@@ -83,6 +83,14 @@ Linux, `%AppData%\PodSteer` on Windows); and display preferences — theme,
 page size, column widths — which the interface keeps in the webview's own
 storage rather than in that directory.
 
+A third kind of write is a CSV export, only where you choose to save it,
+containing exactly the rows and columns a table is showing you at the moment
+you export it — filtered by whatever you searched for, in whatever order you
+sorted them, limited to the columns you have not hidden. It goes through the
+same native save dialog `kubectl` and every other desktop tool uses, is
+written at mode 0600 like everything else here, and is never written anywhere
+PodSteer chose on its own.
+
 ### In scope
 
 - Anything that lets PodSteer act on a cluster beyond what the loaded

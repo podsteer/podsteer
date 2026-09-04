@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
@@ -86,6 +87,67 @@
     if (workload.isRolling) return 'info'
     return 'success'
   }
+
+  /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
+      repeated here rather than asked of either. */
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[session.selectedKindId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /** The controller list's CSV export. Every field is the text its own cell
+      shows — the meter columns export the aggregated usage with its unit,
+      not the bare percentage, exactly as WorkloadsView derives it for the
+      row. */
+  function exportCSV(): CSVExport {
+    const visible = columns.filter(isColumnVisible)
+
+    function cell(workload: Workload, id: string): string {
+      const usage = session.workloadUsage[`${workload.namespace}/${workload.name}`] ?? UNMEASURED
+      switch (id) {
+        case 'status':
+          return workload.status
+        case 'name':
+          return workload.name
+        case 'namespace':
+          return workload.namespace
+        case 'schedule':
+          return workload.schedule || '—'
+        case 'lastRun':
+          return workload.lastScheduled ? new Date(workload.lastScheduled).toLocaleString() : 'never'
+        case 'ready':
+          return workload.ready
+        case 'updated':
+          return String(workload.updated)
+        case 'available':
+          return String(workload.available)
+        case 'cpu':
+          return usage.hasMetrics ? usage.cpu : '—'
+        case 'memory':
+          return usage.hasMetrics ? usage.memory : '—'
+        case 'images':
+          return workload.images.join(', ') || '—'
+        case 'gitops': {
+          const owner = gitOpsOwner({
+            metadata: { labels: workload.labels, annotations: workload.annotations },
+          })
+          if (!owner) return '—'
+          return owner.source ? `${owner.label}/${owner.source}` : owner.label
+        }
+        case 'controlledBy':
+          return workload.controlledBy || '—'
+        case 'age':
+          return formatAge(workload.ageSeconds)
+        default:
+          return ''
+      }
+    }
+
+    return {
+      columns: visible.map((column) => column.label),
+      rows: session.sortedWorkloads.map((workload) => visible.map((column) => cell(workload, column.id))),
+    }
+  }
 </script>
 
 <DataTable
@@ -94,6 +156,7 @@
   isEmpty={session.pagedWorkloads.length === 0}
   sort={session.sort}
   onsort={session.toggleSort}
+  exportRows={exportCSV}
 >
   {#snippet empty()}
     <EmptyState
