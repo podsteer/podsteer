@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
@@ -141,6 +142,11 @@ type clients struct {
 	// metrics reads the metrics.k8s.io API. Present even on clusters without
 	// metrics-server — calls simply fail, which callers expect.
 	metrics metricsclient.Interface
+	// meta lists PartialObjectMetadata only — names, labels, managedFields —
+	// never a full object body. It exists so a scan for who last wrote an
+	// object through a deprecated API version never has to pull object
+	// bodies (or Secret contents) to learn that.
+	meta metadata.Interface
 	// config is retained for requests that bypass the typed clients, notably
 	// the server-side table printing used by the generic browser.
 	config *rest.Config
@@ -509,11 +515,17 @@ func (f *clientFactory) clientsFor(id domain.ClusterID) (*clients, error) {
 		return nil, fmt.Errorf("creating metrics client for %q: %w", id, err)
 	}
 
+	meta, err := metadata.NewForConfig(rest.CopyConfig(cfg))
+	if err != nil {
+		return nil, fmt.Errorf("creating metadata client for %q: %w", id, err)
+	}
+
 	built := &clients{
 		typed:     typed,
 		dynamic:   dyn,
 		discovery: disco,
 		metrics:   metrics,
+		meta:      meta,
 		config:    dynamicConfig,
 	}
 

@@ -50,6 +50,9 @@ type Adapter struct {
 	// backends caches metrics-backend discovery, which answers a question
 	// whose value moves in days: a monitoring stack is installed once.
 	backends backendCache
+	// upgrades caches served API discovery and the writer scans found for
+	// deprecated versions of it — see upgrade.go.
+	upgrades upgradeCache
 	// watches mirror a cluster's pods locally, so a refresh reads memory
 	// rather than the network. An optimisation: see watch.go, where the
 	// governing sentence is that polling remains the truth.
@@ -159,6 +162,7 @@ func (a *Adapter) Invalidate(id domain.ClusterID) {
 	// would answer the first assessment of a freshly opened cluster with
 	// numbers from before it was closed.
 	a.filesystems.forget(id)
+	a.upgrades.forget(id)
 	a.reads.forget(id.String())
 }
 

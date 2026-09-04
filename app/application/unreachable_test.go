@@ -125,6 +125,14 @@ func (g *goneCluster) DiscoverMetricsBackend(context.Context, domain.ClusterID) 
 	return domain.MetricsBackend{}, g.err(false)
 }
 
+func (g *goneCluster) ServedAPIs(context.Context, domain.ClusterID) ([]domain.APIGroupVersion, error) {
+	return nil, g.err(false)
+}
+
+func (g *goneCluster) APIWriters(context.Context, domain.ClusterID, domain.ResourceKind, int) (domain.APIUsage, error) {
+	return domain.APIUsage{}, g.err(false)
+}
+
 func goneService(t *testing.T, cluster *goneCluster) *application.OverviewService {
 	t.Helper()
 
@@ -134,6 +142,7 @@ func goneService(t *testing.T, cluster *goneCluster) *application.OverviewServic
 		Workloads: cluster,
 		Events:    cluster,
 		Metrics:   cluster,
+		APIs:      cluster,
 		Registry:  registry,
 	})
 	if err != nil {

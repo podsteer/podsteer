@@ -21,6 +21,7 @@ package domain
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -136,6 +137,23 @@ func minorOf(gitVersion string) (string, bool) {
 // since, and "unknown" without that context reads as a bug.
 func ScheduleCompiledAt() time.Time { return scheduleCompiledAt }
 
+// nextMinor returns the minor immediately after version's, e.g. "1.31" ->
+// "1.32", false when version cannot be placed at all.
+//
+// Deliberately arithmetic rather than a table lookup: the NEXT minor exists
+// whether or not this build's support and deprecation tables have caught up
+// with it yet, and refusing to name it until they had would defeat the point
+// of asking "what does the next upgrade do" the moment either table goes
+// stale.
+func nextMinor(version ServerVersion) (string, bool) {
+	minor, ok := minorOf(version.GitVersion)
+	if !ok {
+		return "", false
+	}
+	major, small := numbers(minor)
+	return fmt.Sprintf("%d.%d", major, small+1), true
+}
+
 // oldestKnown returns the lowest minor version in the table.
 func oldestKnown() (string, bool) {
 	oldest := ""
@@ -145,6 +163,23 @@ func oldestKnown() (string, bool) {
 		}
 	}
 	return oldest, oldest != ""
+}
+
+// KnownMinors returns every minor the support-window table has an entry for,
+// oldest first.
+//
+// Exposed so the "check against" selector can offer a bounded range —
+// starting at the next minor, never past the newest one this build's table
+// knows — rather than a free-text field that could ask UpgradeImpact about a
+// version neither table has ever heard of and get back a silent nothing with
+// no explanation why.
+func KnownMinors() []string {
+	minors := make([]string, 0, len(endOfLife))
+	for minor := range endOfLife {
+		minors = append(minors, minor)
+	}
+	sort.Slice(minors, func(i, j int) bool { return compareMinor(minors[i], minors[j]) < 0 })
+	return minors
 }
 
 // compareMinor orders two "major.minor" strings numerically, because "1.9"

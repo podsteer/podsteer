@@ -356,6 +356,25 @@ func toReleaseSupport(support domain.ReleaseSupport) ReleaseSupport {
 	return out
 }
 
+// UpgradeSummary is the one-line version of what the upgrade-impact findings
+// found, for the overview header's "check against" selector — the findings
+// themselves are already in Overview.Findings, this only saves the frontend
+// from filtering and counting them by category.
+type UpgradeSummary struct {
+	// TargetMinor is the Kubernetes minor the assessment was made against,
+	// e.g. "1.33". Empty means no target could be placed at all — Version
+	// was unparseable — which the UI reads differently from "assessed and
+	// found nothing".
+	TargetMinor string `json:"targetMinor"`
+	// Count is how many upgrade-impact findings were raised, at any
+	// severity.
+	Count int `json:"count"`
+}
+
+func toUpgradeSummary(upgrade domain.UpgradeSummary) UpgradeSummary {
+	return UpgradeSummary{TargetMinor: upgrade.TargetMinor, Count: upgrade.Count}
+}
+
 // NodeLoad is one node's share of the work.
 type NodeLoad struct {
 	Name         string `json:"name"`
@@ -569,6 +588,15 @@ type Overview struct {
 	CriticalCount int `json:"criticalCount"`
 	WarningCount  int `json:"warningCount"`
 	InfoCount     int `json:"infoCount"`
+	// Upgrade summarises the upgrade-impact findings against Support.Minor's
+	// next release, or whatever minor the "check against" selector chose —
+	// see GetOverviewForTarget.
+	Upgrade UpgradeSummary `json:"upgrade"`
+	// KnownMinors is every minor the support-window table has an entry for,
+	// oldest first — what the "check against" selector offers, bounded to
+	// versions this build can actually reason about instead of a free-text
+	// field that could ask about one neither table has heard of.
+	KnownMinors []string `json:"knownMinors"`
 }
 
 // MetricsBackend is a monitoring system found running in the cluster.
@@ -617,6 +645,8 @@ func toOverview(overview domain.Overview) Overview {
 		Unavailable: overview.Unavailable,
 		Metrics:     string(overview.Metrics),
 		Backend:     toMetricsBackend(overview.Backend),
+		Upgrade:     toUpgradeSummary(overview.Upgrade),
+		KnownMinors: domain.KnownMinors(),
 	}
 
 	for _, finding := range overview.Findings {
