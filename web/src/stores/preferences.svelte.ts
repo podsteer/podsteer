@@ -1171,6 +1171,7 @@ class Preferences {
           }
         }
         this.pinnedKinds = cleaned
+      }
       if (stored.localPortByRemotePort && typeof stored.localPortByRemotePort === 'object') {
         this.localPortByRemotePort = stored.localPortByRemotePort
       }
