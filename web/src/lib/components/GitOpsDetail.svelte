@@ -110,7 +110,7 @@
     rows.push({ label: 'Project', value: argo.project || '—' })
 
     // Said in the CRD's own terms. "Automated" with neither option is a
-    // legitimate setting and reads differently from "manual", which is what
+    // legitimate setting and reads differently to a manual policy, which is what
     // an Application with no sync policy at all is.
     const options = [argo.syncPolicy.prune && 'prune', argo.syncPolicy.selfHeal && 'self-heal'].filter(Boolean)
     rows.push({
