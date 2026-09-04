@@ -7,9 +7,13 @@
   Browser autocomplete is disabled (`type="text"` plus `autocomplete="off"`)
   so the native suggestion list and its built-in clear button never appear
   alongside our own.
+
+  The value is not only ever a plain substring any more — see `$lib/query` —
+  so this also carries an invalid state for a pattern that failed to parse,
+  and a description for what the box currently accepts.
 -->
 <script lang="ts">
-  import { Search, X, Command } from '@lucide/svelte'
+  import { Search, AlertCircle, X, Command } from '@lucide/svelte'
   import { isMac } from '$lib/platform'
 
   interface Props {
@@ -23,9 +27,35 @@
      */
     onnext?: () => boolean
     class?: string
+    /**
+     * True when the query does not parse — an unclosed regex, typically.
+     * Swaps the leading icon for an alert and recolours the border, the same
+     * vocabulary ErrorBanner uses for a failure, scaled down to a field.
+     */
+    invalid?: boolean
+    /**
+     * The field's `title` and accessible description: the parse error while
+     * `invalid`, otherwise a one-line summary of the syntax currently in
+     * effect (`describeQuery`). Omit to leave both unset.
+     */
+    description?: string
   }
 
-  let { value, placeholder = 'Search…', onchange, onnext, class: className = '' }: Props = $props()
+  let {
+    value,
+    placeholder = 'Search…',
+    onchange,
+    onnext,
+    class: className = '',
+    invalid = false,
+    description,
+  }: Props = $props()
+
+  // `aria-describedby` needs an id to point at, and this field can appear
+  // more than once — the Cmd+K box today, potentially another table's
+  // tomorrow — so the id is generated per instance rather than hard-coded.
+  const uid = $props.id()
+  const descriptionId = `${uid}-description`
 
   let inputEl = $state<HTMLInputElement | null>(null)
 
@@ -54,10 +84,14 @@
 </script>
 
 <label class="relative flex items-center {className}">
-  <Search
-    class="pointer-events-none absolute left-3 size-3.5 text-on-surface-variant/60"
-    strokeWidth={2}
-  />
+  {#if invalid}
+    <AlertCircle class="pointer-events-none absolute left-3 size-3.5 text-error" strokeWidth={2} />
+  {:else}
+    <Search
+      class="pointer-events-none absolute left-3 size-3.5 text-on-surface-variant/60"
+      strokeWidth={2}
+    />
+  {/if}
   <!--
     NAMED EXPLICITLY, because the label wrapping this has no text of its own —
     only the search icon, the shortcut chip and the clear button. A screen
@@ -76,10 +110,22 @@
     {value}
     {placeholder}
     aria-label={placeholder}
+    aria-invalid={invalid || undefined}
+    aria-describedby={description ? descriptionId : undefined}
+    title={description}
     oninput={(event) => onchange(event.currentTarget.value)}
     onkeydown={handleKeydown}
+    style:border-color={invalid ? 'var(--color-error)' : undefined}
     class="field h-8 w-full pl-9 text-body-medium {value ? 'pr-8' : 'pr-16'}"
   />
+
+  <!-- `aria-describedby` needs an element, not a string — unlike the draft
+       `aria-description` attribute this targets, which svelte-check's a11y
+       lint does not yet recognise on an input. Visually hidden: `title`
+       already carries this to a sighted pointer user via hover. -->
+  {#if description}
+    <span id={descriptionId} class="sr-only">{description}</span>
+  {/if}
 
   {#if value}
     <button

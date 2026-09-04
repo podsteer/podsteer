@@ -42,6 +42,8 @@ import {
 } from '$lib/api/client'
 import { ApiError, toApiError } from '$lib/api/errors'
 import { podStatusLabel } from '$lib/format'
+import { matchesPodStatusChips } from '$lib/podStatusFilters'
+import { describeQuery, matches, parseQuery, type Query, type Row } from '$lib/query'
 import {
   parseAgeSeconds,
   parseQuantity,
@@ -300,6 +302,14 @@ export class ClusterSession {
   sorts = $state<Record<string, SortState>>({})
 
   /**
+   * Active status quick-filter ids on the Pods page — see
+   * `$lib/podStatusFilters`. Pod-only rather than a per-kind record like
+   * `sorts`, because no other view has quick-filter chips; if one grows some
+   * this should become one.
+   */
+  podStatusFilters = $state<string[]>([])
+
+  /**
    * Rows for whichever view is active. Only one is populated at a time.
    *
    * `$state.raw`, not `$state`, and the difference is the cost of a refresh.
@@ -452,22 +462,78 @@ export class ClusterSession {
    */
   readonly isList = $derived(this.viewMode !== 'overview')
 
-  /** Rows after the search filter, for whichever view is active. */
+  /**
+   * The search term parsed into a filter language query — regex, negation and
+   * label selectors alongside the plain substring `search` always supported.
+   * See `$lib/query`.
+   *
+   * Parsed here, ONCE per settled search term, rather than inside
+   * `filterRows` per row: a regex compile and a tokenise pass are cheap once
+   * and expensive five thousand times over.
+   */
+  readonly query = $derived(parseQuery(this.search))
+
+  /**
+   * The query for what is CURRENTLY in the box, parsed live rather than
+   * after the debounce `query` waits for.
+   *
+   * Parsing itself is cheap — it is FILTERING the rows that is worth
+   * debouncing — so the field's error state (an unclosed regex, mid-type)
+   * can appear immediately instead of a beat behind the keystroke that
+   * caused it.
+   */
+  readonly typedQuery = $derived(parseQuery(this.typedSearch))
+
+  /** The invalid-regex message for `typedQuery`, or undefined when it parses
+      cleanly. Drives the search field's error styling and accessible
+      description. */
+  readonly searchError = $derived(this.typedQuery.error)
+
+  /** A one-line summary of the syntax currently in the box, for the field's
+      tooltip — see `describeQuery`. */
+  readonly searchDescription = $derived(describeQuery(this.typedQuery))
+
+  /**
+   * Pods after the search filter alone, BEFORE the status quick-filter chips.
+   *
+   * Kept separate from `visiblePods` so the chip row can count how many of
+   * what a search already narrowed down each chip would ADD — including a
+   * chip that is not currently selected. Counting against the
+   * already-chip-filtered list would make every unselected chip's count
+   * collapse towards zero the moment any chip was active.
+   */
+  readonly searchedPods = $derived(
+    filterRows(
+      this.pods,
+      this.query,
+      (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase],
+      (pod) => pod.labels,
+    ),
+  )
+
+  /**
+   * Rows after the search filter, for whichever view is active.
+   *
+   * Pods additionally pass through the status quick-filter chips — ANDed
+   * with the text query, since a search term and a chip both narrow the
+   * same list rather than answering different questions.
+   */
   readonly visiblePods = $derived(
-    filterRows(this.pods, this.search, (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase]),
+    this.searchedPods.filter((pod) => matchesPodStatusChips(pod, this.podStatusFilters)),
   )
   readonly visibleNodes = $derived(
-    filterRows(this.nodes, this.search, (node) => [node.name, node.status, ...node.roles]),
+    filterRows(this.nodes, this.query, (node) => [node.name, node.status, ...node.roles]),
   )
   readonly visibleWorkloads = $derived(
-    filterRows(this.workloads, this.search, (workload) => [
-      workload.name,
-      workload.namespace,
-      workload.status,
-    ]),
+    filterRows(
+      this.workloads,
+      this.query,
+      (workload) => [workload.name, workload.namespace, workload.status],
+      (workload) => workload.labels,
+    ),
   )
   readonly visibleApplications = $derived(
-    filterRows(this.applications, this.search, (application) => [
+    filterRows(this.applications, this.query, (application) => [
       application.instance,
       application.namespace,
       application.partOf,
@@ -475,10 +541,10 @@ export class ClusterSession {
     ]),
   )
   readonly visibleNamespaces = $derived(
-    filterRows(this.namespaceRows, this.search, (namespace) => [namespace.name, namespace.phase]),
+    filterRows(this.namespaceRows, this.query, (namespace) => [namespace.name, namespace.phase]),
   )
   readonly visibleEvents = $derived(
-    filterRows(this.events, this.search, (event) => [
+    filterRows(this.events, this.query, (event) => [
       event.reason,
       event.message,
       event.involvedObject,
@@ -486,7 +552,7 @@ export class ClusterSession {
     ]),
   )
   readonly visibleTableRows = $derived(
-    filterRows(this.table?.rows ?? [], this.search, (row) => [row.name, row.namespace, ...row.cells]),
+    filterRows(this.table?.rows ?? [], this.query, (row) => [row.name, row.namespace, ...row.cells]),
   )
 
   /** Total rows after filtering, before pagination. */
@@ -886,6 +952,22 @@ export class ClusterSession {
       this.#searchTimer = null
       this.search = this.typedSearch
     }, SEARCH_DEBOUNCE_MS)
+  }
+
+  /**
+   * Toggles one status quick-filter chip on the Pods page.
+   *
+   * Resets to the first page, for the same reason `setSearch` does: the
+   * visible rows just changed, so wherever the operator was pointing may no
+   * longer exist. Not persisted anywhere — see `preferences.svelte.ts` for
+   * what IS — because a chip is a "right now" question about what is broken,
+   * not a standing preference about how to view Pods.
+   */
+  togglePodStatusFilter = (id: string): void => {
+    this.podStatusFilters = this.podStatusFilters.includes(id)
+      ? this.podStatusFilters.filter((existing) => existing !== id)
+      : [...this.podStatusFilters, id]
+    this.page = 1
   }
 
   /** Moves to a page, clamped to the range that exists. */
@@ -1591,17 +1673,32 @@ export class ClusterSession {
 }
 
 /**
- * Filters rows by a search term across the fields a projector exposes.
+ * Filters rows by a parsed query — see `$lib/query` for the grammar
+ * (substring by default, plus regex, negation and label selectors).
  *
- * Case-insensitive substring matching rather than fuzzy: an operator searching
- * a pod list is usually pasting part of a name they already have, and fuzzy
- * matching would bury the exact hit among approximations.
+ * `text` projects the fields a plain substring search always compared
+ * against, joined into the one string `matches` tests a substring or regex
+ * term against — the concatenation IS the "row.text" the query language
+ * matches over. `labels` is omitted for every kind whose DTO does not carry
+ * one (Nodes, Namespaces, Events, Applications, every generic table row);
+ * `matches` already treats an absent label map as "this row has no labels"
+ * rather than as a reason to special-case the call site.
+ *
+ * The query is parsed once by the caller (`session.query`) and passed in
+ * already-parsed, not re-parsed per row.
  */
-function filterRows<T>(rows: T[], search: string, project: (row: T) => (string | undefined)[]): T[] {
-  const term = search.trim().toLowerCase()
-  if (!term) return rows
+function filterRows<T>(
+  rows: T[],
+  query: Query,
+  text: (row: T) => (string | undefined)[],
+  labels?: (row: T) => Record<string, string> | undefined,
+): T[] {
+  if (query.terms.length === 0) return rows
 
   return rows.filter((row) =>
-    project(row).some((field) => field?.toLowerCase().includes(term)),
+    matches(query, {
+      text: text(row).filter((field): field is string => Boolean(field)).join(' '),
+      labels: labels?.(row),
+    } satisfies Row),
   )
 }

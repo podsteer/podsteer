@@ -132,3 +132,60 @@ describe('opening an object that was not clicked', () => {
     expect(open.selectedPod?.name).toBe('shared')
   })
 })
+
+describe('filtering the pod list', () => {
+  let open: ClusterSession
+
+  beforeEach(() => {
+    open = session()
+    open.pods = [
+      { name: 'web-1', namespace: 'prod', nodeName: 'node-a', phase: 'Running', statusReason: '' } as Pod,
+      { name: 'web-2', namespace: 'prod', nodeName: 'node-a', phase: 'Pending', statusReason: '' } as Pod,
+      {
+        name: 'db-1',
+        namespace: 'prod',
+        nodeName: 'node-b',
+        phase: 'Running',
+        statusReason: 'CrashLoopBackOff',
+      } as Pod,
+    ]
+  })
+
+  it('combines the search query and a status chip with AND', () => {
+    // THE BEHAVIOUR THIS GUARDS. A chip narrows what a search already
+    // narrowed, not a separate question — selecting "Pending" while
+    // searching "web" must not bring back a pod the search itself excluded.
+    open.search = 'web'
+    open.togglePodStatusFilter('pending')
+
+    expect(open.visiblePods.map((pod) => pod.name)).toEqual(['web-2'])
+  })
+
+  it('ORs several selected chips together', () => {
+    open.togglePodStatusFilter('pending')
+    open.togglePodStatusFilter('restarting')
+
+    expect(open.visiblePods.map((pod) => pod.name).sort()).toEqual(['db-1', 'web-2'])
+  })
+
+  it('toggling a chip off restores what it had removed', () => {
+    open.togglePodStatusFilter('pending')
+    expect(open.visiblePods).toHaveLength(1)
+
+    open.togglePodStatusFilter('pending')
+    expect(open.visiblePods).toHaveLength(3)
+  })
+
+  it('counts against the search-filtered list, not the chip-filtered one', () => {
+    // THE BUG THIS GUARDS. Counting against `visiblePods` (search AND chips)
+    // would make every OTHER chip's count collapse the moment one chip was
+    // selected — a "Pending" count of zero while a pod is sitting right
+    // there, merely because "Restarting" happened to be the chip picked.
+    // `searchedPods` is search-only, so a chip's own count is unaffected by
+    // which chips happen to be selected.
+    open.togglePodStatusFilter('restarting')
+
+    expect(open.searchedPods).toHaveLength(3)
+    expect(open.searchedPods.some((pod) => pod.phase === 'Pending')).toBe(true)
+  })
+})
