@@ -21,6 +21,8 @@
   import { gitOpsPanelFor } from '$lib/gitops/panel'
   import OperatorDetail from './OperatorDetail.svelte'
   import { operatorPanelFor } from '$lib/operators/panel'
+  import StandardApiDetail from './StandardApiDetail.svelte'
+  import { standardPanelFor } from '$lib/standardapis/panel'
   import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
@@ -369,6 +371,17 @@
   const operatorPanel = $derived(operatorPanelFor(group, kind))
 
   /**
+   * The standard Kubernetes API whose object this is, if it is one.
+   *
+   * The third family selected the same way, by group AND kind — see
+   * $lib/standardapis/panel. Gateway API ships as CRDs and reaches the
+   * navigator only where somebody installed it; resource.k8s.io and
+   * admissionregistration.k8s.io are in-tree but gated, and reach it only
+   * where the gate is on. Null everywhere else.
+   */
+  const standardPanel = $derived(standardPanelFor(group, kind))
+
+  /**
    * Whether the GitOps panel renders the conditions itself.
    *
    * Argo CD's conditions carry a type and a message and NO status, so the
@@ -410,6 +423,7 @@
       !isIngress &&
       !gitOpsPanel &&
       !operatorPanel &&
+      !standardPanel &&
       !selectedNode &&
       !selectedNamespaceRow &&
       kind !== 'Namespace',
@@ -1420,6 +1434,26 @@
         {isReadOnly}
         {readOnlyReason}
         {onchanged}
+      />
+    {/if}
+
+    <!--
+      WHAT ONE OF KUBERNETES' OWN NEWER APIS DECLARES — Gateway API, device
+      allocation, admission policies. Quoted from the one manifest already
+      here, with no exception at all: a route's parent, a claim's holder and a
+      binding's policy render as followable nodes by Kind, and none of them is
+      fetched to see what it said back. The Conditions section below still
+      renders the object's own top-level conditions, coloured by the domain —
+      this panel says what the generic table and that list cannot. See
+      $lib/standardapis/panel.
+    -->
+    {#if standardPanel}
+      <StandardApiDetail
+        panel={standardPanel}
+        manifest={parsedManifest}
+        namespace={metadata.namespace ?? ''}
+        {canOpen}
+        {onopen}
       />
     {/if}
 

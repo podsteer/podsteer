@@ -1438,6 +1438,54 @@ the pod's own name as the fallback for a bare pod, which is the one case the
 pod IS the subject. The mark is not a column: a column exists on every cluster
 whether or not anything fills it, and on the great majority nothing would.
 
+## Kubernetes' own newer APIs get typed panels too, and three things bite
+
+`web/src/lib/standardapis/` is a third family beside `gitops/` and `operators/`,
+selected the same way — by API group AND Kind, through `standardPanelFor` —
+and rendered by `StandardApiDetail.svelte` from the one manifest the drawer
+already fetched. It covers Gateway API (`GatewayClass`, `Gateway`, and
+`HTTPRoute`/`GRPCRoute` sharing one panel), Dynamic Resource Allocation
+(`ResourceClaim`, `ResourceClaimTemplate`, `DeviceClass`) and the admission
+policies (`ValidatingAdmissionPolicy`, `MutatingAdmissionPolicy` and both
+bindings). It is PURE QUOTATION with no exception — not even the one the
+operator panels name for a certificate's expiry.
+
+**A route has no `status.conditions`, and that is the whole point of its
+panel.** An HTTPRoute's status is `status.parents[]`, one entry per Gateway
+that was asked to serve it, each carrying the controller that answered and
+that controller's own conditions. "Accepted by this Gateway, refused by that
+one" is a sentence only that shape can say, and the drawer's generic
+Conditions section — which reads `status.conditions` — renders nothing at all
+on a route. A Gateway's listeners nest theirs the same way, under
+`status.listeners[]`, joined to the spec BY NAME and never by position: the
+two arrays are not required to agree in order or in length, and a positional
+join hands one listener another's attached-route count.
+
+**`resource.k8s.io` is read by SHAPE and never by `apiVersion`.** The group has
+been re-cut in nearly every release: the earliest versions named one
+`resourceClassName` on the claim and recorded `resourceHandles`, later ones a
+list of device requests, later still the request's own fields moved under
+`exactly` with a prioritised `firstAvailable` beside it. Every field is read
+from wherever its shape puts it, so a version nobody coded for renders as much
+of itself as it carries; what an older version records and newer ones do not
+gets a field of its own rather than being folded into a modern one it does not
+mean. A consumer in `status.reservedFor` names a plural RESOURCE, not a Kind,
+so only a core `pods` is resolved (to `Pod`) and offered as a link — every
+other plural is quoted and left unfollowable, because a link on a guessed Kind
+fails when it is followed.
+
+**Two of the three groups had to be adopted to be reachable at all.**
+`resource.k8s.io` and `admissionregistration.k8s.io` end in `.k8s.io`, so
+`isKubernetesGroup` (`app/adapters/k8s/cluster.go`) hid them from
+`DiscoverCustomKinds`, and nothing in `domain/catalog.go` covers either — the
+kinds could not be opened, and a panel for them would have been dead code.
+They join `adoptedGroups` beside Gateway API, which stretches that list's
+original wording (Kubernetes-owned but installed by an operator) in the
+direction it exists for: the suffix rule hides a group on the grounds that
+every cluster has it, and both of these are behind feature gates most clusters
+do not turn on. A catalog entry was the wrong mechanism precisely because it
+pins ONE version, which is the thing `resource.k8s.io` will not hold still on.
+
 ## A node shell is a pod PodSteer owns, and must be deleted like one
 
 The node shell (`app/adapters/k8s/nodeshell.go`, `TerminalAPI.StartNodeShellSession`)
