@@ -349,3 +349,35 @@ func (s *BrowseService) RevealSecretKey(ctx context.Context, id domain.ClusterID
 
 	return value, nil
 }
+
+// InspectTLSSecret parses one Secret's certificate material, on explicit
+// request.
+//
+// Deliberately not part of GetManifest or anything else that runs when a
+// pane opens — see RevealSecretKey just above. The certificate itself is
+// public material — anything terminating TLS with it hands it to every
+// client that connects — but it lives inside the same Secret as the private
+// key, and a read of that object is a read of that object regardless of
+// which half somebody wanted. So this is its own deliberate act too, gated
+// the same way and logged the same way: the Secret is named, its contents
+// never are.
+func (s *BrowseService) InspectTLSSecret(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (domain.CertificateChain, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return domain.CertificateChain{}, fmt.Errorf("inspecting certificate: %w", err)
+	}
+	if name == "" {
+		return domain.CertificateChain{}, fmt.Errorf("inspecting certificate: %w", domain.ErrEmptyResourceName)
+	}
+
+	chain, err := s.resources.InspectTLSSecret(ctx, id, namespace, name)
+	if err != nil {
+		return domain.CertificateChain{}, fmt.Errorf("inspecting certificate of secret %q: %w", name, err)
+	}
+
+	s.logger.DebugContext(ctx, "inspected certificate",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.String("secret", name))
+
+	return chain, nil
+}

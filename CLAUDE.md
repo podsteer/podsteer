@@ -481,6 +481,11 @@ has been revealed in the pane doing the writing, and is audited the same way
 — cluster, namespace, name and key, never the value — never through a read of
 the whole object.
 
+`InspectTLSSecret` follows the same rule for a TLS Secret's certificate: the
+certificate itself is public material, but it lives beside the private key in
+the same object, so it is parsed only on the same deliberate, per-Secret
+request `RevealSecretKey` requires, never when the Secret pane opens.
+
 ## Escape belongs to one layer, and the layers say which
 
 Seventeen components listen for Escape on the window, so `stopPropagation`

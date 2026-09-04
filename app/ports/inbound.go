@@ -192,4 +192,8 @@ type ResourceService interface {
 
 	// RevealSecretKey returns one decoded Secret value, on explicit request.
 	RevealSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string) (string, error)
+
+	// InspectTLSSecret returns one Secret's parsed certificate chain, on
+	// explicit request — the certificate equivalent of RevealSecretKey.
+	InspectTLSSecret(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (domain.CertificateChain, error)
 }

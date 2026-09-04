@@ -216,6 +216,8 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, domain.ErrInvalidResourceKind),
 		errors.Is(err, domain.ErrUnsupportedWorkloadKind),
 		errors.Is(err, domain.ErrInvalidKey),
+		errors.Is(err, domain.ErrNotTLSSecret),
+		errors.Is(err, domain.ErrInvalidCertificate),
 		errors.Is(err, errInvalidURL),
 		errors.Is(err, errNotFound),
 		errors.Is(err, errEmptySuggestedName),

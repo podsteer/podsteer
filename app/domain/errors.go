@@ -76,4 +76,14 @@ var (
 	// case can only be checked in the adapter, because it requires reading
 	// the object first.
 	ErrInvalidKey = errors.New("invalid key")
+
+	// ErrNotTLSSecret reports that InspectTLSSecret was asked to parse a
+	// Secret that is neither type kubernetes.io/tls nor carries a tls.crt
+	// key by convention — there is no certificate here to inspect at all.
+	ErrNotTLSSecret = errors.New("secret is not a TLS secret")
+
+	// ErrInvalidCertificate reports that certificate material could not be
+	// parsed as PEM-encoded X.509 — a Secret whose tls.crt or ca.crt holds
+	// something else, or nothing.
+	ErrInvalidCertificate = errors.New("invalid certificate data")
 )

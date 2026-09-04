@@ -16,6 +16,7 @@
   import NodePods from './NodePods.svelte'
   import NamespaceContents from './NamespaceContents.svelte'
   import WorkloadUsage from './WorkloadUsage.svelte'
+  import CertificateInspector from './CertificateInspector.svelte'
   import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
@@ -312,6 +313,21 @@
   )
 
   const isIngress = $derived(kind === 'Ingress')
+
+  /**
+   * Whether this Secret carries certificate material worth offering to
+   * inspect.
+   *
+   * kubernetes.io/tls is the declared type, but cert-manager and other
+   * issuers routinely write a tls.crt into an otherwise-Opaque Secret too —
+   * see app/adapters/k8s/tls.go, which accepts either. Read straight off the
+   * already-fetched manifest: this is a QUOTATION (does the key exist at
+   * all), not a verdict, so it belongs here rather than in a round trip.
+   */
+  const hasCertificate = $derived(
+    kind === 'Secret' &&
+      (parsedManifest?.type === 'kubernetes.io/tls' || 'tls.crt' in (parsedManifest?.data ?? {})),
+  )
 
   /** Whether the panel is showing a pod. */
   const isPodPanel = $derived(kind === 'Pod' || !!selectedPod)
@@ -1317,6 +1333,19 @@
           issued it, when it expires — is inside that Secret and is not read here.
         </p>
       </DetailSection>
+    {/if}
+
+    <!--
+      A SECRET'S OWN CERTIFICATE, ON REQUEST — the read the Ingress panel
+      above deliberately does not perform. Keyed on the Secret's identity so
+      switching to a different one starts the section over rather than
+      showing a stale chain under a new name; see CertificateInspector's own
+      header comment for why nothing here is fetched until asked.
+    -->
+    {#if hasCertificate && clusterId && metadata.name}
+      {#key `${clusterId}|${metadata.namespace}|${metadata.name}`}
+        <CertificateInspector {clusterId} namespace={metadata.namespace ?? ''} name={metadata.name} />
+      {/key}
     {/if}
 
     <!--

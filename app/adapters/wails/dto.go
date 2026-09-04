@@ -634,3 +634,102 @@ func toPodGraph(graph domain.PodGraph) PodGraph {
 	}
 	return out
 }
+
+// Certificate is one X.509 certificate as shown by a Secret's certificate
+// inspection — see BrowseAPI.InspectTLSSecret. Never sent except in answer to
+// that deliberate call.
+type Certificate struct {
+	Subject string   `json:"subject"`
+	Issuer  string   `json:"issuer"`
+	SANs    []string `json:"sans"`
+	// NotBefore and NotAfter are RFC 3339, in UTC.
+	NotBefore string `json:"notBefore"`
+	NotAfter  string `json:"notAfter"`
+	// ExpiresInSeconds is NotAfter minus the time InspectTLSSecret ran, so
+	// the frontend never re-derives it from parsing NotAfter itself.
+	// Negative once the certificate has expired.
+	ExpiresInSeconds   int64  `json:"expiresInSeconds"`
+	SerialNumber       string `json:"serialNumber"`
+	SignatureAlgorithm string `json:"signatureAlgorithm"`
+	PublicKeyAlgorithm string `json:"publicKeyAlgorithm"`
+	KeyBits            int    `json:"keyBits"`
+	IsCA               bool   `json:"isCA"`
+	SelfSigned         bool   `json:"selfSigned"`
+}
+
+// toCertificate converts one domain certificate, using now as the reference
+// ExpiresInSeconds is measured against.
+func toCertificate(cert domain.Certificate, now time.Time) Certificate {
+	sans := cert.SANs
+	if sans == nil {
+		sans = []string{}
+	}
+	return Certificate{
+		Subject:            cert.Subject,
+		Issuer:             cert.Issuer,
+		SANs:               sans,
+		NotBefore:          formatTime(cert.NotBefore),
+		NotAfter:           formatTime(cert.NotAfter),
+		ExpiresInSeconds:   int64(cert.ExpiresIn(now).Seconds()),
+		SerialNumber:       cert.SerialNumber,
+		SignatureAlgorithm: cert.SignatureAlgorithm,
+		PublicKeyAlgorithm: cert.PublicKeyAlgorithm,
+		KeyBits:            cert.KeyBits,
+		IsCA:               cert.IsCA,
+		SelfSigned:         cert.SelfSigned,
+	}
+}
+
+// CertificateInsight is one thing worth telling an operator about an
+// inspected certificate chain — the certificate equivalent of PodFinding.
+type CertificateInsight struct {
+	Severity string `json:"severity"`
+	Title    string `json:"title"`
+	Detail   string `json:"detail"`
+	Advice   string `json:"advice"`
+}
+
+// toCertificateInsights converts the domain's assessment of one chain.
+func toCertificateInsights(insights []domain.CertificateInsight) []CertificateInsight {
+	out := make([]CertificateInsight, 0, len(insights))
+	for _, insight := range insights {
+		out = append(out, CertificateInsight{
+			Severity: string(insight.Severity),
+			Title:    insight.Title,
+			Detail:   insight.Detail,
+			Advice:   insight.Advice,
+		})
+	}
+	return out
+}
+
+// CertificateChainDTO is one Secret's parsed certificate material, returned
+// only from a deliberate InspectTLSSecret call — never from GetManifest and
+// never on render.
+type CertificateChainDTO struct {
+	Leaf          Certificate   `json:"leaf"`
+	Intermediates []Certificate `json:"intermediates"`
+	// KeyMatches is null when no key was inspected at all — a Secret
+	// carrying ca.crt with no tls.key, say — which is a different fact from
+	// false and must not be collapsed into it.
+	KeyMatches *bool `json:"keyMatches"`
+	// Insights are AssessPod's counterpart for a certificate. See
+	// domain.CertificateFindings.
+	Insights []CertificateInsight `json:"insights"`
+}
+
+// toCertificateChain converts a domain certificate chain, using now as the
+// reference both ExpiresInSeconds and the insights are computed against.
+func toCertificateChain(chain domain.CertificateChain, now time.Time) CertificateChainDTO {
+	intermediates := make([]Certificate, 0, len(chain.Intermediates))
+	for _, cert := range chain.Intermediates {
+		intermediates = append(intermediates, toCertificate(cert, now))
+	}
+
+	return CertificateChainDTO{
+		Leaf:          toCertificate(chain.Leaf, now),
+		Intermediates: intermediates,
+		KeyMatches:    chain.KeyMatches,
+		Insights:      toCertificateInsights(domain.CertificateFindings(chain, now)),
+	}
+}

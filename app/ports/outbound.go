@@ -228,6 +228,16 @@ type ResourcePort interface {
 	// else's dashboard. Narrowing the call to a deliberate act keeps each
 	// audit entry meaningful.
 	RevealSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string) (string, error)
+
+	// InspectTLSSecret parses one Secret's certificate material, on explicit
+	// request.
+	//
+	// The same discipline as RevealSecretKey and for the same reason: the
+	// certificate is public material, but it lives inside the same Secret as
+	// the private key, and reading that object is reading that object
+	// whichever half was wanted. One deliberate act, never a side effect of
+	// GetManifest or anything that runs when a pane opens.
+	InspectTLSSecret(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (domain.CertificateChain, error)
 }
 
 // PortForwardPort opens local ports onto container ports.
