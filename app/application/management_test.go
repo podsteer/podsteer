@@ -298,6 +298,196 @@ func TestSetConfigMapKeyPropagatesTheAdapterError(t *testing.T) {
 	}
 }
 
+func TestSetImagePassesArgumentsThrough(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management, application.NewRegistry())
+
+	err := service.SetImage(context.Background(), "dev", domain.WorkloadDeployment, "web", "api", "app", "nginx:1.25.3", false)
+	if err != nil {
+		t.Fatalf("SetImage() error = %v", err)
+	}
+
+	if !management.setImageCalled {
+		t.Fatal("SetImage() never reached the adapter")
+	}
+	if management.setImageID != "dev" {
+		t.Errorf("cluster = %q, want %q", management.setImageID, "dev")
+	}
+	if management.setImageKind != domain.WorkloadDeployment {
+		t.Errorf("kind = %q, want %q", management.setImageKind, domain.WorkloadDeployment)
+	}
+	if management.setImageNS != "web" {
+		t.Errorf("namespace = %q, want %q", management.setImageNS, "web")
+	}
+	if management.setImageName != "api" {
+		t.Errorf("name = %q, want %q", management.setImageName, "api")
+	}
+	if management.setImageContainer != "app" {
+		t.Errorf("container = %q, want %q", management.setImageContainer, "app")
+	}
+	if management.setImageValue != "nginx:1.25.3" {
+		t.Errorf("image = %q, want %q", management.setImageValue, "nginx:1.25.3")
+	}
+	if management.setImageInit {
+		t.Error("initContainer = true, want false")
+	}
+}
+
+// TestSetImageAcceptsTheThreeSupportedKinds mirrors
+// TestSuspendWorkloadAcceptsCronJobsAndJobs: SetImage supports exactly the
+// three controller kinds whose pod template sits at spec.template.
+func TestSetImageAcceptsTheThreeSupportedKinds(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []domain.WorkloadKind{domain.WorkloadDeployment, domain.WorkloadStatefulSet, domain.WorkloadDaemonSet} {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+
+			management := &fakeManagementPort{}
+			service := newManagementService(t, management, application.NewRegistry())
+
+			if err := service.SetImage(context.Background(), "dev", kind, "web", "api", "app", "nginx:1.25", true); err != nil {
+				t.Fatalf("SetImage() error = %v", err)
+			}
+			if !management.setImageCalled {
+				t.Fatal("SetImage() never reached the adapter")
+			}
+			if !management.setImageInit {
+				t.Error("initContainer = false, want true — the flag must reach the adapter")
+			}
+		})
+	}
+}
+
+func TestSetImageRejectsAKindThatDoesNotSupportIt(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management, application.NewRegistry())
+
+	err := service.SetImage(context.Background(), "dev", domain.WorkloadCronJob, "batch", "nightly", "worker", "busybox:1.36", false)
+	if !errors.Is(err, domain.ErrUnsupportedWorkloadKind) {
+		t.Errorf("SetImage() error = %v, want %v", err, domain.ErrUnsupportedWorkloadKind)
+	}
+
+	// The whole point of validating here rather than in the adapter: an
+	// unsupported kind must never cost a round trip to the cluster.
+	if management.setImageCalled {
+		t.Error("SetImage() reached the adapter for an unsupported kind")
+	}
+}
+
+func TestSetImageRejectsAnEmptyContainerBeforeTheAdapter(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management, application.NewRegistry())
+
+	err := service.SetImage(context.Background(), "dev", domain.WorkloadDeployment, "web", "api", "", "nginx:1.25", false)
+	if err == nil {
+		t.Error("SetImage() with an empty container succeeded, want an error")
+	}
+	if management.setImageCalled {
+		t.Error("SetImage() reached the adapter for an empty container")
+	}
+}
+
+func TestSetImageRejectsAnInvalidImageReferenceBeforeTheAdapter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		image string
+	}{
+		{"empty", ""},
+		{"whitespace", "ngi nx:1.25"},
+		{"empty tag", "nginx:"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			management := &fakeManagementPort{}
+			service := newManagementService(t, management, application.NewRegistry())
+
+			err := service.SetImage(context.Background(), "dev", domain.WorkloadDeployment, "web", "api", "app", tt.image, false)
+			if tt.image == "" {
+				// Refused as an empty image, checked before ValidImageReference.
+				if err == nil {
+					t.Error("SetImage() with an empty image succeeded, want an error")
+				}
+			} else if !errors.Is(err, domain.ErrInvalidImageReference) {
+				t.Errorf("SetImage() error = %v, want %v", err, domain.ErrInvalidImageReference)
+			}
+			if management.setImageCalled {
+				t.Error("SetImage() reached the adapter for an invalid image")
+			}
+		})
+	}
+}
+
+func TestSetImagePropagatesTheAdapterError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("boom")
+	management := &fakeManagementPort{setImageErr: wantErr}
+	service := newManagementService(t, management, application.NewRegistry())
+
+	err := service.SetImage(context.Background(), "dev", domain.WorkloadDeployment, "web", "api", "app", "nginx:1.25", false)
+	if !errors.Is(err, wantErr) {
+		t.Errorf("SetImage() error = %v, want %v", err, wantErr)
+	}
+}
+
+// TestSetImageRefusesWhenReadOnly is SetImage's share of the property
+// TestManagementServiceRefusesEveryWriteWhenReadOnly asserts for the older
+// write methods: the guard must run BEFORE the adapter is ever reached, not
+// merely produce the right error.
+func TestSetImageRefusesWhenReadOnly(t *testing.T) {
+	t.Parallel()
+
+	const id domain.ClusterID = "prod"
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly(id, true)
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management, registry)
+
+	err := service.SetImage(context.Background(), id, domain.WorkloadDeployment, "web", "api", "app", "nginx:1.25", false)
+	if !errors.Is(err, ports.ErrReadOnly) {
+		t.Errorf("SetImage() error = %v, want %v", err, ports.ErrReadOnly)
+	}
+	if management.setImageCalled {
+		t.Error("SetImage() reached the adapter on a read-only cluster")
+	}
+}
+
+// TestSetImagePassesWhenNotReadOnly is the other half: a cluster that is NOT
+// marked read-only — including when a DIFFERENT cluster is — must still let
+// SetImage through, mirroring TestManagementServicePassesEveryWriteWhenNotReadOnly.
+func TestSetImagePassesWhenNotReadOnly(t *testing.T) {
+	t.Parallel()
+
+	const id domain.ClusterID = "staging"
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly("prod", true)
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management, registry)
+
+	if err := service.SetImage(context.Background(), id, domain.WorkloadDeployment, "web", "api", "app", "nginx:1.25", false); err != nil {
+		t.Fatalf("SetImage() error = %v", err)
+	}
+	if !management.setImageCalled {
+		t.Fatal("SetImage() never reached the adapter")
+	}
+}
+
 func TestCordonNodePassesArgumentsThrough(t *testing.T) {
 	t.Parallel()
 

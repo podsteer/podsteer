@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -407,5 +408,188 @@ func TestSetConfigMapKeyOnAMissingConfigMapIsNotFound(t *testing.T) {
 	err := adapter.SetConfigMapKey(context.Background(), "dev", "app", "missing", "greeting", "hi")
 	if !errors.Is(err, ports.ErrNotFound) {
 		t.Errorf("SetConfigMapKey() error = %v, want %v", err, ports.ErrNotFound)
+	}
+}
+
+// testDeployment builds a Deployment with two containers and one init
+// container, rich enough to prove SetImage patches exactly the one named and
+// leaves every other container — including the init container — untouched.
+func testDeployment(namespace, name string) *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{Name: "migrate", Image: "myapp/migrate:1.0.0"},
+					},
+					Containers: []corev1.Container{
+						{Name: "app", Image: "myapp/web:1.0.0"},
+						{Name: "sidecar", Image: "myapp/proxy:1.0.0"},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestSetImagePatchesOnlyTheNamedContainer(t *testing.T) {
+	client := fake.NewSimpleClientset(testDeployment("web", "api"))
+	adapter := newTestAdapter("dev", client)
+
+	err := adapter.SetImage(context.Background(), "dev", domain.WorkloadDeployment, "web", "api", "app", "myapp/web:2.0.0", false)
+	if err != nil {
+		t.Fatalf("SetImage() error = %v", err)
+	}
+
+	got, err := client.AppsV1().Deployments("web").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting deployment: %v", err)
+	}
+
+	containers := got.Spec.Template.Spec.Containers
+	if len(containers) != 2 {
+		t.Fatalf("containers = %v, want 2 — SetImage must not add or remove containers", containers)
+	}
+	for _, c := range containers {
+		switch c.Name {
+		case "app":
+			if c.Image != "myapp/web:2.0.0" {
+				t.Errorf("container %q image = %q, want %q", c.Name, c.Image, "myapp/web:2.0.0")
+			}
+		case "sidecar":
+			if c.Image != "myapp/proxy:1.0.0" {
+				t.Errorf("container %q image = %q, want it untouched (%q)", c.Name, c.Image, "myapp/proxy:1.0.0")
+			}
+		default:
+			t.Errorf("unexpected container %q", c.Name)
+		}
+	}
+
+	// The init container is a different list entirely — a merge patch on
+	// `containers` must never touch it.
+	initContainers := got.Spec.Template.Spec.InitContainers
+	if len(initContainers) != 1 || initContainers[0].Image != "myapp/migrate:1.0.0" {
+		t.Errorf("initContainers = %v, want untouched", initContainers)
+	}
+}
+
+func TestSetImageOnAnInitContainerPatchesInitContainersInstead(t *testing.T) {
+	client := fake.NewSimpleClientset(testDeployment("web", "api"))
+	adapter := newTestAdapter("dev", client)
+
+	err := adapter.SetImage(context.Background(), "dev", domain.WorkloadDeployment, "web", "api", "migrate", "myapp/migrate:2.0.0", true)
+	if err != nil {
+		t.Fatalf("SetImage() error = %v", err)
+	}
+
+	got, err := client.AppsV1().Deployments("web").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting deployment: %v", err)
+	}
+
+	initContainers := got.Spec.Template.Spec.InitContainers
+	if len(initContainers) != 1 || initContainers[0].Image != "myapp/migrate:2.0.0" {
+		t.Fatalf("initContainers = %v, want migrate patched to myapp/migrate:2.0.0", initContainers)
+	}
+
+	// The regular containers are a different list — untouched by the
+	// initContainer flag routing the patch elsewhere.
+	containers := got.Spec.Template.Spec.Containers
+	for _, c := range containers {
+		if c.Name == "app" && c.Image != "myapp/web:1.0.0" {
+			t.Errorf("container %q image = %q, want it untouched (%q)", c.Name, c.Image, "myapp/web:1.0.0")
+		}
+	}
+}
+
+func TestSetImageOnAStatefulSetAndDaemonSet(t *testing.T) {
+	tests := []struct {
+		kind domain.WorkloadKind
+	}{
+		{domain.WorkloadStatefulSet},
+		{domain.WorkloadDaemonSet},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.kind), func(t *testing.T) {
+			var client *fake.Clientset
+			switch tt.kind {
+			case domain.WorkloadStatefulSet:
+				client = fake.NewSimpleClientset(&appsv1.StatefulSet{
+					ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "data"},
+					Spec: appsv1.StatefulSetSpec{
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{{Name: "db", Image: "postgres:15"}},
+							},
+						},
+					},
+				})
+			case domain.WorkloadDaemonSet:
+				client = fake.NewSimpleClientset(&appsv1.DaemonSet{
+					ObjectMeta: metav1.ObjectMeta{Name: "agent", Namespace: "data"},
+					Spec: appsv1.DaemonSetSpec{
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{{Name: "db", Image: "postgres:15"}},
+							},
+						},
+					},
+				})
+			}
+			adapter := newTestAdapter("dev", client)
+
+			name := map[domain.WorkloadKind]string{domain.WorkloadStatefulSet: "db", domain.WorkloadDaemonSet: "agent"}[tt.kind]
+			err := adapter.SetImage(context.Background(), "dev", tt.kind, "data", name, "db", "postgres:16", false)
+			if err != nil {
+				t.Fatalf("SetImage() error = %v", err)
+			}
+
+			var image string
+			switch tt.kind {
+			case domain.WorkloadStatefulSet:
+				got, err := client.AppsV1().StatefulSets("data").Get(context.Background(), "db", metav1.GetOptions{})
+				if err != nil {
+					t.Fatalf("getting statefulset: %v", err)
+				}
+				image = got.Spec.Template.Spec.Containers[0].Image
+			case domain.WorkloadDaemonSet:
+				got, err := client.AppsV1().DaemonSets("data").Get(context.Background(), "agent", metav1.GetOptions{})
+				if err != nil {
+					t.Fatalf("getting daemonset: %v", err)
+				}
+				image = got.Spec.Template.Spec.Containers[0].Image
+			}
+			if image != "postgres:16" {
+				t.Errorf("image = %q, want %q", image, "postgres:16")
+			}
+		})
+	}
+}
+
+func TestSetImageRefusesAnUnsupportedKind(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	adapter := newTestAdapter("dev", client)
+
+	err := adapter.SetImage(context.Background(), "dev", domain.WorkloadCronJob, "batch", "nightly", "worker", "busybox:1.36", false)
+	if err == nil {
+		t.Error("SetImage() with an unsupported kind succeeded, want an error")
+	}
+
+	// Refused before any request reached the cluster — the same defence in
+	// depth SuspendWorkload's own unsupported-kind test asserts.
+	if len(client.Actions()) != 0 {
+		t.Errorf("SetImage() with an unsupported kind made %d requests, want 0", len(client.Actions()))
+	}
+}
+
+func TestSetImageOnAMissingWorkloadIsNotFound(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	adapter := newTestAdapter("dev", client)
+
+	err := adapter.SetImage(context.Background(), "dev", domain.WorkloadDeployment, "web", "missing", "app", "nginx:1.25", false)
+	if !errors.Is(err, ports.ErrNotFound) {
+		t.Errorf("SetImage() error = %v, want %v", err, ports.ErrNotFound)
 	}
 }

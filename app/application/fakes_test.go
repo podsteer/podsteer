@@ -409,11 +409,22 @@ type fakeManagementPort struct {
 	setConfigMapName      string
 	setConfigMapKeyName   string
 	setConfigMapValue     string
-	cordonErr             error
-	cordonCalled          bool
-	cordonedID            domain.ClusterID
-	cordonedName          string
-	cordonedValue         bool
+
+	setImageErr       error
+	setImageCalled    bool
+	setImageID        domain.ClusterID
+	setImageKind      domain.WorkloadKind
+	setImageNS        domain.NamespaceName
+	setImageName      string
+	setImageContainer string
+	setImageValue     string
+	setImageInit      bool
+
+	cordonErr     error
+	cordonCalled  bool
+	cordonedID    domain.ClusterID
+	cordonedName  string
+	cordonedValue bool
 
 	evictErr     error
 	evictCalled  bool
@@ -513,6 +524,20 @@ func (f *fakeManagementPort) SetConfigMapKey(_ context.Context, id domain.Cluste
 	f.setConfigMapKeyName = key
 	f.setConfigMapValue = value
 	return f.setConfigMapKeyErr
+}
+
+func (f *fakeManagementPort) SetImage(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name, container, image string, initContainer bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.setImageCalled = true
+	f.setImageID = id
+	f.setImageKind = kind
+	f.setImageNS = namespace
+	f.setImageName = name
+	f.setImageContainer = container
+	f.setImageValue = image
+	f.setImageInit = initContainer
+	return f.setImageErr
 }
 
 func (f *fakeManagementPort) CordonNode(_ context.Context, id domain.ClusterID, name string, cordon bool) error {

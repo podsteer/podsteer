@@ -377,6 +377,29 @@ func (m *ManagementAPI) SuspendWorkload(clusterID, kind, namespace, name string,
 	return nil
 }
 
+// SetImage sets one container's (or, when initContainer is true, one init
+// container's) image on a Deployment, StatefulSet or DaemonSet.
+func (m *ManagementAPI) SetImage(clusterID, kind, namespace, name, container, image string, initContainer bool) error {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(m.logger, "SetImage", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return apiError(m.logger, "SetImage", err)
+	}
+
+	if err := m.management.SetImage(ctx, id, domain.WorkloadKind(kind), ns, name, container, image, initContainer); err != nil {
+		return apiError(m.logger, "SetImage", err)
+	}
+
+	return nil
+}
+
 // SetSecretKey writes one key of one Secret.
 //
 // value is the operator's typed, decoded text — not base64 — converted to

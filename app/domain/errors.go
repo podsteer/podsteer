@@ -77,6 +77,13 @@ var (
 	// the object first.
 	ErrInvalidKey = errors.New("invalid key")
 
+	// ErrInvalidImageReference is returned when SetImage is asked to write an
+	// image string that does not look like an image reference — empty,
+	// containing whitespace, or an empty tag — checked by
+	// ValidImageReference. Caught in the application layer before an adapter
+	// is ever reached, mirroring ErrInvalidKey above.
+	ErrInvalidImageReference = errors.New("invalid image reference")
+
 	// ErrNotTLSSecret reports that InspectTLSSecret was asked to parse a
 	// Secret that is neither type kubernetes.io/tls nor carries a tls.crt
 	// key by convention — there is no certificate here to inspect at all.

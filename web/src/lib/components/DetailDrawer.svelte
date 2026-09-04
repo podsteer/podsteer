@@ -49,11 +49,13 @@
   import CordonDialog from './CordonDialog.svelte'
   import DrainDialog from './DrainDialog.svelte'
   import EvictDialog from './EvictDialog.svelte'
+  import SetImageDialog from './SetImageDialog.svelte'
   import Terminal from './Terminal.svelte'
   import DependencyMap from './DependencyMap.svelte'
   import { DeleteResource, RestartRollout } from '$lib/wailsjs/go/wails/ManagementAPI'
   import { ListPodsForWorkload } from '$lib/wailsjs/go/wails/WorkloadAPI'
   import { triggerCronJob, suspendWorkload, cordonNode, evictPod, type Pod } from '$lib/api/client'
+  import { podTemplateOf, type PodTemplate } from '$lib/podTemplate'
   import {
     X,
     Info,
@@ -64,6 +66,7 @@
     FileCode,
     RotateCcw,
     Scale,
+    ImageUp,
     Pencil,
     Copy,
     Check,
@@ -115,8 +118,12 @@
   let cordonDialogOpen = $state(false)
   let drainDialogOpen = $state(false)
   let evictDialogOpen = $state(false)
+  let setImageDialogOpen = $state(false)
   let actionError = $state<string | null>(null)
   let workloadPods = $state<Pod[]>([])
+
+  /** "Image updated" after SetImageDialog applies every changed container. The same self-clearing flag as `copied` and `triggered` — see $lib/flash.svelte. */
+  const imageUpdated = flash(3000)
 
   /**
    * Names the Job a "Run now" just created, for a few seconds.
@@ -294,6 +301,35 @@
     session.selectedKindId === 'apps/v1/daemonsets'
   )
 
+  // The same three kinds as isRestartable — Deployment, StatefulSet and
+  // DaemonSet are exactly the controllers whose pod template sits at
+  // spec.template, which is what ManagementPort.SetImage's patch targets.
+  // Named separately anyway: the two happen to coincide today, and tying
+  // them together would make a future kind that supports one but not the
+  // other an awkward split rather than a one-line change.
+  const isSetImageable = $derived(
+    session.selectedKindId === 'apps/v1/deployments' ||
+    session.selectedKindId === 'apps/v1/statefulsets' ||
+    session.selectedKindId === 'apps/v1/daemonsets'
+  )
+
+  /**
+   * The open workload's pod template, for SetImageDialog to list containers
+   * from.
+   *
+   * FROM session.manifest, NEVER FROM THE WATCH STORE — the drawer's own copy
+   * of the object's manifest, which is what podTemplateOf's own doc comment
+   * requires. Mirrors ResourceOverview's identical derivation.
+   */
+  const workloadPodTemplate = $derived.by((): PodTemplate | null => {
+    if (!isSetImageable || !session.manifest) return null
+    try {
+      return podTemplateOf(parse(session.manifest), session.selectedKind?.kind)
+    } catch {
+      return null
+    }
+  })
+
   const isCronJob = $derived(session.selectedKindId === 'batch/v1/cronjobs')
   const isJob = $derived(session.selectedKindId === 'batch/v1/jobs')
   const isNode = $derived(session.selectedKindId === 'core/v1/nodes')
@@ -390,6 +426,7 @@
     // A "Created <job>" notice from a Run now on the PREVIOUS object must not
     // keep showing over a different one now open in its place.
     triggered.cancel()
+    imageUpdated.cancel()
   })
 
   /**
@@ -723,6 +760,7 @@
   // Nothing left running behind a component that has gone away.
   $effect(() => () => copied.cancel())
   $effect(() => () => triggered.cancel())
+  $effect(() => () => imageUpdated.cancel())
 </script>
 
 <!--
@@ -1154,6 +1192,22 @@
           </button>
         {/if}
 
+        {#if isSetImageable}
+          <button
+            type="button"
+            onclick={() => (setImageDialogOpen = true)}
+            disabled={isReadOnly}
+            aria-label="Set image"
+            aria-describedby={isReadOnly ? 'drawer-readonly-hint' : undefined}
+            title={isReadOnly ? readOnlyReason : 'Set image'}
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
+                   disabled:pointer-events-none disabled:opacity-38"
+          >
+            <ImageUp class="size-4" strokeWidth={1.8} />
+          </button>
+        {/if}
+
         <!-- "Run now" — CronJobs only. Creates a Job outside the schedule;
              see TriggerDialog for what that means for history limits. -->
         {#if isCronJob}
@@ -1331,6 +1385,13 @@
       <div class="flex items-center gap-2 border-b border-success/20 bg-success-container/50 px-4 py-2 text-body-small text-on-success-container">
         <Check class="size-3.5 shrink-0 text-success" strokeWidth={2} />
         Created job <strong data-selectable>{triggeredJobName}</strong>
+      </div>
+    {/if}
+
+    {#if imageUpdated.on}
+      <div class="flex items-center gap-2 border-b border-success/20 bg-success-container/50 px-4 py-2 text-body-small text-on-success-container">
+        <Check class="size-3.5 shrink-0 text-success" strokeWidth={2} />
+        Image updated
       </div>
     {/if}
 
@@ -1529,6 +1590,22 @@
       {productionGroup}
       onclose={() => (scaleDialogOpen = false)}
       onconfirm={handleScale}
+    />
+
+    <SetImageDialog
+      open={setImageDialogOpen}
+      ctx={session.cluster.id}
+      kind={mappedWorkloadKind}
+      name={selectedWorkload.name}
+      namespace={selectedWorkload.namespace}
+      template={workloadPodTemplate}
+      {productionGroup}
+      onclose={() => (setImageDialogOpen = false)}
+      onapplied={async () => {
+        setImageDialogOpen = false
+        imageUpdated.show()
+        await session.refresh()
+      }}
     />
   {/if}
 

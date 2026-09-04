@@ -272,6 +272,58 @@ func (s *ManagementService) UpdateResource(ctx context.Context, id domain.Cluste
 	return nil
 }
 
+// SetImage sets one container's image on a Deployment, StatefulSet or
+// DaemonSet.
+//
+// Only those three kinds support it, and that is checked HERE rather than
+// left to the adapter — mirroring SuspendWorkload's own kind check — so an
+// unsupported kind never costs a round trip to the cluster to be told no. The
+// image is checked with domain.ValidImageReference for the same reason
+// SetSecretKey checks domain.ValidDataKey: a malformed value becomes a local,
+// immediate refusal instead of a 422 from the API server naming a field the
+// operator cannot see.
+func (s *ManagementService) SetImage(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name, container, image string, initContainer bool) error {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return err
+	}
+
+	s.logger.InfoContext(ctx, "setting image",
+		slog.String("cluster", id.String()),
+		slog.String("kind", string(kind)),
+		slog.String("namespace", namespace.String()),
+		slog.String("name", name),
+		slog.String("container", container),
+		slog.String("image", image),
+		slog.Bool("initContainer", initContainer))
+
+	if kind != domain.WorkloadDeployment && kind != domain.WorkloadStatefulSet && kind != domain.WorkloadDaemonSet {
+		return fmt.Errorf("%w: set image is only supported for Deployments, StatefulSets and DaemonSets, got %s",
+			domain.ErrUnsupportedWorkloadKind, kind)
+	}
+	if container == "" {
+		return errors.New("container name must not be empty")
+	}
+	if image == "" {
+		return errors.New("image must not be empty")
+	}
+	if !domain.ValidImageReference(image) {
+		return fmt.Errorf("%w: %q", domain.ErrInvalidImageReference, image)
+	}
+
+	err := s.management.SetImage(ctx, id, kind, namespace, name, container, image, initContainer)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to set image",
+			slog.String("cluster", id.String()),
+			slog.String("kind", string(kind)),
+			slog.String("name", name),
+			slog.String("container", container),
+			slog.String("error", err.Error()))
+		return err
+	}
+
+	return nil
+}
+
 // SetSecretKey writes one key of one Secret.
 //
 // The audit line below is what an entry in a cluster's audit log should be:

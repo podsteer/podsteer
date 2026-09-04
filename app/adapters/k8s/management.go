@@ -479,6 +479,77 @@ func (a *Adapter) SuspendWorkload(ctx context.Context, id domain.ClusterID, kind
 	return nil
 }
 
+// SetImage sets one container's image on a Deployment, StatefulSet or
+// DaemonSet's pod template.
+//
+// A STRATEGIC MERGE PATCH, not a JSON merge patch. spec.template.spec.
+// containers is a LIST, and a JSON merge patch replaces a list wholesale —
+// sending one container would delete every other container in the pod. The
+// strategic merge patch instead merges list entries by their `name` key
+// (containers carries a `patchMergeKey` struct tag naming it, which is what
+// the apiserver uses to tell "replace the list" from "merge into it"), so
+// this names exactly the one container being changed and every other
+// container, its env, volumes and probes included, is left exactly as it
+// was — the same way `kubectl set image` does it.
+func (a *Adapter) SetImage(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name, container, image string, initContainer bool) error {
+	defer a.forgetReads(id)
+
+	client, err := a.factory.clientFor(id)
+	if err != nil {
+		return err
+	}
+
+	ns := namespace.String()
+
+	containerField := "containers"
+	if initContainer {
+		containerField = "initContainers"
+	}
+
+	patch := map[string]any{
+		"spec": map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					containerField: []map[string]any{
+						{"name": container, "image": image},
+					},
+				},
+			},
+		},
+	}
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("marshaling set image patch: %w", err)
+	}
+
+	switch kind {
+	case domain.WorkloadDeployment:
+		_, err = client.AppsV1().Deployments(ns).Patch(ctx, name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{})
+		if err != nil {
+			return classify("setting deployment image", err)
+		}
+
+	case domain.WorkloadStatefulSet:
+		_, err = client.AppsV1().StatefulSets(ns).Patch(ctx, name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{})
+		if err != nil {
+			return classify("setting statefulset image", err)
+		}
+
+	case domain.WorkloadDaemonSet:
+		_, err = client.AppsV1().DaemonSets(ns).Patch(ctx, name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{})
+		if err != nil {
+			return classify("setting daemonset image", err)
+		}
+
+	default:
+		// Defence in depth: the application layer rejects any other kind
+		// before this is reached, mirroring SuspendWorkload's own switch above.
+		return fmt.Errorf("set image not supported for kind: %s", kind)
+	}
+
+	return nil
+}
+
 // UpdateResource applies a YAML manifest to the cluster.
 func (a *Adapter) UpdateResource(ctx context.Context, id domain.ClusterID, manifest string) error {
 	defer a.forgetReads(id)

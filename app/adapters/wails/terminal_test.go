@@ -250,3 +250,6 @@ func (stubManagementPort) EvictPod(context.Context, domain.ClusterID, domain.Nam
 func (stubManagementPort) DrainNode(context.Context, domain.ClusterID, string, domain.DrainOptions) (domain.DrainReport, error) {
 	return domain.DrainReport{}, nil
 }
+func (stubManagementPort) SetImage(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, string, string, bool) error {
+	return nil
+}
