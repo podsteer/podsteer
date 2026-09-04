@@ -76,7 +76,7 @@
   import type { Component, Snippet } from 'svelte'
   import type { SortState } from '$lib/sort'
   import { preferences } from '$stores/preferences.svelte'
-  import { activeTable } from '$stores/activeTable.svelte'
+  import { activeTable, type CSVExport } from '$stores/activeTable.svelte'
   import { ChevronUp, ChevronDown, ChevronsUpDown } from '@lucide/svelte'
 
   interface Props {
@@ -93,9 +93,27 @@
     sort?: SortState | null
     /** Header click: cycles the column ascending, descending, unsorted. */
     onsort?: (columnId: string) => void
+    /**
+     * Produces this table's CSV export.
+     *
+     * DataTable has no idea what a row IS — it renders whatever markup the
+     * `rows` snippet hands it — so it cannot build this itself. It only
+     * carries the reference from whichever view supplied it to the toolbar's
+     * Export CSV control, the same way it already carries `columns` there.
+     */
+    exportRows?: () => CSVExport
   }
 
-  let { kindId, columns, rows, empty, isEmpty = false, sort = null, onsort }: Props = $props()
+  let {
+    kindId,
+    columns,
+    rows,
+    empty,
+    isEmpty = false,
+    sort = null,
+    onsort,
+    exportRows,
+  }: Props = $props()
 
   let body = $state<HTMLTableSectionElement | null>(null)
 
@@ -240,7 +258,7 @@
    * a generic table whose columns are whatever the API server just described.
    */
   $effect(() => {
-    const token = activeTable.claim(kindId, columns)
+    const token = activeTable.claim(kindId, columns, exportRows)
     return () => activeTable.release(token)
   })
 

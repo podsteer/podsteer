@@ -14,11 +14,13 @@
 -->
 <script lang="ts">
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { cpuMeter, cpuTitle, memoryMeter, memoryTitle } from '$lib/meter'
   import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
+  import type { Application } from '$lib/api/client'
   import { countedKind } from '$lib/plural'
   import { Blocks } from '@lucide/svelte'
 
@@ -42,15 +44,71 @@
     { id: 'memory', label: 'Memory', width: 200, minWidth: 180 },
     { id: 'members', label: 'Made of', width: 300 },
   ]
+
+  /** Applications are not a Kubernetes kind, so this view — alone among the
+      table pages — does not key its column preferences off session's
+      selected kind. It has to match the literal handed to DataTable below,
+      which is what ColumnMenu also ends up reading. */
+  const KIND_ID = 'podsteer/applications'
+
+  /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
+      repeated here rather than asked of either. */
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[KIND_ID]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /** The applications list's CSV export, mirroring exactly what each cell
+      shows — the meters export the aggregated usage with its unit, not the
+      bare percentage, and "Made of" the same counted-kind phrases the row
+      draws rather than a raw member list. */
+  function exportCSV(): CSVExport {
+    const visible = COLUMNS.filter(isColumnVisible)
+
+    function cell(application: Application, id: string): string {
+      switch (id) {
+        case 'instance':
+          return application.instance
+        case 'namespace':
+          return application.namespace
+        case 'partOf':
+          return application.partOf || '—'
+        case 'managedBy':
+          return application.managedBy || '—'
+        case 'version':
+          return application.version || '—'
+        case 'objects':
+          return String(application.objects)
+        case 'cpu':
+          return application.hasMetrics ? application.cpu : '—'
+        case 'memory':
+          return application.hasMetrics ? application.memory : '—'
+        case 'members':
+          return application.members
+            .map((member) => `${member.count} ${countedKind(member.kind, member.count)}`)
+            .join(' · ')
+        default:
+          return ''
+      }
+    }
+
+    return {
+      columns: visible.map((column) => column.label),
+      rows: session.sortedApplications.map((application) =>
+        visible.map((column) => cell(application, column.id)),
+      ),
+    }
+  }
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
   <DataTable
-    kindId="podsteer/applications"
+    kindId={KIND_ID}
     columns={COLUMNS}
     isEmpty={session.pagedApplications.length === 0}
     sort={session.sort}
     onsort={session.toggleSort}
+    exportRows={exportCSV}
   >
     {#snippet empty()}
       <EmptyState

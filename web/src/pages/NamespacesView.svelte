@@ -16,6 +16,7 @@
 -->
 <script lang="ts">
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
@@ -76,6 +77,52 @@
     },
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
+
+  /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
+      repeated here rather than asked of either. */
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[session.selectedKindId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /** The namespace list's CSV export, mirroring exactly what each cell
+      shows — the meters export the aggregated usage with its unit, not the
+      bare percentage. */
+  function exportCSV(): CSVExport {
+    const visible = COLUMNS.filter(isColumnVisible)
+
+    function cell(namespace: NamespaceSummary, id: string): string {
+      switch (id) {
+        case 'status':
+          return namespace.phase
+        case 'name':
+          return namespace.name
+        case 'pods':
+          return String(namespace.pods)
+        case 'notReady':
+          return String(namespace.notReady)
+        case 'cpu':
+          return namespace.hasMetrics ? namespace.cpu : '—'
+        case 'memory':
+          return namespace.hasMetrics ? namespace.memory : '—'
+        case 'cpuRequests':
+          return namespace.cpuRequest
+        case 'memoryRequests':
+          return namespace.memoryRequest
+        case 'age':
+          return formatAge(namespace.ageSeconds)
+        default:
+          return ''
+      }
+    }
+
+    return {
+      columns: visible.map((column) => column.label),
+      rows: session.sortedNamespaces.map((namespace) =>
+        visible.map((column) => cell(namespace, column.id)),
+      ),
+    }
+  }
 </script>
 
 <DataTable
@@ -84,6 +131,7 @@
   isEmpty={session.pagedNamespaces.length === 0}
   sort={session.sort}
   onsort={session.toggleSort}
+  exportRows={exportCSV}
 >
   {#snippet empty()}
     <EmptyState

@@ -59,6 +59,10 @@ var errInvalidURL = errors.New("invalid URL")
 // no record of — a licence text whose id does not exist, say.
 var errNotFound = errors.New("not found")
 
+// errEmptySuggestedName is raised when SaveTextFile is asked to save without
+// a filename to seed the dialog with.
+var errEmptySuggestedName = errors.New("a suggested filename is required")
+
 // apiError logs the full failure and returns the sanitised error the frontend
 // receives.
 //
@@ -185,7 +189,8 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, domain.ErrInvalidNamespaceName),
 		errors.Is(err, domain.ErrInvalidResourceKind),
 		errors.Is(err, errInvalidURL),
-		errors.Is(err, errNotFound):
+		errors.Is(err, errNotFound),
+		errors.Is(err, errEmptySuggestedName):
 		return CodeInvalidInput, err.Error()
 
 	case errors.Is(err, domain.ErrClusterNotConnected):

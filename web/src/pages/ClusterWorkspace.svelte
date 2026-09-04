@@ -16,12 +16,18 @@
   import Pagination from '$lib/components/Pagination.svelte'
   import ColumnMenu from '$lib/components/ColumnMenu.svelte'
   import InfoHint from '$lib/components/InfoHint.svelte'
+  import ToolbarButton from '$lib/components/ToolbarButton.svelte'
   import { activeTable } from '$stores/activeTable.svelte'
   import { focusFirstRow } from '$lib/components/DataTable.svelte'
   import SearchField from '$lib/components/SearchField.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import { formatClockTime } from '$lib/format'
   import { shortcut } from '$lib/shortcuts'
+  import { toCSV } from '$lib/csv'
+  import { buildExportFilename } from '$lib/exportFilename'
+  import { saveTextFile } from '$lib/api/client'
+  import { toApiError } from '$lib/api/errors'
+  import { flash } from '$lib/flash.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import EventsView from './EventsView.svelte'
   import GenericTableView from './GenericTableView.svelte'
@@ -29,7 +35,7 @@
   import NodesView from './NodesView.svelte'
   import PodsView from './PodsView.svelte'
   import WorkloadsView from './WorkloadsView.svelte'
-  import { PanelLeft, AlertTriangle } from '@lucide/svelte'
+  import { PanelLeft, AlertTriangle, Download, Check } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -38,6 +44,47 @@
   let { session }: Props = $props()
 
   let searchField: { focus: () => void } | undefined = $state()
+
+  /** The path an export was just saved to, shown in the button's title while
+      `exported.on`. Kept even after the flash expires — the button's title
+      falls back to it below being a small kindness, not a promise. */
+  let exportedPath = $state('')
+  const exported = flash(2000)
+
+  /**
+   * Exports whichever table is on screen as CSV, through the same native
+   * save dialog every other file PodSteer writes to a chosen path uses.
+   *
+   * The rows and columns come from `activeTable.exportRows`: registered by
+   * whichever view's DataTable is currently mounted, because only that view
+   * knows how its own cells are formatted. This function only turns that
+   * into text, names the file, and hands it to the dialog.
+   */
+  async function onExportCSV(): Promise<void> {
+    const data = activeTable.exportRows?.()
+    if (!data) return
+
+    // Applications and the overview are not entries in the backend's own
+    // kind catalogue (see domain/catalog.go), so selectedKind is undefined
+    // for them — the overview never reaches here at all, since it renders no
+    // DataTable and registers no export.
+    const kind =
+      session.selectedKind?.singular ??
+      (session.viewMode === 'applications' ? 'application' : session.viewMode)
+    const filename = buildExportFilename(session.cluster.id, kind, session.namespace)
+
+    try {
+      const path = await saveTextFile(filename, toCSV(data.columns, data.rows))
+      // An empty path means the operator cancelled the dialog, which is not
+      // an error and says nothing — the same convention as readKubeconfigFile.
+      if (path) {
+        exportedPath = path
+        exported.show()
+      }
+    } catch (cause) {
+      session.error = toApiError(cause)
+    }
+  }
 
   /**
    * Poll while this workspace is mounted, at whatever interval Settings says.
@@ -173,6 +220,19 @@
           <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
 
           <ColumnMenu kindId={activeTable.kindId} columns={activeTable.columns} />
+
+          <ToolbarButton
+            icon={exported.on ? Check : Download}
+            label="Export CSV"
+            title={session.visibleCount === 0
+              ? 'No rows to export'
+              : exported.on
+                ? `Saved to ${exportedPath}`
+                : 'Export CSV'}
+            active={exported.on}
+            disabled={session.visibleCount === 0}
+            onclick={onExportCSV}
+          />
         {/if}
       {/if}
     </div>

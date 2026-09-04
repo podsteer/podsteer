@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
   import MeterBar from '$lib/components/MeterBar.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
@@ -104,6 +105,63 @@
   }
 
   const byLimit = $derived(preferences.podMeasure === 'limits')
+
+  /** Whether an operator has not hidden this column — the same rule
+      ColumnMenu and DataTable itself apply, repeated here rather than asked
+      of either: the export has to decide it independently of what is
+      currently mounted, from the same preferences they both read. */
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[session.selectedKindId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /**
+   * The pod list's CSV export.
+   *
+   * Every field here is the same text its cell shows — a status word rather
+   * than the bare phase, a meter's underlying quantity with its unit rather
+   * than the percentage, an age already coarsened — never a number the
+   * operator would have to re-derive what the column meant.
+   */
+  function exportCSV(): CSVExport {
+    const visible = COLUMNS.filter(isColumnVisible)
+
+    function cell(pod: Pod, id: string): string {
+      switch (id) {
+        case 'status':
+          return podStatusLabel(pod)
+        case 'name':
+          return pod.name
+        case 'namespace':
+          return pod.namespace
+        case 'cpu':
+          return pod.cpu
+        case 'memory':
+          return pod.memory
+        case 'ready':
+          return pod.ready
+        case 'restarts':
+          return String(pod.restarts)
+        case 'controlledBy':
+          return pod.controlledBy || '—'
+        case 'node':
+          return pod.nodeName || '—'
+        case 'qos':
+          return pod.qosClass || '—'
+        case 'ip':
+          return pod.podIp || '—'
+        case 'age':
+          return formatAge(pod.ageSeconds)
+        default:
+          return ''
+      }
+    }
+
+    return {
+      columns: visible.map((column) => column.label),
+      rows: session.sortedPods.map((pod) => visible.map((column) => cell(pod, column.id))),
+    }
+  }
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
@@ -153,6 +211,7 @@
     isEmpty={session.pagedPods.length === 0}
     sort={session.sort}
     onsort={session.toggleSort}
+    exportRows={exportCSV}
   >
     {#snippet empty()}
       <EmptyState

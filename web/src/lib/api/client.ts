@@ -66,6 +66,7 @@ import {
   Info as bindInfo,
   LicenceText as bindLicenceText,
   OpenURL as bindOpenURL,
+  SaveTextFile as bindSaveTextFile,
 } from '$lib/wailsjs/go/wails/SystemAPI'
 import { EventsOn } from '$lib/wailsjs/runtime/runtime'
 import type { wails } from '$lib/wailsjs/go/models'
@@ -570,6 +571,19 @@ export function licenceText(textId: string): Promise<string> {
  */
 export function openURL(url: string): Promise<void> {
   return call(() => bindOpenURL(url))
+}
+
+/**
+ * Opens a native save dialog seeded with `name` and writes `content` to
+ * wherever the operator chose.
+ *
+ * An empty returned path means the operator cancelled, which is not an
+ * error — the same convention as readKubeconfigFile. The write happens on
+ * the Go side because the webview cannot touch the filesystem and should
+ * not be able to.
+ */
+export function saveTextFile(name: string, content: string): Promise<string> {
+  return call(() => bindSaveTextFile(name, content))
 }
 
 // --- Management -------------------------------------------------------------

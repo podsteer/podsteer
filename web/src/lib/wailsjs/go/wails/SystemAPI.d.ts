@@ -9,3 +9,5 @@ export function Info():Promise<wails.AppInfo>;
 export function LicenceText(arg1:string):Promise<string>;
 
 export function OpenURL(arg1:string):Promise<void>;
+
+export function SaveTextFile(arg1:string,arg2:string):Promise<string>;

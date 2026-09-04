@@ -7,12 +7,14 @@
 -->
 <script lang="ts">
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
   import { formatAge } from '$lib/format'
   import { get as kubectlGet } from '$lib/kubectl'
+  import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import type { Node } from '$lib/api/client'
   import { Server, CircleDot } from '@lucide/svelte'
@@ -52,6 +54,54 @@
     { id: 'taints', label: 'Taints', width: 80, numeric: true },
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
+
+  /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
+      repeated here rather than asked of either. */
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[session.selectedKindId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /** The node list's CSV export, mirroring exactly what each cell shows. */
+  function exportCSV(): CSVExport {
+    const visible = COLUMNS.filter(isColumnVisible)
+
+    function cell(node: Node, id: string): string {
+      switch (id) {
+        case 'status':
+          return node.status
+        case 'name':
+          return node.name
+        case 'roles':
+          return node.roles.length ? node.roles.join(', ') : 'worker'
+        case 'cpu':
+          return node.cpu
+        case 'memory':
+          return node.memory
+        case 'disk':
+          return node.disk
+        case 'version':
+          return node.version
+        case 'ip':
+          return node.internalIp || '—'
+        case 'os':
+          return node.osImage || '—'
+        case 'pods':
+          return node.maxPods ? String(node.maxPods) : '—'
+        case 'taints':
+          return String(node.taints)
+        case 'age':
+          return formatAge(node.ageSeconds)
+        default:
+          return ''
+      }
+    }
+
+    return {
+      columns: visible.map((column) => column.label),
+      rows: session.sortedNodes.map((node) => visible.map((column) => cell(node, column.id))),
+    }
+  }
 </script>
 
 <DataTable
@@ -60,6 +110,7 @@
   isEmpty={session.pagedNodes.length === 0}
   sort={session.sort}
   onsort={session.toggleSort}
+  exportRows={exportCSV}
 >
   {#snippet empty()}
     <EmptyState title="No nodes" description="This cluster reports no nodes you can see." />
