@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { terminalSessions, sessionKey } from './terminalSessions.svelte'
+import { terminalSessions, sessionKey, localSessionKey } from './terminalSessions.svelte'
 
 const KEY = sessionKey('c1', 'default', 'api-0', 'app')
 
@@ -106,5 +106,34 @@ describe('terminal session handover', () => {
     expect(sessionKey('c1', 'default', 'api-0', 'app')).toBe(
       sessionKey('c1', 'default', 'api-0', 'app', 'shell'),
     )
+  })
+})
+
+describe('local session keys', () => {
+  it('keeps a local shell apart from a container shell on the same cluster', () => {
+    // A local shell has no pod and no container, so without its own key space
+    // it would collide with the bare cluster-level key and a remount could
+    // re-attach a pane on this machine to an exec in a container.
+    expect(localSessionKey('c1', null)).not.toBe(sessionKey('c1', '', '', ''))
+  })
+
+  it('keeps a coding agent apart from the plain shell beside it', () => {
+    // Two different processes against the same tab. Sharing a key would mean
+    // maximising one re-attached to the other.
+    expect(localSessionKey('c1', 'claude')).not.toBe(localSessionKey('c1', null))
+  })
+
+  it('keeps two agents apart', () => {
+    expect(localSessionKey('c1', 'claude')).not.toBe(localSessionKey('c1', 'gemini'))
+  })
+
+  it('keeps the same agent apart across cluster tabs', () => {
+    // The environment differs by tab — a different context is named in the
+    // notice and in the agent's prompt — so these are not one session.
+    expect(localSessionKey('c1', 'claude')).not.toBe(localSessionKey('c2', 'claude'))
+  })
+
+  it('is stable, so a remount claims the session it left', () => {
+    expect(localSessionKey('c1', 'claude')).toBe(localSessionKey('c1', 'claude'))
   })
 })

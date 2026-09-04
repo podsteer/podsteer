@@ -47,13 +47,26 @@ export function sessionKey(
   namespace: string,
   podName: string,
   container: string,
-  mode: 'shell' | 'attach' | 'debug' | 'nodeshell' = 'shell',
+  mode: 'shell' | 'attach' | 'debug' | 'nodeshell' | 'local' = 'shell',
 ): string {
   const base = `${clusterId}/${namespace}/${podName}/${container}`
   // 'shell' keeps the bare key every existing session used; every other mode
-  // — attach, and now the debug and node-shell variants — takes a suffix, so
-  // two sessions against the same target never collide or silently reattach.
+  // — attach, and now the debug, node-shell and local variants — takes a
+  // suffix, so two sessions against the same target never collide or silently
+  // reattach.
   return mode === 'shell' ? base : `${base}/${mode}`
+}
+
+/**
+ * Keys a LOCAL shell, which has no pod and no container to be identified by.
+ *
+ * The cluster tab and the agent are what distinguish one from another: a plain
+ * shell and a coding agent opened against the same tab are two different
+ * processes, and a remount must re-attach to the one it left rather than to
+ * whichever was opened first.
+ */
+export function localSessionKey(clusterId: string, agent: string | null): string {
+  return sessionKey(clusterId, '', agent ?? '', '', 'local')
 }
 
 interface Held {

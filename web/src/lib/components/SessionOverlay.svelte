@@ -1,21 +1,23 @@
 <!--
-  Renders the debug and node-shell dialogs and, once one is confirmed, the
-  terminal for it — mounted ONCE at the workspace level so both can be launched
-  from anywhere (the node drawer, the node row menu, the pod terminal toolbar)
-  and outlive the surface that launched them.
+  Renders the debug, node-shell and local-terminal dialogs and, once one is
+  confirmed, the terminal for it — mounted ONCE at the workspace level so all
+  three can be launched from anywhere (the node drawer, the node row menu, the
+  pod terminal toolbar, the workspace header) and outlive the surface that
+  launched them.
 
   See $stores/sessionLauncher: `pending` is the dialog phase, `running` is the
   terminal phase. The terminal is the same component the pod terminal uses,
-  in its 'debug' / 'nodeshell' variant.
+  in its 'debug' / 'nodeshell' / 'local' variant.
 -->
 <script lang="ts">
   import { sessionLauncher } from '$stores/sessionLauncher.svelte'
   import { nodeShells } from '$stores/nodeShells.svelte'
   import DebugDialog from './DebugDialog.svelte'
   import NodeShellDialog from './NodeShellDialog.svelte'
+  import LocalShellDialog from './LocalShellDialog.svelte'
   import PaneDialog from './PaneDialog.svelte'
   import Terminal from './Terminal.svelte'
-  import { Bug, SquareTerminal } from '@lucide/svelte'
+  import { Bug, SquareTerminal, Laptop } from '@lucide/svelte'
 
   const pending = $derived(sessionLauncher.pending)
   const running = $derived(sessionLauncher.running)
@@ -40,6 +42,14 @@
     productionGroup={pending.productionGroup}
     onclose={() => sessionLauncher.cancel()}
     onconfirm={(image, namespace) => sessionLauncher.startNodeShell(image, namespace)}
+  />
+{:else if pending?.kind === 'local'}
+  <LocalShellDialog
+    open
+    clusterId={pending.clusterId}
+    agents={pending.agents}
+    onclose={() => sessionLauncher.cancel()}
+    onconfirm={(agentId, readOnly) => sessionLauncher.startLocal(agentId, readOnly)}
   />
 {/if}
 
@@ -82,6 +92,26 @@
       nodeShellNamespace={running.namespace}
       nodeShellImage={running.image}
       onstarted={() => void nodeShells.refresh()}
+    />
+  </PaneDialog>
+{:else if running?.kind === 'local'}
+  <PaneDialog
+    open
+    icon={Laptop}
+    kind="Local"
+    name={running.clusterId || 'this machine'}
+    label={running.title}
+    onclose={() => sessionLauncher.close()}
+  >
+    <Terminal
+      variant="local"
+      clusterId={running.clusterId}
+      namespace=""
+      podName=""
+      containerName=""
+      agent={running.agent}
+      agentReadOnly={running.readOnly}
+      subject={running.subject}
     />
   </PaneDialog>
 {/if}

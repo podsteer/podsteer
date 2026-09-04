@@ -30,6 +30,7 @@ import (
 	"github.com/podsteer/podsteer/app/adapters/assets"
 	historystore "github.com/podsteer/podsteer/app/adapters/history"
 	"github.com/podsteer/podsteer/app/adapters/k8s"
+	"github.com/podsteer/podsteer/app/adapters/localshell"
 	"github.com/podsteer/podsteer/app/adapters/macwindow"
 	"github.com/podsteer/podsteer/app/adapters/shellpath"
 	"github.com/podsteer/podsteer/app/adapters/updates"
@@ -112,6 +113,21 @@ func run() error {
 		UserAgent:      fmt.Sprintf("%s/%s", cfg.App.Name, cfg.App.Version),
 		EnvReady:       envReady,
 		LiveWatch:      cfg.Kubernetes.LiveWatch,
+	}, logger)
+
+	// Shells on the operator's OWN machine — the local terminal and the coding
+	// agent it can launch. It reaches no cluster, so it is not a Kubernetes
+	// adapter and holds no client; the one thing it needs from the cluster
+	// side is which kubeconfig files to name in KUBECONFIG, and it takes that
+	// as a function so a file dropped into the kubeconfig directory is seen by
+	// the next shell without a restart.
+	//
+	// It also inherits the PATH the goroutine above adopts, which is what
+	// makes both a Homebrew kubectl and a Homebrew coding agent findable from
+	// a Dock launch.
+	localShells := localshell.New(localshell.Config{
+		KubeconfigFiles: kubernetes.KubeconfigFiles,
+		Shell:           shellpath.LoginShell,
 	}, logger)
 
 	// The Wails lifecycle handler doubles as the outbound event publisher, so
@@ -296,7 +312,7 @@ func run() error {
 		return fmt.Errorf("wiring management API: %w", err)
 	}
 
-	terminalAPI, err := wailsadapter.NewTerminalAPI(managementService, kubernetes, desktop, logger)
+	terminalAPI, err := wailsadapter.NewTerminalAPI(managementService, kubernetes, localShells, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring terminal API: %w", err)
 	}
@@ -371,6 +387,12 @@ func run() error {
 			// until their one-hour deadline reaps them. The deadline is the
 			// backstop; this is the normal path.
 			kubernetes.StopAllNodeShells()
+			// Local shells next. Nothing in a cluster leaks here — these are
+			// processes on this machine — but a shell whose window has gone is
+			// a shell nobody can see, type into, or end, and a login shell
+			// left behind holds its own children with it. Same rule as the
+			// two above: PodSteer started the process, so PodSteer ends it.
+			localShells.StopAllLocalShells()
 			// Same reason, same place: reflectors are goroutines holding
 			// connections, and every one of them has an owner that stops it.
 			kubernetes.StopAllWatches()

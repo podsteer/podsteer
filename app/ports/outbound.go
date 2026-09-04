@@ -403,6 +403,52 @@ type NodeShellPort interface {
 	StopAllNodeShells()
 }
 
+// LocalShellPort runs a shell on the OPERATOR'S OWN MACHINE, not in a cluster.
+//
+// Every other terminal port here reaches the API server. This one does not: it
+// starts the operator's login shell, or a coding agent they already have, on
+// the machine PodSteer is running on, with an environment that names the same
+// kubeconfig PodSteer reads and the context of the tab in front.
+//
+// Three properties are part of the contract rather than of one implementation:
+//
+//   - NOTHING IS EVER INSTALLED. Agents are FOUND on the adopted PATH and
+//     offered; a binary that is not there is not offered and never obtained.
+//   - THE READ-ONLY GUARD DOES NOT APPLY. That guard governs PodSteer's own
+//     writes to a cluster. A shell the operator opened on their own machine
+//     with their own credentials is outside what this application can police,
+//     and an implementation must not pretend otherwise.
+//   - THE KUBECONFIG IS READ, NEVER WRITTEN. In particular current-context is
+//     untouched; the open tab's context is stated to the operator, not pinned.
+//
+// Shaped like NodeShellPort because the leak to avoid is the same: PodSteer
+// started a process, so the record and the thing that kills it are created and
+// destroyed together, everything live is listable, and StopAll ends the lot on
+// shutdown.
+type LocalShellPort interface {
+	// LocalShellSupported reports whether this platform can open one, and the
+	// sentence to show when it cannot.
+	LocalShellSupported() (bool, string)
+	// DetectAgents reports the coding agents present on the adopted PATH, in a
+	// fixed preference order that does not depend on the shape of that PATH.
+	DetectAgents() []domain.CodingAgent
+	// StartLocalShell opens a pseudo-terminal, streams its output to out, and
+	// calls onExit exactly once after the process has exited and been reaped.
+	StartLocalShell(spec domain.LocalShellSpec, out io.Writer, onExit func(reason string)) (domain.LocalShell, error)
+	// WriteLocalShell sends keystrokes to a session.
+	WriteLocalShell(id string, data []byte) error
+	// ResizeLocalShell resizes the pseudo-terminal, which is what makes a
+	// full-screen program redraw at the pane's size.
+	ResizeLocalShell(id string, cols, rows uint16) error
+	// StopLocalShell ends one session and WAITS for the process to be gone.
+	// Idempotent: a closing pane and a shutdown can both reach it.
+	StopLocalShell(id string) error
+	// ListLocalShells reports what is running right now.
+	ListLocalShells() []domain.LocalShell
+	// StopAllLocalShells ends every session, for shutdown.
+	StopAllLocalShells()
+}
+
 // TerminalSize represents a terminal window size.
 type TerminalSize struct {
 	Width  uint16

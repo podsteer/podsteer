@@ -104,6 +104,14 @@ func New(cfg Config, logger *slog.Logger) *Adapter {
 	}
 }
 
+// KubeconfigFiles reports the kubeconfig files this adapter reads, in
+// precedence order, so a local shell can be given the same KUBECONFIG.
+//
+// Not part of any port: it is not a Kubernetes operation, it is this adapter
+// saying which of the operator's files it is looking at. The composition root
+// hands it to the local shell manager as a function.
+func (a *Adapter) KubeconfigFiles() []string { return a.factory.KubeconfigFiles() }
+
 // ServerVersion reaches the cluster's API server and reports its version.
 func (a *Adapter) ServerVersion(ctx context.Context, id domain.ClusterID) (domain.ServerVersion, error) {
 	const op = "querying server version"

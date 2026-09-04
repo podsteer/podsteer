@@ -3,6 +3,7 @@ module github.com/podsteer/podsteer
 go 1.27.0
 
 require (
+	github.com/creack/pty v1.1.24
 	github.com/wailsapp/wails/v2 v2.15.0
 	golang.org/x/sync v0.22.0
 	k8s.io/api v0.36.4
