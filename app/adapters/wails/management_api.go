@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -802,4 +803,110 @@ func (m *ManagementAPI) FreeLocalPort() (int, error) {
 		return 0, apiError(m.logger, "FreeLocalPort", err)
 	}
 	return port, nil
+}
+
+// --- Bulk actions -----------------------------------------------------------
+
+// parseBulkAction narrows the frontend's action string to a domain.BulkAction,
+// refusing anything else as invalid input rather than planning nothing.
+func parseBulkAction(action string) (domain.BulkAction, error) {
+	switch parsed := domain.BulkAction(action); parsed {
+	case domain.BulkActionDelete, domain.BulkActionRestart, domain.BulkActionScale,
+		domain.BulkActionCordon, domain.BulkActionUncordon:
+		return parsed, nil
+	default:
+		return "", fmt.Errorf("%w: %q", errInvalidBulkAction, action)
+	}
+}
+
+// PlanBulk previews what a bulk action would do to items, without touching
+// the cluster — the same domain.PlanBulk the Bulk* methods below run, so the
+// review dialog and the run it precedes can never disagree. The cluster's
+// read-only flag is read here so a read-only cluster's preview says so on
+// every line, before the operator confirms into a refusal.
+//
+// replicas is read for the scale action only.
+func (m *ManagementAPI) PlanBulk(clusterID, action string, items []BulkItemDTO, replicas int) (BulkPlanDTO, error) {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return BulkPlanDTO{}, apiError(m.logger, "PlanBulk", err)
+	}
+
+	parsed, err := parseBulkAction(action)
+	if err != nil {
+		return BulkPlanDTO{}, apiError(m.logger, "PlanBulk", err)
+	}
+
+	candidates, err := toBulkCandidates(id, items)
+	if err != nil {
+		return BulkPlanDTO{}, apiError(m.logger, "PlanBulk", err)
+	}
+
+	opts := domain.BulkOptions{
+		Action:   parsed,
+		Replicas: int32(replicas),
+		ReadOnly: m.management.ReadOnly(id),
+	}
+	return toBulkPlan(domain.PlanBulk(candidates, opts)), nil
+}
+
+// bulkRun is one of ManagementService's Bulk methods, bound to whatever the
+// action needs beyond the candidates.
+type bulkRun func(ctx context.Context, id domain.ClusterID, candidates []domain.BulkCandidate) ([]application.BulkResult, error)
+
+// bulk is the shape every bulk method shares: parse the cluster, convert the
+// rows, run, and classify each outcome. The returned error covers only what
+// stopped the whole action — an invalid argument, a read-only cluster; a
+// per-object failure is a result, never a rejected promise, because one
+// forbidden delete must not hide the forty-nine that succeeded.
+func (m *ManagementAPI) bulk(op, clusterID string, items []BulkItemDTO, run bulkRun) ([]BulkResultDTO, error) {
+	ctx, cancel := m.app.requestContextFor(len(items))
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(m.logger, op, err)
+	}
+
+	candidates, err := toBulkCandidates(id, items)
+	if err != nil {
+		return nil, apiError(m.logger, op, err)
+	}
+
+	results, err := run(ctx, id, candidates)
+	if err != nil {
+		return nil, apiError(m.logger, op, err)
+	}
+
+	return toBulkResults(results), nil
+}
+
+// BulkDelete deletes every selected object the plan allows, and reports each
+// outcome.
+func (m *ManagementAPI) BulkDelete(clusterID string, items []BulkItemDTO) ([]BulkResultDTO, error) {
+	return m.bulk("BulkDelete", clusterID, items, m.management.BulkDelete)
+}
+
+// BulkRestart triggers a rolling restart of every selected Deployment,
+// StatefulSet and DaemonSet, and reports each outcome.
+func (m *ManagementAPI) BulkRestart(clusterID string, items []BulkItemDTO) ([]BulkResultDTO, error) {
+	return m.bulk("BulkRestart", clusterID, items, m.management.BulkRestart)
+}
+
+// BulkScale sets replicas on every selected Deployment, StatefulSet and
+// ReplicaSet, and reports each outcome.
+func (m *ManagementAPI) BulkScale(clusterID string, items []BulkItemDTO, replicas int) ([]BulkResultDTO, error) {
+	return m.bulk("BulkScale", clusterID, items,
+		func(ctx context.Context, id domain.ClusterID, candidates []domain.BulkCandidate) ([]application.BulkResult, error) {
+			return m.management.BulkScale(ctx, id, candidates, int32(replicas))
+		})
+}
+
+// BulkCordon marks every selected node unschedulable (cordon true) or
+// schedulable again (cordon false), and reports each outcome.
+func (m *ManagementAPI) BulkCordon(clusterID string, items []BulkItemDTO, cordon bool) ([]BulkResultDTO, error) {
+	return m.bulk("BulkCordon", clusterID, items,
+		func(ctx context.Context, id domain.ClusterID, candidates []domain.BulkCandidate) ([]application.BulkResult, error) {
+			return m.management.BulkCordon(ctx, id, candidates, cordon)
+		})
 }

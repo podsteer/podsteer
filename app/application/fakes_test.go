@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"maps"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -494,6 +495,62 @@ type fakeManagementPort struct {
 	rollbackToRevision int64
 	rollbackDryRun     bool
 	rollbackOutcome    domain.RollbackOutcome
+
+	// What the bulk methods' concurrent fan-out reached, per object.
+	//
+	// Names are recorded per write so a test can assert exactly which
+	// objects were attempted; bulkFailFor fails ONE name while its
+	// neighbours succeed, which is the partial outcome the bulk methods
+	// exist to report rather than abort on; the in-flight high-water mark is
+	// how bounded concurrency is observed rather than assumed. bulkDelay
+	// holds each write open long enough for the overlap to be seen.
+	bulkNames       []string
+	bulkFailFor     map[string]error
+	bulkDelay       time.Duration
+	bulkInFlight    int
+	bulkMaxInFlight int
+}
+
+// bulkWrite is what every single-object write the bulk methods fan out over
+// funnels through: it counts itself in and out, records the name, and fails
+// it if a test asked for that name to fail — else falls back to err, the
+// every-write failure the older tests configure.
+func (f *fakeManagementPort) bulkWrite(name string) error {
+	f.mu.Lock()
+	f.bulkInFlight++
+	if f.bulkInFlight > f.bulkMaxInFlight {
+		f.bulkMaxInFlight = f.bulkInFlight
+	}
+	delay := f.bulkDelay
+	f.mu.Unlock()
+
+	time.Sleep(delay)
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bulkInFlight--
+	f.bulkNames = append(f.bulkNames, name)
+	if err := f.bulkFailFor[name]; err != nil {
+		return err
+	}
+	return f.err
+}
+
+// bulkAttempted returns the names every write reached, sorted — the writes
+// run concurrently, so their arrival order says nothing a test should assert.
+func (f *fakeManagementPort) bulkAttempted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	names := append([]string(nil), f.bulkNames...)
+	slices.Sort(names)
+	return names
+}
+
+// maxInFlight reports the most writes that were ever open at once.
+func (f *fakeManagementPort) maxInFlight() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.bulkMaxInFlight
 }
 
 var _ ports.ManagementPort = (*fakeManagementPort)(nil)
@@ -503,19 +560,19 @@ func (f *fakeManagementPort) StreamLogs(context.Context, domain.ClusterID, domai
 	return f.err
 }
 
-func (f *fakeManagementPort) DeleteResource(context.Context, domain.ResourceRef) error {
+func (f *fakeManagementPort) DeleteResource(_ context.Context, ref domain.ResourceRef) error {
 	f.record("DeleteResource")
-	return f.err
+	return f.bulkWrite(ref.Name)
 }
 
-func (f *fakeManagementPort) ScaleWorkload(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, int32) error {
+func (f *fakeManagementPort) ScaleWorkload(_ context.Context, _ domain.ClusterID, _ domain.WorkloadKind, _ domain.NamespaceName, name string, _ int32) error {
 	f.record("ScaleWorkload")
-	return f.err
+	return f.bulkWrite(name)
 }
 
-func (f *fakeManagementPort) RestartRollout(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string) error {
+func (f *fakeManagementPort) RestartRollout(_ context.Context, _ domain.ClusterID, _ domain.WorkloadKind, _ domain.NamespaceName, name string) error {
 	f.record("RestartRollout")
-	return f.err
+	return f.bulkWrite(name)
 }
 
 func (f *fakeManagementPort) UpdateResource(context.Context, domain.ClusterID, string, bool) (domain.ApplyOutcome, error) {
@@ -602,12 +659,20 @@ func (f *fakeManagementPort) SetImage(_ context.Context, id domain.ClusterID, ki
 
 func (f *fakeManagementPort) CordonNode(_ context.Context, id domain.ClusterID, name string, cordon bool) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.cordonCalled = true
 	f.cordonedID = id
 	f.cordonedName = name
 	f.cordonedValue = cordon
-	return f.cordonErr
+	cordonErr := f.cordonErr
+	f.mu.Unlock()
+
+	// Through bulkWrite like the other writes BulkCordon fans out over, so
+	// the same per-name failure and in-flight accounting apply; cordonErr
+	// stays the every-call failure the single-node tests configure.
+	if err := f.bulkWrite(name); err != nil {
+		return err
+	}
+	return cordonErr
 }
 func (f *fakeManagementPort) EvictPod(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string, gracePeriodSeconds int) error {
 	f.mu.Lock()

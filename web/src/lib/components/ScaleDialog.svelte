@@ -15,7 +15,7 @@
   import Button from './Button.svelte'
   import KubectlHint from './KubectlHint.svelte'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
-  import type { AutoscalerCheck, AutoscalerRef } from '$lib/autoscalers'
+  import { describeAutoscaler, type AutoscalerCheck } from '$lib/autoscalers'
   import { nameConfirmed } from '$lib/confirm'
   import { TriangleAlert } from '@lucide/svelte'
 
@@ -116,15 +116,6 @@
 
   /** Builds the click handler for an autoscaler's name, or nothing when it cannot be followed. See $lib/reference. */
   const follow = $derived(follower(canOpen, onopen))
-
-  /** "HorizontalPodAutoscaler, min 2, max 10" — only the bounds the server printed. */
-  function describe(ref: AutoscalerRef): string {
-    const bounds = [
-      ref.minReplicas ? `min ${ref.minReplicas}` : null,
-      ref.maxReplicas ? `max ${ref.maxReplicas}` : null,
-    ].filter((part): part is string => part !== null)
-    return bounds.length ? `${ref.kind}, ${bounds.join(', ')}` : ref.kind
-  }
 
   /**
    * Escape closes; Enter confirms, but only where Enter meant nothing else.
@@ -227,7 +218,7 @@
               {:else}
                 <span class="font-medium" data-selectable>{ref.name}</span>
               {/if}
-              ({describe(ref)}). It will override whatever you set here within its sync period.
+              ({describeAutoscaler(ref)}). It will override whatever you set here within its sync period.
             </p>
           </div>
         {/each}

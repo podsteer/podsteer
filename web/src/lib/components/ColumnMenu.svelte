@@ -93,7 +93,9 @@
       </p>
 
       <ul class="max-h-80 overflow-auto py-0.5">
-        {#each columns as column (column.id)}
+        <!-- A selection column is not a column to choose: nothing to hide,
+             nothing to name. See DataTable's Column.select. -->
+        {#each columns.filter((column) => !column.select) as column (column.id)}
           <li>
             <label
               class="flex cursor-pointer items-center gap-2.5 rounded-sm px-3 py-1.5 text-body-small
