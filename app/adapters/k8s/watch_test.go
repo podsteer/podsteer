@@ -24,6 +24,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // richPod carries every field a real one does that this package might read,
@@ -97,11 +99,21 @@ func TestStrippingAPodChangesNothingThisApplicationReads(t *testing.T) {
 		t.Fatalf("stripPod() error = %v", err)
 	}
 
-	want, err := mapPod("dev", original)
+	// Mapped UNDER A PROJECTION, because annotations are now something
+	// mapPod reads — and the projection deliberately names the one
+	// annotation the store strips beside an ordinary one. The domain
+	// refuses the former (see domain.NewProjection), which is exactly what
+	// keeps the two copies equal below. Remove that refusal and this fails,
+	// as it should: a column of the last-applied manifest would read blank
+	// on a cluster the watch is serving and the whole manifest on one it is
+	// not.
+	projection := contractProjection()
+
+	want, err := mapPod("dev", original, projection)
 	if err != nil {
 		t.Fatalf("mapPod(original) error = %v", err)
 	}
-	got, err := mapPod("dev", stripped.(*corev1.Pod))
+	got, err := mapPod("dev", stripped.(*corev1.Pod), projection)
 	if err != nil {
 		t.Fatalf("mapPod(stripped) error = %v", err)
 	}
@@ -109,6 +121,15 @@ func TestStrippingAPodChangesNothingThisApplicationReads(t *testing.T) {
 	if !reflect.DeepEqual(want, got) {
 		t.Fatalf("stripping changed what the application sees:\n original: %+v\n stripped: %+v", want, got)
 	}
+	if got.Annotations()["keep"] != "this" {
+		t.Fatalf("the projected annotation did not survive the store: %v", got.Annotations())
+	}
+}
+
+// contractProjection is what every stripping contract test maps under: an
+// ordinary annotation the fixtures carry, plus the one the store removes.
+func contractProjection() domain.Projection {
+	return domain.NewProjection([]string{"keep", corev1.LastAppliedConfigAnnotation})
 }
 
 func TestStrippingActuallyRemovesTheBulk(t *testing.T) {
@@ -315,7 +336,7 @@ func TestNarrowingTheStoreToOneNamespace(t *testing.T) {
 		}(),
 	}
 
-	all, err := mapWatchedPods("dev", watched, "")
+	all, err := mapWatchedPods("dev", watched, "", domain.Projection{})
 	if err != nil {
 		t.Fatalf("mapWatchedPods() error = %v", err)
 	}
@@ -323,7 +344,7 @@ func TestNarrowingTheStoreToOneNamespace(t *testing.T) {
 		t.Fatalf("mapped %d pods, want the 2 that map", len(all))
 	}
 
-	web, err := mapWatchedPods("dev", watched, "web")
+	web, err := mapWatchedPods("dev", watched, "web", domain.Projection{})
 	if err != nil {
 		t.Fatalf("mapWatchedPods() error = %v", err)
 	}
@@ -394,16 +415,19 @@ func TestStrippingAControllerChangesNothingThisApplicationReads(t *testing.T) {
 			t.Fatalf("stripReplicaSet() error = %v", err)
 		}
 
-		want, err := mapReplicaSet("dev", original)
+		want, err := mapReplicaSet("dev", original, contractProjection())
 		if err != nil {
 			t.Fatalf("mapReplicaSet(original) error = %v", err)
 		}
-		got, err := mapReplicaSet("dev", stripped.(*appsv1.ReplicaSet))
+		got, err := mapReplicaSet("dev", stripped.(*appsv1.ReplicaSet), contractProjection())
 		if err != nil {
 			t.Fatalf("mapReplicaSet(stripped) error = %v", err)
 		}
 		if !reflect.DeepEqual(want, got) {
 			t.Fatalf("stripping changed what the application sees:\n want: %+v\n got:  %+v", want, got)
+		}
+		if got.Annotations()["keep"] != "this" {
+			t.Fatalf("the projected annotation did not survive the store: %v", got.Annotations())
 		}
 	})
 
@@ -415,11 +439,11 @@ func TestStrippingAControllerChangesNothingThisApplicationReads(t *testing.T) {
 			t.Fatalf("stripJob() error = %v", err)
 		}
 
-		want, err := mapJob("dev", original)
+		want, err := mapJob("dev", original, contractProjection())
 		if err != nil {
 			t.Fatalf("mapJob(original) error = %v", err)
 		}
-		got, err := mapJob("dev", stripped.(*batchv1.Job))
+		got, err := mapJob("dev", stripped.(*batchv1.Job), contractProjection())
 		if err != nil {
 			t.Fatalf("mapJob(stripped) error = %v", err)
 		}

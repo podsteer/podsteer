@@ -21,6 +21,8 @@
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
+  import CustomCells from '$lib/components/CustomCells.svelte'
+  import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
   import { formatAge } from '$lib/format'
   import { cpuMeter, cpuTitle, memoryMeter, memoryTitle } from '$lib/meter'
   import { preferences } from '$stores/preferences.svelte'
@@ -78,6 +80,9 @@
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
 
+  /** The built-in columns, then the operator's own — see $lib/customColumns. */
+  const columns = $derived<Column[]>([...COLUMNS, ...toColumns(session.customColumns)])
+
   /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
       repeated here rather than asked of either. */
   function isColumnVisible(column: Column): boolean {
@@ -89,9 +94,11 @@
       shows — the meters export the aggregated usage with its unit, not the
       bare percentage. */
   function exportCSV(): CSVExport {
-    const visible = COLUMNS.filter(isColumnVisible)
+    const visible = columns.filter(isColumnVisible)
 
     function cell(namespace: NamespaceSummary, id: string): string {
+      const custom = parseCustomColumnId(id)
+      if (custom) return customCell(namespace, custom)
       switch (id) {
         case 'status':
           return namespace.phase
@@ -127,7 +134,7 @@
 
 <DataTable
   kindId={session.selectedKindId}
-  columns={COLUMNS}
+  {columns}
   isEmpty={session.pagedNamespaces.length === 0}
   sort={session.sort}
   onsort={session.toggleSort}
@@ -241,6 +248,7 @@
             {formatAge(namespace.ageSeconds)}
           </td>
         {/if}
+        <CustomCells specs={session.customColumns} row={namespace} {isVisible} />
         <!-- Stops the click here: the row itself opens the detail drawer,
              and a click aimed at the menu — or at one of its items — must
              not also do that. -->

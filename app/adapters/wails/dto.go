@@ -69,6 +69,10 @@ type Namespace struct {
 	Phase string `json:"phase"`
 	// IsActive reports whether the namespace accepts new objects.
 	IsActive bool `json:"isActive"`
+	// Labels are the namespace's labels.
+	Labels map[string]string `json:"labels"`
+	// Annotations are only the projected keys — see Pod.Annotations.
+	Annotations map[string]string `json:"annotations"`
 	// CreatedAt is the creation timestamp in RFC 3339, empty if unknown.
 	CreatedAt string `json:"createdAt"`
 	// AgeSeconds is the age at the time of the call.
@@ -78,11 +82,13 @@ type Namespace struct {
 // toNamespace converts a domain namespace, using now as the age reference.
 func toNamespace(namespace domain.Namespace, now time.Time) Namespace {
 	return Namespace{
-		Name:       namespace.Name().String(),
-		Phase:      string(namespace.Phase()),
-		IsActive:   namespace.IsActive(),
-		CreatedAt:  formatTime(namespace.CreatedAt()),
-		AgeSeconds: int64(namespace.Age(now).Seconds()),
+		Name:        namespace.Name().String(),
+		Phase:       string(namespace.Phase()),
+		IsActive:    namespace.IsActive(),
+		Labels:      emptyIfNil(namespace.Labels()),
+		Annotations: emptyIfNil(namespace.Annotations()),
+		CreatedAt:   formatTime(namespace.CreatedAt()),
+		AgeSeconds:  int64(namespace.Age(now).Seconds()),
 	}
 }
 
@@ -283,10 +289,22 @@ type Pod struct {
 	Findings []PodFinding `json:"findings"`
 	// Labels are the pod's labels.
 	Labels map[string]string `json:"labels"`
+	// Annotations are ONLY the keys the list was asked for — the custom
+	// columns' — never the whole map. See domain.Projection.
+	Annotations map[string]string `json:"annotations"`
 	// CreatedAt is the creation timestamp in RFC 3339, empty if unknown.
 	CreatedAt string `json:"createdAt"`
 	// AgeSeconds is the age at the time of the call.
 	AgeSeconds int64 `json:"ageSeconds"`
+}
+
+// emptyIfNil hands the frontend {} rather than null for an absent map, so
+// every row's labels and annotations can be indexed without a guard.
+func emptyIfNil(values map[string]string) map[string]string {
+	if values == nil {
+		return map[string]string{}
+	}
+	return values
 }
 
 // toPod converts a domain pod, using now as the age reference.
@@ -311,11 +329,6 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 			HasMetrics:      !container.Usage.IsZero(),
 			LastTermination: toTermination(container.LastTermination),
 		})
-	}
-
-	labels := pod.Labels()
-	if labels == nil {
-		labels = map[string]string{}
 	}
 
 	requests := pod.Requests()
@@ -356,7 +369,8 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 		HasMemoryLimit:     limits.MemoryBytes > 0,
 		Containers:         containers,
 		Findings:           toPodFindings(domain.AssessPod(pod, now)),
-		Labels:             labels,
+		Labels:             emptyIfNil(pod.Labels()),
+		Annotations:        emptyIfNil(pod.Annotations()),
 		CreatedAt:          formatTime(pod.CreatedAt()),
 		AgeSeconds:         int64(pod.Age(now).Seconds()),
 	}

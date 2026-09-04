@@ -53,10 +53,15 @@ type ClusterPort interface {
 	ServerVersion(ctx context.Context, id domain.ClusterID) (domain.ServerVersion, error)
 
 	// ListNamespaces returns every namespace visible to the credentials.
-	ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error)
+	//
+	// projection names the annotation keys each namespace should carry —
+	// see domain.Projection. The zero value carries none, and is what every
+	// caller that is not the namespace list view passes.
+	ListNamespaces(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Namespace, error)
 
-	// ListNodes returns the cluster's nodes.
-	ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error)
+	// ListNodes returns the cluster's nodes, each carrying the annotations
+	// projection asks for.
+	ListNodes(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Node, error)
 
 	// ListPersistentVolumes returns the cluster's provisioned volumes.
 	ListPersistentVolumes(ctx context.Context, id domain.ClusterID) ([]domain.PersistentVolume, error)
@@ -76,10 +81,19 @@ type ClusterPort interface {
 type WorkloadPort interface {
 	// ListPods returns pods in the given namespace, or across every namespace
 	// when it is domain.NamespaceAll.
-	ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error)
+	//
+	// projection names the annotation keys each pod should carry — see
+	// domain.Projection. THE PROJECTION IS PART OF THE READ: two calls with
+	// different projections are different reads and are not coalesced with
+	// each other, so an operator who has put an annotation on a column pays
+	// one list per refresh beside the assessment's own instead of sharing
+	// it. Labels are unaffected and always carried.
+	ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error)
 
-	// ListWorkloads returns controllers of the given kind.
-	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error)
+	// ListWorkloads returns controllers of the given kind, each carrying the
+	// annotations projection asks for on top of the GitOps keys every row
+	// carries anyway.
+	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Workload, error)
 
 	// PodGraphSources reads what one pod's dependency map is drawn from.
 	//
@@ -130,8 +144,9 @@ type WorkloadPort interface {
 // EventPort reads Kubernetes Events.
 type EventPort interface {
 	// ListEvents returns events in the given namespace, or across every
-	// namespace when it is domain.NamespaceAll.
-	ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Event, error)
+	// namespace when it is domain.NamespaceAll, each carrying the
+	// annotations projection asks for.
+	ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Event, error)
 
 	// ListEventsForResource returns events for a specific resource.
 	ListEventsForResource(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind, name string) ([]domain.Event, error)
@@ -208,8 +223,10 @@ type HistoryPort interface {
 // browsable the moment discovery notices them.
 type ResourcePort interface {
 	// ListTable returns objects of the given kind as a table, with the columns
-	// the API server itself prints.
-	ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName) (domain.ResourceTable, error)
+	// the API server itself prints. Each row also carries the object's labels
+	// and the annotations projection asks for, read from the metadata the
+	// server attaches to the row — never from a further request per object.
+	ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName, projection domain.Projection) (domain.ResourceTable, error)
 
 	// CountResources reports how many objects of kind exist in namespace.
 	//

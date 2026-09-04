@@ -59,11 +59,11 @@ func TestLiveTickCost(t *testing.T) {
 	}
 
 	measure("ListPods(all) cold", func() int {
-		pods, _ := adapter.ListPods(ctx, id, domain.NamespaceAll)
+		pods, _ := adapter.ListPods(ctx, id, domain.NamespaceAll, domain.Projection{})
 		return len(pods)
 	})
 	measure("ListPods(all) cached", func() int {
-		pods, _ := adapter.ListPods(ctx, id, domain.NamespaceAll)
+		pods, _ := adapter.ListPods(ctx, id, domain.NamespaceAll, domain.Projection{})
 		return len(pods)
 	})
 	measure("PodMetrics(all)", func() int {
@@ -71,12 +71,12 @@ func TestLiveTickCost(t *testing.T) {
 		return len(usage)
 	})
 	measure("ListNodes", func() int {
-		nodes, _ := adapter.ListNodes(ctx, id)
+		nodes, _ := adapter.ListNodes(ctx, id, domain.Projection{})
 		return len(nodes)
 	})
 	for _, kind := range domain.WorkloadKinds() {
 		measure("ListWorkloads "+string(kind), func() int {
-			workloads, _ := adapter.ListWorkloads(ctx, id, kind, domain.NamespaceAll)
+			workloads, _ := adapter.ListWorkloads(ctx, id, kind, domain.NamespaceAll, domain.Projection{})
 			return len(workloads)
 		})
 	}
@@ -100,7 +100,7 @@ func TestLiveTickCost(t *testing.T) {
 	}
 	time.Sleep(readTTL + 100*time.Millisecond)
 	measure("ListPods(all) from store", func() int {
-		pods, _ := adapter.ListPods(ctx, id, domain.NamespaceAll)
+		pods, _ := adapter.ListPods(ctx, id, domain.NamespaceAll, domain.Projection{})
 		return len(pods)
 	})
 }

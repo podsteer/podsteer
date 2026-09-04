@@ -145,7 +145,10 @@ func (c *ClusterAPI) ListNamespaces(clusterID string) ([]Namespace, error) {
 // Separate from ListNamespaces, which feeds the namespace filter and must stay
 // a cheap read of names: this one lists every pod in the cluster to count
 // them, and only the namespace list view is worth that.
-func (c *ClusterAPI) ListNamespaceSummaries(clusterID string) ([]NamespaceSummary, error) {
+//
+// annotationKeys names the annotations each row should carry — the same
+// projection WorkloadAPI.ListPods takes, for the same reason.
+func (c *ClusterAPI) ListNamespaceSummaries(clusterID string, annotationKeys []string) ([]NamespaceSummary, error) {
 	ctx, cancel := c.app.requestContext()
 	defer cancel()
 
@@ -154,7 +157,7 @@ func (c *ClusterAPI) ListNamespaceSummaries(clusterID string) ([]NamespaceSummar
 		return nil, apiError(c.logger, "ListNamespaceSummaries", err)
 	}
 
-	summaries, err := c.clusters.ListNamespaceSummaries(ctx, id)
+	summaries, err := c.clusters.ListNamespaceSummaries(ctx, id, domain.NewProjection(annotationKeys))
 	if err != nil {
 		return nil, apiError(c.logger, "ListNamespaceSummaries", err)
 	}
@@ -164,7 +167,9 @@ func (c *ClusterAPI) ListNamespaceSummaries(clusterID string) ([]NamespaceSummar
 
 // ListNodes returns the nodes of a connected cluster, with usage where the
 // cluster provides metrics.
-func (c *ClusterAPI) ListNodes(clusterID string) ([]Node, error) {
+//
+// annotationKeys is the same projection ListNamespaceSummaries takes.
+func (c *ClusterAPI) ListNodes(clusterID string, annotationKeys []string) ([]Node, error) {
 	ctx, cancel := c.app.requestContext()
 	defer cancel()
 
@@ -173,7 +178,7 @@ func (c *ClusterAPI) ListNodes(clusterID string) ([]Node, error) {
 		return nil, apiError(c.logger, "ListNodes", err)
 	}
 
-	nodes, err := c.clusters.ListNodes(ctx, id)
+	nodes, err := c.clusters.ListNodes(ctx, id, domain.NewProjection(annotationKeys))
 	if err != nil {
 		return nil, apiError(c.logger, "ListNodes", err)
 	}

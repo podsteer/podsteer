@@ -16,6 +16,8 @@
   import { cpuMeter, cpuTitle, memoryMeter, memoryTitle } from '$lib/meter'
   import { POD_STATUS_CHIPS } from '$lib/podStatusFilters'
   import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
+  import CustomCells from '$lib/components/CustomCells.svelte'
+  import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
   import { get as kubectlGet } from '$lib/kubectl'
   import type { ClusterSession } from '$stores/session.svelte'
   import type { Pod } from '$lib/api/client'
@@ -63,6 +65,9 @@
     { id: 'ip', label: 'IP', width: 120, defaultHidden: true },
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
+
+  /** The built-in columns, then the operator's own — see $lib/customColumns. */
+  const columns = $derived<Column[]>([...COLUMNS, ...toColumns(session.customColumns)])
 
   /**
    * The findings worth marking a row for.
@@ -124,9 +129,11 @@
    * operator would have to re-derive what the column meant.
    */
   function exportCSV(): CSVExport {
-    const visible = COLUMNS.filter(isColumnVisible)
+    const visible = columns.filter(isColumnVisible)
 
     function cell(pod: Pod, id: string): string {
+      const custom = parseCustomColumnId(id)
+      if (custom) return customCell(pod, custom)
       switch (id) {
         case 'status':
           return podStatusLabel(pod)
@@ -207,7 +214,7 @@
 
   <DataTable
     kindId={session.selectedKindId}
-    columns={COLUMNS}
+    {columns}
     isEmpty={session.pagedPods.length === 0}
     sort={session.sort}
     onsort={session.toggleSort}
@@ -391,6 +398,7 @@
               {formatAge(pod.ageSeconds)}
             </td>
           {/if}
+          <CustomCells specs={session.customColumns} row={pod} {isVisible} />
           <!-- Stops the click here: the row itself opens the detail drawer,
                and a click aimed at the menu — or at one of its items — must
                not also do that. -->

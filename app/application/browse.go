@@ -124,12 +124,12 @@ func (s *BrowseService) Kinds(_ context.Context, id domain.ClusterID) ([]domain.
 // Warnings are floated above Normal events within the same instant, because an
 // event list exists to answer "what is going wrong" and a burst of routine
 // Scheduled events would otherwise bury the one BackOff that matters.
-func (s *BrowseService) ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Event, error) {
+func (s *BrowseService) ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Event, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("listing events: %w", err)
 	}
 
-	events, err := s.events.ListEvents(ctx, id, namespace)
+	events, err := s.events.ListEvents(ctx, id, namespace, projection)
 	if err != nil {
 		return nil, fmt.Errorf("listing events in %q of %q: %w", namespace, id, err)
 	}
@@ -177,7 +177,7 @@ func (s *BrowseService) ListEventsForResource(ctx context.Context, id domain.Clu
 }
 
 // ListTable returns objects of the given kind as a generic table.
-func (s *BrowseService) ListTable(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName) (domain.ResourceTable, error) {
+func (s *BrowseService) ListTable(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, projection domain.Projection) (domain.ResourceTable, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return domain.ResourceTable{}, fmt.Errorf("listing resources: %w", err)
 	}
@@ -195,7 +195,7 @@ func (s *BrowseService) ListTable(ctx context.Context, id domain.ClusterID, kind
 		namespace = domain.NamespaceAll
 	}
 
-	table, err := s.resources.ListTable(ctx, id, kind, namespace)
+	table, err := s.resources.ListTable(ctx, id, kind, namespace, projection)
 	if err != nil {
 		return domain.ResourceTable{}, fmt.Errorf("listing %s in %q of %q: %w", kind.Title, namespace, id, err)
 	}

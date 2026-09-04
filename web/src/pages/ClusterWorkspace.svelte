@@ -33,6 +33,7 @@
   import { flash } from '$lib/flash.svelte'
   import { skeletonFor } from '$lib/manifestTemplates'
   import { iconForKind } from '$lib/kindIcons'
+  import type { CustomColumnSpec } from '$lib/customColumns'
   import type { ClusterSession } from '$stores/session.svelte'
   import EventsView from './EventsView.svelte'
   import GenericTableView from './GenericTableView.svelte'
@@ -55,6 +56,16 @@
       falls back to it below being a small kindness, not a promise. */
   let exportedPath = $state('')
   const exported = flash(2000)
+
+  /**
+   * An annotation column is a new projection — the list has to be ASKED for
+   * the key, see $lib/customColumns — so it is re-read at once rather than
+   * on the next poll. A label column, or a removal, reads what every row
+   * already carries and needs nothing.
+   */
+  function onColumnsChanged(spec: CustomColumnSpec, change: 'added' | 'removed'): void {
+    if (change === 'added' && spec.source === 'annotation') void session.refresh()
+  }
 
   /**
    * The guardrails for the group this cluster sits in.
@@ -321,7 +332,12 @@
         {#if activeTable.present}
           <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
 
-          <ColumnMenu kindId={activeTable.kindId} columns={activeTable.columns} />
+          <ColumnMenu
+            kindId={activeTable.kindId}
+            columns={activeTable.columns}
+            keys={session.metadataKeysOnScreen}
+            onchange={onColumnsChanged}
+          />
 
           <ToolbarButton
             icon={exported.on ? Check : Download}

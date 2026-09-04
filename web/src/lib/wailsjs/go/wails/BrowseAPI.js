@@ -14,8 +14,8 @@ export function InspectTLSSecret(arg1, arg2, arg3) {
   return window['go']['wails']['BrowseAPI']['InspectTLSSecret'](arg1, arg2, arg3);
 }
 
-export function ListEvents(arg1, arg2) {
-  return window['go']['wails']['BrowseAPI']['ListEvents'](arg1, arg2);
+export function ListEvents(arg1, arg2, arg3) {
+  return window['go']['wails']['BrowseAPI']['ListEvents'](arg1, arg2, arg3);
 }
 
 export function ListEventsForResource(arg1, arg2, arg3, arg4) {
@@ -26,8 +26,8 @@ export function ListKinds(arg1) {
   return window['go']['wails']['BrowseAPI']['ListKinds'](arg1);
 }
 
-export function ListTable(arg1, arg2, arg3) {
-  return window['go']['wails']['BrowseAPI']['ListTable'](arg1, arg2, arg3);
+export function ListTable(arg1, arg2, arg3, arg4) {
+  return window['go']['wails']['BrowseAPI']['ListTable'](arg1, arg2, arg3, arg4);
 }
 
 export function NamespaceInventory(arg1, arg2) {

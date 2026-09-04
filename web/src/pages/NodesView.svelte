@@ -12,6 +12,8 @@
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
+  import CustomCells from '$lib/components/CustomCells.svelte'
+  import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
   import { formatAge } from '$lib/format'
   import { get as kubectlGet } from '$lib/kubectl'
   import { preferences } from '$stores/preferences.svelte'
@@ -55,6 +57,9 @@
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
 
+  /** The built-in columns, then the operator's own — see $lib/customColumns. */
+  const columns = $derived<Column[]>([...COLUMNS, ...toColumns(session.customColumns)])
+
   /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
       repeated here rather than asked of either. */
   function isColumnVisible(column: Column): boolean {
@@ -64,9 +69,11 @@
 
   /** The node list's CSV export, mirroring exactly what each cell shows. */
   function exportCSV(): CSVExport {
-    const visible = COLUMNS.filter(isColumnVisible)
+    const visible = columns.filter(isColumnVisible)
 
     function cell(node: Node, id: string): string {
+      const custom = parseCustomColumnId(id)
+      if (custom) return customCell(node, custom)
       switch (id) {
         case 'status':
           return node.status
@@ -106,7 +113,7 @@
 
 <DataTable
   kindId={session.selectedKindId}
-  columns={COLUMNS}
+  {columns}
   isEmpty={session.pagedNodes.length === 0}
   sort={session.sort}
   onsort={session.toggleSort}
@@ -254,6 +261,7 @@
             {formatAge(node.ageSeconds)}
           </td>
         {/if}
+        <CustomCells specs={session.customColumns} row={node} {isVisible} />
         <!-- Stops the click here: the row itself opens the detail drawer,
              and a click aimed at the menu — or at one of its items — must
              not also do that. -->

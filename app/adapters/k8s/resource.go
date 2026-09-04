@@ -29,7 +29,12 @@ const tableMediaType = "application/json;as=Table;v=v1;g=meta.k8s.io"
 const tableListLimit = 1000
 
 // ListTable returns objects of the given kind rendered as a table.
-func (a *Adapter) ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName) (domain.ResourceTable, error) {
+//
+// projection names the annotation keys each row carries; labels are always
+// carried. Both are read from the metadata the server already attaches to
+// every row (see includeObject below), so a custom column costs no request
+// beyond the one list this always made.
+func (a *Adapter) ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName, projection domain.Projection) (domain.ResourceTable, error) {
 	op := fmt.Sprintf("listing %s in %q of %q", kind.Resource, namespace, id)
 
 	set, err := a.factory.clientsFor(id)
@@ -46,6 +51,8 @@ func (a *Adapter) ListTable(ctx context.Context, id domain.ClusterID, kind domai
 	// metadata. Without it a row is only rendered cells, and PodSteer would
 	// have to guess which column holds the name in order to link the row —
 	// a guess that breaks on any CRD whose printer puts the name elsewhere.
+	// The same attachment carries the labels and annotations, which is what
+	// lets a custom column on a CRD read them without a GET per row.
 	body, err := restClient.Get().
 		AbsPath(resourcePath(kind, namespace, "")).
 		SetHeader("Accept", tableMediaType).
@@ -61,7 +68,7 @@ func (a *Adapter) ListTable(ctx context.Context, id domain.ClusterID, kind domai
 		return domain.ResourceTable{}, fmt.Errorf("%s: decoding table: %w", op, err)
 	}
 
-	return mapTable(kind, &table)
+	return mapTable(kind, &table, projection)
 }
 
 // GetManifest returns one object serialised as YAML.
@@ -149,7 +156,7 @@ func resourcePath(kind domain.ResourceKind, namespace domain.NamespaceName, name
 }
 
 // mapTable translates a server-printed table into the domain projection.
-func mapTable(kind domain.ResourceKind, table *metav1.Table) (domain.ResourceTable, error) {
+func mapTable(kind domain.ResourceKind, table *metav1.Table, projection domain.Projection) (domain.ResourceTable, error) {
 	columns := make([]domain.TableColumn, 0, len(table.ColumnDefinitions))
 	for _, definition := range table.ColumnDefinitions {
 		columns = append(columns, domain.TableColumn{
@@ -169,30 +176,41 @@ func mapTable(kind domain.ResourceKind, table *metav1.Table) (domain.ResourceTab
 			cells = append(cells, renderCell(cell))
 		}
 
-		name, namespace := rowIdentity(row)
+		metadata := rowMetadata(row, projection)
 		rows = append(rows, domain.TableRow{
-			Name:      name,
-			Namespace: namespace,
-			Cells:     cells,
+			Name:        metadata.name,
+			Namespace:   metadata.namespace,
+			Cells:       cells,
+			Labels:      metadata.labels,
+			Annotations: metadata.annotations,
 		})
 	}
 
 	return domain.NewResourceTable(kind, columns, rows), nil
 }
 
-// rowIdentity extracts a row's name and namespace from its attached metadata.
+// tableRowMetadata is what a row's attached PartialObjectMetadata yields.
+type tableRowMetadata struct {
+	name        string
+	namespace   domain.NamespaceName
+	labels      map[string]string
+	annotations map[string]string
+}
+
+// rowMetadata extracts a row's identity, labels and projected annotations
+// from its attached metadata.
 //
-// Falls back to the empty string rather than failing: a row whose object could
+// Falls back to the zero value rather than failing: a row whose object could
 // not be decoded is still worth displaying, it just cannot be clicked through
-// to a detail view.
-func rowIdentity(row *metav1.TableRow) (string, domain.NamespaceName) {
+// to a detail view and its custom columns read blank.
+func rowMetadata(row *metav1.TableRow, projection domain.Projection) tableRowMetadata {
 	if len(row.Object.Raw) == 0 {
-		return "", domain.NamespaceAll
+		return tableRowMetadata{namespace: domain.NamespaceAll}
 	}
 
 	var partial metav1.PartialObjectMetadata
 	if err := json.Unmarshal(row.Object.Raw, &partial); err != nil {
-		return "", domain.NamespaceAll
+		return tableRowMetadata{namespace: domain.NamespaceAll}
 	}
 
 	namespace, err := domain.NewNamespaceName(partial.Namespace)
@@ -200,7 +218,12 @@ func rowIdentity(row *metav1.TableRow) (string, domain.NamespaceName) {
 		namespace = domain.NamespaceAll
 	}
 
-	return partial.Name, namespace
+	return tableRowMetadata{
+		name:        partial.Name,
+		namespace:   namespace,
+		labels:      partial.Labels,
+		annotations: projection.Annotations(partial.Annotations),
+	}
 }
 
 // renderCell converts a table cell to its display string.

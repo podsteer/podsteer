@@ -53,11 +53,11 @@ func (g *goneCluster) ServerVersion(context.Context, domain.ClusterID) (domain.S
 	return domain.ServerVersion{}, nil
 }
 
-func (g *goneCluster) ListNamespaces(context.Context, domain.ClusterID) ([]domain.Namespace, error) {
+func (g *goneCluster) ListNamespaces(context.Context, domain.ClusterID, domain.Projection) ([]domain.Namespace, error) {
 	return nil, g.err(false)
 }
 
-func (g *goneCluster) ListNodes(context.Context, domain.ClusterID) ([]domain.Node, error) {
+func (g *goneCluster) ListNodes(context.Context, domain.ClusterID, domain.Projection) ([]domain.Node, error) {
 	return nil, g.err(false)
 }
 
@@ -73,11 +73,11 @@ func (g *goneCluster) DiscoverCustomKinds(context.Context, domain.ClusterID) ([]
 	return nil, g.err(false)
 }
 
-func (g *goneCluster) ListPods(context.Context, domain.ClusterID, domain.NamespaceName) ([]domain.Pod, error) {
+func (g *goneCluster) ListPods(context.Context, domain.ClusterID, domain.NamespaceName, domain.Projection) ([]domain.Pod, error) {
 	return nil, g.err(false)
 }
 
-func (g *goneCluster) ListWorkloads(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName) ([]domain.Workload, error) {
+func (g *goneCluster) ListWorkloads(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, domain.Projection) ([]domain.Workload, error) {
 	return nil, g.err(false)
 }
 
@@ -85,7 +85,7 @@ func (g *goneCluster) ListPodsForWorkload(context.Context, domain.ClusterID, dom
 	return nil, g.err(false)
 }
 
-func (g *goneCluster) ListEvents(context.Context, domain.ClusterID, domain.NamespaceName) ([]domain.Event, error) {
+func (g *goneCluster) ListEvents(context.Context, domain.ClusterID, domain.NamespaceName, domain.Projection) ([]domain.Event, error) {
 	return nil, g.err(false)
 }
 

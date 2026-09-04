@@ -15,6 +15,8 @@
   import type { CSVExport } from '$stores/activeTable.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
+  import CustomCells from '$lib/components/CustomCells.svelte'
+  import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
   import { iconForKind } from '$lib/kindIcons'
   import { get as kubectlGet, resourceArgForKind } from '$lib/kubectl'
   import { preferences } from '$stores/preferences.svelte'
@@ -88,10 +90,18 @@
    * a status from a column that happens to be called "Status", and a guess
    * dressed as a verdict is worse than no verdict.
    */
+  /**
+   * The operator's own columns, after everything the server printed. They
+   * read the labels and annotations the server attaches to each row's
+   * metadata — see $lib/customColumns — which is what lets a CRD nobody
+   * wrote code for grow a `team` column exactly as a Deployment can.
+   */
+  const custom = $derived<Column[]>(toColumns(session.customColumns))
+
   const columns = $derived<Column[]>(
     KindIcon
-      ? [{ id: 'kind', label: 'Kind', width: 44, icon: CircleDot, pinned: true }, ...printed]
-      : printed,
+      ? [{ id: 'kind', label: 'Kind', width: 44, icon: CircleDot, pinned: true }, ...printed, ...custom]
+      : [...printed, ...custom],
   )
 
   /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
@@ -103,16 +113,22 @@
 
   /**
    * The generic table's CSV export: the server's own printed column names,
-   * exactly as it named them — not the icon column, which carries no text of
-   * its own, only a mark this view drew in front of the kind's rows.
+   * exactly as it named them, then the operator's own — not the icon column,
+   * which carries no text of its own, only a mark this view drew in front of
+   * the kind's rows.
    */
   function exportCSV(): CSVExport {
-    const visible = printed.filter(isColumnVisible)
-    const indices = visible.map((column) => Number(column.id.slice(1)))
+    const visible = [...printed, ...custom].filter(isColumnVisible)
+
+    function cell(row: TableRow, id: string): string {
+      const spec = parseCustomColumnId(id)
+      if (spec) return customCell(row, spec)
+      return row.cells[Number(id.slice(1))] ?? ''
+    }
 
     return {
       columns: visible.map((column) => column.label),
-      rows: session.sortedTableRows.map((row) => indices.map((index) => row.cells[index] ?? '')),
+      rows: session.sortedTableRows.map((row) => visible.map((column) => cell(row, column.id))),
     }
   }
 </script>
@@ -163,6 +179,7 @@
             </td>
           {/if}
         {/each}
+        <CustomCells specs={session.customColumns} {row} {isVisible} />
         <!-- Stops the click here: the row itself opens the detail drawer,
              and a click aimed at the menu — or at one of its items — must
              not also do that. -->

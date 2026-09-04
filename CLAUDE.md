@@ -216,6 +216,35 @@ Three rules it holds to, each with a test:
 Narrowed reads — one object, one node's pods, one workload's pods — go
 straight through. Nothing on-demand is cached.
 
+## Custom columns quote metadata, and annotations travel by projection
+
+An operator can put any label or annotation key on any list as a column
+(`web/src/lib/customColumns.ts`, persisted per KIND in
+`preferences.svelte.ts` — a catalogue id and a key, never an object name).
+Labels ship on every row of every kind, rich and generic alike. **Annotations
+do not: only the keys somebody has put on a column travel**, passed as a
+`domain.Projection` through every list call — `ListPods`, `ListWorkloads`,
+`ListNodes`, `ListNamespaces`, `ListEvents`, `ListTable` — and the empty
+projection is what every non-list caller (the assessment, the sampler, the
+consumption sums) passes. The reason is one key: kubectl's
+`last-applied-configuration` is a copy of the whole manifest, tens of
+kilobytes on a Deployment, and shipping the map wholesale would re-send it on
+every row of every refresh. That key is refused outright by `NewProjection`,
+and not only for its size — the watch store strips it, so a column of it
+would read blank on a cluster the watch is serving and the manifest on one it
+is not, two answers decided by something the operator cannot see.
+
+Two consequences. **The projection is part of the read-cache key**: a mapped
+pod carries only what it was asked for, so a list view with an annotation
+column reads beside the assessment's list rather than sharing it — one extra
+list per refresh, paid only by whoever configured such a column, and only CPU
+where the watch is serving. And **the mappers take the projection as a
+parameter** rather than reading it off the adapter, so the stripping contract
+tests in `watch_test.go` can map a stored object and its original under the
+same projection and compare them. The generic table reads both labels and the
+projected annotations from the `PartialObjectMetadata` the server already
+attaches to each row (`includeObject=Metadata`) — never a GET per row.
+
 ## Counting is `limit=1`, never `len(list)`
 
 Kubernetes has no endpoint that reports how many objects a namespace holds, and
