@@ -510,6 +510,79 @@ func toDrainReport(report domain.DrainReport) DrainReportDTO {
 	}
 }
 
+// RevisionDTO is one recorded revision of a Deployment, StatefulSet or
+// DaemonSet's pod template — what RolloutHistory returns, over the wire.
+type RevisionDTO struct {
+	// Number is the revision number Kubernetes assigned.
+	Number int64 `json:"number"`
+	// Name is the owning ReplicaSet's or ControllerRevision's own name.
+	Name string `json:"name"`
+	// CreatedAt is the creation timestamp in RFC 3339, empty if unknown.
+	CreatedAt string `json:"createdAt"`
+	// AgeSeconds is the age at the time of the call.
+	AgeSeconds int64 `json:"ageSeconds"`
+	// Current marks the revision presently in use.
+	Current bool `json:"current"`
+	// Replicas is how many pods this revision has — zero for a StatefulSet
+	// or DaemonSet revision, which is a stored patch rather than a scaled
+	// object. See domain.Revision.Replicas.
+	Replicas int32 `json:"replicas"`
+	// Images are the pod template's container images.
+	Images []string `json:"images"`
+	// ChangeCause is the kubernetes.io/change-cause annotation, empty when
+	// the object that produced this revision never carried one.
+	ChangeCause string `json:"changeCause"`
+	// TemplateYAML is the pod template this revision would roll back to,
+	// for the History tab's diff view.
+	TemplateYAML string `json:"templateYaml"`
+}
+
+// toRevision converts a domain revision, using now as the age reference.
+func toRevision(revision domain.Revision, now time.Time) RevisionDTO {
+	images := revision.Images
+	if images == nil {
+		images = []string{}
+	}
+	return RevisionDTO{
+		Number:       revision.Number,
+		Name:         revision.Name,
+		CreatedAt:    formatTime(revision.Created),
+		AgeSeconds:   int64(now.Sub(revision.Created).Seconds()),
+		Current:      revision.Current,
+		Replicas:     revision.Replicas,
+		Images:       images,
+		ChangeCause:  revision.ChangeCause,
+		TemplateYAML: revision.TemplateYAML,
+	}
+}
+
+// toRevisions converts a slice of domain revisions.
+func toRevisions(revisions []domain.Revision, now time.Time) []RevisionDTO {
+	out := make([]RevisionDTO, 0, len(revisions))
+	for _, revision := range revisions {
+		out = append(out, toRevision(revision, now))
+	}
+	return out
+}
+
+// RollbackOutcomeDTO reports what RollbackWorkload actually did — what
+// domain.RollbackOutcome carries, over the wire.
+type RollbackOutcomeDTO struct {
+	// ToRevision is the revision number rolled back to.
+	ToRevision int64 `json:"toRevision"`
+	// DryRun reports whether this outcome came from a server-side dry run —
+	// nothing was persisted when it is true.
+	DryRun bool `json:"dryRun"`
+}
+
+// toRollbackOutcome converts a domain rollback outcome for the frontend.
+func toRollbackOutcome(outcome domain.RollbackOutcome) RollbackOutcomeDTO {
+	return RollbackOutcomeDTO{
+		ToRevision: outcome.ToRevision,
+		DryRun:     outcome.DryRun,
+	}
+}
+
 // ApplyOutcomeDTO reports what UpdateResource or ValidateResource actually
 // did — what domain.ApplyOutcome carries, over the wire.
 type ApplyOutcomeDTO struct {

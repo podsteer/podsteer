@@ -42,6 +42,10 @@ export function RestartRollout(arg1, arg2, arg3, arg4) {
   return window['go']['wails']['ManagementAPI']['RestartRollout'](arg1, arg2, arg3, arg4);
 }
 
+export function RollbackWorkload(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['wails']['ManagementAPI']['RollbackWorkload'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
 export function ScaleWorkload(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['wails']['ManagementAPI']['ScaleWorkload'](arg1, arg2, arg3, arg4, arg5);
 }

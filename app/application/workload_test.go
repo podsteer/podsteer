@@ -123,6 +123,82 @@ func TestListPodsPreservesPortErrorClassification(t *testing.T) {
 	}
 }
 
+func TestRolloutHistoryRequiresAConnectedCluster(t *testing.T) {
+	t.Parallel()
+
+	service := newWorkloadService(t, &fakeKubernetes{}, false)
+
+	if _, err := service.RolloutHistory(context.Background(), "dev", domain.WorkloadDeployment, "web", "api"); !errors.Is(err, domain.ErrClusterNotConnected) {
+		t.Errorf("RolloutHistory() error = %v, want %v", err, domain.ErrClusterNotConnected)
+	}
+}
+
+// TestRolloutHistoryAcceptsTheThreeSupportedKinds mirrors how SetImage and
+// RollbackWorkload are checked: RolloutHistory supports exactly the three
+// controller kinds whose pod template sits at spec.template.
+func TestRolloutHistoryAcceptsTheThreeSupportedKinds(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []domain.WorkloadKind{domain.WorkloadDeployment, domain.WorkloadStatefulSet, domain.WorkloadDaemonSet} {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+
+			kubernetes := &fakeKubernetes{revisions: []domain.Revision{{Number: 1, Name: "api-111", Current: true}}}
+			service := newWorkloadService(t, kubernetes, true)
+
+			revisions, err := service.RolloutHistory(context.Background(), "dev", kind, "web", "api")
+			if err != nil {
+				t.Fatalf("RolloutHistory() error = %v", err)
+			}
+			if len(revisions) != 1 {
+				t.Fatalf("len(revisions) = %d, want 1", len(revisions))
+			}
+		})
+	}
+}
+
+func TestRolloutHistoryRejectsAKindThatDoesNotCarryOne(t *testing.T) {
+	t.Parallel()
+
+	kubernetes := &fakeKubernetes{revisions: []domain.Revision{{Number: 1}}}
+	service := newWorkloadService(t, kubernetes, true)
+
+	_, err := service.RolloutHistory(context.Background(), "dev", domain.WorkloadCronJob, "batch", "nightly")
+	if !errors.Is(err, domain.ErrUnsupportedWorkloadKind) {
+		t.Errorf("RolloutHistory() error = %v, want %v", err, domain.ErrUnsupportedWorkloadKind)
+	}
+}
+
+func TestRolloutHistoryPassesNamespaceAndNameThrough(t *testing.T) {
+	t.Parallel()
+
+	kubernetes := &fakeKubernetes{}
+	service := newWorkloadService(t, kubernetes, true)
+
+	if _, err := service.RolloutHistory(context.Background(), "dev", domain.WorkloadDeployment, "platform", "api"); err != nil {
+		t.Fatalf("RolloutHistory() error = %v", err)
+	}
+
+	cluster, namespace := kubernetes.lastRequest()
+	if cluster != "dev" {
+		t.Errorf("queried cluster %q, want %q", cluster, "dev")
+	}
+	if namespace != "platform" {
+		t.Errorf("queried namespace %q, want %q", namespace, "platform")
+	}
+}
+
+func TestRolloutHistoryPreservesPortErrorClassification(t *testing.T) {
+	t.Parallel()
+
+	service := newWorkloadService(t, &fakeKubernetes{revisionsErr: ports.ErrForbidden}, true)
+
+	_, err := service.RolloutHistory(context.Background(), "dev", domain.WorkloadDeployment, "web", "api")
+	if !errors.Is(err, ports.ErrForbidden) {
+		t.Errorf("RolloutHistory() error = %v, want it to wrap %v", err, ports.ErrForbidden)
+	}
+}
+
 func TestRegistryLifecycle(t *testing.T) {
 	t.Parallel()
 

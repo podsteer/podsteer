@@ -870,6 +870,31 @@ same as one already in the explicit file.
   for different credentials. It is the only error `DrainNode` ever retries —
   every other failure during a drain is recorded as a `DrainFailure` and the
   rest of the node continues draining around it.
+- **A revision comes from owned ReplicaSets or ControllerRevisions, never
+  the watch store.** `WorkloadPort.RolloutHistory` reads a Deployment's
+  ReplicaSets or a StatefulSet/DaemonSet's ControllerRevisions by
+  ownerReference — the same rule `ListPodsForWorkload` follows, and for the
+  same reason: a selector can be shared by an unrelated object wearing the
+  same labels. `domain.Revision.Current` marks whichever carries the
+  HIGHEST revision number, never the one with the most replicas or the
+  newest timestamp: both controllers REUSE and renumber an existing
+  revision object rather than creating a new one when a rollback's target
+  template already exists, so the active revision is always the highest-
+  numbered one, in steady state and immediately after a rollback alike —
+  which is also why a StatefulSet's own `Status.CurrentRevision` field is
+  deliberately not read, since the same rule has to hold for a DaemonSet
+  too, and a DaemonSet carries no such field. A rollback is a PATCH, not a
+  full replace: `ManagementPort.RollbackWorkload` copies a Deployment's
+  target ReplicaSet `spec.template` onto the Deployment via a strategic
+  merge patch — the same field and patch type `SetImage` uses, which is
+  also why a target revision with FEWER containers than the live template
+  will not remove the ones the merge does not mention — plus a
+  `kubernetes.io/change-cause` annotation naming the rollback, and only
+  when the Deployment already carries one today. A StatefulSet's or
+  DaemonSet's rollback instead applies the target ControllerRevision's own
+  patch data directly as a strategic merge patch, letting the API server do
+  the same reconstruction `kubectl rollout undo` relies on rather than this
+  process re-implementing strategic-merge-patch semantics by hand.
 
 ## Configuration
 

@@ -488,6 +488,184 @@ func TestSetImagePassesWhenNotReadOnly(t *testing.T) {
 	}
 }
 
+func TestRollbackWorkloadPassesArgumentsThrough(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{rollbackOutcome: domain.RollbackOutcome{ToRevision: 3, DryRun: false}}
+	service := newManagementService(t, management, application.NewRegistry())
+
+	outcome, err := service.RollbackWorkload(context.Background(), "dev", domain.WorkloadDeployment, "web", "api", 3, false)
+	if err != nil {
+		t.Fatalf("RollbackWorkload() error = %v", err)
+	}
+	if outcome.ToRevision != 3 {
+		t.Errorf("outcome.ToRevision = %d, want 3", outcome.ToRevision)
+	}
+
+	if !management.rollbackCalled {
+		t.Fatal("RollbackWorkload() never reached the adapter")
+	}
+	if management.rollbackID != "dev" {
+		t.Errorf("cluster = %q, want %q", management.rollbackID, "dev")
+	}
+	if management.rollbackKind != domain.WorkloadDeployment {
+		t.Errorf("kind = %q, want %q", management.rollbackKind, domain.WorkloadDeployment)
+	}
+	if management.rollbackNS != "web" {
+		t.Errorf("namespace = %q, want %q", management.rollbackNS, "web")
+	}
+	if management.rollbackName != "api" {
+		t.Errorf("name = %q, want %q", management.rollbackName, "api")
+	}
+	if management.rollbackToRevision != 3 {
+		t.Errorf("toRevision = %d, want 3", management.rollbackToRevision)
+	}
+	if management.rollbackDryRun {
+		t.Error("dryRun = true, want false")
+	}
+}
+
+// TestRollbackWorkloadAcceptsTheThreeSupportedKinds mirrors
+// TestSetImageAcceptsTheThreeSupportedKinds: a rollback supports exactly the
+// three controller kinds that carry a rollout history.
+func TestRollbackWorkloadAcceptsTheThreeSupportedKinds(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []domain.WorkloadKind{domain.WorkloadDeployment, domain.WorkloadStatefulSet, domain.WorkloadDaemonSet} {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+
+			management := &fakeManagementPort{}
+			service := newManagementService(t, management, application.NewRegistry())
+
+			if _, err := service.RollbackWorkload(context.Background(), "dev", kind, "web", "api", 1, false); err != nil {
+				t.Fatalf("RollbackWorkload() error = %v", err)
+			}
+			if !management.rollbackCalled {
+				t.Fatal("RollbackWorkload() never reached the adapter")
+			}
+		})
+	}
+}
+
+func TestRollbackWorkloadRejectsAKindThatDoesNotSupportIt(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management, application.NewRegistry())
+
+	_, err := service.RollbackWorkload(context.Background(), "dev", domain.WorkloadCronJob, "batch", "nightly", 1, false)
+	if !errors.Is(err, domain.ErrUnsupportedWorkloadKind) {
+		t.Errorf("RollbackWorkload() error = %v, want %v", err, domain.ErrUnsupportedWorkloadKind)
+	}
+
+	// The whole point of validating here rather than in the adapter: an
+	// unsupported kind must never cost a round trip to the cluster.
+	if management.rollbackCalled {
+		t.Error("RollbackWorkload() reached the adapter for an unsupported kind")
+	}
+}
+
+func TestRollbackWorkloadRejectsANonPositiveRevisionBeforeTheAdapter(t *testing.T) {
+	t.Parallel()
+
+	for _, revision := range []int64{0, -1} {
+		t.Run(fmt.Sprintf("revision=%d", revision), func(t *testing.T) {
+			t.Parallel()
+
+			management := &fakeManagementPort{}
+			service := newManagementService(t, management, application.NewRegistry())
+
+			_, err := service.RollbackWorkload(context.Background(), "dev", domain.WorkloadDeployment, "web", "api", revision, false)
+			if !errors.Is(err, domain.ErrInvalidRevision) {
+				t.Errorf("RollbackWorkload() error = %v, want %v", err, domain.ErrInvalidRevision)
+			}
+			if management.rollbackCalled {
+				t.Error("RollbackWorkload() reached the adapter for a non-positive revision")
+			}
+		})
+	}
+}
+
+func TestRollbackWorkloadPropagatesTheAdapterError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("boom")
+	management := &fakeManagementPort{rollbackErr: wantErr}
+	service := newManagementService(t, management, application.NewRegistry())
+
+	_, err := service.RollbackWorkload(context.Background(), "dev", domain.WorkloadDeployment, "web", "api", 1, false)
+	if !errors.Is(err, wantErr) {
+		t.Errorf("RollbackWorkload() error = %v, want %v", err, wantErr)
+	}
+}
+
+// TestRollbackWorkloadRefusesWhenReadOnly is RollbackWorkload's share of the
+// property TestManagementServiceRefusesEveryWriteWhenReadOnly asserts for
+// the older write methods — a REAL rollback, dryRun false.
+func TestRollbackWorkloadRefusesWhenReadOnly(t *testing.T) {
+	t.Parallel()
+
+	const id domain.ClusterID = "prod"
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly(id, true)
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management, registry)
+
+	_, err := service.RollbackWorkload(context.Background(), id, domain.WorkloadDeployment, "web", "api", 1, false)
+	if !errors.Is(err, ports.ErrReadOnly) {
+		t.Errorf("RollbackWorkload() error = %v, want %v", err, ports.ErrReadOnly)
+	}
+	if management.rollbackCalled {
+		t.Error("RollbackWorkload() reached the adapter on a read-only cluster")
+	}
+}
+
+// TestRollbackWorkloadAllowsDryRunOnAReadOnlyCluster mirrors
+// TestManagementServiceUpdateResourceAllowsDryRunOnAReadOnlyCluster: a
+// Preview asks the API server to validate and persists nothing, so it is
+// exactly as safe against a read-only cluster as any other read.
+func TestRollbackWorkloadAllowsDryRunOnAReadOnlyCluster(t *testing.T) {
+	t.Parallel()
+
+	const id domain.ClusterID = "prod"
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly(id, true)
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management, registry)
+
+	if _, err := service.RollbackWorkload(context.Background(), id, domain.WorkloadDeployment, "web", "api", 1, true); err != nil {
+		t.Fatalf("RollbackWorkload(dryRun=true) on a read-only cluster error = %v, want nil", err)
+	}
+	if !management.rollbackCalled {
+		t.Fatal("RollbackWorkload(dryRun=true) never reached the adapter — a dry run must not be refused by the read-only guard")
+	}
+}
+
+// TestRollbackWorkloadPassesWhenNotReadOnly mirrors TestSetImagePassesWhenNotReadOnly.
+func TestRollbackWorkloadPassesWhenNotReadOnly(t *testing.T) {
+	t.Parallel()
+
+	const id domain.ClusterID = "staging"
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly("prod", true)
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management, registry)
+
+	if _, err := service.RollbackWorkload(context.Background(), id, domain.WorkloadDeployment, "web", "api", 1, false); err != nil {
+		t.Fatalf("RollbackWorkload() error = %v", err)
+	}
+	if !management.rollbackCalled {
+		t.Fatal("RollbackWorkload() never reached the adapter")
+	}
+}
+
 func TestCordonNodePassesArgumentsThrough(t *testing.T) {
 	t.Parallel()
 

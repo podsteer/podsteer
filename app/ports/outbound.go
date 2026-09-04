@@ -116,6 +116,15 @@ type WorkloadPort interface {
 	// filtering a cluster-wide list, for the same reason: "what is on this
 	// machine" costs one indexed request, not every pod in the cluster.
 	DrainCandidates(ctx context.Context, id domain.ClusterID, nodeName string) ([]domain.DrainCandidate, error)
+
+	// RolloutHistory returns the recorded revisions of a Deployment,
+	// StatefulSet or DaemonSet's pod template, newest first — a
+	// Deployment's ReplicaSets or a StatefulSet/DaemonSet's
+	// ControllerRevisions, resolved by ownerReference and never by label
+	// selector, mirroring ListPodsForWorkload's own rule. Only those three
+	// kinds carry a rollout history; the application layer rejects any
+	// other kind before this is reached.
+	RolloutHistory(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string) ([]domain.Revision, error)
 }
 
 // EventPort reads Kubernetes Events.
@@ -460,6 +469,33 @@ type ManagementPort interface {
 	// is not runnable, in which case the node was cordoned but nothing was
 	// evicted.
 	DrainNode(ctx context.Context, id domain.ClusterID, name string, opts domain.DrainOptions) (domain.DrainReport, error)
+
+	// RollbackWorkload rolls a Deployment, StatefulSet or DaemonSet back to
+	// a previously recorded revision, the way `kubectl rollout undo
+	// --to-revision` does. Only those three kinds support it; the
+	// application layer rejects any other kind before this is reached,
+	// mirroring SetImage's own kind check.
+	//
+	// For a Deployment this copies the target ReplicaSet's spec.template
+	// onto the Deployment via a strategic merge patch of spec.template —
+	// the same field SetImage patches — plus a `kubernetes.io/change-cause`
+	// annotation naming the rollback, and ONLY when the Deployment already
+	// carries a change-cause annotation today: a rollback must not start a
+	// convention the operator never opted into. For a StatefulSet or
+	// DaemonSet this applies the target ControllerRevision's own patch data
+	// onto the object as a strategic merge patch, letting the API server do
+	// the same reconstruction `kubectl rollout undo` relies on rather than
+	// this process re-implementing strategic-merge-patch semantics by hand.
+	//
+	// Refuses with domain.ErrInvalidRevision when toRevision is not
+	// positive, or names the revision already current — there being nothing
+	// for it to do is a different problem from toRevision naming no
+	// revision at all, which is ports.ErrNotFound.
+	//
+	// dryRun asks the API server to validate the request via DryRun=All
+	// without persisting anything, the same convention UpdateResource's own
+	// dry run uses.
+	RollbackWorkload(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, toRevision int64, dryRun bool) (domain.RollbackOutcome, error)
 }
 
 // EventPublisher delivers domain events to whatever is observing the

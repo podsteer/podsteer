@@ -44,6 +44,7 @@ import {
   ListPodsOnNode as bindListPodsOnNode,
   PodGraph as bindPodGraph,
   WorkloadGraph as bindWorkloadGraph,
+  RolloutHistory as bindRolloutHistory,
 } from '$lib/wailsjs/go/wails/WorkloadAPI'
 import {
   ScaleWorkload as bindScaleWorkload,
@@ -68,6 +69,7 @@ import {
   StopAllPortForwards as bindStopAllPortForwards,
   ProbeLocalPort as bindProbeLocalPort,
   FreeLocalPort as bindFreeLocalPort,
+  RollbackWorkload as bindRollbackWorkload,
 } from '$lib/wailsjs/go/wails/ManagementAPI'
 import { GetOverview as bindGetOverview } from '$lib/wailsjs/go/wails/OverviewAPI'
 import {
@@ -174,6 +176,12 @@ export type DrainPlan = wails.DrainPlanDTO
 export type DrainReport = wails.DrainReportDTO
 /** What an apply — real or a dry-run Validate — actually did. */
 export type ApplyOutcome = wails.ApplyOutcomeDTO
+/** One recorded revision of a Deployment, StatefulSet or DaemonSet's pod
+ * template — what the History tab lists and a rollback picks a target
+ * from. */
+export type Revision = wails.RevisionDTO
+/** What a rollback — real or a dry-run Preview — actually did. */
+export type RollbackOutcome = wails.RollbackOutcomeDTO
 
 /** Selects every namespace. Matches the backend's empty-string convention. */
 export const ALL_NAMESPACES = ''
@@ -445,6 +453,20 @@ export function listApplications(
   namespace: string,
 ): Promise<ApplicationInventory> {
   return call(() => bindListApplications(clusterId, namespace))
+}
+
+/**
+ * Returns the recorded revisions of a Deployment, StatefulSet or DaemonSet's
+ * pod template, newest first — the drawer's History tab, and what
+ * RollbackDialog picks a target revision from.
+ */
+export function rolloutHistory(
+  clusterId: string,
+  kind: string,
+  namespace: string,
+  name: string,
+): Promise<Revision[]> {
+  return call(() => bindRolloutHistory(clusterId, kind, namespace, name))
 }
 
 /** Lists all pods owned by a specific workload. */
@@ -799,6 +821,25 @@ export function setImage(
   initContainer: boolean,
 ): Promise<void> {
   return call(() => bindSetImage(clusterId, kind, namespace, name, container, image, initContainer))
+}
+
+/**
+ * Rolls a Deployment, StatefulSet or DaemonSet back to a previously recorded
+ * revision, the way `kubectl rollout undo --to-revision` does.
+ *
+ * dryRun asks the API server to validate the request without persisting
+ * anything — RollbackDialog's Preview button — and is allowed on a
+ * read-only cluster for the same reason validateResource is.
+ */
+export function rollbackWorkload(
+  clusterId: string,
+  kind: string,
+  namespace: string,
+  name: string,
+  toRevision: number,
+  dryRun: boolean,
+): Promise<RollbackOutcome> {
+  return call(() => bindRollbackWorkload(clusterId, kind, namespace, name, toRevision, dryRun))
 }
 
 /** Suspends or resumes a CronJob's schedule, or a Job's pods. */
