@@ -26,7 +26,9 @@
   import ToolbarButton from './ToolbarButton.svelte'
   import ToolbarToggle from './ToolbarToggle.svelte'
   import PaneDialog from './PaneDialog.svelte'
+  import CreateResourceDialog from './CreateResourceDialog.svelte'
   import { withoutManagedFields } from '$lib/manifest'
+  import { stripForDuplicate } from '$lib/duplicate'
   import { gitOpsOwner, revertWarning } from '$lib/gitops'
   import GitOpsBadge from './GitOpsBadge.svelte'
   import { organisation } from '$stores/organisation.svelte'
@@ -70,6 +72,7 @@
     ImageUp,
     Pencil,
     Copy,
+    CopyPlus,
     Check,
     Trash2,
     Maximize2,
@@ -262,6 +265,35 @@
             ? 'Edit YAML'
             : 'Nothing loaded yet',
   )
+
+  /**
+   * Whether duplicating this object means anything.
+   *
+   * An application has no manifest at all (see the YAML tab's own `show`
+   * below), and a Secret whose values are still hidden shows their
+   * placeholders where the real data belongs — duplicating THAT would carry
+   * `<hidden, N bytes>` into the copy as if it were the value, the same data
+   * loss `canEdit` refuses for the same reason. Unlike editing, an event's
+   * own record is not excluded: it has nothing to reconcile against, but
+   * nothing here stops somebody from wanting the same manifest as a
+   * starting point.
+   */
+  const canDuplicate = $derived(!!session.manifest && !secretsHidden && !isReadOnly)
+
+  const duplicateHint = $derived(
+    isReadOnly
+      ? readOnlyReason
+      : secretsHidden
+        ? 'Reveal the values first — duplicating now would copy their placeholders'
+        : 'Duplicate',
+  )
+
+  /** The "Duplicate <Kind>" dialog, seeded from the manifest as fetched —
+      never from `shownManifest`, so the copy is unaffected by whether
+      managed fields happen to be showing. `stripForDuplicate` removes them
+      itself either way; see $lib/duplicate. */
+  let duplicateDialogOpen = $state(false)
+  const duplicateSeed = $derived(session.manifest ? stripForDuplicate(session.manifest) : '')
 
   /**
    * The kubectl equivalent of Apply: what PodSteer actually sends is the
@@ -1082,6 +1114,13 @@
         onclick={() => (editing ? stopEditing() : startEditing())}
       />
       <ToolbarButton
+        icon={CopyPlus}
+        label="Duplicate"
+        title={duplicateHint}
+        disabled={!canDuplicate}
+        onclick={() => (duplicateDialogOpen = true)}
+      />
+      <ToolbarButton
         icon={copied.on ? Check : Copy}
         label="Copy manifest"
         title={copied.on ? 'Copied' : 'Copy manifest'}
@@ -1877,6 +1916,26 @@
       podName={session.selectedName}
       onclose={() => (evictDialogOpen = false)}
       onconfirm={handleEvict}
+    />
+  {/if}
+
+  {#if session.selectedKind}
+    <CreateResourceDialog
+      open={duplicateDialogOpen}
+      icon={KindIcon}
+      kindLabel={session.selectedKind.singular}
+      verb="Duplicate"
+      seed={duplicateSeed}
+      clusterId={session.cluster.id}
+      namespace={session.selectedKind.namespaced ? session.selectedNamespace : undefined}
+      {productionGroup}
+      {isReadOnly}
+      {readOnlyReason}
+      onclose={() => (duplicateDialogOpen = false)}
+      oncreated={async (name, namespace) => {
+        await session.refresh()
+        if (name) await session.openDetail(name, namespace)
+      }}
     />
   {/if}
 {/if}
