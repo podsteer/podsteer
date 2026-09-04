@@ -243,6 +243,22 @@ type PortForwardPort interface {
 	ListPortForwards() []domain.Forward
 	// StopAllPortForwards tears everything down, for shutdown.
 	StopAllPortForwards()
+	// ProbeLocalPort reports whether a TCP port on THIS machine — not the
+	// cluster — is free to bind, refusing anything outside 1-65535.
+	//
+	// Lives beside the transport rather than in the UI layer because binding
+	// is the only truthful way to answer: a stale process, a container
+	// runtime's proxy or a leaked Docker Desktop port all show as bound to
+	// nothing a port list would show. Offered so the operator can be told
+	// before Start is pressed, rather than after the forward fails.
+	ProbeLocalPort(port int) (bool, error)
+	// FreeLocalPort asks the operating system for a TCP port nothing is
+	// using, so the UI can offer one instead of asking the operator to guess.
+	//
+	// The same race StartPortForward's zero-port case accepts applies here:
+	// nothing holds the port between this call and a later bind, so this is
+	// a proposal, not a reservation.
+	FreeLocalPort() (int, error)
 }
 
 // TerminalSize represents a terminal window size.

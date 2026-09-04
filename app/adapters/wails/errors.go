@@ -185,7 +185,8 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, domain.ErrInvalidNamespaceName),
 		errors.Is(err, domain.ErrInvalidResourceKind),
 		errors.Is(err, errInvalidURL),
-		errors.Is(err, errNotFound):
+		errors.Is(err, errNotFound),
+		errors.Is(err, ports.ErrInvalidPort):
 		return CodeInvalidInput, err.Error()
 
 	case errors.Is(err, domain.ErrClusterNotConnected):

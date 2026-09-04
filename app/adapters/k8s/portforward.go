@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/transport/spdy"
 
 	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // forwardReadyTimeout bounds how long a forward may take to come up.
@@ -334,7 +335,7 @@ func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 // discovering it afterwards. There is an unavoidable race between this and
 // binding it, which is why the forward reports the port it actually bound
 // rather than trusting this one.
-func FreeLocalPort() (int, error) {
+func (a *Adapter) FreeLocalPort() (int, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, err
@@ -346,6 +347,34 @@ func FreeLocalPort() (int, error) {
 		return 0, errors.New("could not read the chosen port")
 	}
 	return address.Port, nil
+}
+
+// ProbeLocalPort reports whether a TCP port on this machine — never the
+// cluster, which is the mistake the name invites — is free to bind.
+//
+// BINDING IS THE ANSWER, not a heuristic about the ephemeral range: a stale
+// process, a container runtime's proxy or a port Docker Desktop leaked all
+// show as bound to nothing a process list would name, and only actually
+// trying to listen catches them. The listener is closed immediately, so the
+// probe itself never holds the port anybody was asking about — and, exactly
+// as with FreeLocalPort, there is a race between this answer and whatever the
+// operator does next: this exists to catch a collision before Start is
+// pressed, not to reserve anything.
+func (a *Adapter) ProbeLocalPort(port int) (bool, error) {
+	if port < 1 || port > 65535 {
+		return false, fmt.Errorf("probing local port %d: %w", port, ports.ErrInvalidPort)
+	}
+
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		// Not free — and deliberately not surfaced as a call failure. Whether
+		// the refusal was "already in use" or "permission denied" (a port
+		// below 1024 without privilege), the practical answer an operator
+		// needs is the same one: they cannot bind here.
+		return false, nil
+	}
+	_ = listener.Close()
+	return true, nil
 }
 
 // forwardableProtocol reports whether a container port can be forwarded.

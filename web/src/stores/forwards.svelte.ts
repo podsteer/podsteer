@@ -12,8 +12,15 @@
  * holding sockets.
  */
 
-import { listPortForwards, startPortForward, stopPortForward, type PortForward } from '$lib/api/client'
+import {
+  listPortForwards,
+  startPortForward,
+  stopPortForward,
+  stopAllPortForwards,
+  type PortForward,
+} from '$lib/api/client'
 import { toApiError } from '$lib/api/errors'
+import { preferences } from './preferences.svelte'
 
 /**
  * Identifies one forwarded port, and THE CLUSTER IS PART OF IT.
@@ -39,6 +46,9 @@ class Forwards {
 
   /** Whether a start or stop is in flight, keyed so one button can spin. */
   busy = $state.raw<Set<string>>(new Set())
+
+  /** Whether "Stop all" is in flight, so it — and nothing else — spins. */
+  stoppingAll = $state(false)
 
   /**
    * Whether this pod's port is already forwarded, and by which forward.
@@ -114,26 +124,37 @@ class Forwards {
     protocol: string,
     /** The pod's own labels, so a replacement can be found if it dies. */
     selector: Record<string, string>,
+    /**
+     * The local port to bind, or 0 to let the operating system choose.
+     *
+     * Defaulted to 0 rather than required: most callers still have no
+     * opinion, and asking them to pass a port they do not care about would
+     * make every existing call site type a zero it does not mean anything.
+     */
+    localPort = 0,
   ): Promise<void> {
     const key = forwardKey(clusterId, namespace, pod, remotePort)
     this.#setBusy(key, true)
     this.error = ''
 
     try {
-      // Local port zero: the operating system chooses. Asking somebody to
-      // pick a free port is asking them to guess, and the forward reports
-      // back which one it actually bound.
-      await startPortForward(
+      const forward = await startPortForward(
         clusterId,
         namespace,
         pod,
         podUID,
-        0,
+        localPort,
         remotePort,
         portName,
         protocol,
         selector,
       )
+      // Remembered by remote port and by name, NEVER by pod, namespace or
+      // cluster — preferences.rememberLocalPort's own signature has nowhere
+      // to put them. Recorded with whatever actually bound, whether the
+      // operator typed it or the operating system chose it: both are worth
+      // proposing next time.
+      preferences.rememberLocalPort(remotePort, portName, forward.localPort)
       await this.refresh()
     } catch (cause) {
       this.error = toApiError(cause).message
@@ -153,6 +174,28 @@ class Forwards {
       this.error = toApiError(cause).message
     } finally {
       this.#setBusy(key, false)
+    }
+  }
+
+  /**
+   * Closes every running forward, across every cluster.
+   *
+   * One call rather than looping stop() per entry: the backend already tears
+   * every forward down and waits for each port to be released in one pass
+   * (StopAllPortForwards), and looping here would mean N round trips racing
+   * refresh() N times for what is conceptually one action.
+   */
+  async stopAll(): Promise<void> {
+    if (this.active.length === 0) return
+    this.stoppingAll = true
+
+    try {
+      await stopAllPortForwards()
+      await this.refresh()
+    } catch (cause) {
+      this.error = toApiError(cause).message
+    } finally {
+      this.stoppingAll = false
     }
   }
 

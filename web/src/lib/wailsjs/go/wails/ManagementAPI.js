@@ -10,8 +10,16 @@ export function ExecInPod(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['wails']['ManagementAPI']['ExecInPod'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function FreeLocalPort() {
+  return window['go']['wails']['ManagementAPI']['FreeLocalPort']();
+}
+
 export function ListPortForwards() {
   return window['go']['wails']['ManagementAPI']['ListPortForwards']();
+}
+
+export function ProbeLocalPort(arg1) {
+  return window['go']['wails']['ManagementAPI']['ProbeLocalPort'](arg1);
 }
 
 export function RestartRollout(arg1, arg2, arg3, arg4) {
@@ -24,6 +32,10 @@ export function ScaleWorkload(arg1, arg2, arg3, arg4, arg5) {
 
 export function StartPortForward(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
   return window['go']['wails']['ManagementAPI']['StartPortForward'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+}
+
+export function StopAllPortForwards() {
+  return window['go']['wails']['ManagementAPI']['StopAllPortForwards']();
 }
 
 export function StopLogStream(arg1) {

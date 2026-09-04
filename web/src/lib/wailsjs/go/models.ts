@@ -1571,6 +1571,7 @@ export namespace wails {
 	    localPort: number;
 	    remotePort: number;
 	    address: string;
+	    scheme: string;
 	    reconnecting: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -1586,6 +1587,7 @@ export namespace wails {
 	        this.localPort = source["localPort"];
 	        this.remotePort = source["remotePort"];
 	        this.address = source["address"];
+	        this.scheme = source["scheme"];
 	        this.reconnecting = source["reconnecting"];
 	    }
 	}

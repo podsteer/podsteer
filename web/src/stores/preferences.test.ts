@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   preferences,
@@ -137,5 +137,72 @@ describe('the column divider', () => {
     expect(css).toContain(`${DETAIL_LABEL_MAX_REM}rem`)
     expect(css).toContain(`${DETAIL_LABEL_MAX_SHARE * 100}%`)
     expect(css).toContain('26%')
+  })
+})
+
+describe('remembered local ports', () => {
+  it('proposes nothing until a forward has been remembered', () => {
+    expect(preferences.proposeLocalPort(5432, 'postgres')).toBeUndefined()
+  })
+
+  it('proposes by the remote port number when no name is on record', () => {
+    preferences.rememberLocalPort(5432, '', 15432)
+
+    expect(preferences.proposeLocalPort(5432, '')).toBe(15432)
+    // A caller asking with a name the store has never seen still falls back
+    // to what is known about the bare remote port.
+    expect(preferences.proposeLocalPort(5432, 'db')).toBe(15432)
+  })
+
+  it('lets a port NAME take precedence over the remote port number', () => {
+    preferences.rememberLocalPort(5432, 'postgres', 15432)
+    // A second pod exposing the same NAMED port on a different remote port —
+    // legitimate, since the remote port is only a convention.
+    preferences.rememberLocalPort(15432, 'postgres', 25432)
+
+    // The name's memory is what a container port called "postgres" gets,
+    // wherever it turns up next, even though the remote port here (15432)
+    // has its own separate memory from the write above.
+    expect(preferences.proposeLocalPort(15432, 'postgres')).toBe(25432)
+    // The bare-number memory for 5432 is untouched by the name-keyed write.
+    expect(preferences.proposeLocalPort(5432, '')).toBe(15432)
+  })
+
+  it('never writes a pod, namespace or cluster name into the persisted shape', () => {
+    // A realistic caller holds a whole Forward — pod, namespace, cluster —
+    // but rememberLocalPort's signature has nowhere to put any of them. This
+    // asserts that stays true: SECURITY.md enumerates what PodSteer writes to
+    // disk, and object names are not on that list.
+    //
+    // A stub Storage rather than the ambient `localStorage`: this test
+    // environment's global is a Node experimental stand-in that throws on
+    // access (silently swallowed by #save's own try/catch, which is exactly
+    // why every other test here never needed one) — asserting on the actual
+    // written bytes needs something that genuinely stores them.
+    const written = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => written.get(key) ?? null,
+      setItem: (key: string, value: string) => void written.set(key, value),
+      removeItem: (key: string) => void written.delete(key),
+      clear: () => written.clear(),
+    })
+
+    const fixturePod = 'postgres-primary-0'
+    const fixtureNamespace = 'payments-prod'
+    const fixtureCluster = 'prod-euc3'
+
+    try {
+      preferences.rememberLocalPort(5432, 'postgres', 15432)
+
+      const raw = written.get('podsteer.preferences.v1') ?? ''
+      expect(raw).not.toContain(fixturePod)
+      expect(raw).not.toContain(fixtureNamespace)
+      expect(raw).not.toContain(fixtureCluster)
+      // The port numbers are exactly what should have been written.
+      expect(raw).toContain('15432')
+      expect(raw).toContain('postgres')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

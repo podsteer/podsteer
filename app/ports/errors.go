@@ -93,4 +93,9 @@ var (
 	// and plenty of clusters run without it. Callers are expected to carry on
 	// and render usage columns as unmeasured.
 	ErrMetricsUnavailable = errors.New("metrics API unavailable")
+
+	// ErrInvalidPort means a port number handed to a local-port operation —
+	// probing or binding one on the operator's own machine — falls outside
+	// the range TCP actually has, 1-65535.
+	ErrInvalidPort = errors.New("port must be between 1 and 65535")
 )

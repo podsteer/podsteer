@@ -6,13 +6,19 @@ export function DeleteResource(arg1:string,arg2:string,arg3:string,arg4:string,a
 
 export function ExecInPod(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Array<string>):Promise<string>;
 
+export function FreeLocalPort():Promise<number>;
+
 export function ListPortForwards():Promise<Array<wails.PortForward>>;
+
+export function ProbeLocalPort(arg1:number):Promise<boolean>;
 
 export function RestartRollout(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function ScaleWorkload(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number):Promise<void>;
 
 export function StartPortForward(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number,arg7:string,arg8:string,arg9:Record<string, string>):Promise<wails.PortForward>;
+
+export function StopAllPortForwards():Promise<void>;
 
 export function StopLogStream(arg1:string):Promise<void>;
 

@@ -40,8 +40,9 @@
   import { forwards } from '$stores/forwards.svelte'
   import { configMapData } from '$stores/configMaps.svelte'
   import { secretReveals } from '$stores/secretReveals.svelte'
-  import { BrowserOpenURL } from '$lib/wailsjs/runtime/runtime'
-  import { EyeOff, ExternalLink, Loader, Plug, Unplug } from '@lucide/svelte'
+  import ForwardAddress from './ForwardAddress.svelte'
+  import PortForwardStart from './PortForwardStart.svelte'
+  import { EyeOff, Loader, Unplug } from '@lucide/svelte'
 
   interface Props {
     /** The pod this container belongs to, for forwarding its ports. */
@@ -390,7 +391,11 @@
             {port.name || 'Port'}
           </span>
 
-          <span class="flex min-w-0 items-center gap-3">
+          <!-- flex-wrap: PortForwardStart's inline validation message ("Port
+               8080 is in use on this machine") is a sibling in this same row
+               rather than a second grid row of its own, so it needs somewhere
+               to go when the row is already full. -->
+          <span class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
             <span class="shrink-0 tabular-nums text-on-surface-variant">
               {port.containerPort}/{port.protocol ?? 'TCP'}
             </span>
@@ -402,24 +407,17 @@
                 still bound and still correct — whatever is pointed at it is
                 stalling, not broken, and that is a different thing to tell
                 somebody than "the forward is fine".
+
+                TODO(kubectl-transparency): the kubectl-equivalent command
+                belongs on this line once it exists — this is exactly the
+                moment somebody watching a stalled forward wants it.
               -->
               <span class="flex min-w-0 items-center gap-1.5 text-gauge-warn">
                 <Loader class="size-3.5 shrink-0 animate-spin" strokeWidth={2} />
                 <span class="truncate">holding {open.address} — finding a replacement pod</span>
               </span>
             {:else if open}
-              <!-- The address is opened in the real browser, not the webview:
-                   this is a link to something on the operator's machine, and
-                   loading it inside the application would replace PodSteer. -->
-              <button
-                type="button"
-                onclick={() => BrowserOpenURL(open.address)}
-                class="resource-link flex min-w-0 items-center gap-1.5 text-left"
-                title="Open {open.address}"
-              >
-                <span class="truncate">{open.address}</span>
-                <ExternalLink class="size-3.5 shrink-0" strokeWidth={1.8} />
-              </button>
+              <ForwardAddress forward={open} />
             {/if}
 
             <!-- Pushed to the end of the value column rather than given a
@@ -430,36 +428,36 @@
                  ports themselves are still worth listing, because what a
                  container will listen on is part of what it is. -->
             {#if podName}
-            <button
-              type="button"
-              disabled={busy}
-              onclick={() =>
-                open
-                  ? forwards.stop(open)
-                  : forwards.start(
-                      clusterId,
-                      namespace,
-                      podName,
-                      podUID,
-                      port.containerPort,
-                      port.name ?? '',
-                      port.protocol ?? 'TCP',
-                      labels,
-                    )}
-              class="state-layer ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm
-                     border border-outline-variant px-2 text-label-large
-                     text-on-surface-variant transition-colors duration-100
-                     hover:bg-surface-container hover:text-on-surface disabled:opacity-50"
-            >
-              {#if busy}
-                <Loader class="size-3.5 animate-spin" strokeWidth={2} />
-              {:else if open}
-                <Unplug class="size-3.5" strokeWidth={1.8} />
+              {#if open}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onclick={() => forwards.stop(open)}
+                  class="state-layer ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm
+                         border border-outline-variant px-2 text-label-large
+                         text-on-surface-variant transition-colors duration-100
+                         hover:bg-surface-container hover:text-on-surface disabled:opacity-50"
+                >
+                  {#if busy}
+                    <Loader class="size-3.5 animate-spin" strokeWidth={2} />
+                  {:else}
+                    <Unplug class="size-3.5" strokeWidth={1.8} />
+                  {/if}
+                  Stop
+                </button>
               {:else}
-                <Plug class="size-3.5" strokeWidth={1.8} />
+                <PortForwardStart
+                  {clusterId}
+                  {namespace}
+                  {podName}
+                  {podUID}
+                  remotePort={port.containerPort}
+                  portName={port.name ?? ''}
+                  protocol={port.protocol ?? 'TCP'}
+                  {labels}
+                  {busy}
+                />
               {/if}
-              {open ? 'Stop' : 'Forward'}
-            </button>
             {/if}
           </span>
         </div>
