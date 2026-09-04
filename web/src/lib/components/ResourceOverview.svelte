@@ -17,6 +17,8 @@
   import NamespaceContents from './NamespaceContents.svelte'
   import WorkloadUsage from './WorkloadUsage.svelte'
   import CertificateInspector from './CertificateInspector.svelte'
+  import GitOpsDetail from './GitOpsDetail.svelte'
+  import { gitOpsPanelFor } from '$lib/gitops/panel'
   import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
@@ -32,6 +34,14 @@
     selectedPod?: Pod | null
     selectedWorkload?: Workload | null
     kind?: string
+    /**
+     * The open object's API group, alongside its kind.
+     *
+     * Needed by the sections a Kind alone cannot select: "Application" is a
+     * kind in argoproj.io, app.k8s.io and core.oam.dev, and only the first
+     * carries the status the GitOps panel reads. See $lib/gitops/panel.
+     */
+    group?: string
     /** The open object's recent usage, accumulated while the drawer is open. */
     usage?: UsageSample[]
     /** The node the drawer is open on, when it is a node. */
@@ -92,6 +102,7 @@
     selectedNamespaceRow,
     selectedWorkload,
     kind,
+    group,
     usage = [],
     backend,
     clusterId,
@@ -315,6 +326,26 @@
   const isIngress = $derived(kind === 'Ingress')
 
   /**
+   * The GitOps controller whose object this is, if it is one.
+   *
+   * Selected by group AND kind, never by kind alone — see $lib/gitops/panel.
+   * Null everywhere else, and on a cluster running neither controller this
+   * can never be anything else: the kinds only reach the navigator when
+   * discovery found their groups.
+   */
+  const gitOpsPanel = $derived(gitOpsPanelFor(group, kind))
+
+  /**
+   * Whether the GitOps panel renders the conditions itself.
+   *
+   * Argo CD's conditions carry a type and a message and NO status, so the
+   * generic list below would print "undefined · message" for every one of
+   * them. Flux's are ordinary metav1 conditions and stay on the generic
+   * path, where the domain colours them.
+   */
+  const conditionsOwned = $derived(gitOpsPanel === 'argo-application')
+
+  /**
    * Whether this Secret carries certificate material worth offering to
    * inspect.
    *
@@ -344,6 +375,7 @@
     !isPodPanel &&
       !isWorkload &&
       !isIngress &&
+      !gitOpsPanel &&
       !selectedNode &&
       !selectedNamespaceRow &&
       kind !== 'Namespace',
@@ -762,6 +794,20 @@
       }
     }),
   )
+
+  /**
+   * What the domain made of the Ready condition, for the Flux panel's chip.
+   *
+   * Looked up by index in the tones above rather than decided again in the
+   * panel, so Ready=False is read in exactly one place. Undefined until the
+   * answer arrives, which leaves the chip uncoloured — the safe failure.
+   */
+  const readyTone = $derived.by(() => {
+    if (!gitOpsPanel) return undefined
+    const index = (conditions as { type?: string }[]).findIndex((condition) => condition.type === 'Ready')
+    if (index === -1) return undefined
+    return (conditionTones[index] || undefined) as 'warn' | 'critical' | undefined
+  })
 
   /**
    * What the container boxes belong to, so two pods cannot share one.
@@ -1301,6 +1347,24 @@
     {/if}
 
     <!--
+      WHAT THE GITOPS CONTROLLER SAYS, in its own words, and the objects it
+      says it manages — quoted from the one manifest already here, never
+      inferred from labels and never re-read from the cluster. The
+      bottom-up question ("who manages THIS object") is the badge in the
+      drawer's header; this is the top-down one. See $lib/gitops/panel.
+    -->
+    {#if gitOpsPanel}
+      <GitOpsDetail
+        panel={gitOpsPanel}
+        manifest={parsedManifest}
+        namespace={metadata.namespace ?? ''}
+        {readyTone}
+        {canOpen}
+        {onopen}
+      />
+    {/if}
+
+    <!--
       Where an Ingress actually sends people, as somewhere they can go.
     -->
     {#if isIngress && routeRows.length > 0}
@@ -1371,7 +1435,7 @@
       cert-manager Certificate or a Flux Kustomization says Ready=False with a
       message, and that is the entire reason somebody opened the panel.
     -->
-    {#if conditions.length > 0 && conditionsLead}
+    {#if conditions.length > 0 && conditionsLead && !conditionsOwned}
       <DetailSection level="h3" id="{conditionsKey}-conditions" title="Conditions" hint={String(conditions.length)}>
         <DetailList rows={conditionRows} />
       </DetailSection>
@@ -1412,7 +1476,7 @@
       </DetailSection>
     {/if}
 
-    {#if conditions.length > 0 && !conditionsLead}
+    {#if conditions.length > 0 && !conditionsLead && !conditionsOwned}
       <DetailSection
         level="h3"
         id="{conditionsKey}-conditions"
