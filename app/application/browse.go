@@ -381,3 +381,25 @@ func (s *BrowseService) InspectTLSSecret(ctx context.Context, id domain.ClusterI
 
 	return chain, nil
 }
+
+// VulnerabilitySummaries returns what a scanner already running in the
+// cluster has recorded about one namespace's workloads.
+//
+// NOTHING ABOUT THE POD LIST DEPENDS ON THIS. It is called once when the pods
+// view opens, on its own, and whatever it returns is merged onto rows that
+// were already drawn — so a slow answer costs a late chip rather than a late
+// list, and no answer costs nothing at all. That is also why an empty result
+// is not distinguished from "no scanner": both mean there is nothing to show,
+// and the adapter caches them identically.
+func (s *BrowseService) VulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.VulnerabilitySummary, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return nil, fmt.Errorf("reading vulnerability reports: %w", err)
+	}
+
+	summaries, err := s.resources.ListVulnerabilitySummaries(ctx, id, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("reading vulnerability reports in %q: %w", namespace, err)
+	}
+
+	return summaries, nil
+}

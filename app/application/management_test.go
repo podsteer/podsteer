@@ -947,6 +947,12 @@ func TestManagementServiceRefusesEveryWriteWhenReadOnly(t *testing.T) {
 			})
 			return err
 		}},
+		{"PromoteRollout", func() error {
+			return service.PromoteRollout(ctx, id, ns, "web")
+		}},
+		{"AbortRollout", func() error {
+			return service.AbortRollout(ctx, id, ns, "web")
+		}},
 	}
 
 	for _, tc := range cases {

@@ -68,6 +68,7 @@ import {
 } from '$lib/sort'
 import { alertPlayer } from './alerts.svelte'
 import { forgetConfigMaps } from './configMaps.svelte'
+import { forgetVulnerabilities } from './vulnerabilities.svelte'
 import { usageHistory, usageKey } from './usageHistory.svelte'
 import { preferences } from './preferences.svelte'
 import { fleet } from './fleet.svelte'
@@ -2125,6 +2126,7 @@ export class ClusterSession {
     // it re-read ConfigMaps it already has.
     usageHistory.forget(this.cluster.id)
     forgetConfigMaps(this.cluster.id)
+    forgetVulnerabilities(this.cluster.id)
     // Recent objects are in-memory only and scoped to this connection — see
     // recentObjects above. A reconnect to the same cluster starts the list
     // over rather than resurrecting names from a session that ended.

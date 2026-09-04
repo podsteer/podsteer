@@ -380,6 +380,57 @@ func (m *ManagementAPI) TriggerCronJob(clusterID, namespace, name string) (strin
 	return jobName, nil
 }
 
+// PromoteRollout advances a paused Argo Rollouts Rollout by one step, the
+// way `kubectl argo rollouts promote NAME` does.
+//
+// The read-only refusal, the audit line and the patch decision all happen
+// below this — see ManagementService.PromoteRollout and
+// domain.PlanRolloutPromote. This is the ordinary bound write; nothing about
+// it is special except the kind it acts on.
+func (m *ManagementAPI) PromoteRollout(clusterID, namespace, name string) error {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(m.logger, "PromoteRollout", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return apiError(m.logger, "PromoteRollout", err)
+	}
+
+	if err := m.management.PromoteRollout(ctx, id, ns, name); err != nil {
+		return apiError(m.logger, "PromoteRollout", err)
+	}
+
+	return nil
+}
+
+// AbortRollout abandons the update an Argo Rollouts Rollout is part way
+// through, the way `kubectl argo rollouts abort NAME` does.
+func (m *ManagementAPI) AbortRollout(clusterID, namespace, name string) error {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(m.logger, "AbortRollout", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return apiError(m.logger, "AbortRollout", err)
+	}
+
+	if err := m.management.AbortRollout(ctx, id, ns, name); err != nil {
+		return apiError(m.logger, "AbortRollout", err)
+	}
+
+	return nil
+}
+
 // SuspendWorkload sets or clears suspend on a CronJob or a Job.
 func (m *ManagementAPI) SuspendWorkload(clusterID, kind, namespace, name string, suspend bool) error {
 	ctx, cancel := m.app.requestContext()

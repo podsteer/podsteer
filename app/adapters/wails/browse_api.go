@@ -198,6 +198,54 @@ func (b *BrowseAPI) ClassifyConditions(conditions []ConditionRef) []string {
 	return tones
 }
 
+// AssessCertificateRenewal says whether a cert-manager Certificate is running
+// out without being renewed.
+//
+// A PURE CALL, exactly like ClassifyConditions above and there for exactly
+// the same reason: the cert-manager panel quotes the manifest the drawer
+// already holds, and quoting needs no round trip — but status.notAfter and
+// status.renewalTime are DATES, and the question an operator opens a
+// Certificate to ask is a comparison between them, the Ready condition and
+// the clock. A comparison is a verdict; verdicts live in the domain where
+// domain.AssessCertificateRenewal's rules are argued with in a test rather
+// than discovered during an outage.
+//
+// Returns an empty list for a healthy certificate, which is the answer for
+// almost all of them.
+func (b *BrowseAPI) AssessCertificateRenewal(certificate CertificateRenewalRef) []CertificateInsight {
+	return toCertificateInsights(domain.AssessCertificateRenewal(toCertificateRenewal(certificate), time.Now()))
+}
+
+// VulnerabilitySummaries returns what a vulnerability scanner already running
+// in the cluster has recorded about one namespace's workloads.
+//
+// CALLED ON ITS OWN, NEVER FROM A LIST. The pod list is drawn without it and
+// the chips fill in when this answers; a cluster with no scanner returns an
+// empty slice and the list is exactly what it was before this existed. See
+// ports.ResourcePort.ListVulnerabilitySummaries and the adapter's cache for
+// why this must never ride the refresh tick.
+func (b *BrowseAPI) VulnerabilitySummaries(clusterID, namespace string) ([]VulnerabilitySummary, error) {
+	ctx, cancel := b.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(b.logger, "VulnerabilitySummaries", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return nil, apiError(b.logger, "VulnerabilitySummaries", err)
+	}
+
+	summaries, err := b.resources.VulnerabilitySummaries(ctx, id, ns)
+	if err != nil {
+		return nil, apiError(b.logger, "VulnerabilitySummaries", err)
+	}
+
+	return toVulnerabilitySummaries(summaries), nil
+}
+
 // GetManifest returns one object as YAML, for the detail view.
 //
 // revealSecrets applies to core/v1 Secrets and nothing else: false replaces

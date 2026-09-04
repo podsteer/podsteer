@@ -255,6 +255,21 @@ type ResourcePort interface {
 	// audit entry meaningful.
 	RevealSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string) (string, error)
 
+	// ListVulnerabilitySummaries returns the severity counts a vulnerability
+	// scanner already running in the cluster has recorded for the workloads
+	// in one namespace, keyed by "Kind/name".
+	//
+	// A DISCOVERED ADD-ON, QUOTED AND NEVER QUERIED — the same relationship
+	// DiscoverMetricsBackend has with a monitoring stack, and it fails the
+	// same way: no scanner installed, an account that may not read its
+	// reports, and a namespace nothing has been scanned in all return an
+	// EMPTY slice and no error. PodSteer scans nothing itself.
+	//
+	// It is deliberately not part of any list call. The pod list must never
+	// wait on it, must never be short of a row because of it, and must never
+	// ask for it on a refresh tick — see the adapter's own cache.
+	ListVulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.VulnerabilitySummary, error)
+
 	// InspectTLSSecret parses one Secret's certificate material, on explicit
 	// request.
 	//
@@ -435,6 +450,33 @@ type ManagementPort interface {
 	// initContainer redirects the patch to spec.template.spec.initContainers
 	// instead, for the same container-by-name merge.
 	SetImage(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name, container, image string, initContainer bool) error
+
+	// PromoteRollout advances a paused Argo Rollouts Rollout by one step, the
+	// way `kubectl argo rollouts promote NAME` does.
+	//
+	// A MERGE PATCH OF NAMED FIELDS, never an apply: the fields promoting
+	// touches live in spec AND status, the controller owns and is rewriting
+	// status concurrently, and UpdateResource's full replace would send a
+	// stale copy of it back. Which patch is sent depends on what is holding
+	// the Rollout, and that decision is domain.PlanRolloutPromote's — the
+	// adapter reads the live object immediately beforehand so the plan is
+	// made from the step the Rollout is on now, not the one the drawer
+	// fetched.
+	//
+	// Only the plugin's DEFAULT promote is offered. Its --full and
+	// --skip-current-step variants are different acts with different blast
+	// radii, and a button whose behaviour depends on an invisible flag is not
+	// one to put on a production cluster.
+	PromoteRollout(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) error
+
+	// AbortRollout tells the Argo Rollouts controller to abandon the update
+	// in progress, the way `kubectl argo rollouts abort NAME` does.
+	//
+	// It is not the reverse of a promote: traffic returns to the stable
+	// ReplicaSet, but the spec is unchanged, so the Rollout stays Degraded
+	// against the revision that was being deployed until something changes
+	// its template.
+	AbortRollout(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) error
 
 	// SetSecretKey writes one key of one Secret, leaving every other key
 	// untouched.

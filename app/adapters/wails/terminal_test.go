@@ -428,6 +428,12 @@ func (stubManagementPort) TriggerCronJob(context.Context, domain.ClusterID, doma
 func (stubManagementPort) SuspendWorkload(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, bool) error {
 	return nil
 }
+func (stubManagementPort) PromoteRollout(context.Context, domain.ClusterID, domain.NamespaceName, string) error {
+	return nil
+}
+func (stubManagementPort) AbortRollout(context.Context, domain.ClusterID, domain.NamespaceName, string) error {
+	return nil
+}
 func (stubManagementPort) SetSecretKey(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []byte) error {
 	return nil
 }

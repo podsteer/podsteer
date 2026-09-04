@@ -23,8 +23,9 @@
   import { get as kubectlGet } from '$lib/kubectl'
   import type { ClusterSession } from '$stores/session.svelte'
   import type { Pod } from '$lib/api/client'
-  import { Box, CircleDot, TriangleAlert, Plug, Loader } from '@lucide/svelte'
+  import { Box, CircleDot, TriangleAlert, Plug, Loader, ShieldAlert } from '@lucide/svelte'
   import { forwards } from '$stores/forwards.svelte'
+  import { ensureVulnerabilities, vulnerabilitiesFor } from '$stores/vulnerabilities.svelte'
 
   interface Props {
     session: ClusterSession
@@ -113,6 +114,19 @@
   }
 
   const byLimit = $derived(preferences.podMeasure === 'limits')
+
+  /**
+   * Asks once for what a scanner already in the cluster found.
+   *
+   * ON OPENING THE VIEW AND ON CHANGING NAMESPACE, never on the refresh tick:
+   * the store reads each cluster-and-namespace at most once for the life of
+   * the tab, and Go holds it for ten minutes behind that. The pod list does
+   * not wait for it and does not change if it never answers — see
+   * $stores/vulnerabilities.
+   */
+  $effect(() => {
+    ensureVulnerabilities(session.cluster.id, session.namespace)
+  })
 
   /**
    * Which rows are on screen, in display order — what a shift-click ranges
@@ -325,6 +339,35 @@
                   strokeWidth={2.2}
                   aria-label="{alarming(pod).length} findings"
                 />
+              {/if}
+
+              <!--
+                WHAT A SCANNER ALREADY IN THE CLUSTER FOUND, and nothing else.
+                Absent entirely where none is installed, which is most
+                clusters, and absent per row where nothing has been scanned —
+                the read that fills these in is separate, bounded and cached,
+                and the list is drawn without waiting for it. Critical and
+                high only: a mark carrying five numbers is not a mark, and the
+                panel behind the row has the whole summary.
+
+                Zero of both is still shown, because "scanned, and clean" and
+                "not scanned" are different facts and no mark at all already
+                means the second.
+              -->
+              {#if vulnerabilitiesFor(session.cluster.id, session.namespace, pod)}
+                {@const found = vulnerabilitiesFor(session.cluster.id, session.namespace, pod)!}
+                <span
+                  class="inline-flex shrink-0 items-center gap-1 rounded px-1.5 text-body-small
+                         {found.critical > 0
+                           ? 'bg-error-container text-on-error-container'
+                           : found.high > 0
+                             ? 'bg-warning-container text-on-warning-container'
+                             : 'bg-surface-container-high text-on-surface-variant'}"
+                  title="{found.critical} critical, {found.high} high, {found.medium} medium, {found.low} low across {found.reports} scanned {found.reports === 1 ? 'container' : 'containers'}"
+                >
+                  <ShieldAlert class="size-3" strokeWidth={2} />
+                  {found.critical}/{found.high}
+                </span>
               {/if}
             </span>
           </td>

@@ -1083,6 +1083,99 @@ same as one already in the explicit file.
   in the Helm release Secret, which is not read), and the panel says so
   rather than showing an empty list.
 
+## Typed renderers instead of a plugin API, one per operator
+
+**There is deliberately no extension API here** (decision of 2026-09-04, in
+`podsteer/business-docs`): the market is leaving them — Lens killed its own,
+FreeLens v2 broke every v1 extension — and a plugin surface is a compatibility
+promise this project would then owe forever. The answer is the one Radar
+takes: PodSteer ships TYPED, BUILT-IN panels for the controllers people
+actually run, and adding another is a new module under `web/src/lib/operators/`
+plus a branch in `OperatorDetail.svelte`, not a new API.
+
+Five so far, each rendered by `OperatorDetail.svelte` from the ONE manifest the
+drawer already fetched: cert-manager `Certificate`, KEDA `ScaledObject`,
+External Secrets `ExternalSecret` (v1beta1 and v1 alike — matched on the group,
+never the version), Argo Rollouts `Rollout`, and Trivy Operator
+`VulnerabilityReport`. **Selection is by API group AND Kind together**,
+extending the mechanism `web/src/lib/gitops/panel.ts` established and for the
+same reason: `Certificate` is also a kind in `cert.gardener.cloud` with an
+entirely different spec, and a panel chosen on half the coordinate opens on an
+object whose fields it does not have. `argoproj.io` is deliberately declared in
+both `gitops/argo.ts` and `operators/panel.ts` rather than shared — Argo CD and
+Argo Rollouts are separate controllers that happen to share a vendor's group,
+and each selector must stay exhaustive over only its own kinds. **A group absent
+from the cluster changes nothing anywhere**: these kinds only reach the
+navigator when discovery found them.
+
+**All quotation, with exactly one exception, and the exception is named so it
+cannot creep.** Ready, Active, Degraded, Paused and CRITICAL are the
+controllers' own words in the controllers' own vocabularies; an enum value none
+of these files has seen renders as itself. The exception is a Certificate's
+expiry: `status.notAfter` and `status.renewalTime` are DATES, comparing them to
+the clock and to the Ready condition is a verdict, and it is the one thing an
+operator opens a Certificate to ask — so `domain.AssessCertificateRenewal`
+(`app/domain/certmanager.go`) makes it, reached through `BrowseAPI` the way
+`ClassifyConditions` is, returning at most ONE insight and nothing at all for a
+certificate that is Ready or renewing on schedule. Two rules there are
+load-bearing: an absent `renewalTime` is NOT an overdue renewal (cert-manager
+also clears it while an issuance is in flight, which the `Issuing` condition is
+read to tell apart), and a certificate with nothing issued yet produces no
+verdict rather than a critical one.
+
+Two things the panels refuse to do, both deliberate. **A KEDA trigger's
+metadata value is not rendered when its key could name a credential**
+(`isCredentialKey`) — KEDA's own design puts secrets in a
+TriggerAuthentication, so this normally redacts nothing, but an inline
+connection string does occur and a panel that printed one would put it on
+screen and into a screenshot; the KEY is still shown, because knowing a
+credential is configured inline is the point. And **an ExternalSecret's panel
+maps remote key to local key and reads no value at all**, from the store or
+from the Secret it writes — resolving one when a pane opens is exactly the
+pattern the Secrets doctrine above exists to prevent.
+
+**The Rollout panel is the only one that writes**, and both controls go through
+the ordinary path: `refuseIfReadOnly` and one audit line in
+`ManagementService`, the production type-the-name gate in
+`RolloutActionDialog`, and a kubectl-transparency strip naming
+`kubectl argo rollouts promote|abort NAME`. They are MERGE PATCHES of named
+fields rather than an apply, because the fields live in spec AND status, the
+controller owns and is concurrently rewriting status, and `UpdateResource`'s
+full replace would send a stale copy of it back. `domain.PlanRolloutPromote`
+(`app/domain/rollout.go`) decides WHICH patch from facts the adapter reads off
+the live object immediately beforehand — the same plan-in-the-domain,
+execute-in-the-adapter split as `PlanDrain` — and every body is transcribed
+from `kubectl argo rollouts`' own implementation rather than invented, because
+the kubectl hint's claim has to stay true. **The status subresource is not
+optional**: it is sent there first, and only a 404 for that path makes the
+unified body go at the object instead, exactly as the plugin's own fallback
+does. A merge patch at the object on a cluster that serves the subresource has
+its status half silently discarded — a promote that reports success and changes
+nothing, which is the worst outcome available. Only the DEFAULT promote is
+offered; `--full` and `--skip-current-step` are different acts with different
+blast radii, and a button whose behaviour depends on an invisible flag does not
+belong on a production cluster.
+
+**The pod list's severity marks are a discovered add-on read, not part of the
+poll.** `Adapter.ListVulnerabilitySummaries` (`app/adapters/k8s/trivy.go`)
+reads what the Trivy Operator already wrote — PodSteer scans nothing, fetches
+no advisory database and grades nothing — as ONE bounded list per cluster and
+namespace, cached ten minutes (`vulnerabilityCacheTTL`, between
+`backendCache`'s thirty and `readCache`'s seconds) and forgotten when a cluster
+is invalidated. No scanner installed (404), an account that may not read the
+reports (403), and a namespace nothing has been scanned in all return an empty
+answer, and all three are CACHED, the same discipline `DiscoverMetricsBackend`
+follows: an account that may never list something should not have that retried
+into its audit log every time a pod list opens. The frontend
+(`$stores/vulnerabilities`) asks once per cluster and namespace for the life of
+the tab, never on the refresh tick; the list is drawn without it and is
+unchanged if it never answers. A row is matched by its CONTROLLING OWNER
+("Kind/name", the same string `Pod.ControlledBy` already carries) because the
+operator writes one report per container of the workload, not per pod — with
+the pod's own name as the fallback for a bare pod, which is the one case the
+pod IS the subject. The mark is not a column: a column exists on every cluster
+whether or not anything fills it, and on the great majority nothing would.
+
 ## A node shell is a pod PodSteer owns, and must be deleted like one
 
 The node shell (`app/adapters/k8s/nodeshell.go`, `TerminalAPI.StartNodeShellSession`)

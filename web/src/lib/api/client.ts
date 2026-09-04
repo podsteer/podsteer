@@ -33,6 +33,8 @@ import {
   ListTable as bindListTable,
   NamespaceInventory as bindNamespaceInventory,
   ClassifyConditions as bindClassifyConditions,
+  AssessCertificateRenewal as bindAssessCertificateRenewal,
+  VulnerabilitySummaries as bindVulnerabilitySummaries,
 } from '$lib/wailsjs/go/wails/BrowseAPI'
 import {
   ListPods as bindListPods,
@@ -83,6 +85,8 @@ import {
   BulkRestart as bindBulkRestart,
   BulkScale as bindBulkScale,
   BulkCordon as bindBulkCordon,
+  PromoteRollout as bindPromoteRollout,
+  AbortRollout as bindAbortRollout,
 } from '$lib/wailsjs/go/wails/ManagementAPI'
 import {
   GetOverview as bindGetOverview,
@@ -170,8 +174,14 @@ export type HistorySettings = wails.HistorySettings
 export type Overview = wails.Overview
 /** One X.509 certificate, as shown by a TLS Secret's certificate inspection. */
 export type Certificate = wails.Certificate
-/** One thing worth knowing about an inspected certificate chain. */
+/** One thing worth knowing about an inspected certificate chain, or about a
+ * cert-manager Certificate that is running out. */
 export type CertificateInsight = wails.CertificateInsight
+/** What a cert-manager Certificate's status says about its own expiry, on the
+ * way to the one verdict the operator panels draw. See assessCertificateRenewal. */
+export type CertificateRenewalRef = wails.CertificateRenewalRef
+/** What a scanner already running in the cluster recorded about one workload. */
+export type VulnerabilitySummary = wails.VulnerabilitySummary
 /** A TLS Secret's parsed certificate material — the leaf, its issuers, and
  * what is worth knowing about them. Never fetched except by inspectTLSSecret. */
 export type CertificateChain = wails.CertificateChainDTO
@@ -359,6 +369,44 @@ export function listNamespaceSummaries(
   annotationKeys: string[] = [],
 ): Promise<NamespaceSummary[]> {
   return call(() => bindListNamespaceSummaries(clusterId, annotationKeys))
+}
+
+/**
+ * Says whether a cert-manager Certificate is running out without being
+ * renewed.
+ *
+ * A pure call that reaches no cluster, exactly like `classifyConditions`. The
+ * cert-manager panel quotes the manifest the drawer already holds, and
+ * quoting needs no round trip — but `status.notAfter` and
+ * `status.renewalTime` are dates, and comparing them to the clock and to the
+ * Ready condition is a verdict. Verdicts live in the Go domain, where
+ * `domain.AssessCertificateRenewal` can be argued with in a test.
+ *
+ * An empty list means there is nothing to say, which is the answer for almost
+ * every certificate.
+ */
+export function assessCertificateRenewal(
+  certificate: CertificateRenewalRef,
+): Promise<CertificateInsight[]> {
+  return call(() => bindAssessCertificateRenewal(certificate))
+}
+
+/**
+ * What a vulnerability scanner already running in the cluster has recorded
+ * about one namespace's workloads, keyed by the `Kind/name` a pod row's
+ * `controlledBy` already carries.
+ *
+ * ON ITS OWN, NEVER FROM A LIST, and never on a refresh tick. The pod list is
+ * drawn without it and the counts fill in when this answers; a cluster with
+ * no scanner returns an empty array and the list is exactly what it was
+ * before this existed. The read is bounded and cached in Go — see
+ * `app/adapters/k8s/trivy.go`.
+ */
+export function vulnerabilitySummaries(
+  clusterId: string,
+  namespace: string,
+): Promise<VulnerabilitySummary[]> {
+  return call(() => bindVulnerabilitySummaries(clusterId, namespace))
 }
 
 /**
@@ -1042,6 +1090,39 @@ export function rollbackWorkload(
 }
 
 /** Suspends or resumes a CronJob's schedule, or a Job's pods. */
+/**
+ * Advances a paused Argo Rollouts Rollout by one step — what
+ * `kubectl argo rollouts promote NAME` does.
+ *
+ * A write like any other: refused on a read-only cluster in Go, audited
+ * there, and planned there too. Which patch it sends depends on what is
+ * holding the Rollout, and the adapter reads the live object immediately
+ * beforehand so the plan is made from the step it is on now.
+ */
+export function promoteRollout(
+  clusterId: string,
+  namespace: string,
+  name: string,
+): Promise<void> {
+  return call(() => bindPromoteRollout(clusterId, namespace, name))
+}
+
+/**
+ * Abandons the update a Rollout is part way through — what
+ * `kubectl argo rollouts abort NAME` does.
+ *
+ * Not the reverse of a promote: traffic returns to the stable ReplicaSet, but
+ * the spec is untouched, so the Rollout stays Degraded against the revision
+ * that was being deployed until something changes its template.
+ */
+export function abortRollout(
+  clusterId: string,
+  namespace: string,
+  name: string,
+): Promise<void> {
+  return call(() => bindAbortRollout(clusterId, namespace, name))
+}
+
 export function suspendWorkload(
   clusterId: string,
   kind: string,
