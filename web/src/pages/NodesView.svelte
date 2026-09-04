@@ -10,8 +10,11 @@
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
+  import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
   import { formatAge } from '$lib/format'
+  import { get as kubectlGet } from '$lib/kubectl'
   import type { ClusterSession } from '$stores/session.svelte'
+  import type { Node } from '$lib/api/client'
   import { Server, CircleDot } from '@lucide/svelte'
 
   interface Props {
@@ -19,6 +22,21 @@
   }
 
   let { session }: Props = $props()
+
+  /** Nodes are cluster-scoped, so there is no namespace to pass. */
+  function actionsFor(node: Node): RowAction[] {
+    return [
+      {
+        label: 'Copy as kubectl',
+        kind: 'copy',
+        onclick: () => copyKubectl(kubectlGet(session.cluster.id, 'nodes', node.name)),
+      },
+    ]
+  }
+
+  function copyKubectl(command: string): void {
+    void navigator.clipboard?.writeText(command).catch(() => {})
+  }
 
   const COLUMNS: Column[] = [
     { id: 'status', label: 'Status', width: 44, icon: CircleDot },
@@ -51,7 +69,7 @@
     {#each session.pagedNodes as node (node.name)}
       {@const selected = session.selectedName === node.name}
       <tr
-        class="group cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
+        class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
                {selected ? 'bg-primary/8' : 'hover:bg-surface-container-low'}"
         onclick={() => session.openDetail(node.name, '', undefined, undefined, node)}
       >
@@ -185,7 +203,14 @@
             {formatAge(node.ageSeconds)}
           </td>
         {/if}
-        <td></td>
+        <!-- Stops the click here: the row itself opens the detail drawer,
+             and a click aimed at the menu — or at one of its items — must
+             not also do that. -->
+        <td class="px-2" onclick={(event) => event.stopPropagation()}>
+          <div class="flex justify-end">
+            <RowMenu actions={actionsFor(node)} label={node.name} />
+          </div>
+        </td>
       </tr>
     {/each}
   {/snippet}

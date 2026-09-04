@@ -4,7 +4,9 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import { rolloutRestart } from '$lib/kubectl'
   import Button from './Button.svelte'
+  import KubectlHint from './KubectlHint.svelte'
 
   interface Props {
     open: boolean
@@ -12,9 +14,12 @@
     workloadKind: string
     onclose: () => void
     onconfirm: () => void
+    /** The kubeconfig context this cluster connects through. See $lib/kubectl. */
+    ctx: string
+    namespace: string
   }
 
-  let { open, workloadName, workloadKind, onclose, onconfirm }: Props = $props()
+  let { open, workloadName, workloadKind, onclose, onconfirm, ctx, namespace }: Props = $props()
 
   /**
    * Escape closes; Enter confirms, but only where Enter meant nothing else.
@@ -76,6 +81,12 @@
       Are you sure you want to restart <strong class="text-on-surface" data-selectable>{workloadName}</strong>?
       This will trigger a rolling update of all pods.
     </p>
+
+    {#if workloadName}
+      <div class="mt-4">
+        <KubectlHint command={rolloutRestart(ctx, workloadKind, workloadName, namespace)} />
+      </div>
+    {/if}
 
     <div class="mt-6 flex justify-end gap-3">
       <Button variant="outlined" onclick={onclose}>Cancel</Button>

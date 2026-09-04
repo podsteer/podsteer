@@ -9,15 +9,34 @@
   import DataTable, { type Column } from '$lib/components/DataTable.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
+  import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
   import { formatAge } from '$lib/format'
+  import { get as kubectlGet } from '$lib/kubectl'
   import { Activity, CircleDot } from '@lucide/svelte'
   import type { ClusterSession } from '$stores/session.svelte'
+  import type { K8sEvent } from '$lib/api/client'
 
   interface Props {
     session: ClusterSession
   }
 
   let { session }: Props = $props()
+
+  /** An Event is a core-group, namespaced kind — kubectl's own "events". */
+  function actionsFor(event: K8sEvent): RowAction[] {
+    return [
+      {
+        label: 'Copy as kubectl',
+        kind: 'copy',
+        onclick: () =>
+          copyKubectl(kubectlGet(session.cluster.id, 'events', event.name, event.namespace)),
+      },
+    ]
+  }
+
+  function copyKubectl(command: string): void {
+    void navigator.clipboard?.writeText(command).catch(() => {})
+  }
 
   const COLUMNS: Column[] = [
     { id: 'type', label: 'Type', width: 44, icon: CircleDot },
@@ -55,7 +74,7 @@
            application that led nowhere, which left its message readable only
            as much of it as the column happened to fit. -->
       <tr
-        class="cursor-pointer border-t border-outline-variant/40 transition-colors duration-100
+        class="group/row cursor-pointer border-t border-outline-variant/40 transition-colors duration-100
                {selected ? 'bg-secondary-container/40' : 'hover:bg-surface-container-low'}"
         onclick={() => session.openDetail(event.name, event.namespace)}
       >
@@ -110,7 +129,15 @@
             {formatAge(event.ageSeconds)}
           </td>
         {/if}
-        <td></td>
+        <!-- Stops the click here: the row itself opens the detail drawer,
+             and a click aimed at the menu — or at one of its items — must
+             not also do that. Named domEvent, not event: `event` in this
+             scope is already the row's own K8sEvent. -->
+        <td class="px-2" onclick={(domEvent) => domEvent.stopPropagation()}>
+          <div class="flex justify-end">
+            <RowMenu actions={actionsFor(event)} label={event.reason} />
+          </div>
+        </td>
       </tr>
     {/each}
   {/snippet}

@@ -153,6 +153,17 @@
 
 {#if actions.length > 0}
   <div class="relative" data-row-menu bind:this={node}>
+    <!--
+      TWO WAYS IN TO THE SAME "row/row" GROUP. `group-data-[row-hover]/row` is
+      for a caller like DetailList, where the row is two grid siblings (a dt
+      and a dd) with no element wrapping both — hover has to be tracked in
+      script and published as a `data-row-hover` attribute, because CSS
+      `:hover` has nothing to attach to that covers the whole row. A table
+      `<tr>` has no such problem: it is one element, so `group-hover/row`
+      answers the same question for free. Both are on the button so either
+      caller works without this component needing to know which kind of row
+      it is in.
+    -->
     <button
       type="button"
       onclick={() => (openMenu = open ? null : id)}
@@ -161,8 +172,8 @@
       title="More"
       class="grid size-5 shrink-0 cursor-pointer place-items-center rounded-full
              transition-all duration-100 hover:text-on-surface
-             group-data-[row-hover]/row:opacity-100 group-focus-within/row:opacity-100
-             focus-visible:opacity-100
+             group-data-[row-hover]/row:opacity-100 group-hover/row:opacity-100
+             group-focus-within/row:opacity-100 focus-visible:opacity-100
              {open ? 'text-on-surface opacity-100' : 'text-on-surface-variant/60 opacity-0'}"
     >
       <MoreVertical class="size-3.5" strokeWidth={2} />
