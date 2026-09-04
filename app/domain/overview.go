@@ -968,6 +968,7 @@ func NewOverview(input OverviewInput) Overview {
 	findings = append(findings, restartFindings(input.Pods, now)...)
 	findings = append(findings, configurationFindings(input.Pods, pods)...)
 	findings = append(findings, memoryLimitFindings(input.Pods, input.MetricsMeasured)...)
+	findings = append(findings, sizingFindings(input.Pods, owners, input.MetricsMeasured, now)...)
 	findings = append(findings, imageDriftFindings(input.Pods)...)
 	findings = append(findings, eventFindings(input.Events, findings, now)...)
 	rankFindings(findings)

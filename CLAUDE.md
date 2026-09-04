@@ -320,6 +320,12 @@ Dependencies point inward. `app/domain` and `app/ports` import nothing outside
 the standard library; if either ever needs `client-go`, something has been
 wired backwards.
 
+Per-workload sizing rules — which workload is over-reserved, throttled at its
+CPU limit, or over its memory request — live in `app/domain/sizing.go`, and
+deliberately reuse `wasteRatio` from the cluster-wide `capacity:waste` finding
+above rather than declaring their own, so the cluster verdict and the
+workload verdict cannot disagree.
+
 ## The pod pane assesses too, and there is a rule for where logic lives
 
 `app/domain/pod_assessment.go` is the same idea at pod scope: a pure function
