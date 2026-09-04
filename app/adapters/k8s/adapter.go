@@ -79,6 +79,7 @@ var (
 	_ ports.EventPort       = (*Adapter)(nil)
 	_ ports.MetricsPort     = (*Adapter)(nil)
 	_ ports.ResourcePort    = (*Adapter)(nil)
+	_ ports.RBACPort        = (*Adapter)(nil)
 	_ ports.ManagementPort  = (*Adapter)(nil)
 	_ ports.PortForwardPort = (*Adapter)(nil)
 	_ ports.NodeShellPort   = (*Adapter)(nil)

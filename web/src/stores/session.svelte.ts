@@ -69,6 +69,7 @@ import {
 import { alertPlayer } from './alerts.svelte'
 import { forgetConfigMaps } from './configMaps.svelte'
 import { forgetVulnerabilities } from './vulnerabilities.svelte'
+import { timeline } from './timeline.svelte'
 import { usageHistory, usageKey } from './usageHistory.svelte'
 import { preferences } from './preferences.svelte'
 import { fleet } from './fleet.svelte'
@@ -192,6 +193,24 @@ export const APPLICATIONS_KIND_ID = 'podsteer/applications'
 export const FLEET_KIND_ID = 'podsteer/fleet'
 
 /**
+ * The RBAC explorer, pinned beside the other three.
+ *
+ * THE FOURTH PSEUDO-ENTRY, AND FOR THE SAME REASON: there is no object to
+ * GET called "my permissions". It is three questions asked of the
+ * authorization review APIs and one reverse lookup over the binding graph —
+ * an interrogation, not a list — so it is deliberately absent from
+ * `domain/catalog.go`, which is offered to every consumer that expects to be
+ * able to fetch what it names. The Roles and ClusterRoles it inspects ARE
+ * catalog entries, and browsing them stays exactly where it was.
+ *
+ * It also polls nothing. The panel's reads happen when somebody presses
+ * something, which is why `#fetch` has a case for it that fetches nothing at
+ * all: an allow or deny decision shown from a previous tick could report a
+ * permission that has since been revoked as still granted.
+ */
+export const RBAC_KIND_ID = 'podsteer/rbac'
+
+/**
  * The column-preference and sort key of one of the merged tables.
  *
  * Per table rather than one for the view: the three hold different columns,
@@ -201,6 +220,19 @@ export const FLEET_KIND_ID = 'podsteer/fleet'
 export function fleetTableId(tab: FleetTab): string {
   return `${FLEET_KIND_ID}/${tab}`
 }
+
+/**
+ * The session timeline's navigation id, the fourth pinned pseudo-entry.
+ *
+ * NOT A KIND, for the reason the other three are not: there is no object to
+ * GET called a timeline. It is the record this tab kept of what it saw while
+ * it was open — events, findings appearing and clearing, and the writes
+ * PodSteer made — so a catalogue entry would offer it to every consumer that
+ * expects to be able to fetch what it names. It is also the only view that
+ * fetches nothing at all: everything in it already crossed the bridge for
+ * some other reason. See $stores/timeline.
+ */
+export const TIMELINE_KIND_ID = 'podsteer/timeline'
 
 export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
 
@@ -254,6 +286,8 @@ export type ViewMode =
   | 'overview'
   | 'applications'
   | 'fleet'
+  | 'rbac'
+  | 'timeline'
   | 'pods'
   | 'nodes'
   | 'events'
@@ -602,6 +636,8 @@ export class ClusterSession {
     if (id === OVERVIEW_KIND_ID) return 'overview'
     if (id === APPLICATIONS_KIND_ID) return 'applications'
     if (id === FLEET_KIND_ID) return 'fleet'
+    if (id === RBAC_KIND_ID) return 'rbac'
+    if (id === TIMELINE_KIND_ID) return 'timeline'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
     if (id === RICH_KIND_IDS.events) return 'events'
@@ -612,7 +648,9 @@ export class ClusterSession {
 
   /** Whether the selected kind carries namespaces. */
   readonly isNamespaced = $derived(
-    this.viewMode === 'overview' ? false : (this.selectedKind?.namespaced ?? true),
+    this.viewMode === 'overview' || this.viewMode === 'timeline'
+      ? false
+      : (this.selectedKind?.namespaced ?? true),
   )
 
   /**
@@ -620,8 +658,13 @@ export class ClusterSession {
    *
    * The overview is an assessment of the whole cluster, so the search box,
    * the pagination and the row count in the toolbar have nothing to act on.
+   * The RBAC explorer is the same case for the same reason — it is a set of
+   * questions and their answers, not rows — and it additionally must not
+   * offer the bulk action bar, which acts on a selection no pane here has.
    */
-  readonly isList = $derived(this.viewMode !== 'overview')
+  readonly isList = $derived(
+    this.viewMode !== 'overview' && this.viewMode !== 'rbac' && this.viewMode !== 'timeline',
+  )
 
   /**
    * The search term parsed into a filter language query — regex, negation and
@@ -837,6 +880,8 @@ export class ClusterSession {
   readonly visibleCount = $derived.by(() => {
     switch (this.viewMode) {
       case 'overview':
+      case 'rbac':
+      case 'timeline':
         return 0
       case 'pods':
         return this.visiblePods.length
@@ -1494,6 +1539,13 @@ export class ClusterSession {
     } catch {
       // The next cycle tries again. A missed assessment is a stale badge for
       // one interval, not something to interrupt anyone over.
+      //
+      // The timeline is told so EXPLICITLY rather than by silence: a refresh
+      // that failed carries no findings, and anything reading that as an
+      // assessment would report every outstanding problem in the cluster
+      // clearing in the same instant. Passing null keeps the baseline the
+      // next successful assessment is compared against — see diffFindings.
+      timeline.recordFindings(this.cluster.id, null)
     }
   }
 
@@ -1518,6 +1570,11 @@ export class ClusterSession {
     this.#lastFindingIds = current
     this.overview = overview
     this.#retainNodeUsage(overview)
+    // The same comparison, kept once: this method already decides what is
+    // new to sound an alert about, and the timeline needs what CLEARED as
+    // well. Rather than diff twice against two baselines that could drift
+    // apart, the store holds its own and is handed the whole assessment.
+    timeline.recordFindings(this.cluster.id, overview.findings)
 
     if (previous === null) return
 
@@ -1557,6 +1614,11 @@ export class ClusterSession {
     if (this.viewMode !== 'overview') void this.#refreshAssessment()
 
     switch (this.viewMode) {
+      case 'timeline':
+        // NOTHING IS FETCHED. The timeline is a record of what other reads
+        // already carried, so a poll landing on this view costs exactly the
+        // assessment above — which runs whatever is on screen anyway.
+        return null
       case 'overview':
         // The explicit target only applies to the view an operator is
         // actually looking at. #refreshAssessment (below) always asks for
@@ -1570,6 +1632,15 @@ export class ClusterSession {
         // while this view is the one on screen, because this switch is the
         // only thing that ever calls it. See $stores/fleet.
         return fleet.refresh(namespace)
+      case 'rbac':
+        // NOTHING, DELIBERATELY. The RBAC explorer's reads are made by the
+        // panel when somebody presses something, never by this tick: a
+        // decision re-fetched on a timer would still be a decision shown
+        // from an earlier instant, and a permission revoked between two
+        // ticks would keep reading as granted until the next one. The
+        // assessment above still runs, so the navigator badge stays current
+        // while this view is open.
+        return Promise.resolve(null)
       // Every list carries the kind's annotation projection — the keys on
       // its custom columns — and nothing else of the annotation map. See
       // $lib/customColumns and the client's listNamespaceSummaries note.
@@ -1658,9 +1729,17 @@ export class ClusterSession {
       case 'overview':
         this.#adopt(rows as Overview)
         break
+      case 'timeline':
+        // Nothing to hold: the entries live in $stores/timeline, written by
+        // whatever produced them rather than by this refresh.
+        break
       case 'fleet':
         // Nothing to hold: the merged rows are the workspace's, in
         // $stores/fleet, and the fetch folded them in itself.
+        break
+      case 'rbac':
+        // Nothing to hold either, and for a different reason: the panel owns
+        // its own answers, because it is the thing that asked for them.
         break
       case 'pods':
         this.pods = rows as Pod[]
@@ -1688,7 +1767,27 @@ export class ClusterSession {
     }
 
     this.#retainUsage()
+    this.#recordTimeline()
     this.#refreshSelection()
+  }
+
+  /**
+   * Files what this refresh carried on the session timeline.
+   *
+   * COSTS NOTHING ON THE WIRE, which is the whole reason the timeline is
+   * built here rather than in Go: the pod assessment rides every row of the
+   * pod list and the events are the rows of the event list, so both were
+   * already fetched and both were already discarded. Same trade as
+   * `#retainUsage` above.
+   *
+   * A view that did not fetch pods passes null rather than an empty list.
+   * The row buffers are mutually exclusive — a poll on the Nodes page leaves
+   * `pods` empty — and an empty list read as an assessment would announce
+   * every pod in the cluster recovering the moment somebody changed view.
+   */
+  #recordTimeline(): void {
+    timeline.recordPodFindings(this.cluster.id, this.viewMode === 'pods' ? this.pods : null)
+    if (this.viewMode === 'events') timeline.recordEvents(this.cluster.id, this.events)
   }
 
   /**
@@ -2127,6 +2226,11 @@ export class ClusterSession {
     usageHistory.forget(this.cluster.id)
     forgetConfigMaps(this.cluster.id)
     forgetVulnerabilities(this.cluster.id)
+    // The timeline goes with the tab, like the Recent section below and for
+    // the same reason: it is made of object names, it was never written
+    // anywhere, and a reconnect starts a fresh record rather than resuming
+    // one from a session that ended.
+    timeline.forget(this.cluster.id)
     // Recent objects are in-memory only and scoped to this connection — see
     // recentObjects above. A reconnect to the same cluster starts the list
     // over rather than resurrecting names from a session that ended.

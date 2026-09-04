@@ -20,6 +20,8 @@ export function ListTable(arg1:string,arg2:string,arg3:string,arg4:Array<string>
 
 export function NamespaceInventory(arg1:string,arg2:string):Promise<wails.NamespaceInventory>;
 
+export function ObjectGraph(arg1:string,arg2:string,arg3:string,arg4:string):Promise<wails.PodGraph>;
+
 export function RevealSecretKey(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function VulnerabilitySummaries(arg1:string,arg2:string):Promise<Array<wails.VulnerabilitySummary>>;

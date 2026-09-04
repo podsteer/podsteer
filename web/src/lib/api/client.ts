@@ -35,6 +35,7 @@ import {
   ClassifyConditions as bindClassifyConditions,
   AssessCertificateRenewal as bindAssessCertificateRenewal,
   VulnerabilitySummaries as bindVulnerabilitySummaries,
+  ObjectGraph as bindObjectGraph,
 } from '$lib/wailsjs/go/wails/BrowseAPI'
 import {
   ListPods as bindListPods,
@@ -53,6 +54,11 @@ import {
   ListPods as bindListFleetPods,
   ListWorkloads as bindListFleetWorkloads,
 } from '$lib/wailsjs/go/wails/FleetAPI'
+import {
+  CanI as bindCanI,
+  InspectRole as bindInspectRole,
+  SubjectRules as bindSubjectRules,
+} from '$lib/wailsjs/go/wails/RBACAPI'
 import {
   ScaleWorkload as bindScaleWorkload,
   UpdateResource as bindUpdateResource,
@@ -105,6 +111,7 @@ import {
   Info as bindInfo,
   LicenceText as bindLicenceText,
   OpenURL as bindOpenURL,
+  ReadTextFile as bindReadTextFile,
   SaveTextFile as bindSaveTextFile,
 } from '$lib/wailsjs/go/wails/SystemAPI'
 import {
@@ -115,6 +122,11 @@ import {
 import { EventsOn } from '$lib/wailsjs/runtime/runtime'
 import type { wails } from '$lib/wailsjs/go/models'
 import { toApiError } from './errors'
+// The session timeline records every write made through this module — see
+// `writing` below. Type-only in the other direction, so the two modules
+// referring to each other costs nothing at runtime.
+import { timeline } from '$stores/timeline.svelte'
+import type { TimelineTarget, WriteRecord } from '$lib/timeline'
 
 /** A cluster described by the local kubeconfig. */
 export type Cluster = wails.Cluster
@@ -152,6 +164,24 @@ export type ClusterEvents = wails.ClusterEvents
 export type ResourceKind = wails.ResourceKind
 /** A generically browsed kind, with server-printed columns. */
 export type ResourceTable = wails.ResourceTable
+
+/** What one kubeconfig may do in one namespace, as the API server enumerated
+    it — see app/domain/rbac.go. */
+export type SubjectRules = wails.SubjectRules
+/** One RBAC rule, as the cluster stated it. */
+export type PolicyRule = wails.PolicyRule
+/** One account a binding names, or one being asked about. */
+export type RBACSubject = wails.RBACSubject
+/** One "can I" question. Blank subject fields ask about the current account. */
+export type AccessRequest = wails.AccessRequest
+/** The API server's own answer to one question, carried verbatim. */
+export type AccessDecision = wails.AccessDecision
+/** One RoleBinding or ClusterRoleBinding, with the subjects it carries. */
+export type RoleBindingRef = wails.RoleBindingRef
+/** One blast-radius flag — a verdict, and the only one in this feature. */
+export type RBACFinding = wails.RBACFinding
+/** One role, what references it, and what its rules permit. */
+export type RoleInspection = wails.RoleInspection
 
 export type NamespaceInventory = wails.NamespaceInventory
 export type ConditionRef = wails.ConditionRef
@@ -284,6 +314,57 @@ async function call<T>(operation: () => Promise<T>): Promise<T> {
   } catch (cause) {
     throw toApiError(cause)
   }
+}
+
+/**
+ * Runs a write and records it on the session timeline, however it ended.
+ *
+ * HERE, AND ONLY HERE, for the same reason `ClusterSession.#recordRecent` is
+ * the single place an object becomes recently opened: every control that
+ * writes to a cluster goes through one of the wrappers below, so a dialog
+ * added later cannot forget to be recorded, and there is exactly one
+ * definition of what a recorded write looks like.
+ *
+ * A FAILURE IS RECORDED TOO. "I pressed delete and nothing happened" is
+ * precisely the question a timeline answers, and one that showed only what
+ * succeeded could not answer it. Nothing that does not change the cluster
+ * goes through this: `validateResource`, `planDrain`, `planBulk` and a
+ * dry-run rollback are all reads dressed as writes, and a timeline claiming
+ * a rollback that was only previewed would be worse than no timeline.
+ *
+ * `describe` is handed the result on success so an entry can quote what the
+ * cluster actually did — the kind and name an applied manifest turned out to
+ * name, say — and `undefined` when there is none.
+ */
+async function writing<T>(
+  clusterId: string,
+  operation: () => Promise<T>,
+  describe: (result: T | undefined) => Omit<WriteRecord, 'outcome' | 'failure'>,
+): Promise<T> {
+  try {
+    const result = await call(operation)
+    timeline.recordWrite(clusterId, { ...describe(result), outcome: 'ok' })
+    return result
+  } catch (cause) {
+    const error = toApiError(cause)
+    timeline.recordWrite(clusterId, {
+      ...describe(undefined),
+      outcome: 'failed',
+      failure: error.message,
+    })
+    throw error
+  }
+}
+
+/**
+ * The object a recorded write was made on.
+ *
+ * The Kubernetes Kind verbatim, because that is what the timeline's row click
+ * resolves against the navigator's catalogue — a lowercased plural matches
+ * nothing and the row silently does nothing at all.
+ */
+function at(kind: string, namespace: string, name: string): TimelineTarget {
+  return { kind, namespace, name }
 }
 
 // --- Clusters ---------------------------------------------------------------
@@ -540,6 +621,24 @@ export function workloadGraph(
   return call(() => bindWorkloadGraph(clusterId, namespace, kind, name))
 }
 
+/**
+ * The neighbourhood of one object of any kind: what its spec names below it,
+ * what owns it above.
+ *
+ * The third map shape, for everything the generic table lists — a Service, a
+ * ConfigMap, a PVC, a CRD instance. Keyed by the navigator catalogue id rather
+ * than by a kind name, because that is what the drawer already holds and what
+ * the backend needs to know which API path to read.
+ */
+export function objectGraph(
+  clusterId: string,
+  kindId: string,
+  namespace: string,
+  name: string,
+): Promise<PodGraph> {
+  return call(() => bindObjectGraph(clusterId, kindId, namespace, name))
+}
+
 /** Lists the pods the scheduler has placed on one node, across namespaces. */
 export function listPodsOnNode(clusterId: string, nodeName: string): Promise<Pod[]> {
   return call(() => bindListPodsOnNode(clusterId, nodeName))
@@ -638,6 +737,50 @@ export function listFleetWorkloads(
 /** Lists events across the named open clusters. */
 export function listFleetEvents(clusterIds: string[], namespace: string): Promise<ClusterEvents[]> {
   return call(() => bindListFleetEvents(clusterIds, namespace))
+}
+
+// --- RBAC explorer ----------------------------------------------------------
+//
+// Three reads, every one of them made because somebody pressed something.
+// Nothing here is on the refresh tick and nothing here is cached, in Go or
+// on this side: a decision held over from an earlier instant could report a
+// permission that has since been revoked as still granted.
+//
+// Being refused is an ordinary answer rather than a rejection — each result
+// carries its own `status`, so a pane says which of "you may not ask", "the
+// cluster does not offer it" and "it failed, try again" happened.
+
+/** Asks what the current credentials may do in one namespace. One request. */
+export function subjectRules(clusterId: string, namespace: string): Promise<SubjectRules> {
+  return call(() => bindSubjectRules(clusterId, namespace))
+}
+
+/**
+ * Asks whether one action is permitted — for the current account when the
+ * subject fields are blank, or for a named user, group or service account.
+ *
+ * The API server decides. What comes back is its own allowed, denied and
+ * reason; nothing on this side evaluates a rule to reach a verdict.
+ */
+export function canI(clusterId: string, request: AccessRequest): Promise<AccessDecision> {
+  return call(() => bindCanI(clusterId, request))
+}
+
+/**
+ * Reads one Role or ClusterRole, the bindings that reference it, and the
+ * blast-radius flags its rules raise.
+ *
+ * `scope` is 'cluster' or 'namespace'. Three requests, two of them
+ * cluster-wide lists, so it is called when the panel is opened and never on
+ * a tick.
+ */
+export function inspectRole(
+  clusterId: string,
+  scope: 'cluster' | 'namespace',
+  namespace: string,
+  name: string,
+): Promise<RoleInspection> {
+  return call(() => bindInspectRole(clusterId, scope, namespace, name))
 }
 
 // --- Events -----------------------------------------------------------------
@@ -909,6 +1052,19 @@ export function chooseFile(title: string): Promise<string> {
   return call(() => bindChooseFile(title))
 }
 
+/**
+ * Opens the native file picker and returns what the chosen file CONTAINS.
+ *
+ * Distinct from chooseFile, which returns a path: a path is only useful to a
+ * Go method that will act on it, and the webview cannot open a file itself.
+ * The settings import is the caller. An empty string means cancelled, as
+ * everywhere else here; an empty or oversized file is an error instead, so
+ * the two cannot be confused.
+ */
+export function readTextFile(title: string): Promise<string> {
+  return call(() => bindReadTextFile(title))
+}
+
 // --- File copy --------------------------------------------------------------
 
 /**
@@ -964,7 +1120,15 @@ export function scaleWorkload(
   name: string,
   replicas: number,
 ): Promise<void> {
-  return call(() => bindScaleWorkload(clusterId, kind, namespace, name, replicas))
+  return writing(
+    clusterId,
+    () => bindScaleWorkload(clusterId, kind, namespace, name, replicas),
+    () => ({
+      action: 'Scaled',
+      target: at(kind, namespace, name),
+      detail: `to ${replicas} replica${replicas === 1 ? '' : 's'}`,
+    }),
+  )
 }
 
 /**
@@ -975,7 +1139,22 @@ export function scaleWorkload(
  * it is created, replacing any existing object of the same name.
  */
 export function updateResource(clusterId: string, manifest: string): Promise<ApplyOutcome> {
-  return call(() => bindUpdateResource(clusterId, manifest))
+  // The manifest itself is never recorded — only what the cluster says it
+  // named. It is an arbitrary document that may carry a Secret's data, and a
+  // timeline holding a copy of one would be a second copy of it.
+  return writing(
+    clusterId,
+    () => bindUpdateResource(clusterId, manifest),
+    // A REFUSAL NAMES NOTHING, and must not claim to: the outcome is where
+    // the kind and name come from, and a rejected manifest never produced
+    // one. The row then reads as an apply that was refused, filed
+    // cluster-wide rather than against an object nothing confirmed.
+    (outcome) => ({
+      action: outcome === undefined ? 'Apply' : outcome.created ? 'Created' : 'Applied',
+      target: at(outcome?.kind ?? '', outcome?.namespace ?? '', outcome?.name ?? ''),
+      detail: '',
+    }),
+  )
 }
 
 /**
@@ -997,7 +1176,11 @@ export function deleteResource(
   namespace: string,
   name: string,
 ): Promise<void> {
-  return call(() => bindDeleteResource(clusterId, kindGroup, kindVersion, kindKind, namespace, name))
+  return writing(
+    clusterId,
+    () => bindDeleteResource(clusterId, kindGroup, kindVersion, kindKind, namespace, name),
+    () => ({ action: 'Deleted', target: at(kindKind, namespace, name), detail: '' }),
+  )
 }
 
 /** Restarts a rollout (deployment/statefulset/daemonset). */
@@ -1007,7 +1190,11 @@ export function restartRollout(
   namespace: string,
   name: string,
 ): Promise<void> {
-  return call(() => bindRestartRollout(clusterId, kind, namespace, name))
+  return writing(
+    clusterId,
+    () => bindRestartRollout(clusterId, kind, namespace, name),
+    () => ({ action: 'Restarted', target: at(kind, namespace, name), detail: 'rolling restart' }),
+  )
 }
 
 /**
@@ -1015,7 +1202,15 @@ export function restartRollout(
  * Resolves to the created Job's name.
  */
 export function triggerCronJob(clusterId: string, namespace: string, name: string): Promise<string> {
-  return call(() => bindTriggerCronJob(clusterId, namespace, name))
+  return writing(
+    clusterId,
+    () => bindTriggerCronJob(clusterId, namespace, name),
+    (job) => ({
+      action: 'Triggered',
+      target: at('CronJob', namespace, name),
+      detail: job ? `created ${job}` : '',
+    }),
+  )
 }
 
 /**
@@ -1036,7 +1231,15 @@ export function setSecretKey(
   key: string,
   value: string,
 ): Promise<void> {
-  return call(() => bindSetSecretKey(clusterId, namespace, name, key, value))
+  // THE KEY, NEVER THE VALUE — the same line ManagementService writes to the
+  // log, and for the same reason. A timeline carrying the plaintext somebody
+  // typed into a Secret would keep a second copy of it in the webview for as
+  // long as the tab stayed open.
+  return writing(
+    clusterId,
+    () => bindSetSecretKey(clusterId, namespace, name, key, value),
+    () => ({ action: 'Wrote key', target: at('Secret', namespace, name), detail: key }),
+  )
 }
 
 /** Writes one key of one ConfigMap. */
@@ -1047,7 +1250,11 @@ export function setConfigMapKey(
   key: string,
   value: string,
 ): Promise<void> {
-  return call(() => bindSetConfigMapKey(clusterId, namespace, name, key, value))
+  return writing(
+    clusterId,
+    () => bindSetConfigMapKey(clusterId, namespace, name, key, value),
+    () => ({ action: 'Wrote key', target: at('ConfigMap', namespace, name), detail: key }),
+  )
 }
 
 /**
@@ -1067,7 +1274,15 @@ export function setImage(
   image: string,
   initContainer: boolean,
 ): Promise<void> {
-  return call(() => bindSetImage(clusterId, kind, namespace, name, container, image, initContainer))
+  return writing(
+    clusterId,
+    () => bindSetImage(clusterId, kind, namespace, name, container, image, initContainer),
+    () => ({
+      action: 'Set image',
+      target: at(kind, namespace, name),
+      detail: `${container} to ${image}`,
+    }),
+  )
 }
 
 /**
@@ -1086,7 +1301,19 @@ export function rollbackWorkload(
   toRevision: number,
   dryRun: boolean,
 ): Promise<RollbackOutcome> {
-  return call(() => bindRollbackWorkload(clusterId, kind, namespace, name, toRevision, dryRun))
+  // A dry run persists nothing, so it is not a write and is not recorded.
+  // Preview is a read that happens to travel down the write's own path.
+  if (dryRun) return call(() => bindRollbackWorkload(clusterId, kind, namespace, name, toRevision, true))
+
+  return writing(
+    clusterId,
+    () => bindRollbackWorkload(clusterId, kind, namespace, name, toRevision, false),
+    () => ({
+      action: 'Rolled back',
+      target: at(kind, namespace, name),
+      detail: `to revision ${toRevision}`,
+    }),
+  )
 }
 
 /** Suspends or resumes a CronJob's schedule, or a Job's pods. */
@@ -1130,7 +1357,15 @@ export function suspendWorkload(
   name: string,
   suspend: boolean,
 ): Promise<void> {
-  return call(() => bindSuspendWorkload(clusterId, kind, namespace, name, suspend))
+  return writing(
+    clusterId,
+    () => bindSuspendWorkload(clusterId, kind, namespace, name, suspend),
+    () => ({
+      action: suspend ? 'Suspended' : 'Resumed',
+      target: at(kind, namespace, name),
+      detail: '',
+    }),
+  )
 }
 
 /**
@@ -1142,7 +1377,15 @@ export function suspendWorkload(
  * work.
  */
 export function cordonNode(clusterId: string, name: string, cordon: boolean): Promise<void> {
-  return call(() => bindCordonNode(clusterId, name, cordon))
+  return writing(
+    clusterId,
+    () => bindCordonNode(clusterId, name, cordon),
+    () => ({
+      action: cordon ? 'Cordoned' : 'Uncordoned',
+      target: at('Node', '', name),
+      detail: '',
+    }),
+  )
 }
 
 /**
@@ -1159,7 +1402,11 @@ export function evictPod(
   name: string,
   gracePeriodSeconds: number,
 ): Promise<void> {
-  return call(() => bindEvictPod(clusterId, namespace, name, gracePeriodSeconds))
+  return writing(
+    clusterId,
+    () => bindEvictPod(clusterId, namespace, name, gracePeriodSeconds),
+    () => ({ action: 'Evicted', target: at('Pod', namespace, name), detail: '' }),
+  )
 }
 
 /**
@@ -1193,8 +1440,21 @@ export function drainNode(
   gracePeriodSeconds: number,
   timeoutSeconds: number,
 ): Promise<DrainReport> {
-  return call(() =>
-    bindDrainNode(clusterId, name, force, deleteEmptyDirData, gracePeriodSeconds, timeoutSeconds),
+  return writing(
+    clusterId,
+    () =>
+      bindDrainNode(clusterId, name, force, deleteEmptyDirData, gracePeriodSeconds, timeoutSeconds),
+    (report) => ({
+      action: 'Drained',
+      target: at('Node', '', name),
+      // What the drain DID, from its own report, rather than what it was
+      // asked to do: a drain that timed out having evicted three of nine is
+      // not the same event as one that finished, and the row has to say so.
+      detail: report
+        ? `${report.evicted.length} evicted, ${report.failed.length} failed` +
+          (report.timedOut ? ', timed out' : '')
+        : '',
+    }),
   )
 }
 
@@ -1226,13 +1486,81 @@ export function planBulk(
  * result, never a rejected promise; only what stops the whole action (a
  * read-only cluster, an unusable argument) rejects.
  */
+
+/**
+ * Records one entry per row a bulk action actually acted on.
+ *
+ * PER ROW, NOT PER RUN, because that is what the action itself is: a bulk
+ * delete is fifty deletes whose failures are per-object results rather than
+ * one outcome (see app/domain/bulk.go), so a single "deleted 50" row could
+ * not say which of them the cluster refused. A SKIPPED row is not recorded at
+ * all — the plan declined to act on it, and nothing reached the cluster.
+ *
+ * `failure` is what stopped the whole run, when something did: a read-only
+ * cluster or an unusable argument rejects before any row is attempted, and
+ * every row is then recorded as refused for that one reason.
+ */
+function recordBulk(
+  clusterId: string,
+  action: string,
+  detail: string,
+  items: BulkItemDTO[],
+  results: BulkResult[] | null,
+  failure?: string,
+): void {
+  if (results === null) {
+    for (const item of items) {
+      timeline.recordWrite(clusterId, {
+        action,
+        target: at(item.kind, item.namespace, item.name),
+        detail,
+        outcome: 'failed',
+        failure,
+      })
+    }
+    return
+  }
+
+  for (const result of results) {
+    if (result.skipped) continue
+    timeline.recordWrite(clusterId, {
+      action,
+      target: at(result.kind, result.namespace, result.name),
+      detail,
+      outcome: result.done ? 'ok' : 'failed',
+      failure: result.done ? undefined : result.reason,
+    })
+  }
+}
+
+/** Runs one bulk action and records what it did to each row. */
+async function bulkWriting(
+  clusterId: string,
+  action: string,
+  detail: string,
+  items: BulkItemDTO[],
+  operation: () => Promise<BulkResult[]>,
+): Promise<BulkResult[]> {
+  try {
+    const results = await call(operation)
+    recordBulk(clusterId, action, detail, items, results)
+    return results
+  } catch (cause) {
+    const error = toApiError(cause)
+    recordBulk(clusterId, action, detail, items, null, error.message)
+    throw error
+  }
+}
+
 export function bulkDelete(clusterId: string, items: BulkItemDTO[]): Promise<BulkResult[]> {
-  return call(() => bindBulkDelete(clusterId, items))
+  return bulkWriting(clusterId, 'Deleted', '', items, () => bindBulkDelete(clusterId, items))
 }
 
 /** Rolling-restarts every selected Deployment, StatefulSet and DaemonSet. Resolves like bulkDelete. */
 export function bulkRestart(clusterId: string, items: BulkItemDTO[]): Promise<BulkResult[]> {
-  return call(() => bindBulkRestart(clusterId, items))
+  return bulkWriting(clusterId, 'Restarted', 'rolling restart', items, () =>
+    bindBulkRestart(clusterId, items),
+  )
 }
 
 /** Scales every selected Deployment, StatefulSet and ReplicaSet to `replicas`. Resolves like bulkDelete. */
@@ -1241,7 +1569,13 @@ export function bulkScale(
   items: BulkItemDTO[],
   replicas: number,
 ): Promise<BulkResult[]> {
-  return call(() => bindBulkScale(clusterId, items, replicas))
+  return bulkWriting(
+    clusterId,
+    'Scaled',
+    `to ${replicas} replica${replicas === 1 ? '' : 's'}`,
+    items,
+    () => bindBulkScale(clusterId, items, replicas),
+  )
 }
 
 /** Cordons (`cordon` true) or uncordons every selected node. Resolves like bulkDelete. */
@@ -1250,7 +1584,9 @@ export function bulkCordon(
   items: BulkItemDTO[],
   cordon: boolean,
 ): Promise<BulkResult[]> {
-  return call(() => bindBulkCordon(clusterId, items, cordon))
+  return bulkWriting(clusterId, cordon ? 'Cordoned' : 'Uncordoned', '', items, () =>
+    bindBulkCordon(clusterId, items, cordon),
+  )
 }
 
 /**

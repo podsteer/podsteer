@@ -325,6 +325,42 @@ func (s *BrowseService) GetManifest(ctx context.Context, id domain.ClusterID, ki
 	return manifest, nil
 }
 
+// ObjectGraph returns the neighbourhood map of one object of any kind.
+//
+// Thin, and correctly so — the same shape as WorkloadService.PodGraph: the
+// reading is the adapter's, the rules are the domain's, and what is left here
+// is the registry check every use case does, the catalogue lookup that turns a
+// navigator id into a kind, and the join between the two.
+func (s *BrowseService) ObjectGraph(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, name string) (domain.PodGraph, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return domain.PodGraph{}, fmt.Errorf("mapping object dependencies: %w", err)
+	}
+	if name == "" {
+		return domain.PodGraph{}, fmt.Errorf("mapping object dependencies: %w", domain.ErrEmptyResourceName)
+	}
+
+	kind, err := s.catalog.Lookup(id, kindID)
+	if err != nil {
+		return domain.PodGraph{}, fmt.Errorf("mapping object dependencies: %w", err)
+	}
+	if !kind.Namespaced {
+		namespace = domain.NamespaceAll
+	}
+
+	input, err := s.resources.ObjectGraphSources(ctx, domain.ResourceRef{
+		ClusterID: id,
+		Kind:      kind,
+		Namespace: namespace,
+		Name:      name,
+	})
+	if err != nil {
+		return domain.PodGraph{}, fmt.Errorf("reading dependencies of %s/%s in %q: %w",
+			kind.Kind, name, id, err)
+	}
+
+	return domain.NewObjectGraph(input), nil
+}
+
 // RevealSecretKey returns one decoded Secret value, on explicit request.
 //
 // Deliberately not part of GetManifest, ListPods or anything else that runs

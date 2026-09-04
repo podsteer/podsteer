@@ -275,6 +275,38 @@ func (b *BrowseAPI) GetManifest(clusterID, kindID, namespace, name string, revea
 	return manifest, nil
 }
 
+// ObjectGraph returns the neighbourhood map of one object of any kind.
+//
+// The third map shape, and the one that covers everything the generic table
+// lists. Bound beside GetManifest rather than beside the other two maps
+// because it is keyed the same way — by a navigator catalogue id, which is
+// what turns "whatever the drawer has open" into a kind that can be read.
+//
+// Called when a map pane opens and never on a refresh tick: a neighbourhood
+// changes when somebody changes it, and redrawing a map under a reader is
+// worse than it being a few seconds stale.
+func (b *BrowseAPI) ObjectGraph(clusterID, kindID, namespace, name string) (PodGraph, error) {
+	ctx, cancel := b.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return PodGraph{}, apiError(b.logger, "ObjectGraph", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return PodGraph{}, apiError(b.logger, "ObjectGraph", err)
+	}
+
+	graph, err := b.resources.ObjectGraph(ctx, id, kindID, ns, name)
+	if err != nil {
+		return PodGraph{}, apiError(b.logger, "ObjectGraph", err)
+	}
+
+	return toPodGraph(graph), nil
+}
+
 // RevealSecretKey returns one decoded Secret value, for a deliberate reveal.
 //
 // Bound as its own narrow method rather than folded into anything the UI

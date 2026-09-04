@@ -243,6 +243,25 @@ type ResourcePort interface {
 	// GetManifest returns one object serialised as YAML, for the detail view.
 	GetManifest(ctx context.Context, ref domain.ResourceRef, revealSecrets bool) (string, error)
 
+	// ObjectGraphSources reads what one object's neighbourhood map is drawn
+	// from: its ownerReference chain upward, whatever its own spec names, and
+	// — only for a kind Kubernetes answers cheaply for — what it selects.
+	//
+	// BOUNDED BY CONSTRUCTION, and that is the contract rather than an
+	// implementation detail. Upward is capped at domain.ObjectOwnerDepth hops
+	// and terminates on a cycle; outward is capped at a small number of
+	// narrowed reads; downward is attempted ONLY where the answer is one list
+	// of one kind in one namespace that the API server itself indexes. No
+	// implementation may sweep the namespace looking for children — a request
+	// per kind per open drawer is the polling storm the read cache exists to
+	// prevent — and where the answer would need one, the map says so instead
+	// (domain.DownwardBound).
+	//
+	// Gathers rather than assembles: which field names what is a rule, and
+	// rules live in the domain. Individual sources degrade on their own, and
+	// ObjectGraphInput.Unreadable names what was missing.
+	ObjectGraphSources(ctx context.Context, ref domain.ResourceRef) (domain.ObjectGraphInput, error)
+
 	// RevealSecretKey returns the decoded value of ONE key of one Secret.
 	//
 	// One key, never the whole Secret, and never as a side effect of anything
@@ -279,6 +298,56 @@ type ResourcePort interface {
 	// whichever half was wanted. One deliberate act, never a side effect of
 	// GetManifest or anything that runs when a pane opens.
 	InspectTLSSecret(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (domain.CertificateChain, error)
+}
+
+// RBACPort answers the Kubernetes authorization review APIs and reads the
+// binding graph behind them.
+//
+// EVERY METHOD IS A READ, and the two review methods are reads that happen to
+// be POSTs: a SubjectAccessReview and its relatives are created rather than
+// fetched because the question IS the request body, but nothing is persisted
+// and no object exists afterwards. A 403 on any of them is an ordinary answer
+// about this account rather than a fault — see domain.ReviewStatus, which is
+// modelled on domain.MetricsStatus for exactly that reason.
+//
+// THE API SERVER DECIDES. These methods carry its answer across unaltered;
+// nothing in PodSteer evaluates rules to reach a verdict about what an
+// account may do. See app/domain/rbac.go for where that line is drawn and
+// what is on the other side of it.
+type RBACPort interface {
+	// SubjectRules asks what the CURRENT credentials may do in one namespace,
+	// through SelfSubjectRulesReview — one request for the whole answer.
+	//
+	// The namespace is required by that API and a blank one is read as the
+	// default namespace, because a rules review has no cluster-wide form: the
+	// question "what may I do here" has to name a here.
+	SubjectRules(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.RulesReview, error)
+
+	// AccessReview asks whether one specific action is permitted.
+	//
+	// WHICH OF TWO APIS IT REACHES is decided by the request's subject: an
+	// unnamed subject is the caller's own question and goes to
+	// SelfSubjectAccessReview, which any authenticated account may ask; a
+	// named user, group or service account goes to SubjectAccessReview, which
+	// is privileged and routinely refused. Both answer in the same shape.
+	AccessReview(ctx context.Context, id domain.ClusterID, request domain.AccessRequest) (domain.AccessOutcome, error)
+
+	// RoleRules returns one Role or ClusterRole's own rules.
+	RoleRules(ctx context.Context, id domain.ClusterID, target domain.RoleTarget) ([]domain.PolicyRule, error)
+
+	// ListBindings returns every RoleBinding in the cluster and every
+	// ClusterRoleBinding, with the subjects each carries.
+	//
+	// TWO LISTS, CLUSTER-WIDE, AND DELIBERATELY NOT NARROWED. A ClusterRole
+	// is referenced by ClusterRoleBindings and by RoleBindings in any
+	// namespace at all, so a lookup scoped to one namespace would report a
+	// widely granted role as bound to nobody. It is bounded by WHEN it runs
+	// instead: once, when the panel is opened, and never on a refresh tick.
+	//
+	// Which of them actually reference a given role is a rule with cases
+	// worth arguing about, so it is domain.BindingsReferencing's decision
+	// rather than this method's.
+	ListBindings(ctx context.Context, id domain.ClusterID) ([]domain.RoleBindingRef, error)
 }
 
 // PortForwardPort opens local ports onto container ports.
