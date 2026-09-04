@@ -344,10 +344,28 @@ type ManagementPort interface {
 	// kind before this is reached.
 	SuspendWorkload(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, suspend bool) error
 
-	// UpdateResource applies a YAML manifest to the cluster, creating or
-	// updating the resource. The manifest must be valid YAML for a Kubernetes
-	// object; the kind and namespace in the manifest override the parameters.
-	UpdateResource(ctx context.Context, id domain.ClusterID, manifest string) error
+	// UpdateResource applies a YAML manifest of ANY kind — built-in or
+	// custom — to the cluster, through the dynamic client rather than a
+	// fixed set of typed kinds. The manifest must be valid YAML/JSON for a
+	// single Kubernetes object carrying apiVersion, kind and metadata.name;
+	// a namespaced kind must also carry metadata.namespace, since there is no
+	// separate namespace parameter to fall back to. Returns
+	// domain.ErrInvalidManifest, wrapped, for any of those.
+	//
+	// The write itself is optimistic-locked by the manifest's OWN
+	// resourceVersion: present, it is sent as a PUT and the server enforces
+	// the lock, reporting a stale one as ports.ErrConflict (HTTP 409); absent,
+	// the object is created, and an AlreadyExists on that create falls back
+	// to fetching the live resourceVersion and replacing the object with it —
+	// full replace semantics, matching what an operator pasting a manifest
+	// over an existing object means by Apply.
+	//
+	// dryRun asks the API server to validate the request (admission, schema,
+	// webhooks) without persisting anything, via the DryRun=All option —
+	// nothing here diffs the manifest itself. The returned ApplyOutcome
+	// reports what happened: whether the object was created, and any warning
+	// the API server attached to the request.
+	UpdateResource(ctx context.Context, id domain.ClusterID, manifest string, dryRun bool) (domain.ApplyOutcome, error)
 
 	// SetSecretKey writes one key of one Secret, leaving every other key
 	// untouched.

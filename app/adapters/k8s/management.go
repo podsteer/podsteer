@@ -10,7 +10,6 @@ import (
 	"maps"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,7 +17,6 @@ import (
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
-	"sigs.k8s.io/yaml"
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
@@ -479,121 +477,12 @@ func (a *Adapter) SuspendWorkload(ctx context.Context, id domain.ClusterID, kind
 	return nil
 }
 
-// UpdateResource applies a YAML manifest to the cluster.
-func (a *Adapter) UpdateResource(ctx context.Context, id domain.ClusterID, manifest string) error {
-	defer a.forgetReads(id)
-
-	client, err := a.factory.clientFor(id)
-	if err != nil {
-		return err
-	}
-
-	// Decode the manifest to determine the resource type.
-	decode := scheme.Codecs.UniversalDeserializer().Decode
-	obj, gvk, err := decode([]byte(manifest), nil, nil)
-	if err != nil {
-		// Try YAML to JSON conversion first.
-		jsonBytes, yamlErr := yaml.YAMLToJSON([]byte(manifest))
-		if yamlErr != nil {
-			return fmt.Errorf("invalid manifest: %w (yaml error: %v)", err, yamlErr)
-		}
-		obj, gvk, err = decode(jsonBytes, nil, nil)
-		if err != nil {
-			return fmt.Errorf("invalid manifest after yaml conversion: %w", err)
-		}
-	}
-
-	// Apply based on the resource type.
-	switch gvk.Kind {
-	case "Pod":
-		pod := obj.(*corev1.Pod)
-		existing, err := client.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
-		if err != nil {
-			// Create if not found.
-			_, err = client.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
-			if err != nil {
-				return classify("creating pod", err)
-			}
-		} else {
-			// Update existing.
-			pod.ResourceVersion = existing.ResourceVersion
-			_, err = client.CoreV1().Pods(pod.Namespace).Update(ctx, pod, metav1.UpdateOptions{})
-			if err != nil {
-				return classify("updating pod", err)
-			}
-		}
-
-	case "Deployment":
-		deployment := obj.(*appsv1.Deployment)
-		existing, err := client.AppsV1().Deployments(deployment.Namespace).Get(ctx, deployment.Name, metav1.GetOptions{})
-		if err != nil {
-			_, err = client.AppsV1().Deployments(deployment.Namespace).Create(ctx, deployment, metav1.CreateOptions{})
-			if err != nil {
-				return classify("creating deployment", err)
-			}
-		} else {
-			deployment.ResourceVersion = existing.ResourceVersion
-			_, err = client.AppsV1().Deployments(deployment.Namespace).Update(ctx, deployment, metav1.UpdateOptions{})
-			if err != nil {
-				return classify("updating deployment", err)
-			}
-		}
-
-	case "ConfigMap":
-		cm := obj.(*corev1.ConfigMap)
-		existing, err := client.CoreV1().ConfigMaps(cm.Namespace).Get(ctx, cm.Name, metav1.GetOptions{})
-		if err != nil {
-			_, err = client.CoreV1().ConfigMaps(cm.Namespace).Create(ctx, cm, metav1.CreateOptions{})
-			if err != nil {
-				return classify("creating configmap", err)
-			}
-		} else {
-			cm.ResourceVersion = existing.ResourceVersion
-			_, err = client.CoreV1().ConfigMaps(cm.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
-			if err != nil {
-				return classify("updating configmap", err)
-			}
-		}
-
-	case "Secret":
-		secret := obj.(*corev1.Secret)
-		existing, err := client.CoreV1().Secrets(secret.Namespace).Get(ctx, secret.Name, metav1.GetOptions{})
-		if err != nil {
-			_, err = client.CoreV1().Secrets(secret.Namespace).Create(ctx, secret, metav1.CreateOptions{})
-			if err != nil {
-				return classify("creating secret", err)
-			}
-		} else {
-			secret.ResourceVersion = existing.ResourceVersion
-			_, err = client.CoreV1().Secrets(secret.Namespace).Update(ctx, secret, metav1.UpdateOptions{})
-			if err != nil {
-				return classify("updating secret", err)
-			}
-		}
-
-	case "Service":
-		svc := obj.(*corev1.Service)
-		existing, err := client.CoreV1().Services(svc.Namespace).Get(ctx, svc.Name, metav1.GetOptions{})
-		if err != nil {
-			_, err = client.CoreV1().Services(svc.Namespace).Create(ctx, svc, metav1.CreateOptions{})
-			if err != nil {
-				return classify("creating service", err)
-			}
-		} else {
-			svc.ResourceVersion = existing.ResourceVersion
-			svc.Spec.ClusterIP = existing.Spec.ClusterIP // Preserve ClusterIP
-			_, err = client.CoreV1().Services(svc.Namespace).Update(ctx, svc, metav1.UpdateOptions{})
-			if err != nil {
-				return classify("updating service", err)
-			}
-		}
-
-	default:
-		return fmt.Errorf("update not supported for kind: %s", gvk.Kind)
-	}
-
-	return nil
-}
+// UpdateResource is defined in apply.go: it applies a manifest of ANY kind —
+// built-in or custom — through the dynamic client, rather than the fixed
+// switch over five typed kinds this file used to hold. Kept as a separate
+// file because it is a materially different mechanism (dynamic client +
+// RESTMapper, not a typed clientset switch), not because it is a different
+// concern from the rest of ManagementPort.
 
 // SetSecretKey writes one key of one Secret via a JSON merge patch on `data`.
 //

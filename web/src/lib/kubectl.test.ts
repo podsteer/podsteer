@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   apply,
+  applyDryRun,
   del,
   describe as describeCmd,
   exec,
@@ -209,6 +210,22 @@ describe('apply', () => {
 
   it('omits -n for a cluster-scoped object', () => {
     expect(apply('prod')).toBe('kubectl --context prod apply -f -')
+  })
+})
+
+describe('applyDryRun', () => {
+  it('adds --dry-run=server after the same apply -f - as apply()', () => {
+    expect(applyDryRun('prod', 'default')).toBe(
+      'kubectl --context prod -n default apply -f - --dry-run=server',
+    )
+  })
+
+  it('omits -n for a cluster-scoped object', () => {
+    expect(applyDryRun('prod')).toBe('kubectl --context prod apply -f - --dry-run=server')
+  })
+
+  it('is server-side, not client-side — a client dry run only checks the manifest parses', () => {
+    expect(applyDryRun('prod', 'default')).not.toContain('--dry-run=client')
   })
 })
 

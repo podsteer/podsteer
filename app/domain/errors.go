@@ -86,4 +86,12 @@ var (
 	// parsed as PEM-encoded X.509 — a Secret whose tls.crt or ca.crt holds
 	// something else, or nothing.
 	ErrInvalidCertificate = errors.New("invalid certificate data")
+
+	// ErrInvalidManifest reports that a manifest offered to UpdateResource
+	// could not be applied as written: it is not valid YAML/JSON for a
+	// Kubernetes object, it is missing apiVersion, kind or metadata.name, it
+	// names a namespaced kind with no metadata.namespace, or it contains more
+	// than one object. Checked before any request reaches the cluster, the
+	// same way ErrInvalidKey is checked before SetSecretKey ever dials out.
+	ErrInvalidManifest = errors.New("invalid manifest")
 )

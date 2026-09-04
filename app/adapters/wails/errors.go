@@ -58,6 +58,13 @@ const (
 	// OBJECT'S OWN POLICY declined it — which calls for waiting and trying
 	// again, not for different credentials.
 	CodeDisruptionBudget ErrorCode = "disruption_budget"
+	// CodeConflict means UpdateResource's PUT carried a resourceVersion the
+	// API server no longer recognises — the object changed since the
+	// manifest was read. Its own code because the recovery is specific and
+	// unlike anything else here: reload the object and re-apply the edit,
+	// never just retry the same request, which would resend the same stale
+	// resourceVersion and fail again.
+	CodeConflict ErrorCode = "conflict"
 	// CodeInternal is the fallback for anything unclassified.
 	CodeInternal ErrorCode = "internal"
 )
@@ -180,6 +187,12 @@ func classifyError(err error) (ErrorCode, string) {
 	case errors.Is(err, ports.ErrDisruptionBudget):
 		return CodeDisruptionBudget, "A PodDisruptionBudget refused the eviction: it would leave the workload below its minimum."
 
+	// ALSO BEFORE ErrForbidden's message would apply, for the same shape of
+	// reason: a 409 from an Update is not RBAC — the request was permitted
+	// and the object's resourceVersion is simply stale.
+	case errors.Is(err, ports.ErrConflict):
+		return CodeConflict, "This object changed on the cluster since you opened it. Reload it and re-apply your edit."
+
 	// The three transport failures are ONE code and three messages. The code is
 	// the category the UI branches on — including whether to offer Retry — and
 	// splitting it would have meant changing that logic to say the same thing.
@@ -216,6 +229,13 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, domain.ErrInvalidResourceKind),
 		errors.Is(err, domain.ErrUnsupportedWorkloadKind),
 		errors.Is(err, domain.ErrInvalidKey),
+		errors.Is(err, domain.ErrInvalidManifest),
+		// The cluster's own verdict on an applied object (schema validation,
+		// an admission webhook) rather than PodSteer's local pre-flight
+		// check, but the SAME treatment applies: err.Error() is shown
+		// verbatim rather than paraphrased, because Validate exists
+		// specifically to hand an operator the server's diagnosis.
+		errors.Is(err, ports.ErrManifestRejected),
 		errors.Is(err, domain.ErrNotTLSSecret),
 		errors.Is(err, domain.ErrInvalidCertificate),
 		errors.Is(err, errInvalidURL),

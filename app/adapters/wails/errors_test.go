@@ -85,3 +85,43 @@ func TestClassifyErrorReadOnlyIsNotForbidden(t *testing.T) {
 		t.Fatalf("message does not point at where to change it: %q", message)
 	}
 }
+
+// TestClassifyErrorConflictIsNotForbidden pins the reason CodeConflict is its
+// own code: a stale resourceVersion is a normal outcome of optimistic
+// concurrency, not RBAC, and the fix is reloading the object — never
+// re-requesting different credentials the way CodeForbidden's message
+// implies.
+func TestClassifyErrorConflictIsNotForbidden(t *testing.T) {
+	err := fmt.Errorf("applying resource: %w: some error", ports.ErrConflict)
+
+	code, message := classifyError(err)
+
+	if code != CodeConflict {
+		t.Fatalf("code %q, want %q", code, CodeConflict)
+	}
+	if code == CodeForbidden {
+		t.Fatal("a conflict must never classify as forbidden")
+	}
+	if !strings.Contains(message, "Reload") {
+		t.Fatalf("message does not point at reloading the object: %q", message)
+	}
+}
+
+// TestClassifyErrorManifestRejectedShowsTheServerMessageVerbatim pins the
+// reason ErrManifestRejected reuses CodeInvalidInput's err.Error() message
+// rather than a paraphrase: Validate exists specifically to hand an operator
+// the API server's own diagnosis of what is wrong with their manifest, and
+// "An unexpected error occurred" (CodeInternal's fallback) would defeat that.
+func TestClassifyErrorManifestRejectedShowsTheServerMessageVerbatim(t *testing.T) {
+	err := fmt.Errorf("applying resource: %w: Deployment.apps \"web\" is invalid: spec.replicas: Invalid value",
+		ports.ErrManifestRejected)
+
+	code, message := classifyError(err)
+
+	if code != CodeInvalidInput {
+		t.Fatalf("code %q, want %q", code, CodeInvalidInput)
+	}
+	if !strings.Contains(message, "spec.replicas") {
+		t.Fatalf("message does not carry the server's own diagnosis verbatim: %q", message)
+	}
+}

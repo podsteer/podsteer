@@ -48,6 +48,7 @@ import {
 import {
   ScaleWorkload as bindScaleWorkload,
   UpdateResource as bindUpdateResource,
+  ValidateResource as bindValidateResource,
   DeleteResource as bindDeleteResource,
   RestartRollout as bindRestartRollout,
   TriggerCronJob as bindTriggerCronJob,
@@ -170,6 +171,8 @@ export type DrainFailure = wails.DrainFailure
 export type DrainPlan = wails.DrainPlanDTO
 /** What happened when a drain ran. */
 export type DrainReport = wails.DrainReportDTO
+/** What an apply — real or a dry-run Validate — actually did. */
+export type ApplyOutcome = wails.ApplyOutcomeDTO
 
 /** Selects every namespace. Matches the backend's empty-string convention. */
 export const ALL_NAMESPACES = ''
@@ -694,9 +697,25 @@ export function scaleWorkload(
   return call(() => bindScaleWorkload(clusterId, kind, namespace, name, replicas))
 }
 
-/** Updates a resource with the provided YAML manifest. */
-export function updateResource(clusterId: string, manifest: string): Promise<void> {
+/**
+ * Applies a manifest of any kind to the cluster — the generic path, not a
+ * fixed set of typed kinds. A manifest carrying `metadata.resourceVersion`
+ * is sent as a PUT the server optimistic-locks against; a stale one comes
+ * back as an ApiError with code `conflict` (see api/errors.ts). One without
+ * it is created, replacing any existing object of the same name.
+ */
+export function updateResource(clusterId: string, manifest: string): Promise<ApplyOutcome> {
   return call(() => bindUpdateResource(clusterId, manifest))
+}
+
+/**
+ * Validates a manifest without applying it — the same generic path as
+ * updateResource, but with the API server's dry run: every admission check
+ * (schema validation, webhooks) runs, and nothing is persisted. Allowed on a
+ * read-only cluster, since nothing here writes anything.
+ */
+export function validateResource(clusterId: string, manifest: string): Promise<ApplyOutcome> {
+  return call(() => bindValidateResource(clusterId, manifest))
 }
 
 /** Deletes a resource. */

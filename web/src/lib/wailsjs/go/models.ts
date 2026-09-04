@@ -159,6 +159,28 @@ export namespace wails {
 		}
 	}
 	
+	export class ApplyOutcomeDTO {
+	    created: boolean;
+	    kind: string;
+	    name: string;
+	    namespace: string;
+	    dryRun: boolean;
+	    warnings: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ApplyOutcomeDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.created = source["created"];
+	        this.kind = source["kind"];
+	        this.name = source["name"];
+	        this.namespace = source["namespace"];
+	        this.dryRun = source["dryRun"];
+	        this.warnings = source["warnings"];
+	    }
+	}
 	export class PodCapacity {
 	    scheduled: number;
 	    scheduledLabel: string;

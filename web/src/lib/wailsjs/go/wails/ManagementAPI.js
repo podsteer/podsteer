@@ -85,3 +85,7 @@ export function TriggerCronJob(arg1, arg2, arg3) {
 export function UpdateResource(arg1, arg2) {
   return window['go']['wails']['ManagementAPI']['UpdateResource'](arg1, arg2);
 }
+
+export function ValidateResource(arg1, arg2) {
+  return window['go']['wails']['ManagementAPI']['ValidateResource'](arg1, arg2);
+}

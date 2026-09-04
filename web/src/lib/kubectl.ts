@@ -183,6 +183,19 @@ export function apply(ctx: string, ns?: string): string {
 }
 
 /**
+ * `kubectl --context c [-n ns] apply -f - --dry-run=server`.
+ *
+ * What Validate actually sends: the same manifest apply asks the API server
+ * to run every admission check against (schema validation, webhooks)
+ * without persisting anything. `--dry-run=server` rather than `--dry-run=client`
+ * deliberately — a client-side dry run only checks the manifest parses, and
+ * PodSteer's own Validate hits the server exactly like this hint says.
+ */
+export function applyDryRun(ctx: string, ns?: string): string {
+  return [...base(ctx, ns), 'apply', '-f', '-', '--dry-run=server'].join(' ')
+}
+
+/**
  * `kubectl --context c -n ns get secret <name> -o jsonpath='{.data.<key>}' |
  * base64 -d`.
  *

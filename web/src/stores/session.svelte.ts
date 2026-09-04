@@ -24,6 +24,8 @@ import {
   listWorkloads,
   scaleWorkload,
   updateResource,
+  validateResource,
+  type ApplyOutcome,
   type Cluster,
   type Finding,
   type K8sEvent,
@@ -1824,13 +1826,51 @@ export class ClusterSession {
     }
   }
 
-  /** Updates a resource with the provided YAML manifest. */
-  updateResource = async (manifest: string): Promise<void> => {
+  /**
+   * Applies manifest to the cluster — the generic path, any kind — creating
+   * or replacing the object it names.
+   *
+   * RETHROWS on failure, unlike most write methods here (scaleWorkload,
+   * say): the YAML editor's footer needs the actual ApiError to tell a
+   * conflict — the object changed on the cluster since the manifest was
+   * read — from every other failure, and needs the outcome itself to say
+   * "Applied" or "Created". session.error is set first regardless, so
+   * anything reading it generically still sees the same failure.
+   */
+  updateResource = async (manifest: string): Promise<ApplyOutcome> => {
     try {
-      await updateResource(this.cluster.id, manifest)
+      return await updateResource(this.cluster.id, manifest)
     } catch (cause) {
-      this.#fail(cause)
+      throw this.#fail(cause)
     }
+  }
+
+  /**
+   * Validates manifest against the cluster without applying it — the same
+   * generic path as updateResource, with the API server's dry run. Rethrows
+   * for the same reason updateResource does.
+   */
+  validateResource = async (manifest: string): Promise<ApplyOutcome> => {
+    try {
+      return await validateResource(this.cluster.id, manifest)
+    } catch (cause) {
+      throw this.#fail(cause)
+    }
+  }
+
+  /**
+   * Re-reads the currently open object's manifest, unconditionally.
+   *
+   * Used after a successful apply — so the NEXT apply carries the
+   * resourceVersion this one just produced, rather than the one the draft
+   * was opened with, which would otherwise fail as a conflict for a reason
+   * nothing on screen explains — and by the conflict banner's Reload
+   * action, where discarding what is on screen for what the cluster has now
+   * is the entire point.
+   */
+  reloadManifest = async (): Promise<void> => {
+    if (!this.selectedName) return
+    await this.#loadManifest(this.selectedName, this.selectedNamespace)
   }
 }
 

@@ -74,6 +74,28 @@ section to the UI is an entry there, not a frontend change. Custom resources
 are appended per cluster by `DiscoverCustomKinds` — never globally, because two
 clusters run different operators.
 
+**Applying a manifest reads the same way: any kind, not a fixed list.**
+`Adapter.UpdateResource` (`app/adapters/k8s/apply.go`) goes through the
+DYNAMIC client rather than a typed clientset switch, so a CRD applies exactly
+like a Deployment. The kind is resolved to its REST resource and scope by a
+`meta.RESTMapper` built from discovery, cached per cluster and rebuilt
+EXACTLY ONCE when a lookup reports `meta.NoKindMatchError` — a CRD installed
+a minute ago must apply without reconnecting the cluster, but re-querying
+discovery on every apply of an ordinary built-in kind would erase the whole
+point of caching it. The write is optimistic-locked by the manifest's OWN
+`resourceVersion`: present, it is sent as a PUT the API server enforces the
+lock on, and a stale one comes back as `ports.ErrConflict` — reload the
+object and re-apply the edit, never retry the same request; absent, the
+object is created, and an `AlreadyExists` on that create falls back to
+fetching the live `resourceVersion` and replacing the object with it (full
+replace semantics, matching what pasting a whole manifest over an existing
+object means by Apply). Validation is a SERVER-SIDE dry run
+(`metav1.DryRunAll`), not a client-side diff: `ManagementAPI.ValidateResource`
+sends the same manifest through the same path with nothing persisted, so the
+API server's own admission chain — schema validation, webhooks — is what
+answers, and that answer is shown close to verbatim
+(`ports.ErrManifestRejected`) rather than paraphrased.
+
 ## The watch is an optimisation; polling is the truth
 
 `app/adapters/k8s/watch.go` mirrors a cluster's pods locally so a refresh reads

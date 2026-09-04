@@ -43,7 +43,8 @@
   import ScaleDialog from './ScaleDialog.svelte'
   import RestartDialog from './RestartDialog.svelte'
   import KubectlHint from './KubectlHint.svelte'
-  import { apply as kubectlApply, resourceArgForKind } from '$lib/kubectl'
+  import { apply as kubectlApply, applyDryRun as kubectlApplyDryRun, resourceArgForKind } from '$lib/kubectl'
+  import { ApiError } from '$lib/api/errors'
   import TriggerDialog from './TriggerDialog.svelte'
   import SuspendDialog from './SuspendDialog.svelte'
   import CordonDialog from './CordonDialog.svelte'
@@ -127,6 +128,31 @@
    */
   const triggered = flash(4000)
   let triggeredJobName = $state('')
+
+  /**
+   * A transient notice after Apply or Validate succeeds: "Applied",
+   * "Created", or "Valid — the server accepted this manifest". The same
+   * self-clearing flag as `triggered` above, paired with a message for the
+   * same reason.
+   */
+  const applyResult = flash(4000)
+  let applyResultMessage = $state('')
+
+  /** Whether a dry run is in flight, so Validate can show it is working. */
+  let validating = $state(false)
+
+  /**
+   * Whether the last Apply failed because the object changed on the
+   * cluster since this manifest was read (HTTP 409 on the PUT).
+   *
+   * A PERSISTENT banner rather than a flash: `applyResult` above says
+   * something happened and fades, which is right for a success an operator
+   * does not need to act on. A conflict is the opposite — it stays until
+   * Reload (or Cancel) is chosen, the same way `actionError` stays, because
+   * disappearing on its own would silently leave the stale draft on screen
+   * looking exactly like one that would apply cleanly.
+   */
+  let conflict = $state(false)
 
   /** The selected kind's own icon, so the drawer is marked like its row. */
   const KindIcon = $derived(
@@ -237,6 +263,12 @@
    */
   const applyCommand = $derived(
     kubectlApply(session.cluster.id, session.selectedKind?.namespaced ? session.selectedNamespace : undefined),
+  )
+
+  /** The kubectl equivalent of Validate — apply's own hint, plus the flag
+      that makes it a server-side dry run rather than a real write. */
+  const applyDryRunCommand = $derived(
+    kubectlApplyDryRun(session.cluster.id, session.selectedKind?.namespaced ? session.selectedNamespace : undefined),
   )
 
   /**
@@ -390,6 +422,11 @@
     // A "Created <job>" notice from a Run now on the PREVIOUS object must not
     // keep showing over a different one now open in its place.
     triggered.cancel()
+    // Same reasoning for an Apply/Validate result, and a conflict banner is
+    // about the PREVIOUS object's stale draft — it says nothing true about
+    // whatever is opening now.
+    applyResult.cancel()
+    conflict = false
   })
 
   /**
@@ -587,17 +624,72 @@
     editing = false
     draft = null
     draftOrigin = ''
+    // A conflict banner is about the draft that is about to disappear; it
+    // must not linger to describe the next edit.
+    conflict = false
   }
 
   async function applyEdit(): Promise<void> {
     if (draft === null) return
+    actionError = null
+    conflict = false
     try {
-      await session.updateResource(draft)
+      const outcome = await session.updateResource(draft)
       stopEditing()
+      applyResultMessage = outcome.created ? 'Created' : 'Applied'
+      applyResult.show()
+      // Reloads the manifest so the NEXT apply carries the resourceVersion
+      // this one just produced — without this, editing the same object
+      // again would PUT with the version it was opened under and land as a
+      // conflict for a reason nothing on screen would explain.
+      await session.reloadManifest()
       await session.refresh()
     } catch (error) {
-      actionError = `Failed to update: ${error}`
+      if (error instanceof ApiError && error.isConflict) {
+        conflict = true
+      } else {
+        actionError = `Failed to update: ${error}`
+      }
     }
+  }
+
+  /**
+   * Validates the draft against the cluster without applying it — the same
+   * generic path as Apply, with the API server's dry run. Shows the
+   * server's own error verbatim on failure, since that diagnosis (a schema
+   * violation, an admission webhook's reason) is the entire point of
+   * asking before committing to a real write.
+   */
+  async function validateManifest(): Promise<void> {
+    if (draft === null) return
+    actionError = null
+    conflict = false
+    validating = true
+    try {
+      await session.validateResource(draft)
+      applyResultMessage = 'Valid — the server accepted this manifest'
+      applyResult.show()
+    } catch (error) {
+      actionError = error instanceof ApiError ? error.message : `Failed to validate: ${error}`
+    } finally {
+      validating = false
+    }
+  }
+
+  /**
+   * Discards the current draft for whatever the cluster holds now, after a
+   * conflict — the object changed underneath this edit, so the
+   * resourceVersion (and possibly the content) the draft was built from is
+   * no longer the truth. Re-fetching without discarding the draft would
+   * leave an operator re-applying an edit still built on the stale version,
+   * which is the exact failure this banner exists to stop.
+   */
+  async function reloadAfterConflict(): Promise<void> {
+    await session.reloadManifest()
+    conflict = false
+    const seed = shownManifest ?? ''
+    draft = seed
+    draftOrigin = seed
   }
 
   /**
@@ -722,7 +814,10 @@
 
   // Nothing left running behind a component that has gone away.
   $effect(() => () => copied.cancel())
-  $effect(() => () => triggered.cancel())
+  $effect(() => () => {
+    triggered.cancel()
+    applyResult.cancel()
+  })
 </script>
 
 <!--
@@ -772,6 +867,53 @@
     >
       <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
       This cluster is in {productionGroup}, marked production.
+    </p>
+  {/if}
+{/snippet}
+
+<!--
+  A PUT rejected because the object changed on the cluster since this
+  manifest was read (HTTP 409 — see ports.ErrConflict). Distinct from
+  actionError because the recovery is a specific ACTION, not just a message:
+  the draft's resourceVersion is stale, so the one useful next step is
+  discarding it for what the cluster holds now, which is what Reload does.
+-->
+{#snippet conflictBanner()}
+  {#if conflict}
+    <div
+      class="flex w-full items-start gap-2 rounded-sm border border-error/30 bg-error-container/40
+             px-3 py-2 text-body-small text-on-error-container"
+      role="alert"
+    >
+      <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
+      <span class="min-w-0 flex-1"
+        >This object changed on the cluster since you opened it.</span
+      >
+      <button
+        type="button"
+        class="shrink-0 font-medium underline underline-offset-2 hover:no-underline"
+        onclick={reloadAfterConflict}
+      >
+        Reload
+      </button>
+    </div>
+  {/if}
+{/snippet}
+
+<!--
+  "Applied", "Created", or Validate's "Valid" — a transient success notice,
+  the same shape as the "Run now" notice above the tabs but scoped to the
+  YAML footer, since Apply and Validate are only ever pressed from there.
+-->
+{#snippet applyResultNotice()}
+  {#if applyResult.on}
+    <p
+      class="flex w-full items-center gap-2 rounded-sm border border-success/20 bg-success-container/50
+             px-3 py-2 text-body-small text-on-success-container"
+      role="status"
+    >
+      <Check class="size-3.5 shrink-0 text-success" strokeWidth={2} />
+      {applyResultMessage}
     </p>
   {/if}
 {/snippet}
@@ -1493,9 +1635,14 @@
       >
         {@render productionBanner()}
         {@render revertNotice()}
-        <KubectlHint command={applyCommand} />
+        {@render conflictBanner()}
+        {@render applyResultNotice()}
+        <KubectlHint command={validating ? applyDryRunCommand : applyCommand} />
         <div class="flex items-center justify-end gap-3">
           <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
+          <Button variant="outlined" disabled={validating} onclick={validateManifest}>
+            {validating ? 'Validating…' : 'Validate'}
+          </Button>
           <Button variant="filled" disabled={isReadOnly} onclick={applyEdit}>Apply</Button>
         </div>
       </div>
@@ -1548,13 +1695,18 @@
       {#if editing}
         {@render productionBanner()}
         {@render revertNotice()}
+        {@render conflictBanner()}
+        {@render applyResultNotice()}
         <!-- flex-1, the same as revertNotice: this row is justify-end, so
              whatever is not a button has to claim the leading space itself
              or the row centres on nothing. -->
         <div class="min-w-0 flex-1">
-          <KubectlHint command={applyCommand} />
+          <KubectlHint command={validating ? applyDryRunCommand : applyCommand} />
         </div>
         <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
+        <Button variant="outlined" disabled={validating} onclick={validateManifest}>
+          {validating ? 'Validating…' : 'Validate'}
+        </Button>
         <Button variant="filled" disabled={isReadOnly} onclick={applyEdit}>Apply</Button>
       {/if}
     {/snippet}
