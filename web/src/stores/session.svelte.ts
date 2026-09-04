@@ -41,6 +41,7 @@ import {
   type Workload,
 } from '$lib/api/client'
 import { ApiError, toApiError } from '$lib/api/errors'
+import { findAutoscalers, type AutoscalerCheck } from '$lib/autoscalers'
 import { podStatusLabel } from '$lib/format'
 import { matchesPodStatusChips } from '$lib/podStatusFilters'
 import { describeQuery, matches, parseQuery, type Query, type Row } from '$lib/query'
@@ -188,6 +189,17 @@ export const WORKLOAD_KIND_BY_ID: Record<string, string> = {
   'batch/v1/jobs': 'Job',
   'batch/v1/cronjobs': 'CronJob',
 }
+
+/**
+ * The HorizontalPodAutoscaler kind's id.
+ *
+ * Stable, unlike a KEDA ScaledObject's: HPA is a built-in kind — see
+ * `domain/catalog.go` — present in every cluster's catalog whether or not the
+ * API server actually serves `autoscaling/v2`. A ScaledObject has no such
+ * fixed id because it is discovered per cluster, so it is looked up in
+ * `session.kinds` instead. See `ClusterSession.autoscalersFor`.
+ */
+const HPA_KIND_ID = 'autoscaling/v2/horizontalpodautoscalers'
 
 /** What the content pane should render for the selected kind. */
 export type ViewMode =
@@ -398,6 +410,22 @@ export class ClusterSession {
    */
   #usageGeneration = 0
   table = $state.raw<ResourceTable | null>(null)
+
+  /**
+   * Autoscaler table reads for the Scale dialog, keyed by `"namespace/kindId"`.
+   *
+   * An HPA or ScaledObject LIST already carries every autoscaler in a
+   * namespace, so a dialog opened on three workloads in the same namespace —
+   * one after another, or reopened while this tab stays open — costs one HPA
+   * request and one ScaledObject request, not three of each. `findAutoscalers`
+   * does the per-workload filtering against whichever table this returns.
+   *
+   * FAILURES ARE NOT CACHED. The same reasoning `readcache.go` applies to the
+   * backend's poll cache holds here: handing the same refusal to every caller
+   * would leave the dialog reporting "could not check" for a namespace whose
+   * permission was granted a moment ago.
+   */
+  #autoscalerTables = new Map<string, Promise<ResourceTable>>()
   overview = $state.raw<Overview | null>(null)
 
   /**
@@ -1727,6 +1755,72 @@ export class ClusterSession {
       await scaleWorkload(this.cluster.id, kind, namespace, name, replicas)
     } catch (cause) {
       this.#fail(cause)
+    }
+  }
+
+  /**
+   * Reads one autoscaler-serving kind's table for a namespace, sharing the
+   * read across every call this session makes for that namespace and kind —
+   * see `#autoscalerTables`.
+   */
+  #autoscalerTable(namespace: string, kindId: string): Promise<ResourceTable> {
+    const key = `${namespace}/${kindId}`
+    const held = this.#autoscalerTables.get(key)
+    if (held) return held
+
+    const read = listTable(this.cluster.id, kindId, namespace)
+    this.#autoscalerTables.set(key, read)
+    // A refused or failed read must not be handed to the next caller — the
+    // account may be granted the permission it lacked a moment later, or the
+    // cluster blip may already be over. Dropping the entry is enough: nothing
+    // here waits on `read` before returning it to its own caller.
+    read.catch(() => this.#autoscalerTables.delete(key))
+    return read
+  }
+
+  /**
+   * Whether an autoscaler manages a workload's replica count — asked by the
+   * Scale dialog when it opens, never on a keystroke in the field it warns
+   * above.
+   *
+   * Reads the HorizontalPodAutoscaler table always, and the ScaledObject
+   * table only when this cluster's catalog carries a `keda.sh` one. A cluster
+   * with no KEDA installed is not asked for it at all: that is not "no KEDA
+   * autoscaler", it is a request for a kind the cluster does not serve, and
+   * making it would turn an ordinary cluster into a failed check.
+   *
+   * A FAILED READ IS `'unknown'`, NEVER `'known'` WITH AN EMPTY LIST — the
+   * same distinction `domain.MetricsStatus` draws for the overview (see
+   * CLAUDE.md). Telling an operator nothing manages their workload when the
+   * honest answer is "could not check" would let them scale over an
+   * autoscaler they were never told about.
+   */
+  autoscalersFor = async (
+    kind: string,
+    namespace: string,
+    name: string,
+  ): Promise<AutoscalerCheck> => {
+    const keda = this.kinds.find((entry) => entry.group === 'keda.sh' && entry.kind === 'ScaledObject')
+    const sources: { kindId: string; hint: 'hpa' | 'keda' }[] = [{ kindId: HPA_KIND_ID, hint: 'hpa' }]
+    if (keda) sources.push({ kindId: keda.id, hint: 'keda' })
+
+    const reads = await Promise.all(
+      sources.map(async (source) => {
+        try {
+          const table = await this.#autoscalerTable(namespace, source.kindId)
+          return { ok: true as const, autoscalers: findAutoscalers(table, source.hint, { kind, name }) }
+        } catch (cause) {
+          return { ok: false as const, reason: toApiError(cause).message }
+        }
+      }),
+    )
+
+    const failure = reads.find((read) => !read.ok)
+    if (failure && !failure.ok) return { status: 'unknown', reason: failure.reason }
+
+    return {
+      status: 'known',
+      autoscalers: reads.flatMap((read) => (read.ok ? read.autoscalers : [])),
     }
   }
 

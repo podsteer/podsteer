@@ -1272,6 +1272,9 @@
       kind={mappedWorkloadKind}
       name={selectedWorkload.name}
       namespace={selectedWorkload.namespace}
+      checkAutoscalers={session.autoscalersFor}
+      canOpen={kindIdFor}
+      onopen={openObject}
       onclose={() => (scaleDialogOpen = false)}
       onconfirm={handleScale}
     />
