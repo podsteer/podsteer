@@ -27,6 +27,7 @@
   import ToolbarToggle from './ToolbarToggle.svelte'
   import PaneDialog from './PaneDialog.svelte'
   import CreateResourceDialog from './CreateResourceDialog.svelte'
+  import CompareDialog from './CompareDialog.svelte'
   import { withoutManagedFields } from '$lib/manifest'
   import { stripForDuplicate } from '$lib/duplicate'
   import { gitOpsOwner, revertWarning } from '$lib/gitops'
@@ -73,6 +74,7 @@
     Pencil,
     Copy,
     CopyPlus,
+    GitCompare,
     Check,
     Trash2,
     Maximize2,
@@ -294,6 +296,38 @@
       itself either way; see $lib/duplicate. */
   let duplicateDialogOpen = $state(false)
   const duplicateSeed = $derived(session.manifest ? stripForDuplicate(session.manifest) : '')
+
+  /**
+   * Whether comparing this object means anything.
+   *
+   * Narrower than canDuplicate's guard, and deliberately so: CompareDialog
+   * fetches its OWN left-hand manifest with revealSecrets=false on every
+   * compare, never `session.manifest`, so a Secret's values being hidden or
+   * revealed right now makes no difference to what Compare would show —
+   * there is no placeholder-carried-forward risk here the way there is for
+   * Duplicate. An application is the one real exclusion, same as the YAML
+   * tab's own `show` below: there is no manifest to fetch for something that
+   * is not a Kubernetes object.
+   */
+  const canCompare = $derived(!!session.selectedKind && !isApplication)
+
+  // Read-only is not a reason to hide or disable Compare — nothing here
+  // writes anything, so the guard that blocks Edit and Duplicate on a
+  // read-only cluster has no reason to apply to a feature that only reads.
+
+  /**
+   * Opens CompareDialog on the object currently shown.
+   *
+   * PER-OBJECT ONLY. PodSteer has no multi-select anywhere yet — DataTable's
+   * own header comment says pagination and the toolbar live above it and
+   * selection is not among what either owns — so there is no list of
+   * objects to hand this a batch of. A list-level "Compare selected" belongs
+   * in the table toolbar once multi-select exists, comparing each selected
+   * row against its counterpart by name; it does not belong here, which is
+   * why it is not wired up as a loop over this same dialog.
+   */
+  // TODO(bulk-actions): a table-toolbar "Compare selected" once multi-select ships.
+  let compareDialogOpen = $state(false)
 
   /**
    * The kubectl equivalent of Apply: what PodSteer actually sends is the
@@ -1121,6 +1155,13 @@
         onclick={() => (duplicateDialogOpen = true)}
       />
       <ToolbarButton
+        icon={GitCompare}
+        label="Compare…"
+        title={canCompare ? 'Compare against another object' : 'Nothing to compare yet'}
+        disabled={!canCompare}
+        onclick={() => (compareDialogOpen = true)}
+      />
+      <ToolbarButton
         icon={copied.on ? Check : Copy}
         label="Copy manifest"
         title={copied.on ? 'Copied' : 'Copy manifest'}
@@ -1937,5 +1978,17 @@
         if (name) await session.openDetail(name, namespace)
       }}
     />
+
+    {#if session.selectedName}
+      <CompareDialog
+        open={compareDialogOpen}
+        icon={KindIcon}
+        clusterId={session.cluster.id}
+        kind={session.selectedKind}
+        namespace={session.selectedNamespace}
+        name={session.selectedName}
+        onclose={() => (compareDialogOpen = false)}
+      />
+    {/if}
   {/if}
 {/if}
