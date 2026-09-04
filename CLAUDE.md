@@ -754,6 +754,70 @@ and the fan-out simply stops. The command palette reads the merged rows the
 way it reads any view's own: only while that view is on screen, never by
 fetching across clusters for a keystroke.
 
+## The RBAC explorer quotes the API server, and flags only what it can argue
+
+`podsteer/rbac` is the fourth pinned pseudo-entry, beside the overview,
+Applications and All clusters, and it is one for the same reason they are:
+"what can this kubeconfig do here" is a question asked of the authorization
+review APIs, not an object anything can GET, so it is deliberately absent from
+`domain/catalog.go` — a catalogue entry is offered to every consumer that
+expects to fetch what it names. Roles and ClusterRoles themselves are ordinary
+catalogue entries under Access Control and stay exactly where they were; this
+entry is the interrogation, not the list.
+
+**The API server decides; PodSteer only flags.** Three of the four panes are
+quotations. `SelfSubjectRulesReview` answers "what may I do in this namespace"
+in ONE request — never one access check per verb per resource — and
+`SelfSubjectAccessReview`/`SubjectAccessReview` answer one question each, with
+`allowed`, `denied` and `reason` carried across verbatim by
+`app/adapters/k8s/rbac.go` and rendered as they arrived. Nothing here
+evaluates a rule to reach a verdict about somebody's permissions, and that is
+not fastidiousness: RBAC is only one authorizer in a chain that may also hold
+Node, ABAC and a webhook, and being subtly wrong about what an account may do
+is worse than saying nothing. `allowed` and `denied` are BOTH carried because
+they are not opposites — an authorizer with no opinion leaves both false, and
+rendering that as a denial claims a verdict nothing gave.
+
+The fourth pane is the one verdict, so it lives in the domain with a test per
+rule: `domain.AssessRole` (`app/domain/rbac.go`) flags wildcard verbs,
+resources or API groups; `escalate`, `bind` and `impersonate`; a cluster-scoped
+Secret read; `create` on pods (whoever may create one names the service
+account it runs as, and the kubelet mounts that account's token); and a
+binding to `cluster-admin`. Each says what it permits and why it matters, the
+same shape `pod_assessment.go` uses — **and a role with none of them produces
+no findings, with a test asserting exactly that**. The severity of a wildcard
+depends on scope, because the identical rule means one namespace or the whole
+cluster. Two rules are narrower than they look, on purpose: a namespaced
+Secret read is not flagged at all (it is how most workloads are configured),
+and only `pods` counts for the pod-creation flag — a Deployment rule reaches
+the same place by a longer route, but claiming so would be a statement about
+controller behaviour rather than a reading of the rule on screen.
+
+**Nothing here is cached and nothing here polls.** `ClusterSession`'s tick has
+a case for this view that fetches nothing at all: an allow re-shown from a
+previous tick, or served from a cache, would keep reading as granted after the
+permission behind it was revoked. The reverse lookup is the expensive half —
+a ClusterRole is referenced by ClusterRoleBindings and by RoleBindings in any
+namespace, so `ListBindings` lists both cluster-wide rather than narrowing to
+a namespace and reporting a widely granted role as bound to nobody — and it is
+bounded by WHEN it runs: `InspectRole` is three requests, made when somebody
+presses Inspect. Which bindings actually reference a role is
+`domain.BindingsReferencing`, not the adapter's filter, because the cases are
+worth arguing about (a RoleBinding may reference a ClusterRole; a RoleBinding
+to a Role reaches only its own namespace's).
+
+**Being refused is an ordinary answer, not a broken pane.** `domain.ReviewStatus`
+is modelled on `MetricsStatus` and separates a refusal from an absence from a
+transient failure, and each pane renders the sentence naming the permission
+that would fix it — creating a `SubjectAccessReview` about somebody else is
+privileged and most accounts cannot, which is a fact about the cluster rather
+than a fault. The role read and the binding list carry SEPARATE statuses,
+because an account routinely holds one and not the other and a single refusal
+must not blank the half that answered. A subject's name is an object name: it
+is typed into the panel and shown, and it is never written to disk — the same
+no-object-names commitment SECURITY.md makes, which is why recent subjects, if
+they are ever offered, belong in memory beside the navigator's Recent section.
+
 ## Two structural facts that look like mistakes
 
 **`main.go` sits at the repository root.** The Wails CLI runs `go build` with

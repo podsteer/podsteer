@@ -48,6 +48,7 @@ import TimelineView from './TimelineView.svelte'
   import PodsView from './PodsView.svelte'
   import WorkloadsView from './WorkloadsView.svelte'
   import FleetView from './FleetView.svelte'
+  import RBACView from './RBACView.svelte'
   import { fleet } from '$stores/fleet.svelte'
   import { PanelLeft, AlertTriangle, Download, Check, Plus } from '@lucide/svelte'
 
@@ -419,6 +420,8 @@ import TimelineView from './TimelineView.svelte'
       <OverviewView {session} />
     {:else if session.viewMode === 'fleet'}
       <FleetView {session} />
+    {:else if session.viewMode === 'rbac'}
+      <RBACView {session} />
     {:else if session.viewMode === 'timeline'}
       <TimelineView {session} />
     {:else if session.viewMode === 'pods'}

@@ -220,6 +220,45 @@ type HistoryService interface {
 	SetSamplingInterval(interval time.Duration) error
 }
 
+// RBACService is the use-case surface for the RBAC explorer.
+//
+// Three questions, three calls, and every one of them a read that runs
+// because somebody pressed something — none of it is on the refresh tick, and
+// none of it is cached. An allow or deny decision must never be shown from a
+// previous instant: a permission revoked a minute ago has to stop reading as
+// granted, which a cached answer cannot promise.
+//
+// The statuses on the returned values do the work an error would otherwise
+// do badly. An account not permitted to ask a review is the ordinary case
+// here rather than an exceptional one, and it is reported in the result so
+// the rest of the panel still renders — the same shape domain.MetricsStatus
+// gives the overview.
+type RBACService interface {
+	// SubjectRules answers "what can this kubeconfig actually do here" for
+	// one namespace of a connected cluster.
+	SubjectRules(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.SubjectRules, error)
+
+	// CanI answers one access review, for the current account or for a named
+	// user, group or service account.
+	//
+	// The API server's own allowed, denied and reason are carried across
+	// verbatim. Refuses with domain.ErrInvalidAccessRequest, wrapped, when
+	// the request names no verb or nothing to act on, before any request
+	// reaches the cluster.
+	CanI(ctx context.Context, id domain.ClusterID, request domain.AccessRequest) (domain.AccessDecision, error)
+
+	// InspectRole reads one Role or ClusterRole, finds the bindings that
+	// reference it, and assesses what its rules permit.
+	//
+	// ONE CALL FOR THE WHOLE PANEL — the role, two binding lists and the
+	// assessment — so opening it is a bounded, countable three requests
+	// rather than a fan-out that grows with the cluster. The role and the
+	// bindings report separately: an account may read a ClusterRole without
+	// being able to list the bindings to it, and one refusal must not blank
+	// the half that answered.
+	InspectRole(ctx context.Context, id domain.ClusterID, target domain.RoleTarget) (domain.RoleInspection, error)
+}
+
 // ResourceService is the use-case surface for the generic browsing path.
 type ResourceService interface {
 	// ListTable returns objects of the given kind as a table. The kind is

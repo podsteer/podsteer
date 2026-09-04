@@ -119,4 +119,17 @@ var (
 	// running it anyway would create a needless new ReplicaSet or
 	// ControllerRevision.
 	ErrInvalidRevision = errors.New("invalid revision")
+
+	// ErrInvalidAccessRequest reports that an access review named no verb, or
+	// nothing to act on — neither a resource nor a non-resource path. The API
+	// server would answer such a request with a flat "no", which reads as a
+	// denial of something rather than as the malformed question it is, so it
+	// is refused locally before it reaches the cluster.
+	ErrInvalidAccessRequest = errors.New("invalid access request")
+
+	// ErrInvalidRoleTarget reports that a role inspection named no role, or
+	// named a namespaced Role without the namespace that identifies it —
+	// `Role/edit` exists in a great many namespaces at once, so a blank one
+	// does not name an object.
+	ErrInvalidRoleTarget = errors.New("invalid role target")
 )

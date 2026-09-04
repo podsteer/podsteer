@@ -180,6 +180,18 @@ func run() error {
 		return fmt.Errorf("wiring fleet service: %w", err)
 	}
 
+	// The RBAC explorer. Every call it makes is a read, and every one of
+	// them happens because somebody pressed something — it is deliberately
+	// not wired into anything that runs on a timer.
+	rbacService, err := application.NewRBACService(application.RBACServiceDeps{
+		RBAC:     kubernetes,
+		Registry: registry,
+		Logger:   logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring rbac service: %w", err)
+	}
+
 	overviewService, err := application.NewOverviewService(application.OverviewServiceDeps{
 		Cluster:   kubernetes,
 		Workloads: kubernetes,
@@ -268,6 +280,11 @@ func run() error {
 	fleetAPI, err := wailsadapter.NewFleetAPI(fleetService, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring fleet API: %w", err)
+	}
+
+	rbacAPI, err := wailsadapter.NewRBACAPI(rbacService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring rbac API: %w", err)
 	}
 
 	// The Kubernetes adapter is the port-forward AND the node-shell transport:
@@ -369,6 +386,7 @@ func run() error {
 			browseAPI,
 			overviewAPI,
 			fleetAPI,
+			rbacAPI,
 			historyAPI,
 			managementAPI,
 			terminalAPI,

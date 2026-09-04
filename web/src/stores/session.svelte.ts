@@ -192,6 +192,24 @@ export const APPLICATIONS_KIND_ID = 'podsteer/applications'
 export const FLEET_KIND_ID = 'podsteer/fleet'
 
 /**
+ * The RBAC explorer, pinned beside the other three.
+ *
+ * THE FOURTH PSEUDO-ENTRY, AND FOR THE SAME REASON: there is no object to
+ * GET called "my permissions". It is three questions asked of the
+ * authorization review APIs and one reverse lookup over the binding graph —
+ * an interrogation, not a list — so it is deliberately absent from
+ * `domain/catalog.go`, which is offered to every consumer that expects to be
+ * able to fetch what it names. The Roles and ClusterRoles it inspects ARE
+ * catalog entries, and browsing them stays exactly where it was.
+ *
+ * It also polls nothing. The panel's reads happen when somebody presses
+ * something, which is why `#fetch` has a case for it that fetches nothing at
+ * all: an allow or deny decision shown from a previous tick could report a
+ * permission that has since been revoked as still granted.
+ */
+export const RBAC_KIND_ID = 'podsteer/rbac'
+
+/**
  * The column-preference and sort key of one of the merged tables.
  *
  * Per table rather than one for the view: the three hold different columns,
@@ -267,6 +285,7 @@ export type ViewMode =
   | 'overview'
   | 'applications'
   | 'fleet'
+  | 'rbac'
   | 'timeline'
   | 'pods'
   | 'nodes'
@@ -616,6 +635,7 @@ export class ClusterSession {
     if (id === OVERVIEW_KIND_ID) return 'overview'
     if (id === APPLICATIONS_KIND_ID) return 'applications'
     if (id === FLEET_KIND_ID) return 'fleet'
+    if (id === RBAC_KIND_ID) return 'rbac'
     if (id === TIMELINE_KIND_ID) return 'timeline'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
@@ -637,8 +657,13 @@ export class ClusterSession {
    *
    * The overview is an assessment of the whole cluster, so the search box,
    * the pagination and the row count in the toolbar have nothing to act on.
+   * The RBAC explorer is the same case for the same reason — it is a set of
+   * questions and their answers, not rows — and it additionally must not
+   * offer the bulk action bar, which acts on a selection no pane here has.
    */
-  readonly isList = $derived(this.viewMode !== 'overview' && this.viewMode !== 'timeline')
+  readonly isList = $derived(
+    this.viewMode !== 'overview' && this.viewMode !== 'rbac' && this.viewMode !== 'timeline',
+  )
 
   /**
    * The search term parsed into a filter language query — regex, negation and
@@ -854,6 +879,7 @@ export class ClusterSession {
   readonly visibleCount = $derived.by(() => {
     switch (this.viewMode) {
       case 'overview':
+      case 'rbac':
       case 'timeline':
         return 0
       case 'pods':
@@ -1605,6 +1631,15 @@ export class ClusterSession {
         // while this view is the one on screen, because this switch is the
         // only thing that ever calls it. See $stores/fleet.
         return fleet.refresh(namespace)
+      case 'rbac':
+        // NOTHING, DELIBERATELY. The RBAC explorer's reads are made by the
+        // panel when somebody presses something, never by this tick: a
+        // decision re-fetched on a timer would still be a decision shown
+        // from an earlier instant, and a permission revoked between two
+        // ticks would keep reading as granted until the next one. The
+        // assessment above still runs, so the navigator badge stays current
+        // while this view is open.
+        return Promise.resolve(null)
       // Every list carries the kind's annotation projection — the keys on
       // its custom columns — and nothing else of the annotation map. See
       // $lib/customColumns and the client's listNamespaceSummaries note.
@@ -1700,6 +1735,10 @@ export class ClusterSession {
       case 'fleet':
         // Nothing to hold: the merged rows are the workspace's, in
         // $stores/fleet, and the fetch folded them in itself.
+        break
+      case 'rbac':
+        // Nothing to hold either, and for a different reason: the panel owns
+        // its own answers, because it is the thing that asked for them.
         break
       case 'pods':
         this.pods = rows as Pod[]

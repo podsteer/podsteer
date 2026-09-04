@@ -1,5 +1,76 @@
 export namespace wails {
 	
+	export class AccessRequest {
+	    subjectKind: string;
+	    subjectName: string;
+	    subjectNamespace: string;
+	    verb: string;
+	    group: string;
+	    resource: string;
+	    subresource: string;
+	    namespace: string;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AccessRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.subjectKind = source["subjectKind"];
+	        this.subjectName = source["subjectName"];
+	        this.subjectNamespace = source["subjectNamespace"];
+	        this.verb = source["verb"];
+	        this.group = source["group"];
+	        this.resource = source["resource"];
+	        this.subresource = source["subresource"];
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	    }
+	}
+	export class AccessDecision {
+	    request: AccessRequest;
+	    status: string;
+	    refusal: string;
+	    allowed: boolean;
+	    denied: boolean;
+	    reason: string;
+	    evaluationError: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AccessDecision(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.request = this.convertValues(source["request"], AccessRequest);
+	        this.status = source["status"];
+	        this.refusal = source["refusal"];
+	        this.allowed = source["allowed"];
+	        this.denied = source["denied"];
+	        this.reason = source["reason"];
+	        this.evaluationError = source["evaluationError"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class AppInfo {
 	    name: string;
 	    version: string;
@@ -2126,6 +2197,26 @@ export namespace wails {
 		}
 	}
 	
+	export class PolicyRule {
+	    verbs: string[];
+	    apiGroups: string[];
+	    resources: string[];
+	    resourceNames: string[];
+	    nonResourceUrls: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PolicyRule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.verbs = source["verbs"];
+	        this.apiGroups = source["apiGroups"];
+	        this.resources = source["resources"];
+	        this.resourceNames = source["resourceNames"];
+	        this.nonResourceUrls = source["nonResourceUrls"];
+	    }
+	}
 	export class PortForward {
 	    id: string;
 	    clusterId: string;
@@ -2152,6 +2243,42 @@ export namespace wails {
 	        this.address = source["address"];
 	        this.scheme = source["scheme"];
 	        this.reconnecting = source["reconnecting"];
+	    }
+	}
+	export class RBACFinding {
+	    id: string;
+	    severity: string;
+	    title: string;
+	    detail: string;
+	    advice: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RBACFinding(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.severity = source["severity"];
+	        this.title = source["title"];
+	        this.detail = source["detail"];
+	        this.advice = source["advice"];
+	    }
+	}
+	export class RBACSubject {
+	    kind: string;
+	    name: string;
+	    namespace: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RBACSubject(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.name = source["name"];
+	        this.namespace = source["namespace"];
 	    }
 	}
 	
@@ -2292,6 +2419,96 @@ export namespace wails {
 	        this.templateYaml = source["templateYaml"];
 	    }
 	}
+	export class RoleBindingRef {
+	    kind: string;
+	    name: string;
+	    namespace: string;
+	    roleRefKind: string;
+	    roleRefName: string;
+	    subjects: RBACSubject[];
+	
+	    static createFrom(source: any = {}) {
+	        return new RoleBindingRef(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.name = source["name"];
+	        this.namespace = source["namespace"];
+	        this.roleRefKind = source["roleRefKind"];
+	        this.roleRefName = source["roleRefName"];
+	        this.subjects = this.convertValues(source["subjects"], RBACSubject);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RoleInspection {
+	    scope: string;
+	    namespace: string;
+	    name: string;
+	    kind: string;
+	    status: string;
+	    refusal: string;
+	    rules: PolicyRule[];
+	    bindingsStatus: string;
+	    bindingsRefusal: string;
+	    bindings: RoleBindingRef[];
+	    findings: RBACFinding[];
+	
+	    static createFrom(source: any = {}) {
+	        return new RoleInspection(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.scope = source["scope"];
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.kind = source["kind"];
+	        this.status = source["status"];
+	        this.refusal = source["refusal"];
+	        this.rules = this.convertValues(source["rules"], PolicyRule);
+	        this.bindingsStatus = source["bindingsStatus"];
+	        this.bindingsRefusal = source["bindingsRefusal"];
+	        this.bindings = this.convertValues(source["bindings"], RoleBindingRef);
+	        this.findings = this.convertValues(source["findings"], RBACFinding);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class RollbackOutcomeDTO {
 	    toRevision: number;
 	    dryRun: boolean;
@@ -2381,6 +2598,48 @@ export namespace wails {
 	
 	
 	
+	export class SubjectRules {
+	    namespace: string;
+	    status: string;
+	    refusal: string;
+	    namespaced: PolicyRule[];
+	    clusterScoped: PolicyRule[];
+	    incomplete: boolean;
+	    incompleteReason: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubjectRules(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.namespace = source["namespace"];
+	        this.status = source["status"];
+	        this.refusal = source["refusal"];
+	        this.namespaced = this.convertValues(source["namespaced"], PolicyRule);
+	        this.clusterScoped = this.convertValues(source["clusterScoped"], PolicyRule);
+	        this.incomplete = source["incomplete"];
+	        this.incompleteReason = source["incompleteReason"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	
 	
