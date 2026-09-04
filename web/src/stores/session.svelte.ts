@@ -47,6 +47,7 @@ import { ApiError, toApiError } from '$lib/api/errors'
 import { findAutoscalers, type AutoscalerCheck } from '$lib/autoscalers'
 import { podStatusLabel } from '$lib/format'
 import { matchesPodStatusChips } from '$lib/podStatusFilters'
+import { EVENT_CHIPS, WORKLOAD_CHIPS, matchesChips, type FleetRow, type FleetTab } from '$lib/fleet'
 import { describeQuery, matches, parseQuery, type Query, type Row } from '$lib/query'
 import {
   parseAgeSeconds,
@@ -59,6 +60,7 @@ import { alertPlayer } from './alerts.svelte'
 import { forgetConfigMaps } from './configMaps.svelte'
 import { usageHistory, usageKey } from './usageHistory.svelte'
 import { preferences } from './preferences.svelte'
+import { fleet } from './fleet.svelte'
 
 /** Lifecycle of an asynchronous read. */
 
@@ -164,6 +166,31 @@ export const OVERVIEW_KIND_ID = 'podsteer/overview'
  */
 export const APPLICATIONS_KIND_ID = 'podsteer/applications'
 
+/**
+ * The merged cross-cluster view, pinned beside the other two.
+ *
+ * THE THIRD PSEUDO-ENTRY, AND FOR THE SAME REASON: there is no object to GET
+ * called "all clusters". It is the pods, workloads or events of every open
+ * tab in one table — an aggregation, not a kind — and a catalog entry would
+ * offer it to every consumer that expects to fetch what it names, from a
+ * cluster that by definition knows nothing of the other tabs. Its rows live
+ * in $stores/fleet rather than on any one session, because they are nobody's
+ * tab's; what stays here is this tab's own view of them — search, sort,
+ * page, chips.
+ */
+export const FLEET_KIND_ID = 'podsteer/fleet'
+
+/**
+ * The column-preference and sort key of one of the merged tables.
+ *
+ * Per table rather than one for the view: the three hold different columns,
+ * so a sort set on one must not leak into another — the same rule `sorts`
+ * already applies between kinds.
+ */
+export function fleetTableId(tab: FleetTab): string {
+  return `${FLEET_KIND_ID}/${tab}`
+}
+
 export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
 
 /** Kind ids PodSteer renders with purpose-built columns rather than generically. */
@@ -193,6 +220,13 @@ export const WORKLOAD_KIND_BY_ID: Record<string, string> = {
   'batch/v1/cronjobs': 'CronJob',
 }
 
+/** The kind id behind a controller name — `WORKLOAD_KIND_BY_ID` read the
+    other way, for a row of a merged table that names its kind and needs the
+    navigator's id to open in. */
+export function workloadKindId(kind: string): string | undefined {
+  return Object.keys(WORKLOAD_KIND_BY_ID).find((id) => WORKLOAD_KIND_BY_ID[id] === kind)
+}
+
 /**
  * The HorizontalPodAutoscaler kind's id.
  *
@@ -208,6 +242,7 @@ const HPA_KIND_ID = 'autoscaling/v2/horizontalpodautoscalers'
 export type ViewMode =
   | 'overview'
   | 'applications'
+  | 'fleet'
   | 'pods'
   | 'nodes'
   | 'events'
@@ -306,6 +341,28 @@ const EVENT_SORT: SortAccessors<K8sEvent> = {
   age: (event) => event.ageSeconds,
 }
 
+/*
+ * The merged tables sort by the same accessors as their single-cluster twins,
+ * plus the columns they add. Spread rather than re-declared, so a column's
+ * ordering rule cannot differ between "this cluster's pods" and "every
+ * cluster's pods".
+ */
+const FLEET_POD_SORT: SortAccessors<FleetRow<Pod>> = {
+  ...POD_SORT,
+  cluster: (pod) => pod.cluster,
+}
+
+const FLEET_WORKLOAD_SORT: SortAccessors<FleetRow<Workload>> = {
+  ...WORKLOAD_SORT,
+  cluster: (workload) => workload.cluster,
+  kind: (workload) => workload.kind,
+}
+
+const FLEET_EVENT_SORT: SortAccessors<FleetRow<K8sEvent>> = {
+  ...EVENT_SORT,
+  cluster: (event) => event.cluster,
+}
+
 export class ClusterSession {
   /** The connected cluster this tab shows. */
   readonly cluster: Cluster
@@ -356,6 +413,15 @@ export class ClusterSession {
    * this should become one.
    */
   podStatusFilters = $state<string[]>([])
+
+  /**
+   * Active quick-filter chips on each of the merged tables — the pod chips
+   * again for Pods, `WORKLOAD_CHIPS` and `EVENT_CHIPS` for the other two.
+   * Kept apart from `podStatusFilters`: a chip pressed while reading every
+   * cluster's pods is not a chip pressed on this cluster's, and the two
+   * views must not surprise each other.
+   */
+  fleetChips = $state<Record<FleetTab, string[]>>({ pods: [], workloads: [], events: [] })
 
   /**
    * Rows for whichever view is active. Only one is populated at a time.
@@ -514,6 +580,7 @@ export class ClusterSession {
     const id = this.selectedKindId
     if (id === OVERVIEW_KIND_ID) return 'overview'
     if (id === APPLICATIONS_KIND_ID) return 'applications'
+    if (id === FLEET_KIND_ID) return 'fleet'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
     if (id === RICH_KIND_IDS.events) return 'events'
@@ -581,6 +648,7 @@ export class ClusterSession {
       this.query,
       (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase],
       (pod) => pod.labels,
+      () => this.cluster.id,
     ),
   )
 
@@ -595,7 +663,13 @@ export class ClusterSession {
     this.searchedPods.filter((pod) => matchesPodStatusChips(pod, this.podStatusFilters)),
   )
   readonly visibleNodes = $derived(
-    filterRows(this.nodes, this.query, (node) => [node.name, node.status, ...node.roles]),
+    filterRows(
+      this.nodes,
+      this.query,
+      (node) => [node.name, node.status, ...node.roles],
+      undefined,
+      () => this.cluster.id,
+    ),
   )
   readonly visibleWorkloads = $derived(
     filterRows(
@@ -603,30 +677,110 @@ export class ClusterSession {
       this.query,
       (workload) => [workload.name, workload.namespace, workload.status],
       (workload) => workload.labels,
+      () => this.cluster.id,
     ),
   )
   readonly visibleApplications = $derived(
-    filterRows(this.applications, this.query, (application) => [
-      application.instance,
-      application.namespace,
-      application.partOf,
-      application.name,
-    ]),
+    filterRows(
+      this.applications,
+      this.query,
+      (application) => [
+        application.instance,
+        application.namespace,
+        application.partOf,
+        application.name,
+      ],
+      undefined,
+      () => this.cluster.id,
+    ),
   )
   readonly visibleNamespaces = $derived(
-    filterRows(this.namespaceRows, this.query, (namespace) => [namespace.name, namespace.phase]),
+    filterRows(
+      this.namespaceRows,
+      this.query,
+      (namespace) => [namespace.name, namespace.phase],
+      undefined,
+      () => this.cluster.id,
+    ),
   )
   readonly visibleEvents = $derived(
-    filterRows(this.events, this.query, (event) => [
-      event.reason,
-      event.message,
-      event.involvedObject,
-      event.namespace,
-    ]),
+    filterRows(
+      this.events,
+      this.query,
+      (event) => [event.reason, event.message, event.involvedObject, event.namespace],
+      undefined,
+      () => this.cluster.id,
+    ),
   )
   readonly visibleTableRows = $derived(
-    filterRows(this.table?.rows ?? [], this.query, (row) => [row.name, row.namespace, ...row.cells]),
+    filterRows(
+      this.table?.rows ?? [],
+      this.query,
+      (row) => [row.name, row.namespace, ...row.cells],
+      undefined,
+      () => this.cluster.id,
+    ),
   )
+
+  /**
+   * The merged tables' rows, filtered the same way — search, then chips —
+   * over what $stores/fleet holds for every open cluster. The cluster each
+   * row carries is what a `cluster:` term selects on; the rest of the text
+   * fields are exactly the single-cluster list's, so a search that finds a
+   * pod in one tab finds it here too.
+   */
+  readonly searchedFleetPods = $derived(
+    filterRows(
+      fleet.podRows,
+      this.query,
+      (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase],
+      (pod) => pod.labels,
+      (pod) => pod.cluster,
+    ),
+  )
+  readonly visibleFleetPods = $derived(
+    this.searchedFleetPods.filter((pod) => matchesPodStatusChips(pod, this.fleetChips.pods)),
+  )
+  readonly searchedFleetWorkloads = $derived(
+    filterRows(
+      fleet.workloadRows,
+      this.query,
+      (workload) => [workload.name, workload.namespace, workload.kind, workload.status],
+      (workload) => workload.labels,
+      (workload) => workload.cluster,
+    ),
+  )
+  readonly visibleFleetWorkloads = $derived(
+    this.searchedFleetWorkloads.filter((workload) =>
+      matchesChips(workload, WORKLOAD_CHIPS, this.fleetChips.workloads),
+    ),
+  )
+  readonly searchedFleetEvents = $derived(
+    filterRows(
+      fleet.eventRows,
+      this.query,
+      (event) => [event.reason, event.message, event.involvedObject, event.namespace],
+      undefined,
+      (event) => event.cluster,
+    ),
+  )
+  readonly visibleFleetEvents = $derived(
+    this.searchedFleetEvents.filter((event) =>
+      matchesChips(event, EVENT_CHIPS, this.fleetChips.events),
+    ),
+  )
+
+  /** Total rows of the merged table showing, after filtering. */
+  readonly visibleFleetCount = $derived.by(() => {
+    switch (fleet.tab) {
+      case 'pods':
+        return this.visibleFleetPods.length
+      case 'workloads':
+        return this.visibleFleetWorkloads.length
+      case 'events':
+        return this.visibleFleetEvents.length
+    }
+  })
 
   /** Total rows after filtering, before pagination. */
   readonly visibleCount = $derived.by(() => {
@@ -645,6 +799,8 @@ export class ClusterSession {
         return this.visibleNamespaces.length
       case 'applications':
         return this.visibleApplications.length
+      case 'fleet':
+        return this.visibleFleetCount
       default:
         return this.visibleTableRows.length
     }
@@ -667,8 +823,14 @@ export class ClusterSession {
   /** Index of the first row on the current page, for the range readout. */
   readonly pageStart = $derived((this.currentPage - 1) * preferences.pageSize)
 
+  /** What `sorts` is keyed by: the kind id, or for the merged view the
+      table showing — see `fleetTableId`. */
+  readonly sortKey = $derived(
+    this.viewMode === 'fleet' ? fleetTableId(fleet.tab) : this.selectedKindId,
+  )
+
   /** The sort applied to the current kind, or null for server order. */
-  readonly sort = $derived(this.sorts[this.selectedKindId] ?? null)
+  readonly sort = $derived(this.sorts[this.sortKey] ?? null)
 
   /** Filtered rows after sorting, per view. */
   readonly sortedPods = $derived(sortRows(this.visiblePods, this.sort, POD_SORT))
@@ -715,6 +877,18 @@ export class ClusterSession {
   readonly pagedWorkloads = $derived(this.#slice(this.sortedWorkloads))
   readonly pagedEvents = $derived(this.#slice(this.sortedEvents))
   readonly pagedNamespaces = $derived(this.#slice(this.sortedNamespaces))
+
+  /** The merged tables, sorted and paged like any other. */
+  readonly sortedFleetPods = $derived(sortRows(this.visibleFleetPods, this.sort, FLEET_POD_SORT))
+  readonly sortedFleetWorkloads = $derived(
+    sortRows(this.visibleFleetWorkloads, this.sort, FLEET_WORKLOAD_SORT),
+  )
+  readonly sortedFleetEvents = $derived(
+    sortRows(this.visibleFleetEvents, this.sort, FLEET_EVENT_SORT),
+  )
+  readonly pagedFleetPods = $derived(this.#slice(this.sortedFleetPods))
+  readonly pagedFleetWorkloads = $derived(this.#slice(this.sortedFleetWorkloads))
+  readonly pagedFleetEvents = $derived(this.#slice(this.sortedFleetEvents))
   readonly sortedApplications = $derived(
     sortRows(this.visibleApplications, this.sort, APPLICATION_SORT),
   )
@@ -1057,6 +1231,32 @@ export class ClusterSession {
     this.page = 1
   }
 
+  /** Toggles one quick-filter chip on a merged table. Same page reset, same
+      reasons, as the pod chips. */
+  toggleFleetChip = (tab: FleetTab, id: string): void => {
+    const active = this.fleetChips[tab]
+    this.fleetChips = {
+      ...this.fleetChips,
+      [tab]: active.includes(id) ? active.filter((existing) => existing !== id) : [...active, id],
+    }
+    this.page = 1
+  }
+
+  /**
+   * Switches which merged table is showing, and reads it.
+   *
+   * Through this session's own refresh rather than the fleet store's, so
+   * the read lands under this tab's generation guard and reports into its
+   * error banner — the same path the poll takes, which is the only other
+   * caller.
+   */
+  selectFleetTab = async (tab: FleetTab): Promise<void> => {
+    if (tab === fleet.tab) return
+    fleet.tab = tab
+    this.page = 1
+    await this.refresh()
+  }
+
   /** Moves to a page, clamped to the range that exists. */
   goToPage = (page: number): void => {
     this.page = Math.min(Math.max(1, page), this.pageCount)
@@ -1070,7 +1270,7 @@ export class ClusterSession {
    * longer exists.
    */
   toggleSort = (columnId: string): void => {
-    const current = this.sorts[this.selectedKindId]
+    const current = this.sorts[this.sortKey]
     const next: SortState | null =
       !current || current.columnId !== columnId
         ? { columnId, direction: 'asc' }
@@ -1080,9 +1280,9 @@ export class ClusterSession {
 
     const sorts = { ...this.sorts }
     if (next) {
-      sorts[this.selectedKindId] = next
+      sorts[this.sortKey] = next
     } else {
-      delete sorts[this.selectedKindId]
+      delete sorts[this.sortKey]
     }
     this.sorts = sorts
     this.page = 1
@@ -1254,6 +1454,11 @@ export class ClusterSession {
         return this.upgradeTarget
           ? getOverviewForTarget(id, this.upgradeTarget)
           : getOverview(id)
+      case 'fleet':
+        // Every open cluster, one call, at this tab's cadence — and only
+        // while this view is the one on screen, because this switch is the
+        // only thing that ever calls it. See $stores/fleet.
+        return fleet.refresh(namespace)
       case 'pods':
         return listPods(id, namespace)
       case 'nodes':
@@ -1310,6 +1515,10 @@ export class ClusterSession {
     switch (this.viewMode) {
       case 'overview':
         this.#adopt(rows as Overview)
+        break
+      case 'fleet':
+        // Nothing to hold: the merged rows are the workspace's, in
+        // $stores/fleet, and the fetch folded them in itself.
         break
       case 'pods':
         this.pods = rows as Pod[]
@@ -1918,12 +2127,18 @@ export class ClusterSession {
  *
  * The query is parsed once by the caller (`session.query`) and passed in
  * already-parsed, not re-parsed per row.
+ *
+ * `cluster` is which cluster the row came from, for a `cluster:` term. Every
+ * row in PodSteer belongs to one — the tab's own for its lists, the row's
+ * own for a merged table — so it is always supplied: typing `cluster:prod`
+ * over prod's own pod list shows the list, not an empty table.
  */
 function filterRows<T>(
   rows: T[],
   query: Query,
   text: (row: T) => (string | undefined)[],
   labels?: (row: T) => Record<string, string> | undefined,
+  cluster?: (row: T) => string | undefined,
 ): T[] {
   if (query.terms.length === 0) return rows
 
@@ -1931,6 +2146,7 @@ function filterRows<T>(
     matches(query, {
       text: text(row).filter((field): field is string => Boolean(field)).join(' '),
       labels: labels?.(row),
+      cluster: cluster?.(row),
     } satisfies Row),
   )
 }

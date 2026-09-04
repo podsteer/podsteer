@@ -22,6 +22,10 @@
  *   key=value       label selector: row.labels[key] === value
  *   key!=value      label selector: row.labels[key] !== value
  *   label:key       label presence: key in row.labels
+ *   cluster:name    case-insensitive substring of `Row.cluster`, the cluster
+ *                   the row came from. Made for the merged All-clusters
+ *                   tables; every row belongs to one cluster, so it also
+ *                   holds, trivially, on a single cluster's own list
  *
  * Plain words stay plain substring matches — no prefix, no change from
  * before this module existed — because the overwhelming case is an operator
@@ -40,12 +44,17 @@ export interface Row {
       every kind that does not — Nodes, Namespaces, Events, Applications, and
       every server-printed generic table row. */
   labels?: Record<string, string>
+  /** The cluster the row came from. Every list in PodSteer belongs to one,
+      so callers pass the tab's own cluster for a single-cluster list and the
+      row's own for a merged one; absent, a `cluster:` term never matches. */
+  cluster?: string
 }
 
 /** One parsed term. A discriminated union rather than one bag of optional
     fields, so a switch over `kind` narrows without a manual assertion. */
 type Term =
   | { kind: 'text'; negated: boolean; value: string }
+  | { kind: 'cluster'; negated: boolean; value: string }
   | { kind: 'regex'; negated: boolean; pattern: string; regex: RegExp | null }
   | { kind: 'labelEquals'; negated: boolean; key: string; value: string }
   | { kind: 'labelNotEquals'; negated: boolean; key: string; value: string }
@@ -67,8 +76,12 @@ export interface Query {
  *
  * Character-by-character rather than a regex split: a naive `.split(/\s+/)`
  * has no idea it is inside quotes and would cut `"a b"` into two tokens.
+ *
+ * Exported for the one caller that edits a query rather than parsing it —
+ * the All-clusters strip toggling a `cluster:` term (see `$lib/fleet`) — so
+ * what it treats as one term is exactly what this grammar does.
  */
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   const tokens: string[] = []
   const n = text.length
   let i = 0
@@ -158,6 +171,19 @@ function parseTerm(raw: string, isLast: boolean): { term: Term; error?: string }
     // literal path fragment rather than an error.
   }
 
+  // cluster:name. Ahead of the label forms because a kubeconfig context name
+  // is free-form — an EKS ARN carries colons and slashes, a GKE one
+  // underscores — and nothing after the prefix may be read as anything but
+  // the name. Quotes around it are stripped, so a name with a space can be
+  // given the same way a phrase is.
+  if (body.startsWith('cluster:')) {
+    let value = body.slice('cluster:'.length)
+    if (value.length >= 2 && value[0] === '"' && value[value.length - 1] === '"') {
+      value = value.slice(1, -1)
+    }
+    return { term: { kind: 'cluster', negated, value } }
+  }
+
   // key!=value, checked ahead of key=value so it is not mistaken for one.
   const notEqualsAt = body.indexOf('!=')
   if (notEqualsAt > 0) {
@@ -223,6 +249,14 @@ function evaluate(term: Term, row: Row): boolean {
   switch (term.kind) {
     case 'text':
       return row.text.toLowerCase().includes(term.value.toLowerCase())
+    case 'cluster':
+      // A row with no cluster matches no cluster term and every negated one
+      // — the same reading an absent label map gets. A substring rather than
+      // an exact name, because the name is whatever the kubeconfig context
+      // is called and "prod" is what somebody types, not
+      // "gke_acme_europe-west1_prod"; the status strip's chips insert the
+      // full name for the exact case.
+      return (row.cluster ?? '').toLowerCase().includes(term.value.toLowerCase())
     case 'regex':
       // regex is only null when the pattern failed to compile, and matches()
       // never reaches this branch in that case — see the guard there.
@@ -286,6 +320,8 @@ function categoryName(term: Term): string {
   switch (term.kind) {
     case 'text':
       return 'substring'
+    case 'cluster':
+      return 'cluster'
     case 'regex':
       return term.regex === null ? 'invalid regex' : 'regex'
     case 'labelEquals':

@@ -166,6 +166,19 @@ func run() error {
 		return fmt.Errorf("wiring browse service: %w", err)
 	}
 
+	// The fleet reads through the two services above rather than the
+	// adapter, so a cross-cluster row is exactly the row that cluster's own
+	// tab would show, and the read cache coalesces the two.
+	fleetService, err := application.NewFleetService(application.FleetServiceDeps{
+		Workloads: workloadService,
+		Events:    browseService,
+		Registry:  registry,
+		Logger:    logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring fleet service: %w", err)
+	}
+
 	overviewService, err := application.NewOverviewService(application.OverviewServiceDeps{
 		Cluster:   kubernetes,
 		Workloads: kubernetes,
@@ -240,6 +253,11 @@ func run() error {
 	overviewAPI, err := wailsadapter.NewOverviewAPI(overviewService, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring overview API: %w", err)
+	}
+
+	fleetAPI, err := wailsadapter.NewFleetAPI(fleetService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring fleet API: %w", err)
 	}
 
 	managementAPI, err := wailsadapter.NewManagementAPI(managementService, kubernetes, workloadService, desktop, logger)
@@ -325,6 +343,7 @@ func run() error {
 			workloadAPI,
 			browseAPI,
 			overviewAPI,
+			fleetAPI,
 			historyAPI,
 			managementAPI,
 			terminalAPI,

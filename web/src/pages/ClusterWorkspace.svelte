@@ -40,6 +40,8 @@
   import NodesView from './NodesView.svelte'
   import PodsView from './PodsView.svelte'
   import WorkloadsView from './WorkloadsView.svelte'
+  import FleetView from './FleetView.svelte'
+  import { fleet } from '$stores/fleet.svelte'
   import { PanelLeft, AlertTriangle, Download, Check, Plus } from '@lucide/svelte'
 
   interface Props {
@@ -150,8 +152,18 @@
     // DataTable and registers no export.
     const kind =
       session.selectedKind?.singular ??
-      (session.viewMode === 'applications' ? 'application' : session.viewMode)
-    const filename = buildExportFilename(session.cluster.id, kind, session.namespace)
+      (session.viewMode === 'applications'
+        ? 'application'
+        : session.viewMode === 'fleet'
+          ? fleet.tab
+          : session.viewMode)
+    // A merged table is every open cluster's, so its file is named for all
+    // of them rather than for whichever tab happened to be in front.
+    const filename = buildExportFilename(
+      session.viewMode === 'fleet' ? 'all-clusters' : session.cluster.id,
+      kind,
+      session.namespace,
+    )
 
     try {
       const path = await saveTextFile(filename, toCSV(data.columns, data.rows))
@@ -228,7 +240,11 @@
       <div class="min-w-0 shrink">
         <div class="flex items-baseline gap-2">
           <h2 class="truncate text-title-medium font-semibold text-on-surface">
-            {session.isList ? (session.selectedKind?.title ?? 'Resources') : session.cluster.id}
+            {session.viewMode === 'fleet'
+              ? 'All clusters'
+              : session.isList
+                ? (session.selectedKind?.title ?? 'Resources')
+                : session.cluster.id}
           </h2>
           {#if session.isList}
             <span class="rounded-full bg-surface-container-high px-2 py-0.5 text-label-small
@@ -257,7 +273,9 @@
         <SearchField
           bind:this={searchField}
           value={session.typedSearch}
-          placeholder="Search {session.selectedKind?.title.toLowerCase() ?? 'resources'}…"
+          placeholder="Search {session.viewMode === 'fleet'
+            ? 'all clusters'
+            : (session.selectedKind?.title.toLowerCase() ?? 'resources')}…"
           onchange={session.setSearch}
           onnext={focusFirstRow}
           invalid={Boolean(session.searchError)}
@@ -272,7 +290,8 @@
         <InfoHint
           label="Search syntax"
           text={'-term negates. re:pattern or /pattern/ is a regex. key=value, key!=value ' +
-            'and label:key select on labels. "quoted phrases" keep spaces in one term.'}
+            'and label:key select on labels. cluster:name selects a cluster. ' +
+            '"quoted phrases" keep spaces in one term.'}
         />
 
         <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
@@ -352,6 +371,8 @@
     <!-- The view for the selected kind -->
     {#if session.viewMode === 'overview'}
       <OverviewView {session} />
+    {:else if session.viewMode === 'fleet'}
+      <FleetView {session} />
     {:else if session.viewMode === 'pods'}
       <PodsView {session} />
     {:else if session.viewMode === 'nodes'}

@@ -47,6 +47,11 @@ import {
   RolloutHistory as bindRolloutHistory,
 } from '$lib/wailsjs/go/wails/WorkloadAPI'
 import {
+  ListEvents as bindListFleetEvents,
+  ListPods as bindListFleetPods,
+  ListWorkloads as bindListFleetWorkloads,
+} from '$lib/wailsjs/go/wails/FleetAPI'
+import {
   ScaleWorkload as bindScaleWorkload,
   UpdateResource as bindUpdateResource,
   ValidateResource as bindValidateResource,
@@ -117,6 +122,11 @@ export type ApplicationInventory = wails.ApplicationInventory
 export type Application = wails.Application
 /** A Kubernetes Event. */
 export type K8sEvent = wails.Event
+/** One cluster's share of a cross-cluster list, with its own verdict — see
+    app/domain/fleet.go for the statuses. */
+export type ClusterPods = wails.ClusterPods
+export type ClusterWorkloads = wails.ClusterWorkloads
+export type ClusterEvents = wails.ClusterEvents
 /** A browsable kind, as shown in the navigator. */
 export type ResourceKind = wails.ResourceKind
 /** A generically browsed kind, with server-printed columns. */
@@ -490,6 +500,32 @@ export function listPodsForWorkload(
   name: string,
 ): Promise<Pod[]> {
   return call(() => bindListPodsForWorkload(clusterId, namespace, kind, name))
+}
+
+// --- Fleet ------------------------------------------------------------------
+//
+// One call per tick however many clusters are open. The fan-out is in Go —
+// application.FleetService — and every cluster comes back with its own
+// verdict, so a refused or unreachable cluster is a row in the answer, never
+// a rejection of it. The rejection cases are the caller's own: naming a
+// cluster that is not open, or an unusable namespace.
+
+/** Lists pods across the named open clusters, grouped per cluster in tab order. */
+export function listFleetPods(clusterIds: string[], namespace: string): Promise<ClusterPods[]> {
+  return call(() => bindListFleetPods(clusterIds, namespace))
+}
+
+/** Lists every controller kind but ReplicaSet across the named open clusters. */
+export function listFleetWorkloads(
+  clusterIds: string[],
+  namespace: string,
+): Promise<ClusterWorkloads[]> {
+  return call(() => bindListFleetWorkloads(clusterIds, namespace))
+}
+
+/** Lists events across the named open clusters. */
+export function listFleetEvents(clusterIds: string[], namespace: string): Promise<ClusterEvents[]> {
+  return call(() => bindListFleetEvents(clusterIds, namespace))
 }
 
 // --- Events -----------------------------------------------------------------

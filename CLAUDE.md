@@ -588,6 +588,48 @@ cluster's objects are never fetched either; if its tab is open, that tab's own
 poll is already the source, and the palette only ever reads what a tab already
 has — it does not open one.
 
+## The All-clusters view is a pseudo-entry, renders what answered, and polls only on screen
+
+`podsteer/fleet` is the third pinned pseudo-entry beside the overview and
+Applications, and for the same reason: it is every open tab's pods, workloads
+or events in ONE table — an aggregation, not a kind — so it is deliberately
+absent from `domain/catalog.go`. A catalogue entry is offered to every
+consumer that expects to GET what it names, from one cluster, and no cluster
+knows what the other tabs are. The fan-out lives in Go —
+`application.FleetService`, bound as `FleetAPI` — so a tick is one bridge call
+however many clusters are open. Each cluster is read through the same
+`WorkloadService`/`EventService` call its own tab makes, so `readcache.go`
+coalesces the two when they land together; at most `fleetConcurrency`
+clusters are read at once; results follow the registry's tab order whatever
+order the frontend named them in; and the only error is naming a cluster that
+is not open. Workloads are every controller kind but ReplicaSet
+(`domain.FleetWorkloadKinds`), one request per cluster per kind.
+
+**Partial results are mandatory, not a nicety.** Every cluster answers for
+itself: `domain.ClusterRead` carries its own `ClusterReadStatus`, modelled on
+`MetricsStatus` and for the same reason — forbidden, unreachable and slow call
+for opposite actions, and a merged table that showed the same nothing for all
+three would send somebody to check a VPN over a permission problem. A cluster
+still unanswered at `fleetReadBudget` is reported slow and NOT waited for; its
+read carries on, freed of the bridge call's cancellation but not its deadline,
+and what it eventually returns is handed to the next read of the same thing.
+That is what makes "slow" true rather than permanent: a merely slow cluster's
+rows arrive a tick late instead of never, and one that is down is reported
+unreachable once its dial has timed out instead of slow for ever. The frontend
+keeps a slow or unreachable cluster's last rows, marked stale in the status
+strip, and drops a refused one's — stale rows under a "forbidden" mark would
+claim a view the account does not have. Refusing the whole call because one
+cluster refused is the bug this section exists to prevent.
+
+**Nothing polls off screen.** `$stores/fleet` holds the rows — they are the
+workspace's, not any one tab's, so switching tabs does not refetch them — and
+has no timer of its own. `ClusterSession.#fetch` calls `fleet.refresh` only
+when the session's own poll fires with the fleet view selected, and a session
+polls only while its tab is in front; select another kind, or another tab,
+and the fan-out simply stops. The command palette reads the merged rows the
+way it reads any view's own: only while that view is on screen, never by
+fetching across clusters for a keystroke.
+
 ## Two structural facts that look like mistakes
 
 **`main.go` sits at the repository root.** The Wails CLI runs `go build` with

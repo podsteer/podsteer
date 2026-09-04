@@ -15,8 +15,9 @@
  *     tabs and the namespace list — all already loaded by the tab, none of
  *     it fetched here.
  *   - Objects reads whichever list the CURRENT view already polled — pods,
- *     workloads, nodes, namespaces, events, applications, or a generic
- *     table's rows — with no request of its own.
+ *     workloads, nodes, namespaces, events, applications, a generic
+ *     table's rows, or the merged All-clusters rows while that view is the
+ *     one on screen ($stores/fleet) — with no request of its own.
  *   - Recents reads `session.recentObjects`, already in memory.
  *
  * The one exception is a `kind:` pill (or typing a kind's own name followed
@@ -49,6 +50,7 @@ import {
 import { toApiError } from '$lib/api/errors'
 import { toCSV } from '$lib/csv'
 import { buildExportFilename } from '$lib/exportFilename'
+import { fleetRowTarget, type FleetTarget } from '$lib/fleet'
 import {
   buildCommands,
   type Command,
@@ -59,10 +61,11 @@ import {
 import { parsePaletteQuery } from '$lib/palette/parse'
 import { rank } from '$lib/palette/rank'
 import { activeTable } from './activeTable.svelte'
+import { fleet } from './fleet.svelte'
 import { newResourceDialog } from './newResourceDialog.svelte'
 import { organiseDialog } from './organiseDialog.svelte'
 import { preferences } from './preferences.svelte'
-import type { ClusterSession } from './session.svelte'
+import { RICH_KIND_IDS, workloadKindId, type ClusterSession } from './session.svelte'
 import { settingsDialog } from './settingsDialog.svelte'
 import { shortcutSheet } from './shortcutSheet.svelte'
 
@@ -138,6 +141,10 @@ class CommandPaletteStore {
   /** `workspace.focus`, handed in by `sync()` rather than imported — see the
       module comment on why this store never imports $stores/workspace. */
   #focusCluster: ((clusterId: string) => void | Promise<void>) | null = $state.raw(null)
+  /** `workspace.openInCluster`, handed in the same way and for the same
+      reason: a merged-table hit opens in a tab that may not be the one in
+      front, and only the workspace knows how to bring one forward. */
+  #openInCluster: ((target: FleetTarget) => void | Promise<void>) | null = $state.raw(null)
 
   /**
    * The one on-demand kind search's state.
@@ -394,6 +401,37 @@ class CommandPaletteStore {
           kindId,
           run: open(row.name, row.namespace, session.selectedKind?.namespaced ?? true),
         }))
+      case 'fleet': {
+        // The merged rows — already in memory, because this view is the one
+        // on screen and its own poll is what filled them. Nothing is fetched
+        // across clusters for a keystroke; a hit opens in its own cluster's
+        // tab, through the workspace.
+        const openInCluster = this.#openInCluster
+        if (!openInCluster) return []
+        switch (fleet.tab) {
+          case 'pods':
+            return fleet.podRows.map((pod) => ({
+              label: pod.name,
+              detail: `${pod.cluster} · ${pod.namespace}`,
+              kindId: RICH_KIND_IDS.pods,
+              run: () => openInCluster(fleetRowTarget('pods', pod)),
+            }))
+          case 'workloads':
+            return fleet.workloadRows.map((workload) => ({
+              label: workload.name,
+              detail: `${workload.cluster} · ${workload.namespace}`,
+              kindId: workloadKindId(workload.kind) ?? kindId,
+              run: () => openInCluster(fleetRowTarget('workloads', workload)),
+            }))
+          case 'events':
+            return fleet.eventRows.map((event) => ({
+              label: event.involvedObject,
+              detail: `${event.cluster} · ${event.namespace}`,
+              kindId: RICH_KIND_IDS.events,
+              run: () => openInCluster(fleetRowTarget('events', event)),
+            }))
+        }
+      }
       default:
         // 'overview' has no rows — it is an assessment, not a list.
         return []
@@ -464,10 +502,12 @@ class CommandPaletteStore {
     session: ClusterSession | null,
     tabs: { id: string }[],
     focusCluster: (clusterId: string) => void | Promise<void>,
+    openInCluster: ((target: FleetTarget) => void | Promise<void>) | null = null,
   ): void {
     this.#session = session
     this.#tabs = tabs
     this.#focusCluster = focusCluster
+    this.#openInCluster = openInCluster
   }
 
   show = (): void => {
