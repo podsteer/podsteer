@@ -45,6 +45,16 @@ type ClusterService interface {
 
 	// AddKubeconfig adds raw to the kubeconfig and reports what changed.
 	AddKubeconfig(ctx context.Context, raw string) (domain.KubeconfigMerge, error)
+
+	// SetReadOnly marks a connected cluster read-only, or lifts the mark.
+	//
+	// The policy originates on the client: OrganiseDialog's toggle calls this
+	// right after Connect succeeds, and again whenever the group setting or
+	// the cluster's group changes. It is a guard against the frontend's own
+	// bugs, never a permission — see ports.ErrReadOnly, which every write in
+	// ManagementService returns while the mark is set. Fails with
+	// domain.ErrClusterNotConnected wrapped if id is not currently open.
+	SetReadOnly(ctx context.Context, id domain.ClusterID, readOnly bool) error
 }
 
 // NavigationService describes what a connected cluster can show.

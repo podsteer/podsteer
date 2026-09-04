@@ -108,4 +108,16 @@ var (
 	// freed" from "capacity freed except for the pods that mattered" without
 	// reading the report.
 	ErrDrainRefused = errors.New("drain refused: at least one pod cannot be evicted as asked")
+	// ErrReadOnly means the cluster is marked read-only in PodSteer.
+	//
+	// THIS IS A GUARD AGAINST THE UI'S OWN BUGS, NOT A PERMISSION. The flag
+	// lives entirely on the client — an operator ticks it in OrganiseDialog,
+	// the frontend calls ClusterAPI.SetReadOnly, and application.Registry
+	// remembers it per cluster. Checking it again here means a write control
+	// the frontend forgot to disable, or a stale cache, is refused instead of
+	// reaching the cluster — but it is never a security boundary: RBAC is the
+	// only thing that actually decides what these credentials may do, and an
+	// operator who clears the flag in Organise can make the exact same write
+	// a moment later. See SECURITY.md, "What PodSteer can do".
+	ErrReadOnly = errors.New("cluster is read-only")
 )

@@ -36,7 +36,11 @@ already grants, using the same client library `kubectl` uses.
 **PodSteer enforces no permissions of its own, and cannot.** It is a client. If
 an account should not be able to delete a namespace, that has to be true in the
 cluster's RBAC — there is no setting here that can make it so. Restricting what
-PodSteer may do means restricting the credentials it runs with.
+PodSteer may do means restricting the credentials it runs with. The per-group
+**read-only** toggle in Organise is the same story: it is a local guard against
+your own mistakes, set on this machine and checked again by the backend as a
+defence against the UI's own bugs, never a permission — turning it on does not
+remove anything your credentials could otherwise do.
 
 **It talks to your clusters, and to GitHub only if you let it.** No account and
 no telemetry — those remain absolute, and there is no code here that could send

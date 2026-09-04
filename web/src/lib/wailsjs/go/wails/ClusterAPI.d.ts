@@ -21,3 +21,5 @@ export function ListNodes(arg1:string):Promise<Array<wails.Node>>;
 export function PreviewKubeconfig(arg1:string):Promise<wails.KubeconfigMerge>;
 
 export function ReadKubeconfigFile():Promise<string>;
+
+export function SetReadOnly(arg1:string,arg2:boolean):Promise<void>;

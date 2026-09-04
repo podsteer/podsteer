@@ -35,6 +35,22 @@ and `session.svelte.ts` holds one tab's state.
 If you find yourself wanting an "active cluster" in the backend, that is the
 signal you are about to break tabs.
 
+**The registry also carries a per-cluster read-only policy, set entirely by
+the client.** An operator marks a group read-only in OrganiseDialog; the
+frontend calls `ClusterAPI.SetReadOnly` right after Connect succeeds and again
+whenever the group setting or the cluster's group changes; `Registry.SetReadOnly`
+remembers the flag until `Close` clears it. `ManagementService` checks it
+before every write and returns `ports.ErrReadOnly`, and `TerminalAPI.StartSession`
+checks it before opening a shell. **This is a guard against the frontend's own
+bugs, never a security boundary** — the flag lives in this process's memory,
+not in the cluster, so it cannot be what stands between an account and a
+write it is otherwise credentialed to make. The backend enforces it anyway
+because the frontend disabling a button is one code path, and a stray context
+menu, a stale cache, or a future control that forgets to check the group's
+setting is exactly the class of bug a client-only guard cannot catch. RBAC —
+set on the cluster, not on this machine — is the only thing that actually
+decides what a write may do; see SECURITY.md, "What PodSteer can do".
+
 ## Two tiers of resource support
 
 The navigator has to cover far more kinds than anyone can hand-model, so there

@@ -328,6 +328,26 @@ func (s *ClusterService) AddKubeconfig(
 	return merge, nil
 }
 
+// SetReadOnly marks id read-only, or lifts the mark, for every write
+// ManagementService enforces against it.
+//
+// Requiring id to be open — the same registry.Get check every other
+// per-cluster method here makes — is what keeps a stale call from a closed
+// tab from planting a flag for a cluster nothing is connected to: the very
+// thing Registry.Close already clears would otherwise be re-set moments
+// later by a request that started before the tab closed.
+func (s *ClusterService) SetReadOnly(ctx context.Context, id domain.ClusterID, readOnly bool) error {
+	if _, err := s.registry.Get(id); err != nil {
+		return fmt.Errorf("setting read-only policy: %w", err)
+	}
+
+	s.registry.SetReadOnly(id, readOnly)
+	s.logger.InfoContext(ctx, "read-only policy changed",
+		slog.String("cluster", id.String()),
+		slog.Bool("readOnly", readOnly))
+	return nil
+}
+
 func (s *ClusterService) ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("listing nodes: %w", err)

@@ -19,6 +19,7 @@ export const API_ERROR_CODES = [
   'not_found',
   'kubeconfig_unavailable',
   'credential_plugin_missing',
+  'read_only',
   'cancelled',
   'invalid_input',
   'disruption_budget',
@@ -69,6 +70,18 @@ export class ApiError extends Error {
   /** Whether the failure is simply that no cluster is connected yet. */
   get isNotConnected(): boolean {
     return this.code === 'no_active_cluster'
+  }
+
+  /**
+   * Whether the failure is PodSteer's own read-only guard refusing a write.
+   *
+   * Reaching this from the frontend means a write control slipped past the
+   * disabling this same code is supposed to apply — the backend check is a
+   * second line of defence, not the first. See app/ports/errors.go's
+   * ErrReadOnly.
+   */
+  get isReadOnly(): boolean {
+    return this.code === 'read_only'
   }
 }
 

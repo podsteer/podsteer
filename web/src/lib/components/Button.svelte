@@ -26,6 +26,16 @@
     loading?: boolean
     /** Accessible label, required when the content is not descriptive text. */
     label?: string
+    /**
+     * Id of an element explaining why the button is disabled.
+     *
+     * `disabled` alone tells a screen reader THAT a control cannot be
+     * activated, never why — and a production guardrail's whole point is
+     * that the reason is not obvious from the label. Point this at a visible
+     * hint element rather than duplicating its text in a `title`, which
+     * assistive technology is inconsistent about reading at all.
+     */
+    describedBy?: string
     onclick?: (event: MouseEvent) => void
     class?: string
     children: Snippet
@@ -37,6 +47,7 @@
     disabled = false,
     loading = false,
     label,
+    describedBy,
     onclick,
     class: className = '',
     children,
@@ -57,6 +68,7 @@
   {onclick}
   disabled={isInert}
   aria-label={label}
+  aria-describedby={describedBy}
   aria-busy={loading}
   class="state-layer no-drag inline-flex h-8 shrink-0 items-center justify-center gap-2
          rounded-xs px-4 text-label-large whitespace-nowrap

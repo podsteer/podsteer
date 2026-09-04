@@ -9,13 +9,14 @@
 <script lang="ts">
   import { appInfo, openWebsite } from '$stores/system.svelte'
   import { workspace } from '$stores/workspace.svelte'
+  import { organisation } from '$stores/organisation.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import { shortcutSheet } from '$stores/shortcutSheet.svelte'
   import { formatClockTime } from '$lib/format'
   import { iconForKind } from '$lib/kindIcons'
   import { shortcut } from '$lib/shortcuts'
   import { openURL } from '$lib/api/client'
-  import { ExternalLink, Clock, Server, RefreshCw, Keyboard } from '@lucide/svelte'
+  import { ExternalLink, Clock, Server, RefreshCw, Keyboard, Lock } from '@lucide/svelte'
   import ShareMenu from './ShareMenu.svelte'
   import GithubIcon from './icons/GithubIcon.svelte'
   import LinkedinIcon from './icons/LinkedinIcon.svelte'
@@ -26,6 +27,13 @@
   const BLUESKY_URL = 'https://bsky.app/profile/podsteer.com'
 
   const session = $derived(workspace.active)
+
+  /** The active cluster's guardrail settings, or the unmarked default. */
+  const groupSettings = $derived.by(() => {
+    if (!session) return null
+    const placement = organisation.placementOf(session.cluster.id)
+    return organisation.settingsFor(placement.project, placement.group)
+  })
 
   const refreshLabel = $derived(
     preferences.effectiveIntervalMs === 0
@@ -65,6 +73,29 @@
       <span class="sr-only">
         {session.cluster.isReachable ? 'reachable' : 'not reachable'}
       </span>
+
+      <!-- The environment word, said plainly rather than only in colour —
+           the status bar is read at a glance while acting on a cluster, and
+           that is exactly the moment "which one is this" matters most. -->
+      {#if groupSettings?.environment}
+        <span
+          class="shrink-0 font-medium {groupSettings.environment === 'production'
+            ? 'text-error'
+            : 'opacity-70'}"
+        >
+          {groupSettings.environment}
+        </span>
+      {/if}
+
+      {#if groupSettings?.readOnly}
+        <span
+          class="flex items-center"
+          title="This cluster is marked read-only in PodSteer. Change that under Organise."
+        >
+          <Lock class="size-3" strokeWidth={2} aria-hidden="true" />
+          <span class="sr-only">read-only</span>
+        </span>
+      {/if}
     </span>
 
     {#if session.cluster.version}

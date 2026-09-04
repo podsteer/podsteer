@@ -1,5 +1,12 @@
 <!--
   Dialog for scaling a deployment or statefulset.
+
+  On a cluster whose group is marked production, scaling to ZERO — the one
+  target that can take a workload off the air entirely — costs the same
+  type-the-name confirmation Delete does. Scaling to any other number stays a
+  single click: it changes capacity, not whether the workload exists, and a
+  production banner without an extra gate is enough for that. See CLAUDE.md,
+  "Type-the-name confirmation on production".
 -->
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
@@ -9,11 +16,18 @@
   import KubectlHint from './KubectlHint.svelte'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
   import type { AutoscalerCheck, AutoscalerRef } from '$lib/autoscalers'
+  import { nameConfirmed } from '$lib/confirm'
   import { TriangleAlert } from '@lucide/svelte'
 
   interface Props {
     open: boolean
     currentReplicas: number
+    /**
+     * The group's name, when this workload's cluster is marked production —
+     * null or undefined otherwise. Shows the banner whenever set; only turns
+     * on the type-the-name gate when the chosen target is also zero.
+     */
+    productionGroup?: string | null
     onclose: () => void
     onconfirm: (replicas: number) => void
     /** The kubeconfig context this cluster connects through. See $lib/kubectl. */
@@ -45,6 +59,7 @@
     kind,
     name,
     namespace,
+    productionGroup,
     checkAutoscalers,
     canOpen,
     onopen,
@@ -54,13 +69,23 @@
   // prop into $state() captures only its initial value, and the dialog is kept
   // mounted between openings.
   let replicas = $state(0)
+  /** What has been typed into the confirmation field. */
+  let typed = $state('')
 
   $effect(() => {
-    if (open) replicas = currentReplicas
+    if (open) {
+      replicas = currentReplicas
+      typed = ''
+    }
   })
 
+  const requiresTypedName = $derived(!!productionGroup && replicas === 0)
+  const confirmed = $derived(
+    !requiresTypedName || (!!name && nameConfirmed(typed, name)),
+  )
+
   function handleSubmit(): void {
-    if (replicas >= 0) {
+    if (replicas >= 0 && confirmed) {
       onconfirm(replicas)
     }
   }
@@ -157,6 +182,16 @@
   >
     <h2 class="text-headline-small text-on-surface">Scale Replicas</h2>
 
+    {#if productionGroup}
+      <p
+        class="mt-4 flex items-start gap-2 rounded-sm border border-error/30 bg-error-container/40
+               px-3 py-2 text-body-small text-on-error-container"
+      >
+        <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
+        This cluster is in {productionGroup}, marked production.
+      </p>
+    {/if}
+
     <p class="mt-4 text-body-medium text-on-surface-variant">
       Set the number of replicas for this workload.
     </p>
@@ -219,10 +254,38 @@
     <div class="mt-4">
       <KubectlHint command={scale(ctx, kind, name, namespace, replicas)} />
     </div>
+    {#if requiresTypedName}
+      <label class="mt-4 block">
+        <span class="text-body-small text-on-surface-variant">
+          Scaling to zero takes this workload off the air. Type
+          <strong class="text-on-surface" data-selectable>{name}</strong> to confirm
+        </span>
+        <input
+          type="text"
+          bind:value={typed}
+          autocomplete="off"
+          spellcheck="false"
+          aria-describedby="scale-confirm-hint"
+          class="field mt-1 w-full px-3 py-2 text-body-medium"
+        />
+      </label>
+      <p id="scale-confirm-hint" class="mt-1.5 text-body-small text-on-surface-variant/70">
+        {confirmed
+          ? 'Name confirmed.'
+          : `Scale stays disabled until the name above matches exactly.`}
+      </p>
+    {/if}
 
     <div class="mt-6 flex justify-end gap-3">
       <Button variant="outlined" onclick={onclose}>Cancel</Button>
-      <Button variant="filled" onclick={handleSubmit}>Scale</Button>
+      <Button
+        variant="filled"
+        disabled={!confirmed}
+        describedBy={requiresTypedName ? 'scale-confirm-hint' : undefined}
+        onclick={handleSubmit}
+      >
+        Scale
+      </Button>
     </div>
   </div>
 {/if}

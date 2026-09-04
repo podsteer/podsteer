@@ -374,6 +374,11 @@ func (f *fakeKubeconfig) Merge(_ context.Context, raw string) (domain.Kubeconfig
 // anything about StreamLogs to compile.
 type fakeManagementPort struct {
 	mu sync.Mutex
+	// calls records every write that reached the fake, in order, for the
+	// read-only tests that assert a refused write never got this far.
+	calls []string
+	// err, when set, is returned by every tracked write.
+	err error
 
 	triggerJobName string
 	triggerErr     error
@@ -428,31 +433,38 @@ type fakeManagementPort struct {
 var _ ports.ManagementPort = (*fakeManagementPort)(nil)
 
 func (f *fakeManagementPort) StreamLogs(context.Context, domain.ClusterID, domain.NamespaceName, string, string, bool, int64, chan<- string) error {
-	return nil
+	f.record("StreamLogs")
+	return f.err
 }
 
 func (f *fakeManagementPort) DeleteResource(context.Context, domain.ResourceRef) error {
-	return nil
+	f.record("DeleteResource")
+	return f.err
 }
 
 func (f *fakeManagementPort) ScaleWorkload(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, int32) error {
-	return nil
+	f.record("ScaleWorkload")
+	return f.err
 }
 
 func (f *fakeManagementPort) RestartRollout(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string) error {
-	return nil
+	f.record("RestartRollout")
+	return f.err
 }
 
 func (f *fakeManagementPort) UpdateResource(context.Context, domain.ClusterID, string) error {
-	return nil
+	f.record("UpdateResource")
+	return f.err
 }
 
 func (f *fakeManagementPort) ExecInPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, bool) error {
-	return nil
+	f.record("ExecInPod")
+	return f.err
 }
 
 func (f *fakeManagementPort) ExecInPodWithTTY(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, ports.TerminalSizeQueue) error {
-	return nil
+	f.record("ExecInPodWithTTY")
+	return f.err
 }
 
 func (f *fakeManagementPort) TriggerCronJob(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (string, error) {
@@ -530,4 +542,17 @@ func (f *fakeManagementPort) DrainNode(_ context.Context, id domain.ClusterID, n
 	f.drainedName = name
 	f.drainedOpts = opts
 	return f.drainReport, f.drainErr
+}
+
+func (f *fakeManagementPort) record(call string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, call)
+}
+
+// recordedCalls returns what reached the port, in order.
+func (f *fakeManagementPort) recordedCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
 }

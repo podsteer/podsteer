@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -148,12 +149,24 @@ func generateTerminalID() string {
 func (t *TerminalAPI) StartSession(clusterID, namespace, podName, containerName string, cols, rows int) (string, error) {
 	id, err := domain.NewClusterID(clusterID)
 	if err != nil {
-		return "", err
+		return "", apiError(t.logger, "StartSession", err)
 	}
 
 	ns, err := domain.NewNamespaceName(namespace)
 	if err != nil {
-		return "", err
+		return "", apiError(t.logger, "StartSession", err)
+	}
+
+	// An interactive shell can mutate the cluster as freely as any other
+	// write, so it gets the same refusal — but checked HERE, synchronously,
+	// before a PTY is allocated and a goroutine started. Letting the session
+	// open and fail on its first write would read as a terminal that
+	// connected and then immediately died for no visible reason.
+	// ManagementService.ExecInPodWithTTY checks again; this is only the fast
+	// path that avoids the false start.
+	if t.management.ReadOnly(id) {
+		return "", apiError(t.logger, "StartSession",
+			fmt.Errorf("starting terminal session: %w", ports.ErrReadOnly))
 	}
 
 	sessionID := generateTerminalID()

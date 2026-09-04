@@ -34,6 +34,12 @@ const (
 	CodeUnauthenticated ErrorCode = "unauthenticated"
 	// CodeForbidden means RBAC denied the operation.
 	CodeForbidden ErrorCode = "forbidden"
+	// CodeReadOnly means the cluster is marked read-only in PodSteer — a
+	// local guard the operator set, not an RBAC refusal. Its own code rather
+	// than CodeForbidden because the advice is different: CodeForbidden sends
+	// somebody to their cluster administrator, and there is nobody to ask
+	// here — the fix is in Organise, on this machine.
+	CodeReadOnly ErrorCode = "read_only"
 	// CodeNotFound means the requested resource does not exist.
 	CodeNotFound ErrorCode = "not_found"
 	// CodeKubeconfig means the local kubeconfig could not be read.
@@ -149,6 +155,14 @@ func classifyError(err error) (ErrorCode, string) {
 	// somebody to check a VPN for a cluster that was never contacted.
 	case errors.Is(err, ports.ErrCredentialPluginMissing):
 		return CodeCredentialPlugin, credentialPluginMessage(err)
+
+	// ALSO BEFORE THE RBAC CASES, for the same reason: ErrReadOnly is PodSteer
+	// refusing on its own, before the request ever reaches the API server, so
+	// it must never be reported as CodeForbidden — that would send somebody
+	// to argue with an administrator about a restriction the administrator
+	// never set.
+	case errors.Is(err, ports.ErrReadOnly):
+		return CodeReadOnly, "This cluster is marked read-only in PodSteer. Change that under Organise."
 
 	case errors.Is(err, ports.ErrUnauthenticated):
 		return CodeUnauthenticated, "Your credentials were rejected — they may have expired"

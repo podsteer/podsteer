@@ -203,7 +203,12 @@ func run() error {
 
 	managementService, err := application.NewManagementService(application.ManagementServiceDeps{
 		Management: kubernetes,
-		Logger:     logger,
+		// The same registry clusterService reads and ClusterAPI.SetReadOnly
+		// writes: a policy set through one has to be enforced by the other,
+		// or a cluster the operator marked read-only would still accept
+		// writes issued through this service.
+		Registry: registry,
+		Logger:   logger,
 	})
 	if err != nil {
 		return fmt.Errorf("wiring management service: %w", err)

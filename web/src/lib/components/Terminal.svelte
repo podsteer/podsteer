@@ -45,6 +45,17 @@
     containerName: string
     /** Every container in the pod, for the selector. */
     containers?: string[]
+    /**
+     * True when this cluster is marked read-only in PodSteer.
+     *
+     * An interactive shell can mutate the cluster as freely as any other
+     * write — see CLAUDE.md's read-only section — so this refuses to open
+     * one at all rather than opening a session that would fail on its first
+     * keystroke. The backend refuses the same way (ExecInPodWithTTY), which
+     * is the actual guard; this is what keeps the pane from starting a
+     * connection it already knows will be refused.
+     */
+    readOnly?: boolean
     /** Offered when the pane can still be made bigger. */
     onmaximize?: () => void
   }
@@ -55,8 +66,12 @@
     podName,
     containerName,
     containers = [],
+    readOnly = false,
     onmaximize,
   }: Props = $props()
+
+  const READ_ONLY_REASON =
+    'This cluster is marked read-only in PodSteer. Change that under Organise.'
 
   // Seeded by the effect below; reading the prop here would capture only its
   // initial value and leave the selector stale after switching pods.
@@ -120,7 +135,15 @@
       EventsOn('terminal:exit', handleTerminalExit),
     ]
 
-    startSession()
+    if (readOnly) {
+      // No PTY, no goroutine, no exec call at all — the same fast-fail
+      // TerminalAPI.StartSession makes server-side, taken before ever
+      // reaching it. See the readOnly prop's own doc comment.
+      connectionState = 'disconnected'
+      terminal?.writeln(`\x1b[33m${READ_ONLY_REASON}\x1b[0m`)
+    } else {
+      startSession()
+    }
 
     const resizeObserver = new ResizeObserver(() => fitAddon?.fit())
     resizeObserver.observe(terminalContainer)
@@ -376,6 +399,7 @@
   }
 
   async function reconnect(): Promise<void> {
+    if (readOnly) return
     terminalSessions.forget(currentKey())
     if (sessionId) {
       await StopSession(sessionId).catch(() => {})
@@ -467,8 +491,10 @@
       <select
         value={activeContainer}
         onchange={(event) => void switchContainer(event.currentTarget.value)}
+        disabled={readOnly}
         aria-label="Container"
-        class="field h-7 shrink-0 px-1.5 text-body-small"
+        title={readOnly ? READ_ONLY_REASON : undefined}
+        class="field h-7 shrink-0 px-1.5 text-body-small disabled:opacity-38"
       >
         {#each containers as container (container)}
           <option value={container}>{container}</option>
@@ -532,7 +558,12 @@
       <ToolbarButton
         icon={RotateCw}
         label="Reconnect"
-        title={connectionState === 'connected' ? 'Reconnect this session' : 'Start a new session'}
+        title={readOnly
+          ? READ_ONLY_REASON
+          : connectionState === 'connected'
+            ? 'Reconnect this session'
+            : 'Start a new session'}
+        disabled={readOnly}
         onclick={() => void reconnect()}
       />
       {#if onmaximize}
