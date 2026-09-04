@@ -21,6 +21,7 @@
   import SearchField from '$lib/components/SearchField.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import { formatClockTime } from '$lib/format'
+  import { shortcut } from '$lib/shortcuts'
   import type { ClusterSession } from '$stores/session.svelte'
   import EventsView from './EventsView.svelte'
   import GenericTableView from './GenericTableView.svelte'
@@ -52,19 +53,18 @@
    * Cmd+B / Ctrl+B toggles the navigator.
    * Cmd+R / Ctrl+R refreshes.
    * Cmd+K / Ctrl+K focuses the search field.
+   *
+   * Matched against $lib/shortcuts rather than a literal key check, so this
+   * handler and ShortcutSheet.svelte read from one table and cannot drift.
    */
   function onKeydown(event: KeyboardEvent): void {
-    const accel = event.metaKey || event.ctrlKey
-    if (!accel) return
-
-    const key = event.key.toLowerCase()
-    if (key === 'b') {
+    if (shortcut('toggle-navigator').matches(event)) {
       event.preventDefault()
       preferences.toggleNavigator()
-    } else if (key === 'r') {
+    } else if (shortcut('refresh').matches(event)) {
       event.preventDefault()
       void session.refresh()
-    } else if (key === 'k') {
+    } else if (shortcut('focus-search').matches(event)) {
       event.preventDefault()
       searchField?.focus()
     }
@@ -88,7 +88,9 @@
         onclick={preferences.toggleNavigator}
         aria-label={preferences.navigatorCollapsed ? 'Show sidebar' : 'Hide sidebar'}
         aria-pressed={!preferences.navigatorCollapsed}
-        title="{preferences.navigatorCollapsed ? 'Show' : 'Hide'} sidebar  ⌘B"
+        title="{preferences.navigatorCollapsed ? 'Show' : 'Hide'} sidebar  {shortcut(
+          'toggle-navigator',
+        ).keys}"
         class="state-layer grid size-8 shrink-0 place-items-center rounded-full
                text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
       >

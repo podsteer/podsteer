@@ -382,6 +382,18 @@ interface PersistedShape {
   showManagedFields: boolean
   /** clusterId -> the namespace filter it was last left on. */
   namespaceByCluster: Record<string, string>
+  /**
+   * clusterId -> pinned kind ids, in the order the operator pinned them.
+   *
+   * KIND IDS ONLY — a catalog identifier like "apps/v1/deployments", never an
+   * object name — so this is exactly the same shape of fact as
+   * namespaceByCluster above and belongs in the same place, the webview's own
+   * storage. Nothing here says which Deployment exists, only that this
+   * operator watches Deployments on this cluster. Objects opened in the
+   * detail drawer are a different kind of fact — see ClusterSession's
+   * recentObjects, which is deliberately NOT persisted here or anywhere else.
+   */
+  pinnedKinds: Record<string, string[]>
   /** clusterId -> snoozeKey() -> epoch milliseconds when the snooze lapses. */
   snoozes: Record<string, Record<string, number>>
   /** Per-surface threshold lines. */
@@ -450,6 +462,7 @@ const DEFAULTS: PersistedShape = {
   wrapLines: true,
   showManagedFields: false,
   namespaceByCluster: {},
+  pinnedKinds: {},
   snoozes: {},
   // Both lines on, everywhere. An operator who only wants to hear about the
   // serious case can turn the first one off, but a default that says nothing
@@ -532,6 +545,9 @@ class Preferences {
 
   /** clusterId -> last-selected namespace filter. */
   namespaceByCluster = $state<Record<string, string>>({})
+
+  /** clusterId -> pinned kind ids, in the order pinned. See the shape above. */
+  pinnedKinds = $state<Record<string, string[]>>({})
 
   /**
    * Objects the operator has deliberately quietened, per cluster.
@@ -735,6 +751,40 @@ class Preferences {
 
   setClusterNamespace = (clusterId: string, namespace: string): void => {
     this.namespaceByCluster = { ...this.namespaceByCluster, [clusterId]: namespace }
+    this.#save()
+  }
+
+  // --- Pinned kinds -----------------------------------------------------------
+
+  /** Kind ids pinned for one cluster, in the order the operator pinned them. */
+  pinnedKindsFor = (clusterId: string): string[] => this.pinnedKinds[clusterId] ?? []
+
+  /** Whether a kind is currently pinned for a cluster. */
+  isKindPinned = (clusterId: string, kindId: string): boolean =>
+    this.pinnedKindsFor(clusterId).includes(kindId)
+
+  /**
+   * Pins a kind, appended after whatever is already pinned.
+   *
+   * A kind already pinned is left exactly where it is rather than moved to
+   * the end — clicking a filled star twice in a row must not reorder the
+   * section out from under somebody who did not ask to reorder anything.
+   */
+  pinKind = (clusterId: string, kindId: string): void => {
+    const existing = this.pinnedKindsFor(clusterId)
+    if (existing.includes(kindId)) return
+    this.pinnedKinds = { ...this.pinnedKinds, [clusterId]: [...existing, kindId] }
+    this.#save()
+  }
+
+  /** Unpins a kind. Not present is not an error — unpinning is idempotent. */
+  unpinKind = (clusterId: string, kindId: string): void => {
+    const existing = this.pinnedKindsFor(clusterId)
+    if (!existing.includes(kindId)) return
+    this.pinnedKinds = {
+      ...this.pinnedKinds,
+      [clusterId]: existing.filter((id) => id !== kindId),
+    }
     this.#save()
   }
 
@@ -1036,6 +1086,20 @@ class Preferences {
       if (stored.namespaceByCluster && typeof stored.namespaceByCluster === 'object') {
         this.namespaceByCluster = stored.namespaceByCluster
       }
+      // BACKWARD-COMPATIBLE: a preferences blob written before this setting
+      // existed has no `pinnedKinds` key at all, and the field stays at its
+      // default of {} — nobody's navigator gains a Pinned section they never
+      // asked for. Each cluster's list is filtered to strings so a corrupted
+      // or hand-edited entry cannot smuggle something other than a kind id in.
+      if (stored.pinnedKinds && typeof stored.pinnedKinds === 'object') {
+        const cleaned: Record<string, string[]> = {}
+        for (const [clusterId, ids] of Object.entries(stored.pinnedKinds)) {
+          if (Array.isArray(ids)) {
+            cleaned[clusterId] = ids.filter((id): id is string => typeof id === 'string')
+          }
+        }
+        this.pinnedKinds = cleaned
+      }
       if (stored.snoozes && typeof stored.snoozes === 'object') {
         this.snoozes = stored.snoozes
       }
@@ -1125,6 +1189,7 @@ class Preferences {
         wrapLines: this.wrapLines,
         showManagedFields: this.showManagedFields,
         namespaceByCluster: this.namespaceByCluster,
+        pinnedKinds: this.pinnedKinds,
         snoozes: this.#pruneSnoozes(),
         thresholds: this.thresholds,
         podMeasure: this.podMeasure,

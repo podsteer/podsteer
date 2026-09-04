@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
   import ClusterTabs from '$lib/components/ClusterTabs.svelte'
+  import ShortcutSheet from '$lib/components/ShortcutSheet.svelte'
   import Splash from '$lib/components/Splash.svelte'
   import StatusBar from '$lib/components/StatusBar.svelte'
   import ClusterView from '$pages/ClusterView.svelte'
@@ -16,6 +17,8 @@
   import { updates } from '$stores/updates.svelte'
   import { alertPlayer } from '$stores/alerts.svelte'
   import { forwards } from '$stores/forwards.svelte'
+  import { shortcutSheet } from '$stores/shortcutSheet.svelte'
+  import { isTypingTarget, shortcut } from '$lib/shortcuts'
 
   /**
    * The shortest time the splash stays up. Initialisation is faster than this
@@ -73,26 +76,45 @@
    * should be. Moving between tabs has to work from the picker too, or the one
    * tab you cannot leave by keyboard is the one you start on.
    *
+   * Every combo below is matched against $lib/shortcuts rather than a literal
+   * key check, so this handler and ShortcutSheet.svelte can never disagree
+   * about what ⌘] does or how it is spelled on this platform.
+   *
    * ⌘] / ⌘[ move between tabs, the picker counting as the first.
+   * ⌘1…9 jumps straight to the Nth open cluster tab.
    * ⌘N goes to the picker, which is where a new cluster is opened from.
+   * ⌘/ opens the shortcut sheet, and so does a bare "?" — but only when focus
+   * is not inside a text field, or typing a literal question mark into the
+   * search box or the YAML editor would pop it open instead.
    */
   function onKeydown(event: KeyboardEvent): void {
-    if (!(event.metaKey || event.ctrlKey)) return
-
-    switch (event.key) {
-      case ']':
-        event.preventDefault()
-        workspace.cycleTab(1)
-        break
-      case '[':
-        event.preventDefault()
-        workspace.cycleTab(-1)
-        break
-      case 'n':
-      case 'N':
-        event.preventDefault()
-        workspace.showPicker()
-        break
+    if (shortcut('next-tab').matches(event)) {
+      event.preventDefault()
+      workspace.cycleTab(1)
+      return
+    }
+    if (shortcut('previous-tab').matches(event)) {
+      event.preventDefault()
+      workspace.cycleTab(-1)
+      return
+    }
+    if (shortcut('switch-tab').matches(event)) {
+      event.preventDefault()
+      const target = workspace.sessions[Number(event.key) - 1]
+      if (target) void workspace.focus(target.cluster.id)
+      return
+    }
+    if (shortcut('new-cluster').matches(event)) {
+      event.preventDefault()
+      workspace.showPicker()
+      return
+    }
+    if (
+      shortcut('shortcut-sheet').matches(event) ||
+      (event.key === '?' && !isTypingTarget(event.target))
+    ) {
+      event.preventDefault()
+      shortcutSheet.show()
     }
   }
 </script>
@@ -130,3 +152,5 @@
     <Splash />
   {/if}
 </div>
+
+<ShortcutSheet open={shortcutSheet.open} onclose={shortcutSheet.hide} />

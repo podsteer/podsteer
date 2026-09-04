@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   preferences,
@@ -14,6 +14,33 @@ import {
   DETAIL_WIDTHS,
   DEFAULT_DETAIL_LABEL_SHARE,
 } from './preferences.svelte'
+
+const STORAGE_KEY = 'podsteer.preferences.v1'
+
+/**
+ * happy-dom, the environment this suite runs under, does not implement
+ * `localStorage` at all (`window.localStorage` is `undefined`) — the store's
+ * own #load/#save already treat that as "storage unavailable" and fall back
+ * to defaults through a try/catch, which is why every other test in this
+ * file never touches it directly. The persistence tests below are the
+ * exception: they exist to verify what #load/#save actually read and write,
+ * so they need a real (if minimal) Storage to read it back from.
+ */
+function memoryStorage(): Storage {
+  const store = new Map<string, string>()
+  return {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => void store.set(key, value),
+    removeItem: (key: string) => void store.delete(key),
+    clear: () => store.clear(),
+    key: (index: number) => [...store.keys()][index] ?? null,
+    get length() {
+      return store.size
+    },
+  } as Storage
+}
+
+vi.stubGlobal('localStorage', memoryStorage())
 
 describe('detail panel bounds', () => {
   it('floors at a readable width and ceilings before the window is covered', () => {
@@ -139,3 +166,113 @@ describe('the column divider', () => {
     expect(css).toContain('26%')
   })
 })
+
+describe('pinned kinds', () => {
+  // Unique per test so one test's pins cannot leak into another's — the
+  // store is a module singleton, shared for the life of the file.
+  let clusterId: string
+  let n = 0
+  beforeEach(() => {
+    clusterId = `pin-test-cluster-${n++}`
+  })
+
+  it('starts with nothing pinned', () => {
+    expect(preferences.pinnedKindsFor(clusterId)).toEqual([])
+    expect(preferences.isKindPinned(clusterId, 'apps/v1/deployments')).toBe(false)
+  })
+
+  it('pins in the order pinned, and unpins by id', () => {
+    preferences.pinKind(clusterId, 'apps/v1/deployments')
+    preferences.pinKind(clusterId, 'core/v1/services')
+    preferences.pinKind(clusterId, 'batch/v1/cronjobs')
+
+    expect(preferences.pinnedKindsFor(clusterId)).toEqual([
+      'apps/v1/deployments',
+      'core/v1/services',
+      'batch/v1/cronjobs',
+    ])
+    expect(preferences.isKindPinned(clusterId, 'core/v1/services')).toBe(true)
+
+    preferences.unpinKind(clusterId, 'core/v1/services')
+    expect(preferences.pinnedKindsFor(clusterId)).toEqual([
+      'apps/v1/deployments',
+      'batch/v1/cronjobs',
+    ])
+    expect(preferences.isKindPinned(clusterId, 'core/v1/services')).toBe(false)
+  })
+
+  it('pinning an already-pinned kind does not duplicate or reorder it', () => {
+    preferences.pinKind(clusterId, 'apps/v1/deployments')
+    preferences.pinKind(clusterId, 'core/v1/services')
+    // Pinning the first one again must not move it to the end — a second
+    // click on an already-filled star should do nothing, not reorder the
+    // section out from under the operator.
+    preferences.pinKind(clusterId, 'apps/v1/deployments')
+
+    expect(preferences.pinnedKindsFor(clusterId)).toEqual([
+      'apps/v1/deployments',
+      'core/v1/services',
+    ])
+  })
+
+  it('unpinning something never pinned is a harmless no-op', () => {
+    expect(() => preferences.unpinKind(clusterId, 'apps/v1/deployments')).not.toThrow()
+    expect(preferences.pinnedKindsFor(clusterId)).toEqual([])
+  })
+
+  it('scopes pins to one cluster at a time', () => {
+    const other = `${clusterId}-other`
+    preferences.pinKind(clusterId, 'apps/v1/deployments')
+    preferences.pinKind(other, 'core/v1/nodes')
+
+    expect(preferences.pinnedKindsFor(clusterId)).toEqual(['apps/v1/deployments'])
+    expect(preferences.pinnedKindsFor(other)).toEqual(['core/v1/nodes'])
+  })
+
+  it('persists kind ids only, keyed by cluster, so a restart keeps them', () => {
+    preferences.pinKind(clusterId, 'apps/v1/deployments')
+    preferences.pinKind(clusterId, 'core/v1/services')
+
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    expect(stored.pinnedKinds[clusterId]).toEqual(['apps/v1/deployments', 'core/v1/services'])
+  })
+
+  it('reads a missing pinnedKinds key as {} rather than failing', async () => {
+    // BACKWARD COMPATIBILITY. A preferences blob written before this setting
+    // existed has no pinnedKinds key at all — a fresh module load over that
+    // blob must default to {} rather than throwing or leaving the field
+    // undefined, exactly as every other field here already does.
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    delete raw.pinnedKinds
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(raw))
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.pinnedKindsFor(clusterId)).toEqual([])
+  })
+
+  it('drops anything in a stored entry that is not a kind id string', async () => {
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    raw.pinnedKinds = { [clusterId]: ['apps/v1/deployments', 42, null, 'core/v1/services'] }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(raw))
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.pinnedKindsFor(clusterId)).toEqual([
+      'apps/v1/deployments',
+      'core/v1/services',
+    ])
+  })
+})
+
+/**
+ * Re-imports the module fresh, so its constructor runs #load() again against
+ * whatever is in localStorage right now.
+ *
+ * The store is a module singleton loaded once at import time, same as the
+ * real app loads it once at startup — so testing what a FRESH load does with
+ * stored data means forcing a fresh module instance rather than calling a
+ * private method on the one this file already has.
+ */
+async function reimportPreferences(): Promise<typeof import('./preferences.svelte')> {
+  vi.resetModules()
+  return import('./preferences.svelte')
+}
