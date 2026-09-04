@@ -172,6 +172,7 @@ describe('what a settings file must never carry', () => {
         'columns',
         'customColumns',
         'debugImage',
+        'desktopNotificationsEnabled',
         'detailLabelFraction',
         'detailWidthFraction',
         'expandedCategories',

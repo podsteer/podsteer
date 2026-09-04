@@ -422,6 +422,31 @@ about before adding a fourth:
   anything, so the note claims only the former. Per-object usage is not written
   to disk either — the recorded cluster history deliberately carries no object
   names, and a file of per-pod series would reverse that.
+- **kube-state-metrics is discovered the same way, and is a SEPARATE
+  question** — `app/adapters/k8s/kubestate.go`, beside `prometheus.go` and
+  following it in every particular: two label selectors
+  (`app.kubernetes.io/name` and the older `k8s-app` variant), a ranked pick
+  because a cluster genuinely holds two often enough to matter, a miss and a
+  refusal are both ordinary answers rather than errors, a refusal is cached
+  and a transport failure is not, and the answer is dropped when a cluster is
+  invalidated. **PodSteer does not query it either, and there is deliberately
+  no `ProxyTarget` on `domain.KubeStateMetrics`** — `MetricsBackend` has one
+  because a proxied PromQL query is a thing somebody may one day ask for,
+  while kube-state-metrics is a scrape endpoint and reading it would be
+  PodSteer collecting metrics rather than pointing at the system that already
+  does. It is carried separately from `Backend` because they answer different
+  questions — one keeps series, the other produces the object-state series a
+  great many of them ARE — and what the note buys an operator is knowing why
+  the replica counts and Job gauges in their Grafana exist while PodSteer's
+  own figures come from the metrics API and its own samples, which
+  `KubeStateNote.svelte` says in as many words. Two deliberate divergences
+  from `pickPrometheus`, both because nothing connects to it: an unrecognised
+  port does not disqualify a service (Prometheus needs the right port or it
+  proxies PromQL at a gRPC listener; this needs none, so the port is reported
+  when recognised and left empty otherwise), and an exact name outranks a
+  Helm-prefixed one, because `nameRank` scores those the same and there is
+  only one candidate name here — a list of one ranks nothing, and the
+  two-install case would be decided by list order.
 
 Dependencies point inward. `app/domain` and `app/ports` import nothing outside
 the standard library; if either ever needs `client-go`, something has been
@@ -1001,6 +1026,69 @@ Four rules there are load-bearing, each with a test in
   `PlanBulk` and a dry-run rollback are reads — and **no value is ever
   recorded**: writing one key of a Secret records the key, never what was
   written, exactly as `ManagementService`'s own audit line does.
+
+## A new critical finding can reach the desktop, and one diff decides it
+
+A new warning or critical finding plays a motif (`$stores/alerts`); a new
+CRITICAL one can also post an OS notification, through Wails' own notification
+support (`NotificationAPI`, `App.StartNotifications`). Both are raised from
+`ClusterSession.#adopt`, from **the same diff**, and that is the load-bearing
+part: `#adopt` used to hand-roll a second comparison over a `Set` of ids
+beside the one the session timeline already ran, and two differs mean two
+baselines. They drift, and then the timeline records a finding appearing on
+one refresh while the notification announces it on another — the same event,
+two instants, and no way to tell which is right. So `#adopt` now calls
+`diffFindings` (`web/src/lib/timeline.ts`) and hands `diff.appeared` to the
+sound, to the notification and — as the whole assessment, because it also
+records what CLEARED — to the timeline. Adding a third consumer means reading
+that diff, never computing another.
+
+Everything about **whether** one is posted is in `web/src/lib/notify.ts`, pure
+and with a test per rule, because each of them is the kind that is invisible
+when it goes wrong: critical only (a sound is over in half a second, a
+notification sits in a tray until it is dismissed), snoozed findings never,
+one notification per batch naming the count, and at most one per cluster per
+`NOTIFY_COOLDOWN_MS`. **Off by default**, the same choice `alertSoundsEnabled`
+makes and for one more reason it does not have — on macOS the first
+notification triggers a system permission prompt, so `NotificationAPI.Request`
+runs when the operator turns the preference on and never at startup.
+
+Two rules there are worth not re-deriving. **A failed refresh is `null`, not an
+empty assessment** — the trap `diffFindings`' own comment describes, and the
+reason `#refreshAssessment` tells the timeline explicitly rather than by
+silence. **A PARTIAL refresh is the same trap pointed the other way**, and it
+is what `sourcesAreComparable` exists for: `Overview.unavailable` names the
+sources this assessment could not read, and a source that was missing last
+refresh and answered this one hands over every finding it produces in the same
+instant. None of them is new. So the two assessments must have read the same
+source SET to be compared at all — deliberately not "the current one is
+clean", which would permanently mute every cluster without metrics-server.
+
+**A notification is a write, and is fenced like one.** macOS keeps delivered
+notifications in Notification Centre, which is on disk, and a Linux
+notification daemon may log what it showed — so the no-object-names commitment
+SECURITY.md makes about files holds here in full. What travels is a COUNT, a
+finding's TITLE (a rule's own name, written in this repository) and the
+kubeconfig CONTEXT NAME, which travels on exactly the terms the settings file
+lets one travel. `Finding.summary` and `Finding.subjects` are deliberately
+never read. `NotificationRequest` has no field for a namespace or an object
+name and `notification_api_test.go` asserts its field set against a LITERAL
+list, the way `settingsFile.test.ts` does for the export, so one cannot join
+it without somebody arguing for it. Do-not-disturb is not checked and cannot
+be: macOS Focus, Windows Focus Assist and a Linux daemon's quiet mode all
+apply after delivery and none is readable through any API Wails exposes, so
+PodSteer posts and the platform decides whether to present — guessing would
+mean guessing wrong in the direction that silences an alarm somebody asked
+for.
+
+The lifecycle (`InitializeNotifications`, the click handler,
+`CleanupNotifications`) lives on `App` and **not** on the bound
+`NotificationAPI`, because Wails binds every exported method of a bound
+struct: a `Start` there would be a webview-callable way to re-register the
+click handler and a `Stop` a webview-callable way to tear the platform's
+connection down. Clicking one raises the window in Go — before the event is
+emitted, so a tab never switches behind a hidden window — and `App.svelte`
+then focuses that cluster and opens its overview.
 
 ## Licences are policy, and the build enforces it
 

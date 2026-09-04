@@ -75,6 +75,7 @@ type fakeKubernetes struct {
 	metricsErr      error
 	nodeFilesystems map[string]domain.NodeFilesystems
 	metricsBackend  domain.MetricsBackend
+	kubeState       domain.KubeStateMetrics
 	volumes         []domain.PersistentVolume
 	claims          []domain.PersistentVolumeClaim
 
@@ -251,6 +252,10 @@ func (f *fakeKubernetes) NodeFilesystems(_ context.Context, _ domain.ClusterID) 
 
 func (f *fakeKubernetes) DiscoverMetricsBackend(_ context.Context, _ domain.ClusterID) (domain.MetricsBackend, error) {
 	return f.metricsBackend, nil
+}
+
+func (f *fakeKubernetes) DiscoverKubeStateMetrics(_ context.Context, _ domain.ClusterID) (domain.KubeStateMetrics, error) {
+	return f.kubeState, nil
 }
 
 // ServedAPIs answers from servedAPIs, or servedAPIsErr when set.

@@ -901,6 +901,11 @@ type OverviewInput struct {
 	// Backend is a monitoring system found running in the cluster, if any.
 	// Zero means none was found, which is the ordinary case.
 	Backend MetricsBackend
+	// KubeState is a kube-state-metrics installation found in the cluster,
+	// if any. Zero means none was found, which is the ordinary case, and it
+	// is carried separately from Backend because they answer different
+	// questions — one keeps series, the other produces object-state ones.
+	KubeState KubeStateMetrics
 	// ServedAPIs is every group/version discovery reports the cluster
 	// serves, straight from the API server rather than from the catalog:
 	// the catalog only ever holds the CURRENT version PodSteer targets for
@@ -958,6 +963,12 @@ type Overview struct {
 	// keeps minutes of, rather than pretending its own window is the whole
 	// picture.
 	Backend MetricsBackend
+	// KubeState names a kube-state-metrics installation found in this
+	// cluster, when one was found. It changes nothing PodSteer measures
+	// either — every figure on this screen comes from the metrics API and
+	// from PodSteer's own samples — and it is here so the UI can say exactly
+	// that, rather than leaving somebody to wonder whether the two agree.
+	KubeState KubeStateMetrics
 	// Upgrade summarises what UpgradeImpact found against TargetVersion.
 	// Zero (TargetMinor == "") means no target could be placed — Version was
 	// unparseable, or too new for even NextMinor to reason about — which is
@@ -1059,6 +1070,7 @@ func NewOverview(input OverviewInput) Overview {
 		Unavailable: slices.Clone(input.Unavailable),
 		Metrics:     input.Metrics,
 		Backend:     input.Backend,
+		KubeState:   input.KubeState,
 		Upgrade:     upgrade,
 	}
 }

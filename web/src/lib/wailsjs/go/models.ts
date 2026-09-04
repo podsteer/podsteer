@@ -1458,6 +1458,26 @@ export namespace wails {
 	        this.maxIntervalSeconds = source["maxIntervalSeconds"];
 	    }
 	}
+	export class KubeStateMetrics {
+	    found: boolean;
+	    label: string;
+	    namespace: string;
+	    service: string;
+	    port: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new KubeStateMetrics(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.found = source["found"];
+	        this.label = source["label"];
+	        this.namespace = source["namespace"];
+	        this.service = source["service"];
+	        this.port = source["port"];
+	    }
+	}
 	export class KubeconfigMerge {
 	    added: string[];
 	    conflicts: string[];
@@ -1902,6 +1922,38 @@ export namespace wails {
 		    return a;
 		}
 	}
+	export class NotificationCapability {
+	    supported: boolean;
+	    authorised: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new NotificationCapability(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.supported = source["supported"];
+	        this.authorised = source["authorised"];
+	    }
+	}
+	export class NotificationRequest {
+	    id: string;
+	    title: string;
+	    body: string;
+	    clusterId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new NotificationRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.body = source["body"];
+	        this.clusterId = source["clusterId"];
+	    }
+	}
 	export class UpgradeSummary {
 	    targetMinor: string;
 	    count: number;
@@ -2152,6 +2204,7 @@ export namespace wails {
 	    unavailable: string[];
 	    metrics: string;
 	    backend: MetricsBackend;
+	    kubeState: KubeStateMetrics;
 	    criticalCount: number;
 	    warningCount: number;
 	    infoCount: number;
@@ -2183,6 +2236,7 @@ export namespace wails {
 	        this.unavailable = source["unavailable"];
 	        this.metrics = source["metrics"];
 	        this.backend = this.convertValues(source["backend"], MetricsBackend);
+	        this.kubeState = this.convertValues(source["kubeState"], KubeStateMetrics);
 	        this.criticalCount = source["criticalCount"];
 	        this.warningCount = source["warningCount"];
 	        this.infoCount = source["infoCount"];

@@ -343,6 +343,15 @@ func run() error {
 		return fmt.Errorf("wiring system API: %w", err)
 	}
 
+	// Desktop notifications. It decides nothing — whether a finding is new,
+	// snoozed, wanted or too recent is settled in the frontend beside the
+	// assessment diff those questions are about — so this is the delivery
+	// mechanism and the platform's own honesty about what it can deliver.
+	notificationAPI, err := wailsadapter.NewNotificationAPI(desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring notification API: %w", err)
+	}
+
 	frontend, err := assets.FS()
 	if err != nil {
 		return err
@@ -373,6 +382,10 @@ func run() error {
 			// the application does and stops when it closes, which is exactly
 			// the window the recorded history claims to cover.
 			historyService.Start(ctx)
+			// After desktop.OnStartup, which is what gives it a runtime
+			// context to work with. It asks for no permission here — see
+			// App.StartNotifications — and failing is not fatal.
+			desktop.StartNotifications()
 		},
 		OnShutdown: func(ctx context.Context) {
 			// Forwards first: each one holds a local socket, and a process
@@ -397,6 +410,10 @@ func run() error {
 			// connections, and every one of them has an owner that stops it.
 			kubernetes.StopAllWatches()
 			historyService.Close()
+			// Before desktop.OnShutdown, which drops the runtime context this
+			// needs to release what the platform held — a D-Bus connection on
+			// Linux. Same rule as the three above: PodSteer opened it.
+			desktop.StopNotifications()
 			desktop.OnShutdown(ctx)
 		},
 
@@ -415,6 +432,7 @@ func run() error {
 			fileCopyAPI,
 			systemAPI,
 			updateAPI,
+			notificationAPI,
 		},
 
 		// Only one PodSteer should hold the kubeconfig and its client caches;

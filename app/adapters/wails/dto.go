@@ -660,6 +660,20 @@ type ClusterUnreachableEvent struct {
 	At string `json:"at"`
 }
 
+// NotificationActivatedEvent is the payload of the "notification:activated"
+// event — somebody clicked a desktop notification.
+//
+// ONE FIELD, AND IT IS A CONTEXT NAME. The notification itself carries no
+// object name (see NotificationRequest), so there is none to hand back here
+// either; the frontend brings that cluster's tab forward and opens its
+// overview, which is where the findings that raised it are listed. An empty
+// ClusterID means the OS returned a notification with no data — the window is
+// still raised, because a click is still a request to look.
+type NotificationActivatedEvent struct {
+	// ClusterID is the kubeconfig context name of the tab to bring forward.
+	ClusterID string `json:"clusterId"`
+}
+
 // LogLinesEvent is the payload of the "log:lines" event.
 //
 // A batch rather than a line. One event per line meant a pod's backlog

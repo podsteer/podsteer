@@ -75,6 +75,79 @@ func (a *App) OnShutdown(_ context.Context) {
 	a.logger.Info("application stopped")
 }
 
+// StartNotifications prepares the desktop notification service and registers
+// the handler for somebody clicking one.
+//
+// ON App RATHER THAN ON NotificationAPI, which is where it started. Wails
+// binds every exported method of a bound struct, so a Start and a Stop there
+// were reachable from the webview — a page that could re-register the click
+// handler, or tear down the platform's connection under the application. The
+// lifecycle belongs to the lifecycle handler, which is deliberately not in
+// the Bind list, and the bound API keeps only what the frontend legitimately
+// asks for.
+//
+// Called from the composition root's OnStartup, after this type's own.
+// FAILING IS NOT FATAL and is deliberately not surfaced: a machine that will
+// not initialise notifications is a machine that shows none, which is exactly
+// what NotificationAPI.Capability then reports to the Settings pane. Refusing
+// to start the application over an optional alarm would be absurd.
+//
+// NO AUTHORISATION IS REQUESTED HERE. On macOS the request is a visible
+// system prompt, and firing one at somebody who has never asked for
+// notifications — the preference is off by default — is precisely how an
+// application gets denied permanently in its first minute.
+// NotificationAPI.Request runs when the operator turns the preference on.
+func (a *App) StartNotifications() {
+	ctx, ok := a.runtimeContext()
+	if !ok {
+		return
+	}
+
+	if err := wailsruntime.InitializeNotifications(ctx); err != nil {
+		a.logger.Debug("desktop notifications are not available",
+			slog.String("error", err.Error()))
+		return
+	}
+
+	// Wails delivers the response on its own goroutine, so everything in here
+	// is a runtime call or an event emit — both safe from one.
+	wailsruntime.OnNotificationResponse(ctx, func(result wailsruntime.NotificationResult) {
+		if result.Error != nil {
+			a.logger.Debug("notification response carried an error",
+				slog.String("error", result.Error.Error()))
+			return
+		}
+
+		// THE WINDOW FIRST, then the event. A click on a notification is a
+		// request to look at something, and an event that switched tabs
+		// behind a hidden window would move the operator's application
+		// without ever showing it to them.
+		wailsruntime.WindowUnminimise(ctx)
+		wailsruntime.WindowShow(ctx)
+
+		// Whatever came back, and nothing more: the notification carried one
+		// kubeconfig context name and no object name, so there is nothing
+		// else here to hand over. An empty one still raises the window,
+		// because a click is still a request to look.
+		cluster, _ := result.Response.UserInfo["clusterId"].(string)
+		a.emit(notificationActivatedEvent, NotificationActivatedEvent{ClusterID: cluster})
+	})
+}
+
+// StopNotifications releases whatever the platform held — on Linux, a D-Bus
+// connection.
+//
+// Called from OnShutdown beside the port-forward, node-shell and local-shell
+// teardown, and for the reason those are there: PodSteer opened it, so
+// PodSteer closes it.
+func (a *App) StopNotifications() {
+	ctx, ok := a.runtimeContext()
+	if !ok {
+		return
+	}
+	wailsruntime.CleanupNotifications(ctx)
+}
+
 // runtimeContext returns the Wails runtime context, and whether it is
 // available.
 //
