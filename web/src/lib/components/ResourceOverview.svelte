@@ -17,6 +17,9 @@
   import NamespaceContents from './NamespaceContents.svelte'
   import WorkloadUsage from './WorkloadUsage.svelte'
   import CertificateInspector from './CertificateInspector.svelte'
+  import ReachabilityPanel from './ReachabilityPanel.svelte'
+  import ImagePanel from './ImagePanel.svelte'
+  import { isProbeableKind } from '$lib/reachability'
   import GitOpsDetail from './GitOpsDetail.svelte'
   import { gitOpsPanelFor } from '$lib/gitops/panel'
   import OperatorDetail from './OperatorDetail.svelte'
@@ -408,6 +411,26 @@
 
   /** Whether the panel is showing a pod. */
   const isPodPanel = $derived(kind === 'Pod' || !!selectedPod)
+
+  /**
+   * Whether a reachability probe is worth offering here.
+   *
+   * Only the three kinds with an address to aim at — see $lib/reachability,
+   * which also decides which vantages each one can honestly answer from.
+   */
+  const canProbe = $derived(isProbeableKind(kind) && !!clusterId && !!metadata.name)
+
+  /**
+   * Every container of an open pod, in the order the panel lists them, for
+   * the image pane's own selector. Init and ephemeral containers included:
+   * an init container that cannot pull its image is exactly the case
+   * somebody opens that pane for, and its image appears nowhere else.
+   */
+  const imageContainerNames = $derived([
+    ...containers.map((container: { name?: string }) => container.name ?? ''),
+    ...initContainers.map((container: { name?: string }) => container.name ?? ''),
+    ...ephemeralContainers.map((container: { name?: string }) => container.name ?? ''),
+  ].filter(Boolean))
 
   /**
    * A kind with no purpose-built sections at all — a CRD, or anything served
@@ -1502,6 +1525,43 @@
     {#if hasCertificate && clusterId && metadata.name}
       {#key `${clusterId}|${metadata.namespace}|${metadata.name}`}
         <CertificateInspector {clusterId} namespace={metadata.namespace ?? ''} name={metadata.name} />
+      {/key}
+    {/if}
+
+    <!--
+      CAN THIS ACTUALLY BE REACHED, AND FROM WHERE. Every other section above
+      quotes what the object declares; this is the only one that goes and
+      finds out, which is why it never runs on its own — see the panel's own
+      header. Keyed on the object so switching rows starts over rather than
+      showing one Service's answer under another's name.
+    -->
+    {#if canProbe}
+      {#key `${clusterId}|${metadata.namespace}|${kind}|${metadata.name}`}
+        <ReachabilityPanel
+          kind={kind ?? ''}
+          manifest={parsedManifest}
+          clusterId={clusterId ?? ''}
+          probePod={isPodPanel ? (metadata.name ?? '') : ''}
+          probeContainer={isPodPanel ? (imageContainerNames[0] ?? '') : ''}
+          {isReadOnly}
+          {readOnlyReason}
+        />
+      {/key}
+    {/if}
+
+    <!--
+      WHAT THIS CONTAINER'S IMAGE IS, without pulling it. On request, like the
+      certificate above and for a related reason: it costs a GET of the pod
+      and a GET of its node, and neither belongs on a refresh tick.
+    -->
+    {#if isPodPanel && clusterId && metadata.name && imageContainerNames.length > 0}
+      {#key `${clusterId}|${metadata.namespace}|${metadata.name}`}
+        <ImagePanel
+          {clusterId}
+          namespace={metadata.namespace ?? ''}
+          podName={metadata.name}
+          containers={imageContainerNames}
+        />
       {/key}
     {/if}
 

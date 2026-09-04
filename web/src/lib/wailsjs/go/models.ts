@@ -1458,6 +1458,54 @@ export namespace wails {
 	        this.maxIntervalSeconds = source["maxIntervalSeconds"];
 	    }
 	}
+	export class ImageReport {
+	    container: string;
+	    declared: string;
+	    resolved: string;
+	    drift: boolean;
+	    registry: string;
+	    repository: string;
+	    tag: string;
+	    referenceReadable: boolean;
+	    digest: string;
+	    digestNote: string;
+	    sizeBytes: number;
+	    sizeStatus: string;
+	    sizeSource: string;
+	    otherNames: string[];
+	    pullPolicy: string;
+	    pullSecrets: string[];
+	    credentialed: boolean;
+	    credentialNote: string;
+	    bounded: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ImageReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.container = source["container"];
+	        this.declared = source["declared"];
+	        this.resolved = source["resolved"];
+	        this.drift = source["drift"];
+	        this.registry = source["registry"];
+	        this.repository = source["repository"];
+	        this.tag = source["tag"];
+	        this.referenceReadable = source["referenceReadable"];
+	        this.digest = source["digest"];
+	        this.digestNote = source["digestNote"];
+	        this.sizeBytes = source["sizeBytes"];
+	        this.sizeStatus = source["sizeStatus"];
+	        this.sizeSource = source["sizeSource"];
+	        this.otherNames = source["otherNames"];
+	        this.pullPolicy = source["pullPolicy"];
+	        this.pullSecrets = source["pullSecrets"];
+	        this.credentialed = source["credentialed"];
+	        this.credentialNote = source["credentialNote"];
+	        this.bounded = source["bounded"];
+	    }
+	}
 	export class KubeconfigMerge {
 	    added: string[];
 	    conflicts: string[];
@@ -2295,6 +2343,103 @@ export namespace wails {
 	        this.address = source["address"];
 	        this.scheme = source["scheme"];
 	        this.reconnecting = source["reconnecting"];
+	    }
+	}
+	export class ProbeStep {
+	    name: string;
+	    status: string;
+	    detail: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProbeStep(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.status = source["status"];
+	        this.detail = source["detail"];
+	    }
+	}
+	export class ProbeResult {
+	    vantage: string;
+	    route: string;
+	    target: string;
+	    scheme: string;
+	    outcome: string;
+	    summary: string;
+	    steps: ProbeStep[];
+	    statusCode: number;
+	    elapsedMs: number;
+	    timeoutMs: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProbeResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.vantage = source["vantage"];
+	        this.route = source["route"];
+	        this.target = source["target"];
+	        this.scheme = source["scheme"];
+	        this.outcome = source["outcome"];
+	        this.summary = source["summary"];
+	        this.steps = this.convertValues(source["steps"], ProbeStep);
+	        this.statusCode = source["statusCode"];
+	        this.elapsedMs = source["elapsedMs"];
+	        this.timeoutMs = source["timeoutMs"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class ProbeSubjectInput {
+	    kind: string;
+	    namespace: string;
+	    name: string;
+	    serviceType: string;
+	    clusterIp: string;
+	    podIp: string;
+	    host: string;
+	    port: number;
+	    portName: string;
+	    protocol: string;
+	    tls: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProbeSubjectInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.serviceType = source["serviceType"];
+	        this.clusterIp = source["clusterIp"];
+	        this.podIp = source["podIp"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.portName = source["portName"];
+	        this.protocol = source["protocol"];
+	        this.tls = source["tls"];
 	    }
 	}
 	export class RBACFinding {

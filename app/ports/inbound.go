@@ -259,6 +259,37 @@ type RBACService interface {
 	InspectRole(ctx context.Context, id domain.ClusterID, target domain.RoleTarget) (domain.RoleInspection, error)
 }
 
+// InspectService is the use-case surface for the on-request inspections: a
+// reachability probe, and a container image report.
+//
+// EVERY METHOD HERE IS THE CONSEQUENCE OF A BUTTON, and nothing on this
+// surface may ever be called by the refresh tick — see ports.InspectPort,
+// where the same rule is stated for the driven side, and BrowseAPI.ObjectGraph
+// for the precedent. A probe opens a socket or runs a command in somebody's
+// container; a repeated one would be a stream of execs in an audit log nobody
+// asked for.
+type InspectService interface {
+	// ProbeFromHere probes subject from THIS MACHINE, through the API server
+	// named in the kubeconfig and through nothing else. Refuses with a
+	// domain.ErrProbe… sentinel when the subject cannot be probed from here —
+	// an Ingress host, a headless Service, a UDP port — each of which is a
+	// fact the caller renders where a result would have gone.
+	ProbeFromHere(ctx context.Context, id domain.ClusterID, subject domain.ProbeSubject) (domain.ProbeResult, error)
+
+	// ProbeFromPod probes subject from inside a container the operator chose,
+	// as one bounded exec. Refused on a cluster marked read-only, and audited
+	// by cluster, namespace, pod, container and target — never by output.
+	// Wraps ErrProbeToolMissing when the container has nothing to probe with.
+	ProbeFromPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, subject domain.ProbeSubject) (domain.ProbeResult, error)
+
+	// ImageReport describes one container's image using only what Kubernetes
+	// reports: the resolved reference and digest, the size and names recorded
+	// by the node that pulled it, and whether the pull needed credentials. It
+	// reads no registry and no pull Secret, and the report says so — see
+	// domain.ImageDetailBounded.
+	ImageReport(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string) (domain.ImageReport, error)
+}
+
 // ResourceService is the use-case surface for the generic browsing path.
 type ResourceService interface {
 	// ListTable returns objects of the given kind as a table. The kind is
