@@ -111,6 +111,17 @@ Linux, `%AppData%\PodSteer` on Windows); and display preferences — theme,
 page size, column widths — which the interface keeps in the webview's own
 storage rather than in that directory.
 
+**One cluster-shaped thing is in that directory, in the file names.** A
+history file is named after the kubeconfig context it records, sanitised for
+the filesystem and suffixed with a short hash so two contexts differing only
+in punctuation cannot collide — so somebody with access to your home directory
+can see which clusters you have opened, though not what is in them. The
+samples themselves hold capacity figures and nothing else: no object names, no
+logs, no manifests, and no address or credential for any cluster. This is the
+same disclosure the settings file makes further down, for the same reason: a
+context name is a handle your own kubeconfig already gives you, and naming it
+is what makes the file readable to you.
+
 A third kind of write is a CSV export, only where you choose to save it,
 containing exactly the rows and columns a table is showing you at the moment
 you export it — filtered by whatever you searched for, in whatever order you
