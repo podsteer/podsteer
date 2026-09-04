@@ -44,4 +44,6 @@ export function SuspendWorkload(arg1:string,arg2:string,arg3:string,arg4:string,
 
 export function TriggerCronJob(arg1:string,arg2:string,arg3:string):Promise<string>;
 
-export function UpdateResource(arg1:string,arg2:string):Promise<void>;
+export function UpdateResource(arg1:string,arg2:string):Promise<wails.ApplyOutcomeDTO>;
+
+export function ValidateResource(arg1:string,arg2:string):Promise<wails.ApplyOutcomeDTO>;

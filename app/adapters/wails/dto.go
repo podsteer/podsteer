@@ -510,6 +510,49 @@ func toDrainReport(report domain.DrainReport) DrainReportDTO {
 	}
 }
 
+// ApplyOutcomeDTO reports what UpdateResource or ValidateResource actually
+// did — what domain.ApplyOutcome carries, over the wire.
+type ApplyOutcomeDTO struct {
+	// Created is true when the object did not exist and was created; false
+	// when an existing object was replaced.
+	Created bool `json:"created"`
+	// Kind is the applied object's Kubernetes kind, e.g. "Deployment".
+	Kind string `json:"kind"`
+	// Name is the applied object's name.
+	Name string `json:"name"`
+	// Namespace is empty for a cluster-scoped kind.
+	Namespace string `json:"namespace"`
+	// DryRun reports whether this outcome came from a server-side dry run —
+	// ValidateResource always sets it; UpdateResource never does. Nothing
+	// was persisted when it is true.
+	DryRun bool `json:"dryRun"`
+	// Warnings carries any warning the API server attached to the request.
+	// Always empty today — see Adapter.UpdateResource's own comment on why —
+	// but present on the wire so the frontend does not need a second shape
+	// once it is wired.
+	Warnings []string `json:"warnings"`
+}
+
+// toApplyOutcome converts a domain apply outcome for the frontend.
+func toApplyOutcome(outcome domain.ApplyOutcome) ApplyOutcomeDTO {
+	// Never nil on the wire: the frontend's type is string[], and JSON null
+	// where an array is expected is a needless special case for every caller
+	// to guard against.
+	warnings := outcome.Warnings
+	if warnings == nil {
+		warnings = []string{}
+	}
+
+	return ApplyOutcomeDTO{
+		Created:   outcome.Created,
+		Kind:      outcome.Kind,
+		Name:      outcome.Name,
+		Namespace: outcome.Namespace.String(),
+		DryRun:    outcome.DryRun,
+		Warnings:  warnings,
+	}
+}
+
 // ClusterConnectedEvent is the payload of the "cluster:connected" event.
 type ClusterConnectedEvent struct {
 	// Cluster is the cluster that was reached.

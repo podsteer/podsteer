@@ -138,7 +138,9 @@ func (stubManagementPort) ScaleWorkload(context.Context, domain.ClusterID, domai
 func (stubManagementPort) RestartRollout(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string) error {
 	return nil
 }
-func (stubManagementPort) UpdateResource(context.Context, domain.ClusterID, string) error { return nil }
+func (stubManagementPort) UpdateResource(context.Context, domain.ClusterID, string, bool) (domain.ApplyOutcome, error) {
+	return domain.ApplyOutcome{}, nil
+}
 func (stubManagementPort) ExecInPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, bool) error {
 	return nil
 }

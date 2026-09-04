@@ -159,6 +159,31 @@ func (r ResourceRef) String() string {
 	return fmt.Sprintf("%s/%s/%s", r.Kind.Kind, r.Namespace, r.Name)
 }
 
+// ApplyOutcome reports what UpdateResource actually did, so the caller can
+// say something more useful than "it worked" — whether the object was
+// created rather than updated, and any warning the API server attached to a
+// request it otherwise accepted (a deprecated apiVersion, an unrecognised
+// field caught by a validating webhook that chose to warn rather than
+// reject).
+type ApplyOutcome struct {
+	// Created is true when the object did not exist and Create was used;
+	// false when an existing object was replaced with Update.
+	Created bool
+	// Kind is the applied object's Kubernetes kind, e.g. "Deployment".
+	Kind string
+	// Name is the applied object's name.
+	Name string
+	// Namespace is empty for a cluster-scoped kind.
+	Namespace NamespaceName
+	// DryRun echoes whether this outcome came from a server-side dry run —
+	// nothing was persisted, and the caller must not treat Created as history.
+	DryRun bool
+	// Warnings carries any warning the API server attached to the request
+	// (client-go's warning handler). Empty when the server sent none, which
+	// is the common case and not itself worth reporting as an absence.
+	Warnings []string
+}
+
 // OwnerReference records what created an object.
 //
 // Kubernetes lets an object have several owners but at most one *controller*,

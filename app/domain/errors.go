@@ -101,4 +101,12 @@ var (
 	// neither the pod nor the reason — so this is checked locally, before any
 	// request reaches the cluster, and says exactly what the container needs.
 	ErrContainerNotAttachable = errors.New("container has no tty; attach needs `tty: true` and `stdin: true` on the container")
+
+	// ErrInvalidManifest reports that a manifest offered to UpdateResource
+	// could not be applied as written: it is not valid YAML/JSON for a
+	// Kubernetes object, it is missing apiVersion, kind or metadata.name, it
+	// names a namespaced kind with no metadata.namespace, or it contains more
+	// than one object. Checked before any request reaches the cluster, the
+	// same way ErrInvalidKey is checked before SetSecretKey ever dials out.
+	ErrInvalidManifest = errors.New("invalid manifest")
 )

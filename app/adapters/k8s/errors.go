@@ -55,6 +55,23 @@ func classify(op string, err error) error {
 		return fmt.Errorf("%s: %w: %w", op, ports.ErrForbidden, err)
 	case apierrors.IsNotFound(err):
 		return fmt.Errorf("%s: %w: %w", op, ports.ErrNotFound, err)
+	case apierrors.IsConflict(err):
+		// The one 409 PodSteer expects: UpdateResource's PUT carried a
+		// resourceVersion the server no longer recognises, because the
+		// object changed since the manifest was read. Its own sentinel
+		// rather than falling through to the opaque default case, because
+		// the recovery — reload, then re-apply — is specific to this failure
+		// and nothing else here produces it.
+		return fmt.Errorf("%s: %w: %w", op, ports.ErrConflict, err)
+	case apierrors.IsInvalid(err):
+		// The request reached the server and was well-formed enough to
+		// route, but the OBJECT itself was declined — a schema violation, or
+		// a ValidatingWebhookConfiguration saying no. Surfaces mainly
+		// through UpdateResource's dry run, where the message is the reason
+		// Validate exists: an operator needs it close to verbatim to fix
+		// their manifest, which is why it is wrapped rather than replaced
+		// the way most other cases here are.
+		return fmt.Errorf("%s: %w: %w", op, ports.ErrManifestRejected, err)
 	case apierrors.IsTooManyRequests(err):
 		// The one 429 PodSteer ever expects to see: the eviction subresource
 		// returning it because a PodDisruptionBudget would be violated. It is

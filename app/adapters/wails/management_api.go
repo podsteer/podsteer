@@ -454,20 +454,48 @@ func (m *ManagementAPI) SetConfigMapKey(clusterID, namespace, name, key, value s
 	return nil
 }
 
-// UpdateResource applies a YAML manifest to the cluster.
-func (m *ManagementAPI) UpdateResource(clusterID, manifest string) error {
+// UpdateResource applies a YAML manifest of any kind to the cluster — the
+// generic path through the dynamic client, not a fixed set of typed kinds.
+// See ports.ManagementPort.UpdateResource for the full contract: a manifest
+// carrying metadata.resourceVersion is sent as a PUT the server optimistic-
+// locks against (a stale version comes back as the "conflict" error code);
+// one without it is created, replacing an existing object of the same name.
+func (m *ManagementAPI) UpdateResource(clusterID, manifest string) (ApplyOutcomeDTO, error) {
 	ctx, cancel := m.app.requestContext()
 	defer cancel()
 
 	id, err := domain.NewClusterID(clusterID)
 	if err != nil {
-		return apiError(m.logger, "UpdateResource", err)
+		return ApplyOutcomeDTO{}, apiError(m.logger, "UpdateResource", err)
 	}
 
-	if err := m.management.UpdateResource(ctx, id, manifest); err != nil {
-		return apiError(m.logger, "UpdateResource", err)
+	outcome, err := m.management.UpdateResource(ctx, id, manifest, false)
+	if err != nil {
+		return ApplyOutcomeDTO{}, apiError(m.logger, "UpdateResource", err)
 	}
-	return nil
+	return toApplyOutcome(outcome), nil
+}
+
+// ValidateResource is UpdateResource's dry run: the manifest is sent through
+// the same generic apply path with DryRun=All, so the API server runs every
+// admission check (schema validation, webhooks) without persisting anything.
+// Allowed on a read-only cluster — see ManagementService.UpdateResource's own
+// comment on why — which is what lets an operator check a manifest is
+// well-formed before asking someone with write access to apply it for real.
+func (m *ManagementAPI) ValidateResource(clusterID, manifest string) (ApplyOutcomeDTO, error) {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return ApplyOutcomeDTO{}, apiError(m.logger, "ValidateResource", err)
+	}
+
+	outcome, err := m.management.UpdateResource(ctx, id, manifest, true)
+	if err != nil {
+		return ApplyOutcomeDTO{}, apiError(m.logger, "ValidateResource", err)
+	}
+	return toApplyOutcome(outcome), nil
 }
 
 // ExecInPod executes a command in a pod container.

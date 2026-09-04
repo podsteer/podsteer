@@ -124,4 +124,24 @@ var (
 	// probing or binding one on the operator's own machine — falls outside
 	// the range TCP actually has, 1-65535.
 	ErrInvalidPort = errors.New("port must be between 1 and 65535")
+
+	// ErrConflict means UpdateResource sent a PUT carrying the resourceVersion
+	// the manifest was opened with, and the API server rejected it (HTTP 409)
+	// because the object has since changed. This is optimistic concurrency
+	// working as designed, not a fault: somebody or something else wrote the
+	// object between the read that seeded the editor and this write, and the
+	// only honest recovery is to reload the current object and re-apply the
+	// edit against it — never to retry the same request, which would carry
+	// the same stale resourceVersion and fail again.
+	ErrConflict = errors.New("object changed on the cluster since it was read")
+
+	// ErrManifestRejected means the API server accepted the REQUEST but
+	// declined the OBJECT (HTTP 422/Invalid) — a schema validation failure,
+	// or an admission webhook's rejection. Distinct from
+	// domain.ErrInvalidManifest, which is caught locally before any request
+	// leaves this process: this is the cluster's own verdict, most often
+	// surfaced through UpdateResource's dry run, and its message is the
+	// diagnosis an operator needs to fix their manifest — not something
+	// PodSteer can usefully paraphrase.
+	ErrManifestRejected = errors.New("the cluster rejected the manifest")
 )

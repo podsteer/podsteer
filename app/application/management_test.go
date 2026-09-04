@@ -673,7 +673,8 @@ func TestManagementServiceRefusesEveryWriteWhenReadOnly(t *testing.T) {
 			return service.RestartRollout(ctx, id, domain.WorkloadKind("Deployment"), ns, "web")
 		}},
 		{"UpdateResource", func() error {
-			return service.UpdateResource(ctx, id, "kind: Pod")
+			_, err := service.UpdateResource(ctx, id, "kind: Pod", false)
+			return err
 		}},
 		{"ExecInPod", func() error {
 			var stdout, stderr bytes.Buffer
@@ -702,6 +703,44 @@ func TestManagementServiceRefusesEveryWriteWhenReadOnly(t *testing.T) {
 	// underneath never saw any of them.
 	if calls := port.recordedCalls(); len(calls) != 0 {
 		t.Fatalf("port recorded calls %v, want none — a refused write must never reach the adapter", calls)
+	}
+}
+
+// TestManagementServiceUpdateResourceAllowsDryRunOnAReadOnlyCluster is the
+// one deliberate exception to the property above: a dry run persists
+// nothing, so it must reach the port even on a cluster marked read-only —
+// otherwise "Validate" would be the one control OrganiseDialog's read-only
+// toggle disables despite changing nothing, which is not what the toggle is
+// for. A REAL apply on the same cluster must still be refused, which the
+// second half of this test checks so the exception cannot regress into "dry
+// run just skips the check for everyone".
+func TestManagementServiceUpdateResourceAllowsDryRunOnAReadOnlyCluster(t *testing.T) {
+	t.Parallel()
+
+	const id domain.ClusterID = "prod"
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly(id, true)
+
+	port := &fakeManagementPort{}
+	service := newManagementService(t, port, registry)
+
+	ctx := context.Background()
+
+	if _, err := service.UpdateResource(ctx, id, "kind: Pod", true); err != nil {
+		t.Fatalf("UpdateResource(dryRun=true) on a read-only cluster error = %v, want nil", err)
+	}
+	if calls := port.recordedCalls(); len(calls) != 1 || calls[0] != "UpdateResource" {
+		t.Fatalf("port recorded calls %v, want exactly one UpdateResource — a dry run must reach the port", calls)
+	}
+
+	if _, err := service.UpdateResource(ctx, id, "kind: Pod", false); !errors.Is(err, ports.ErrReadOnly) {
+		t.Fatalf("UpdateResource(dryRun=false) on a read-only cluster error = %v, want wrapping ports.ErrReadOnly", err)
+	}
+	// Still exactly one recorded call: the real apply above must have been
+	// refused before it ever reached the port.
+	if calls := port.recordedCalls(); len(calls) != 1 {
+		t.Fatalf("port recorded calls %v, want still exactly one — the real apply must never reach the adapter", calls)
 	}
 }
 
@@ -743,7 +782,8 @@ func TestManagementServicePassesEveryWriteWhenNotReadOnly(t *testing.T) {
 			return service.RestartRollout(ctx, id, domain.WorkloadKind("Deployment"), ns, "web")
 		}, "RestartRollout"},
 		{"UpdateResource", func() error {
-			return service.UpdateResource(ctx, id, "kind: Pod")
+			_, err := service.UpdateResource(ctx, id, "kind: Pod", false)
+			return err
 		}, "UpdateResource"},
 		{"ExecInPod", func() error {
 			var stdout, stderr bytes.Buffer

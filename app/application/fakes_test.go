@@ -463,9 +463,9 @@ func (f *fakeManagementPort) RestartRollout(context.Context, domain.ClusterID, d
 	return f.err
 }
 
-func (f *fakeManagementPort) UpdateResource(context.Context, domain.ClusterID, string) error {
+func (f *fakeManagementPort) UpdateResource(context.Context, domain.ClusterID, string, bool) (domain.ApplyOutcome, error) {
 	f.record("UpdateResource")
-	return f.err
+	return domain.ApplyOutcome{}, f.err
 }
 
 func (f *fakeManagementPort) ExecInPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, bool) error {

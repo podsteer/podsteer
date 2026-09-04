@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"sync"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
@@ -129,6 +131,21 @@ type clients struct {
 	// config is retained for requests that bypass the typed clients, notably
 	// the server-side table printing used by the generic browser.
 	config *rest.Config
+
+	// restMapperMu guards restMapper, which is built lazily on first use
+	// rather than alongside the clients above: most connections never apply
+	// a manifest, and a discovery-driven mapper walks every API group and
+	// version the cluster serves, which is not a cost worth paying on
+	// connect for a feature that may never be used.
+	restMapperMu sync.RWMutex
+	// restMapper resolves a GroupVersionKind to its GroupVersionResource and
+	// scope for UpdateResource. Cached because building one re-queries
+	// discovery, and rebuilt exactly once when a lookup reports
+	// meta.NoKindMatchError — see clientFactory.restMappingFor in apply.go —
+	// so a CRD installed a minute ago applies without reconnecting the
+	// cluster, while an apply of an ordinary built-in kind never re-queries
+	// discovery at all.
+	restMapper meta.RESTMapper
 }
 
 // clientFactory builds and caches one client set per cluster.
@@ -145,14 +162,64 @@ type clientFactory struct {
 
 	mu      sync.RWMutex
 	clients map[domain.ClusterID]*clients
+
+	// mapperBuilder builds a RESTMapper from a cluster's discovery client. A
+	// field rather than a bare call to restmapper.GetAPIGroupResources so a
+	// test can substitute a counting wrapper and prove a rebuild actually
+	// happened — see apply_test.go — rather than inferring it from timing or
+	// from a real discovery fake.
+	mapperBuilder func(discovery.DiscoveryInterface) (meta.RESTMapper, error)
 }
 
 // newClientFactory returns a factory that builds clients according to cfg.
 func newClientFactory(cfg Config) *clientFactory {
 	return &clientFactory{
-		cfg:     cfg.withDefaults(),
-		clients: make(map[domain.ClusterID]*clients),
+		cfg:           cfg.withDefaults(),
+		clients:       make(map[domain.ClusterID]*clients),
+		mapperBuilder: buildDiscoveryRESTMapper,
 	}
+}
+
+// buildDiscoveryRESTMapper is the production mapperBuilder: it walks every
+// API group and version the cluster's discovery endpoint reports and builds
+// a RESTMapper from the result — the same mechanism `kubectl` itself uses to
+// turn a Kind into the REST resource it lives at.
+func buildDiscoveryRESTMapper(disco discovery.DiscoveryInterface) (meta.RESTMapper, error) {
+	groupResources, err := restmapper.GetAPIGroupResources(disco)
+	if err != nil {
+		return nil, err
+	}
+	return restmapper.NewDiscoveryRESTMapper(groupResources), nil
+}
+
+// restMapper returns the cached RESTMapper for set, building it on first use.
+func (f *clientFactory) restMapper(id domain.ClusterID, set *clients) (meta.RESTMapper, error) {
+	set.restMapperMu.RLock()
+	mapper := set.restMapper
+	set.restMapperMu.RUnlock()
+	if mapper != nil {
+		return mapper, nil
+	}
+	return f.rebuildRESTMapper(id, set)
+}
+
+// rebuildRESTMapper re-queries discovery and replaces set's cached mapper.
+//
+// Called on first use and, from restMappingFor in apply.go, exactly once
+// more when a lookup reports meta.NoKindMatchError: a CRD registered after
+// the mapper was built is invisible to it until discovery is asked again,
+// and an operator applying a manifest for a CRD that was installed a minute
+// ago must not have to reconnect the cluster first.
+func (f *clientFactory) rebuildRESTMapper(id domain.ClusterID, set *clients) (meta.RESTMapper, error) {
+	set.restMapperMu.Lock()
+	defer set.restMapperMu.Unlock()
+
+	mapper, err := f.mapperBuilder(set.discovery)
+	if err != nil {
+		return nil, fmt.Errorf("discovering API resources for %q: %w", id, err)
+	}
+	set.restMapper = mapper
+	return mapper, nil
 }
 
 // awaitEnv blocks until the process environment is settled.

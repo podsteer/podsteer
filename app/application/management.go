@@ -247,29 +247,41 @@ func (s *ManagementService) SuspendWorkload(ctx context.Context, id domain.Clust
 	return nil
 }
 
-// UpdateResource applies a YAML manifest to the cluster.
-func (s *ManagementService) UpdateResource(ctx context.Context, id domain.ClusterID, manifest string) error {
-	if err := s.refuseIfReadOnly(id); err != nil {
-		return err
+// UpdateResource applies a YAML manifest of any kind to the cluster.
+//
+// dryRun is NOT gated by the read-only check below. A dry run asks the API
+// server to validate the request and persists nothing — see
+// ports.ManagementPort.UpdateResource — so it is exactly as safe against a
+// read-only cluster as any other read, and refusing it would block the one
+// action ("Validate") an operator on a read-only cluster is otherwise
+// invited to take before asking someone else to apply the change for real. A
+// real apply (dryRun false) is refused exactly like every other write here.
+func (s *ManagementService) UpdateResource(ctx context.Context, id domain.ClusterID, manifest string, dryRun bool) (domain.ApplyOutcome, error) {
+	if !dryRun {
+		if err := s.refuseIfReadOnly(id); err != nil {
+			return domain.ApplyOutcome{}, err
+		}
 	}
 
 	s.logger.InfoContext(ctx, "updating resource",
 		slog.String("cluster", id.String()),
-		slog.Int("manifestLength", len(manifest)))
+		slog.Int("manifestLength", len(manifest)),
+		slog.Bool("dryRun", dryRun))
 
 	if manifest == "" {
-		return errors.New("manifest cannot be empty")
+		return domain.ApplyOutcome{}, errors.New("manifest cannot be empty")
 	}
 
-	err := s.management.UpdateResource(ctx, id, manifest)
+	outcome, err := s.management.UpdateResource(ctx, id, manifest, dryRun)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "failed to update resource",
 			slog.String("cluster", id.String()),
+			slog.Bool("dryRun", dryRun),
 			slog.String("error", err.Error()))
-		return err
+		return domain.ApplyOutcome{}, err
 	}
 
-	return nil
+	return outcome, nil
 }
 
 // SetImage sets one container's image on a Deployment, StatefulSet or

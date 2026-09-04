@@ -23,6 +23,7 @@ export const API_ERROR_CODES = [
   'cancelled',
   'invalid_input',
   'disruption_budget',
+  'conflict',
   'internal',
 ] as const
 
@@ -82,6 +83,19 @@ export class ApiError extends Error {
    */
   get isReadOnly(): boolean {
     return this.code === 'read_only'
+  }
+
+  /**
+   * Whether the failure is an apply whose resourceVersion the cluster no
+   * longer recognises — the object changed since the manifest was read.
+   *
+   * A distinct code rather than folded into invalid_input, because the
+   * recovery is specific: reload the object and re-apply the edit against
+   * it, never retry the same request, which would resend the same stale
+   * resourceVersion. See app/ports/errors.go's ErrConflict.
+   */
+  get isConflict(): boolean {
+    return this.code === 'conflict'
   }
 }
 
