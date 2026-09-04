@@ -231,6 +231,7 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, domain.ErrInvalidKey),
 		errors.Is(err, domain.ErrInvalidImageReference),
 		errors.Is(err, domain.ErrInvalidManifest),
+		errors.Is(err, domain.ErrInvalidRevision),
 		// The cluster's own verdict on an applied object (schema validation,
 		// an admission webhook) rather than PodSteer's local pre-flight
 		// check, but the SAME treatment applies: err.Error() is shown

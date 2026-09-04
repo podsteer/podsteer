@@ -76,6 +76,9 @@ type fakeKubernetes struct {
 	volumes         []domain.PersistentVolume
 	claims          []domain.PersistentVolumeClaim
 
+	revisions    []domain.Revision
+	revisionsErr error
+
 	mu               sync.Mutex
 	requestedCluster domain.ClusterID
 	requestedNS      domain.NamespaceName
@@ -220,6 +223,14 @@ func (f *fakeKubernetes) NodeFilesystems(_ context.Context, _ domain.ClusterID) 
 
 func (f *fakeKubernetes) DiscoverMetricsBackend(_ context.Context, _ domain.ClusterID) (domain.MetricsBackend, error) {
 	return f.metricsBackend, nil
+}
+
+func (f *fakeKubernetes) RolloutHistory(_ context.Context, id domain.ClusterID, _ domain.WorkloadKind, namespace domain.NamespaceName, _ string) ([]domain.Revision, error) {
+	f.record(id, namespace)
+	if f.revisionsErr != nil {
+		return nil, f.revisionsErr
+	}
+	return append([]domain.Revision(nil), f.revisions...), nil
 }
 
 func (f *fakeKubernetes) record(id domain.ClusterID, namespace domain.NamespaceName) {
@@ -439,6 +450,16 @@ type fakeManagementPort struct {
 	drainedName string
 	drainedOpts domain.DrainOptions
 	drainReport domain.DrainReport
+
+	rollbackErr        error
+	rollbackCalled     bool
+	rollbackID         domain.ClusterID
+	rollbackKind       domain.WorkloadKind
+	rollbackNS         domain.NamespaceName
+	rollbackName       string
+	rollbackToRevision int64
+	rollbackDryRun     bool
+	rollbackOutcome    domain.RollbackOutcome
 }
 
 var _ ports.ManagementPort = (*fakeManagementPort)(nil)
@@ -572,6 +593,19 @@ func (f *fakeManagementPort) DrainNode(_ context.Context, id domain.ClusterID, n
 	f.drainedName = name
 	f.drainedOpts = opts
 	return f.drainReport, f.drainErr
+}
+
+func (f *fakeManagementPort) RollbackWorkload(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, toRevision int64, dryRun bool) (domain.RollbackOutcome, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rollbackCalled = true
+	f.rollbackID = id
+	f.rollbackKind = kind
+	f.rollbackNS = namespace
+	f.rollbackName = name
+	f.rollbackToRevision = toRevision
+	f.rollbackDryRun = dryRun
+	return f.rollbackOutcome, f.rollbackErr
 }
 
 func (f *fakeManagementPort) record(call string) {

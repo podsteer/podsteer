@@ -26,6 +26,10 @@ export function PodGraph(arg1, arg2, arg3) {
   return window['go']['wails']['WorkloadAPI']['PodGraph'](arg1, arg2, arg3);
 }
 
+export function RolloutHistory(arg1, arg2, arg3, arg4) {
+  return window['go']['wails']['WorkloadAPI']['RolloutHistory'](arg1, arg2, arg3, arg4);
+}
+
 export function WorkloadConsumption(arg1, arg2, arg3) {
   return window['go']['wails']['WorkloadAPI']['WorkloadConsumption'](arg1, arg2, arg3);
 }

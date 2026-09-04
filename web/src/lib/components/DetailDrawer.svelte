@@ -53,11 +53,13 @@
   import DrainDialog from './DrainDialog.svelte'
   import EvictDialog from './EvictDialog.svelte'
   import SetImageDialog from './SetImageDialog.svelte'
+  import RolloutHistory from './RolloutHistory.svelte'
+  import RollbackDialog from './RollbackDialog.svelte'
   import Terminal from './Terminal.svelte'
   import DependencyMap from './DependencyMap.svelte'
   import { DeleteResource, RestartRollout } from '$lib/wailsjs/go/wails/ManagementAPI'
   import { ListPodsForWorkload } from '$lib/wailsjs/go/wails/WorkloadAPI'
-  import { triggerCronJob, suspendWorkload, cordonNode, evictPod, type Pod } from '$lib/api/client'
+  import { triggerCronJob, suspendWorkload, cordonNode, evictPod, type Pod, type Revision } from '$lib/api/client'
   import { podTemplateOf, type PodTemplate } from '$lib/podTemplate'
   import {
     X,
@@ -86,6 +88,7 @@
     CirclePause,
     Ban,
     LogOut,
+    History as HistoryIcon,
   } from '@lucide/svelte'
 
   interface Props {
@@ -94,7 +97,7 @@
 
   let { session }: Props = $props()
 
-  type Tab = 'overview' | 'logs' | 'terminal' | 'map' | 'events' | 'yaml'
+  type Tab = 'overview' | 'logs' | 'terminal' | 'map' | 'history' | 'events' | 'yaml'
   let activeTab = $state<Tab>('overview')
   const copied = flash(1500)
   let deleteDialogOpen = $state(false)
@@ -128,6 +131,24 @@
 
   /** "Image updated" after SetImageDialog applies every changed container. The same self-clearing flag as `copied` and `triggered` — see $lib/flash.svelte. */
   const imageUpdated = flash(3000)
+
+  let rollbackDialogOpen = $state(false)
+  /** The revision RollbackDialog was opened for. Set only alongside
+   * rollbackDialogOpen = true, so the dialog never renders with a stale
+   * target from a previous click. */
+  let rollbackTarget = $state<Revision | null>(null)
+  /**
+   * Bumped after a rollback succeeds, to make RolloutHistory refetch — a
+   * rollback changes which revision is current and, for a Deployment,
+   * routinely bumps the target ReplicaSet's own revision number, neither of
+   * which the tab would otherwise know to reload for.
+   */
+  let historyReloadToken = $state(0)
+  /** "Rolled back to revision N" after a rollback succeeds. The same
+   * self-clearing flag as `imageUpdated`, paired with the revision for the
+   * same reason `triggered` is paired with the job name. */
+  const rolledBack = flash(4000)
+  let rolledBackToRevision = $state(0)
 
   /**
    * Names the Job a "Run now" just created, for a few seconds.
@@ -377,6 +398,18 @@
     session.selectedKindId === 'apps/v1/daemonsets'
   )
 
+  // The same three kinds as isSetImageable — a rollout history exists for
+  // exactly the controllers whose pod template sits at spec.template, the
+  // one thing a revision records. Named separately anyway, mirroring
+  // isSetImageable's own doc comment: the two happen to coincide today, and
+  // tying them together would make a future kind that supports one but not
+  // the other an awkward split rather than a one-line change.
+  const hasRolloutHistory = $derived(
+    session.selectedKindId === 'apps/v1/deployments' ||
+    session.selectedKindId === 'apps/v1/statefulsets' ||
+    session.selectedKindId === 'apps/v1/daemonsets'
+  )
+
   /**
    * The open workload's pod template, for SetImageDialog to list containers
    * from.
@@ -496,6 +529,11 @@
     // whatever is opening now.
     applyResult.cancel()
     conflict = false
+    // A "Rolled back to revision N" notice, and the dialog it came from, are
+    // about the PREVIOUS object too.
+    rolledBack.cancel()
+    rollbackDialogOpen = false
+    rollbackTarget = null
   })
 
   /**
@@ -653,6 +691,28 @@
     }
   }
 
+  /** Opens RollbackDialog for one revision, from the History tab's own
+   * "Roll back…" button — RolloutHistory only reads and compares, so the
+   * write it can trigger is turned into a dialog here rather than fired
+   * directly. */
+  function handleOpenRollback(revision: Revision): void {
+    rollbackTarget = revision
+    rollbackDialogOpen = true
+  }
+
+  /** Called once RollbackDialog's own confirm succeeds. */
+  async function handleRolledBack(): Promise<void> {
+    rollbackDialogOpen = false
+    rolledBackToRevision = rollbackTarget?.number ?? 0
+    rollbackTarget = null
+    rolledBack.show()
+    // The History tab's own list is not part of session state — nothing
+    // else refetches it — so it needs telling separately from the refresh
+    // below, which is for the workload list and consumption meters.
+    historyReloadToken += 1
+    await session.refresh()
+  }
+
   /** Cordons or uncordons the selected node. Uncordon needs no dialog — it
    * undoes a visible, deliberate state rather than doing anything the
    * cluster cannot immediately reverse. */
@@ -804,6 +864,9 @@
     // currently has — and both are worth walking, which is what the map is
     // for. Nothing else has dependencies to draw.
     { id: 'map', label: 'Map', icon: Workflow, show: () => isPod || isWorkloadKind },
+    // Deployments, StatefulSets and DaemonSets only — the three kinds a
+    // revision exists for. See hasRolloutHistory's own doc comment.
+    { id: 'history', label: 'History', icon: HistoryIcon, show: () => hasRolloutHistory },
     // An event has no events of its own, and asking for them returns the
     // empty list that means "nothing recent" — which reads as a fault here
     // rather than as the tautology it is.
@@ -887,6 +950,7 @@
     triggered.cancel()
     imageUpdated.cancel()
     applyResult.cancel()
+    rolledBack.cancel()
   })
 </script>
 
@@ -1576,6 +1640,13 @@
       </div>
     {/if}
 
+    {#if rolledBack.on}
+      <div class="flex items-center gap-2 border-b border-success/20 bg-success-container/50 px-4 py-2 text-body-small text-on-success-container">
+        <Check class="size-3.5 shrink-0 text-success" strokeWidth={2} />
+        Rolled back to revision {rolledBackToRevision}
+      </div>
+    {/if}
+
     <!-- Tab content -->
     <div
       class="min-h-0 flex-1 overflow-auto bg-surface-container-lowest"
@@ -1686,6 +1757,24 @@
             <p class="text-body-medium">This kind has no dependencies to map</p>
           </div>
         {/if}
+      {:else if activeTab === 'history'}
+        {#if hasRolloutHistory && session.selectedKind && session.selectedName}
+          <RolloutHistory
+            clusterId={session.cluster.id}
+            kind={session.selectedKind.kind}
+            namespace={session.selectedNamespace}
+            name={session.selectedName}
+            {isReadOnly}
+            {readOnlyReason}
+            reloadToken={historyReloadToken}
+            onrollback={handleOpenRollback}
+          />
+        {:else}
+          <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
+            <HistoryIcon class="size-8" strokeWidth={1.2} />
+            <p class="text-body-medium">This kind has no rollout history</p>
+          </div>
+        {/if}
       {:else if activeTab === 'events'}
         <EventsView
           clusterId={session.cluster.id}
@@ -1793,6 +1882,22 @@
         await session.refresh()
       }}
     />
+
+    {#if rollbackTarget}
+      <RollbackDialog
+        open={rollbackDialogOpen}
+        ctx={session.cluster.id}
+        kind={mappedWorkloadKind}
+        name={selectedWorkload.name}
+        namespace={selectedWorkload.namespace}
+        toRevision={rollbackTarget.number}
+        {productionGroup}
+        {isReadOnly}
+        {readOnlyReason}
+        onclose={() => (rollbackDialogOpen = false)}
+        onrolledback={handleRolledBack}
+      />
+    {/if}
   {/if}
 
   <!-- The same pane, given the window. Closing restores it to the drawer

@@ -400,6 +400,33 @@ func (m *ManagementAPI) SetImage(clusterID, kind, namespace, name, container, im
 	return nil
 }
 
+// RollbackWorkload rolls a Deployment, StatefulSet or DaemonSet back to a
+// previously recorded revision, the way `kubectl rollout undo
+// --to-revision` does. dryRun asks the API server to validate the request
+// without persisting anything — RollbackDialog's Preview button — and is
+// allowed on a read-only cluster for the same reason ValidateResource is.
+func (m *ManagementAPI) RollbackWorkload(clusterID, kind, namespace, name string, toRevision int, dryRun bool) (RollbackOutcomeDTO, error) {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return RollbackOutcomeDTO{}, apiError(m.logger, "RollbackWorkload", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return RollbackOutcomeDTO{}, apiError(m.logger, "RollbackWorkload", err)
+	}
+
+	outcome, err := m.management.RollbackWorkload(ctx, id, domain.WorkloadKind(kind), ns, name, int64(toRevision), dryRun)
+	if err != nil {
+		return RollbackOutcomeDTO{}, apiError(m.logger, "RollbackWorkload", err)
+	}
+
+	return toRollbackOutcome(outcome), nil
+}
+
 // SetSecretKey writes one key of one Secret.
 //
 // value is the operator's typed, decoded text — not base64 — converted to

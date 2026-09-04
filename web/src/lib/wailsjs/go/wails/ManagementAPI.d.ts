@@ -22,6 +22,8 @@ export function ProbeLocalPort(arg1:number):Promise<boolean>;
 
 export function RestartRollout(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
+export function RollbackWorkload(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:boolean):Promise<wails.RollbackOutcomeDTO>;
+
 export function ScaleWorkload(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number):Promise<void>;
 
 export function SetConfigMapKey(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;

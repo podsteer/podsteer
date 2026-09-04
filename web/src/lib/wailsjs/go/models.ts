@@ -1917,6 +1917,48 @@ export namespace wails {
 	}
 	
 	
+	export class RevisionDTO {
+	    number: number;
+	    name: string;
+	    createdAt: string;
+	    ageSeconds: number;
+	    current: boolean;
+	    replicas: number;
+	    images: string[];
+	    changeCause: string;
+	    templateYaml: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RevisionDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.number = source["number"];
+	        this.name = source["name"];
+	        this.createdAt = source["createdAt"];
+	        this.ageSeconds = source["ageSeconds"];
+	        this.current = source["current"];
+	        this.replicas = source["replicas"];
+	        this.images = source["images"];
+	        this.changeCause = source["changeCause"];
+	        this.templateYaml = source["templateYaml"];
+	    }
+	}
+	export class RollbackOutcomeDTO {
+	    toRevision: number;
+	    dryRun: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RollbackOutcomeDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.toRevision = source["toRevision"];
+	        this.dryRun = source["dryRun"];
+	    }
+	}
 	export class Sample {
 	    at: number;
 	    cpuUsage: number;

@@ -336,3 +336,6 @@ func (stubManagementPort) DrainNode(context.Context, domain.ClusterID, string, d
 func (stubManagementPort) SetImage(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, string, string, bool) error {
 	return nil
 }
+func (stubManagementPort) RollbackWorkload(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, int64, bool) (domain.RollbackOutcome, error) {
+	return domain.RollbackOutcome{}, nil
+}

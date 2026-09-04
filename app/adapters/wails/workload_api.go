@@ -244,6 +244,31 @@ func (w *WorkloadAPI) ListPodsOnNode(clusterID, nodeName string) ([]Pod, error) 
 	return toPods(pods, time.Now()), nil
 }
 
+// RolloutHistory returns the recorded revisions of a Deployment,
+// StatefulSet or DaemonSet's pod template, newest first — the History tab
+// in the drawer, and what a rollback picks a target revision from.
+func (w *WorkloadAPI) RolloutHistory(clusterID, kind, namespace, name string) ([]RevisionDTO, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(w.logger, "RolloutHistory", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return nil, apiError(w.logger, "RolloutHistory", err)
+	}
+
+	revisions, err := w.workloads.RolloutHistory(ctx, id, domain.WorkloadKind(kind), ns, name)
+	if err != nil {
+		return nil, apiError(w.logger, "RolloutHistory", err)
+	}
+
+	return toRevisions(revisions, time.Now()), nil
+}
+
 // ListPodsForWorkload returns all pods owned by a specific workload.
 func (w *WorkloadAPI) ListPodsForWorkload(clusterID, namespace, kind, name string) ([]Pod, error) {
 	ctx, cancel := w.app.requestContext()

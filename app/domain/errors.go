@@ -109,4 +109,14 @@ var (
 	// than one object. Checked before any request reaches the cluster, the
 	// same way ErrInvalidKey is checked before SetSecretKey ever dials out.
 	ErrInvalidManifest = errors.New("invalid manifest")
+
+	// ErrInvalidRevision reports that RollbackWorkload was asked for a
+	// revision number that is not positive, or — checked in the adapter,
+	// which is the only layer that knows which revision is presently live —
+	// names the revision already current. Rolling back to the current
+	// revision is not a malformed request in the way an unknown revision is
+	// (that is ports.ErrNotFound), but there is nothing for it to do, and
+	// running it anyway would create a needless new ReplicaSet or
+	// ControllerRevision.
+	ErrInvalidRevision = errors.New("invalid revision")
 )

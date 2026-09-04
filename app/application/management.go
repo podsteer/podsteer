@@ -336,6 +336,58 @@ func (s *ManagementService) SetImage(ctx context.Context, id domain.ClusterID, k
 	return nil
 }
 
+// RollbackWorkload rolls a Deployment, StatefulSet or DaemonSet back to a
+// previously recorded revision.
+//
+// dryRun is NOT gated by the read-only check below, mirroring
+// UpdateResource's own dry run: it validates against the API server and
+// persists nothing, so it is exactly as safe against a read-only cluster as
+// any other read. A real rollback (dryRun false) is refused exactly like
+// every other write here.
+//
+// Only the three kinds that carry a rollout history support it, and that is
+// checked HERE rather than left to the adapter — mirroring SetImage's own
+// kind check — so an unsupported kind never costs a round trip to the
+// cluster to be told no. toRevision must be positive; whether it names the
+// revision already current can only be told by reading the cluster, which
+// is why that half of the check lives in the adapter.
+func (s *ManagementService) RollbackWorkload(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, toRevision int64, dryRun bool) (domain.RollbackOutcome, error) {
+	if !dryRun {
+		if err := s.refuseIfReadOnly(id); err != nil {
+			return domain.RollbackOutcome{}, err
+		}
+	}
+
+	s.logger.InfoContext(ctx, "rolling back workload",
+		slog.String("cluster", id.String()),
+		slog.String("kind", string(kind)),
+		slog.String("namespace", namespace.String()),
+		slog.String("name", name),
+		slog.Int64("toRevision", toRevision),
+		slog.Bool("dryRun", dryRun))
+
+	if kind != domain.WorkloadDeployment && kind != domain.WorkloadStatefulSet && kind != domain.WorkloadDaemonSet {
+		return domain.RollbackOutcome{}, fmt.Errorf("%w: rollback is only supported for Deployments, StatefulSets and DaemonSets, got %s",
+			domain.ErrUnsupportedWorkloadKind, kind)
+	}
+	if toRevision <= 0 {
+		return domain.RollbackOutcome{}, fmt.Errorf("%w: revision must be positive, got %d", domain.ErrInvalidRevision, toRevision)
+	}
+
+	outcome, err := s.management.RollbackWorkload(ctx, id, kind, namespace, name, toRevision, dryRun)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to roll back workload",
+			slog.String("cluster", id.String()),
+			slog.String("kind", string(kind)),
+			slog.String("name", name),
+			slog.Int64("toRevision", toRevision),
+			slog.String("error", err.Error()))
+		return domain.RollbackOutcome{}, err
+	}
+
+	return outcome, nil
+}
+
 // SetSecretKey writes one key of one Secret.
 //
 // The audit line below is what an entry in a cluster's audit log should be:
