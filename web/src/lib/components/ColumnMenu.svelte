@@ -180,8 +180,10 @@
         Columns
       </p>
 
-      <ul class="max-h-64 overflow-auto py-0.5">
-        {#each builtIn as column (column.id)}
+      <ul class="max-h-80 overflow-auto py-0.5">
+        <!-- A selection column is not a column to choose: nothing to hide,
+             nothing to name. See DataTable's Column.select. -->
+        {#each builtIn.filter((column) => !column.select) as column (column.id)}
           <li>
             <label
               class="flex cursor-pointer items-center gap-2.5 rounded-sm px-3 py-1.5 text-body-small

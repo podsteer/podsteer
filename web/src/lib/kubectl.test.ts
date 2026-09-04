@@ -3,7 +3,9 @@ import {
   apply,
   attach,
   applyDryRun,
+  cordon,
   del,
+  delMany,
   describe as describeCmd,
   exec,
   get,
@@ -14,8 +16,10 @@ import {
   resourceArgForKind,
   revealSecretKey,
   rolloutRestart,
+  rolloutRestartMany,
   rolloutUndo,
   scale,
+  scaleMany,
   setImage,
   shellQuote,
 } from './kubectl'
@@ -195,6 +199,65 @@ describe('del', () => {
 
   it('omits -n for a cluster-scoped resource', () => {
     expect(del('prod', 'namespaces', 'billing')).toBe('kubectl --context prod delete namespaces billing')
+  })
+})
+
+describe('delMany', () => {
+  it('names every object on one line within a namespace', () => {
+    expect(
+      delMany('prod', 'pods', [
+        { name: 'a', ns: 'default' },
+        { name: 'b', ns: 'default' },
+        { name: 'c', ns: 'default' },
+      ]),
+    ).toBe('kubectl --context prod -n default delete pods a b c')
+  })
+
+  it('emits one line per namespace, in the order each first appears', () => {
+    // kubectl takes one -n per invocation: a selection made under "All
+    // namespaces" is one command per namespace it spans, never one command
+    // with three flags.
+    expect(
+      delMany('prod', 'pods', [
+        { name: 'a', ns: 'web' },
+        { name: 'b', ns: 'data' },
+        { name: 'c', ns: 'web' },
+      ]),
+    ).toBe('kubectl --context prod -n web delete pods a c\nkubectl --context prod -n data delete pods b')
+  })
+
+  it('omits -n for cluster-scoped objects', () => {
+    expect(delMany('prod', 'nodes', [{ name: 'node-1' }, { name: 'node-2' }])).toBe(
+      'kubectl --context prod delete nodes node-1 node-2',
+    )
+  })
+})
+
+describe('scaleMany', () => {
+  it('names every workload as kind/name with one --replicas flag', () => {
+    expect(
+      scaleMany('prod', 'Deployment', [{ name: 'web', ns: 'default' }, { name: 'api', ns: 'default' }], 0),
+    ).toBe('kubectl --context prod -n default scale deployment/web deployment/api --replicas=0')
+  })
+})
+
+describe('rolloutRestartMany', () => {
+  it('names every workload as kind/name, one line per namespace', () => {
+    expect(
+      rolloutRestartMany('prod', 'StatefulSet', [{ name: 'db', ns: 'data' }, { name: 'cache', ns: 'web' }]),
+    ).toBe(
+      'kubectl --context prod -n data rollout restart statefulset/db\nkubectl --context prod -n web rollout restart statefulset/cache',
+    )
+  })
+})
+
+describe('cordon', () => {
+  it('names every node on one line, with no namespace', () => {
+    expect(cordon('prod', ['node-1', 'node-2'], true)).toBe('kubectl --context prod cordon node-1 node-2')
+  })
+
+  it('is uncordon when switched off', () => {
+    expect(cordon('prod', ['node-1'], false)).toBe('kubectl --context prod uncordon node-1')
   })
 })
 

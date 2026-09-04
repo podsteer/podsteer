@@ -181,6 +181,118 @@ export namespace wails {
 	        this.warnings = source["warnings"];
 	    }
 	}
+	export class BulkItemDTO {
+	    group: string;
+	    version: string;
+	    kind: string;
+	    namespace: string;
+	    name: string;
+	    controllerKind: string;
+	    controllerName: string;
+	    replicas: number;
+	    unschedulable: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new BulkItemDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.group = source["group"];
+	        this.version = source["version"];
+	        this.kind = source["kind"];
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.controllerKind = source["controllerKind"];
+	        this.controllerName = source["controllerName"];
+	        this.replicas = source["replicas"];
+	        this.unschedulable = source["unschedulable"];
+	    }
+	}
+	export class BulkLineDTO {
+	    kind: string;
+	    namespace: string;
+	    name: string;
+	    act: boolean;
+	    reason: string;
+	    note: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BulkLineDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.act = source["act"];
+	        this.reason = source["reason"];
+	        this.note = source["note"];
+	    }
+	}
+	export class BulkPlanDTO {
+	    action: string;
+	    lines: BulkLineDTO[];
+	    acting: number;
+	    skipped: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new BulkPlanDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.action = source["action"];
+	        this.lines = this.convertValues(source["lines"], BulkLineDTO);
+	        this.acting = source["acting"];
+	        this.skipped = source["skipped"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class BulkResultDTO {
+	    kind: string;
+	    namespace: string;
+	    name: string;
+	    skipped: boolean;
+	    done: boolean;
+	    reason: string;
+	    note: string;
+	    code: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BulkResultDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.skipped = source["skipped"];
+	        this.done = source["done"];
+	        this.reason = source["reason"];
+	        this.note = source["note"];
+	        this.code = source["code"];
+	    }
+	}
 	export class PodCapacity {
 	    scheduled: number;
 	    scheduledLabel: string;

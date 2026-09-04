@@ -14,6 +14,8 @@
   import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
   import CustomCells from '$lib/components/CustomCells.svelte'
   import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
+  import RowSelect from '$lib/components/RowSelect.svelte'
+  import { rowKey } from '$lib/bulk'
   import { formatAge } from '$lib/format'
   import { cpuMeter, cpuTitle, memoryMeter, memoryTitle, type Measured } from '$lib/meter'
   import { preferences } from '$stores/preferences.svelte'
@@ -56,6 +58,7 @@
   const isCronJob = $derived(session.selectedKindId === 'batch/v1/cronjobs')
 
   const columns = $derived<Column[]>([
+    { id: 'select', label: 'Select', width: 40, pinned: true, select: true },
     { id: 'status', label: 'Status', width: 44, icon: CircleDot },
     { id: 'name', label: 'Name', width: 300, pinned: true },
     { id: 'namespace', label: 'Namespace', width: 150 },
@@ -101,6 +104,16 @@
    */
   const resource = $derived(session.selectedKind ? resourceArgForKind(session.selectedKind) : null)
 
+  /** The rows on screen, in display order, for range and select-all. See PodsView. */
+  $effect(() => {
+    session.selection.visible = session.pagedWorkloads.map((workload) =>
+      rowKey(workload.namespace, workload.name),
+    )
+    return () => {
+      session.selection.visible = []
+    }
+  })
+
   function actionsFor(workload: Workload): RowAction[] {
     if (!resource) return []
     return [
@@ -129,7 +142,8 @@
       not the bare percentage, exactly as WorkloadsView derives it for the
       row. */
   function exportCSV(): CSVExport {
-    const visible = columns.filter(isColumnVisible)
+    // The tick box is a control, not a column with text in it.
+    const visible = columns.filter((column) => !column.select && isColumnVisible(column))
 
     function cell(workload: Workload, id: string): string {
       const custom = parseCustomColumnId(id)
@@ -188,6 +202,11 @@
   sort={session.sort}
   onsort={session.toggleSort}
   exportRows={exportCSV}
+  selectAll={{
+    checked: session.selection.allVisibleSelected,
+    indeterminate: session.selection.someVisibleSelected,
+    ontoggle: () => session.selection.toggleAllVisible(),
+  }}
 >
   {#snippet empty()}
     <EmptyState
@@ -210,11 +229,19 @@
       -->
       {@const usage =
         session.workloadUsage[`${workload.namespace}/${workload.name}`] ?? UNMEASURED}
+      {@const key = rowKey(workload.namespace, workload.name)}
+      {@const ticked = session.selection.has(key)}
       <tr
         class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
-               {selected ? 'bg-primary/8' : 'hover:bg-surface-container-low'}"
+               {selected ? 'bg-primary/8' : ticked ? 'bg-primary/5' : 'hover:bg-surface-container-low'}"
+        aria-selected={ticked}
         onclick={() => session.openDetail(workload.name, workload.namespace, undefined, workload)}
       >
+        <RowSelect
+          selected={ticked}
+          label={workload.name}
+          ontoggle={(range) => session.selection.toggle(key, range)}
+        />
         {#if isVisible('status')}
           <td class="overflow-hidden py-1.5 pr-3 pl-5">
             <StatusIndicator

@@ -164,6 +164,83 @@ export function del(ctx: string, resource: string, name: string, ns?: string): s
   return [...base(ctx, ns), 'delete', resource, name].join(' ')
 }
 
+/** One object a bulk command names. `ns` is omitted for a cluster-scoped object. */
+export interface BulkTarget {
+  name: string
+  ns?: string
+}
+
+/**
+ * Targets grouped by namespace, in the order each namespace first appears.
+ *
+ * kubectl takes ONE `-n` per invocation, so a selection made under "All
+ * namespaces" that spans three of them is three commands, not one with three
+ * flags. The builders below emit one line per group; a selection within a
+ * single namespace — the common case — stays one line.
+ */
+function byNamespace(targets: BulkTarget[]): [string | undefined, string[]][] {
+  const groups = new Map<string | undefined, string[]>()
+  for (const target of targets) {
+    const names = groups.get(target.ns)
+    if (names) names.push(target.name)
+    else groups.set(target.ns, [target.name])
+  }
+  return [...groups.entries()]
+}
+
+/**
+ * `kubectl --context c [-n ns] delete <resource> <a> <b> <c>` — one line per
+ * namespace the selection spans. The equivalent of a bulk delete, which is
+ * what the review dialog shows before running one.
+ */
+export function delMany(ctx: string, resource: string, targets: BulkTarget[]): string {
+  return byNamespace(targets)
+    .map(([ns, names]) => [...base(ctx, ns), 'delete', resource, ...names].join(' '))
+    .join('\n')
+}
+
+/**
+ * `kubectl --context c -n ns scale <kind>/<a> <kind>/<b> --replicas=N` — one
+ * line per namespace. Always namespaced, for the same reason `scale` is.
+ */
+export function scaleMany(ctx: string, kind: string, targets: BulkTarget[], replicas: number): string {
+  return byNamespace(targets)
+    .map(([ns, names]) =>
+      [
+        ...base(ctx, ns),
+        'scale',
+        ...names.map((name) => `${kind.toLowerCase()}/${name}`),
+        `--replicas=${replicas}`,
+      ].join(' '),
+    )
+    .join('\n')
+}
+
+/**
+ * `kubectl --context c -n ns rollout restart <kind>/<a> <kind>/<b>` — one
+ * line per namespace. Always namespaced, for the same reason `scale` is.
+ */
+export function rolloutRestartMany(ctx: string, kind: string, targets: BulkTarget[]): string {
+  return byNamespace(targets)
+    .map(([ns, names]) =>
+      [...base(ctx, ns), 'rollout', 'restart', ...names.map((name) => `${kind.toLowerCase()}/${name}`)].join(
+        ' ',
+      ),
+    )
+    .join('\n')
+}
+
+/**
+ * `kubectl --context c cordon <a> <b>` or `... uncordon <a> <b>`.
+ *
+ * Nodes are cluster-scoped, so there is never a `-n` and never more than one
+ * line. kubectl accepts several nodes in one invocation, which is what makes
+ * this the honest equivalent of a bulk cordon rather than a shorthand.
+ */
+export function cordon(ctx: string, names: string[], on: boolean): string {
+  return [...base(ctx), on ? 'cordon' : 'uncordon', ...names].join(' ')
+}
+
 /** Options `logs` accepts, each contributing one flag only when it is set. */
 export interface LogsOptions {
   container?: string

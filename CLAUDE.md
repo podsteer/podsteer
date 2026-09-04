@@ -929,6 +929,22 @@ same as one already in the explicit file.
   worse outcome than refusing to start, because a caller cannot tell "capacity
   freed" from "capacity freed except for the pod that mattered" without
   reading the report closely.
+- **A bulk action is planned in the domain and executed in the application
+  layer, and the two share one function.** `domain.PlanBulk`
+  (`app/domain/bulk.go`) decides act/skip per selected object from facts the
+  list rows already carry — the controlling `ownerReference` (never a label),
+  a workload's desired count, a node's cordoned flag, the cluster's read-only
+  flag — so planning a selection costs no read. `ManagementAPI.PlanBulk`
+  shows that plan in the review dialog, and `ManagementService.BulkDelete`,
+  `BulkRestart`, `BulkScale` and `BulkCordon` run the SAME function again
+  before fanning the acting lines out over the single-object
+  `ManagementPort` methods (bounded errgroup, no shared context), so what was
+  reviewed is what runs. Unlike a drain, **a failure never aborts the rest**:
+  one forbidden delete is a per-object result beside forty-nine successes,
+  classified exactly as a single write's error would be, because a run that
+  stopped halfway would leave the operator unable to tell from the list which
+  rows were touched. The read-only guard runs once, up front, for the whole
+  selection.
 - **Eviction, never deletion, is what a drain and the pod drawer's Evict both
   use.** `ManagementPort.EvictPod` goes through the policy/v1 Eviction
   subresource specifically because it is the one request a PodDisruptionBudget

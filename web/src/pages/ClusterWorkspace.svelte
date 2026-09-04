@@ -10,6 +10,10 @@
 <script lang="ts">
   import DetailDrawer from '$lib/components/DetailDrawer.svelte'
   import CreateResourceDialog from '$lib/components/CreateResourceDialog.svelte'
+  import BulkActionBar from '$lib/components/BulkActionBar.svelte'
+  import BulkActionDialog from '$lib/components/BulkActionDialog.svelte'
+  import { escapeUnclaimed } from '$lib/escape'
+  import type { BulkActionId } from '$lib/bulk'
   import NamespacesView from './NamespacesView.svelte'
   import ApplicationsView from './ApplicationsView.svelte'
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
@@ -105,6 +109,13 @@
   const created = flash(2000)
 
   /**
+   * The bulk action under review, or null when none is. One dialog serves
+   * every verb: which rows it acts on is the session's selection, and what
+   * it does to each is the plan it fetches on open.
+   */
+  let bulkAction = $state<BulkActionId | null>(null)
+
+  /**
    * The skeleton the dialog opens with.
    *
    * Live here, but the dialog itself only reads its `seed` prop at the
@@ -191,11 +202,26 @@
    * Cmd+B / Ctrl+B toggles the navigator.
    * Cmd+R / Ctrl+R refreshes.
    * Cmd+K / Ctrl+K focuses the search field.
+   * Escape clears the row selection, when nothing nearer has claimed it.
    *
    * Matched against $lib/shortcuts rather than a literal key check, so this
    * handler and ShortcutSheet.svelte read from one table and cannot drift.
+   *
+   * Escape is the exception, and it goes through $lib/escape's stack: a
+   * dialog, a drawer or a menu that is open owns the keystroke, so the
+   * selection clears only once there is nothing above the list — one Escape
+   * per layer, innermost first. A text field's own Escape (the search box
+   * blurs on it) is left alone too.
    */
   function onKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      if (!escapeUnclaimed() || session.selection.count === 0) return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      session.selection.clear()
+      return
+    }
+
     if (shortcut('toggle-navigator').matches(event)) {
       event.preventDefault()
       preferences.toggleNavigator()
@@ -385,6 +411,21 @@
     {/if}
   </section>
 </div>
+
+<!-- Over the list, while rows are ticked. The session's selection is
+     cleared on every kind or namespace change, so the bar can never name a
+     count from a list that is no longer on screen. -->
+{#if session.isList}
+  <BulkActionBar {session} {isReadOnly} {readOnlyReason} onaction={(action) => (bulkAction = action)} />
+{/if}
+
+<BulkActionDialog
+  open={bulkAction !== null}
+  action={bulkAction ?? 'delete'}
+  {session}
+  {productionGroup}
+  onclose={() => (bulkAction = null)}
+/>
 
 <DetailDrawer {session} />
 

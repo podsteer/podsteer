@@ -105,6 +105,32 @@ func (a *App) requestContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(parent, a.requestTimeout)
 }
 
+// bulkTimeoutCap is the most a bulk action may take however large the
+// selection: a wedged API server must not pin the review dialog for an hour
+// because somebody selected a page of two hundred rows.
+const bulkTimeoutCap = 10 * time.Minute
+
+// requestContextFor derives a context for a call that is really `requests`
+// single calls — a bulk action over that many objects.
+//
+// One request timeout each rather than one for the lot: the whole point of
+// the bound is that a quiet cluster surfaces as an error, and a bulk delete
+// of fifty pods against a slow cluster that answers each in a second is not
+// quiet, it is fifty seconds of work that a single 30s timeout would cut
+// off halfway with the rest never attempted. Capped, so the bound still
+// means something.
+func (a *App) requestContextFor(requests int) (context.Context, context.CancelFunc) {
+	parent, ok := a.runtimeContext()
+	if !ok {
+		parent = context.Background()
+	}
+	timeout := a.requestTimeout * time.Duration(max(requests, 1))
+	if timeout > bulkTimeoutCap {
+		timeout = bulkTimeoutCap
+	}
+	return context.WithTimeout(parent, timeout)
+}
+
 // Publish delivers a domain event to the frontend over the Wails event bus.
 //
 // The ctx parameter is the *request* context of whichever use case raised the

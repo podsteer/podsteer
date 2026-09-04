@@ -81,6 +81,11 @@ var errNotFound = errors.New("not found")
 // a filename to seed the dialog with.
 var errEmptySuggestedName = errors.New("a suggested filename is required")
 
+// errInvalidBulkAction is raised when PlanBulk is asked to plan an action
+// that is not one of domain's BulkAction values — a frontend bug, reported
+// as invalid input rather than swallowed into an empty plan.
+var errInvalidBulkAction = errors.New("unknown bulk action")
+
 // apiError logs the full failure and returns the sanitised error the frontend
 // receives.
 //
@@ -244,6 +249,8 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, errInvalidURL),
 		errors.Is(err, errNotFound),
 		errors.Is(err, errEmptySuggestedName),
+		errors.Is(err, errInvalidBulkAction),
+		errors.Is(err, domain.ErrEmptyResourceName),
 		errors.Is(err, ports.ErrInvalidPort):
 		return CodeInvalidInput, err.Error()
 

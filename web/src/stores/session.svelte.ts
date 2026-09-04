@@ -45,6 +45,8 @@ import {
 } from '$lib/api/client'
 import { ApiError, toApiError } from '$lib/api/errors'
 import { findAutoscalers, type AutoscalerCheck } from '$lib/autoscalers'
+import { RowSelection } from '$lib/selection.svelte'
+import { nodeItem, podItem, rowKey, tableRowItem, workloadItem, type BulkItem } from '$lib/bulk'
 import { podStatusLabel } from '$lib/format'
 import { matchesPodStatusChips } from '$lib/podStatusFilters'
 import { describeQuery, matches, parseQuery, type Query, type Row } from '$lib/query'
@@ -474,6 +476,16 @@ export class ClusterSession {
   manifestStatus = $state<LoadStatus>('idle')
 
   /**
+   * The rows ticked for a bulk action — a different thing from the row the
+   * drawer is open on above: that is one object being read, this is a set
+   * about to be acted on together, and ticking five pods then opening a
+   * sixth to check something must leave the five ticked. Cleared whenever
+   * the list underneath changes kind or namespace, because a tick made on
+   * one list means nothing on another. See $lib/selection.
+   */
+  readonly selection = new RowSelection()
+
+  /**
    * Monotonic request counter.
    *
    * A slow response must never overwrite a newer one. Clicking through three
@@ -877,6 +889,44 @@ export class ClusterSession {
     restarts: this.pods.reduce((sum, pod) => sum + pod.restarts, 0),
   })
 
+  /**
+   * The ticked rows as a bulk action's plan needs them.
+   *
+   * Resolved against the rows held NOW rather than remembered at tick time:
+   * a row deleted by somebody else between the tick and the action drops
+   * out here instead of being sent to the cluster by name alone, and the
+   * count the action bar shows is of objects that still exist. Every fact
+   * on an item is a quotation of a field the row already carries — the
+   * controller a pod's "Controlled By" names, a workload's desired count, a
+   * node's cordoned flag — so planning costs no read at all. See $lib/bulk.
+   */
+  readonly bulkItems = $derived.by((): BulkItem[] => {
+    const kind = this.selectedKind
+    const keys = this.selection.keys
+    if (!kind || keys.size === 0) return []
+
+    switch (this.viewMode) {
+      case 'pods':
+        return this.pods
+          .filter((pod) => keys.has(rowKey(pod.namespace, pod.name)))
+          .map((pod) => podItem(kind, pod))
+      case 'workloads':
+        return this.workloads
+          .filter((workload) => keys.has(rowKey(workload.namespace, workload.name)))
+          .map((workload) => workloadItem(kind, workload))
+      case 'nodes':
+        return this.nodes.filter((node) => keys.has(node.name)).map((node) => nodeItem(kind, node))
+      case 'table':
+        return (this.table?.rows ?? [])
+          .filter(
+            (row) => row.name && keys.has(rowKey(kind.namespaced ? row.namespace : '', row.name)),
+          )
+          .map((row) => tableRowItem(kind, row))
+      default:
+        return []
+    }
+  })
+
   /** Loads the navigator tree and namespace list, then the default view. */
   initialise = async (): Promise<void> => {
     await Promise.all([this.loadKinds(), this.loadNamespaces()])
@@ -940,6 +990,7 @@ export class ClusterSession {
     this.selectedKindId = kindId
     this.page = 1
     this.closeDetail()
+    this.selection.clear()
     await this.refresh()
   }
 
@@ -1006,6 +1057,7 @@ export class ClusterSession {
       }
       this.page = 1
       this.closeDetail()
+      this.selection.clear()
       await this.refresh()
     }
 
@@ -1055,6 +1107,7 @@ export class ClusterSession {
     // navigated away from, and leaving it there over a list of something else
     // is a panel describing an object nothing on screen refers to.
     this.closeDetail()
+    if (changed) this.selection.clear()
 
     if (changed) await this.refresh()
   }
@@ -1065,6 +1118,7 @@ export class ClusterSession {
     this.namespace = namespace
     preferences.setClusterNamespace(this.cluster.id, namespace)
     this.page = 1
+    this.selection.clear()
     await this.refresh()
   }
 

@@ -51,6 +51,16 @@
      * name.
      */
     icon?: Component
+    /**
+     * A selection column, for bulk actions.
+     *
+     * Its header is the "select all on this page" checkbox rather than a
+     * sort control, it cannot be resized, and the column chooser does not
+     * list it — there is nothing to sort by, widen or hide in a tick box.
+     * Always paired with `pinned`, since a view that offers selection
+     * offers it on every row.
+     */
+    select?: boolean
   }
 
   /**
@@ -102,6 +112,12 @@
      * Export CSV control, the same way it already carries `columns` there.
      */
     exportRows?: () => CSVExport
+    /**
+     * The state of a `select` column's header checkbox, and what clicking
+     * it does. Supplied by a view whose rows carry a RowSelect cell; a
+     * select column with none draws a disabled box.
+     */
+    selectAll?: { checked: boolean; indeterminate: boolean; ontoggle: () => void }
   }
 
   let {
@@ -113,6 +129,7 @@
     sort = null,
     onsort,
     exportRows,
+    selectAll,
   }: Props = $props()
 
   let body = $state<HTMLTableSectionElement | null>(null)
@@ -179,11 +196,16 @@
   })
 
   /**
-   * Arrow keys walk the rows; Enter opens one; Escape lets go.
+   * Arrow keys walk the rows; Enter opens one; Space ticks one; Escape lets
+   * go.
    *
    * Enter clicks the row rather than calling a handler of its own, so the
    * keyboard and the mouse can never open different things — whatever a click
-   * does today is what Enter does.
+   * does today is what Enter does. Space goes the same way to the row's tick
+   * box (see RowSelect), for the same reason: one path, owned by the cell,
+   * and shift carries across so a keyboard range reads like a shift-click.
+   * A view with no tick boxes keeps Space as a second Enter, so the key does
+   * something everywhere.
    */
   function onRowKeydown(event: KeyboardEvent): void {
     const current = (event.target as HTMLElement | null)?.closest('tr')
@@ -219,10 +241,21 @@
         focus(all.length - 1)
         break
       case 'Enter':
-      case ' ':
         event.preventDefault()
         current.click()
         break
+      case ' ': {
+        event.preventDefault()
+        const box = current.querySelector<HTMLInputElement>('input[data-row-select]')
+        if (box) {
+          box.dispatchEvent(
+            new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: event.shiftKey }),
+          )
+        } else {
+          current.click()
+        }
+        break
+      }
       case 'Escape':
         event.preventDefault()
         current.blur()
@@ -388,6 +421,23 @@
                   : undefined}
                 class="relative p-0 font-medium"
               >
+                {#if column.select}
+                  <!-- The page's tick box: all, some (indeterminate) or none
+                       of the rows on screen. It describes THIS page and acts
+                       on this page — see RowSelection.toggleAllVisible. -->
+                  <span class="flex items-center py-2 {index === 0 ? 'pl-5' : 'px-3'}">
+                    <input
+                      type="checkbox"
+                      checked={selectAll?.checked ?? false}
+                      indeterminate={selectAll?.indeterminate ?? false}
+                      disabled={!selectAll}
+                      aria-label="Select all rows on this page"
+                      title="Select all rows on this page"
+                      class="size-3.5 cursor-pointer accent-primary"
+                      onchange={() => selectAll?.ontoggle()}
+                    />
+                  </span>
+                {:else}
                 <button
                   type="button"
                   onclick={() => onsort?.(column.id)}
@@ -450,6 +500,7 @@
                   onpointercancel={endResize}
                   ondblclick={() => resetWidth(column)}
                 ></span>
+                {/if}
               </th>
             {/each}
           </tr>

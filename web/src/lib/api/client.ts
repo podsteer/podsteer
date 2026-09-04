@@ -70,6 +70,11 @@ import {
   ProbeLocalPort as bindProbeLocalPort,
   FreeLocalPort as bindFreeLocalPort,
   RollbackWorkload as bindRollbackWorkload,
+  PlanBulk as bindPlanBulk,
+  BulkDelete as bindBulkDelete,
+  BulkRestart as bindBulkRestart,
+  BulkScale as bindBulkScale,
+  BulkCordon as bindBulkCordon,
 } from '$lib/wailsjs/go/wails/ManagementAPI'
 import {
   GetOverview as bindGetOverview,
@@ -175,6 +180,11 @@ export type DrainSkip = wails.DrainSkip
 export type DrainFailure = wails.DrainFailure
 /** What a drain would do, previewed before it runs. */
 export type DrainPlan = wails.DrainPlanDTO
+/** One selected row, as a bulk action's plan and run take it. See $lib/bulk. */
+export type BulkItemDTO = wails.BulkItemDTO
+export type BulkLine = wails.BulkLineDTO
+export type BulkPlan = wails.BulkPlanDTO
+export type BulkResult = wails.BulkResultDTO
 /** What happened when a drain ran. */
 export type DrainReport = wails.DrainReportDTO
 /** What an apply — real or a dry-run Validate — actually did. */
@@ -955,6 +965,61 @@ export function drainNode(
   return call(() =>
     bindDrainNode(clusterId, name, force, deleteEmptyDirData, gracePeriodSeconds, timeoutSeconds),
   )
+}
+
+// --- Bulk actions -----------------------------------------------------------
+
+/**
+ * Previews what a bulk action would do to each selected row, without
+ * touching the cluster.
+ *
+ * The same domain function the run itself goes through — see
+ * app/domain/bulk.go — so the review dialog and the outcome can never
+ * disagree. Call it when the dialog opens and again whenever the target
+ * replica count changes; it costs no cluster read at all, since every fact
+ * it needs is on the rows already on screen. `replicas` is read for the
+ * scale action only.
+ */
+export function planBulk(
+  clusterId: string,
+  action: string,
+  items: BulkItemDTO[],
+  replicas = 0,
+): Promise<BulkPlan> {
+  return call(() => bindPlanBulk(clusterId, action, items, replicas))
+}
+
+/**
+ * Deletes every selected row the plan allows. Resolves to one result per
+ * row whether it was skipped, deleted or failed — a per-object failure is a
+ * result, never a rejected promise; only what stops the whole action (a
+ * read-only cluster, an unusable argument) rejects.
+ */
+export function bulkDelete(clusterId: string, items: BulkItemDTO[]): Promise<BulkResult[]> {
+  return call(() => bindBulkDelete(clusterId, items))
+}
+
+/** Rolling-restarts every selected Deployment, StatefulSet and DaemonSet. Resolves like bulkDelete. */
+export function bulkRestart(clusterId: string, items: BulkItemDTO[]): Promise<BulkResult[]> {
+  return call(() => bindBulkRestart(clusterId, items))
+}
+
+/** Scales every selected Deployment, StatefulSet and ReplicaSet to `replicas`. Resolves like bulkDelete. */
+export function bulkScale(
+  clusterId: string,
+  items: BulkItemDTO[],
+  replicas: number,
+): Promise<BulkResult[]> {
+  return call(() => bindBulkScale(clusterId, items, replicas))
+}
+
+/** Cordons (`cordon` true) or uncordons every selected node. Resolves like bulkDelete. */
+export function bulkCordon(
+  clusterId: string,
+  items: BulkItemDTO[],
+  cordon: boolean,
+): Promise<BulkResult[]> {
+  return call(() => bindBulkCordon(clusterId, items, cordon))
 }
 
 /**
