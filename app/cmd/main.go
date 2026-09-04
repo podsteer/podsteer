@@ -56,11 +56,68 @@ const trafficLightVerticalNudge = 6.0
 // It is the only function in the codebase that calls os.Exit, so every other
 // layer stays testable and composable.
 func Main() {
-	if err := run(); err != nil {
+	if err := dispatch(os.Args[1:]); err != nil {
 		// The logger may not exist yet if configuration itself failed, so this
 		// deliberately writes to stderr directly.
 		fmt.Fprintf(os.Stderr, "podsteer: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// dispatch chooses between the desktop application and the subcommands.
+//
+// NO ARGUMENTS MEANS THE WINDOW, and that is not merely the default — it is
+// what keeps `wails build` working. Wails generates its TypeScript bindings
+// by compiling and RUNNING this binary with no arguments of its own (see
+// CLAUDE.md, "Two structural facts that look like mistakes"), so anything
+// that changed the argument-free path — a required flag, a usage message, a
+// prompt — would take the build down with it. A subcommand is therefore
+// additive: it is reached only when the first argument names it, and every
+// other launch behaves exactly as it did before this existed.
+func dispatch(args []string) error {
+	chosen, rest, err := route(args)
+	if err != nil {
+		return err
+	}
+
+	switch chosen {
+	case commandMCP:
+		return runMCP(rest)
+	default:
+		return run()
+	}
+}
+
+// command is what a set of arguments asks for.
+type command int
+
+const (
+	// commandWindow is the desktop application, and the zero value: the
+	// argument-free launch must never depend on this file adding a case.
+	commandWindow command = iota
+	// commandMCP is the Model Context Protocol server on stdio.
+	commandMCP
+)
+
+// route decides which command the arguments name.
+//
+// Split from dispatch so the rule above — no arguments means the window — is
+// something a test can assert without starting a window, which is exactly
+// what a test of the binding-generation path cannot do.
+func route(args []string) (command, []string, error) {
+	if len(args) == 0 {
+		return commandWindow, nil, nil
+	}
+
+	switch args[0] {
+	case "mcp":
+		return commandMCP, args[1:], nil
+	default:
+		// Refused rather than ignored. Silently opening the window on an
+		// argument nobody recognised would answer a mistyped subcommand with
+		// a desktop application, which is not what anyone piping stdio at
+		// this binary is waiting for.
+		return commandWindow, nil, fmt.Errorf("unknown command %q (try: podsteer mcp --help)", args[0])
 	}
 }
 
@@ -267,6 +324,20 @@ func run() error {
 		return fmt.Errorf("wiring management service: %w", err)
 	}
 
+	// The on-request inspections: a reachability probe, and an image report.
+	// The registry goes in for one method only — an in-cluster probe runs a
+	// command in somebody's container, which is write-shaped whatever it
+	// reads, so it is refused on a cluster the operator marked read-only and
+	// audited like every other exec here.
+	inspectService, err := application.NewInspectService(application.InspectServiceDeps{
+		Inspect:  kubernetes,
+		Registry: registry,
+		Logger:   logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring inspect service: %w", err)
+	}
+
 	// --- Driving (inbound) adapters ---------------------------------------
 	//
 	// These depend on the inbound ports, not on the concrete services: the
@@ -320,6 +391,11 @@ func run() error {
 	fileCopyAPI, err := wailsadapter.NewFileCopyAPI(managementService, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring file copy API: %w", err)
+	}
+
+	inspectAPI, err := wailsadapter.NewInspectAPI(inspectService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring inspect API: %w", err)
 	}
 
 	historyAPI, err := wailsadapter.NewHistoryAPI(historyService, desktop, logger)
@@ -430,6 +506,7 @@ func run() error {
 			managementAPI,
 			terminalAPI,
 			fileCopyAPI,
+			inspectAPI,
 			systemAPI,
 			updateAPI,
 			notificationAPI,

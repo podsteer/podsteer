@@ -173,4 +173,15 @@ var (
 	// such file or directory` — IS the diagnosis, and paraphrasing it would
 	// throw away the only thing the operator can act on.
 	ErrCommandFailed = errors.New("the command failed inside the container")
+
+	// ErrProbeToolMissing means an in-cluster reachability probe found
+	// nothing in the container to probe with — no nc, no curl, no wget. The
+	// direct sibling of ErrTarMissing and it exists for the same reason: a
+	// distroless or scratch image carries no such tool, that is the ordinary
+	// failure for this feature rather than a fault in anything, and the
+	// alternative wording — "unreachable" — would be a claim about somebody's
+	// Service made on the strength of somebody else's image. Nothing about
+	// the cluster, the credentials or the network is wrong, and retrying
+	// cannot help; another container is the answer.
+	ErrProbeToolMissing = errors.New("the container has nothing to probe with")
 )

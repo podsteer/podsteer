@@ -41,6 +41,19 @@ remains in the pod's spec until the pod is deleted — and it can create a
 root shell on that node (the equivalent of `kubectl node-shell`); PodSteer
 deletes that pod when its terminal closes or when it exits, and the pod carries
 a one-hour `activeDeadlineSeconds` as a backstop for the case PodSteer cannot.
+It can also **run one bounded connect attempt inside a container you name**, as
+a reachability probe: a single `sh -c` that resolves a name and tries a TCP
+connection, using whatever `nc`, `curl` or `wget` the image already has.
+Nothing is created for it — no pod, no sidecar, no file — and it exits within
+five seconds. It reads nothing and writes nothing, but it is an **exec into
+somebody's container**, which is the same subresource a shell uses and appears
+in your cluster's audit log as one, so it is treated as a write here: it is
+refused on a cluster you marked read-only, and it leaves one line in PodSteer's
+own log naming the cluster, namespace, pod, container and the address that was
+probed — never what the probe found. The other half of that feature reaches your
+cluster only through the API server your kubeconfig names, either through its
+own service proxy or through a port-forward PodSteer opens and closes again.
+
 It does all of this with the credentials your kubeconfig already grants, using
 the same client library `kubectl` uses.
 
@@ -49,6 +62,13 @@ is different in kind from everything above, so it is set out in full below
 under "The local terminal, and the program it can start". Nothing in a cluster
 is involved: it runs your login shell, or a coding agent you already have
 installed, on this machine.
+
+**The same binary is also an MCP server a coding agent can start**, with
+`podsteer mcp`. It is set out in full below under "The MCP subprocess, and what
+it can read". Two things about it are worth having here: it runs on stdio, so
+it opens no port and serves nothing over a network; and every tool it offers is
+a read — it cannot delete, scale, restart, apply, exec, port-forward or reveal
+a Secret's values.
 
 **PodSteer enforces no permissions of its own, and cannot.** It is a client. If
 an account should not be able to delete a namespace, that has to be true in the
@@ -101,6 +121,18 @@ What the check does and does not do:
   your browser. It does not download, replace its own binary, or run an
   installer.
 
+**No container registry is contacted, and that is worth saying explicitly**
+because the feature it would serve exists. The image pane in a pod's drawer
+describes a container's image — its reference, its digest, its size on the node
+that pulled it, the other names that node knows it by — entirely from what
+Kubernetes itself reports. The layers, the entrypoint and the labels are only in
+the image's own manifest in a registry, and reading those would mean PodSteer
+opening connections to third-party hosts and, for a private image, using a pull
+Secret from your cluster to authenticate them. Neither is on the list above, so
+neither happens: the pane states what it did not look at rather than quietly
+looking. If that ever changes it will be off by default, per image, initiated by
+you, and described here before it ships.
+
 The webview still has no network access at all: a content security
 policy in `web/index.html` forbids every remote origin, and all cluster traffic
 goes through the Go process rather than the page. Two things are written to
@@ -110,6 +142,17 @@ retention setting, under the per-user application directory at mode 0600
 Linux, `%AppData%\PodSteer` on Windows); and display preferences — theme,
 page size, column widths — which the interface keeps in the webview's own
 storage rather than in that directory.
+
+**One cluster-shaped thing is in that directory, in the file names.** A
+history file is named after the kubeconfig context it records, sanitised for
+the filesystem and suffixed with a short hash so two contexts differing only
+in punctuation cannot collide — so somebody with access to your home directory
+can see which clusters you have opened, though not what is in them. The
+samples themselves hold capacity figures and nothing else: no object names, no
+logs, no manifests, and no address or credential for any cluster. This is the
+same disclosure the settings file makes further down, for the same reason: a
+context name is a handle your own kubeconfig already gives you, and naming it
+is what makes the file readable to you.
 
 A third kind of write is a CSV export, only where you choose to save it,
 containing exactly the rows and columns a table is showing you at the moment
@@ -267,6 +310,53 @@ for it to be gone rather than assuming.
 **Not available on Windows.** There is no pseudo-terminal for it in this build;
 the control is absent and says why, rather than failing when pressed.
 
+## The MCP subprocess, and what it can read
+
+`podsteer mcp` runs the same binary as a **Model Context Protocol server**, so
+a coding agent you already use can read your clusters through PodSteer. Your
+agent starts it; you do not run it by hand.
+
+**It is a subprocess on stdio, not a server.** It binds no socket, opens no
+port, serves nothing over HTTP and contacts nothing we operate. It talks JSON
+over its own standard input and output, to the process that started it and to
+nothing else, and it exists only for as long as that process keeps the pipe
+open. There is no account and no telemetry here either — the same commitment
+the rest of this file makes.
+
+**Everything it offers is a read**, and that is structural rather than a
+promise: the application code it is given carries no writing methods at all, so
+there is no delete, scale, restart, apply, exec, port-forward, file copy,
+manifest edit or node shell in it, and none can be added by writing a handler.
+The reason there are none is that every write in the interface is guarded by a
+confirmation an operator reads — a type-the-name gate, a drain preview, a bulk
+review — and an agent cannot be shown one.
+
+What it can read is what the interface already shows you: the clusters in your
+kubeconfig, namespaces, kinds, pods, workloads, nodes, any kind at all as the
+API server prints it, one object's manifest, a bounded tail of a container's
+log, Kubernetes Events, the cluster assessment, a pod's assessment, the
+dependency map, and the RBAC reviews.
+
+**It has exactly your permissions.** Every read goes to the API server with
+your kubeconfig, so the cluster's own RBAC decides what answers — the server
+grants nothing your account does not already have. A refusal is reported as a
+refusal naming what was refused, never as an empty list, so an agent cannot
+conclude that a namespace is empty because it was not allowed to look.
+
+**A Secret's values never leave**, whichever tool is called. A manifest read
+through it has each value replaced by its decoded size before the object is
+serialised — the same masking the YAML tab uses, applied in the same place —
+and the two calls that can return key material (the per-key reveal and the TLS
+certificate inspection) are not reachable from it at all. Tests assert both.
+
+**Nothing is written anywhere.** No file, no kubeconfig — `current-context`
+included — and no history. Its log lines go to stderr, never to the transport,
+and they name operations and errors rather than the contents of any answer.
+
+The agent's own behaviour remains between you and the tool you installed, as
+with the local terminal above: what it does with what it reads, and whatever
+else it can reach with your credentials, is not something PodSteer mediates.
+
 ### In scope
 
 - Anything that lets PodSteer act on a cluster beyond what the loaded
@@ -283,6 +373,12 @@ the control is absent and says why, rather than failing when pressed.
   annotations, log output or an API server's table columns rendered in a way
   that executes, or that escapes into the terminal or the manifest editor.
 - Code execution from opening a manifest, a log stream, or an exec session.
+- A reachability probe running anything in a container other than the bounded
+  connect attempt described above, running one in a container you did not name,
+  or a probe's target reaching the shell as syntax rather than as data.
+- PodSteer opening a connection to anything that is not an API server your
+  kubeconfig names or, for the update check, `api.github.com` — a container
+  registry included.
 - The local terminal starting anything other than the shell or agent you chose,
   or the environment it is given carrying more than the variables listed above
   — in particular a kubeconfig being written, copied to disk, or having its
@@ -290,6 +386,11 @@ the control is absent and says why, rather than failing when pressed.
 - A file downloaded from a container landing anywhere outside the folder you
   chose, or keeping a setuid or setgid bit — however the archive the
   container sent was crafted.
+- The MCP subprocess doing anything but read: a tool that changes a cluster,
+  a Secret's values reaching it, a network listener of any kind, or anything
+  it writes to disk. Also anything by which the process that started it
+  reaches a cluster your kubeconfig does not name, or a refusal being
+  presented to the agent as an absence.
 - An exported settings file containing anything the list above says it does
   not: a credential, a cluster address, or the name of any object in any
   cluster. The file is made to be shared, so anything that leaks into it

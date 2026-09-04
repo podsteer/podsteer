@@ -17,10 +17,15 @@
   import NamespaceContents from './NamespaceContents.svelte'
   import WorkloadUsage from './WorkloadUsage.svelte'
   import CertificateInspector from './CertificateInspector.svelte'
+  import ReachabilityPanel from './ReachabilityPanel.svelte'
+  import ImagePanel from './ImagePanel.svelte'
+  import { isProbeableKind } from '$lib/reachability'
   import GitOpsDetail from './GitOpsDetail.svelte'
   import { gitOpsPanelFor } from '$lib/gitops/panel'
   import OperatorDetail from './OperatorDetail.svelte'
   import { operatorPanelFor } from '$lib/operators/panel'
+  import StandardApiDetail from './StandardApiDetail.svelte'
+  import { standardPanelFor } from '$lib/standardapis/panel'
   import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
@@ -369,6 +374,17 @@
   const operatorPanel = $derived(operatorPanelFor(group, kind))
 
   /**
+   * The standard Kubernetes API whose object this is, if it is one.
+   *
+   * The third family selected the same way, by group AND kind — see
+   * $lib/standardapis/panel. Gateway API ships as CRDs and reaches the
+   * navigator only where somebody installed it; resource.k8s.io and
+   * admissionregistration.k8s.io are in-tree but gated, and reach it only
+   * where the gate is on. Null everywhere else.
+   */
+  const standardPanel = $derived(standardPanelFor(group, kind))
+
+  /**
    * Whether the GitOps panel renders the conditions itself.
    *
    * Argo CD's conditions carry a type and a message and NO status, so the
@@ -397,6 +413,26 @@
   const isPodPanel = $derived(kind === 'Pod' || !!selectedPod)
 
   /**
+   * Whether a reachability probe is worth offering here.
+   *
+   * Only the three kinds with an address to aim at — see $lib/reachability,
+   * which also decides which vantages each one can honestly answer from.
+   */
+  const canProbe = $derived(isProbeableKind(kind) && !!clusterId && !!metadata.name)
+
+  /**
+   * Every container of an open pod, in the order the panel lists them, for
+   * the image pane's own selector. Init and ephemeral containers included:
+   * an init container that cannot pull its image is exactly the case
+   * somebody opens that pane for, and its image appears nowhere else.
+   */
+  const imageContainerNames = $derived([
+    ...containers.map((container: { name?: string }) => container.name ?? ''),
+    ...initContainers.map((container: { name?: string }) => container.name ?? ''),
+    ...ephemeralContainers.map((container: { name?: string }) => container.name ?? ''),
+  ].filter(Boolean))
+
+  /**
    * A kind with no purpose-built sections at all — a CRD, or anything served
    * by the generic table.
    *
@@ -410,6 +446,7 @@
       !isIngress &&
       !gitOpsPanel &&
       !operatorPanel &&
+      !standardPanel &&
       !selectedNode &&
       !selectedNamespaceRow &&
       kind !== 'Namespace',
@@ -1424,6 +1461,26 @@
     {/if}
 
     <!--
+      WHAT ONE OF KUBERNETES' OWN NEWER APIS DECLARES — Gateway API, device
+      allocation, admission policies. Quoted from the one manifest already
+      here, with no exception at all: a route's parent, a claim's holder and a
+      binding's policy render as followable nodes by Kind, and none of them is
+      fetched to see what it said back. The Conditions section below still
+      renders the object's own top-level conditions, coloured by the domain —
+      this panel says what the generic table and that list cannot. See
+      $lib/standardapis/panel.
+    -->
+    {#if standardPanel}
+      <StandardApiDetail
+        panel={standardPanel}
+        manifest={parsedManifest}
+        namespace={metadata.namespace ?? ''}
+        {canOpen}
+        {onopen}
+      />
+    {/if}
+
+    <!--
       Where an Ingress actually sends people, as somewhere they can go.
     -->
     {#if isIngress && routeRows.length > 0}
@@ -1468,6 +1525,43 @@
     {#if hasCertificate && clusterId && metadata.name}
       {#key `${clusterId}|${metadata.namespace}|${metadata.name}`}
         <CertificateInspector {clusterId} namespace={metadata.namespace ?? ''} name={metadata.name} />
+      {/key}
+    {/if}
+
+    <!--
+      CAN THIS ACTUALLY BE REACHED, AND FROM WHERE. Every other section above
+      quotes what the object declares; this is the only one that goes and
+      finds out, which is why it never runs on its own — see the panel's own
+      header. Keyed on the object so switching rows starts over rather than
+      showing one Service's answer under another's name.
+    -->
+    {#if canProbe}
+      {#key `${clusterId}|${metadata.namespace}|${kind}|${metadata.name}`}
+        <ReachabilityPanel
+          kind={kind ?? ''}
+          manifest={parsedManifest}
+          clusterId={clusterId ?? ''}
+          probePod={isPodPanel ? (metadata.name ?? '') : ''}
+          probeContainer={isPodPanel ? (imageContainerNames[0] ?? '') : ''}
+          {isReadOnly}
+          {readOnlyReason}
+        />
+      {/key}
+    {/if}
+
+    <!--
+      WHAT THIS CONTAINER'S IMAGE IS, without pulling it. On request, like the
+      certificate above and for a related reason: it costs a GET of the pod
+      and a GET of its node, and neither belongs on a refresh tick.
+    -->
+    {#if isPodPanel && clusterId && metadata.name && imageContainerNames.length > 0}
+      {#key `${clusterId}|${metadata.namespace}|${metadata.name}`}
+        <ImagePanel
+          {clusterId}
+          namespace={metadata.namespace ?? ''}
+          podName={metadata.name}
+          containers={imageContainerNames}
+        />
       {/key}
     {/if}
 

@@ -119,6 +119,11 @@ import {
   StartDownload as bindStartDownload,
   StartUpload as bindStartUpload,
 } from '$lib/wailsjs/go/wails/FileCopyAPI'
+import {
+  ImageReport as bindImageReport,
+  ProbeFromHere as bindProbeFromHere,
+  ProbeFromPod as bindProbeFromPod,
+} from '$lib/wailsjs/go/wails/InspectAPI'
 import { EventsOn } from '$lib/wailsjs/runtime/runtime'
 import type { wails } from '$lib/wailsjs/go/models'
 import { toApiError } from './errors'
@@ -182,6 +187,20 @@ export type RoleBindingRef = wails.RoleBindingRef
 export type RBACFinding = wails.RBACFinding
 /** One role, what references it, and what its rules permit. */
 export type RoleInspection = wails.RoleInspection
+
+/** What the frontend read off an object it is offering to probe. Every field
+    is a quotation of the manifest already on screen, so planning a probe
+    costs no read at all. */
+export type ProbeSubjectInput = wails.ProbeSubjectInput
+/** One step of a probe — resolution, connection, request — and what it
+    produced. The three stay apart because a name that did not resolve and a
+    port that refused need opposite next steps. */
+export type ProbeStep = wails.ProbeStep
+/** A finished reachability probe: what was tried, from where, what happened. */
+export type ProbeResult = wails.ProbeResult
+/** What Kubernetes reports about one container's image. Read `sizeStatus`
+    before `sizeBytes`, and always show `bounded`. */
+export type ImageReport = wails.ImageReport
 
 export type NamespaceInventory = wails.NamespaceInventory
 export type ConditionRef = wails.ConditionRef
@@ -907,6 +926,74 @@ export function inspectTLSSecret(
   name: string,
 ): Promise<CertificateChain> {
   return call(() => bindInspectTLSSecret(clusterId, namespace, name))
+}
+
+// --- On-request inspections -------------------------------------------------
+//
+// A reachability probe and an image report. NEITHER IS EVER CALLED BY THE
+// REFRESH TICK, and that is the one rule this whole group shares: a probe
+// opens a socket or runs a command in somebody's container, and repeating
+// that every ten seconds would fill an audit log with execs nobody asked for.
+// The panels above them keep the answer with the time it was taken and wait
+// to be asked again — the same discipline `objectGraph` follows.
+
+/**
+ * Probes a target from THIS MACHINE, through the API server named in the
+ * kubeconfig and through nothing else.
+ *
+ * A Service goes through the API server's own service proxy; a pod through an
+ * ephemeral port-forward the backend opens and tears down again. An Ingress
+ * host is refused outright, because reaching it would mean opening a
+ * connection to a host that is not an API server — the in-cluster vantage is
+ * what answers for one.
+ *
+ * A target that refuses a connection is an ordinary RESULT, not a rejection:
+ * the promise resolves with an outcome of "refused". A rejection means the
+ * probe could not be performed at all.
+ */
+export function probeFromHere(
+  clusterId: string,
+  subject: wails.ProbeSubjectInput,
+): Promise<wails.ProbeResult> {
+  return call(() => bindProbeFromHere(clusterId, subject))
+}
+
+/**
+ * Probes a target from inside a container the operator chose.
+ *
+ * A WRITE-SHAPED ACT: it runs a command in somebody else's container, so the
+ * backend refuses it on a cluster marked read-only and leaves one audit line
+ * naming the cluster, namespace, pod, container and target. Like the reveal of
+ * a Secret key, never call it speculatively — one call, one deliberate press.
+ *
+ * A container with no nc, curl or wget rejects with the `probe_tool_missing`
+ * code, which says nothing about the target and everything about the image.
+ */
+export function probeFromPod(
+  clusterId: string,
+  namespace: string,
+  podName: string,
+  containerName: string,
+  subject: wails.ProbeSubjectInput,
+): Promise<wails.ProbeResult> {
+  return call(() => bindProbeFromPod(clusterId, namespace, podName, containerName, subject))
+}
+
+/**
+ * Describes one container's image using only what Kubernetes reports.
+ *
+ * Two GETs — the pod, and the node that pulled it. No registry is contacted
+ * and no pull Secret is read; the report carries the line saying so, and the
+ * panel always shows it, because empty space where layers would be is a claim
+ * nothing checked.
+ */
+export function imageReport(
+  clusterId: string,
+  namespace: string,
+  podName: string,
+  containerName: string,
+): Promise<wails.ImageReport> {
+  return call(() => bindImageReport(clusterId, namespace, podName, containerName))
 }
 
 // --- Port forwards ----------------------------------------------------------

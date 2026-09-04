@@ -20,6 +20,7 @@ app/
 ├── adapters/
 │   ├── k8s/        client-go + cli-runtime; satisfies the Kubernetes ports
 │   ├── wails/      bound structs and DTOs; the frontend API contract
+│   ├── mcp/        read-only tools for a coding agent, over stdio
 │   └── assets/     embeds the built frontend
 └── config/         environment-driven configuration
 ```
@@ -671,6 +672,100 @@ certificate itself is public material, but it lives beside the private key in
 the same object, so it is parsed only on the same deliberate, per-Secret
 request `RevealSecretKey` requires, never when the Secret pane opens.
 
+## A reachability probe says WHERE it was answered from, or it says nothing
+
+`app/domain/reachability.go` plans a probe of a Service, a pod or an Ingress
+and shapes what came back; `app/adapters/k8s/reachability.go` opens the
+sockets; `application.InspectService` guards and audits it. **Two vantages, and
+the difference between them is the entire feature**, so `ProbeResult` carries
+its vantage and its ROUTE and no surface renders an outcome without both. From
+this machine, a Service goes through the API server's own service proxy — a
+success means the endpoints answer *the API server*, which is subject to no
+NetworkPolicy — and a pod goes through an **ephemeral port-forward**, reusing
+`StartPortForward`/`StopPortForward` rather than a second SPDY dialer and torn
+down in a defer so a cancelled probe cannot leak a bound socket. From inside
+the cluster, `domain.ProbeCommand` is one `sh -c` in a container the operator
+names, so cluster DNS, the CNI and every policy in the path are exercised as a
+workload experiences them. **An Ingress has no local vantage at all**, and that
+is a product rule rather than a gap: reaching a public host means connecting to
+something that is not an API server, which is the one thing "External systems"
+below forbids — the panel says so and points at a browser.
+
+Five rules, each with a test:
+
+- **DNS and connect are separate steps and always will be.** A name that does
+  not resolve and an address that refuses need opposite next steps, so
+  `OutcomeNameNotResolved` is its own outcome and a failed resolution
+  short-circuits rather than reporting a connect that never happened. `skipped`
+  is a third status because an address literal has nothing to resolve, and
+  rendering that as a failure sends somebody to look at cluster DNS.
+- **A refusal is an ordinary answer, never an error dialog.** Only a probe that
+  could not be PERFORMED rejects — an ExternalName or headless Service, a UDP
+  port, an Ingress from here — and each of those is a fact about the object that
+  `CodeProbeUnavailable` carries verbatim into the panel where the result would
+  have gone. A container with no `nc`, `curl` or `wget` is
+  `ports.ErrProbeToolMissing` / `probe_tool_missing`, the direct sibling of
+  `ErrTarMissing` and for the same reason: it says nothing about the target.
+- **Every probe is explicit, one-shot and bounded.** `domain.ProbeTimeout` (5s)
+  is a hard ceiling carried on the plan so no adapter invents its own, and
+  nothing on this path is ever called by the refresh tick — that rule is written
+  on `ports.InspectPort` and `ports.InspectService` and is why both live behind
+  one interface.
+- **The in-cluster probe is write-shaped and treated as one.** It runs something
+  in somebody's container, so it goes through the read-only guard and leaves one
+  audit line naming cluster, namespace, pod, container and target — and **never
+  the output**, exactly as a file transfer's line never carries a file's
+  contents. The local probe is not guarded, on the same line `StreamLogs` and
+  `DownloadFromPod` sit on.
+- **The command and the parser are one protocol**, so `ProbeCommand` and
+  `ParseProbeOutput` live together in the domain with a test asserting the
+  script emits what the parser reads. Host and port are vetted by `PlanProbe`
+  and single-quoted regardless.
+
+## An image is described from what Kubernetes reports, and says what it did not read
+
+`app/domain/imagereport.go` describes a container's image using the resolved
+reference and digest the kubelet recorded, the size and names of the node that
+pulled it (`status.images`), the pull policy, and the NAMES of any
+`imagePullSecrets`. Two GETs — the pod and its node — on request, never on a
+tick.
+
+**No registry is contacted, and that is a decision rather than an omission.**
+The layers, their creation commands, the entrypoint, the exposed ports and the
+labels live in the image's manifest and config blob in a registry; reading them
+is a new outbound destination for every image an operator opens, and for a
+private one an authenticated read whose credential is a pull Secret the Secrets
+doctrine says is read on explicit request and never on render. "External
+systems" below is the commitment on the other side of that, and the update-check
+ADR's rule applies unchanged: a new client-side call does not get to reuse an
+existing one, and needs its own record in `podsteer/business-docs`. Until then
+`domain.ImageDetailBounded` is on **every** report and the panel always shows
+it — a `Bounded` line, not an `Unreadable` one, because no read was attempted
+and no permission changes that, and empty space where layers would be is a
+claim nothing checked. A pod that pulls with credentials gets
+`domain.ImageCredentialNote`, which names the Secret and states that it was not
+read.
+
+Three rules there are load-bearing:
+
+- **The node's digest and the container status's digest routinely differ**, and
+  that is what a multi-platform image looks like: one names the index and the
+  other the manifest for that node's architecture. So `matchNodeImage` tries the
+  digest FIRST and falls back to repository-and-tag, and the disagreement is
+  stated in `DigestNote` rather than hidden — matching on the digest alone
+  reports "the node does not list this image" for an image the node is plainly
+  running.
+- **A size that was not measured is a dash with a reason, never a nought.**
+  `ImageSizeStatus` separates measured from not-reported (the kubelet garbage-
+  collects images) from unreadable (an account without `get nodes`, or an
+  unscheduled pod), modelled on `MetricsStatus` and for the same reason; a
+  refused node is carried INSIDE the facts rather than failing the call, so the
+  digest and references still render.
+- **The resolved reference is the subject, not the declared one.** What the
+  kubelet says it is running is a fact; what the manifest asks for is an
+  intention, and `Drift` is the comparison — made in the domain, like every
+  other comparison here.
+
 ## Files are copied by tar, and unpacked only in Go
 
 Copying a file to or from a container (`FileCopyAPI`, from the pod drawer) is
@@ -850,6 +945,15 @@ its working directory set to the project root and no package argument
 (`pkg/commands/build/base.go`), and exposes no setting to point it elsewhere.
 The root file is a three-line shim; the real entry point is `app/cmd/main.go`,
 which is `package cmd` for the same reason.
+
+That is also why `cmd.Main` reads its arguments the way it does. Wails
+generates bindings by compiling and RUNNING this binary with no arguments of
+its own, so **the argument-free path must always be the window** — a
+subcommand is additive and is reached only when the first argument names it.
+`route` is split out of `dispatch` precisely so `main_test.go` can assert that
+without starting a window, which is the one thing a test of this path cannot
+do. Anything that put a flag, a prompt or a usage message in front of a bare
+launch would take `wails build`, `wails dev` and `make bindings` down with it.
 
 **Vite builds into `app/adapters/assets/dist`.** Go's `//go:embed` cannot
 reference a parent directory, so the bundle has to land beside the package that
@@ -1250,6 +1354,11 @@ plus, since v0.2.0, `api.github.com` for the update check, and nothing else.
 No telemetry, no account, and still no network access from the webview (see
 the CSP in `web/index.html`).
 
+**`podsteer mcp` adds nothing to that list**, and the section above says why:
+it speaks to its parent process over stdio and to the same API servers this
+one does. A change that gave it a listener, or any other transport, would be a
+change to this list and needs to be argued for here.
+
 The webview's own policy is tightened at BUILD time, not in `index.html`:
 `connect-src 'self' ws: wss:` is what Vite's hot reload needs, and a bare
 scheme source permits a WebSocket to any host. A Vite plugin strips it from
@@ -1268,6 +1377,27 @@ silently broken in k9s, Terraform, dotnet, JetBrains and Docker Desktop.
 
 If a future paid tier wants a client-side call, **it does not get to reuse this
 one.** That is the creep path this ADR exists to make visible.
+
+**A container REGISTRY is the destination most recently declined**, and it is
+worth recording so the question is not re-derived. The image pane
+(`app/domain/imagereport.go`) would show layers, creation commands, the
+entrypoint and the labels if it read an image's manifest and config blob, and
+those are only in a registry. That is a new outbound host per image an operator
+opens — plural, arbitrary, and third-party — and for a private image an
+authenticated read whose credential is a pull Secret in the cluster, which the
+Secrets doctrine says is read on an explicit per-key request and never as a side
+effect of opening a pane. Even a strictly anonymous, per-image, off-by-default
+read is a destination this file's first sentence does not list, so it needs a
+decision recorded in `podsteer/business-docs` and an amendment here and in
+SECURITY.md — the same bar the update check cleared. What shipped instead is
+everything Kubernetes already reports, with the pane stating what it did not
+look at.
+
+**The reachability probes add no destination at all**, deliberately. The local
+vantage reaches a cluster only through the API server named in the kubeconfig —
+its service proxy, or a port-forward tunnelled through it — and the in-cluster
+vantage opens no socket from this machine whatsoever. An Ingress's public host
+is refused for exactly this reason; see the reachability section above.
 
 The kubeconfig is **read on every call and written in exactly one place**:
 `KubeconfigPort.Merge`, behind Add cluster. Everything about that write is
@@ -1526,6 +1656,54 @@ the pod's own name as the fallback for a bare pod, which is the one case the
 pod IS the subject. The mark is not a column: a column exists on every cluster
 whether or not anything fills it, and on the great majority nothing would.
 
+## Kubernetes' own newer APIs get typed panels too, and three things bite
+
+`web/src/lib/standardapis/` is a third family beside `gitops/` and `operators/`,
+selected the same way — by API group AND Kind, through `standardPanelFor` —
+and rendered by `StandardApiDetail.svelte` from the one manifest the drawer
+already fetched. It covers Gateway API (`GatewayClass`, `Gateway`, and
+`HTTPRoute`/`GRPCRoute` sharing one panel), Dynamic Resource Allocation
+(`ResourceClaim`, `ResourceClaimTemplate`, `DeviceClass`) and the admission
+policies (`ValidatingAdmissionPolicy`, `MutatingAdmissionPolicy` and both
+bindings). It is PURE QUOTATION with no exception — not even the one the
+operator panels name for a certificate's expiry.
+
+**A route has no `status.conditions`, and that is the whole point of its
+panel.** An HTTPRoute's status is `status.parents[]`, one entry per Gateway
+that was asked to serve it, each carrying the controller that answered and
+that controller's own conditions. "Accepted by this Gateway, refused by that
+one" is a sentence only that shape can say, and the drawer's generic
+Conditions section — which reads `status.conditions` — renders nothing at all
+on a route. A Gateway's listeners nest theirs the same way, under
+`status.listeners[]`, joined to the spec BY NAME and never by position: the
+two arrays are not required to agree in order or in length, and a positional
+join hands one listener another's attached-route count.
+
+**`resource.k8s.io` is read by SHAPE and never by `apiVersion`.** The group has
+been re-cut in nearly every release: the earliest versions named one
+`resourceClassName` on the claim and recorded `resourceHandles`, later ones a
+list of device requests, later still the request's own fields moved under
+`exactly` with a prioritised `firstAvailable` beside it. Every field is read
+from wherever its shape puts it, so a version nobody coded for renders as much
+of itself as it carries; what an older version records and newer ones do not
+gets a field of its own rather than being folded into a modern one it does not
+mean. A consumer in `status.reservedFor` names a plural RESOURCE, not a Kind,
+so only a core `pods` is resolved (to `Pod`) and offered as a link — every
+other plural is quoted and left unfollowable, because a link on a guessed Kind
+fails when it is followed.
+
+**Two of the three groups had to be adopted to be reachable at all.**
+`resource.k8s.io` and `admissionregistration.k8s.io` end in `.k8s.io`, so
+`isKubernetesGroup` (`app/adapters/k8s/cluster.go`) hid them from
+`DiscoverCustomKinds`, and nothing in `domain/catalog.go` covers either — the
+kinds could not be opened, and a panel for them would have been dead code.
+They join `adoptedGroups` beside Gateway API, which stretches that list's
+original wording (Kubernetes-owned but installed by an operator) in the
+direction it exists for: the suffix rule hides a group on the grounds that
+every cluster has it, and both of these are behind feature gates most clusters
+do not turn on. A catalog entry was the wrong mechanism precisely because it
+pins ONE version, which is the thing `resource.k8s.io` will not hold still on.
+
 ## A node shell is a pod PodSteer owns, and must be deleted like one
 
 The node shell (`app/adapters/k8s/nodeshell.go`, `TerminalAPI.StartNodeShellSession`)
@@ -1617,6 +1795,79 @@ between the operator and the tool they installed. There is no PodSteer service
 in that path, which is what keeps this consistent with the no-account,
 no-telemetry commitment — putting one there would be a different decision
 needing its own record.
+
+## The MCP server is a subcommand, it is local, and it only reads
+
+`podsteer mcp` (`app/adapters/mcp`, wired in `app/cmd/mcp.go`) serves PodSteer's
+reads to the operator's own coding agent over the Model Context Protocol. It is
+the other half of the bridge `app/adapters/localshell` starts: that one hands
+an agent a terminal, this one hands it the reads the window makes.
+
+**Local, stdio, no listener.** The agent spawns the process and owns the pipes;
+no socket is bound, nothing is served over HTTP, and nothing PodSteer operates
+is contacted — the only traffic is the same cluster traffic the window makes,
+with the same kubeconfig. A loopback listener would have been easier for some
+clients to attach to and is refused anyway: it would make PodSteer reachable by
+anything else running on the machine and would need an authentication story
+this application has deliberately never had. That is the same reasoning as the
+local terminal's, and it is what keeps this consistent with the no-account,
+no-telemetry commitment in the licensing section above and with SECURITY.md's
+external-systems list, which it does not extend.
+
+**A subcommand rather than a service the window runs.** A background server
+started by the desktop app would have to be discovered, would outlive the tab
+whose credentials it was using, and would be running whether or not anybody was
+asking it anything. A subprocess starts with the agent and ends with it. It
+never reaches `wails.Run`, so the single-instance lock is untouched and an
+agent can start one while the window is open.
+
+**Read-only, and structurally so.** The server takes narrowed reading
+interfaces (`ClusterReader`, `ResourceReader` and the rest in `server.go`)
+rather than the inbound ports whole, so it cannot NAME `AddKubeconfig`,
+`RevealSecretKey` or any `ManagementService` write, let alone call one.
+`tools_test.go` asserts that by reflection as well as by tool name. **There are
+no write tools and this is not an oversight**: every write in the UI is guarded
+by a confirmation an operator reads — the type-the-name gate on a production
+rollout, the drain preview, the bulk review dialog, the Secret-key reveal — and
+an agent cannot be shown one. The honest options were a write with no
+confirmation or a confirmation nobody sees. If a write is ever added, the
+confirmation problem has to be solved first and recorded in
+`podsteer/business-docs`, not worked around here.
+
+**RBAC decides and a refusal arrives as a refusal.** Every tool goes through
+the same use cases the window calls, so the server grants nothing the account
+did not already have, and `errors.go` classifies a failure into the same
+vocabulary `adapters/wails/errors.go` uses — kept separate rather than shared,
+because one adapter must not import another, and because the readers differ. A
+403 comes back as a tool result carrying `isError` and the word "forbidden",
+never as an empty list: an agent handed an empty array reports that the cluster
+holds no such objects, with complete confidence. The same rule shapes the rest
+of the surface — a truncated list states its true total, an absent pod is
+reported rather than assessed as healthy, and a bounded log read says it was
+bounded.
+
+**Secrets follow the doctrine above unchanged.** `GetManifest` is called with
+`revealSecrets` false in exactly one expression, so a Secret's values are
+replaced by their decoded size in the adapter before anything is serialised,
+and there is no tool that reveals a key or parses a TLS certificate.
+
+**The protocol is implemented directly** — JSON-RPC 2.0 over newline-delimited
+stdio, about 150 lines in `jsonrpc.go` and `server.go` — rather than by taking
+an SDK. The surface actually needed is five methods (`initialize`,
+`tools/list`, `tools/call`, `ping`, and ignoring notifications), an SDK would be
+a dependency whose own protocol revisions this repository would then track, and
+`docs/LICENCE-POLICY.md` makes every shipped dependency a decision rather than
+a convenience. Line-delimited reading rather than a streaming decoder is what
+makes a malformed message survivable: a decoder left mid-value cannot
+resynchronise, whereas a bad line is answered with a parse error and the next
+one is read normally. One request is handled at a time, deliberately.
+
+Two smaller decisions worth not re-deriving: the process runs with
+`LiveWatch: false`, because a mirror pays for itself under a UI re-reading the
+same lists every few seconds and not under an agent asking a handful of
+questions minutes apart; and its user agent is `podsteer-mcp/<version>`, so an
+operator reading their API server's audit log can tell a question their agent
+asked from a pane they had open.
 
 ## Configuration
 

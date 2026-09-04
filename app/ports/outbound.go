@@ -803,3 +803,45 @@ type EventPublisher interface {
 	// Publish delivers event to all observers.
 	Publish(ctx context.Context, event domain.DomainEvent)
 }
+
+// InspectPort answers the two questions an operator asks ON REQUEST about
+// something already on screen: can this be reached, and what is this image.
+//
+// A PORT OF ITS OWN RATHER THAN THREE MORE METHODS ON ResourcePort, because
+// everything behind it shares one rule the polled ports do not: nothing here
+// ever runs on a refresh tick. A probe opens a socket or runs a command in
+// somebody's container, and an image report costs a GET of a pod and a GET of
+// a node — all of which are fine as answers to a button and none of which are
+// fine ten seconds later, unasked, for as long as a pane stays open. Keeping
+// them behind one interface is what makes that rule visible to anything
+// wiring them, the same way BrowseAPI.ObjectGraph's own comment makes it for
+// the dependency map.
+type InspectPort interface {
+	// ProbeFromHere performs plan from THIS MACHINE, reaching the cluster the
+	// only way this process reaches anything: through the API server named in
+	// the kubeconfig. A Service is probed through the API server's own
+	// service proxy; a pod through an ephemeral port-forward this call opens
+	// and tears down again before returning, whatever the outcome.
+	//
+	// A target that refuses a connection is an ORDINARY ANSWER carried in the
+	// observation, never an error. An error here means the probe could not be
+	// performed at all — the cluster was unreachable, the account may not
+	// proxy, the forward never came up.
+	ProbeFromHere(ctx context.Context, id domain.ClusterID, plan domain.ProbePlan) (domain.ProbeObservation, error)
+
+	// ProbeFromPod performs plan from INSIDE a container the operator chose,
+	// as one bounded exec of domain.ProbeCommand. Nothing is created: no pod,
+	// no sidecar, no file. A container with no tool to probe with wraps
+	// ErrProbeToolMissing, which is a fact about that image and not about the
+	// target.
+	ProbeFromPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, plan domain.ProbePlan) (domain.ProbeObservation, error)
+
+	// ImageFacts gathers what Kubernetes reports about one container's image:
+	// the pod's own view of it, and the image list of the node that pulled
+	// it. It reads no registry and no pull Secret — see domain.ImageReport
+	// for why that is a decision rather than an omission. A node that cannot
+	// be read is reported inside the facts rather than failing the call: an
+	// account without `get nodes` should still see the digest and the
+	// references, and a refusal is not an absence.
+	ImageFacts(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string) (domain.ImageFacts, error)
+}
