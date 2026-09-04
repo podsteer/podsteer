@@ -1019,7 +1019,7 @@ func TestManagementServiceStreamLogsIgnoresReadOnly(t *testing.T) {
 
 	out := make(chan string, 1)
 	close(out)
-	if err := service.StreamLogs(context.Background(), id, ns, "web-0", "app", false, 10, out); err != nil {
+	if err := service.StreamLogs(context.Background(), id, ns, "web-0", "app", domain.LogOptions{TailLines: 10}, out); err != nil {
 		t.Fatalf("StreamLogs() error = %v, want nil on a read-only cluster", err)
 	}
 	if calls := port.recordedCalls(); len(calls) != 1 || calls[0] != "StreamLogs" {

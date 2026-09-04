@@ -40,7 +40,7 @@ export function StopLogStream(arg1:string):Promise<void>;
 
 export function StopPortForward(arg1:string):Promise<void>;
 
-export function StreamLogs(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean,arg6:number):Promise<string>;
+export function StreamLogs(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean,arg6:number,arg7:number,arg8:boolean,arg9:boolean,arg10:number):Promise<string>;
 
 export function SuspendWorkload(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 

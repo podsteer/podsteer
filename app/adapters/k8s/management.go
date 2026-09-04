@@ -33,7 +33,7 @@ const maxLogLineBytes = 1024 * 1024
 //
 // The channel is closed when the stream ends (pod terminates, context
 // cancelled, or an error occurs). The caller must drain the channel.
-func (a *Adapter) StreamLogs(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, containerName string, follow bool, tailLines int64, out chan<- string) error {
+func (a *Adapter) StreamLogs(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, containerName string, opts domain.LogOptions, out chan<- string) error {
 	defer close(out)
 
 	client, err := a.factory.clientFor(id)
@@ -41,18 +41,9 @@ func (a *Adapter) StreamLogs(ctx context.Context, id domain.ClusterID, namespace
 		return err
 	}
 
-	opts := &corev1.PodLogOptions{
-		Container:  containerName,
-		Follow:     follow,
-		TailLines:  &tailLines,
-		Timestamps: true,
-	}
+	logOpts := podLogOptions(containerName, opts)
 
-	if tailLines == 0 {
-		opts.TailLines = nil
-	}
-
-	req := client.CoreV1().Pods(namespace.String()).GetLogs(podName, opts)
+	req := client.CoreV1().Pods(namespace.String()).GetLogs(podName, logOpts)
 	stream, err := req.Stream(ctx)
 	if err != nil {
 		return classify("streaming logs", err)
@@ -85,6 +76,39 @@ func (a *Adapter) StreamLogs(ctx context.Context, id domain.ClusterID, namespace
 		return err
 	}
 	return nil
+}
+
+// podLogOptions builds the corev1 request from domain.LogOptions.
+//
+// A separate, pure function rather than inline in StreamLogs: it is the one
+// piece of this method with no I/O in it, and keeping it out of the loop that
+// opens a real connection is what lets a test assert the translation without
+// needing a stream to complete.
+//
+// TailLines, SinceSeconds and LimitBytes are pointer fields on
+// corev1.PodLogOptions because zero is a meaningful request there ("give me
+// the last 0 lines" is not one anyone means), so each is only set when the
+// domain value is positive — the same "0 means unset" convention
+// domain.LogOptions documents on every one of them.
+func podLogOptions(containerName string, opts domain.LogOptions) *corev1.PodLogOptions {
+	logOpts := &corev1.PodLogOptions{
+		Container:  containerName,
+		Follow:     opts.Follow,
+		Previous:   opts.Previous,
+		Timestamps: opts.Timestamps,
+	}
+
+	if opts.TailLines > 0 {
+		logOpts.TailLines = &opts.TailLines
+	}
+	if opts.SinceSeconds > 0 {
+		logOpts.SinceSeconds = &opts.SinceSeconds
+	}
+	if opts.LimitBytes > 0 {
+		logOpts.LimitBytes = &opts.LimitBytes
+	}
+
+	return logOpts
 }
 
 // ExecInPod executes a command in a pod container.

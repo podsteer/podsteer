@@ -918,7 +918,15 @@ export function drainNode(
   )
 }
 
-/** Streams logs from a pod container. Returns a stream ID for stopping. */
+/**
+ * Streams logs from a pod container. Returns a stream ID for stopping.
+ *
+ * sinceSeconds and limitBytes of 0 mean unset — see domain.LogOptions on the
+ * Go side. timestamps is always sent true by every caller today: the
+ * frontend decides whether to DISPLAY a timestamp at render time rather than
+ * by re-opening the stream — see LogViewer.svelte, which is why it never
+ * varies this parameter.
+ */
 export function streamLogs(
   clusterId: string,
   namespace: string,
@@ -926,8 +934,25 @@ export function streamLogs(
   containerName: string,
   follow: boolean,
   tailLines: number,
+  sinceSeconds: number,
+  previous: boolean,
+  timestamps: boolean,
+  limitBytes: number,
 ): Promise<string> {
-  return call(() => bindStreamLogs(clusterId, namespace, podName, containerName, follow, tailLines))
+  return call(() =>
+    bindStreamLogs(
+      clusterId,
+      namespace,
+      podName,
+      containerName,
+      follow,
+      tailLines,
+      sinceSeconds,
+      previous,
+      timestamps,
+      limitBytes,
+    ),
+  )
 }
 
 /** Stops a log stream. */

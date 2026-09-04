@@ -92,18 +92,20 @@ func (s *ManagementService) refuseIfReadOnly(id domain.ClusterID) error {
 //
 // The channel is closed when the stream ends. The caller must drain it.
 // If containerName is empty, logs are streamed from the first container.
-// If tailLines is 0, all available logs are streamed.
-// If follow is true, the stream remains open for new log lines.
-func (s *ManagementService) StreamLogs(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, containerName string, follow bool, tailLines int64, out chan<- string) error {
+// See domain.LogOptions for what each field of opts does.
+func (s *ManagementService) StreamLogs(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, containerName string, opts domain.LogOptions, out chan<- string) error {
 	s.logger.InfoContext(ctx, "streaming logs",
 		slog.String("cluster", id.String()),
 		slog.String("namespace", namespace.String()),
 		slog.String("pod", podName),
 		slog.String("container", containerName),
-		slog.Bool("follow", follow),
-		slog.Int64("tailLines", tailLines))
+		slog.Bool("follow", opts.Follow),
+		slog.Int64("tailLines", opts.TailLines),
+		slog.Int64("sinceSeconds", opts.SinceSeconds),
+		slog.Bool("previous", opts.Previous),
+		slog.Int64("limitBytes", opts.LimitBytes))
 
-	err := s.management.StreamLogs(ctx, id, namespace, podName, containerName, follow, tailLines, out)
+	err := s.management.StreamLogs(ctx, id, namespace, podName, containerName, opts, out)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "failed to stream logs",
 			slog.String("cluster", id.String()),
