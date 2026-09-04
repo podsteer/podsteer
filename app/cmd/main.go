@@ -105,6 +105,7 @@ func run() error {
 
 	kubernetes := k8s.New(k8s.Config{
 		KubeconfigPath: cfg.Kubernetes.KubeconfigPath,
+		KubeconfigDir:  cfg.Kubernetes.KubeconfigDir,
 		QPS:            cfg.Kubernetes.QPS,
 		Burst:          cfg.Kubernetes.Burst,
 		UserAgent:      fmt.Sprintf("%s/%s", cfg.App.Name, cfg.App.Version),

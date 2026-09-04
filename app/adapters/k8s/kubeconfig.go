@@ -231,9 +231,11 @@ func (a *Adapter) planMerge(raw string) (
 		return domain.KubeconfigMerge{}, nil, nil, err
 	}
 
-	// Loaded from the destination alone rather than through the merge rules:
-	// what is about to be written is one file, so what it already contains is
-	// the only thing a conflict can be against.
+	// Loaded from the destination alone, because that is the only file
+	// anything below is about to WRITE to: the plan's Clusters/AuthInfos/
+	// Contexts maps are copied onto this value and nothing else, never onto
+	// a synthetic merge that could smuggle a directory file's entries into
+	// the one file PodSteer is allowed to touch.
 	existing, err := clientcmd.LoadFromFile(path)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
@@ -249,10 +251,25 @@ func (a *Adapter) planMerge(raw string) (
 		existing = clientcmdapi.NewConfig()
 	}
 
+	// The CONFLICT CHECK, though, is against the merged view Clusters()
+	// itself reads — existing's contexts plus whatever PODSTEER_KUBECONFIG_DIR
+	// contributes — because a name is exactly as unusable for a new context
+	// when a directory file already defines it as when the explicit file
+	// does: PodSteer would either refuse to add it or (worse) add it here
+	// while the operator's own file elsewhere still wins the read, which is a
+	// confusing way to discover a name was never free. Best-effort: a
+	// directory that fails to read at this moment falls back to the
+	// explicit file alone rather than blocking the add altogether — the same
+	// leniency kubeconfigDirFiles already shows an unreadable directory.
+	taken := existing.Contexts
+	if merged, err := a.factory.rawConfig(); err == nil {
+		taken = merged.Contexts
+	}
+
 	added := make([]string, 0, len(incoming.Contexts))
 	conflicts := make([]string, 0)
 	for name := range incoming.Contexts {
-		if _, taken := existing.Contexts[name]; taken {
+		if _, ok := taken[name]; ok {
 			conflicts = append(conflicts, name)
 		} else {
 			added = append(added, name)
@@ -268,7 +285,7 @@ func (a *Adapter) planMerge(raw string) (
 // The first entry of the precedence list, which is what kubectl itself writes
 // to when $KUBECONFIG names several files.
 func (a *Adapter) writableKubeconfigPath() (string, error) {
-	path := a.factory.kubeconfigPath(a.factory.configFlags("").ToRawKubeConfigLoader())
+	path := a.factory.kubeconfigPath(a.factory.clientConfig(""))
 	if path == "" {
 		return "", fmt.Errorf("locating the kubeconfig: %w", ports.ErrKubeconfigUnavailable)
 	}

@@ -733,10 +733,11 @@ somebody to check a VPN, and it is deliberately not retryable.
 
 ## External systems
 
-The local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`) and the API servers
-it names — plus, since v0.2.0, `api.github.com` for the update check, and
-nothing else. No telemetry, no account, and still no network access from the
-webview (see the CSP in `web/index.html`).
+The local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`, plus whatever
+`PODSTEER_KUBECONFIG_DIR` names — see below) and the API servers it names —
+plus, since v0.2.0, `api.github.com` for the update check, and nothing else.
+No telemetry, no account, and still no network access from the webview (see
+the CSP in `web/index.html`).
 
 The webview's own policy is tightened at BUILD time, not in `index.html`:
 `connect-src 'self' ws: wss:` is what Vite's hot reload needs, and a bare
@@ -772,6 +773,27 @@ access to a cluster quietly.
 `current-context` is never touched. Adding a cluster is not a request to
 switch to it, and kubectl in another terminal must not change target because
 somebody pasted a config here.
+
+**`PODSTEER_KUBECONFIG_DIR` extends the READ side only, never the write
+side.** An operator with one file per cluster — `~/.kube/configs/*.yaml`, or a
+folder synced from a password manager — points this at that directory instead
+of hand-maintaining `$KUBECONFIG` as a path list, the way Radar's
+`--kubeconfig-dir` and a synced Lens folder both work. `client.go`'s
+`loadingRules` appends every regular file the directory holds (following one
+symlink hop; dotfiles, subdirectories and anything that fails to parse as a
+kubeconfig are skipped and, for a parse failure, logged at warn by path only)
+to `clientcmd.ClientConfigLoadingRules.Precedence` AFTER the explicit or
+default file, sorted by filename, and the directory is re-scanned on every
+call for the same reason the kubeconfig itself is: a file dropped in appears
+without a restart. Because Precedence is what governs the merge, and
+client-go's merge keeps the FIRST file's definition of a context name, the
+explicit file always wins a collision — a directory file cannot shadow a
+context the operator already has. `Merge` still writes to exactly the one
+explicit file described above; the directory is never a write target, because
+the operator owns those files and may be syncing them from somewhere PodSteer
+has no business writing to. Its existence check does look at the merged view,
+though, so a name already taken by a directory-only context is refused the
+same as one already in the explicit file.
 
 ## Domain quirks worth knowing
 

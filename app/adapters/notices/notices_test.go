@@ -135,10 +135,13 @@ func TestWindowsOnlyModulesAreCovered(t *testing.T) {
 		present[entry.Name] = true
 	}
 
+	// Only go-webview2 is left on this list. go-ansiterm and mousetrap used
+	// to be here too, but both arrived through k8s.io/cli-runtime's cobra
+	// dependency, and nothing has shipped that module since the kubeconfig
+	// loading rules stopped going through genericclioptions — the inventory
+	// dropping them is the generator being right, not being single-platform.
 	for _, name := range []string{
 		"github.com/wailsapp/go-webview2",
-		"github.com/Azure/go-ansiterm",
-		"github.com/inconshreveable/mousetrap",
 	} {
 		if !present[name] {
 			t.Errorf("%s is linked into the Windows build but is absent from the notices; "+
