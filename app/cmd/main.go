@@ -235,7 +235,7 @@ func run() error {
 		return fmt.Errorf("wiring overview API: %w", err)
 	}
 
-	managementAPI, err := wailsadapter.NewManagementAPI(managementService, kubernetes, desktop, logger)
+	managementAPI, err := wailsadapter.NewManagementAPI(managementService, kubernetes, workloadService, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring management API: %w", err)
 	}

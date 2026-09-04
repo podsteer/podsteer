@@ -83,6 +83,17 @@ type WorkloadService interface {
 	// ListPodsForWorkload returns all pods owned by a specific workload.
 	ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error)
 
+	// DrainCandidates returns the pods on a node with the extra facts a
+	// drain plan needs. See WorkloadPort.DrainCandidates.
+	//
+	// Lives here rather than on ManagementService: it is a read like
+	// ListPodsOnNode beside it, not a write, and ManagementAPI borrows it —
+	// through this service, not the outbound port directly, so a drain
+	// preview fails the same way every other read does against a cluster
+	// that has since been disconnected — to build the preview PlanDrain
+	// shows before a drain runs.
+	DrainCandidates(ctx context.Context, id domain.ClusterID, nodeName string) ([]domain.DrainCandidate, error)
+
 	// WorkloadUsage sums what a controller's pods are consuming, against what
 	// they reserved and what they will be stopped at.
 	WorkloadUsage(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.AggregateUsage, error)

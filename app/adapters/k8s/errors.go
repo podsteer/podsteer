@@ -55,6 +55,15 @@ func classify(op string, err error) error {
 		return fmt.Errorf("%s: %w: %w", op, ports.ErrForbidden, err)
 	case apierrors.IsNotFound(err):
 		return fmt.Errorf("%s: %w: %w", op, ports.ErrNotFound, err)
+	case apierrors.IsTooManyRequests(err):
+		// The one 429 PodSteer ever expects to see: the eviction subresource
+		// returning it because a PodDisruptionBudget would be violated. It is
+		// not a rate limit and not RBAC — the request was well-formed and
+		// permitted, and the OBJECT'S OWN POLICY declined it — so it gets a
+		// sentinel of its own rather than falling into ErrForbidden, which
+		// would tell an operator to ask for different credentials for
+		// something more credentials cannot fix.
+		return fmt.Errorf("%s: %w: %w", op, ports.ErrDisruptionBudget, err)
 	case apierrors.IsTimeout(err),
 		apierrors.IsServerTimeout(err),
 		apierrors.IsServiceUnavailable(err):

@@ -228,3 +228,82 @@ func (s *ManagementService) ExecInPodWithTTY(ctx context.Context, id domain.Clus
 
 	return s.management.ExecInPodWithTTY(ctx, id, namespace, podName, containerName, command, stdin, stdout, stderr, sizeQueue)
 }
+
+// CordonNode marks a node schedulable or unschedulable.
+func (s *ManagementService) CordonNode(ctx context.Context, id domain.ClusterID, name string, cordon bool) error {
+	s.logger.InfoContext(ctx, "cordoning node",
+		slog.String("cluster", id.String()),
+		slog.String("name", name),
+		slog.Bool("cordon", cordon))
+
+	if err := s.management.CordonNode(ctx, id, name, cordon); err != nil {
+		s.logger.ErrorContext(ctx, "failed to cordon node",
+			slog.String("cluster", id.String()),
+			slog.String("name", name),
+			slog.String("error", err.Error()))
+		return err
+	}
+
+	return nil
+}
+
+// EvictPod evicts one pod through the eviction subresource, which a
+// PodDisruptionBudget may refuse.
+func (s *ManagementService) EvictPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string, gracePeriodSeconds int) error {
+	s.logger.InfoContext(ctx, "evicting pod",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.String("name", name),
+		slog.Int("gracePeriodSeconds", gracePeriodSeconds))
+
+	if err := s.management.EvictPod(ctx, id, namespace, name, gracePeriodSeconds); err != nil {
+		s.logger.ErrorContext(ctx, "failed to evict pod",
+			slog.String("cluster", id.String()),
+			slog.String("namespace", namespace.String()),
+			slog.String("name", name),
+			slog.String("error", err.Error()))
+		return err
+	}
+
+	return nil
+}
+
+// DrainNode cordons a node and evicts every pod the drain plan allows.
+//
+// The report is logged and returned even when the call also returns an
+// error — an ErrDrainRefused still cordoned the node, which is worth a line
+// in the log the same way a completed drain's counts are.
+func (s *ManagementService) DrainNode(ctx context.Context, id domain.ClusterID, name string, opts domain.DrainOptions) (domain.DrainReport, error) {
+	s.logger.InfoContext(ctx, "draining node",
+		slog.String("cluster", id.String()),
+		slog.String("name", name),
+		slog.Bool("force", opts.Force),
+		slog.Bool("deleteEmptyDirData", opts.DeleteEmptyDirData))
+
+	report, err := s.management.DrainNode(ctx, id, name, opts)
+
+	// Counts only — never the pod names. This is the one write on
+	// ManagementPort whose outcome is worth a summary line regardless of
+	// whether it succeeded: an operator reading the log later needs to know
+	// a node was taken out of service even if nobody was watching the UI
+	// when it happened.
+	s.logger.InfoContext(ctx, "drain finished",
+		slog.String("cluster", id.String()),
+		slog.String("name", name),
+		slog.Bool("cordoned", report.Cordoned),
+		slog.Int("evicted", len(report.Evicted)),
+		slog.Int("skipped", len(report.Skipped)),
+		slog.Int("refused", len(report.Refused)),
+		slog.Int("failed", len(report.Failed)),
+		slog.Bool("timedOut", report.TimedOut))
+
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to drain node",
+			slog.String("cluster", id.String()),
+			slog.String("name", name),
+			slog.String("error", err.Error()))
+		return report, err
+	}
+
+	return report, nil
+}

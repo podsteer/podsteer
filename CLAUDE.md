@@ -741,6 +741,28 @@ somebody pasted a config here.
   maps those onto an `ErrorCode` and encodes it as a `[code] message` prefix,
   because Wails can only send an error as a string. `web/src/lib/api/errors.ts`
   parses it back. Changing the codes means changing both ends.
+- **A drain is planned in the domain and executed in the adapter.**
+  `domain.PlanDrain` (`app/domain/drain.go`) decides evict/skip/refuse from
+  facts `app/adapters/k8s/drain.go` gathers; nothing in the domain touches the
+  network, and nothing in the adapter decides who gets evicted. The same
+  function backs both the preview `ManagementAPI.PlanDrain` shows before a
+  drain runs and the plan `DrainNode` actually executes, so the two can never
+  disagree — an operator who read "nothing refused" a moment ago must not then
+  watch the drain refuse something. A single refused pod vetoes the whole
+  plan, mirroring `kubectl drain`: doing part of a drain and stopping is a
+  worse outcome than refusing to start, because a caller cannot tell "capacity
+  freed" from "capacity freed except for the pod that mattered" without
+  reading the report closely.
+- **Eviction, never deletion, is what a drain and the pod drawer's Evict both
+  use.** `ManagementPort.EvictPod` goes through the policy/v1 Eviction
+  subresource specifically because it is the one request a PodDisruptionBudget
+  can refuse — `DeleteResource` simply removes the pod, budget or no budget.
+  A refusal is HTTP 429, mapped to its own sentinel (`ports.ErrDisruptionBudget`)
+  rather than folded into `ErrForbidden`: RBAC allowed the request and the
+  object's own policy declined it, which calls for waiting and retrying, not
+  for different credentials. It is the only error `DrainNode` ever retries —
+  every other failure during a drain is recorded as a `DrainFailure` and the
+  rest of the node continues draining around it.
 
 ## Configuration
 

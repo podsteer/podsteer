@@ -43,11 +43,14 @@
   import RestartDialog from './RestartDialog.svelte'
   import TriggerDialog from './TriggerDialog.svelte'
   import SuspendDialog from './SuspendDialog.svelte'
+  import CordonDialog from './CordonDialog.svelte'
+  import DrainDialog from './DrainDialog.svelte'
+  import EvictDialog from './EvictDialog.svelte'
   import Terminal from './Terminal.svelte'
   import DependencyMap from './DependencyMap.svelte'
   import { DeleteResource, RestartRollout } from '$lib/wailsjs/go/wails/ManagementAPI'
   import { ListPodsForWorkload } from '$lib/wailsjs/go/wails/WorkloadAPI'
-  import { triggerCronJob, suspendWorkload, type Pod } from '$lib/api/client'
+  import { triggerCronJob, suspendWorkload, cordonNode, evictPod, type Pod } from '$lib/api/client'
   import {
     X,
     Info,
@@ -71,6 +74,8 @@
     Play,
     CirclePlay,
     CirclePause,
+    Ban,
+    LogOut,
   } from '@lucide/svelte'
 
   interface Props {
@@ -104,6 +109,9 @@
   let restartDialogOpen = $state(false)
   let triggerDialogOpen = $state(false)
   let suspendDialogOpen = $state(false)
+  let cordonDialogOpen = $state(false)
+  let drainDialogOpen = $state(false)
+  let evictDialogOpen = $state(false)
   let actionError = $state<string | null>(null)
   let workloadPods = $state<Pod[]>([])
 
@@ -247,6 +255,7 @@
 
   const isCronJob = $derived(session.selectedKindId === 'batch/v1/cronjobs')
   const isJob = $derived(session.selectedKindId === 'batch/v1/jobs')
+  const isNode = $derived(session.selectedKindId === 'core/v1/nodes')
 
   /** The Kubernetes kind of the open workload, or null when it is not one. */
   const mappedWorkloadKind = $derived(
@@ -494,6 +503,32 @@
       await session.refresh()
     } catch (error) {
       actionError = `Failed to ${suspend ? 'suspend' : 'resume'}: ${error}`
+    }
+  }
+
+  /** Cordons or uncordons the selected node. Uncordon needs no dialog — it
+   * undoes a visible, deliberate state rather than doing anything the
+   * cluster cannot immediately reverse. */
+  async function handleCordon(cordon: boolean): Promise<void> {
+    if (!session.selectedName) return
+    try {
+      await cordonNode(session.cluster.id, session.selectedName, cordon)
+      cordonDialogOpen = false
+      await session.refresh()
+    } catch (error) {
+      actionError = `Failed to ${cordon ? 'cordon' : 'uncordon'}: ${error}`
+    }
+  }
+
+  /** Evicts the selected pod through the eviction subresource. */
+  async function handleEvict(): Promise<void> {
+    if (!session.selectedNamespace || !session.selectedName) return
+    try {
+      await evictPod(session.cluster.id, session.selectedNamespace, session.selectedName, -1)
+      evictDialogOpen = false
+      await session.refresh()
+    } catch (error) {
+      actionError = `Failed to evict: ${error}`
     }
   }
 
@@ -1080,6 +1115,49 @@
           </button>
         {/if}
 
+        <!-- Cordon/Uncordon and Drain — nodes only. Uncordon acts at once,
+             the same reasoning as Resume above; cordoning and draining both
+             open a dialog because each changes what the cluster is willing
+             to schedule, cordoning implicitly and draining by force. -->
+        {#if isNode}
+          <button
+            type="button"
+            onclick={() => (session.selectedNode?.unschedulable ? handleCordon(false) : (cordonDialogOpen = true))}
+            aria-label={session.selectedNode?.unschedulable ? 'Uncordon' : 'Cordon'}
+            title={session.selectedNode?.unschedulable ? 'Uncordon' : 'Cordon'}
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+          >
+            <Ban class="size-4 {session.selectedNode?.unschedulable ? 'text-warning' : ''}" strokeWidth={1.8} />
+          </button>
+
+          <button
+            type="button"
+            onclick={() => (drainDialogOpen = true)}
+            aria-label="Drain…"
+            title="Drain node"
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+          >
+            <LogOut class="size-4" strokeWidth={1.8} />
+          </button>
+        {/if}
+
+        <!-- Evict — pods only. Distinct from Delete: goes through the
+             eviction subresource, which a PodDisruptionBudget can refuse. -->
+        {#if isPod}
+          <button
+            type="button"
+            onclick={() => (evictDialogOpen = true)}
+            aria-label="Evict"
+            title="Evict pod"
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+          >
+            <LogOut class="size-4" strokeWidth={1.8} />
+          </button>
+        {/if}
+
         <!-- Edit and Copy used to sit here. They act on the manifest, so they
              now live in the YAML tab's toolbar beside it — a control belongs
              next to the thing it changes, and from the Overview tab "Copy"
@@ -1441,6 +1519,33 @@
       workloadKind={session.selectedKind?.kind ?? 'CronJob'}
       onclose={() => (suspendDialogOpen = false)}
       onconfirm={() => handleSuspend(true)}
+    />
+  {/if}
+
+  {#if isNode}
+    <CordonDialog
+      open={cordonDialogOpen}
+      nodeName={session.selectedName}
+      onclose={() => (cordonDialogOpen = false)}
+      onconfirm={() => handleCordon(true)}
+    />
+
+    <DrainDialog
+      open={drainDialogOpen}
+      clusterId={session.cluster.id}
+      nodeName={session.selectedName}
+      onclose={() => (drainDialogOpen = false)}
+      ondrained={() => void session.refresh()}
+      onerror={(message) => (actionError = `Failed to drain: ${message}`)}
+    />
+  {/if}
+
+  {#if isPod}
+    <EvictDialog
+      open={evictDialogOpen}
+      podName={session.selectedName}
+      onclose={() => (evictDialogOpen = false)}
+      onconfirm={handleEvict}
     />
   {/if}
 {/if}

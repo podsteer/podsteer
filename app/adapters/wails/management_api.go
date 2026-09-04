@@ -30,8 +30,15 @@ type ManagementAPI struct {
 	// this port" and the adapter's, and inserting a layer that only forwards
 	// arguments would be a place for the record and the goroutine to drift.
 	forwards ports.PortForwardPort
-	app      *App
-	logger   *slog.Logger
+	// workloads reads the pods a drain plan is built from. Borrowed here
+	// rather than duplicated: PlanDrain needs DrainCandidates, which is a
+	// WorkloadService read (see ports.WorkloadService.DrainCandidates), and
+	// domain.PlanDrain itself is a pure function called directly — the same
+	// pattern BrowseAPI.ClassifyConditions uses for a domain rule that
+	// reaches no cluster.
+	workloads ports.WorkloadService
+	app       *App
+	logger    *slog.Logger
 
 	// Active log streams, keyed by stream ID, with their cancel function.
 	streamsMu sync.Mutex
@@ -39,12 +46,14 @@ type ManagementAPI struct {
 }
 
 // NewManagementAPI returns a new management API.
-func NewManagementAPI(management *application.ManagementService, forwards ports.PortForwardPort, app *App, logger *slog.Logger) (*ManagementAPI, error) {
+func NewManagementAPI(management *application.ManagementService, forwards ports.PortForwardPort, workloads ports.WorkloadService, app *App, logger *slog.Logger) (*ManagementAPI, error) {
 	switch {
 	case management == nil:
 		return nil, errors.New("wails: ManagementAPI requires a ManagementService")
 	case forwards == nil:
 		return nil, errors.New("wails: ManagementAPI requires a PortForwardPort")
+	case workloads == nil:
+		return nil, errors.New("wails: ManagementAPI requires a WorkloadService")
 	case app == nil:
 		return nil, errors.New("wails: ManagementAPI requires an App")
 	}
@@ -56,6 +65,7 @@ func NewManagementAPI(management *application.ManagementService, forwards ports.
 	return &ManagementAPI{
 		management: management,
 		forwards:   forwards,
+		workloads:  workloads,
 		app:        app,
 		logger:     logger.With(slog.String("api", "management")),
 		streams:    make(map[string]context.CancelFunc),
@@ -356,6 +366,106 @@ func (m *ManagementAPI) SuspendWorkload(clusterID, kind, namespace, name string,
 	}
 
 	return nil
+}
+
+// CordonNode marks a node schedulable or unschedulable.
+func (m *ManagementAPI) CordonNode(clusterID, name string, cordon bool) error {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(m.logger, "CordonNode", err)
+	}
+
+	if err := m.management.CordonNode(ctx, id, name, cordon); err != nil {
+		return apiError(m.logger, "CordonNode", err)
+	}
+
+	return nil
+}
+
+// EvictPod evicts one pod through the eviction subresource, which a
+// PodDisruptionBudget may refuse — see ports.ErrDisruptionBudget.
+func (m *ManagementAPI) EvictPod(clusterID, namespace, name string, gracePeriodSeconds int) error {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(m.logger, "EvictPod", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return apiError(m.logger, "EvictPod", err)
+	}
+
+	if err := m.management.EvictPod(ctx, id, ns, name, gracePeriodSeconds); err != nil {
+		return apiError(m.logger, "EvictPod", err)
+	}
+
+	return nil
+}
+
+// PlanDrain previews what draining name would do, without touching the
+// cluster — the candidates a drain of this node would consider, run through
+// the same domain.PlanDrain a real drain uses, so the preview and the drain
+// it precedes can never disagree.
+func (m *ManagementAPI) PlanDrain(clusterID, name string, force, deleteEmptyDirData bool) (DrainPlanDTO, error) {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return DrainPlanDTO{}, apiError(m.logger, "PlanDrain", err)
+	}
+
+	candidates, err := m.workloads.DrainCandidates(ctx, id, name)
+	if err != nil {
+		return DrainPlanDTO{}, apiError(m.logger, "PlanDrain", err)
+	}
+
+	opts := domain.DrainOptions{Force: force, DeleteEmptyDirData: deleteEmptyDirData}
+	return toDrainPlan(domain.PlanDrain(candidates, opts)), nil
+}
+
+// DrainNode cordons a node and evicts every pod the drain plan allows.
+//
+// timeoutSeconds of zero or less means the adapter's own default. A negative
+// gracePeriodSeconds means "use each pod's own
+// terminationGracePeriodSeconds", the same convention `kubectl drain
+// --grace-period` uses.
+func (m *ManagementAPI) DrainNode(clusterID, name string, force, deleteEmptyDirData bool, gracePeriodSeconds, timeoutSeconds int) (DrainReportDTO, error) {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return DrainReportDTO{}, apiError(m.logger, "DrainNode", err)
+	}
+
+	opts := domain.DrainOptions{
+		Force:              force,
+		DeleteEmptyDirData: deleteEmptyDirData,
+		GracePeriodSeconds: gracePeriodSeconds,
+		Timeout:            time.Duration(timeoutSeconds) * time.Second,
+	}
+
+	report, err := m.management.DrainNode(ctx, id, name, opts)
+	if err != nil {
+		// Wails rejects a promise with an error string alone — there is no
+		// channel back for a value beside it — so an ErrDrainRefused here
+		// loses the report's own Refused list. That is an acceptable gap
+		// rather than a design flaw: the confirm button is disabled while
+		// PlanDrain's preview is not runnable, so reaching here with a
+		// refusal at all means the node changed underneath an operator
+		// between opening the dialog and confirming it, which the error
+		// message alone is enough to explain.
+		return DrainReportDTO{}, apiError(m.logger, "DrainNode", err)
+	}
+
+	return toDrainReport(report), nil
 }
 
 // UpdateResource applies a YAML manifest to the cluster.

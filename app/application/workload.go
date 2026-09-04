@@ -355,6 +355,26 @@ func (s *WorkloadService) ListPodsOnNode(ctx context.Context, id domain.ClusterI
 	return pods, nil
 }
 
+// DrainCandidates returns the pods on a node with the extra facts a drain
+// plan needs.
+//
+// Lives here beside ListPodsOnNode rather than on ManagementService: it is a
+// read, and ManagementAPI's PlanDrain preview borrows it through this
+// service — via the same registry check as every other read here — so a
+// preview asked for after a cluster disconnects fails the same ordinary way
+// a pod list would, rather than reaching an adapter with no client to use.
+func (s *WorkloadService) DrainCandidates(ctx context.Context, id domain.ClusterID, nodeName string) ([]domain.DrainCandidate, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return nil, fmt.Errorf("listing drain candidates: %w", err)
+	}
+
+	candidates, err := s.workloads.DrainCandidates(ctx, id, nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("listing drain candidates on node %q of %q: %w", nodeName, id, err)
+	}
+	return candidates, nil
+}
+
 // ListPodsForWorkload returns all pods owned by a specific workload.
 func (s *WorkloadService) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error) {
 	if _, err := s.registry.Get(id); err != nil {
