@@ -65,9 +65,29 @@ const (
 	// never just retry the same request, which would resend the same stale
 	// resourceVersion and fail again.
 	CodeConflict ErrorCode = "conflict"
+	// CodeTarMissing means a file copy found no tar binary in the
+	// container. Its own code because nothing else here fits: the cluster,
+	// the credentials and the network are all fine, retrying cannot help,
+	// and the advice — the image needs tar, or a sidecar that has it — is
+	// unlike any other message this file produces.
+	CodeTarMissing ErrorCode = "tar_missing"
+	// CodeCommandFailed means a command PodSteer ran inside a container
+	// exited non-zero. The message is what the command wrote to stderr,
+	// verbatim, because for tar that text IS the diagnosis.
+	CodeCommandFailed ErrorCode = "command_failed"
+	// CodeTransferLimit means a file copy crossed the configured byte or
+	// entry ceiling. Its own code rather than invalid_input because the
+	// operator did nothing wrong: the transfer was simply bigger than the
+	// default allows, and the message names the setting that raises it.
+	CodeTransferLimit ErrorCode = "transfer_limit"
 	// CodeInternal is the fallback for anything unclassified.
 	CodeInternal ErrorCode = "internal"
 )
+
+// errNoLocalPath is raised when a file copy names a local path that does not
+// exist, or is not the kind of thing the direction needs — a file where a
+// directory was asked for.
+var errNoLocalPath = errors.New("local path unusable")
 
 // errInvalidURL is raised when the frontend asks the shell to open something
 // that is not a plain http(s) address.
@@ -171,6 +191,20 @@ func classifyError(err error) (ErrorCode, string) {
 	case errors.Is(err, ports.ErrReadOnly):
 		return CodeReadOnly, "This cluster is marked read-only in PodSteer. Change that under Organise."
 
+	// BEFORE THE TRANSPORT CASES TOO: a runtime that cannot start tar
+	// answers the exec with an internal error, which classify wraps as
+	// unreachable — and the cluster was reached perfectly well.
+	case errors.Is(err, ports.ErrTarMissing):
+		return CodeTarMissing, "The container has no tar binary, and copying files runs tar inside it — the same way kubectl cp does. Add tar to the image, or copy through a container that has it."
+
+	// Verbatim, because the message is what tar wrote to stderr and that
+	// is the diagnosis — see ports.ErrCommandFailed.
+	case errors.Is(err, ports.ErrCommandFailed):
+		return CodeCommandFailed, err.Error()
+
+	case errors.Is(err, domain.ErrTransferTooLarge):
+		return CodeTransferLimit, err.Error() + ". PODSTEER_COPY_MAX_BYTES and PODSTEER_COPY_MAX_ENTRIES raise the ceiling."
+
 	case errors.Is(err, ports.ErrUnauthenticated):
 		return CodeUnauthenticated, "Your credentials were rejected — they may have expired"
 
@@ -241,9 +275,15 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, domain.ErrNotTLSSecret),
 		errors.Is(err, domain.ErrInvalidCertificate),
 		errors.Is(err, domain.ErrContainerNotAttachable),
+		errors.Is(err, domain.ErrInvalidRemotePath),
+		// A hostile archive entry is reported with its name, so the
+		// operator can see what the container tried to plant — and
+		// decide what to make of the image that sent it.
+		errors.Is(err, domain.ErrUnsafeArchiveEntry),
 		errors.Is(err, errInvalidURL),
 		errors.Is(err, errNotFound),
 		errors.Is(err, errEmptySuggestedName),
+		errors.Is(err, errNoLocalPath),
 		errors.Is(err, ports.ErrInvalidPort):
 		return CodeInvalidInput, err.Error()
 

@@ -144,4 +144,21 @@ var (
 	// diagnosis an operator needs to fix their manifest — not something
 	// PodSteer can usefully paraphrase.
 	ErrManifestRejected = errors.New("the cluster rejected the manifest")
+
+	// ErrTarMissing means a file copy could not run because the container
+	// has no `tar` binary. Copying is `kubectl cp`'s mechanism exactly — a
+	// tar stream over an exec session — so an image built FROM scratch, or a
+	// distroless one, cannot take part, and that is the ordinary failure
+	// for this feature rather than a fault in anything. Its own sentinel
+	// because the advice is unlike every other error here: nothing about
+	// credentials, the network or the cluster is wrong, and retrying
+	// cannot help — the image needs tar, or a sidecar that has it.
+	ErrTarMissing = errors.New("the container has no tar binary")
+
+	// ErrCommandFailed means a command PodSteer ran inside a container
+	// exited non-zero. The message carries what the command wrote to
+	// stderr, verbatim, because that text — `tar: /nope: Cannot stat: No
+	// such file or directory` — IS the diagnosis, and paraphrasing it would
+	// throw away the only thing the operator can act on.
+	ErrCommandFailed = errors.New("the command failed inside the container")
 )

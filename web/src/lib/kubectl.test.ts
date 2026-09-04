@@ -3,6 +3,8 @@ import {
   apply,
   attach,
   applyDryRun,
+  cpFromPod,
+  cpToPod,
   del,
   describe as describeCmd,
   exec,
@@ -305,6 +307,42 @@ describe('revealSecretKey', () => {
     // teaches the wrong lesson.
     expect(revealSecretKey('prod', 'ingress-tls', 'web', 'tls.crt')).toBe(
       "kubectl --context prod -n web get secret ingress-tls -o jsonpath='{.data.tls\\.crt}' | base64 -d",
+    )
+  })
+})
+
+describe('cpFromPod', () => {
+  it('names the pod-side source and the full local destination', () => {
+    expect(cpFromPod('prod', 'web-0', 'default', '/etc/nginx', '/Users/me/Downloads/nginx', 'app')).toBe(
+      'kubectl --context prod -n default cp web-0:/etc/nginx /Users/me/Downloads/nginx -c app',
+    )
+  })
+
+  it('omits -c when no container is named', () => {
+    expect(cpFromPod('prod', 'web-0', 'default', '/etc/hosts', '/tmp/hosts')).toBe(
+      'kubectl --context prod -n default cp web-0:/etc/hosts /tmp/hosts',
+    )
+  })
+
+  it('quotes a local path with a space in it', () => {
+    // A Downloads folder called "My Files" is the ordinary case on a
+    // desktop, and unquoted it would be two arguments.
+    expect(cpFromPod('prod', 'web-0', 'default', '/etc/hosts', '/Users/me/My Files/hosts')).toBe(
+      "kubectl --context prod -n default cp web-0:/etc/hosts '/Users/me/My Files/hosts'",
+    )
+  })
+})
+
+describe('cpToPod', () => {
+  it('names the local source and the full pod-side destination', () => {
+    expect(cpToPod('prod', 'web-0', 'default', '/Users/me/config.yaml', '/app/config.yaml', 'app')).toBe(
+      'kubectl --context prod -n default cp /Users/me/config.yaml web-0:/app/config.yaml -c app',
+    )
+  })
+
+  it('quotes a remote path with a space in it', () => {
+    expect(cpToPod('prod', 'web-0', 'default', '/tmp/x', '/data/my dir/x')).toBe(
+      "kubectl --context prod -n default cp /tmp/x 'web-0:/data/my dir/x'",
     )
   })
 })
