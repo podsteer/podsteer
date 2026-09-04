@@ -1323,6 +1323,7 @@ export namespace wails {
 	    detail: string;
 	    healthy: boolean;
 	    subject: boolean;
+	    missing: boolean;
 	    group: string;
 	
 	    static createFrom(source: any = {}) {
@@ -1340,6 +1341,7 @@ export namespace wails {
 	        this.detail = source["detail"];
 	        this.healthy = source["healthy"];
 	        this.subject = source["subject"];
+	        this.missing = source["missing"];
 	        this.group = source["group"];
 	    }
 	}
@@ -2121,6 +2123,7 @@ export namespace wails {
 	    nodes: GraphNode[];
 	    edges: GraphEdge[];
 	    unreadable: string[];
+	    bounded: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PodGraph(source);
@@ -2131,6 +2134,7 @@ export namespace wails {
 	        this.nodes = this.convertValues(source["nodes"], GraphNode);
 	        this.edges = this.convertValues(source["edges"], GraphEdge);
 	        this.unreadable = source["unreadable"];
+	        this.bounded = source["bounded"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

@@ -129,14 +129,49 @@ reproduced; and a transfer stops at 1 GiB or 100,000 entries unless
 `PODSTEER_COPY_MAX_BYTES` and `PODSTEER_COPY_MAX_ENTRIES` say otherwise. The
 tests for each of those are in `app/adapters/archive/archive_test.go`.
 
-The same feature is also the **one thing PodSteer reads from your disk that is
-not a kubeconfig**: a file or folder you chose in the native dialog, uploaded
-into a container. It follows no symlink that leaves what you chose, and it is
-refused on a cluster marked read-only, like every other write into a cluster.
-Each transfer, either way, leaves one line in PodSteer's log naming the
-cluster, namespace, pod, container, the path inside the container, the
+The same feature is also one of the **two things PodSteer reads from your disk
+that are not a kubeconfig**: a file or folder you chose in the native dialog,
+uploaded into a container. It follows no symlink that leaves what you chose,
+and it is refused on a cluster marked read-only, like every other write into a
+cluster. Each transfer, either way, leaves one line in PodSteer's log naming
+the cluster, namespace, pod, container, the path inside the container, the
 direction and the byte count — never a file's contents, and never the local
 path.
+
+A fifth kind of write, and the second thing read from your disk, is the
+**settings file** — Settings → Export & import. It is the arrangement you have
+made on this machine, in one JSON document you can keep in git or send to a
+colleague: projects and groups with their environment, colour and read-only
+marks, pinned kinds, saved column layouts and custom columns, thresholds,
+refresh and appearance, remembered port-forward ports, and the debug and
+node-shell image defaults. It goes through the same native save dialog and is
+written at mode 0600, like everything else here.
+
+What it carries is deliberately narrower than what PodSteer holds, because the
+file is the one artefact here designed to be sent to somebody else:
+
+- **No credentials, no kubeconfig contents, no cluster addresses, no tokens.**
+  None of these exist outside the Go process's Kubernetes client, and nothing
+  in the export reads them.
+- **No object names.** No pod, node, namespace or workload appears in it. The
+  two settings that do hold them — a snoozed finding, which is keyed by a
+  namespace and an object name, and the namespace filter each cluster was last
+  left on — are held back for exactly this reason. The export is an allowlist
+  written out field by field rather than a copy of what is stored, and
+  `web/src/lib/settingsFile.test.ts` populates every forbidden category and
+  asserts none of it reaches the document, so this is a test rather than an
+  intention.
+- **It does carry your kubeconfig context names**, and nothing else about a
+  cluster. A group cannot be marked read-only without naming the cluster it
+  applies to. A context name is a handle your own kubeconfig already gives you
+  and it identifies nothing inside a cluster — but anyone you send the file to
+  will see which contexts you have. The file states this in its own header, and
+  so does the pane, before you export rather than after.
+
+Importing one is a review: what will change, what will be added and what will
+be left alone, shown before anything is written, and applied only on confirm.
+A malformed document is refused with the reason and never partly applied.
+Nothing outside what the file carries is touched, even by Replace.
 
 ## The local terminal, and the program it can start
 
@@ -223,6 +258,10 @@ the control is absent and says why, rather than failing when pressed.
 - A file downloaded from a container landing anywhere outside the folder you
   chose, or keeping a setuid or setgid bit — however the archive the
   container sent was crafted.
+- An exported settings file containing anything the list above says it does
+  not: a credential, a cluster address, or the name of any object in any
+  cluster. The file is made to be shared, so anything that leaks into it
+  leaks to whoever it was shared with.
 - Supply-chain problems in what we ship: a compromised dependency in the
   inventory, or a release artefact that does not match its source.
 

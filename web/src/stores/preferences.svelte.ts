@@ -15,12 +15,22 @@
  */
 
 import {
+  ALERT_SEVERITIES,
   DEFAULT_ALERT_SOUNDS,
   alertPlayer,
   isAlertSound,
   type AlertSeverity,
 } from './alerts.svelte'
 import { customColumnId, normaliseSpecs, type CustomColumnSpec } from '$lib/customColumns'
+import {
+  entryFor,
+  describeValue,
+  mergeRecord,
+  mergeValue,
+  type FieldRead,
+  type ImportEntry,
+  type ImportMode,
+} from '$lib/settingsDiff'
 
 /** Page sizes offered. 25 is the default; 100 is the ceiling. */
 export const PAGE_SIZES = [10, 25, 50, 100] as const
@@ -544,6 +554,59 @@ const DEFAULTS: PersistedShape = {
   alertSounds: DEFAULT_ALERT_SOUNDS,
   columns: {},
   customColumns: {},
+}
+
+/**
+ * The preferences half of a settings file — an ALLOWLIST, not the persisted
+ * shape.
+ *
+ * Three fields of `PersistedShape` are deliberately absent, and each would be
+ * a bug rather than an omission if it appeared here:
+ *
+ * - `snoozes`, whose inner keys are a finding id, a NAMESPACE and an OBJECT
+ *   NAME. That is exactly what SECURITY.md says PodSteer does not write, and
+ *   an export file is where it would leave the machine.
+ * - `namespaceByCluster`, which is a namespace name per cluster — a namespace
+ *   is an object, and "which namespace this operator was last reading" is a
+ *   fact about their cluster's contents, not about how they like PodSteer to
+ *   look.
+ * - `lastUpdateCheck` and `dismissedUpdate`, which are machine state rather
+ *   than an arrangement anybody made, and are wrong the moment they land on
+ *   another machine.
+ *
+ * See `$lib/settingsFile` for the whole rule, and `settingsFile.test.ts` for
+ * the test that fails if this set grows without somebody arguing for it.
+ */
+export interface ExportedPreferences {
+  themePreference: ThemePreference
+  pageSize: PageSize
+  refreshIntervalMs: number
+  autoRefresh: boolean
+  navigatorCollapsed: boolean
+  navigatorWidth: number
+  detailWidthFraction: number
+  detailLabelFraction: number
+  expandedCategories: string[]
+  findingsExpanded: boolean
+  wrapLines: boolean
+  showManagedFields: boolean
+  /** clusterId -> pinned kind ids. A CONTEXT NAME and catalogue ids only. */
+  pinnedKinds: Record<string, string[]>
+  localPortByRemotePort: Record<string, number>
+  localPortByPortName: Record<string, number>
+  debugImage: string
+  nodeShellImage: string
+  nodeShellNamespace: string
+  thresholds: Record<ThresholdScope, ThresholdSet>
+  podMeasure: PodMeasure
+  usageWindowMinutes: number
+  mapOrientation: 'horizontal' | 'vertical'
+  updateChecksEnabled: boolean
+  sections: Record<string, boolean>
+  alertSoundsEnabled: boolean
+  alertSounds: Record<AlertSeverity, string>
+  columns: Record<string, Record<string, ColumnPreference>>
+  customColumns: Record<string, CustomColumnSpec[]>
 }
 
 class Preferences {
@@ -1216,6 +1279,91 @@ class Preferences {
     this.#save()
   }
 
+  // --- Settings file --------------------------------------------------------
+
+  /**
+   * What travels in a settings file.
+   *
+   * WRITTEN OUT FIELD BY FIELD, never spread from a persisted blob. A spread
+   * would carry whatever the shape grows next, and two of the things it has
+   * already grown — the snooze map and the per-cluster namespace — hold
+   * object names. The explicit list is what makes adding one a decision
+   * somebody makes rather than one that happens to them. See
+   * ExportedPreferences.
+   */
+  exportable = (): ExportedPreferences => ({
+    themePreference: this.themePreference,
+    pageSize: this.pageSize,
+    refreshIntervalMs: this.refreshIntervalMs,
+    autoRefresh: this.autoRefresh,
+    navigatorCollapsed: this.navigatorCollapsed,
+    navigatorWidth: this.navigatorWidth,
+    detailWidthFraction: this.detailWidthFraction,
+    detailLabelFraction: this.detailLabelFraction,
+    expandedCategories: [...this.expandedCategories],
+    findingsExpanded: this.findingsExpanded,
+    wrapLines: this.wrapLines,
+    showManagedFields: this.showManagedFields,
+    pinnedKinds: plainCopy(this.pinnedKinds),
+    localPortByRemotePort: { ...this.localPortByRemotePort },
+    localPortByPortName: { ...this.localPortByPortName },
+    debugImage: this.debugImage,
+    nodeShellImage: this.nodeShellImage,
+    nodeShellNamespace: this.nodeShellNamespace,
+    thresholds: plainCopy(this.thresholds),
+    podMeasure: this.podMeasure,
+    usageWindowMinutes: this.usageWindowMinutes,
+    mapOrientation: this.mapOrientation,
+    updateChecksEnabled: this.updateChecksEnabled,
+    sections: { ...this.sections },
+    alertSoundsEnabled: this.alertSoundsEnabled,
+    alertSounds: { ...this.alertSounds },
+    columns: plainCopy(this.columns),
+    customColumns: plainCopy(this.customColumns),
+  })
+
+  /**
+   * Adopts an imported set wholesale, then persists once.
+   *
+   * The caller passes the COMPLETE result of the merge — see
+   * `mergeExportedPreferences` — so nothing here decides anything about
+   * merge versus replace. The theme is reapplied because it is the one field
+   * with an effect outside this object.
+   */
+  applyExported = (next: ExportedPreferences): void => {
+    this.themePreference = next.themePreference
+    this.pageSize = next.pageSize
+    this.refreshIntervalMs = next.refreshIntervalMs
+    this.autoRefresh = next.autoRefresh
+    this.navigatorCollapsed = next.navigatorCollapsed
+    this.navigatorWidth = next.navigatorWidth
+    this.detailWidthFraction = next.detailWidthFraction
+    this.detailLabelFraction = next.detailLabelFraction
+    this.expandedCategories = [...next.expandedCategories]
+    this.findingsExpanded = next.findingsExpanded
+    this.wrapLines = next.wrapLines
+    this.showManagedFields = next.showManagedFields
+    this.pinnedKinds = plainCopy(next.pinnedKinds)
+    this.localPortByRemotePort = { ...next.localPortByRemotePort }
+    this.localPortByPortName = { ...next.localPortByPortName }
+    this.debugImage = next.debugImage
+    this.nodeShellImage = next.nodeShellImage
+    this.nodeShellNamespace = next.nodeShellNamespace
+    this.thresholds = plainCopy(next.thresholds)
+    this.podMeasure = next.podMeasure
+    this.usageWindowMinutes = next.usageWindowMinutes
+    this.mapOrientation = next.mapOrientation
+    this.updateChecksEnabled = next.updateChecksEnabled
+    this.sections = { ...next.sections }
+    this.alertSoundsEnabled = next.alertSoundsEnabled
+    this.alertSounds = { ...next.alertSounds }
+    this.columns = plainCopy(next.columns)
+    this.customColumns = plainCopy(next.customColumns)
+
+    this.#applyTheme()
+    this.#save()
+  }
+
   // --- Persistence ----------------------------------------------------------
 
   #load(): void {
@@ -1467,6 +1615,349 @@ class Preferences {
     document.documentElement.dataset.theme =
       this.themePreference === 'system' ? this.#systemTheme : this.themePreference
   }
+}
+
+/**
+ * A plain, detached copy of a JSON-safe value.
+ *
+ * A round trip rather than `structuredClone`, for one reason that matters:
+ * the fields being copied are `$state` PROXIES, and an exported document must
+ * be a snapshot rather than a live view into the store — a later edit to a
+ * column width must not change a document already written. Everything passing
+ * through here came from storage or from a document, so it is JSON-safe by
+ * construction.
+ */
+function plainCopy<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+/**
+ * Every field of the preferences half, in the order a review lists them.
+ *
+ * The list `exportable()` writes out by hand has to agree with this one, and
+ * `settingsFile.test.ts` asserts that it does — the hand-written version is
+ * what makes adding a field deliberate, and this one is what the reader, the
+ * merge and the review are driven from.
+ */
+export const EXPORTED_PREFERENCE_FIELDS = [
+  'themePreference',
+  'pageSize',
+  'refreshIntervalMs',
+  'autoRefresh',
+  'navigatorCollapsed',
+  'navigatorWidth',
+  'detailWidthFraction',
+  'detailLabelFraction',
+  'expandedCategories',
+  'findingsExpanded',
+  'wrapLines',
+  'showManagedFields',
+  'pinnedKinds',
+  'localPortByRemotePort',
+  'localPortByPortName',
+  'debugImage',
+  'nodeShellImage',
+  'nodeShellNamespace',
+  'thresholds',
+  'podMeasure',
+  'usageWindowMinutes',
+  'mapOrientation',
+  'updateChecksEnabled',
+  'sections',
+  'alertSoundsEnabled',
+  'alertSounds',
+  'columns',
+  'customColumns',
+] as const satisfies readonly (keyof ExportedPreferences)[]
+
+/** What this build sets when a replacing document does not mention a field. */
+export function defaultExportedPreferences(): ExportedPreferences {
+  const out: Record<string, unknown> = {}
+  for (const field of EXPORTED_PREFERENCE_FIELDS) out[field] = plainCopy(DEFAULTS[field])
+  // Assembled key by key from the field list above, so the cast asserts what
+  // the loop guarantees: every field of the shape, and only those.
+  return out as unknown as ExportedPreferences
+}
+
+// --- Reading a document's preferences half ----------------------------------
+
+/** A value this build refuses, reported rather than silently coerced. */
+const REJECT = undefined
+
+function asBoolean(raw: unknown): boolean | undefined {
+  return typeof raw === 'boolean' ? raw : REJECT
+}
+
+function asNumberIn(min: number, max: number): (raw: unknown) => number | undefined {
+  return (raw) =>
+    typeof raw === 'number' && Number.isFinite(raw) && raw >= min && raw <= max ? raw : REJECT
+}
+
+function asNonEmptyString(raw: unknown): string | undefined {
+  return typeof raw === 'string' && raw.trim() !== '' ? raw : REJECT
+}
+
+function asOneOf<T extends string | number>(allowed: readonly T[]): (raw: unknown) => T | undefined {
+  return (raw) => (allowed.includes(raw as T) ? (raw as T) : REJECT)
+}
+
+function asStringArray(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return REJECT
+  return raw.filter((entry): entry is string => typeof entry === 'string')
+}
+
+/**
+ * A keyed map whose values each pass `read`.
+ *
+ * An entry that fails is DROPPED rather than failing the whole map: one
+ * hand-edited column width must not cost somebody every other column they had
+ * arranged. The map itself being the wrong type is a refusal, because that is
+ * the field, not one row of it.
+ */
+function asRecordOf<V>(read: (raw: unknown) => V | undefined): (raw: unknown) => Record<string, V> | undefined {
+  return (raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return REJECT
+    const out: Record<string, V> = {}
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      const read1 = read(value)
+      if (read1 !== undefined) out[key] = read1
+    }
+    return out
+  }
+}
+
+/** One column's stored overrides, keeping only the two fields that exist. */
+function asColumnPreference(raw: unknown): ColumnPreference | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return REJECT
+  const stored = raw as Partial<ColumnPreference>
+  const out: ColumnPreference = {}
+  if (typeof stored.width === 'number' && Number.isFinite(stored.width)) {
+    out.width = Math.round(stored.width)
+  }
+  if (typeof stored.hidden === 'boolean') out.hidden = stored.hidden
+  return out
+}
+
+/** The three surfaces, each repaired the way storage's own read repairs them. */
+function asThresholds(raw: unknown): Record<ThresholdScope, ThresholdSet> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return REJECT
+  const scoped = raw as Partial<Record<ThresholdScope, unknown>>
+  return {
+    overview: readThresholdSet(scoped.overview),
+    nodes: readThresholdSet(scoped.nodes),
+    pods: readThresholdSet(scoped.pods),
+  }
+}
+
+/** Per-severity motifs, each checked against the catalogue that exists here. */
+function asAlertSounds(raw: unknown): Record<AlertSeverity, string> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return REJECT
+  const stored = raw as Partial<Record<AlertSeverity, unknown>>
+  const out = { ...DEFAULT_ALERT_SOUNDS }
+  for (const severity of ALERT_SEVERITIES) {
+    if (isAlertSound(stored[severity])) out[severity] = stored[severity]
+  }
+  return out
+}
+
+/**
+ * How each field of the preferences half is read out of a document.
+ *
+ * The same rules `#load` applies to this machine's own storage, for the same
+ * reason: a document from a colleague deserves no more trust and no less than
+ * the last version of PodSteer to run here. A refusal is counted, not fatal.
+ */
+const PREFERENCE_READERS: {
+  [K in keyof ExportedPreferences]: (raw: unknown) => ExportedPreferences[K] | undefined
+} = {
+  themePreference: asOneOf(THEME_PREFERENCES),
+  pageSize: asOneOf(PAGE_SIZES),
+  refreshIntervalMs: asNumberIn(0, Number.MAX_SAFE_INTEGER),
+  autoRefresh: asBoolean,
+  navigatorCollapsed: asBoolean,
+  navigatorWidth: asNumberIn(180, 400),
+  detailWidthFraction: asNumberIn(0.05, 0.95),
+  detailLabelFraction: asNumberIn(0.05, 0.9),
+  expandedCategories: asStringArray,
+  findingsExpanded: asBoolean,
+  wrapLines: asBoolean,
+  showManagedFields: asBoolean,
+  pinnedKinds: asRecordOf(asStringArray),
+  localPortByRemotePort: asRecordOf(asNumberIn(1, 65535)),
+  localPortByPortName: asRecordOf(asNumberIn(1, 65535)),
+  debugImage: asNonEmptyString,
+  nodeShellImage: asNonEmptyString,
+  nodeShellNamespace: asNonEmptyString,
+  thresholds: asThresholds,
+  podMeasure: asOneOf(['requests', 'limits'] as const),
+  usageWindowMinutes: asOneOf(USAGE_WINDOWS),
+  mapOrientation: asOneOf(['horizontal', 'vertical'] as const),
+  updateChecksEnabled: asBoolean,
+  sections: asRecordOf(asBoolean),
+  alertSoundsEnabled: asBoolean,
+  alertSounds: asAlertSounds,
+  columns: asRecordOf(asRecordOf(asColumnPreference)),
+  // Validated spec by spec by the same function the column picker and storage
+  // both go through, so a column that would render as a permanent dash cannot
+  // arrive by import when it cannot arrive any other way.
+  customColumns: (raw) => {
+    const map = asRecordOf((specs: unknown) => {
+      const valid = normaliseSpecs(specs)
+      return valid.length > 0 ? valid : REJECT
+    })(raw)
+    return map as Record<string, CustomColumnSpec[]> | undefined
+  },
+}
+
+/** Reads the preferences half, reporting what it did not know or accept. */
+export function readExportedPreferences(raw: unknown): FieldRead<ExportedPreferences> {
+  const value: Record<string, unknown> = {}
+  const unknown: string[] = []
+  const invalid: string[] = []
+
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { value: {}, unknown, invalid }
+  }
+
+  const known = new Set<string>(EXPORTED_PREFERENCE_FIELDS)
+  for (const [field, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (!known.has(field)) {
+      unknown.push(field)
+      continue
+    }
+    const read = (PREFERENCE_READERS[field as keyof ExportedPreferences] as (raw: unknown) => unknown)(
+      entry,
+    )
+    if (read === undefined) invalid.push(field)
+    else value[field] = read
+  }
+
+  return { value: value as Partial<ExportedPreferences>, unknown, invalid }
+}
+
+// --- Merging and reviewing --------------------------------------------------
+
+/** Fields that are keyed maps, merged key by key rather than wholesale. */
+const RECORD_FIELDS = new Set<keyof ExportedPreferences>([
+  'pinnedKinds',
+  'localPortByRemotePort',
+  'localPortByPortName',
+  'thresholds',
+  'sections',
+  'alertSounds',
+  'columns',
+  'customColumns',
+])
+
+/**
+ * Combines the current preferences with a document's, under an import mode.
+ *
+ * Maps merge key by key so importing a colleague's Deployment columns keeps
+ * the Pod columns already arranged here; scalars take the file's value where
+ * it has one. `expandedCategories` is the one array, and it unions rather
+ * than replacing under merge: it is a set of what is OPEN, and combining two
+ * people's open sections is what merging them means.
+ */
+export function mergeExportedPreferences(
+  current: ExportedPreferences,
+  incoming: Partial<ExportedPreferences>,
+  mode: ImportMode,
+): ExportedPreferences {
+  const defaults = defaultExportedPreferences()
+  const out: Record<string, unknown> = {}
+
+  for (const field of EXPORTED_PREFERENCE_FIELDS) {
+    if (field === 'expandedCategories') {
+      const arriving = incoming.expandedCategories
+      if (!arriving) {
+        out[field] = mode === 'replace' ? [...defaults.expandedCategories] : [...current.expandedCategories]
+      } else {
+        out[field] =
+          mode === 'replace' ? [...arriving] : [...new Set([...current.expandedCategories, ...arriving])]
+      }
+      continue
+    }
+
+    if (RECORD_FIELDS.has(field)) {
+      out[field] = mergeRecord(
+        current[field] as Record<string, unknown>,
+        incoming[field] as Record<string, unknown> | undefined,
+        mode,
+        defaults[field] as Record<string, unknown>,
+      )
+      continue
+    }
+
+    out[field] = mergeValue<unknown>(current[field], incoming[field], mode, defaults[field])
+  }
+
+  return plainCopy(out as unknown as ExportedPreferences)
+}
+
+/** How each field is named and counted in a review. */
+const PREFERENCE_LABELS: Record<keyof ExportedPreferences, { label: string; unit?: string }> = {
+  themePreference: { label: 'Theme' },
+  pageSize: { label: 'Rows per page' },
+  refreshIntervalMs: { label: 'Refresh interval (ms)' },
+  autoRefresh: { label: 'Auto refresh' },
+  navigatorCollapsed: { label: 'Navigator collapsed' },
+  navigatorWidth: { label: 'Navigator width (px)' },
+  detailWidthFraction: { label: 'Detail panel width' },
+  detailLabelFraction: { label: 'Detail label column' },
+  expandedCategories: { label: 'Expanded navigator categories', unit: 'categories' },
+  findingsExpanded: { label: 'Findings expanded' },
+  wrapLines: { label: 'Wrap long lines' },
+  showManagedFields: { label: 'Show managed fields' },
+  pinnedKinds: { label: 'Pinned kinds', unit: 'clusters' },
+  localPortByRemotePort: { label: 'Remembered ports, by remote port', unit: 'ports' },
+  localPortByPortName: { label: 'Remembered ports, by port name', unit: 'ports' },
+  debugImage: { label: 'Debug container image' },
+  nodeShellImage: { label: 'Node shell image' },
+  nodeShellNamespace: { label: 'Node shell namespace' },
+  thresholds: { label: 'Threshold lines' },
+  podMeasure: { label: 'Pod bars measure against' },
+  usageWindowMinutes: { label: 'Retained usage (minutes)' },
+  mapOrientation: { label: 'Dependency map orientation' },
+  updateChecksEnabled: { label: 'Check for updates' },
+  sections: { label: 'Detail sections opened or closed', unit: 'sections' },
+  alertSoundsEnabled: { label: 'Sound on a new finding' },
+  alertSounds: { label: 'Sound per severity' },
+  columns: { label: 'Saved column layouts', unit: 'kinds' },
+  customColumns: { label: 'Custom columns', unit: 'kinds' },
+}
+
+/** The three surfaces spelled out, because the numbers ARE the decision. */
+function describeThresholds(value: unknown): string {
+  const scoped = value as Record<ThresholdScope, ThresholdSet>
+  return THRESHOLD_SCOPES.map((scope) => {
+    const set = scoped[scope]
+    const warn = set.warnEnabled ? String(set.warn) : 'off'
+    const critical = set.criticalEnabled ? String(set.critical) : 'off'
+    return `${scope} ${warn}/${critical}`
+  }).join(' · ')
+}
+
+/** Which motif each severity plays, spelled out for the same reason. */
+function describeAlertSounds(value: unknown): string {
+  const sounds = value as Record<AlertSeverity, string>
+  return ALERT_SEVERITIES.map((severity) => `${severity} ${sounds[severity]}`).join(' · ')
+}
+
+/** One review line per preference field, changed or not. */
+export function describePreferenceChanges(
+  current: ExportedPreferences,
+  next: ExportedPreferences,
+): ImportEntry[] {
+  return EXPORTED_PREFERENCE_FIELDS.map((field) => {
+    const meta = PREFERENCE_LABELS[field]
+    const render =
+      field === 'thresholds'
+        ? describeThresholds
+        : field === 'alertSounds'
+          ? describeAlertSounds
+          : (value: unknown) => describeValue(value, meta.unit)
+    return entryFor('Preferences', meta.label, current[field], next[field], render)
+  })
 }
 
 /** The application-wide preferences, shared by every tab. */
