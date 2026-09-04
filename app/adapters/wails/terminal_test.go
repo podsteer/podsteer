@@ -128,7 +128,7 @@ type stubManagementPort struct{}
 
 var _ ports.ManagementPort = (*stubManagementPort)(nil)
 
-func (stubManagementPort) StreamLogs(context.Context, domain.ClusterID, domain.NamespaceName, string, string, bool, int64, chan<- string) error {
+func (stubManagementPort) StreamLogs(context.Context, domain.ClusterID, domain.NamespaceName, string, string, domain.LogOptions, chan<- string) error {
 	return nil
 }
 func (stubManagementPort) DeleteResource(context.Context, domain.ResourceRef) error { return nil }
@@ -335,4 +335,7 @@ func (stubManagementPort) DrainNode(context.Context, domain.ClusterID, string, d
 }
 func (stubManagementPort) SetImage(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, string, string, bool) error {
 	return nil
+}
+func (stubManagementPort) RollbackWorkload(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, int64, bool) (domain.RollbackOutcome, error) {
+	return domain.RollbackOutcome{}, nil
 }

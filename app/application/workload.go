@@ -375,6 +375,29 @@ func (s *WorkloadService) DrainCandidates(ctx context.Context, id domain.Cluster
 	return candidates, nil
 }
 
+// RolloutHistory returns the recorded revisions of a Deployment,
+// StatefulSet or DaemonSet's pod template, newest first.
+//
+// Only those three kinds support it, checked HERE rather than left to the
+// adapter — mirroring SetImage's own kind check — so an unsupported kind
+// never costs a round trip to the cluster to be told no.
+func (s *WorkloadService) RolloutHistory(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string) ([]domain.Revision, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return nil, fmt.Errorf("listing rollout history: %w", err)
+	}
+
+	if kind != domain.WorkloadDeployment && kind != domain.WorkloadStatefulSet && kind != domain.WorkloadDaemonSet {
+		return nil, fmt.Errorf("%w: rollout history is only available for Deployments, StatefulSets and DaemonSets, got %s",
+			domain.ErrUnsupportedWorkloadKind, kind)
+	}
+
+	revisions, err := s.workloads.RolloutHistory(ctx, id, kind, namespace, name)
+	if err != nil {
+		return nil, fmt.Errorf("listing rollout history for %s/%s in %q of %q: %w", kind, name, namespace, id, err)
+	}
+	return revisions, nil
+}
+
 // ListPodsForWorkload returns all pods owned by a specific workload.
 func (s *WorkloadService) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error) {
 	if _, err := s.registry.Get(id); err != nil {

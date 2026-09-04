@@ -93,6 +93,12 @@ type WorkloadService interface {
 	// ListPodsForWorkload returns all pods owned by a specific workload.
 	ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error)
 
+	// RolloutHistory returns the recorded revisions of a Deployment,
+	// StatefulSet or DaemonSet's pod template, newest first. Only those
+	// three kinds carry a rollout history; any other kind is refused with
+	// domain.ErrUnsupportedWorkloadKind before the port below is reached.
+	RolloutHistory(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string) ([]domain.Revision, error)
+
 	// DrainCandidates returns the pods on a node with the extra facts a
 	// drain plan needs. See WorkloadPort.DrainCandidates.
 	//

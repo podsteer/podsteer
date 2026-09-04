@@ -140,6 +140,25 @@ export function setImage(
   ].join(' ')
 }
 
+/**
+ * `kubectl --context c -n ns rollout undo <kind>/<name> --to-revision=N`.
+ *
+ * Always namespaced, for the same reason `scale` and `rolloutRestart` are —
+ * every kind this applies to (Deployment, StatefulSet, DaemonSet) is
+ * namespaced. `toRevision` is never zero here: RollbackDialog only offers
+ * this once a specific revision has been picked, unlike kubectl's own CLI
+ * where `--to-revision=0` means "the previous one".
+ */
+export function rolloutUndo(ctx: string, kind: string, name: string, ns: string, toRevision: number): string {
+  return [
+    ...base(ctx, ns),
+    'rollout',
+    'undo',
+    `${kind.toLowerCase()}/${name}`,
+    `--to-revision=${toRevision}`,
+  ].join(' ')
+}
+
 /** `kubectl --context c [-n ns] delete <resource> <name>`. */
 export function del(ctx: string, resource: string, name: string, ns?: string): string {
   return [...base(ctx, ns), 'delete', resource, name].join(' ')

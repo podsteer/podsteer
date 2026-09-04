@@ -13,6 +13,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
@@ -591,5 +592,145 @@ func TestSetImageOnAMissingWorkloadIsNotFound(t *testing.T) {
 	err := adapter.SetImage(context.Background(), "dev", domain.WorkloadDeployment, "web", "missing", "app", "nginx:1.25", false)
 	if !errors.Is(err, ports.ErrNotFound) {
 		t.Errorf("SetImage() error = %v, want %v", err, ports.ErrNotFound)
+	}
+}
+
+// TestStreamLogsSendsTheRequestedOptions asserts every domain.LogOptions
+// field reaches the corev1.PodLogOptions the request actually carries — the
+// translation podLogOptions does, exercised through the real StreamLogs path
+// rather than called directly, so a future refactor that stops using it is
+// still caught.
+func TestStreamLogsSendsTheRequestedOptions(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-0", Namespace: "app"}}
+	client := fake.NewSimpleClientset(pod)
+	adapter := newTestAdapter("dev", client)
+
+	var captured *corev1.PodLogOptions
+	client.PrependReactor("get", "pods", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		generic, ok := action.(clientgotesting.GenericAction)
+		if !ok || action.GetSubresource() != "log" {
+			return false, nil, nil
+		}
+		captured, _ = generic.GetValue().(*corev1.PodLogOptions)
+		return false, nil, nil
+	})
+
+	opts := domain.LogOptions{
+		Follow:       true,
+		TailLines:    50,
+		SinceSeconds: 300,
+		Previous:     true,
+		Timestamps:   true,
+		LimitBytes:   1024,
+	}
+
+	out := make(chan string, 8)
+	if err := adapter.StreamLogs(context.Background(), "dev", "app", "web-0", "app", opts, out); err != nil {
+		t.Fatalf("StreamLogs() error = %v", err)
+	}
+	//nolint:revive // draining is the whole point — the lines themselves are
+	// covered by TestStreamLogsDeliversTheStreamedLines.
+	for range out {
+	}
+
+	if captured == nil {
+		t.Fatal("no PodLogOptions reached the request")
+	}
+	if captured.Container != "app" {
+		t.Errorf("Container = %q, want %q", captured.Container, "app")
+	}
+	if !captured.Follow {
+		t.Error("Follow = false, want true")
+	}
+	if captured.TailLines == nil || *captured.TailLines != 50 {
+		t.Errorf("TailLines = %v, want 50", captured.TailLines)
+	}
+	if captured.SinceSeconds == nil || *captured.SinceSeconds != 300 {
+		t.Errorf("SinceSeconds = %v, want 300", captured.SinceSeconds)
+	}
+	if !captured.Previous {
+		t.Error("Previous = false, want true")
+	}
+	if !captured.Timestamps {
+		t.Error("Timestamps = false, want true")
+	}
+	if captured.LimitBytes == nil || *captured.LimitBytes != 1024 {
+		t.Errorf("LimitBytes = %v, want 1024", captured.LimitBytes)
+	}
+}
+
+// TestStreamLogsLeavesZeroFieldsUnset pins the "0 means unset" convention
+// domain.LogOptions documents on TailLines, SinceSeconds and LimitBytes: each
+// is a pointer field on corev1.PodLogOptions specifically because a PRESENT
+// zero means something to the API server ("the last 0 lines"), so a caller
+// that never set them must leave the pointers nil rather than pointing at a
+// zero.
+func TestStreamLogsLeavesZeroFieldsUnset(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-0", Namespace: "app"}}
+	client := fake.NewSimpleClientset(pod)
+	adapter := newTestAdapter("dev", client)
+
+	var captured *corev1.PodLogOptions
+	client.PrependReactor("get", "pods", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		generic, ok := action.(clientgotesting.GenericAction)
+		if !ok || action.GetSubresource() != "log" {
+			return false, nil, nil
+		}
+		captured, _ = generic.GetValue().(*corev1.PodLogOptions)
+		return false, nil, nil
+	})
+
+	out := make(chan string, 8)
+	if err := adapter.StreamLogs(context.Background(), "dev", "app", "web-0", "app", domain.LogOptions{Timestamps: true}, out); err != nil {
+		t.Fatalf("StreamLogs() error = %v", err)
+	}
+	for range out {
+	}
+
+	if captured == nil {
+		t.Fatal("no PodLogOptions reached the request")
+	}
+	if captured.TailLines != nil {
+		t.Errorf("TailLines = %v, want nil", *captured.TailLines)
+	}
+	if captured.SinceSeconds != nil {
+		t.Errorf("SinceSeconds = %v, want nil", *captured.SinceSeconds)
+	}
+	if captured.LimitBytes != nil {
+		t.Errorf("LimitBytes = %v, want nil", *captured.LimitBytes)
+	}
+	if captured.Previous {
+		t.Error("Previous = true, want false")
+	}
+}
+
+// TestStreamLogsDeliversTheStreamedLines is a smoke test that the channel
+// carries what the API server sent, one line per receive, and is closed when
+// the stream ends — the contract every caller of StreamLogs relies on.
+func TestStreamLogsDeliversTheStreamedLines(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-0", Namespace: "app"}}
+	client := fake.NewSimpleClientset(pod)
+	adapter := newTestAdapter("dev", client)
+
+	client.PrependReactor("get", "pods", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		if action.GetSubresource() != "log" {
+			return false, nil, nil
+		}
+		return true, &runtime.Unknown{Raw: []byte("line one\nline two\n")}, nil
+	})
+
+	out := make(chan string, 8)
+	if err := adapter.StreamLogs(context.Background(), "dev", "app", "web-0", "app", domain.LogOptions{Timestamps: true}, out); err != nil {
+		t.Fatalf("StreamLogs() error = %v", err)
+	}
+
+	var lines []string
+	for line := range out {
+		lines = append(lines, line)
+	}
+
+	want := []string{"line one", "line two"}
+	if !reflect.DeepEqual(lines, want) {
+		t.Errorf("lines = %v, want %v", lines, want)
 	}
 }

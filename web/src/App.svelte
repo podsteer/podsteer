@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
   import ClusterTabs from '$lib/components/ClusterTabs.svelte'
+  import CommandPalette from '$lib/components/CommandPalette.svelte'
   import ShortcutSheet from '$lib/components/ShortcutSheet.svelte'
   import Splash from '$lib/components/Splash.svelte'
   import StatusBar from '$lib/components/StatusBar.svelte'
@@ -18,6 +19,7 @@
   import { alertPlayer } from '$stores/alerts.svelte'
   import { forwards } from '$stores/forwards.svelte'
   import { shortcutSheet } from '$stores/shortcutSheet.svelte'
+  import { palette } from '$stores/palette.svelte'
   import { isTypingTarget, shortcut } from '$lib/shortcuts'
 
   /**
@@ -86,8 +88,16 @@
    * ⌘/ opens the shortcut sheet, and so does a bare "?" — but only when focus
    * is not inside a text field, or typing a literal question mark into the
    * search box or the YAML editor would pop it open instead.
+   * ⌘⇧P / ⌘P opens the command palette — also global, for the same reason:
+   * jumping to another kind, cluster or object cannot depend on which tab
+   * happens to be in front when the operator reaches for it.
    */
   function onKeydown(event: KeyboardEvent): void {
+    if (shortcut('command-palette').matches(event)) {
+      event.preventDefault()
+      palette.show()
+      return
+    }
     if (shortcut('next-tab').matches(event)) {
       event.preventDefault()
       workspace.cycleTab(1)
@@ -154,3 +164,4 @@
 </div>
 
 <ShortcutSheet open={shortcutSheet.open} onclose={shortcutSheet.hide} />
+<CommandPalette open={palette.open} onclose={palette.hide} />

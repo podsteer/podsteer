@@ -14,6 +14,7 @@ import {
   resourceArgForKind,
   revealSecretKey,
   rolloutRestart,
+  rolloutUndo,
   scale,
   setImage,
   shellQuote,
@@ -164,6 +165,23 @@ describe('setImage', () => {
   it('quotes an image containing a space', () => {
     expect(setImage('prod', 'DaemonSet', 'agent', 'kube-system', 'agent', 'my registry/app:v1')).toBe(
       "kubectl --context prod -n kube-system set image daemonset/agent agent='my registry/app:v1'",
+    )
+  })
+})
+
+describe('rolloutUndo', () => {
+  it('lowercases the kind and always carries the namespace', () => {
+    expect(rolloutUndo('prod', 'Deployment', 'web', 'default', 3)).toBe(
+      'kubectl --context prod -n default rollout undo deployment/web --to-revision=3',
+    )
+  })
+
+  it('names statefulset and daemonset the same way', () => {
+    expect(rolloutUndo('prod', 'StatefulSet', 'db', 'data', 1)).toBe(
+      'kubectl --context prod -n data rollout undo statefulset/db --to-revision=1',
+    )
+    expect(rolloutUndo('prod', 'DaemonSet', 'agent', 'kube-system', 2)).toBe(
+      'kubectl --context prod -n kube-system rollout undo daemonset/agent --to-revision=2',
     )
   })
 })

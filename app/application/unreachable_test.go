@@ -133,6 +133,10 @@ func (g *goneCluster) APIWriters(context.Context, domain.ClusterID, domain.Resou
 	return domain.APIUsage{}, g.err(false)
 }
 
+func (g *goneCluster) RolloutHistory(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string) ([]domain.Revision, error) {
+	return nil, g.err(false)
+}
+
 func goneService(t *testing.T, cluster *goneCluster) *application.OverviewService {
 	t.Helper()
 

@@ -79,7 +79,14 @@ func NewManagementAPI(management *application.ManagementService, forwards ports.
 // batcher below for why they are not sent one at a time.
 // The stream ends when the pod terminates, the context is cancelled, or an
 // error occurs. A "log:end" event is emitted when the stream closes.
-func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName string, follow bool, tailLines int) (string, error) {
+//
+// sinceSeconds and limitBytes of 0 mean unset, matching domain.LogOptions —
+// see its doc comment for what each parameter does. timestamps is always
+// sent true by the frontend today: it decides whether to DISPLAY a
+// timestamp at render time rather than by re-opening the stream, so the
+// parameter exists here for the same reason it exists on domain.LogOptions,
+// not because any caller currently varies it.
+func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName string, follow bool, tailLines int, sinceSeconds int, previous bool, timestamps bool, limitBytes int) (string, error) {
 	// Through the accessor, not the field — see runtimeContext. Reading
 	// app.ctx bare races OnShutdown's write of nil, and WithCancel(nil)
 	// panics rather than failing.
@@ -99,6 +106,15 @@ func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName 
 	if err != nil {
 		cancel()
 		return "", err
+	}
+
+	opts := domain.LogOptions{
+		Follow:       follow,
+		TailLines:    int64(tailLines),
+		SinceSeconds: int64(sinceSeconds),
+		Previous:     previous,
+		Timestamps:   timestamps,
+		LimitBytes:   int64(limitBytes),
 	}
 
 	// Generate a stream ID so the frontend can cancel if needed.
@@ -125,7 +141,7 @@ func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName 
 
 		// Start the stream.
 		go func() {
-			err := m.management.StreamLogs(ctx, id, ns, podName, containerName, follow, int64(tailLines), out)
+			err := m.management.StreamLogs(ctx, id, ns, podName, containerName, opts, out)
 			if err != nil && ctx.Err() == nil {
 				m.logger.ErrorContext(ctx, "log stream error",
 					slog.String("cluster", clusterID),
@@ -398,6 +414,33 @@ func (m *ManagementAPI) SetImage(clusterID, kind, namespace, name, container, im
 	}
 
 	return nil
+}
+
+// RollbackWorkload rolls a Deployment, StatefulSet or DaemonSet back to a
+// previously recorded revision, the way `kubectl rollout undo
+// --to-revision` does. dryRun asks the API server to validate the request
+// without persisting anything — RollbackDialog's Preview button — and is
+// allowed on a read-only cluster for the same reason ValidateResource is.
+func (m *ManagementAPI) RollbackWorkload(clusterID, kind, namespace, name string, toRevision int, dryRun bool) (RollbackOutcomeDTO, error) {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return RollbackOutcomeDTO{}, apiError(m.logger, "RollbackWorkload", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return RollbackOutcomeDTO{}, apiError(m.logger, "RollbackWorkload", err)
+	}
+
+	outcome, err := m.management.RollbackWorkload(ctx, id, domain.WorkloadKind(kind), ns, name, int64(toRevision), dryRun)
+	if err != nil {
+		return RollbackOutcomeDTO{}, apiError(m.logger, "RollbackWorkload", err)
+	}
+
+	return toRollbackOutcome(outcome), nil
 }
 
 // SetSecretKey writes one key of one Secret.

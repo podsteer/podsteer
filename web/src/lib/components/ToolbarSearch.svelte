@@ -12,7 +12,7 @@
   typed into rather than clicked.
 -->
 <script lang="ts">
-  import { Search, X } from '@lucide/svelte'
+  import { AlertCircle, Search, X } from '@lucide/svelte'
 
   interface Props {
     /** The current query. */
@@ -36,6 +36,17 @@
     /** Enter, and Shift+Enter, where stepping through matches makes sense. */
     onnext?: () => void
     onprevious?: () => void
+    /**
+     * True when the query does not parse — an unclosed `re:`/`/…/` regex.
+     * Swaps the leading icon for an alert and recolours the border, the same
+     * vocabulary `SearchField` uses for the table's own search box, so a
+     * broken pattern reads the same way whichever field it was typed into.
+     */
+    invalid?: boolean
+    /** The field's `title`: the parse error while `invalid`, otherwise
+        omitted. Mirrors `SearchField`'s `description`, narrowed to what this
+        field needs — it has no separate syntax summary to show when valid. */
+    description?: string
   }
 
   let {
@@ -48,6 +59,8 @@
     onchange,
     onnext,
     onprevious,
+    invalid = false,
+    description,
   }: Props = $props()
 
   let input = $state<HTMLInputElement | null>(null)
@@ -91,10 +104,17 @@
 <!-- The margin is the gap to the first icon: at the toolbar's own spacing the
      field's border sat almost against it and the two read as one control. -->
 <div class="relative mr-3 flex min-w-0 flex-1 items-center">
-  <Search
-    class="pointer-events-none absolute left-2 size-3.5 text-on-surface-variant/50"
-    strokeWidth={1.8}
-  />
+  {#if invalid}
+    <AlertCircle
+      class="pointer-events-none absolute left-2 size-3.5 text-error"
+      strokeWidth={1.8}
+    />
+  {:else}
+    <Search
+      class="pointer-events-none absolute left-2 size-3.5 text-on-surface-variant/50"
+      strokeWidth={1.8}
+    />
+  {/if}
 
   <!-- Every suggestion mechanism off. This searches one document, so a
        dropdown of things typed into other search boxes is noise that covers
@@ -110,12 +130,15 @@
     type="text"
     {placeholder}
     aria-label={label}
+    aria-invalid={invalid || undefined}
+    title={description}
     autocomplete="off"
     autocorrect="off"
     autocapitalize="off"
     spellcheck="false"
     data-1p-ignore
     data-lpignore="true"
+    style:border-color={invalid ? 'var(--color-error)' : undefined}
     class="field h-7 w-full min-w-0 py-0 pr-16 pl-7 text-body-small"
   />
 

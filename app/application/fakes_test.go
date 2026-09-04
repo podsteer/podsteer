@@ -89,6 +89,9 @@ type fakeKubernetes struct {
 	apiUsage    map[string]domain.APIUsage
 	apiUsageErr map[string]error
 
+	revisions    []domain.Revision
+	revisionsErr error
+
 	mu               sync.Mutex
 	requestedCluster domain.ClusterID
 	requestedNS      domain.NamespaceName
@@ -254,6 +257,14 @@ func (f *fakeKubernetes) APIWriters(_ context.Context, _ domain.ClusterID, kind 
 		return domain.APIUsage{}, err
 	}
 	return f.apiUsage[kind.ID()], nil
+}
+
+func (f *fakeKubernetes) RolloutHistory(_ context.Context, id domain.ClusterID, _ domain.WorkloadKind, namespace domain.NamespaceName, _ string) ([]domain.Revision, error) {
+	f.record(id, namespace)
+	if f.revisionsErr != nil {
+		return nil, f.revisionsErr
+	}
+	return append([]domain.Revision(nil), f.revisions...), nil
 }
 
 func (f *fakeKubernetes) record(id domain.ClusterID, namespace domain.NamespaceName) {
@@ -473,11 +484,21 @@ type fakeManagementPort struct {
 	drainedName string
 	drainedOpts domain.DrainOptions
 	drainReport domain.DrainReport
+
+	rollbackErr        error
+	rollbackCalled     bool
+	rollbackID         domain.ClusterID
+	rollbackKind       domain.WorkloadKind
+	rollbackNS         domain.NamespaceName
+	rollbackName       string
+	rollbackToRevision int64
+	rollbackDryRun     bool
+	rollbackOutcome    domain.RollbackOutcome
 }
 
 var _ ports.ManagementPort = (*fakeManagementPort)(nil)
 
-func (f *fakeManagementPort) StreamLogs(context.Context, domain.ClusterID, domain.NamespaceName, string, string, bool, int64, chan<- string) error {
+func (f *fakeManagementPort) StreamLogs(context.Context, domain.ClusterID, domain.NamespaceName, string, string, domain.LogOptions, chan<- string) error {
 	f.record("StreamLogs")
 	return f.err
 }
@@ -606,6 +627,19 @@ func (f *fakeManagementPort) DrainNode(_ context.Context, id domain.ClusterID, n
 	f.drainedName = name
 	f.drainedOpts = opts
 	return f.drainReport, f.drainErr
+}
+
+func (f *fakeManagementPort) RollbackWorkload(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, toRevision int64, dryRun bool) (domain.RollbackOutcome, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rollbackCalled = true
+	f.rollbackID = id
+	f.rollbackKind = kind
+	f.rollbackNS = namespace
+	f.rollbackName = name
+	f.rollbackToRevision = toRevision
+	f.rollbackDryRun = dryRun
+	return f.rollbackOutcome, f.rollbackErr
 }
 
 func (f *fakeManagementPort) record(call string) {
