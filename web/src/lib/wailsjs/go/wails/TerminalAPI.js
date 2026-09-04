@@ -6,6 +6,10 @@ export function Resize(arg1, arg2, arg3) {
   return window['go']['wails']['TerminalAPI']['Resize'](arg1, arg2, arg3);
 }
 
+export function StartAttachSession(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['wails']['TerminalAPI']['StartAttachSession'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
 export function StartSession(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['wails']['TerminalAPI']['StartSession'](arg1, arg2, arg3, arg4, arg5, arg6);
 }

@@ -187,6 +187,20 @@ export function exec(
   return parts.join(' ')
 }
 
+/**
+ * `kubectl --context c -n ns attach -it <pod> [-c container]`.
+ *
+ * Distinct from `exec`: attach connects to the container's own main
+ * process — whatever its ENTRYPOINT/CMD started — rather than spawning a
+ * new one, so there is no command to append. See Terminal.svelte's Attach
+ * mode, which does the same thing over the Kubernetes API directly.
+ */
+export function attach(ctx: string, pod: string, ns: string, container?: string): string {
+  const parts = [...base(ctx, ns), 'attach', '-it', pod]
+  if (container) parts.push('-c', container)
+  return parts.join(' ')
+}
+
 /** `kubectl --context c -n ns port-forward pod/<pod> <local>:<remote>`. */
 export function portForward(
   ctx: string,

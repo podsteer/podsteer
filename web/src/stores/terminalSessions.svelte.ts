@@ -32,14 +32,25 @@
  * somebody typed into a production container — and it is not going to disk.
  */
 
-/** Identifies a session by what it is attached to, not by who opened it. */
+/**
+ * Identifies a session by what it is attached to, not by who opened it.
+ *
+ * `mode` defaults to 'shell' and is folded into the key only for 'attach', so
+ * every existing shell key is unchanged. It has to be part of the key at
+ * all: Shell and Attach are two different sessions against the same
+ * container — one starts a new process, the other connects to the running
+ * one — and without this a mode switch would either collide with, or
+ * silently reattach to, a session opened in the other mode.
+ */
 export function sessionKey(
   clusterId: string,
   namespace: string,
   podName: string,
   container: string,
+  mode: 'shell' | 'attach' = 'shell',
 ): string {
-  return `${clusterId}/${namespace}/${podName}/${container}`
+  const base = `${clusterId}/${namespace}/${podName}/${container}`
+  return mode === 'attach' ? `${base}/attach` : base
 }
 
 interface Held {

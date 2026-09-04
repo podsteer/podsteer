@@ -876,7 +876,7 @@
       namespace={selectedPod.namespace}
       podName={selectedPod.name}
       containerName={selectedPod.containers?.[0]?.name ?? ''}
-      containers={selectedPod.containers?.map((c) => c.name) ?? []}
+      containers={selectedPod.containers?.map((c) => ({ name: c.name, tty: c.tty })) ?? []}
       readOnly={isReadOnly}
       onmaximize={maximized === 'terminal' ? undefined : () => (maximized = 'terminal')}
     />
@@ -886,7 +886,7 @@
       namespace={workloadPods[0].namespace}
       podName={workloadPods[0].name}
       containerName={workloadPods[0].containers?.[0]?.name ?? ''}
-      containers={workloadPods[0].containers?.map((c: any) => c.name) ?? []}
+      containers={workloadPods[0].containers?.map((c: any) => ({ name: c.name, tty: c.tty })) ?? []}
       readOnly={isReadOnly}
       onmaximize={maximized === 'terminal' ? undefined : () => (maximized = 'terminal')}
     />

@@ -145,6 +145,9 @@ func (stubManagementPort) ExecInPod(context.Context, domain.ClusterID, domain.Na
 func (stubManagementPort) ExecInPodWithTTY(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, ports.TerminalSizeQueue) error {
 	return errors.New("ExecInPodWithTTY reached: a refused StartSession must never get this far")
 }
+func (stubManagementPort) AttachToPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, io.Reader, io.Writer, io.Writer, ports.TerminalSizeQueue) error {
+	return errors.New("AttachToPod reached: a refused StartAttachSession must never get this far")
+}
 
 // TestStartSessionRefusesOnReadOnlyCluster pins the fast path CLAUDE.md's
 // read-only section promises: an interactive shell refuses synchronously,
@@ -223,6 +226,84 @@ func TestStartSessionAllowsOnOrdinaryCluster(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "read_only") {
 		t.Fatalf("StartSession() error = %q, an unmarked cluster must not be refused as read-only", err)
+	}
+}
+
+// TestStartAttachSessionRefusesOnReadOnlyCluster is StartSession's own
+// read-only test, mirrored for the attach path: attaching can type into the
+// container's process as freely as an interactive shell can, so it gets the
+// identical synchronous refusal — before a PTY is allocated or a goroutine
+// started — rather than opening a session that fails on its first keystroke.
+func TestStartAttachSessionRefusesOnReadOnlyCluster(t *testing.T) {
+	t.Parallel()
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly("prod", true)
+
+	management, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: stubManagementPort{},
+		Registry:   registry,
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+
+	terminal, err := NewTerminalAPI(management, NewApp(nil, 0), nil)
+	if err != nil {
+		t.Fatalf("NewTerminalAPI() error = %v", err)
+	}
+
+	sessionID, err := terminal.StartAttachSession("prod", "default", "web-0", "app", 80, 24)
+	if err == nil {
+		t.Fatal("StartAttachSession() error = nil, want a read-only refusal")
+	}
+	if !strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("StartAttachSession() error = %q, want it classified read_only", err)
+	}
+	if sessionID != "" {
+		t.Fatalf("StartAttachSession() session id = %q, want empty on refusal", sessionID)
+	}
+
+	terminal.mu.Lock()
+	live := len(terminal.sessions)
+	terminal.mu.Unlock()
+	if live != 0 {
+		t.Fatalf("live sessions = %d, want 0 — a refused start must never allocate one", live)
+	}
+}
+
+// TestStartAttachSessionAllowsOnOrdinaryCluster is the other half, mirroring
+// TestStartSessionAllowsOnOrdinaryCluster: the guard must not refuse a
+// cluster nothing marked, so the call has to get far enough to try opening a
+// stream — asserted the same way, by watching it fail past the read-only
+// gate rather than at it, since a fully connected session needs a live Wails
+// runtime this test does not have.
+func TestStartAttachSessionAllowsOnOrdinaryCluster(t *testing.T) {
+	t.Parallel()
+
+	registry := application.NewRegistry()
+	// Marked, but a different cluster — the guard has to be per-cluster.
+	registry.SetReadOnly("prod", true)
+
+	management, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: stubManagementPort{},
+		Registry:   registry,
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+
+	terminal, err := NewTerminalAPI(management, NewApp(nil, 0), nil)
+	if err != nil {
+		t.Fatalf("NewTerminalAPI() error = %v", err)
+	}
+
+	_, err = terminal.StartAttachSession("staging", "default", "web-0", "app", 80, 24)
+	if err == nil {
+		t.Fatal("StartAttachSession() error = nil, want a failure reaching for the (absent) Wails runtime")
+	}
+	if strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("StartAttachSession() error = %q, an unmarked cluster must not be refused as read-only", err)
 	}
 }
 

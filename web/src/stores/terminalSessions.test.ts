@@ -83,4 +83,28 @@ describe('terminal session handover', () => {
     expect(terminalSessions.take(KEY)?.id).toBe('sess-app')
     expect(terminalSessions.take(other)?.id).toBe('sess-side')
   })
+
+  it('keeps a shell and an attach session for the same container apart', () => {
+    // Shell starts a new process, Attach connects to the running one — two
+    // different sessions against the same container, so a mode switch must
+    // not collide with, or silently reattach to, the other mode's session.
+    const shellKey = sessionKey('c1', 'default', 'api-0', 'app')
+    const attachKey = sessionKey('c1', 'default', 'api-0', 'app', 'attach')
+    expect(attachKey).not.toBe(shellKey)
+
+    const stop = vi.fn()
+    terminalSessions.offer(shellKey, 'sess-shell', '', stop)
+    terminalSessions.offer(attachKey, 'sess-attach', '', stop)
+
+    expect(terminalSessions.take(shellKey)?.id).toBe('sess-shell')
+    expect(terminalSessions.take(attachKey)?.id).toBe('sess-attach')
+
+    terminalSessions.forget(attachKey)
+  })
+
+  it('defaults sessionKey to shell mode, unchanged from before Attach existed', () => {
+    expect(sessionKey('c1', 'default', 'api-0', 'app')).toBe(
+      sessionKey('c1', 'default', 'api-0', 'app', 'shell'),
+    )
+  })
 })

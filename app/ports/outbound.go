@@ -400,6 +400,22 @@ type ManagementPort interface {
 	// runs until the context is cancelled, the command exits, or an error occurs.
 	ExecInPodWithTTY(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, command []string, stdin io.Reader, stdout, stderr io.Writer, sizeQueue TerminalSizeQueue) error
 
+	// AttachToPod connects to a container's own running process — PID 1,
+	// whatever the image's ENTRYPOINT/CMD started — rather than spawning a
+	// new one the way ExecInPod and ExecInPodWithTTY do. It is the only way
+	// to interact with a process that reads stdin, and to see its live
+	// stdout without a separate log stream.
+	//
+	// The pod is read once before the attach request is made, so a container
+	// whose own spec does not declare both tty and stdin is refused locally
+	// with domain.ErrContainerNotAttachable, naming the fields to change,
+	// rather than failing on the server once the PTY negotiation begins.
+	//
+	// The sizeQueue delivers resize events exactly as ExecInPodWithTTY's
+	// does. The session runs until the context is cancelled, the attached
+	// process exits, or an error occurs.
+	AttachToPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, stdin io.Reader, stdout, stderr io.Writer, sizeQueue TerminalSizeQueue) error
+
 	// CordonNode marks a node schedulable or unschedulable, without touching
 	// anything already running on it — cordoning removes the node from
 	// consideration for NEW pods only. A merge patch of spec.unschedulable,

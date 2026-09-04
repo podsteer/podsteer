@@ -138,6 +138,8 @@ func mapContainers(pod *corev1.Pod) []domain.Container {
 			Liveness:  mapProbe(spec.LivenessProbe),
 			Readiness: mapProbe(spec.ReadinessProbe),
 			Startup:   mapProbe(spec.StartupProbe),
+			TTY:       spec.TTY,
+			Stdin:     spec.Stdin,
 		}
 
 		if status, ok := statuses[spec.Name]; ok {

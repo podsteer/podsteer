@@ -259,6 +259,119 @@ func (t *TerminalAPI) StartSession(clusterID, namespace, podName, containerName 
 	return sessionID, nil
 }
 
+// StartAttachSession creates a new interactive session attached to a
+// container's own running process — PID 1, whatever the image's
+// ENTRYPOINT/CMD started — rather than the new shell StartSession opens.
+//
+// It shares StartSession's machinery end to end: the same session registry,
+// the same "terminal:data"/"terminal:exit" events, and Write/Resize/StopSession
+// work identically on either kind of session, so the frontend need not know
+// which one it opened once it has the session ID back.
+//
+// Returns the session ID.
+func (t *TerminalAPI) StartAttachSession(clusterID, namespace, podName, containerName string, cols, rows int) (string, error) {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return "", apiError(t.logger, "StartAttachSession", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return "", apiError(t.logger, "StartAttachSession", err)
+	}
+
+	// Attaching can type into the container's process as freely as an
+	// interactive shell can, so it gets StartSession's identical synchronous
+	// refusal, checked HERE before a PTY is allocated or a goroutine
+	// started. ManagementService.AttachToPod checks again; this is only the
+	// fast path that avoids the false start.
+	if t.management.ReadOnly(id) {
+		return "", apiError(t.logger, "StartAttachSession",
+			fmt.Errorf("starting attach session: %w", ports.ErrReadOnly))
+	}
+
+	sessionID := generateTerminalID()
+
+	// Create the stdin pipe
+	stdinReader, stdinWriter := io.Pipe()
+
+	// Create the terminal size queue with initial size
+	sizeQueue := newTerminalSizeQueue()
+	sizeQueue.send(ports.TerminalSize{
+		Width:  uint16(cols),
+		Height: uint16(rows),
+	})
+
+	parent, ok := t.app.runtimeContext()
+	if !ok {
+		return "", errors.New("application is shutting down")
+	}
+	ctx, cancel := context.WithCancel(parent)
+
+	session := &terminalSession{
+		id:        sessionID,
+		cancel:    cancel,
+		stdinPipe: stdinWriter,
+		sizeQueue: sizeQueue,
+	}
+
+	t.mu.Lock()
+	t.sessions[sessionID] = session
+	t.mu.Unlock()
+
+	stdoutWriter := &terminalOutputWriter{
+		sessionID: sessionID,
+		app:       t.app,
+	}
+
+	go func() {
+		defer func() {
+			t.mu.Lock()
+			delete(t.sessions, sessionID)
+			t.mu.Unlock()
+
+			// Closing signals EOF to the remote process; the attach is
+			// already unwinding.
+			_ = stdinWriter.Close()
+			sizeQueue.close()
+		}()
+
+		err := t.management.AttachToPod(
+			ctx,
+			id,
+			ns,
+			podName,
+			containerName,
+			stdinReader,
+			stdoutWriter,
+			stdoutWriter, // stderr goes to same output in TTY mode
+			sizeQueue,
+		)
+
+		reason := ""
+		if err != nil && !errors.Is(err, context.Canceled) {
+			reason = err.Error()
+			t.logger.Error("attach session ended with error",
+				slog.String("session", sessionID),
+				slog.String("error", err.Error()))
+		}
+
+		// Reported through the SAME event StartSession uses: the frontend
+		// treats an attach session's exit identically to a shell's.
+		t.app.emit("terminal:exit", TerminalExitEvent{
+			SessionID: sessionID,
+			Reason:    reason,
+		})
+	}()
+
+	t.logger.Info("attach session started",
+		slog.String("session", sessionID),
+		slog.String("pod", podName),
+		slog.String("container", containerName))
+
+	return sessionID, nil
+}
+
 // Write sends data to the terminal's stdin.
 //
 // This is called by the frontend for every keystroke or paste operation.

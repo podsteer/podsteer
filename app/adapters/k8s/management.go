@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	"sigs.k8s.io/yaml"
 
@@ -119,10 +120,9 @@ func (a *Adapter) ExecInPod(ctx context.Context, id domain.ClusterID, namespace 
 		return fmt.Errorf("getting REST config: %w", err)
 	}
 
-	// Create the executor
-	exec, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
+	exec, err := newRemoteCommand(ctx, config, req)
 	if err != nil {
-		return fmt.Errorf("creating executor: %w", err)
+		return err
 	}
 
 	// Execute the command
@@ -807,10 +807,9 @@ func (a *Adapter) ExecInPodWithTTY(ctx context.Context, id domain.ClusterID, nam
 		return fmt.Errorf("getting REST config: %w", err)
 	}
 
-	// Create the executor
-	exec, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
+	exec, err := newRemoteCommand(ctx, config, req)
 	if err != nil {
-		return fmt.Errorf("creating SPDY executor: %w", err)
+		return err
 	}
 
 	// Wrap the size queue to satisfy remotecommand.TerminalSizeQueue
@@ -829,6 +828,123 @@ func (a *Adapter) ExecInPodWithTTY(ctx context.Context, id domain.ClusterID, nam
 	})
 	if err != nil {
 		return fmt.Errorf("terminal exec: %w", err)
+	}
+
+	return nil
+}
+
+// newRemoteCommand builds the SPDY executor that streams both an exec and an
+// attach session — the two subresources differ only in the request VersionedParams
+// carries, never in how the resulting stream is driven, so ExecInPodWithTTY and
+// AttachToPod share this rather than each constructing their own.
+//
+// ctx is checked before the (cheap, but not free) executor is built: both
+// callers stream on the same context immediately afterwards, so a context
+// already cancelled — a session stopped between the caller's checks and this
+// call — is reported here rather than after a connection was opened for it.
+func newRemoteCommand(ctx context.Context, config *rest.Config, req *rest.Request) (remotecommand.Executor, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	exec, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
+	if err != nil {
+		return nil, fmt.Errorf("creating SPDY executor: %w", err)
+	}
+	return exec, nil
+}
+
+// containerSpec finds the named container's own declaration in pod's spec,
+// searching ordinary, then (restartable or not) init, then ephemeral
+// containers — everywhere a container name can live and everywhere the
+// attach subresource itself is willing to look.
+func containerSpec(pod *corev1.Pod, name string) (tty, stdin, found bool) {
+	for _, c := range pod.Spec.Containers {
+		if c.Name == name {
+			return c.TTY, c.Stdin, true
+		}
+	}
+	for _, c := range pod.Spec.InitContainers {
+		if c.Name == name {
+			return c.TTY, c.Stdin, true
+		}
+	}
+	for _, c := range pod.Spec.EphemeralContainers {
+		if c.Name == name {
+			return c.TTY, c.Stdin, true
+		}
+	}
+	return false, false, false
+}
+
+// AttachToPod connects to a container's own running process — PID 1,
+// whatever the image's ENTRYPOINT/CMD started — via the pod's attach
+// subresource, in place of ExecInPodWithTTY's exec subresource which starts
+// a new one. See ports.ManagementPort for the full contract.
+func (a *Adapter) AttachToPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, stdin io.Reader, stdout, stderr io.Writer, sizeQueue ports.TerminalSizeQueue) error {
+	client, err := a.factory.clientFor(id)
+	if err != nil {
+		return err
+	}
+
+	ns := namespace.String()
+
+	// Read the pod once so a container whose own spec has no tty/stdin is
+	// refused HERE, with a message naming the fields to change, rather than
+	// failing on the server once the PTY negotiation begins — see
+	// domain.ErrContainerNotAttachable's doc comment.
+	pod, err := client.CoreV1().Pods(ns).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return classify("reading pod for attach", err)
+	}
+
+	tty, hasStdin, found := containerSpec(pod, containerName)
+	if !found {
+		return fmt.Errorf("attaching to pod %q: %w: no container named %q",
+			podName, ports.ErrNotFound, containerName)
+	}
+	if !tty || !hasStdin {
+		return fmt.Errorf("attaching to pod %q container %q: %w",
+			podName, containerName, domain.ErrContainerNotAttachable)
+	}
+
+	req := client.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(ns).
+		SubResource("attach").
+		VersionedParams(&corev1.PodAttachOptions{
+			Container: containerName,
+			Stdin:     stdin != nil,
+			Stdout:    stdout != nil,
+			Stderr:    stderr != nil,
+			TTY:       true,
+		}, scheme.ParameterCodec)
+
+	config, err := a.factory.restConfig(id)
+	if err != nil {
+		return fmt.Errorf("getting REST config: %w", err)
+	}
+
+	exec, err := newRemoteCommand(ctx, config, req)
+	if err != nil {
+		return err
+	}
+
+	var tsq remotecommand.TerminalSizeQueue
+	if sizeQueue != nil {
+		tsq = &terminalSizeQueueAdapter{queue: sizeQueue}
+	}
+
+	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdin:             stdin,
+		Stdout:            stdout,
+		Stderr:            stderr,
+		Tty:               true,
+		TerminalSizeQueue: tsq,
+	})
+	if err != nil {
+		return fmt.Errorf("attaching to pod: %w", err)
 	}
 
 	return nil

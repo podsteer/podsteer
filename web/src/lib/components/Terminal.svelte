@@ -28,7 +28,13 @@
   import { SerializeAddon } from '@xterm/addon-serialize'
   import { WebLinksAddon } from '@xterm/addon-web-links'
   import { Copy, Check, Maximize2, RotateCw, ChevronUp, ChevronDown } from '@lucide/svelte'
-  import { StartSession, Write, Resize, StopSession } from '$lib/wailsjs/go/wails/TerminalAPI'
+  import {
+    StartSession,
+    StartAttachSession,
+    Write,
+    Resize,
+    StopSession,
+  } from '$lib/wailsjs/go/wails/TerminalAPI'
   import { EventsOn } from '$lib/wailsjs/runtime/runtime'
   import { terminalTheme, onThemeChange } from '$lib/terminalTheme'
   import { matchFractions } from '$lib/terminalSearch'
@@ -38,22 +44,36 @@
   import ToolbarSearch from './ToolbarSearch.svelte'
   import '@xterm/xterm/css/xterm.css'
 
+  /**
+   * A container option for the selector, carrying just enough of the DTO
+   * (`app/adapters/wails/dto.go`'s Container) to decide whether Attach makes
+   * sense — see the mode select below.
+   */
+  interface ContainerOption {
+    name: string
+    /** Quotes the container's own spec.tty && spec.stdin. See mode below. */
+    tty: boolean
+  }
+
+  /** A session's mode: a new process (Shell) or the container's own (Attach). */
+  type SessionMode = 'shell' | 'attach'
+
   interface Props {
     clusterId: string
     namespace: string
     podName: string
     containerName: string
     /** Every container in the pod, for the selector. */
-    containers?: string[]
+    containers?: ContainerOption[]
     /**
      * True when this cluster is marked read-only in PodSteer.
      *
      * An interactive shell can mutate the cluster as freely as any other
      * write — see CLAUDE.md's read-only section — so this refuses to open
      * one at all rather than opening a session that would fail on its first
-     * keystroke. The backend refuses the same way (ExecInPodWithTTY), which
-     * is the actual guard; this is what keeps the pane from starting a
-     * connection it already knows will be refused.
+     * keystroke. The backend refuses the same way (ExecInPodWithTTY and
+     * AttachToPod), which is the actual guard; this is what keeps the pane
+     * from starting a connection it already knows will be refused.
      */
     readOnly?: boolean
     /** Offered when the pane can still be made bigger. */
@@ -73,13 +93,29 @@
   const READ_ONLY_REASON =
     'This cluster is marked read-only in PodSteer. Change that under Organise.'
 
+  const ATTACH_NOTE =
+    "Attached to the container's main process. Ctrl+P, Ctrl+Q would detach in Docker; " +
+    'here, closing the pane detaches; Ctrl+C is sent to the process.'
+
   // Seeded by the effect below; reading the prop here would capture only its
   // initial value and leave the selector stale after switching pods.
   let activeContainer = $state('')
+  /**
+   * Shell starts a new process in the container; Attach connects to its own
+   * running one (PID 1) instead — the only way to interact with a process
+   * that reads stdin, and to see its live stdout without a separate log
+   * stream. Offered only when the active container's own spec declares both
+   * tty and stdin (see attachAvailable below) — the same fields
+   * AttachToPod refuses on server-side, checked here first so the control
+   * simply is not there for a container it would refuse.
+   */
+  let mode = $state<SessionMode>('shell')
 
   $effect(() => {
     activeContainer = containerName
   })
+
+  const attachAvailable = $derived(containers.find((c) => c.name === activeContainer)?.tty ?? false)
 
   let terminalContainer: HTMLDivElement
   let terminal: Terminal | null = null
@@ -356,20 +392,15 @@
     connectionState = 'connecting'
 
     try {
-      const id = await StartSession(
-        clusterId,
-        namespace,
-        podName,
-        activeContainer,
-        terminal.cols,
-        terminal.rows,
-      )
+      const start = mode === 'attach' ? StartAttachSession : StartSession
+      const id = await start(clusterId, namespace, podName, activeContainer, terminal.cols, terminal.rows)
       sessionId = id
       connectionState = 'connected'
       terminal.focus()
     } catch (err) {
       connectionState = 'error'
-      terminal.writeln(`\x1b[31mFailed to start terminal session: ${err}\x1b[0m`)
+      const label = mode === 'attach' ? 'attach' : 'terminal'
+      terminal.writeln(`\x1b[31mFailed to start ${label} session: ${err}\x1b[0m`)
     }
   }
 
@@ -412,6 +443,15 @@
 
   async function switchContainer(next: string): Promise<void> {
     activeContainer = next
+    // The new container may not support Attach even if the old one did —
+    // falling back here means reconnect() below asks StartSession, never a
+    // StartAttachSession the backend would refuse.
+    if (!(containers.find((c) => c.name === next)?.tty ?? false)) mode = 'shell'
+    await reconnect()
+  }
+
+  async function switchMode(next: SessionMode): Promise<void> {
+    mode = next
     await reconnect()
   }
 
@@ -429,7 +469,7 @@
 
   /** The key this component's session is filed under. */
   function currentKey(): string {
-    return sessionKey(clusterId, namespace, podName, activeContainer)
+    return sessionKey(clusterId, namespace, podName, activeContainer, mode)
   }
 
   /**
@@ -496,14 +536,37 @@
         title={readOnly ? READ_ONLY_REASON : undefined}
         class="field h-7 shrink-0 px-1.5 text-body-small disabled:opacity-38"
       >
-        {#each containers as container (container)}
-          <option value={container}>{container}</option>
+        {#each containers as container (container.name)}
+          <option value={container.name}>{container.name}</option>
         {/each}
       </select>
     {:else}
       <span class="shrink-0 truncate pl-1 text-body-small text-on-surface-variant">
         {activeContainer}
       </span>
+    {/if}
+
+    {#if attachAvailable}
+      <!--
+        Offered only for a container whose own spec declares both tty and
+        stdin — the same fields AttachToPod refuses on without, checked here
+        first so the control is simply absent rather than present and
+        failing.
+      -->
+      <div class="mx-1 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+      <select
+        value={mode}
+        onchange={(event) => void switchMode(event.currentTarget.value as SessionMode)}
+        disabled={readOnly}
+        aria-label="Session mode"
+        title={readOnly
+          ? READ_ONLY_REASON
+          : 'Shell starts a new process in the container; Attach connects to its own running one'}
+        class="field h-7 shrink-0 px-1.5 text-body-small disabled:opacity-38"
+      >
+        <option value="shell">Shell</option>
+        <option value="attach">Attach</option>
+      </select>
     {/if}
 
     {#snippet trailing()}
@@ -576,6 +639,20 @@
       {/if}
     {/snippet}
   </PaneToolbar>
+
+  {#if mode === 'attach'}
+    <!--
+      A banner, not something written into the buffer: the buffer is the
+      attached process's own terminal, and this is PodSteer's own note about
+      it, not a line that process printed.
+    -->
+    <p
+      class="shrink-0 border-b border-outline-variant/60 bg-surface-container-low px-3 py-1
+             text-body-small text-on-surface-variant"
+    >
+      {ATTACH_NOTE}
+    </p>
+  {/if}
 
   <!--
     `bg-surface-container-lowest` matches what terminalTheme hands xterm, so the

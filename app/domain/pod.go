@@ -107,6 +107,13 @@ type Container struct {
 	// ready=false is a readiness problem, started=false is a startup problem,
 	// and they are investigated in different places.
 	Started bool
+	// TTY and Stdin quote the container's own spec.tty and spec.stdin —
+	// whether it allocates a pseudo-terminal and keeps standard input open.
+	// Both must be true before Attach (connecting to the container's own
+	// running process, as opposed to Shell, which starts a new one) can
+	// behave interactively; ManagementPort.AttachToPod refuses otherwise.
+	TTY   bool
+	Stdin bool
 	// LastTermination is how this container's previous life ended, when there
 	// was one. See Termination — it is the only record of it that exists.
 	LastTermination Termination

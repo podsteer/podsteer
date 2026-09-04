@@ -683,6 +683,10 @@ func TestManagementServiceRefusesEveryWriteWhenReadOnly(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			return service.ExecInPodWithTTY(ctx, id, ns, "web-0", "app", []string{"/bin/sh"}, nil, &stdout, &stderr, nil)
 		}},
+		{"AttachToPod", func() error {
+			var stdout, stderr bytes.Buffer
+			return service.AttachToPod(ctx, id, ns, "web-0", "app", nil, &stdout, &stderr, nil)
+		}},
 	}
 
 	for _, tc := range cases {
@@ -749,6 +753,10 @@ func TestManagementServicePassesEveryWriteWhenNotReadOnly(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			return service.ExecInPodWithTTY(ctx, id, ns, "web-0", "app", []string{"/bin/sh"}, nil, &stdout, &stderr, nil)
 		}, "ExecInPodWithTTY"},
+		{"AttachToPod", func() error {
+			var stdout, stderr bytes.Buffer
+			return service.AttachToPod(ctx, id, ns, "web-0", "app", nil, &stdout, &stderr, nil)
+		}, "AttachToPod"},
 	}
 
 	var want []string

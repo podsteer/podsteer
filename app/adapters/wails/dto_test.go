@@ -9,6 +9,39 @@ import (
 
 var dtoNow = time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 
+// TestToPodCarriesEachContainersTTYAndStdin pins the wire contract the
+// terminal pane's Attach control depends on: whether a container has a tty
+// and keeps stdin open must reach the frontend exactly as the domain carries
+// it, per container, not collapsed to the pod as a whole.
+func TestToPodCarriesEachContainersTTYAndStdin(t *testing.T) {
+	t.Parallel()
+
+	pod, err := domain.NewPod(domain.PodSpec{
+		Name:      "web-0",
+		Namespace: "default",
+		ClusterID: "dev",
+		Containers: []domain.Container{
+			{Name: "app", TTY: true, Stdin: true},
+			{Name: "sidecar"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewPod() error = %v", err)
+	}
+
+	dto := toPod(pod, dtoNow)
+
+	if len(dto.Containers) != 2 {
+		t.Fatalf("Containers = %d, want 2", len(dto.Containers))
+	}
+	if !dto.Containers[0].TTY || !dto.Containers[0].Stdin {
+		t.Errorf("Containers[0] TTY/Stdin = %v/%v, want true/true", dto.Containers[0].TTY, dto.Containers[0].Stdin)
+	}
+	if dto.Containers[1].TTY || dto.Containers[1].Stdin {
+		t.Errorf("Containers[1] TTY/Stdin = %v/%v, want false/false", dto.Containers[1].TTY, dto.Containers[1].Stdin)
+	}
+}
+
 func TestToCertificateFormatsTimesAsRFC3339AndSizesExpiry(t *testing.T) {
 	t.Parallel()
 
