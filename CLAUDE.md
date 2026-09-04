@@ -947,6 +947,28 @@ same as one already in the explicit file.
   on the same struct: both change what the API server is actually asked
   for, so the frontend re-opens the stream when either changes, the same
   as it already did for `Follow` and `TailLines`.
+- **A GitOps object's members are quoted from the controller's own status,
+  never inferred from labels.** The Argo CD Application and Flux
+  Kustomization/HelmRelease panels (`web/src/lib/gitops/`, rendered by
+  `GitOpsDetail.svelte`) list `status.resources` and
+  `status.inventory.entries` as followable rows — a label-based
+  "applications" view was rejected on 2026-09-02 because a label is weaker
+  than a selector (overlaps double-count, unlabelled workloads vanish, every
+  line drawn is a relationship Kubernetes does not have), it needs a
+  cluster-wide LIST per kind per refresh, and on an unlabelled cluster the
+  UI cannot say why it is empty; the controller's status is the membership
+  it acts on, costs the one GET the drawer already makes, and reads no
+  Secret. The panel is selected by group AND kind ("Application" exists in
+  three API groups), and it complements the bottom-up `gitops.ts` badge
+  rather than replacing it. A Flux inventory id is
+  `<namespace>_<name>_<group>_<kind>` as `sigs.k8s.io/cli-utils`'s
+  `ObjMetadata` writes it: a core kind has an EMPTY group segment
+  (`shop_web__Service`), a cluster-scoped object an empty namespace
+  (`_shop__Namespace`), and a colon in an RBAC name is transcoded as `__` —
+  so `parseInventoryId` reads the fields from the outside in and never
+  splits on `_`. A HelmRelease carries no inventory at all (the objects are
+  in the Helm release Secret, which is not read), and the panel says so
+  rather than showing an empty list.
 
 ## Configuration
 

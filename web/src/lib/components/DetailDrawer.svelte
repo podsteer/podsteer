@@ -1724,6 +1724,7 @@
           selectedNamespaceRow={session.selectedNamespaceRow}
           selectedWorkload={selectedWorkload}
           kind={session.selectedKind?.kind}
+          group={session.selectedKind?.group}
           usage={session.usage}
           backend={session.overview?.backend}
           clusterId={session.cluster.id}
