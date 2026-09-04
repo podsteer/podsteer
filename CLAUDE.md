@@ -740,6 +740,64 @@ exists so the UI can say "the last 40 minutes" instead of implying more.
   cluster, so the chart and the numbers above it can never disagree.
 - Samples hold capacity figures only: no object names, no logs, no manifests.
 
+## The settings file carries arrangements, never anything about a cluster's contents
+
+Settings → Export & import writes the two localStorage stores — `preferences`
+and `organisation` — as one pretty-printed JSON document an operator can keep
+in git and hand to a colleague (`web/src/lib/settingsFile.ts`,
+`SettingsTransfer.svelte`). JSON rather than YAML because the stores are
+already JSON, so the document is a projection rather than a translation and no
+value can change meaning on the way through — YAML's implicit typing would
+read a group called `no` as false; because `JSON.parse` is the platform's, so
+nothing but code in this repository stands between somebody's file and their
+settings; and because the file exists to live in git, where two-space JSON
+diffs one setting to a line. JSON has no comments, so the header is a
+`_readme` array of strings at the top of the document.
+
+**What must never travel is the whole point of the file, and it is the
+no-object-names commitment SECURITY.md makes.** The export is an ALLOWLIST
+built field by field in each store's `exportable()`, never a spread of the
+persisted shape — a spread would carry whatever the shape grows next, and two
+things it has already grown hold object names: `snoozes`, whose keys are a
+finding id, a NAMESPACE and an OBJECT NAME, and `namespaceByCluster`. Both are
+held back, along with the update check's machine state. No credential,
+kubeconfig or cluster address is in either store, so none can reach the file.
+
+**One cluster-shaped thing does travel: the kubeconfig CONTEXT NAME**, as the
+key of `pinnedKinds` and of the organisation's placements — "staging is
+read-only" cannot be said without naming staging. It is a handle the
+recipient's own kubeconfig already gives them and it identifies nothing inside
+any cluster, but a colleague reading the file will see which contexts a
+teammate has, so the document's own header says so and the Settings pane says
+so before the Export button rather than after.
+
+`settingsFile.test.ts` is what keeps this true: it populates both stores with
+every forbidden category — a snoozed pod and node, a namespace filter, a
+server URL, a token — serialises, and asserts none of them appear; and it
+asserts the exported key set against a LITERAL list, so a field carrying
+object names cannot join the export without somebody editing that list and
+arguing for it. Redaction that is only a comment is redaction that lapses.
+
+Import is a REVIEW, not an overwrite: `previewImport` computes the state an
+apply will set and derives the review from it, so the two cannot disagree —
+the same rule `domain.PlanBulk` follows. Merge (the default) keeps everything
+the file does not mention, key by key within a map; replace makes the exported
+surface exactly the file's. **Neither mode touches what the file never
+carried** — a replace leaves the snoozes and the namespace filter alone,
+because destroying data on the strength of a document's silence would turn the
+redaction rules into a way to lose things. A malformed document is refused
+whole with the reason and never partly applied; an unknown field is counted
+and ignored, so a file from a newer build still imports what this build
+understands, and a version from the future is stated rather than refused.
+
+Reading the file needs `SystemAPI.ReadTextFile`, which opens the picker and
+returns the CONTENTS — `ChooseFile` returns a path, and the webview cannot
+turn one into content. Its dialog is filtered where `ChooseFile`'s is
+deliberately not. `SaveTextFile`'s save dialog now derives its filter from the
+suggested name's extension: it was pinned to CSV, and macOS enforces a filter
+as the extension, so a `.json` document would have been written as
+`.json.csv` — which the log download was already quietly suffering.
+
 ## Licences are policy, and the build enforces it
 
 The policy lives in two halves that must be edited together:

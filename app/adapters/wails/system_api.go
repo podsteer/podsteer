@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -51,6 +52,11 @@ type SystemAPI struct {
 	// reason chooseSavePath is one.
 	chooseDirectory func(title string) (string, error)
 	chooseFile      func(title string) (string, error)
+
+	// chooseTextPath is the open dialog behind ReadTextFile — filtered to the
+	// documents PodSteer imports, where chooseFile is deliberately unfiltered
+	// because anything at all can be copied into a container.
+	chooseTextPath func(title string) (string, error)
 }
 
 // NewSystemAPI returns the bound system API.
@@ -75,6 +81,7 @@ func NewSystemAPI(name, version string, app *App, logger *slog.Logger) (*SystemA
 	s.chooseSavePath = s.showSaveDialog
 	s.chooseDirectory = s.showDirectoryDialog
 	s.chooseFile = s.showOpenDialog
+	s.chooseTextPath = s.showTextOpenDialog
 	return s, nil
 }
 
@@ -144,20 +151,53 @@ func (s *SystemAPI) LicenceText(textID string) (string, error) {
 	return text, nil
 }
 
+// saveDialogFor describes the save dialog for one suggested filename.
+//
+// DERIVED FROM THE EXTENSION rather than fixed, because SaveTextFile now
+// writes three different things and a dialog restricted to CSV would have
+// appended `.csv` to the other two — macOS's save panel treats a filter as
+// the extension it will enforce, so a settings document would have arrived as
+// `podsteer-settings-….json.csv` and failed to import. The log download was
+// already going out through the CSV filter for the same reason; this fixes
+// that at the same time as making room for the settings file.
+//
+// Anything unrecognised gets an unrestricted dialog rather than a guess: the
+// operator named the file, and second-guessing them costs more than the tidy
+// filter is worth.
+func saveDialogFor(suggestedName string) (title string, filters []wailsruntime.FileFilter) {
+	switch strings.ToLower(filepath.Ext(suggestedName)) {
+	case ".csv":
+		return "Export CSV", []wailsruntime.FileFilter{
+			{DisplayName: "CSV (*.csv)", Pattern: "*.csv"},
+		}
+	case ".json":
+		return "Export", []wailsruntime.FileFilter{
+			{DisplayName: "JSON (*.json)", Pattern: "*.json"},
+		}
+	case ".log":
+		return "Download logs", []wailsruntime.FileFilter{
+			{DisplayName: "Log (*.log)", Pattern: "*.log"},
+			{DisplayName: "All files", Pattern: "*"},
+		}
+	default:
+		return "Save", nil
+	}
+}
+
 // showSaveDialog is chooseSavePath's real implementation: the native save
-// dialog, seeded with the suggested filename and restricted to CSV.
+// dialog, seeded with the suggested filename and filtered by its extension.
 func (s *SystemAPI) showSaveDialog(suggestedName string) (string, error) {
 	ctx, ok := s.app.runtimeContext()
 	if !ok {
 		return "", fmt.Errorf("the window is not running")
 	}
 
+	title, filters := saveDialogFor(suggestedName)
+
 	return wailsruntime.SaveFileDialog(ctx, wailsruntime.SaveDialogOptions{
-		Title:           "Export CSV",
+		Title:           title,
 		DefaultFilename: suggestedName,
-		Filters: []wailsruntime.FileFilter{
-			{DisplayName: "CSV (*.csv)", Pattern: "*.csv"},
-		},
+		Filters:         filters,
 	})
 }
 
@@ -224,6 +264,87 @@ func (s *SystemAPI) showOpenDialog(title string) (string, error) {
 	return wailsruntime.OpenFileDialog(ctx, wailsruntime.OpenDialogOptions{
 		Title: title,
 	})
+}
+
+// showTextOpenDialog is chooseTextPath's real implementation: the native file
+// picker, filtered to JSON but offering everything, because an operator who
+// renamed their settings file should not be told it does not exist.
+func (s *SystemAPI) showTextOpenDialog(title string) (string, error) {
+	ctx, ok := s.app.runtimeContext()
+	if !ok {
+		return "", fmt.Errorf("the window is not running")
+	}
+
+	return wailsruntime.OpenFileDialog(ctx, wailsruntime.OpenDialogOptions{
+		Title: title,
+		Filters: []wailsruntime.FileFilter{
+			{DisplayName: "JSON (*.json)", Pattern: "*.json"},
+			{DisplayName: "All files", Pattern: "*"},
+		},
+	})
+}
+
+// maxTextFileBytes caps what ReadTextFile will hand the webview.
+//
+// A settings document is a few kilobytes; a megabyte is already two orders
+// past anything PodSteer writes. The cap is not a security boundary — the
+// operator picked the file — it is a refusal to marshal an arbitrarily large
+// string across the bridge and into a JSON parser running in the UI thread,
+// which is how "I chose the wrong file" becomes "the window froze".
+const maxTextFileBytes = 1 << 20
+
+// ReadTextFile opens a native file picker and returns what the chosen file
+// contains.
+//
+// The file is read HERE rather than handed to the frontend as a path, for the
+// same reason ReadKubeconfigFile is: the webview cannot open files and should
+// not be able to. That is also why this exists rather than ChooseFile being
+// reused — ChooseFile returns a PATH, which is only ever useful to a Go method
+// that will act on it, and nothing in the webview can turn one into content.
+//
+// An empty returned string means the operator cancelled, which is not an
+// error — the same convention as ChooseDirectory and ReadKubeconfigFile. An
+// empty FILE is refused instead of being returned as a cancellation, because
+// the two would otherwise be indistinguishable to the caller.
+func (s *SystemAPI) ReadTextFile(title string) (string, error) {
+	if strings.TrimSpace(title) == "" {
+		title = "Choose a file"
+	}
+
+	path, err := s.chooseTextPath(title)
+	if err != nil {
+		return "", apiError(s.logger, "ReadTextFile", err)
+	}
+	if path == "" {
+		return "", nil
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", apiError(s.logger, "ReadTextFile", err)
+	}
+	if info.Size() > maxTextFileBytes {
+		return "", apiError(s.logger, "ReadTextFile", fmt.Errorf(
+			"%w: that file is %d bytes; PodSteer reads at most %d",
+			errUnreadableTextFile, info.Size(), maxTextFileBytes))
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", apiError(s.logger, "ReadTextFile", err)
+	}
+	if len(content) == 0 {
+		return "", apiError(s.logger, "ReadTextFile", fmt.Errorf("%w: that file is empty",
+			errUnreadableTextFile))
+	}
+
+	// The PATH is not logged, and neither is the content. What was chosen is
+	// the operator's business and the reason for it is on screen in front of
+	// them; SECURITY.md's file-transfer rule — one line naming what moved,
+	// never a local path — is the same rule.
+	s.logger.Debug("read a text file", slog.Int("bytes", len(content)))
+
+	return string(content), nil
 }
 
 // ChooseDirectory opens the native folder picker and returns the operator's
