@@ -1253,6 +1253,12 @@
     <ScaleDialog
       open={scaleDialogOpen}
       currentReplicas={selectedWorkload.desired}
+      workloadKind={session.selectedKindId === 'apps/v1/deployments' ? 'Deployment' : 'StatefulSet'}
+      namespace={selectedWorkload.namespace}
+      workloadName={selectedWorkload.name}
+      checkAutoscalers={session.autoscalersFor}
+      canOpen={kindIdFor}
+      onopen={openObject}
       onclose={() => (scaleDialogOpen = false)}
       onconfirm={handleScale}
     />

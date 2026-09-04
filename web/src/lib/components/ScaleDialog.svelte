@@ -4,16 +4,46 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import { follower, type OpenObject, type ServesKind } from '$lib/reference'
+  import type { AutoscalerCheck, AutoscalerRef } from '$lib/autoscalers'
   import Button from './Button.svelte'
+  import { TriangleAlert } from '@lucide/svelte'
 
   interface Props {
     open: boolean
     currentReplicas: number
+    /** The workload's own Kubernetes Kind — "Deployment" or "StatefulSet" — matched against an autoscaler's scale target. */
+    workloadKind: string
+    namespace: string
+    workloadName: string
     onclose: () => void
     onconfirm: (replicas: number) => void
+    /**
+     * Asks whether an autoscaler targets this workload.
+     *
+     * A PROP RATHER THAN AN IMPORT, so the dialog stays a plain view over
+     * what it is handed. The caching that keeps this to one request per kind
+     * — not one per workload the operator opens the dialog on — lives with
+     * the session that already holds the cluster and its catalog.
+     */
+    checkAutoscalers: (kind: string, namespace: string, name: string) => Promise<AutoscalerCheck>
+    /** Resolves a Kind to this cluster's navigator id, for the autoscaler link. */
+    canOpen?: ServesKind
+    onopen?: OpenObject
   }
 
-  let { open, currentReplicas, onclose, onconfirm }: Props = $props()
+  let {
+    open,
+    currentReplicas,
+    workloadKind,
+    namespace,
+    workloadName,
+    onclose,
+    onconfirm,
+    checkAutoscalers,
+    canOpen,
+    onopen,
+  }: Props = $props()
 
   // Seeded by the effect below rather than from the prop directly: reading a
   // prop into $state() captures only its initial value, and the dialog is kept
@@ -28,6 +58,42 @@
     if (replicas >= 0) {
       onconfirm(replicas)
     }
+  }
+
+  /**
+   * Whether an autoscaler owns this workload's replica count, asked once per
+   * opening rather than once per keystroke in the field below.
+   *
+   * UNDEFINED WHILE PENDING, AND RENDERED AS NOTHING. Showing a placeholder
+   * that then flips to "no autoscaler" a moment later is worse than showing
+   * nothing at all: on a slow cluster the operator may already have clicked
+   * Scale by the time the honest answer arrives.
+   */
+  let autoscalers = $state<AutoscalerCheck | undefined>(undefined)
+  let checkRequest = 0
+
+  $effect(() => {
+    if (!open) return
+    const request = ++checkRequest
+    autoscalers = undefined
+    void checkAutoscalers(workloadKind, namespace, workloadName).then((result) => {
+      // The dialog can close and reopen on a different workload before a slow
+      // read returns; a stale answer landing on the new one would warn about
+      // — or silently clear a warning about — the wrong autoscaler.
+      if (request === checkRequest) autoscalers = result
+    })
+  })
+
+  /** Builds the click handler for an autoscaler's name, or nothing when it cannot be followed. See $lib/reference. */
+  const follow = $derived(follower(canOpen, onopen))
+
+  /** "HorizontalPodAutoscaler, min 2, max 10" — only the bounds the server printed. */
+  function describe(ref: AutoscalerRef): string {
+    const bounds = [
+      ref.minReplicas ? `min ${ref.minReplicas}` : null,
+      ref.maxReplicas ? `max ${ref.maxReplicas}` : null,
+    ].filter((part): part is string => part !== null)
+    return bounds.length ? `${ref.kind}, ${bounds.join(', ')}` : ref.kind
   }
 
   /**
@@ -89,6 +155,48 @@
     <p class="mt-4 text-body-medium text-on-surface-variant">
       Set the number of replicas for this workload.
     </p>
+
+    <!--
+      Scaling by hand while an autoscaler targets this workload is undone
+      within its next sync period — silently, unless something here says so.
+      Aptakube warns; this is that warning. IT DOES NOT BLOCK THE ACTION: the
+      operator may be doing this on purpose, e.g. to force an immediate
+      change ahead of the autoscaler's next reconcile.
+    -->
+    {#if autoscalers?.status === 'known' && autoscalers.autoscalers.length > 0}
+      <div class="mt-4 flex flex-col gap-2">
+        {#each autoscalers.autoscalers as ref (ref.kind + '/' + ref.name)}
+          {@const opener = follow(ref.kind, ref.name, namespace)}
+          <div class="flex items-start gap-2 rounded-sm border border-gauge-warn/40 bg-gauge-warn/10 p-3">
+            <TriangleAlert class="mt-0.5 size-4 shrink-0 text-gauge-warn" strokeWidth={2} />
+            <p class="text-body-small text-on-surface">
+              An autoscaler manages this replica count —
+              {#if opener}
+                <button
+                  type="button"
+                  class="resource-link font-medium"
+                  onclick={() => {
+                    // Closed first: what the click opens is a different
+                    // object, not this workload, and leaving the dialog open
+                    // over it would scale whatever was here when it was
+                    // clicked rather than what is now on screen.
+                    onclose()
+                    opener()
+                  }}
+                >{ref.name}</button>
+              {:else}
+                <span class="font-medium" data-selectable>{ref.name}</span>
+              {/if}
+              ({describe(ref)}). It will override whatever you set here within its sync period.
+            </p>
+          </div>
+        {/each}
+      </div>
+    {:else if autoscalers?.status === 'unknown'}
+      <p class="mt-4 text-body-small text-on-surface-variant">
+        Could not check for an autoscaler: {autoscalers.reason}
+      </p>
+    {/if}
 
     <label class="mt-4 block">
       <span class="text-body-small text-on-surface-variant">Replicas</span>
