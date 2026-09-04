@@ -365,6 +365,17 @@ func TestAdoptedGroupsSurviveTheSuffixRule(t *testing.T) {
 			t.Fatalf("%q was hidden, though it is only present when installed", group)
 		}
 	}
+
+	// The two in-tree but GATED groups the typed panels under
+	// web/src/lib/standardapis read. Nothing in the catalog covers either, so
+	// the suffix rule was the only thing deciding, and it hid them: a cluster
+	// has ResourceClaims because somebody enabled DRA and installed a driver,
+	// and MutatingAdmissionPolicy because somebody turned its gate on.
+	for _, group := range []string{"resource.k8s.io", "admissionregistration.k8s.io"} {
+		if isKubernetesGroup(group) {
+			t.Fatalf("%q was hidden, though it is only present when its feature gate is on", group)
+		}
+	}
 }
 
 // --- Projection ---------------------------------------------------------------

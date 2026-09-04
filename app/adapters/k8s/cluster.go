@@ -238,6 +238,21 @@ var adoptedGroups = map[string]bool{
 	"groupsnapshot.storage.k8s.io": true,
 	// AdminNetworkPolicy, installed by a CNI rather than by Kubernetes.
 	"policy.networking.k8s.io": true,
+	// Dynamic Resource Allocation, which is how a GPU workload is described
+	// now. In-tree rather than installed by anybody, so it stretches this
+	// list's original wording — but it stretches it in the direction the list
+	// exists for. The suffix rule hides a group on the grounds that every
+	// cluster has it, and this one is behind a feature gate that most clusters
+	// do not turn on: a cluster has ResourceClaims because somebody enabled
+	// DRA and installed a driver, exactly as it has Gateways because somebody
+	// installed Gateway API. Hidden, the kinds could not be opened at all.
+	"resource.k8s.io": true,
+	// The admission policies, and the webhook configurations that share their
+	// group. Same reasoning: ValidatingAdmissionPolicy was gated off until
+	// recently and MutatingAdmissionPolicy still is on most clusters, and
+	// nothing in the catalog covers this group, so the whole of what admits or
+	// refuses a write was unreachable.
+	"admissionregistration.k8s.io": true,
 }
 
 // Worth knowing before adding to the list above: `x-k8s.io` groups — Cluster
