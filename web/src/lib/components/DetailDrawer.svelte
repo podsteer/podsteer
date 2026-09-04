@@ -43,11 +43,13 @@
   import RestartDialog from './RestartDialog.svelte'
   import KubectlHint from './KubectlHint.svelte'
   import { apply as kubectlApply, resourceArgForKind } from '$lib/kubectl'
+  import TriggerDialog from './TriggerDialog.svelte'
+  import SuspendDialog from './SuspendDialog.svelte'
   import Terminal from './Terminal.svelte'
   import DependencyMap from './DependencyMap.svelte'
   import { DeleteResource, RestartRollout } from '$lib/wailsjs/go/wails/ManagementAPI'
   import { ListPodsForWorkload } from '$lib/wailsjs/go/wails/WorkloadAPI'
-  import type { Pod } from '$lib/api/client'
+  import { triggerCronJob, suspendWorkload, type Pod } from '$lib/api/client'
   import {
     X,
     Info,
@@ -68,6 +70,9 @@
     EyeOff,
     Plug,
     Loader,
+    Play,
+    CirclePlay,
+    CirclePause,
   } from '@lucide/svelte'
 
   interface Props {
@@ -99,8 +104,20 @@
   /** Which pane, if any, has been given the whole window. */
   let maximized = $state<'yaml' | 'logs' | 'terminal' | 'map' | null>(null)
   let restartDialogOpen = $state(false)
+  let triggerDialogOpen = $state(false)
+  let suspendDialogOpen = $state(false)
   let actionError = $state<string | null>(null)
   let workloadPods = $state<Pod[]>([])
+
+  /**
+   * Names the Job a "Run now" just created, for a few seconds.
+   *
+   * The same self-clearing flag LogViewer and RowMenu use for "Copied!" —
+   * see $lib/flash.svelte — paired with the name here because the flag
+   * itself carries no content of its own.
+   */
+  const triggered = flash(4000)
+  let triggeredJobName = $state('')
 
   /** The selected kind's own icon, so the drawer is marked like its row. */
   const KindIcon = $derived(
@@ -239,6 +256,9 @@
     session.selectedKindId === 'apps/v1/daemonsets'
   )
 
+  const isCronJob = $derived(session.selectedKindId === 'batch/v1/cronjobs')
+  const isJob = $derived(session.selectedKindId === 'batch/v1/jobs')
+
   /** The Kubernetes kind of the open workload, or null when it is not one. */
   const mappedWorkloadKind = $derived(
     session.selectedKindId ? (WORKLOAD_KIND_BY_ID[session.selectedKindId] ?? null) : null,
@@ -262,8 +282,11 @@
     selectedPod?.containers.map(c => c.name) ?? []
   )
 
+  // Broader than isScalable: Trigger and Suspend act on CronJobs and Jobs
+  // too, and ResourceOverview already excludes those two kinds from what it
+  // does with this prop, so widening it here is safe.
   const selectedWorkload = $derived(
-    isScalable ? session.workloads.find(w => w.name === session.selectedName && w.namespace === session.selectedNamespace) : null
+    isWorkloadKind ? session.workloads.find(w => w.name === session.selectedName && w.namespace === session.selectedNamespace) : null
   )
 
   /**
@@ -325,6 +348,9 @@
     shownObject
     activeTab = 'overview'
     actionError = null
+    // A "Created <job>" notice from a Run now on the PREVIOUS object must not
+    // keep showing over a different one now open in its place.
+    triggered.cancel()
   })
 
   /**
@@ -448,6 +474,37 @@
       await session.refresh()
     } catch (error) {
       actionError = `Failed to restart: ${error}`
+    }
+  }
+
+  async function handleTrigger(): Promise<void> {
+    if (!selectedWorkload) return
+    try {
+      const jobName = await triggerCronJob(session.cluster.id, selectedWorkload.namespace, selectedWorkload.name)
+      triggerDialogOpen = false
+      triggeredJobName = jobName
+      triggered.show()
+      await session.refresh()
+    } catch (error) {
+      actionError = `Failed to trigger: ${error}`
+    }
+  }
+
+  /** Suspends or resumes the selected CronJob or Job. Resume needs no dialog. */
+  async function handleSuspend(suspend: boolean): Promise<void> {
+    if (!session.selectedKind || !selectedWorkload) return
+    try {
+      await suspendWorkload(
+        session.cluster.id,
+        session.selectedKind.kind,
+        selectedWorkload.namespace,
+        selectedWorkload.name,
+        suspend,
+      )
+      suspendDialogOpen = false
+      await session.refresh()
+    } catch (error) {
+      actionError = `Failed to ${suspend ? 'suspend' : 'resume'}: ${error}`
     }
   }
 
@@ -600,6 +657,7 @@
 
   // Nothing left running behind a component that has gone away.
   $effect(() => () => copied.cancel())
+  $effect(() => () => triggered.cancel())
 </script>
 
 <!--
@@ -997,6 +1055,42 @@
           </button>
         {/if}
 
+        <!-- "Run now" — CronJobs only. Creates a Job outside the schedule;
+             see TriggerDialog for what that means for history limits. -->
+        {#if isCronJob}
+          <button
+            type="button"
+            onclick={() => (triggerDialogOpen = true)}
+            aria-label="Run now"
+            title="Run now"
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+          >
+            <Play class="size-4" strokeWidth={1.8} />
+          </button>
+        {/if}
+
+        <!-- Suspend/Resume — CronJobs and Jobs. Resume acts immediately with
+             no dialog: it undoes a visible, deliberate state rather than
+             doing anything destructive, unlike suspending a running Job. -->
+        {#if (isCronJob || isJob) && selectedWorkload}
+          {@const workload = selectedWorkload}
+          <button
+            type="button"
+            onclick={() => (workload.suspended ? handleSuspend(false) : (suspendDialogOpen = true))}
+            aria-label={workload.suspended ? 'Resume' : 'Suspend'}
+            title={workload.suspended ? 'Resume' : 'Suspend'}
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+          >
+            {#if workload.suspended}
+              <CirclePlay class="size-4" strokeWidth={1.8} />
+            {:else}
+              <CirclePause class="size-4" strokeWidth={1.8} />
+            {/if}
+          </button>
+        {/if}
+
         <!-- Edit and Copy used to sit here. They act on the manifest, so they
              now live in the YAML tab's toolbar beside it — a control belongs
              next to the thing it changes, and from the Overview tab "Copy"
@@ -1082,6 +1176,16 @@
       <div class="flex items-center gap-2 border-b border-error/20 bg-error-container/50 px-4 py-2 text-body-small text-on-error-container">
         <Activity class="size-3.5 shrink-0 text-error" strokeWidth={2} />
         {actionError}
+      </div>
+    {/if}
+
+    <!-- "Run now" success notice: names the Job it created, since the
+         operator has no other way to find it among the CronJob's history
+         without knowing what to look for. -->
+    {#if triggered.on}
+      <div class="flex items-center gap-2 border-b border-success/20 bg-success-container/50 px-4 py-2 text-body-small text-on-success-container">
+        <Check class="size-3.5 shrink-0 text-success" strokeWidth={2} />
+        Created job <strong data-selectable>{triggeredJobName}</strong>
       </div>
     {/if}
 
@@ -1352,6 +1456,21 @@
         restartDialogOpen = false
         await handleRestart()
       }}
+    />
+
+    <TriggerDialog
+      open={triggerDialogOpen}
+      workloadName={selectedWorkload.name}
+      onclose={() => (triggerDialogOpen = false)}
+      onconfirm={handleTrigger}
+    />
+
+    <SuspendDialog
+      open={suspendDialogOpen}
+      workloadName={selectedWorkload.name}
+      workloadKind={session.selectedKind?.kind ?? 'CronJob'}
+      onclose={() => (suspendDialogOpen = false)}
+      onconfirm={() => handleSuspend(true)}
     />
   {/if}
 {/if}

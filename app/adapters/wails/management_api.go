@@ -312,6 +312,52 @@ func (m *ManagementAPI) RestartRollout(clusterID, kind, namespace, name string) 
 	return m.management.RestartRollout(ctx, id, domain.WorkloadKind(kind), ns, name)
 }
 
+// TriggerCronJob creates a Job from a CronJob's template right now, outside
+// its schedule, and returns the created Job's name.
+func (m *ManagementAPI) TriggerCronJob(clusterID, namespace, name string) (string, error) {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return "", apiError(m.logger, "TriggerCronJob", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return "", apiError(m.logger, "TriggerCronJob", err)
+	}
+
+	jobName, err := m.management.TriggerCronJob(ctx, id, ns, name)
+	if err != nil {
+		return "", apiError(m.logger, "TriggerCronJob", err)
+	}
+
+	return jobName, nil
+}
+
+// SuspendWorkload sets or clears suspend on a CronJob or a Job.
+func (m *ManagementAPI) SuspendWorkload(clusterID, kind, namespace, name string, suspend bool) error {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(m.logger, "SuspendWorkload", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return apiError(m.logger, "SuspendWorkload", err)
+	}
+
+	if err := m.management.SuspendWorkload(ctx, id, domain.WorkloadKind(kind), ns, name, suspend); err != nil {
+		return apiError(m.logger, "SuspendWorkload", err)
+	}
+
+	return nil
+}
+
 // UpdateResource applies a YAML manifest to the cluster.
 func (m *ManagementAPI) UpdateResource(clusterID, manifest string) error {
 	ctx, cancel := m.app.requestContext()

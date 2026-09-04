@@ -139,6 +139,58 @@ func (s *ManagementService) RestartRollout(ctx context.Context, id domain.Cluste
 	return nil
 }
 
+// TriggerCronJob creates a Job from a CronJob's template right now, outside
+// its schedule.
+func (s *ManagementService) TriggerCronJob(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (string, error) {
+	s.logger.InfoContext(ctx, "triggering cronjob",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.String("name", name))
+
+	jobName, err := s.management.TriggerCronJob(ctx, id, namespace, name)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to trigger cronjob",
+			slog.String("cluster", id.String()),
+			slog.String("name", name),
+			slog.String("error", err.Error()))
+		return "", err
+	}
+
+	return jobName, nil
+}
+
+// SuspendWorkload sets or clears suspend on a CronJob or a Job.
+//
+// Only those two kinds support it, and that is checked HERE rather than left
+// to the adapter — mirroring how ScaleWorkload validates its replica count
+// before the adapter is ever reached, so an unsupported kind never costs a
+// round trip to the cluster to be told no.
+func (s *ManagementService) SuspendWorkload(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, suspend bool) error {
+	s.logger.InfoContext(ctx, "suspending workload",
+		slog.String("cluster", id.String()),
+		slog.String("kind", string(kind)),
+		slog.String("namespace", namespace.String()),
+		slog.String("name", name),
+		slog.Bool("suspend", suspend))
+
+	if kind != domain.WorkloadCronJob && kind != domain.WorkloadJob {
+		return fmt.Errorf("%w: suspend is only supported for CronJobs and Jobs, got %s",
+			domain.ErrUnsupportedWorkloadKind, kind)
+	}
+
+	err := s.management.SuspendWorkload(ctx, id, kind, namespace, name, suspend)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to suspend workload",
+			slog.String("cluster", id.String()),
+			slog.String("kind", string(kind)),
+			slog.String("name", name),
+			slog.String("error", err.Error()))
+		return err
+	}
+
+	return nil
+}
+
 // UpdateResource applies a YAML manifest to the cluster.
 func (s *ManagementService) UpdateResource(ctx context.Context, id domain.ClusterID, manifest string) error {
 	s.logger.InfoContext(ctx, "updating resource",

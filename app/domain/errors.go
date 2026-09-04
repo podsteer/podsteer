@@ -59,4 +59,10 @@ var (
 	// and either is worth saying rather than rendering nothing and letting it
 	// read as "this variable is blank".
 	ErrSecretKeyNotFound = errors.New("secret key not found")
+
+	// ErrUnsupportedWorkloadKind is returned when an operation is attempted
+	// against a WorkloadKind that does not support it — suspending a
+	// Deployment, say. The application layer checks this before an adapter is
+	// ever reached, mirroring how ScaleWorkload validates its replica count.
+	ErrUnsupportedWorkloadKind = errors.New("unsupported workload kind")
 )

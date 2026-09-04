@@ -7,12 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
 	"sigs.k8s.io/yaml"
@@ -337,6 +340,140 @@ func (a *Adapter) RestartRollout(ctx context.Context, id domain.ClusterID, kind 
 
 	default:
 		return fmt.Errorf("restart not supported for kind: %s", kind)
+	}
+
+	return nil
+}
+
+// manualInstantiateAnnotation marks a Job as created outside its CronJob's
+// schedule, the same annotation `kubectl create job --from=cronjob` sets.
+const manualInstantiateAnnotation = "cronjob.kubernetes.io/instantiate"
+
+// manualJobRandomSuffixLength is how many random characters follow
+// "-manual-" in a manually triggered Job's name.
+const manualJobRandomSuffixLength = 5
+
+// maxObjectNameLength is Kubernetes' limit on an object name. A Job's name
+// feeds its pods' names, so a manually triggered Job must stay under it even
+// when the CronJob it came from is named right up to the edge.
+const maxObjectNameLength = 63
+
+// TriggerCronJob creates a Job from a CronJob's template right now, the way
+// `kubectl create job --from=cronjob/NAME` does.
+func (a *Adapter) TriggerCronJob(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (string, error) {
+	defer a.forgetReads(id)
+
+	client, err := a.factory.clientFor(id)
+	if err != nil {
+		return "", err
+	}
+
+	ns := namespace.String()
+
+	// A suspended CronJob may still be triggered — kubectl allows exactly
+	// this, and an operator reaching for "run now" wants one run regardless
+	// of the schedule, so suspension is never checked here.
+	cronJob, err := client.BatchV1().CronJobs(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", classify("creating job from cronjob", err)
+	}
+
+	labels := make(map[string]string, len(cronJob.Spec.JobTemplate.Labels))
+	maps.Copy(labels, cronJob.Spec.JobTemplate.Labels)
+
+	annotations := make(map[string]string, len(cronJob.Spec.JobTemplate.Annotations)+1)
+	maps.Copy(annotations, cronJob.Spec.JobTemplate.Annotations)
+	annotations[manualInstantiateAnnotation] = "manual"
+
+	controller := true
+	blockOwnerDeletion := true
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        manualJobName(name),
+			Namespace:   ns,
+			Labels:      labels,
+			Annotations: annotations,
+			// The single owner reference is what makes the CronJob controller
+			// adopt this Job: count it as active, apply
+			// successfulJobsHistoryLimit/failedJobsHistoryLimit to it, and show
+			// it under the CronJob exactly as a scheduled run would.
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion:         "batch/v1",
+				Kind:               "CronJob",
+				Name:               cronJob.Name,
+				UID:                cronJob.UID,
+				Controller:         &controller,
+				BlockOwnerDeletion: &blockOwnerDeletion,
+			}},
+		},
+		Spec: cronJob.Spec.JobTemplate.Spec,
+	}
+
+	created, err := client.BatchV1().Jobs(ns).Create(ctx, job, metav1.CreateOptions{})
+	if err != nil {
+		return "", classify("creating job from cronjob", err)
+	}
+
+	return created.Name, nil
+}
+
+// manualJobName builds the name a manually triggered Job gets:
+// <cronjob>-manual-<5 random lowercase alphanumerics>, with the CronJob's own
+// name truncated so the result stays within maxObjectNameLength. Kubernetes
+// rejects an over-length name outright rather than truncating it, and a Job's
+// name feeds its pods' names, so this has to be done before Create rather
+// than left to the API server.
+func manualJobName(cronJobName string) string {
+	suffix := "-manual-" + utilrand.String(manualJobRandomSuffixLength)
+
+	prefix := cronJobName
+	if maxPrefix := maxObjectNameLength - len(suffix); len(prefix) > maxPrefix {
+		prefix = prefix[:maxPrefix]
+	}
+
+	return prefix + suffix
+}
+
+// SuspendWorkload sets or clears spec.suspend on a CronJob or a Job.
+func (a *Adapter) SuspendWorkload(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, suspend bool) error {
+	defer a.forgetReads(id)
+
+	client, err := a.factory.clientFor(id)
+	if err != nil {
+		return err
+	}
+
+	ns := namespace.String()
+
+	patch := map[string]any{
+		"spec": map[string]any{
+			"suspend": suspend,
+		},
+	}
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("marshaling suspend patch: %w", err)
+	}
+
+	switch kind {
+	case domain.WorkloadCronJob:
+		_, err = client.BatchV1().CronJobs(ns).Patch(ctx, name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+		if err != nil {
+			return classify("suspending cronjob", err)
+		}
+
+	case domain.WorkloadJob:
+		_, err = client.BatchV1().Jobs(ns).Patch(ctx, name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+		if err != nil {
+			return classify("suspending job", err)
+		}
+
+	default:
+		// Defence in depth: the application layer rejects any other kind
+		// before this is reached, mirroring ScaleWorkload and RestartRollout's
+		// own kind switches above.
+		return fmt.Errorf("suspend not supported for kind: %s", kind)
 	}
 
 	return nil

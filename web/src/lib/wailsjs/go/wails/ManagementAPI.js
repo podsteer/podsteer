@@ -38,6 +38,14 @@ export function StreamLogs(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['wails']['ManagementAPI']['StreamLogs'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
+export function SuspendWorkload(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['wails']['ManagementAPI']['SuspendWorkload'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function TriggerCronJob(arg1, arg2, arg3) {
+  return window['go']['wails']['ManagementAPI']['TriggerCronJob'](arg1, arg2, arg3);
+}
+
 export function UpdateResource(arg1, arg2) {
   return window['go']['wails']['ManagementAPI']['UpdateResource'](arg1, arg2);
 }
