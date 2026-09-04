@@ -15,6 +15,7 @@
   import Navigator from '$lib/components/Navigator.svelte'
   import Pagination from '$lib/components/Pagination.svelte'
   import ColumnMenu from '$lib/components/ColumnMenu.svelte'
+  import InfoHint from '$lib/components/InfoHint.svelte'
   import { activeTable } from '$stores/activeTable.svelte'
   import { focusFirstRow } from '$lib/components/DataTable.svelte'
   import SearchField from '$lib/components/SearchField.svelte'
@@ -130,7 +131,19 @@
           placeholder="Search {session.selectedKind?.title.toLowerCase() ?? 'resources'}…"
           onchange={session.setSearch}
           onnext={focusFirstRow}
+          invalid={Boolean(session.searchError)}
+          description={session.searchError ?? session.searchDescription}
           class="min-w-40 flex-1"
+        />
+
+        <!-- The lightest affordance for a grammar nobody is expected to
+             already know: an icon that says nothing until asked, next to a
+             field that otherwise looks like the plain-substring box it
+             always was. -->
+        <InfoHint
+          label="Search syntax"
+          text={'-term negates. re:pattern or /pattern/ is a regex. key=value, key!=value ' +
+            'and label:key select on labels. "quoted phrases" keep spaces in one term.'}
         />
 
         <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
