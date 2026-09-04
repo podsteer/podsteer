@@ -552,6 +552,8 @@ export namespace wails {
 	    state: string;
 	    reason: string;
 	    started: boolean;
+	    tty: boolean;
+	    stdin: boolean;
 	    requests: string;
 	    limits: string;
 	    cpu: string;
@@ -572,6 +574,8 @@ export namespace wails {
 	        this.state = source["state"];
 	        this.reason = source["reason"];
 	        this.started = source["started"];
+	        this.tty = source["tty"];
+	        this.stdin = source["stdin"];
 	        this.requests = source["requests"];
 	        this.limits = source["limits"];
 	        this.cpu = source["cpu"];

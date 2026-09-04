@@ -369,6 +369,29 @@ func (s *ManagementService) ExecInPodWithTTY(ctx context.Context, id domain.Clus
 	return s.management.ExecInPodWithTTY(ctx, id, namespace, podName, containerName, command, stdin, stdout, stderr, sizeQueue)
 }
 
+// AttachToPod connects to a container's own running process rather than
+// starting a new one — the only way to interact with a process that reads
+// stdin, and to see its live stdout without a separate log stream.
+//
+// It can type into that process exactly as an interactive shell can, so it
+// is refused exactly like ExecInPodWithTTY — TerminalAPI.StartAttachSession
+// also checks ReadOnly before it allocates a PTY at all; this is the check
+// that still fires if a future caller ever reaches this method some other
+// way.
+func (s *ManagementService) AttachToPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, stdin io.Reader, stdout, stderr io.Writer, sizeQueue ports.TerminalSizeQueue) error {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return err
+	}
+
+	s.logger.InfoContext(ctx, "attaching to pod",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.String("pod", podName),
+		slog.String("container", containerName))
+
+	return s.management.AttachToPod(ctx, id, namespace, podName, containerName, stdin, stdout, stderr, sizeQueue)
+}
+
 // CordonNode marks a node schedulable or unschedulable.
 func (s *ManagementService) CordonNode(ctx context.Context, id domain.ClusterID, name string, cordon bool) error {
 	s.logger.InfoContext(ctx, "cordoning node",

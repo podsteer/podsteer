@@ -147,6 +147,36 @@ func TestMapContainersIncludesContainersWithoutStatus(t *testing.T) {
 	}
 }
 
+// TestMapContainersCarriesTTYAndStdin pins the quotation AttachToPod's local
+// refusal depends on: a container's own tty and stdin declarations must
+// reach the domain exactly as the spec wrote them, not defaulted or dropped,
+// since the terminal pane decides whether to offer Attach from this value.
+func TestMapContainersCarriesTTYAndStdin(t *testing.T) {
+	t.Parallel()
+
+	source := &corev1.Pod{
+		Name: "api-7d9f", Namespace: "default",
+		Spec: corev1.PodSpec{Containers: []corev1.Container{
+			{Name: "app", TTY: true, Stdin: true},
+			{Name: "sidecar"},
+		}},
+	}
+
+	pod, err := mapPod("dev", source)
+	if err != nil {
+		t.Fatalf("mapPod() error = %v", err)
+	}
+
+	containers := pod.Containers()
+	if !containers[0].TTY || !containers[0].Stdin {
+		t.Errorf("containers[0] TTY/Stdin = %v/%v, want true/true", containers[0].TTY, containers[0].Stdin)
+	}
+	if containers[1].TTY || containers[1].Stdin {
+		t.Errorf("containers[1] TTY/Stdin = %v/%v, want false/false — a quotation of the spec, not a default",
+			containers[1].TTY, containers[1].Stdin)
+	}
+}
+
 func TestMapContainerState(t *testing.T) {
 	t.Parallel()
 

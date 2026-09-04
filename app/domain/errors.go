@@ -86,4 +86,12 @@ var (
 	// parsed as PEM-encoded X.509 — a Secret whose tls.crt or ca.crt holds
 	// something else, or nothing.
 	ErrInvalidCertificate = errors.New("invalid certificate data")
+
+	// ErrContainerNotAttachable reports that AttachToPod was asked to attach
+	// to a container whose own spec does not declare both a tty and stdin.
+	// Kubernetes' attach subresource accepts the request regardless and only
+	// fails once the PTY negotiation begins, with a server error that names
+	// neither the pod nor the reason — so this is checked locally, before any
+	// request reaches the cluster, and says exactly what the container needs.
+	ErrContainerNotAttachable = errors.New("container has no tty; attach needs `tty: true` and `stdin: true` on the container")
 )

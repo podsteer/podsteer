@@ -141,6 +141,12 @@ type Container struct {
 	// Ready: started with not-ready is a readiness problem, not-started is a
 	// startup problem, and they are looked into in different places.
 	Started bool `json:"started"`
+	// TTY and Stdin quote the container's own spec: whether it allocates a
+	// pseudo-terminal and keeps standard input open. Both must be true
+	// before the terminal pane offers Attach (connecting to this container's
+	// own running process) as an alternative to Shell (starting a new one).
+	TTY   bool `json:"tty"`
+	Stdin bool `json:"stdin"`
 	// Requests and Limits, formatted for display. Empty when undeclared.
 	Requests string `json:"requests"`
 	Limits   string `json:"limits"`
@@ -296,6 +302,8 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 			State:           string(container.State),
 			Reason:          container.Reason,
 			Started:         container.Started,
+			TTY:             container.TTY,
+			Stdin:           container.Stdin,
 			Requests:        formatResources(container.Requests),
 			Limits:          formatResources(container.Limits),
 			CPU:             formatCores(container.Usage),

@@ -57,6 +57,8 @@ func richPod(name string) *corev1.Pod {
 				Command: []string{"/bin/sh"},
 				Args:    []string{"-c", "sleep"},
 				Env:     []corev1.EnvVar{{Name: "SECRET", Value: "x"}},
+				TTY:     true,
+				Stdin:   true,
 				Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")},
 					Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m")},

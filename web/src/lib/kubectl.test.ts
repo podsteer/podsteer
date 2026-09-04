@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   apply,
+  attach,
   del,
   describe as describeCmd,
   exec,
@@ -190,6 +191,20 @@ describe('exec', () => {
   it('accepts a custom command', () => {
     expect(exec('prod', 'web-1', 'default', 'app', ['/bin/bash', '-l'])).toBe(
       'kubectl --context prod -n default exec -it web-1 -c app -- /bin/bash -l',
+    )
+  })
+})
+
+describe('attach', () => {
+  it('defaults to no container flag', () => {
+    expect(attach('prod', 'web-1', 'default')).toBe('kubectl --context prod -n default attach -it web-1')
+  })
+
+  it('names the container when given one, with no trailing command the way exec has', () => {
+    // attach connects to the container's own process rather than starting a
+    // new one, so there is no `-- <command>` for it to carry.
+    expect(attach('prod', 'web-1', 'default', 'app')).toBe(
+      'kubectl --context prod -n default attach -it web-1 -c app',
     )
   })
 })

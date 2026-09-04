@@ -467,6 +467,11 @@ func (f *fakeManagementPort) ExecInPodWithTTY(context.Context, domain.ClusterID,
 	return f.err
 }
 
+func (f *fakeManagementPort) AttachToPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, io.Reader, io.Writer, io.Writer, ports.TerminalSizeQueue) error {
+	f.record("AttachToPod")
+	return f.err
+}
+
 func (f *fakeManagementPort) TriggerCronJob(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
