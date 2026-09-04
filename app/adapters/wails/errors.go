@@ -284,6 +284,12 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, domain.ErrInvalidImageReference),
 		errors.Is(err, domain.ErrInvalidManifest),
 		errors.Is(err, domain.ErrInvalidRevision),
+		// A malformed access review or role target, refused before it
+		// reaches the cluster: the API server would answer an empty
+		// question with a flat "no", which reads as a denial rather than
+		// as the question having been empty.
+		errors.Is(err, domain.ErrInvalidAccessRequest),
+		errors.Is(err, domain.ErrInvalidRoleTarget),
 		// The cluster's own verdict on an applied object (schema validation,
 		// an admission webhook) rather than PodSteer's local pre-flight
 		// check, but the SAME treatment applies: err.Error() is shown

@@ -52,6 +52,11 @@ import {
   ListWorkloads as bindListFleetWorkloads,
 } from '$lib/wailsjs/go/wails/FleetAPI'
 import {
+  CanI as bindCanI,
+  InspectRole as bindInspectRole,
+  SubjectRules as bindSubjectRules,
+} from '$lib/wailsjs/go/wails/RBACAPI'
+import {
   ScaleWorkload as bindScaleWorkload,
   UpdateResource as bindUpdateResource,
   ValidateResource as bindValidateResource,
@@ -148,6 +153,24 @@ export type ClusterEvents = wails.ClusterEvents
 export type ResourceKind = wails.ResourceKind
 /** A generically browsed kind, with server-printed columns. */
 export type ResourceTable = wails.ResourceTable
+
+/** What one kubeconfig may do in one namespace, as the API server enumerated
+    it — see app/domain/rbac.go. */
+export type SubjectRules = wails.SubjectRules
+/** One RBAC rule, as the cluster stated it. */
+export type PolicyRule = wails.PolicyRule
+/** One account a binding names, or one being asked about. */
+export type RBACSubject = wails.RBACSubject
+/** One "can I" question. Blank subject fields ask about the current account. */
+export type AccessRequest = wails.AccessRequest
+/** The API server's own answer to one question, carried verbatim. */
+export type AccessDecision = wails.AccessDecision
+/** One RoleBinding or ClusterRoleBinding, with the subjects it carries. */
+export type RoleBindingRef = wails.RoleBindingRef
+/** One blast-radius flag — a verdict, and the only one in this feature. */
+export type RBACFinding = wails.RBACFinding
+/** One role, what references it, and what its rules permit. */
+export type RoleInspection = wails.RoleInspection
 
 export type NamespaceInventory = wails.NamespaceInventory
 export type ConditionRef = wails.ConditionRef
@@ -590,6 +613,50 @@ export function listFleetWorkloads(
 /** Lists events across the named open clusters. */
 export function listFleetEvents(clusterIds: string[], namespace: string): Promise<ClusterEvents[]> {
   return call(() => bindListFleetEvents(clusterIds, namespace))
+}
+
+// --- RBAC explorer ----------------------------------------------------------
+//
+// Three reads, every one of them made because somebody pressed something.
+// Nothing here is on the refresh tick and nothing here is cached, in Go or
+// on this side: a decision held over from an earlier instant could report a
+// permission that has since been revoked as still granted.
+//
+// Being refused is an ordinary answer rather than a rejection — each result
+// carries its own `status`, so a pane says which of "you may not ask", "the
+// cluster does not offer it" and "it failed, try again" happened.
+
+/** Asks what the current credentials may do in one namespace. One request. */
+export function subjectRules(clusterId: string, namespace: string): Promise<SubjectRules> {
+  return call(() => bindSubjectRules(clusterId, namespace))
+}
+
+/**
+ * Asks whether one action is permitted — for the current account when the
+ * subject fields are blank, or for a named user, group or service account.
+ *
+ * The API server decides. What comes back is its own allowed, denied and
+ * reason; nothing on this side evaluates a rule to reach a verdict.
+ */
+export function canI(clusterId: string, request: AccessRequest): Promise<AccessDecision> {
+  return call(() => bindCanI(clusterId, request))
+}
+
+/**
+ * Reads one Role or ClusterRole, the bindings that reference it, and the
+ * blast-radius flags its rules raise.
+ *
+ * `scope` is 'cluster' or 'namespace'. Three requests, two of them
+ * cluster-wide lists, so it is called when the panel is opened and never on
+ * a tick.
+ */
+export function inspectRole(
+  clusterId: string,
+  scope: 'cluster' | 'namespace',
+  namespace: string,
+  name: string,
+): Promise<RoleInspection> {
+  return call(() => bindInspectRole(clusterId, scope, namespace, name))
 }
 
 // --- Events -----------------------------------------------------------------

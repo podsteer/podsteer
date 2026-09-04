@@ -22,6 +22,7 @@
     APPLICATIONS_KIND_ID,
     FLEET_KIND_ID,
     OVERVIEW_KIND_ID,
+    RBAC_KIND_ID,
     type ClusterSession,
     type RecentObject,
   } from '$stores/session.svelte'
@@ -32,6 +33,7 @@
   import {
     Blocks,
     ChevronDown,
+    KeyRound,
     Layers,
     LayoutDashboard,
     AlertTriangle,
@@ -80,6 +82,7 @@
   const onOverview = $derived(session.selectedKindId === OVERVIEW_KIND_ID)
   const onApplications = $derived(session.selectedKindId === APPLICATIONS_KIND_ID)
   const onFleet = $derived(session.selectedKindId === FLEET_KIND_ID)
+  const onRBAC = $derived(session.selectedKindId === RBAC_KIND_ID)
   /** How many tabs the merged view would merge — the badge on its row. */
   const openClusters = $derived(workspace.sessions.length)
 
@@ -414,6 +417,31 @@
         >
           {openClusters}
         </span>
+      </button>
+    </div>
+
+    <!-- The RBAC explorer, pinned beside the other two and for the same
+         reason: "what may this kubeconfig do here" is a question asked of the
+         review APIs, not an object anything can GET, so it is a pseudo-entry
+         rather than an entry in domain/catalog.go. Roles and ClusterRoles
+         themselves stay where they are, under Access Control. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(RBAC_KIND_ID)}
+        aria-current={onRBAC ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onRBAC
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <KeyRound
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onRBAC ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">Permissions</span>
       </button>
     </div>
 
