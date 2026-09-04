@@ -463,14 +463,15 @@ Three rules there have subtleties worth not re-deriving:
 - **A correctly configured pod produces no findings**, and a test asserts it. A
   panel that always has something to say is one people stop reading.
 
-## The dependency map is two shapes, not one
+## The dependency map is three shapes, not one
 
-`app/domain/graph.go` builds both, and they are separate functions because the
-SUBJECT decides the structure: a pod's map is a chain with the pod in the
-middle, a workload's is a fan — one controller over however many pods it
-currently has. Pretending they are one shape would mean a pod field that is
-sometimes a list, and edges that mean different things depending on which it
-was.
+`app/domain/graph.go` builds two of them and `app/domain/object_graph.go` the
+third, and they are separate functions because the SUBJECT decides the
+structure: a pod's map is a chain with the pod in the middle, a workload's is a
+fan — one controller over however many pods it currently has — and any other
+object's is a neighbourhood. Pretending they are one shape would mean a pod
+field that is sometimes a list, and edges that mean different things depending
+on which it was.
 
 **EVERY EDGE IS A RELATIONSHIP KUBERNETES ACTUALLY HAS.** That rule is worth
 stating on its own, because breaking it is always the convenient thing to do
@@ -557,6 +558,74 @@ resolves references against the navigator's catalogue, which is keyed by
 `Kind` — so a lowercased plural matches nothing and the click silently does
 nothing at all. That is what it did on every node of every kind until it was
 noticed.
+
+### The third shape is a neighbourhood, and it is offered on every kind
+
+`NewObjectGraph` (`app/domain/object_graph.go`) draws anything the generic
+table lists — a Service, a ConfigMap, a Secret, an Ingress, a PVC, a CRD
+instance — with the subject in the middle, what its spec names below it and
+what owns it above. It is a third function rather than a widening of the other
+two for the reason the other two are separate: those two subjects have a
+structure worth asserting, and an arbitrary object has none beyond "it names
+some objects and some name it".
+
+**It is still every-edge-is-real, and the rules are in the domain.**
+`ReferencesFromManifest` (`app/domain/object_references.go`) is a pure function
+over the DECODED MANIFEST — `map[string]any`, so no client-go and no Go type
+for a CRD — that says which field of which kind names what: an Ingress's
+`ingressClassName`, its backends (the default one included) and its
+`tls[].secretName`; a PVC's `volumeName`, `storageClassName` and data source; a
+PersistentVolume's `claimRef` (the one genuinely cross-namespace reference the
+map meets) and class; a ServiceAccount's secrets and pull secrets; an HPA's
+`scaleTargetRef`; a binding's `roleRef` and its ServiceAccount subjects, never
+its User or Group ones, which are strings an authenticator produced rather than
+objects. **A kind with no rule draws its owner chain and nothing else.**
+Guessing at a field that merely looks like a reference — anything ending in
+`Ref` — would draw lines out of a CRD's spec its author never meant as
+references, which is the same class of mistake as reading a label as ownership.
+
+**A reference that resolves to nothing is drawn, marked, and never dropped.**
+`GraphNode.Missing` is its own field beside `Healthy`, because an object that
+exists and is failing and one that was named and is absent call for opposite
+next steps; the map outlines a missing box dashed, and `graphFold.ts` counts
+missing members separately from unwell ones so a folded set says "3 not found"
+rather than "3 not ready". **A refusal is not an absence**: a 403 resolving a
+reference leaves the box unmarked and names the refusal in `Unreadable`, since
+telling an account that may not read Secrets that the Secret does not exist
+sends somebody to recreate an object that is sitting there.
+
+### Downward navigation is bounded, and the panel says why
+
+Upward is free and is taken: `ownerReferences` are already on the object, so
+each hop is one GET of a name Kubernetes itself wrote. It is still capped at
+`domain.ObjectOwnerDepth` (three) and terminates on a repeat keyed by UID —
+Kubernetes does not forbid an ownerReference cycle, and an unbounded walk is a
+drawer somebody else's object can make issue reads without limit. Outward is
+capped too: `graphReferenceLimit` (12) distinct references, resolved four at a
+time, with anything past the bound named rather than silently dropped.
+
+**Downward is attempted only where Kubernetes gives a cheap answer**, which
+today is one case: a Service's selector against one list of one kind in one
+namespace, read through `readcache.go` so it coalesces with the tab's own poll.
+Everything else somebody might want below an object — which pods mount this
+ConfigMap, which PVCs use this StorageClass — has no server-side index at all,
+and answering it would mean listing every kind in the namespace every time a
+pane opened: a request per kind per open drawer, which is exactly the polling
+storm the read-cache section above exists to prevent. So it is not done, and
+`domain.DownwardBound` puts one short line in the panel instead.
+
+**That line is `PodGraph.Bounded`, and it is NOT `Unreadable`.** Collapsing the
+two would be the mistake this codebase keeps refusing to make elsewhere
+(`MetricsStatus`, `ClusterReadStatus`): `Unreadable` means a read was attempted
+and refused, so a permission would fix it; `Bounded` means no read was
+attempted, deliberately, and no permission changes that. Empty space under an
+object with neither line would read as "nothing depends on this", which is a
+claim nothing here checked.
+
+Nothing on this path runs on a refresh tick — `BrowseAPI.ObjectGraph` is called
+when the pane opens and not again — because a neighbourhood changes when
+somebody changes it, and redrawing a map under a reader is worse than it being
+a few seconds stale.
 
 ## Secrets are read on request, never on render
 

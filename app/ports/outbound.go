@@ -243,6 +243,25 @@ type ResourcePort interface {
 	// GetManifest returns one object serialised as YAML, for the detail view.
 	GetManifest(ctx context.Context, ref domain.ResourceRef, revealSecrets bool) (string, error)
 
+	// ObjectGraphSources reads what one object's neighbourhood map is drawn
+	// from: its ownerReference chain upward, whatever its own spec names, and
+	// — only for a kind Kubernetes answers cheaply for — what it selects.
+	//
+	// BOUNDED BY CONSTRUCTION, and that is the contract rather than an
+	// implementation detail. Upward is capped at domain.ObjectOwnerDepth hops
+	// and terminates on a cycle; outward is capped at a small number of
+	// narrowed reads; downward is attempted ONLY where the answer is one list
+	// of one kind in one namespace that the API server itself indexes. No
+	// implementation may sweep the namespace looking for children — a request
+	// per kind per open drawer is the polling storm the read cache exists to
+	// prevent — and where the answer would need one, the map says so instead
+	// (domain.DownwardBound).
+	//
+	// Gathers rather than assembles: which field names what is a rule, and
+	// rules live in the domain. Individual sources degrade on their own, and
+	// ObjectGraphInput.Unreadable names what was missing.
+	ObjectGraphSources(ctx context.Context, ref domain.ResourceRef) (domain.ObjectGraphInput, error)
+
 	// RevealSecretKey returns the decoded value of ONE key of one Secret.
 	//
 	// One key, never the whole Secret, and never as a side effect of anything

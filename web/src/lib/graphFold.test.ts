@@ -12,6 +12,7 @@ function node(id: string, over: Partial<FoldNode> = {}): FoldNode {
     detail: '',
     healthy: true,
     subject: false,
+    missing: false,
     group: '',
     ...over,
   }
@@ -126,5 +127,83 @@ describe('folding a busy map', () => {
     const folded = fold(plain, new Set())
     expect(folded.nodes).toHaveLength(2)
     expect(folded.edges).toHaveLength(1)
+  })
+})
+
+/**
+ * A neighbourhood map's own sibling set: the references one object names, all
+ * grouped under it. They fold exactly as a workload's replicas do, and a
+ * reference to something that is not there must not be hidden by the fold any
+ * more than an unwell pod is.
+ */
+function neighbourhood(count: number, missing: number): FoldableGraph {
+  const nodes = [
+    node('service/shop/web', { kind: 'service', apiKind: 'Service', subject: true }),
+  ]
+  const edges: FoldEdge[] = []
+
+  for (let i = 0; i < count; i++) {
+    const id = `secret/shop/token-${i}`
+    nodes.push(
+      node(id, {
+        kind: 'secret',
+        apiKind: 'Secret',
+        group: 'service/shop/web',
+        missing: i < missing,
+        healthy: i >= missing,
+        detail: i < missing ? 'not found' : '',
+      }),
+    )
+    edges.push({ from: 'service/shop/web', to: id, label: 'token' })
+  }
+
+  return { nodes, edges }
+}
+
+describe('folding a set that names something absent', () => {
+  it('counts the missing members separately from the unwell ones', () => {
+    // COUNTED SEPARATELY even though a missing node is drawn unwell: an object
+    // that exists and is failing and one that was named and is absent call for
+    // opposite next steps.
+    const folded = fold(neighbourhood(FOLD_THRESHOLD + 2, 2), new Set())
+
+    expect(folded.groups).toHaveLength(1)
+    expect(folded.groups[0].missing).toBe(2)
+    expect(folded.groups[0].unhealthy).toBe(2)
+    expect(folded.groups[0].count).toBe(FOLD_THRESHOLD + 2)
+  })
+
+  it('says how many are missing rather than how many are unwell', () => {
+    const folded = fold(neighbourhood(FOLD_THRESHOLD + 2, 2), new Set())
+    const box = folded.nodes.find((n) => n.fold)
+
+    expect(box?.detail).toBe('2 not found')
+    // Folding must never hide the thing somebody opened the map to find.
+    expect(box?.healthy).toBe(false)
+  })
+
+  it('falls back to the readiness count when nothing is missing', () => {
+    const graph = neighbourhood(FOLD_THRESHOLD + 1, 0)
+    graph.nodes[1] = { ...graph.nodes[1], healthy: false }
+
+    const box = fold(graph, new Set()).nodes.find((n) => n.fold)
+    expect(box?.detail).toBe('1 not ready')
+  })
+
+  it('never marks the group box itself as missing', () => {
+    // A GROUP IS NOT ITSELF A MISSING OBJECT: it stands for its members, and
+    // the count says how many of them are. Drawing the box as missing would
+    // claim the set does not exist.
+    const box = fold(neighbourhood(FOLD_THRESHOLD + 3, 3), new Set()).nodes.find((n) => n.fold)
+    expect(box?.missing).toBe(false)
+  })
+
+  it('puts a missing member back, still marked, when the set is expanded', () => {
+    const key = 'fold/service/shop/web/secret'
+    const folded = fold(neighbourhood(FOLD_THRESHOLD + 1, 1), new Set([key]))
+
+    const member = folded.nodes.find((n) => n.id === 'secret/shop/token-0')
+    expect(member?.missing).toBe(true)
+    expect(folded.nodes.some((n) => n.fold)).toBe(false)
   })
 })

@@ -33,6 +33,7 @@ import {
   ListTable as bindListTable,
   NamespaceInventory as bindNamespaceInventory,
   ClassifyConditions as bindClassifyConditions,
+  ObjectGraph as bindObjectGraph,
 } from '$lib/wailsjs/go/wails/BrowseAPI'
 import {
   ListPods as bindListPods,
@@ -490,6 +491,24 @@ export function workloadGraph(
   name: string,
 ): Promise<PodGraph> {
   return call(() => bindWorkloadGraph(clusterId, namespace, kind, name))
+}
+
+/**
+ * The neighbourhood of one object of any kind: what its spec names below it,
+ * what owns it above.
+ *
+ * The third map shape, for everything the generic table lists — a Service, a
+ * ConfigMap, a PVC, a CRD instance. Keyed by the navigator catalogue id rather
+ * than by a kind name, because that is what the drawer already holds and what
+ * the backend needs to know which API path to read.
+ */
+export function objectGraph(
+  clusterId: string,
+  kindId: string,
+  namespace: string,
+  name: string,
+): Promise<PodGraph> {
+  return call(() => bindObjectGraph(clusterId, kindId, namespace, name))
 }
 
 /** Lists the pods the scheduler has placed on one node, across namespaces. */

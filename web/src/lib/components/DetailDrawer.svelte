@@ -474,6 +474,19 @@
   /** Whether the open object is one of the six controllers. */
   const isWorkloadKind = $derived(Boolean(mappedWorkloadKind))
 
+  /**
+   * Whether there is a map to draw.
+   *
+   * A real object of any kind has one. The pinned pseudo-entries do not: the
+   * overview is an assessment, and Applications and the fleet view are
+   * aggregations across clusters — none of them is something a cluster can be
+   * asked to GET, which is what a map is drawn from. `selectedApplication` is
+   * the third case, an inventory row rather than a catalogue kind.
+   */
+  const hasMap = $derived(
+    Boolean(session.selectedKindId && session.selectedName) && !isApplication,
+  )
+
   const isWorkloadWithLogs = $derived(
     session.selectedKindId === 'apps/v1/deployments' ||
     session.selectedKindId === 'apps/v1/statefulsets' ||
@@ -922,11 +935,15 @@
     { id: 'overview', label: 'Overview', icon: Info, show: () => true },
     { id: 'logs', label: 'Logs', icon: ScrollText, show: () => isPod || isWorkloadWithLogs },
     { id: 'terminal', label: 'Terminal', icon: TerminalSquare, show: () => isPod || isWorkloadWithLogs },
-    // Pods and the six controllers. A pod's map is a chain with the pod in
-    // the middle; a workload's is a fan — one controller over the pods it
-    // currently has — and both are worth walking, which is what the map is
-    // for. Nothing else has dependencies to draw.
-    { id: 'map', label: 'Map', icon: Workflow, show: () => isPod || isWorkloadKind },
+    // EVERY OBJECT, not only pods and the six controllers. A pod's map is a
+    // chain with the pod in the middle, a workload's is a fan, and everything
+    // else — a Service, a ConfigMap, a PVC, a CRD instance — is the
+    // neighbourhood: the object in the middle, what its spec names below it,
+    // what owns it above. Three shapes, because the subject decides the
+    // structure. What is NOT offered is the aggregations, which are not
+    // objects and have nothing to GET: the overview, the applications view and
+    // the fleet view.
+    { id: 'map', label: 'Map', icon: Workflow, show: () => hasMap },
     // Deployments, StatefulSets and DaemonSets only — the three kinds a
     // revision exists for. See hasRolloutHistory's own doc comment.
     { id: 'history', label: 'History', icon: HistoryIcon, show: () => hasRolloutHistory },
@@ -1163,6 +1180,22 @@
       namespace={session.selectedNamespace}
       name={session.selectedName}
       kind={mappedWorkloadKind}
+      onopen={openObject}
+      onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
+    />
+  {:else if hasMap && session.selectedKind && session.selectedName}
+    <!--
+      The neighbourhood shape. The catalogue id goes with the kind because the
+      backend needs the API group, version and resource to read an arbitrary
+      object, and a Kind name alone does not carry them — "Application" exists
+      in three API groups.
+    -->
+    <DependencyMap
+      clusterId={session.cluster.id}
+      namespace={session.selectedNamespace}
+      name={session.selectedName}
+      kind={session.selectedKind.kind}
+      kindId={session.selectedKind.id}
       onopen={openObject}
       onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
     />
@@ -1838,12 +1871,12 @@
               Showing the map in a larger window.
             </p>
           </div>
-        {:else if (isPod && selectedPod) || mappedWorkloadKind}
+        {:else if (isPod && selectedPod) || mappedWorkloadKind || hasMap}
           {@render mapSurface()}
         {:else}
           <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
             <Workflow class="size-8" strokeWidth={1.2} />
-            <p class="text-body-medium">This kind has no dependencies to map</p>
+            <p class="text-body-medium">There is nothing here to map</p>
           </div>
         {/if}
       {:else if activeTab === 'history'}
