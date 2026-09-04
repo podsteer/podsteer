@@ -10,10 +10,12 @@
   import { appInfo, openWebsite } from '$stores/system.svelte'
   import { workspace } from '$stores/workspace.svelte'
   import { preferences } from '$stores/preferences.svelte'
+  import { shortcutSheet } from '$stores/shortcutSheet.svelte'
   import { formatClockTime } from '$lib/format'
   import { iconForKind } from '$lib/kindIcons'
+  import { shortcut } from '$lib/shortcuts'
   import { openURL } from '$lib/api/client'
-  import { ExternalLink, Clock, Server, RefreshCw } from '@lucide/svelte'
+  import { ExternalLink, Clock, Server, RefreshCw, Keyboard } from '@lucide/svelte'
   import ShareMenu from './ShareMenu.svelte'
   import GithubIcon from './icons/GithubIcon.svelte'
   import LinkedinIcon from './icons/LinkedinIcon.svelte'
@@ -101,6 +103,23 @@
   {/if}
 
   <div class="ml-auto flex items-center gap-3">
+    <!-- The lightest existing place for this: one icon, no dialog to open
+         first to find it. The keyboard shortcuts it lists are read from the
+         same table ⌘B, ⌘R and the rest are matched against — see
+         $lib/shortcuts — so this list and what the keys actually do cannot
+         drift apart. -->
+    <button
+      type="button"
+      onclick={shortcutSheet.show}
+      aria-label="Keyboard shortcuts"
+      title="Keyboard shortcuts  {shortcut('shortcut-sheet').keys}"
+      class="state-layer flex cursor-pointer items-center rounded-xs opacity-70 transition-opacity duration-100 hover:opacity-100"
+    >
+      <Keyboard class="size-3.5" strokeWidth={2} />
+    </button>
+
+    {@render sep()}
+
     <!-- Share PodSteer: distinct from the follow-us icons after it — this
          shares the app itself, not PodSteer's own accounts. -->
     <ShareMenu />

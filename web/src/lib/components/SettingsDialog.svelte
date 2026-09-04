@@ -63,7 +63,7 @@
     RETENTION_OPTIONS,
     SAMPLING_INTERVALS,
   } from '$stores/history.svelte'
-  import { accelerator } from '$lib/platform'
+  import { shortcut } from '$lib/shortcuts'
   import { updates } from '$stores/updates.svelte'
   import Button from './Button.svelte'
   import CreditsPane from './CreditsPane.svelte'
@@ -381,7 +381,7 @@
             <div class="mt-5 flex items-center gap-3">
               <Button variant="tonal" onclick={onrefresh}>Refresh now</Button>
               <span class="text-body-small text-on-surface-variant/70">
-                or press {accelerator('R')} at any time
+                or press {shortcut('refresh').keys} at any time
               </span>
             </div>
           </section>
@@ -502,7 +502,9 @@
                   class="accent-primary"
                 />
                 Show the resource navigator
-                <span class="text-body-small text-on-surface-variant/70">{accelerator('B')}</span>
+                <span class="text-body-small text-on-surface-variant/70"
+                  >{shortcut('toggle-navigator').keys}</span
+                >
               </label>
             </div>
           </section>

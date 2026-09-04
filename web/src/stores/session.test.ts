@@ -132,3 +132,67 @@ describe('opening an object that was not clicked', () => {
     expect(open.selectedPod?.name).toBe('shared')
   })
 })
+
+describe('recent objects', () => {
+  // No object names are ever written to disk (see SECURITY.md), so this is
+  // tracked in memory on the session rather than in preferences — these
+  // tests are about that in-memory list, not about persistence.
+  let open: ClusterSession
+
+  beforeEach(() => {
+    open = session()
+    open.selectedKindId = RICH_KIND_IDS.pods
+  })
+
+  it('is bounded at twelve, dropping the oldest first', async () => {
+    for (let index = 0; index < 15; index++) {
+      await open.openDetail(`pod-${index}`, 'web')
+    }
+
+    expect(open.recentObjects).toHaveLength(12)
+    // Most recent first: the last one opened leads, and the three oldest
+    // (pod-0, pod-1, pod-2) fell off the end.
+    expect(open.recentObjects[0]).toEqual({
+      kindId: RICH_KIND_IDS.pods,
+      name: 'pod-14',
+      namespace: 'web',
+    })
+    expect(open.recentObjects.map((entry) => entry.name)).not.toContain('pod-2')
+  })
+
+  it('moves a reopened entry to the top instead of duplicating it', async () => {
+    await open.openDetail('api', 'web')
+    await open.openDetail('worker', 'web')
+    await open.openDetail('cache', 'web')
+    // Reopening the first one must surface it again, not leave a second copy
+    // behind at the bottom of the list.
+    await open.openDetail('api', 'web')
+
+    expect(open.recentObjects.map((entry) => entry.name)).toEqual(['api', 'cache', 'worker'])
+  })
+
+  it('tells apart two objects that share a name in different namespaces', async () => {
+    await open.openDetail('api', 'staging')
+    await open.openDetail('api', 'production')
+
+    expect(open.recentObjects).toHaveLength(2)
+    expect(open.recentObjects.map((entry) => entry.namespace)).toEqual(['production', 'staging'])
+  })
+
+  it('clears on Clear, and on disconnect', async () => {
+    await open.openDetail('api', 'web')
+    expect(open.recentObjects).toHaveLength(1)
+
+    open.clearRecents()
+    expect(open.recentObjects).toEqual([])
+
+    await open.openDetail('api', 'web')
+    expect(open.recentObjects).toHaveLength(1)
+
+    // dispose() is what a tab close (a disconnect) runs — see
+    // workspace.svelte.ts's close(). Nothing about a past connection should
+    // outlive it.
+    open.dispose()
+    expect(open.recentObjects).toEqual([])
+  })
+})

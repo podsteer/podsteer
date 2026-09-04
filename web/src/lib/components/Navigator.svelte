@@ -22,11 +22,20 @@
     APPLICATIONS_KIND_ID,
     OVERVIEW_KIND_ID,
     type ClusterSession,
+    type RecentObject,
   } from '$stores/session.svelte'
   import { clampNavigatorWidth, preferences } from '$stores/preferences.svelte'
   import { categoryMeta, iconForKind } from '$lib/kindIcons'
   import Select from './Select.svelte'
-  import { Blocks, ChevronDown, LayoutDashboard, AlertTriangle } from '@lucide/svelte'
+  import {
+    Blocks,
+    ChevronDown,
+    LayoutDashboard,
+    AlertTriangle,
+    Star,
+    History,
+    X,
+  } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -128,6 +137,47 @@
     return section.groups?.find((group) => group.name === '')?.kinds ?? []
   }
 
+  /**
+   * The operator's pinned kinds for this cluster, resolved to catalog entries
+   * and in the order pinned.
+   *
+   * A pinned id the cluster no longer serves — an operator uninstalled — is
+   * SKIPPED here, not dropped from preferences: the pin may come back the
+   * next time that operator is reinstalled, and nothing about pinning it said
+   * "forget this if it ever goes away for a moment".
+   */
+  const pinnedKinds = $derived.by(() => {
+    const byId = new Map(session.kinds.map((kind) => [kind.id, kind]))
+    return preferences
+      .pinnedKindsFor(session.cluster.id)
+      .map((id) => byId.get(id))
+      .filter((kind): kind is ResourceKind => kind !== undefined)
+  })
+
+  /** The catalog entry a recently opened object was opened under, or
+      undefined if that kind is no longer served — the glyph then falls back
+      to the generic package icon iconForKind already uses for that case. */
+  function kindFor(recent: RecentObject): ResourceKind | undefined {
+    return session.kinds.find((kind) => kind.id === recent.kindId)
+  }
+
+  /**
+   * Reopens a recent object.
+   *
+   * THROUGH openObject, NOT openDetail DIRECTLY — Recent spans every kind at
+   * once, unlike a table row's own click handler, which only ever opens a row
+   * of the kind already on screen. openObject is what the rest of the app
+   * already uses to jump to an object of a DIFFERENT kind (DetailDrawer's
+   * followed references, OverviewView's findings): it switches the selected
+   * kind and namespace first, so the manifest fetched is the one that was
+   * actually asked for, and its own last step is exactly the openDetail call
+   * every other open in the app goes through.
+   */
+  async function openRecent(recent: RecentObject): Promise<void> {
+    const kind = kindFor(recent)
+    await session.openObject(recent.kindId, recent.name, recent.namespace, kind?.namespaced ?? true)
+  }
+
   // --- Resize logic ---
   let resizing = $state(false)
   /**
@@ -195,6 +245,74 @@
   }
 </script>
 
+<!--
+  One kind's row, shared by every place a kind is listed: ungrouped kinds,
+  subgrouped kinds, flat categories, and the Pinned section. Three copies of
+  this markup existed before the star affordance was added, and a fourth was
+  about to — a snippet is what stops the four from quietly drifting apart the
+  way the thresholdGroup comment in SettingsDialog.svelte warns about.
+-->
+{#snippet kindRow(kind: ResourceKind)}
+  {@const selected = kind.id === session.selectedKindId}
+  {@const KindIcon = iconForKind(kind)}
+  {@const pinned = preferences.isKindPinned(session.cluster.id, kind.id)}
+  <li class="group/item relative">
+    <button
+      type="button"
+      onclick={() => session.selectKind(kind.id)}
+      aria-current={selected ? 'page' : undefined}
+      title={kind.group ? `${kind.kind} · ${kind.group}/${kind.version}` : kind.kind}
+      class="flex w-full items-center gap-2 rounded-sm py-[5px] pr-7 pl-2 text-left
+             transition-all duration-100 ease-standard
+             {selected
+               ? 'bg-primary/12 text-primary'
+               : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+    >
+      <span class="w-1.5 shrink-0" aria-hidden="true"></span>
+      <KindIcon
+        class="size-4 shrink-0 transition-colors duration-100
+               {selected ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+        strokeWidth={1.8}
+      />
+      <span class="flex-1 truncate text-body-medium">{kind.title}</span>
+      {#if !kind.namespaced}
+        <span
+          class="rounded bg-surface-container-high px-1 py-px text-label-small uppercase
+                 text-on-surface-variant/50"
+          title="Cluster-scoped"
+        >
+          C
+        </span>
+      {/if}
+    </button>
+
+    <!--
+      Pin / unpin. A SIBLING of the row button rather than nested inside it —
+      a button cannot contain another button — positioned over the row's own
+      trailing edge the same way ClusterTabs' tab-close control sits over its
+      tab. Hover/focus-revealed when unpinned, same as that close control;
+      left visible, filled, once pinned, so a glance down the pinned rows
+      themselves still shows which ones they are without hovering each one.
+    -->
+    <button
+      type="button"
+      onclick={() =>
+        pinned
+          ? preferences.unpinKind(session.cluster.id, kind.id)
+          : preferences.pinKind(session.cluster.id, kind.id)}
+      aria-pressed={pinned}
+      aria-label="{pinned ? 'Unpin' : 'Pin'} {kind.title}"
+      title="{pinned ? 'Unpin' : 'Pin'} {kind.title}"
+      class="state-layer absolute top-1/2 right-0.5 grid size-6 -translate-y-1/2 place-items-center
+             rounded-full text-on-surface-variant/60 transition-opacity duration-100
+             hover:bg-surface-container-high hover:text-on-surface
+             {pinned ? 'opacity-100' : 'opacity-0 group-hover/item:opacity-100 focus-visible:opacity-100'}"
+    >
+      <Star class="size-3.5 {pinned ? 'fill-current text-primary' : ''}" strokeWidth={1.8} />
+    </button>
+  </li>
+{/snippet}
+
 <nav
   class="relative flex shrink-0 flex-col border-r border-outline-variant/60 bg-surface-container-low"
   style="width: {draggedWidth ?? preferences.navigatorWidth}px"
@@ -260,6 +378,80 @@
         {/if}
       </button>
     </div>
+
+    <!-- Pinned kinds: directly under Overview and above every category, so a
+         cluster with sixty custom resources still opens on the handful an
+         operator actually works with. Rendered in the order pinned — see
+         preferences.pinKind — and skipped, not removed, for a kind this
+         cluster no longer serves (see the comment on `pinnedKinds` above). -->
+    {#if pinnedKinds.length > 0}
+      <div class="px-1.5 pb-1">
+        <div class="flex items-center gap-2 px-2 pt-1 pb-1">
+          <span class="text-body-small font-semibold uppercase tracking-wider text-on-surface-variant/70">
+            Pinned
+          </span>
+        </div>
+        <ul>
+          {#each pinnedKinds as kind (kind.id)}
+            {@render kindRow(kind)}
+          {/each}
+        </ul>
+      </div>
+    {/if}
+
+    <!-- Recent objects: the last twelve opened in the detail drawer for THIS
+         cluster, most recent first. Kept in memory on the session rather than
+         in preferences — see ClusterSession.recentObjects for why object
+         names are never written to disk. -->
+    {#if session.recentObjects.length > 0}
+      <div class="px-1.5 pb-1">
+        <div class="flex items-center justify-between gap-2 px-2 pt-1 pb-1">
+          <span class="flex items-center gap-1.5 text-body-small font-semibold uppercase tracking-wider
+                       text-on-surface-variant/70">
+            <History class="size-3.5" strokeWidth={1.8} />
+            Recent
+          </span>
+          <button
+            type="button"
+            onclick={() => session.clearRecents()}
+            class="state-layer flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-label-small
+                   text-on-surface-variant transition-colors duration-100
+                   hover:bg-surface-container hover:text-on-surface"
+          >
+            <X class="size-3" strokeWidth={2} />
+            Clear
+          </button>
+        </div>
+        <ul>
+          {#each session.recentObjects as recent (`${recent.kindId}|${recent.namespace}|${recent.name}`)}
+            {@const RecentIcon = iconForKind(kindFor(recent) ?? { kind: '' })}
+            <li>
+              <button
+                type="button"
+                onclick={() => void openRecent(recent)}
+                title={recent.namespace ? `${recent.name} — ${recent.namespace}` : recent.name}
+                class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
+                       text-on-surface-variant transition-all duration-100 ease-standard
+                       hover:bg-surface-container hover:text-on-surface"
+              >
+                <span class="w-1.5 shrink-0" aria-hidden="true"></span>
+                <RecentIcon
+                  class="size-4 shrink-0 text-on-surface-variant/60 transition-colors duration-100
+                         group-hover/item:text-on-surface-variant"
+                  strokeWidth={1.8}
+                />
+                <span class="min-w-0 flex-1 truncate text-body-medium">{recent.name}</span>
+                {#if recent.namespace}
+                  <span class="shrink-0 truncate text-label-small text-on-surface-variant/50">
+                    {recent.namespace}
+                  </span>
+                {/if}
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
 
     {#if session.kinds.length === 0}
       <div class="flex flex-col items-center gap-2 px-4 py-8">
@@ -350,38 +542,7 @@
               -->
               <ul>
                 {#each ungroupedIn(section) as kind (kind.id)}
-                  {@const selected = kind.id === session.selectedKindId}
-                  {@const KindIcon = iconForKind(kind)}
-                  <li>
-                    <button
-                      type="button"
-                      onclick={() => session.selectKind(kind.id)}
-                      aria-current={selected ? 'page' : undefined}
-                      title={kind.group ? `${kind.kind} · ${kind.group}/${kind.version}` : kind.kind}
-                      class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
-                             transition-all duration-100 ease-standard
-                             {selected
-                               ? 'bg-primary/12 text-primary'
-                               : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
-                    >
-                      <span class="w-1.5 shrink-0" aria-hidden="true"></span>
-                      <KindIcon
-                        class="size-4 shrink-0 transition-colors duration-100
-                               {selected ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
-                        strokeWidth={1.8}
-                      />
-                      <span class="flex-1 truncate text-body-medium">{kind.title}</span>
-                      {#if !kind.namespaced}
-                        <span
-                          class="rounded bg-surface-container-high px-1 py-px text-label-small uppercase
-                                 text-on-surface-variant/50"
-                          title="Cluster-scoped"
-                        >
-                          C
-                        </span>
-                      {/if}
-                    </button>
-                  </li>
+                  {@render kindRow(kind)}
                 {/each}
               </ul>
 
@@ -419,38 +580,7 @@
                 {#if groupOpen}
                   <ul class="ml-1.5 border-l border-outline-variant/20 pl-1.5">
                     {#each group.kinds as kind (kind.id)}
-                  {@const selected = kind.id === session.selectedKindId}
-                  {@const KindIcon = iconForKind(kind)}
-                  <li>
-                    <button
-                      type="button"
-                      onclick={() => session.selectKind(kind.id)}
-                      aria-current={selected ? 'page' : undefined}
-                      title={kind.group ? `${kind.kind} · ${kind.group}/${kind.version}` : kind.kind}
-                      class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
-                             transition-all duration-100 ease-standard
-                             {selected
-                               ? 'bg-primary/12 text-primary'
-                               : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
-                    >
-                      <span class="w-1.5 shrink-0" aria-hidden="true"></span>
-                      <KindIcon
-                        class="size-4 shrink-0 transition-colors duration-100
-                               {selected ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
-                        strokeWidth={1.8}
-                      />
-                      <span class="flex-1 truncate text-body-medium">{kind.title}</span>
-                      {#if !kind.namespaced}
-                        <span
-                          class="rounded bg-surface-container-high px-1 py-px text-label-small uppercase
-                                 text-on-surface-variant/50"
-                          title="Cluster-scoped"
-                        >
-                          C
-                        </span>
-                      {/if}
-                    </button>
-                  </li>
+                      {@render kindRow(kind)}
                     {/each}
                   </ul>
                 {/if}
@@ -458,38 +588,7 @@
             {:else}
               <ul>
                 {#each section.kinds as kind (kind.id)}
-                {@const selected = kind.id === session.selectedKindId}
-                {@const KindIcon = iconForKind(kind)}
-                <li>
-                  <button
-                    type="button"
-                    onclick={() => session.selectKind(kind.id)}
-                    aria-current={selected ? 'page' : undefined}
-                    title={kind.group ? `${kind.kind} · ${kind.group}/${kind.version}` : kind.kind}
-                    class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
-                           transition-all duration-100 ease-standard
-                           {selected
-                             ? 'bg-primary/12 text-primary'
-                             : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
-                  >
-                    <span class="w-1.5 shrink-0" aria-hidden="true"></span>
-                    <KindIcon
-                      class="size-4 shrink-0 transition-colors duration-100
-                             {selected ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
-                      strokeWidth={1.8}
-                    />
-                    <span class="flex-1 truncate text-body-medium">{kind.title}</span>
-                    {#if !kind.namespaced}
-                      <span
-                        class="rounded bg-surface-container-high px-1 py-px text-label-small uppercase
-                               text-on-surface-variant/50"
-                        title="Cluster-scoped"
-                      >
-                        C
-                      </span>
-                    {/if}
-                  </button>
-                </li>
+                  {@render kindRow(kind)}
                 {/each}
               </ul>
             {/if}

@@ -741,6 +741,14 @@ somebody pasted a config here.
   maps those onto an `ErrorCode` and encodes it as a `[code] message` prefix,
   because Wails can only send an error as a string. `web/src/lib/api/errors.ts`
   parses it back. Changing the codes means changing both ends.
+- **The navigator's Recent section is in memory only, deliberately.**
+  `ClusterSession.recentObjects` (`web/src/stores/session.svelte.ts`) holds the
+  last objects opened in the detail drawer and is gone when the tab closes,
+  because object names are not on the list of things SECURITY.md says PodSteer
+  writes to disk — the same no-object-names commitment the sampled capacity
+  history makes. Pinned *kinds* are a different kind of fact (a catalog id,
+  never an object name) and persist in `preferences.svelte.ts` for exactly
+  that reason.
 
 ## Configuration
 

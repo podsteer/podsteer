@@ -96,6 +96,22 @@ const MAX_USAGE_SAMPLES = 200
 /** How often the current view re-fetches while auto-refresh is on. */
 export const DEFAULT_REFRESH_INTERVAL_MS = 10_000
 
+/** One object recently opened in this cluster's detail drawer. */
+export interface RecentObject {
+  kindId: string
+  name: string
+  namespace: string
+}
+
+/**
+ * How many recently opened objects the Recent section keeps.
+ *
+ * Twelve, the same order of magnitude as the pinned-kinds star affordance it
+ * sits beside in the navigator — enough to cover a working session's worth of
+ * "what was I just looking at" without becoming a second, unbounded list.
+ */
+const MAX_RECENT_OBJECTS = 12
+
 /**
  * How stale the browsable-kind list may get before it is re-read.
  *
@@ -281,6 +297,23 @@ export class ClusterSession {
   kinds = $state.raw<ResourceKind[]>([])
   /** Namespaces, for the filter. */
   namespaces = $state.raw<Namespace[]>([])
+
+  /**
+   * Objects recently opened in this cluster's detail drawer, most recent
+   * first.
+   *
+   * IN MEMORY ONLY, NEVER PERSISTED — and deliberately not alongside
+   * pinnedKinds in preferences.svelte.ts, even though both live in the
+   * navigator. A kind id says "this operator watches Deployments here"; an
+   * object name says which Deployment, and SECURITY.md enumerates exactly
+   * what PodSteer writes to disk on this operator's behalf. Object names are
+   * not on that list — the recorded capacity history holds no object names as
+   * a product commitment (see CLAUDE.md, "History is sampled, and says so"),
+   * and a localStorage entry naming every pod somebody opened would quietly
+   * reverse it. This is per tab, like `usage` below, and gone the moment the
+   * tab closes.
+   */
+  recentObjects = $state.raw<RecentObject[]>([])
 
   /** The kind currently selected in the navigator. */
   selectedKindId = $state<string>(DEFAULT_KIND_ID)
@@ -1403,6 +1436,12 @@ export class ClusterSession {
     workload?: Workload,
     node?: Node,
   ): Promise<void> => {
+    // Recorded here, and only here, so a click, a followed reference (via
+    // openObject, which sets selectedKindId and then calls this) and a click
+    // from the Recent section itself all count as "opened" the same way —
+    // there is exactly one place an object becomes recently opened.
+    this.#recordRecent(this.selectedKindId, name, namespace)
+
     this.selectedName = name
     this.selectedNamespace = namespace
     this.selectedPod = pod ?? this.#findPod(name, namespace)
@@ -1433,6 +1472,31 @@ export class ClusterSession {
     this.secretsRevealed = false
 
     await this.#loadManifest(name, namespace)
+  }
+
+  /**
+   * Records an object as opened, most recent first, deduplicated by identity.
+   *
+   * Identity is kind + namespace + name, not name alone: a ConfigMap and a
+   * Secret can share a name in the same namespace, and two namespaces
+   * routinely hold pods with the same name — collapsing those would reopen
+   * the wrong object from Recent.
+   */
+  #recordRecent(kindId: string, name: string, namespace: string): void {
+    const withoutExisting = this.recentObjects.filter(
+      (entry) => !(entry.kindId === kindId && entry.name === name && entry.namespace === namespace),
+    )
+    this.recentObjects = [{ kindId, name, namespace }, ...withoutExisting].slice(
+      0,
+      MAX_RECENT_OBJECTS,
+    )
+  }
+
+  /** Empties the Recent section. Nothing else can un-forget an object once
+      this runs — that is the same trade Data → local history's "Don't
+      record" makes, and it is the point of a Clear control. */
+  clearRecents = (): void => {
+    this.recentObjects = []
   }
 
   /**
@@ -1569,6 +1633,10 @@ export class ClusterSession {
     // it re-read ConfigMaps it already has.
     usageHistory.forget(this.cluster.id)
     forgetConfigMaps(this.cluster.id)
+    // Recent objects are in-memory only and scoped to this connection — see
+    // recentObjects above. A reconnect to the same cluster starts the list
+    // over rather than resurrecting names from a session that ended.
+    this.recentObjects = []
   }
 
   /** Scales a workload to the specified number of replicas. */

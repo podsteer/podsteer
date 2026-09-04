@@ -38,7 +38,8 @@
   have any of.
 -->
 <script lang="ts">
-  import { isMac, accelerator } from '$lib/platform'
+  import { isMac } from '$lib/platform'
+  import { shortcut } from '$lib/shortcuts'
   import { workspace } from '$stores/workspace.svelte'
   import { preferences, THEME_LABELS } from '$stores/preferences.svelte'
   import { windowState } from '$stores/windowState.svelte'
@@ -55,11 +56,11 @@
    *
    * Handled here rather than in the workspace because Settings is
    * application-wide: it must open from the cluster picker as well, where no
-   * workspace is mounted.
+   * workspace is mounted. Matched against $lib/shortcuts so this handler and
+   * ShortcutSheet.svelte cannot disagree about what the combo is.
    */
   function onKeydown(event: KeyboardEvent): void {
-    if (!(event.metaKey || event.ctrlKey)) return
-    if (event.key !== ',') return
+    if (!shortcut('settings').matches(event)) return
 
     event.preventDefault()
     settingsOpen = !settingsOpen
@@ -206,7 +207,7 @@
     onclick={() => void workspace.active?.refresh()}
     disabled={!workspace.active}
     aria-label="Refresh"
-    title="Refresh  ⌘R"
+    title="Refresh  {shortcut('refresh').keys}"
     class="state-layer no-drag grid size-8 shrink-0 self-center place-items-center rounded-full
            text-on-surface-variant transition-colors duration-100
            hover:bg-surface-container-high hover:text-on-surface
@@ -246,7 +247,7 @@
     type="button"
     onclick={() => (settingsOpen = true)}
     aria-label="Settings"
-    title="Settings  {accelerator(',')}"
+    title="Settings  {shortcut('settings').keys}"
     class="state-layer no-drag grid size-8 shrink-0 self-center place-items-center rounded-full
            text-on-surface-variant transition-colors duration-100
            hover:bg-surface-container-high hover:text-on-surface"
