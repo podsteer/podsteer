@@ -27,6 +27,23 @@ export const PAGE_SIZES = [10, 25, 50, 100] as const
 /** How many rows a page holds. */
 export type PageSize = (typeof PAGE_SIZES)[number]
 
+/**
+ * The image an ephemeral debug container proposes before the operator edits
+ * it. Matches the Go default (domain.DefaultDebugImage) so the dialog and the
+ * backend agree on what "default" is.
+ */
+export const DEFAULT_DEBUG_IMAGE = 'busybox:1.37'
+
+/**
+ * The image a node shell runs. alpine carries nsenter via busybox, which is
+ * all the node shell needs to enter the host namespaces; it pulls in a second
+ * and is tiny.
+ */
+export const DEFAULT_NODE_SHELL_IMAGE = 'docker.io/library/alpine:3.20'
+
+/** The namespace a node-shell pod is created in, matching kubectl node-shell. */
+export const DEFAULT_NODE_SHELL_NAMESPACE = 'kube-system'
+
 /** The colour schemes PodSteer can render in. */
 export const THEMES = ['dark', 'light'] as const
 
@@ -402,6 +419,18 @@ interface PersistedShape {
   localPortByRemotePort: Record<string, number>
   /** The same idea, keyed by the container port's NAME when it has one. */
   localPortByPortName: Record<string, number>
+  /**
+   * The last-used image for an ephemeral debug container, the node-shell
+   * image, and the node-shell namespace.
+   *
+   * The SAME KIND OF FACT as localPortByRemotePort above — a workflow
+   * preference (which debugger image, which node-shell namespace), never an
+   * object name — which is why it belongs in the webview's own storage
+   * alongside them and not in the no-object-names disk file.
+   */
+  debugImage: string
+  nodeShellImage: string
+  nodeShellNamespace: string
   /** clusterId -> snoozeKey() -> epoch milliseconds when the snooze lapses. */
   snoozes: Record<string, Record<string, number>>
   /** Per-surface threshold lines. */
@@ -473,6 +502,9 @@ const DEFAULTS: PersistedShape = {
   pinnedKinds: {},
   localPortByRemotePort: {},
   localPortByPortName: {},
+  debugImage: DEFAULT_DEBUG_IMAGE,
+  nodeShellImage: DEFAULT_NODE_SHELL_IMAGE,
+  nodeShellNamespace: DEFAULT_NODE_SHELL_NAMESPACE,
   snoozes: {},
   // Both lines on, everywhere. An operator who only wants to hear about the
   // serious case can turn the first one off, but a default that says nothing
@@ -579,6 +611,33 @@ class Preferences {
   localPortByRemotePort = $state<Record<string, number>>({})
   /** The same idea, keyed by the container port's NAME when it has one. */
   localPortByPortName = $state<Record<string, number>>({})
+
+  /**
+   * Remembered debug and node-shell inputs. See the PersistedShape fields of
+   * the same names: a workflow preference, never an object name.
+   */
+  debugImage = $state<string>(DEFAULT_DEBUG_IMAGE)
+  nodeShellImage = $state<string>(DEFAULT_NODE_SHELL_IMAGE)
+  nodeShellNamespace = $state<string>(DEFAULT_NODE_SHELL_NAMESPACE)
+
+  /** Remembers the debug image the operator last used. Blank resets it to the
+   * default rather than persisting an empty image the backend would reject. */
+  setDebugImage = (image: string): void => {
+    this.debugImage = image.trim() || DEFAULT_DEBUG_IMAGE
+    this.#save()
+  }
+
+  /** Remembers the node-shell image. Blank resets to the default. */
+  setNodeShellImage = (image: string): void => {
+    this.nodeShellImage = image.trim() || DEFAULT_NODE_SHELL_IMAGE
+    this.#save()
+  }
+
+  /** Remembers the node-shell namespace. Blank resets to the default. */
+  setNodeShellNamespace = (namespace: string): void => {
+    this.nodeShellNamespace = namespace.trim() || DEFAULT_NODE_SHELL_NAMESPACE
+    this.#save()
+  }
 
   /**
    * Objects the operator has deliberately quietened, per cluster.
@@ -1178,6 +1237,18 @@ class Preferences {
       if (stored.localPortByPortName && typeof stored.localPortByPortName === 'object') {
         this.localPortByPortName = stored.localPortByPortName
       }
+      // A stored empty string is ignored rather than trusted: it would send
+      // the backend an image or namespace it will reject, so the default
+      // stands until the operator sets a real one.
+      if (typeof stored.debugImage === 'string' && stored.debugImage.trim() !== '') {
+        this.debugImage = stored.debugImage
+      }
+      if (typeof stored.nodeShellImage === 'string' && stored.nodeShellImage.trim() !== '') {
+        this.nodeShellImage = stored.nodeShellImage
+      }
+      if (typeof stored.nodeShellNamespace === 'string' && stored.nodeShellNamespace.trim() !== '') {
+        this.nodeShellNamespace = stored.nodeShellNamespace
+      }
       if (stored.snoozes && typeof stored.snoozes === 'object') {
         this.snoozes = stored.snoozes
       }
@@ -1270,6 +1341,9 @@ class Preferences {
         pinnedKinds: this.pinnedKinds,
         localPortByRemotePort: this.localPortByRemotePort,
         localPortByPortName: this.localPortByPortName,
+        debugImage: this.debugImage,
+        nodeShellImage: this.nodeShellImage,
+        nodeShellNamespace: this.nodeShellNamespace,
         snoozes: this.#pruneSnoozes(),
         thresholds: this.thresholds,
         podMeasure: this.podMeasure,

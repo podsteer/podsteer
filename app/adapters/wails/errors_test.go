@@ -125,3 +125,23 @@ func TestClassifyErrorManifestRejectedShowsTheServerMessageVerbatim(t *testing.T
 		t.Fatalf("message does not carry the server's own diagnosis verbatim: %q", message)
 	}
 }
+
+// TestClassifyErrorEphemeralUnsupportedIsNotNotFound pins the reason
+// CodeEphemeralUnsupported is its own code: the pod is present and the
+// subresource is what is missing, so classifying it as not_found would send an
+// operator to look for a pod that exists.
+func TestClassifyErrorEphemeralUnsupportedIsNotNotFound(t *testing.T) {
+	err := fmt.Errorf("adding ephemeral container to pod %q: %w", "web-0", ports.ErrEphemeralContainersUnsupported)
+
+	code, message := classifyError(err)
+
+	if code != CodeEphemeralUnsupported {
+		t.Fatalf("code %q, want %q", code, CodeEphemeralUnsupported)
+	}
+	if code == CodeNotFound {
+		t.Fatal("an unsupported ephemeral-containers subresource must never classify as not_found")
+	}
+	if !strings.Contains(message, "ephemeral") {
+		t.Fatalf("message does not mention ephemeral debug containers: %q", message)
+	}
+}

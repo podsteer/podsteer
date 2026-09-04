@@ -47,10 +47,13 @@ export function sessionKey(
   namespace: string,
   podName: string,
   container: string,
-  mode: 'shell' | 'attach' = 'shell',
+  mode: 'shell' | 'attach' | 'debug' | 'nodeshell' = 'shell',
 ): string {
   const base = `${clusterId}/${namespace}/${podName}/${container}`
-  return mode === 'attach' ? `${base}/attach` : base
+  // 'shell' keeps the bare key every existing session used; every other mode
+  // — attach, and now the debug and node-shell variants — takes a suffix, so
+  // two sessions against the same target never collide or silently reattach.
+  return mode === 'shell' ? base : `${base}/${mode}`
 }
 
 interface Held {

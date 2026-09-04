@@ -13,6 +13,9 @@ import {
   DETAIL_MIN_REM,
   DETAIL_WIDTHS,
   DEFAULT_DETAIL_LABEL_SHARE,
+  DEFAULT_DEBUG_IMAGE,
+  DEFAULT_NODE_SHELL_IMAGE,
+  DEFAULT_NODE_SHELL_NAMESPACE,
 } from './preferences.svelte'
 
 const STORAGE_KEY = 'podsteer.preferences.v1'
@@ -276,6 +279,50 @@ async function reimportPreferences(): Promise<typeof import('./preferences.svelt
   vi.resetModules()
   return import('./preferences.svelte')
 }
+
+describe('remembered debug and node-shell inputs', () => {
+  it('remembers the debug image, and a blank one resets to the default', () => {
+    preferences.setDebugImage('ubuntu:24.04')
+    expect(preferences.debugImage).toBe('ubuntu:24.04')
+    // A blank must never be persisted — the backend would reject an empty
+    // image — so it falls back to the default.
+    preferences.setDebugImage('   ')
+    expect(preferences.debugImage).toBe(DEFAULT_DEBUG_IMAGE)
+  })
+
+  it('remembers the node-shell image and namespace, each resetting on blank', () => {
+    preferences.setNodeShellImage('docker.io/library/ubuntu:24.04')
+    preferences.setNodeShellNamespace('ops')
+    expect(preferences.nodeShellImage).toBe('docker.io/library/ubuntu:24.04')
+    expect(preferences.nodeShellNamespace).toBe('ops')
+
+    preferences.setNodeShellImage('')
+    preferences.setNodeShellNamespace('')
+    expect(preferences.nodeShellImage).toBe(DEFAULT_NODE_SHELL_IMAGE)
+    expect(preferences.nodeShellNamespace).toBe(DEFAULT_NODE_SHELL_NAMESPACE)
+  })
+
+  it('persists the debug and node-shell inputs to storage', () => {
+    const written = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => written.get(key) ?? null,
+      setItem: (key: string, value: string) => void written.set(key, value),
+      removeItem: (key: string) => void written.delete(key),
+      clear: () => written.clear(),
+    })
+
+    try {
+      preferences.setDebugImage('busybox:1.36')
+      preferences.setNodeShellNamespace('ops')
+
+      const raw = written.get(STORAGE_KEY) ?? ''
+      expect(raw).toContain('busybox:1.36')
+      expect(raw).toContain('ops')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
 
 describe('remembered local ports', () => {
   it('proposes nothing until a forward has been remembered', () => {

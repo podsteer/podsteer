@@ -5,6 +5,10 @@ export function Resize(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function StartAttachSession(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number):Promise<string>;
 
+export function StartDebugSession(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:Array<string>,arg7:number,arg8:number):Promise<string>;
+
+export function StartNodeShellSession(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number):Promise<string>;
+
 export function StartSession(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number):Promise<string>;
 
 export function StopSession(arg1:string):Promise<void>;

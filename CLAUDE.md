@@ -948,6 +948,30 @@ same as one already in the explicit file.
   for, so the frontend re-opens the stream when either changes, the same
   as it already did for `Follow` and `TailLines`.
 
+## A node shell is a pod PodSteer owns, and must be deleted like one
+
+The node shell (`app/adapters/k8s/nodeshell.go`, `TerminalAPI.StartNodeShellSession`)
+is a privileged pod that enters a node's host namespaces with `nsenter` — the
+same thing `kubectl node-shell` and Lens do, and the most powerful thing this
+application can do. Unlike an exec into a container, which leaves nothing
+behind, this CREATES a pod, so it is tracked exactly the way a port-forward is
+(`nodeShells`, a registry beside `forwards` on the adapter): the record of the
+pod and the thing that deletes it are created and torn down together, because
+every leak in the clients that offer this comes from those two parting company.
+The pod is **deleted when its terminal session ends** — the attach session's
+goroutine deletes it on exit — **and on application shutdown** (`StopAllNodeShells`
+in `OnShutdown`, beside `StopAllPortForwards`), and it must appear in the
+activity list with a stop control (`NodeShellsPanel`, the way `PortForwardsPanel`
+does) so an operator can always see and end a root shell still running on a
+node. The pod also carries `activeDeadlineSeconds` of one hour — NOT the normal
+lifecycle, but a backstop for the one case cleanup cannot cover: PodSteer
+crashing, which would otherwise leave a privileged pod running until someone
+noticed. Deletion on session end is the rule; the deadline is the safety net.
+The ephemeral debug container beside it (`AddEphemeralContainer`) is the
+opposite: it is NOT tracked and NOT deleted, because Kubernetes will not remove
+an ephemeral container — it stays in the pod's spec until the pod is deleted,
+which the dialog states plainly.
+
 ## Configuration
 
 All optional, all prefixed `PODSTEER_`: `KUBECONFIG`, `QPS`, `BURST`,

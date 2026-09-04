@@ -21,6 +21,7 @@
   import { iconForKind } from '$lib/kindIcons'
   import { parse } from 'yaml'
   import { forwards } from '$stores/forwards.svelte'
+  import { sessionLauncher } from '$stores/sessionLauncher.svelte'
   import YamlPane from './YamlPane.svelte'
   import Button from './Button.svelte'
   import ToolbarButton from './ToolbarButton.svelte'
@@ -773,6 +774,34 @@
     }
   }
 
+  /**
+   * Opens the debug dialog for the pod on screen. The dialog and the terminal
+   * it leads to live in SessionOverlay at the workspace level, so a debug
+   * container outlives this drawer the way the container itself outlives it.
+   */
+  function openDebug(): void {
+    if (!selectedPod) return
+    sessionLauncher.requestDebug({
+      clusterId: session.cluster.id,
+      namespace: selectedPod.namespace,
+      pod: selectedPod.name,
+      containers: selectedPod.containers?.map((c) => c.name) ?? [],
+      readOnly: isReadOnly,
+      productionGroup,
+    })
+  }
+
+  /** Opens the node-shell dialog for the node on screen. */
+  function openNodeShell(): void {
+    if (!session.selectedName) return
+    sessionLauncher.requestNodeShell({
+      clusterId: session.cluster.id,
+      node: session.selectedName,
+      readOnly: isReadOnly,
+      productionGroup,
+    })
+  }
+
   /** True once the draft differs from what it was seeded with. */
   const dirty = $derived(draft !== null && draft !== draftOrigin)
 
@@ -1150,6 +1179,7 @@
       containerName={selectedPod.containers?.[0]?.name ?? ''}
       containers={selectedPod.containers?.map((c) => ({ name: c.name, tty: c.tty })) ?? []}
       readOnly={isReadOnly}
+      ondebug={openDebug}
       onmaximize={maximized === 'terminal' ? undefined : () => (maximized = 'terminal')}
     />
     {:else if isWorkloadWithLogs && workloadPods.length > 0}
@@ -1555,6 +1585,23 @@
                    text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
           >
             <LogOut class="size-4" strokeWidth={1.8} />
+          </button>
+
+          <!-- Node shell — a root shell on the node. A write (it creates a
+               privileged pod), so disabled on a read-only cluster like the
+               others, never hidden. -->
+          <button
+            type="button"
+            onclick={openNodeShell}
+            disabled={isReadOnly}
+            aria-label="Node shell"
+            aria-describedby={isReadOnly ? 'drawer-readonly-hint' : undefined}
+            title={isReadOnly ? readOnlyReason : 'Open a root shell on this node'}
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
+                   disabled:pointer-events-none disabled:opacity-38"
+          >
+            <TerminalSquare class="size-4" strokeWidth={1.8} />
           </button>
         {/if}
 

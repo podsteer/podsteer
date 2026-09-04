@@ -510,6 +510,53 @@ func (s *ManagementService) AttachToPod(ctx context.Context, id domain.ClusterID
 	return s.management.AttachToPod(ctx, id, namespace, podName, containerName, stdin, stdout, stderr, sizeQueue)
 }
 
+// AddEphemeralContainer adds an ephemeral debug container to a running pod.
+//
+// A write — it mutates the pod's spec — so it is refused on a read-only
+// cluster exactly like the methods above. The audit line names the cluster,
+// namespace, pod, target and image, and NEVER the command: an ephemeral
+// container is `kubectl debug`, and what an audit log needs is which pod grew
+// a debugger and from what image, not a transcript of what was typed into it —
+// the same discipline SetSecretKey follows for a Secret's value.
+func (s *ManagementService) AddEphemeralContainer(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, spec domain.DebugContainerSpec) (string, error) {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return "", err
+	}
+
+	s.logger.InfoContext(ctx, "adding ephemeral debug container",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.String("pod", podName),
+		slog.String("target", spec.TargetContainer),
+		slog.String("image", spec.Image))
+
+	if !domain.ValidImageReference(spec.Image) {
+		return "", fmt.Errorf("%w: %q", domain.ErrInvalidImageReference, spec.Image)
+	}
+
+	name, err := s.management.AddEphemeralContainer(ctx, id, namespace, podName, spec)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to add ephemeral debug container",
+			slog.String("cluster", id.String()),
+			slog.String("namespace", namespace.String()),
+			slog.String("pod", podName),
+			slog.String("error", err.Error()))
+		return "", err
+	}
+
+	return name, nil
+}
+
+// WaitForEphemeralContainerRunning blocks until the named ephemeral container
+// is running, so a caller can open a terminal into it without racing the pull.
+//
+// A read, not a write: it polls the pod's status and changes nothing, so it
+// is NOT gated by the read-only guard — the refusal belongs on the write that
+// added the container, which already happened.
+func (s *ManagementService) WaitForEphemeralContainerRunning(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string) error {
+	return s.management.WaitForEphemeralContainerRunning(ctx, id, namespace, podName, containerName)
+}
+
 // CordonNode marks a node schedulable or unschedulable.
 func (s *ManagementService) CordonNode(ctx context.Context, id domain.ClusterID, name string, cordon bool) error {
 	s.logger.InfoContext(ctx, "cordoning node",

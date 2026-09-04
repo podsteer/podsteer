@@ -150,6 +150,26 @@ func (stubManagementPort) ExecInPodWithTTY(context.Context, domain.ClusterID, do
 func (stubManagementPort) AttachToPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, io.Reader, io.Writer, io.Writer, ports.TerminalSizeQueue) error {
 	return errors.New("AttachToPod reached: a refused StartAttachSession must never get this far")
 }
+func (stubManagementPort) AddEphemeralContainer(context.Context, domain.ClusterID, domain.NamespaceName, string, domain.DebugContainerSpec) (string, error) {
+	return "", errors.New("AddEphemeralContainer reached: a refused StartDebugSession must never get this far")
+}
+func (stubManagementPort) WaitForEphemeralContainerRunning(context.Context, domain.ClusterID, domain.NamespaceName, string, string) error {
+	return errors.New("WaitForEphemeralContainerRunning reached: a refused StartDebugSession must never get this far")
+}
+
+// stubNodeShellPort is a stand-in for ports.NodeShellPort, local to this
+// package. StartNodeShell errors loudly if reached, since the read-only tests
+// assert that a refused StartNodeShellSession never creates a pod.
+type stubNodeShellPort struct{}
+
+var _ ports.NodeShellPort = (*stubNodeShellPort)(nil)
+
+func (stubNodeShellPort) StartNodeShell(context.Context, domain.ClusterID, domain.NamespaceName, string, string) (domain.NodeShell, error) {
+	return domain.NodeShell{}, errors.New("StartNodeShell reached: a refused StartNodeShellSession must never get this far")
+}
+func (stubNodeShellPort) StopNodeShell(string) error         { return nil }
+func (stubNodeShellPort) ListNodeShells() []domain.NodeShell { return nil }
+func (stubNodeShellPort) StopAllNodeShells()                 {}
 
 // TestStartSessionRefusesOnReadOnlyCluster pins the fast path CLAUDE.md's
 // read-only section promises: an interactive shell refuses synchronously,
@@ -169,7 +189,7 @@ func TestStartSessionRefusesOnReadOnlyCluster(t *testing.T) {
 		t.Fatalf("NewManagementService() error = %v", err)
 	}
 
-	terminal, err := NewTerminalAPI(management, NewApp(nil, 0), nil)
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, NewApp(nil, 0), nil)
 	if err != nil {
 		t.Fatalf("NewTerminalAPI() error = %v", err)
 	}
@@ -213,7 +233,7 @@ func TestStartSessionAllowsOnOrdinaryCluster(t *testing.T) {
 		t.Fatalf("NewManagementService() error = %v", err)
 	}
 
-	terminal, err := NewTerminalAPI(management, NewApp(nil, 0), nil)
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, NewApp(nil, 0), nil)
 	if err != nil {
 		t.Fatalf("NewTerminalAPI() error = %v", err)
 	}
@@ -250,7 +270,7 @@ func TestStartAttachSessionRefusesOnReadOnlyCluster(t *testing.T) {
 		t.Fatalf("NewManagementService() error = %v", err)
 	}
 
-	terminal, err := NewTerminalAPI(management, NewApp(nil, 0), nil)
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, NewApp(nil, 0), nil)
 	if err != nil {
 		t.Fatalf("NewTerminalAPI() error = %v", err)
 	}
@@ -295,7 +315,7 @@ func TestStartAttachSessionAllowsOnOrdinaryCluster(t *testing.T) {
 		t.Fatalf("NewManagementService() error = %v", err)
 	}
 
-	terminal, err := NewTerminalAPI(management, NewApp(nil, 0), nil)
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, NewApp(nil, 0), nil)
 	if err != nil {
 		t.Fatalf("NewTerminalAPI() error = %v", err)
 	}
@@ -306,6 +326,90 @@ func TestStartAttachSessionAllowsOnOrdinaryCluster(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "read_only") {
 		t.Fatalf("StartAttachSession() error = %q, an unmarked cluster must not be refused as read-only", err)
+	}
+}
+
+// TestStartDebugSessionRefusesOnReadOnlyCluster mirrors the shell and attach
+// read-only tests for the debug path: adding an ephemeral container mutates
+// the pod, so it must be refused synchronously — before any container is
+// added or session allocated. stubManagementPort.AddEphemeralContainer errors
+// loudly if reached, which is the proof it was not.
+func TestStartDebugSessionRefusesOnReadOnlyCluster(t *testing.T) {
+	t.Parallel()
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly("prod", true)
+
+	management, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: stubManagementPort{},
+		Registry:   registry,
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, NewApp(nil, 0), nil)
+	if err != nil {
+		t.Fatalf("NewTerminalAPI() error = %v", err)
+	}
+
+	sessionID, err := terminal.StartDebugSession("prod", "default", "web-0", "app", "busybox:1.37", []string{"sh"}, 80, 24)
+	if err == nil {
+		t.Fatal("StartDebugSession() error = nil, want a read-only refusal")
+	}
+	if !strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("StartDebugSession() error = %q, want it classified read_only", err)
+	}
+	if sessionID != "" {
+		t.Fatalf("StartDebugSession() session id = %q, want empty on refusal", sessionID)
+	}
+
+	terminal.mu.Lock()
+	live := len(terminal.sessions)
+	terminal.mu.Unlock()
+	if live != 0 {
+		t.Fatalf("live sessions = %d, want 0 — a refused debug start must never allocate one", live)
+	}
+}
+
+// TestStartNodeShellSessionRefusesOnReadOnlyCluster is the same for the node
+// shell: creating a privileged pod is a write, refused before the pod is
+// created. stubNodeShellPort.StartNodeShell errors loudly if reached.
+func TestStartNodeShellSessionRefusesOnReadOnlyCluster(t *testing.T) {
+	t.Parallel()
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly("prod", true)
+
+	management, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: stubManagementPort{},
+		Registry:   registry,
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, NewApp(nil, 0), nil)
+	if err != nil {
+		t.Fatalf("NewTerminalAPI() error = %v", err)
+	}
+
+	sessionID, err := terminal.StartNodeShellSession("prod", "kube-system", "node-1", "docker.io/library/alpine:3.20", 80, 24)
+	if err == nil {
+		t.Fatal("StartNodeShellSession() error = nil, want a read-only refusal")
+	}
+	if !strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("StartNodeShellSession() error = %q, want it classified read_only", err)
+	}
+	if sessionID != "" {
+		t.Fatalf("StartNodeShellSession() session id = %q, want empty on refusal", sessionID)
+	}
+
+	terminal.mu.Lock()
+	live := len(terminal.sessions)
+	terminal.mu.Unlock()
+	if live != 0 {
+		t.Fatalf("live sessions = %d, want 0 — a refused node-shell start must never allocate one", live)
 	}
 }
 

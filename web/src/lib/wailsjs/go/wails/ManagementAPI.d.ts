@@ -14,6 +14,8 @@ export function ExecInPod(arg1:string,arg2:string,arg3:string,arg4:string,arg5:A
 
 export function FreeLocalPort():Promise<number>;
 
+export function ListNodeShells():Promise<Array<wails.NodeShell>>;
+
 export function ListPortForwards():Promise<Array<wails.PortForward>>;
 
 export function PlanDrain(arg1:string,arg2:string,arg3:boolean,arg4:boolean):Promise<wails.DrainPlanDTO>;
@@ -34,9 +36,13 @@ export function SetSecretKey(arg1:string,arg2:string,arg3:string,arg4:string,arg
 
 export function StartPortForward(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number,arg7:string,arg8:string,arg9:Record<string, string>):Promise<wails.PortForward>;
 
+export function StopAllNodeShells():Promise<void>;
+
 export function StopAllPortForwards():Promise<void>;
 
 export function StopLogStream(arg1:string):Promise<void>;
+
+export function StopNodeShell(arg1:string):Promise<void>;
 
 export function StopPortForward(arg1:string):Promise<void>;
 

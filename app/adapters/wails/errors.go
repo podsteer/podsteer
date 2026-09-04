@@ -65,6 +65,13 @@ const (
 	// never just retry the same request, which would resend the same stale
 	// resourceVersion and fail again.
 	CodeConflict ErrorCode = "conflict"
+	// CodeEphemeralUnsupported means the cluster will not accept an ephemeral
+	// debug container — the pods/ephemeralcontainers subresource is not served
+	// (a cluster older than 1.23, or with the feature gate off). Its own code
+	// rather than not_found, because the pod is present and the fix is about
+	// the cluster, not the object: reporting it as "not found" would send an
+	// operator to look for a pod that is right there.
+	CodeEphemeralUnsupported ErrorCode = "ephemeral_unsupported"
 	// CodeInternal is the fallback for anything unclassified.
 	CodeInternal ErrorCode = "internal"
 )
@@ -176,6 +183,12 @@ func classifyError(err error) (ErrorCode, string) {
 
 	case errors.Is(err, ports.ErrForbidden):
 		return CodeForbidden, "Your account is not allowed to perform this operation"
+
+	// BEFORE ErrNotFound: the subresource being unavailable arrives as its own
+	// sentinel (the adapter already told a missing subresource apart from a
+	// missing pod), and it must never read as "the pod is gone".
+	case errors.Is(err, ports.ErrEphemeralContainersUnsupported):
+		return CodeEphemeralUnsupported, "This cluster does not support ephemeral debug containers — its API server is too old, or the feature is turned off."
 
 	case errors.Is(err, ports.ErrNotFound):
 		return CodeNotFound, "The requested resource no longer exists"

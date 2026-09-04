@@ -10,6 +10,14 @@ export function StartAttachSession(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['wails']['TerminalAPI']['StartAttachSession'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
+export function StartDebugSession(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['wails']['TerminalAPI']['StartDebugSession'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+}
+
+export function StartNodeShellSession(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['wails']['TerminalAPI']['StartNodeShellSession'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
 export function StartSession(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['wails']['TerminalAPI']['StartSession'](arg1, arg2, arg3, arg4, arg5, arg6);
 }

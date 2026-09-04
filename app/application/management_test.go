@@ -36,6 +36,81 @@ func TestNewManagementServiceRejectsMissingDependencies(t *testing.T) {
 	}
 }
 
+func TestAddEphemeralContainerPassesArgumentsThroughAndReturnsTheName(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{debugContainerName: "debugger-xk29p"}
+	service := newManagementService(t, management, application.NewRegistry())
+
+	name, err := service.AddEphemeralContainer(context.Background(), "dev", "web", "api-0", domain.DebugContainerSpec{
+		Image:           "busybox:1.37",
+		TargetContainer: "api",
+		Command:         []string{"sh"},
+		TTY:             true,
+		Stdin:           true,
+	})
+	if err != nil {
+		t.Fatalf("AddEphemeralContainer() error = %v", err)
+	}
+	if name != "debugger-xk29p" {
+		t.Errorf("AddEphemeralContainer() = %q, want the adapter's generated name", name)
+	}
+	if !management.debugCalled {
+		t.Fatal("AddEphemeralContainer() never reached the adapter")
+	}
+	if management.debugPod != "api-0" || management.debugNS != "web" || management.debugID != "dev" {
+		t.Errorf("reached adapter with %q/%q/%q, want dev/web/api-0", management.debugID, management.debugNS, management.debugPod)
+	}
+	if management.debugSpec.TargetContainer != "api" || management.debugSpec.Image != "busybox:1.37" {
+		t.Errorf("spec = %+v, want target api / image busybox:1.37", management.debugSpec)
+	}
+}
+
+// TestAddEphemeralContainerRejectsAnInvalidImage pins the local pre-flight: a
+// malformed image is refused before any request reaches the cluster, the same
+// way SetImage checks ValidImageReference.
+func TestAddEphemeralContainerRejectsAnInvalidImage(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management, application.NewRegistry())
+
+	_, err := service.AddEphemeralContainer(context.Background(), "dev", "web", "api-0", domain.DebugContainerSpec{
+		Image: "not a valid image", Command: []string{"sh"},
+	})
+	if !errors.Is(err, domain.ErrInvalidImageReference) {
+		t.Fatalf("AddEphemeralContainer() error = %v, want ErrInvalidImageReference", err)
+	}
+	if management.debugCalled {
+		t.Error("AddEphemeralContainer() reached the adapter with a malformed image")
+	}
+}
+
+// TestAddEphemeralContainerRefusesWhenReadOnly is AddEphemeralContainer's share
+// of the read-only property: it mutates the pod, so a read-only cluster refuses
+// it before the adapter is reached.
+func TestAddEphemeralContainerRefusesWhenReadOnly(t *testing.T) {
+	t.Parallel()
+
+	const id domain.ClusterID = "prod"
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly(id, true)
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management, registry)
+
+	_, err := service.AddEphemeralContainer(context.Background(), id, "web", "api-0", domain.DebugContainerSpec{
+		Image: "busybox:1.37", Command: []string{"sh"},
+	})
+	if !errors.Is(err, ports.ErrReadOnly) {
+		t.Fatalf("AddEphemeralContainer() error = %v, want ErrReadOnly", err)
+	}
+	if management.debugCalled {
+		t.Error("AddEphemeralContainer() reached the adapter on a read-only cluster")
+	}
+}
+
 func TestTriggerCronJobPassesArgumentsThroughAndReturnsTheJobName(t *testing.T) {
 	t.Parallel()
 
@@ -865,6 +940,12 @@ func TestManagementServiceRefusesEveryWriteWhenReadOnly(t *testing.T) {
 		{"AttachToPod", func() error {
 			var stdout, stderr bytes.Buffer
 			return service.AttachToPod(ctx, id, ns, "web-0", "app", nil, &stdout, &stderr, nil)
+		}},
+		{"AddEphemeralContainer", func() error {
+			_, err := service.AddEphemeralContainer(ctx, id, ns, "web-0", domain.DebugContainerSpec{
+				Image: "busybox:1.37", Command: []string{"sh"}, TTY: true, Stdin: true,
+			})
+			return err
 		}},
 	}
 

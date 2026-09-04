@@ -30,8 +30,15 @@ vulnerability.
 **PodSteer both reads and writes.** It lists and inspects resources, and it can
 also delete objects, scale and restart workloads, apply edited manifests, write
 a single decoded key of a Secret or a ConfigMap, and open an interactive shell
-inside a container. It does all of this with the credentials your kubeconfig
-already grants, using the same client library `kubectl` uses.
+inside a container. It can add an **ephemeral debug container** to a running
+pod (the equivalent of `kubectl debug`) — which, being a Kubernetes ephemeral
+container, cannot be removed and remains in the pod's spec until the pod is
+deleted — and it can create a **privileged node-shell pod** that enters a
+node's host namespaces to open a root shell on that node (the equivalent of
+`kubectl node-shell`); PodSteer deletes that pod when its terminal closes or
+when it exits, and the pod carries a one-hour `activeDeadlineSeconds` as a
+backstop for the case PodSteer cannot. It does all of this with the credentials
+your kubeconfig already grants, using the same client library `kubectl` uses.
 
 **PodSteer enforces no permissions of its own, and cannot.** It is a client. If
 an account should not be able to delete a namespace, that has to be true in the

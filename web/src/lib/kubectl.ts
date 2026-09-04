@@ -220,6 +220,53 @@ export function attach(ctx: string, pod: string, ns: string, container?: string)
   return parts.join(' ')
 }
 
+/**
+ * `kubectl --context c -n ns debug -it <pod> --image=<image> [--target=<container>] [-- <command>]`.
+ *
+ * The ephemeral debug container. `--target` shares the named container's
+ * process namespace, and is omitted when nothing is targeted. `image` is the
+ * one argument an operator can paste anything into, so it runs through
+ * `shellQuote`; the container name is a Kubernetes identifier and does not.
+ * PodSteer performs this through the pods/ephemeralcontainers subresource, not
+ * by shelling out — this only shows the equivalent invocation.
+ */
+export function debug(
+  ctx: string,
+  pod: string,
+  ns: string,
+  image: string,
+  target?: string,
+  command: string[] = ['sh'],
+): string {
+  const parts = [...base(ctx, ns), 'debug', '-it', pod, `--image=${shellQuote(image)}`]
+  if (target) parts.push(`--target=${target}`)
+  parts.push('--', ...command)
+  return parts.join(' ')
+}
+
+/**
+ * `kubectl debug node/<node> -it --image=<image> --profile=sysadmin`.
+ *
+ * What the node shell APPROXIMATES — it is not exactly this. `kubectl debug
+ * node/NAME` runs a debugging pod that mounts the host's filesystem at /host;
+ * PodSteer instead runs a privileged pod that enters the node's namespaces
+ * with nsenter, which is what `kubectl node-shell` and Lens do and what lands
+ * a true root shell on the node. The `--profile=sysadmin` flag is the closest
+ * kubectl has to the privileges this needs. Deliberately NOT namespaced: the
+ * node is cluster-scoped, and PodSteer's own pod lands in a namespace the
+ * dialog chooses rather than kubectl's default.
+ */
+export function debugNode(ctx: string, node: string, image: string): string {
+  return [
+    ...base(ctx),
+    'debug',
+    `node/${node}`,
+    '-it',
+    `--image=${shellQuote(image)}`,
+    '--profile=sysadmin',
+  ].join(' ')
+}
+
 /** `kubectl --context c -n ns port-forward pod/<pod> <local>:<remote>`. */
 export function portForward(
   ctx: string,

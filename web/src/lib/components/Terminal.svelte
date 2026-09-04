@@ -27,10 +27,12 @@
   import { SearchAddon } from '@xterm/addon-search'
   import { SerializeAddon } from '@xterm/addon-serialize'
   import { WebLinksAddon } from '@xterm/addon-web-links'
-  import { Copy, Check, Maximize2, RotateCw, ChevronUp, ChevronDown } from '@lucide/svelte'
+  import { Copy, Check, Maximize2, RotateCw, ChevronUp, ChevronDown, Bug } from '@lucide/svelte'
   import {
     StartSession,
     StartAttachSession,
+    StartDebugSession,
+    StartNodeShellSession,
     Write,
     Resize,
     StopSession,
@@ -76,6 +78,38 @@
      * from starting a connection it already knows will be refused.
      */
     readOnly?: boolean
+    /**
+     * What kind of session this pane opens.
+     *
+     * 'container' is the ordinary pod terminal (Shell / Attach). 'debug' adds
+     * an ephemeral debug container to the pod and opens a shell into it;
+     * 'nodeshell' creates a privileged pod on a node and attaches to a host
+     * shell. The two special variants reuse everything else about this
+     * component — the buffer, the toolbar, search, copy-on-select — and only
+     * differ in how the session is started.
+     */
+    variant?: 'container' | 'debug' | 'nodeshell'
+    /** debug: the container whose process namespace to share (--target). */
+    debugTarget?: string
+    /** debug: the image to run. */
+    debugImage?: string
+    /** debug: the command, already split; empty means the image's default. */
+    debugCommand?: string[]
+    /** nodeshell: the node to run on. */
+    nodeName?: string
+    /** nodeshell: the namespace the pod is created in. */
+    nodeShellNamespace?: string
+    /** nodeshell: the image the pod runs. */
+    nodeShellImage?: string
+    /**
+     * Offered on the container terminal's toolbar, beside Shell/Attach, to
+     * start a debug container — the drawer wires it to the debug dialog. Absent
+     * on the debug and node-shell variants, which have nothing to debug into.
+     */
+    ondebug?: () => void
+    /** Called after a session is successfully started (not on a re-attach) —
+     * the node-shell overlay uses it to refresh the activity list. */
+    onstarted?: () => void
     /** Offered when the pane can still be made bigger. */
     onmaximize?: () => void
   }
@@ -87,6 +121,15 @@
     containerName,
     containers = [],
     readOnly = false,
+    variant = 'container',
+    debugTarget = '',
+    debugImage = '',
+    debugCommand = [],
+    nodeName = '',
+    nodeShellNamespace = '',
+    nodeShellImage = '',
+    ondebug,
+    onstarted,
     onmaximize,
   }: Props = $props()
 
@@ -96,6 +139,14 @@
   const ATTACH_NOTE =
     "Attached to the container's main process. Ctrl+P, Ctrl+Q would detach in Docker; " +
     'here, closing the pane detaches; Ctrl+C is sent to the process.'
+
+  const DEBUG_NOTE =
+    'This ephemeral debug container cannot be removed once added — Kubernetes keeps it in ' +
+    "the pod's spec until the pod is deleted. Closing this pane ends the shell, not the container."
+
+  const NODE_SHELL_NOTE =
+    'You are root on the node, in its host namespaces. This pod is deleted when you close ' +
+    'this pane; it also self-destructs after one hour as a backstop.'
 
   // Seeded by the effect below; reading the prop here would capture only its
   // initial value and leave the selector stale after switching pods.
@@ -392,16 +443,46 @@
     connectionState = 'connecting'
 
     try {
-      const start = mode === 'attach' ? StartAttachSession : StartSession
-      const id = await start(clusterId, namespace, podName, activeContainer, terminal.cols, terminal.rows)
+      const id = await startForVariant(terminal.cols, terminal.rows)
       sessionId = id
       connectionState = 'connected'
       terminal.focus()
+      // A newly created node-shell pod (or debug container) now exists on the
+      // cluster; let whoever is listing them know so it appears at once rather
+      // than on the next poll.
+      onstarted?.()
     } catch (err) {
       connectionState = 'error'
-      const label = mode === 'attach' ? 'attach' : 'terminal'
-      terminal.writeln(`\x1b[31mFailed to start ${label} session: ${err}\x1b[0m`)
+      terminal.writeln(`\x1b[31mFailed to start ${sessionLabel()} session: ${err}\x1b[0m`)
     }
+  }
+
+  /**
+   * Starts the right kind of session for this pane's variant, returning its id.
+   *
+   * The debug and node-shell starts do more work server-side than a plain
+   * exec — adding a container and waiting for it, creating a pod and waiting
+   * for it — so this call can take a few seconds, which is why the pane shows
+   * "Connecting…" until it returns.
+   */
+  function startForVariant(cols: number, rows: number): Promise<string> {
+    switch (variant) {
+      case 'debug':
+        return StartDebugSession(clusterId, namespace, podName, debugTarget, debugImage, debugCommand, cols, rows)
+      case 'nodeshell':
+        return StartNodeShellSession(clusterId, nodeShellNamespace, nodeName, nodeShellImage, cols, rows)
+      default:
+        return mode === 'attach'
+          ? StartAttachSession(clusterId, namespace, podName, activeContainer, cols, rows)
+          : StartSession(clusterId, namespace, podName, activeContainer, cols, rows)
+    }
+  }
+
+  /** Names this pane's session, for the failure message. */
+  function sessionLabel(): string {
+    if (variant === 'debug') return 'debug'
+    if (variant === 'nodeshell') return 'node shell'
+    return mode === 'attach' ? 'attach' : 'terminal'
   }
 
   function handleTerminalData(event: { sessionId: string; data: string }): void {
@@ -469,6 +550,12 @@
 
   /** The key this component's session is filed under. */
   function currentKey(): string {
+    // Each variant keys on what actually identifies its session: a container
+    // terminal on its container and mode, a debug shell on the pod, a node
+    // shell on the node. Distinct keys keep the maximise/remount handover from
+    // ever re-attaching one to another.
+    if (variant === 'debug') return sessionKey(clusterId, namespace, podName, '', 'debug')
+    if (variant === 'nodeshell') return sessionKey(clusterId, nodeShellNamespace, nodeName, '', 'nodeshell')
     return sessionKey(clusterId, namespace, podName, activeContainer, mode)
   }
 
@@ -526,47 +613,70 @@
       {/if}
     </span>
 
-    {#if containers.length > 1}
-      <div class="mx-1 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
-      <select
-        value={activeContainer}
-        onchange={(event) => void switchContainer(event.currentTarget.value)}
-        disabled={readOnly}
-        aria-label="Container"
-        title={readOnly ? READ_ONLY_REASON : undefined}
-        class="field h-7 shrink-0 px-1.5 text-body-small disabled:opacity-38"
-      >
-        {#each containers as container (container.name)}
-          <option value={container.name}>{container.name}</option>
-        {/each}
-      </select>
+    {#if variant === 'container'}
+      {#if containers.length > 1}
+        <div class="mx-1 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+        <select
+          value={activeContainer}
+          onchange={(event) => void switchContainer(event.currentTarget.value)}
+          disabled={readOnly}
+          aria-label="Container"
+          title={readOnly ? READ_ONLY_REASON : undefined}
+          class="field h-7 shrink-0 px-1.5 text-body-small disabled:opacity-38"
+        >
+          {#each containers as container (container.name)}
+            <option value={container.name}>{container.name}</option>
+          {/each}
+        </select>
+      {:else}
+        <span class="shrink-0 truncate pl-1 text-body-small text-on-surface-variant">
+          {activeContainer}
+        </span>
+      {/if}
+
+      {#if attachAvailable}
+        <!--
+          Offered only for a container whose own spec declares both tty and
+          stdin — the same fields AttachToPod refuses on without, checked here
+          first so the control is simply absent rather than present and
+          failing.
+        -->
+        <div class="mx-1 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+        <select
+          value={mode}
+          onchange={(event) => void switchMode(event.currentTarget.value as SessionMode)}
+          disabled={readOnly}
+          aria-label="Session mode"
+          title={readOnly
+            ? READ_ONLY_REASON
+            : 'Shell starts a new process in the container; Attach connects to its own running one'}
+          class="field h-7 shrink-0 px-1.5 text-body-small disabled:opacity-38"
+        >
+          <option value="shell">Shell</option>
+          <option value="attach">Attach</option>
+        </select>
+      {/if}
+
+      {#if ondebug}
+        <!--
+          Debug sits beside Shell/Attach because it is the third way into this
+          pod: a `kubectl debug` ephemeral container with its own tools. It
+          opens its own dialog (image, target) rather than switching this
+          session, because it changes the pod rather than reconnecting.
+        -->
+        <div class="mx-1 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+        <ToolbarButton
+          icon={Bug}
+          label="Debug with an ephemeral container"
+          title={readOnly ? READ_ONLY_REASON : 'Add an ephemeral debug container (kubectl debug)'}
+          disabled={readOnly}
+          onclick={() => ondebug?.()}
+        />
+      {/if}
     {:else}
       <span class="shrink-0 truncate pl-1 text-body-small text-on-surface-variant">
-        {activeContainer}
+        {#if variant === 'debug'}Debug container{:else}Node shell · {nodeName}{/if}
       </span>
-    {/if}
-
-    {#if attachAvailable}
-      <!--
-        Offered only for a container whose own spec declares both tty and
-        stdin — the same fields AttachToPod refuses on without, checked here
-        first so the control is simply absent rather than present and
-        failing.
-      -->
-      <div class="mx-1 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
-      <select
-        value={mode}
-        onchange={(event) => void switchMode(event.currentTarget.value as SessionMode)}
-        disabled={readOnly}
-        aria-label="Session mode"
-        title={readOnly
-          ? READ_ONLY_REASON
-          : 'Shell starts a new process in the container; Attach connects to its own running one'}
-        class="field h-7 shrink-0 px-1.5 text-body-small disabled:opacity-38"
-      >
-        <option value="shell">Shell</option>
-        <option value="attach">Attach</option>
-      </select>
     {/if}
 
     {#snippet trailing()}
@@ -640,7 +750,7 @@
     {/snippet}
   </PaneToolbar>
 
-  {#if mode === 'attach'}
+  {#if variant === 'container' && mode === 'attach'}
     <!--
       A banner, not something written into the buffer: the buffer is the
       attached process's own terminal, and this is PodSteer's own note about
@@ -651,6 +761,20 @@
              text-body-small text-on-surface-variant"
     >
       {ATTACH_NOTE}
+    </p>
+  {:else if variant === 'debug'}
+    <p
+      class="shrink-0 border-b border-outline-variant/60 bg-surface-container-low px-3 py-1
+             text-body-small text-on-surface-variant"
+    >
+      {DEBUG_NOTE}
+    </p>
+  {:else if variant === 'nodeshell'}
+    <p
+      class="shrink-0 border-b border-gauge-warn/40 bg-gauge-warn/10 px-3 py-1
+             text-body-small text-on-surface-variant"
+    >
+      {NODE_SHELL_NOTE}
     </p>
   {/if}
 

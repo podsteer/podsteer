@@ -242,12 +242,16 @@ func run() error {
 		return fmt.Errorf("wiring overview API: %w", err)
 	}
 
-	managementAPI, err := wailsadapter.NewManagementAPI(managementService, kubernetes, workloadService, desktop, logger)
+	// The Kubernetes adapter is the port-forward AND the node-shell transport:
+	// both track a resource PodSteer created (a bound socket, a privileged
+	// pod) and both must tear it down where the record lives, so they share
+	// the adapter rather than a service layer that would only forward calls.
+	managementAPI, err := wailsadapter.NewManagementAPI(managementService, kubernetes, kubernetes, workloadService, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring management API: %w", err)
 	}
 
-	terminalAPI, err := wailsadapter.NewTerminalAPI(managementService, desktop, logger)
+	terminalAPI, err := wailsadapter.NewTerminalAPI(managementService, kubernetes, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring terminal API: %w", err)
 	}
@@ -311,6 +315,12 @@ func run() error {
 			// complaint every competing client has an issue open about, and
 			// the fix is to close them rather than to hope.
 			kubernetes.StopAllPortForwards()
+			// Node shells next, and for a sharper reason than a leaked socket:
+			// each is a PRIVILEGED pod on a node, and a process that exits
+			// without deleting them leaves root shells running on the cluster
+			// until their one-hour deadline reaps them. The deadline is the
+			// backstop; this is the normal path.
+			kubernetes.StopAllNodeShells()
 			// Same reason, same place: reflectors are goroutines holding
 			// connections, and every one of them has an owner that stops it.
 			kubernetes.StopAllWatches()

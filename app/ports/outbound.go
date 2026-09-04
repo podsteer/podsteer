@@ -290,6 +290,33 @@ type PortForwardPort interface {
 	FreeLocalPort() (int, error)
 }
 
+// NodeShellPort creates and tears down node shells — privileged pods that
+// enter a node's host namespaces, the way `kubectl node-shell` and Lens do.
+//
+// Deliberately shaped like PortForwardPort, because a node shell has the same
+// leak to avoid: the pod is a resource PodSteer created, so the record of it
+// and the thing that deletes it must never part company. Start creates the
+// pod and returns once it is running; Stop deletes it; and everything still
+// running is listed so the activity surface can show it with a stop control
+// and StopAll can remove it on shutdown.
+type NodeShellPort interface {
+	// StartNodeShell creates a privileged pod pinned to nodeName that runs a
+	// login shell in the node's host namespaces, waits for it to be running,
+	// and returns the descriptor. It does NOT open the terminal — that is the
+	// caller's exec/attach session, kept separate so the transport and the
+	// record cannot drift.
+	StartNodeShell(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, nodeName, image string) (domain.NodeShell, error)
+	// StopNodeShell deletes the pod behind one node shell and forgets it.
+	// Idempotent: stopping one already gone is not an error, since the
+	// terminal session ending and an explicit stop can both reach it.
+	StopNodeShell(id string) error
+	// ListNodeShells reports what node shells are running right now — the live
+	// registry, so the activity list shows only pods that still exist.
+	ListNodeShells() []domain.NodeShell
+	// StopAllNodeShells deletes every node-shell pod, for shutdown.
+	StopAllNodeShells()
+}
+
 // TerminalSize represents a terminal window size.
 type TerminalSize struct {
 	Width  uint16
@@ -441,6 +468,34 @@ type ManagementPort interface {
 	// does. The session runs until the context is cancelled, the attached
 	// process exits, or an error occurs.
 	AttachToPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, stdin io.Reader, stdout, stderr io.Writer, sizeQueue TerminalSizeQueue) error
+
+	// AddEphemeralContainer adds an ephemeral debug container to a running
+	// pod through the pods/ephemeralcontainers subresource, the way
+	// `kubectl debug -it POD --image=… --target=CONTAINER` does. It returns
+	// the generated container name, so the caller can wait for it and open a
+	// terminal into it.
+	//
+	// The write is a strategic merge patch of spec.ephemeralContainers, which
+	// merges the list by container name and so ADDS the new container without
+	// clobbering any already present — a pod can carry several debug
+	// containers from several investigations, and losing an earlier one would
+	// be losing evidence. An ephemeral container CANNOT be removed once added;
+	// it stays in the pod's spec until the pod is deleted, which is
+	// Kubernetes' behaviour and what the dialog offering this states plainly.
+	//
+	// A cluster whose API server does not serve the subresource — one older
+	// than 1.23, or with the feature gate off — is reported as
+	// ErrEphemeralContainersUnsupported rather than a generic failure.
+	AddEphemeralContainer(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, spec domain.DebugContainerSpec) (string, error)
+
+	// WaitForEphemeralContainerRunning blocks until the named ephemeral
+	// container reports Running in the pod's ephemeralContainerStatuses, or a
+	// bounded timeout elapses — polling the pod's status rather than sleeping
+	// a guessed interval, because an image pull can take seconds and a shell
+	// opened before the container is up fails with nothing to say. A container
+	// that reaches a terminated state instead is reported as an error naming
+	// why, rather than waited on until the timeout.
+	WaitForEphemeralContainerRunning(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string) error
 
 	// CordonNode marks a node schedulable or unschedulable, without touching
 	// anything already running on it — cordoning removes the node from
