@@ -20,9 +20,30 @@ import {
   type Unsubscribe,
 } from '$lib/api/client'
 import { ApiError, toApiError } from '$lib/api/errors'
+import type { FleetTarget } from '$lib/fleet'
 import { clusterActivity } from './activity.svelte'
+import { fleet } from './fleet.svelte'
 import { organisation } from './organisation.svelte'
-import { ClusterSession, type LoadStatus } from './session.svelte'
+import {
+  ClusterSession,
+  RICH_KIND_IDS,
+  workloadKindId,
+  type LoadStatus,
+} from './session.svelte'
+
+/**
+ * The navigator id of a kind a merged table can show.
+ *
+ * The built-ins' own constants rather than a catalogue lookup: every kind
+ * the All-clusters view lists is a built-in with a fixed id, present in
+ * every cluster's catalogue, so there is nothing to discover — and the
+ * target tab may not have loaded its catalogue yet when the click lands.
+ */
+function kindIdFor(kind: string): string | undefined {
+  if (kind === 'Pod') return RICH_KIND_IDS.pods
+  if (kind === 'Event') return RICH_KIND_IDS.events
+  return workloadKindId(kind)
+}
 
 class Workspace {
   /** Every cluster in the kubeconfig, for the picker. */
@@ -178,6 +199,27 @@ class Workspace {
     }
   }
 
+  /**
+   * Opens one object of one cluster from a merged table — a row of the
+   * All-clusters view, or a palette hit made from it.
+   *
+   * The tab first, then the object. `focus` initialises a tab that was
+   * opened without ever being shown; `openObject` on that tab's session then
+   * switches it to the object's kind, moves its namespace filter only if
+   * that filter would hide the object, and opens the drawer — the same path
+   * following a reference takes, so the panel arrives with its live
+   * sections rather than the manifest alone. Nothing here reads any cluster
+   * the row did not come from.
+   */
+  openInCluster = async (target: FleetTarget): Promise<void> => {
+    const session = this.sessions.find((entry) => entry.cluster.id === target.cluster)
+    const kindId = kindIdFor(target.kind)
+    if (!session || !kindId) return
+
+    await this.focus(target.cluster)
+    await session.openObject(kindId, target.name, target.namespace, true)
+  }
+
   /** Returns to the cluster picker without closing anything. */
   showPicker = (): void => {
     this.activeClusterId = null
@@ -301,3 +343,10 @@ class Workspace {
  * instances would only invite them to disagree about which tab is in front.
  */
 export const workspace = new Workspace()
+
+// The merged tables read whatever tabs are open, and this is the mirror of
+// the registry that says which — handed over as a function rather than
+// imported by $stores/fleet, which would close a circle through
+// $stores/session. Read at each fleet refresh, so a tab opened or closed a
+// moment ago is in or out of the next read without anything being told.
+fleet.openClusters = () => workspace.sessions.map((session) => session.cluster.id)

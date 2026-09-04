@@ -20,16 +20,19 @@
   import { ALL_NAMESPACES, type ResourceKind } from '$lib/api/client'
   import {
     APPLICATIONS_KIND_ID,
+    FLEET_KIND_ID,
     OVERVIEW_KIND_ID,
     type ClusterSession,
     type RecentObject,
   } from '$stores/session.svelte'
   import { clampNavigatorWidth, preferences } from '$stores/preferences.svelte'
+  import { workspace } from '$stores/workspace.svelte'
   import { categoryMeta, iconForKind } from '$lib/kindIcons'
   import Select from './Select.svelte'
   import {
     Blocks,
     ChevronDown,
+    Layers,
     LayoutDashboard,
     AlertTriangle,
     Star,
@@ -76,6 +79,9 @@
 
   const onOverview = $derived(session.selectedKindId === OVERVIEW_KIND_ID)
   const onApplications = $derived(session.selectedKindId === APPLICATIONS_KIND_ID)
+  const onFleet = $derived(session.selectedKindId === FLEET_KIND_ID)
+  /** How many tabs the merged view would merge — the badge on its row. */
+  const openClusters = $derived(workspace.sessions.length)
 
   /**
    * Kinds grouped by category and then by who publishes them.
@@ -376,6 +382,38 @@
             {session.issueCount}
           </span>
         {/if}
+      </button>
+    </div>
+
+    <!-- Every open cluster's pods, workloads or events in one table. Pinned
+         beside the dashboard for the reason the dashboard is: it is not a
+         kind, and no single cluster could serve it — see FLEET_KIND_ID. The
+         badge is how many tabs it merges; one is honest, if not much of a
+         merge. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(FLEET_KIND_ID)}
+        aria-current={onFleet ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onFleet
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <Layers
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onFleet ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">All clusters</span>
+        <span
+          class="rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small
+                 tabular-nums text-on-surface-variant/70"
+          title="{openClusters} open cluster{openClusters === 1 ? '' : 's'}"
+        >
+          {openClusters}
+        </span>
       </button>
     </div>
 

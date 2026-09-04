@@ -142,6 +142,33 @@ type EventService interface {
 	ListEventsForResource(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind, name string) ([]domain.Event, error)
 }
 
+// FleetService is the use-case surface for reading across several open
+// clusters at once — the merged Pods, Workloads and Events tables.
+//
+// Every read answers PER CLUSTER and never fails because one cluster did: a
+// refused, unreachable or slow cluster is reported in its own ClusterRead
+// beside the others' rows, so the table renders whatever did answer. The one
+// error is naming a cluster that is not open, which fails the whole call with
+// domain.ErrClusterNotConnected wrapped — the caller asked for something that
+// does not exist. Results follow the registry's tab order whatever order the
+// ids came in, and a repeated id is read once.
+//
+// Each cluster's share is the same read its own tab makes, through
+// WorkloadService and EventService, so the adapter's read cache coalesces a
+// fleet read with the tab's poll when the two land in the same tick.
+type FleetService interface {
+	// ListPods lists pods in the given namespace of each cluster.
+	ListPods(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Pod], error)
+
+	// ListWorkloads lists every controller kind in domain.FleetWorkloadKinds
+	// in the given namespace of each cluster. A cluster that refuses some
+	// kinds and serves others is reported Partial, naming the kinds missing.
+	ListWorkloads(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Workload], error)
+
+	// ListEvents lists events in the given namespace of each cluster.
+	ListEvents(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Event], error)
+}
+
 // OverviewService is the use-case surface for the cluster dashboard.
 //
 // It is a use case of its own rather than a method on ClusterService because
