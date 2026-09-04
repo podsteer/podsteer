@@ -219,6 +219,35 @@ be left alone, shown before anything is written, and applied only on confirm.
 A malformed document is refused with the reason and never partly applied.
 Nothing outside what the file carries is touched, even by Replace.
 
+A sixth kind of write is a **desktop notification**, and it is counted as a
+write on purpose: your operating system keeps the notifications it has shown
+you — on macOS in Notification Centre, which is a database on disk, and on
+Linux a notification daemon may log what it displayed. So the same rule
+applies to one as to everything else in this list.
+
+- **It is off until you turn it on**, in Settings → Notifications, and it is
+  only ever raised for a **critical** finding that was not there on the
+  previous refresh. A problem that was already there when you opened the
+  cluster never raises one, a failed or partial refresh never raises one, and
+  anything you have snoozed never raises one.
+- **It carries no object names.** What it says is a count, the name of the
+  rule that fired — "CrashLoopBackOff", written in PodSteer's own source —
+  and your kubeconfig context name, on the same terms the settings file
+  carries one. There is no pod, node, namespace or workload in it, there is
+  no field in the request that could hold one, and there is a test asserting
+  that field list so a new one cannot be added quietly.
+- **A burst is one notification.** Twenty pods failing from the same event
+  produce a single notification naming twenty, and one cluster raises at most
+  one a minute.
+- **Your Do Not Disturb still decides whether you see it.** PodSteer posts a
+  notification and your operating system's notification centre applies your
+  own Focus, Focus Assist or quiet-mode settings to it, exactly as it does for
+  every other application. PodSteer does not attempt to read that state, and
+  clicking a notification brings PodSteer forward on that cluster and does
+  nothing else.
+- **Permission is asked for when you turn it on**, never at startup, and the
+  pane says so if your system has not granted it.
+
 ## The local terminal, and the program it can start
 
 PodSteer can open a terminal running **a process on your own computer**, rather
@@ -366,6 +395,10 @@ else it can reach with your credentials, is not something PodSteer mediates.
   not: a credential, a cluster address, or the name of any object in any
   cluster. The file is made to be shared, so anything that leaks into it
   leaks to whoever it was shared with.
+- A desktop notification carrying the name of any object in any cluster, or
+  any Secret or credential material. Your operating system retains what it
+  has shown you, so anything that reaches a notification reaches whatever
+  keeps it.
 - Supply-chain problems in what we ship: a compromised dependency in the
   inventory, or a release artefact that does not match its source.
 

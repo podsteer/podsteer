@@ -54,6 +54,9 @@ type Adapter struct {
 	// backends caches metrics-backend discovery, which answers a question
 	// whose value moves in days: a monitoring stack is installed once.
 	backends backendCache
+	// kubeState caches kube-state-metrics discovery — the same question at
+	// the same cadence as backends, about a different thing. See kubestate.go.
+	kubeState kubeStateCache
 	// upgrades caches served API discovery and the writer scans found for
 	// deprecated versions of it — see upgrade.go.
 	upgrades upgradeCache
@@ -183,6 +186,11 @@ func (a *Adapter) Invalidate(id domain.ClusterID) {
 	// numbers from before it was closed.
 	a.filesystems.forget(id)
 	a.upgrades.forget(id)
+	// kube-state-metrics discovery too, and for a sharper reason than the
+	// sweep: a tab is routinely reconnected because its kubeconfig context
+	// now points at a different cluster, and a half-hour answer carried
+	// across that would name a namespace in the cluster this tab used to be.
+	a.kubeState.forget(id)
 	// Scanner reports go the same way, and for the same reason as the disk
 	// sweep: a ten-minute answer carried across a reconnect would put the
 	// previous connection's findings on the first pod list of the new one.

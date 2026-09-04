@@ -235,6 +235,9 @@ export type VulnerabilitySummary = wails.VulnerabilitySummary
  * what is worth knowing about them. Never fetched except by inspectTLSSecret. */
 export type CertificateChain = wails.CertificateChainDTO
 export type MetricsBackend = wails.MetricsBackend
+/** A kube-state-metrics installation discovered in the cluster. Pointed at
+ * and never read — see KubeStateNote.svelte and the Go type's own comment. */
+export type KubeStateMetrics = wails.KubeStateMetrics
 export type PodGraph = wails.PodGraph
 /** One problem, aggregated across the objects it affects. */
 export type Finding = wails.Finding
@@ -316,6 +319,17 @@ export interface FileCopyDoneEvent {
   localPath: string
   cancelled: boolean
   error: string
+}
+
+/**
+ * Payload of the `notification:activated` event: somebody clicked one.
+ *
+ * ONE FIELD, and it is a kubeconfig context name — because that is the only
+ * thing the notification carried. See $lib/notify for why a desktop
+ * notification never carries an object name.
+ */
+export interface NotificationActivatedEvent {
+  clusterId: string
 }
 
 /** Removes an event subscription. */
@@ -1742,4 +1756,22 @@ export function onFileCopyProgress(
 /** Subscribes to file copies ending, however they end. */
 export function onFileCopyDone(handler: (event: FileCopyDoneEvent) => void): Unsubscribe {
   return EventsOn('filecopy:done', (event: FileCopyDoneEvent) => handler(event))
+}
+
+/**
+ * Subscribes to somebody clicking a desktop notification.
+ *
+ * The window has already been raised by the time this arrives — Go does that
+ * before it emits, because an event that switched tabs behind a hidden window
+ * would move the operator's application without showing it to them. What
+ * reaches here is the kubeconfig CONTEXT NAME and nothing else, because that
+ * is all the notification carried; the finding it was about is in the
+ * cluster's overview, which is where App.svelte then goes.
+ */
+export function onNotificationActivated(
+  handler: (event: NotificationActivatedEvent) => void,
+): Unsubscribe {
+  return EventsOn('notification:activated', (event: NotificationActivatedEvent) =>
+    handler(event),
+  )
 }

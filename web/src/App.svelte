@@ -17,6 +17,9 @@
   import { loadAppInfo } from '$stores/system.svelte'
   import { updates } from '$stores/updates.svelte'
   import { alertPlayer } from '$stores/alerts.svelte'
+  import { notifications } from '$stores/notifications.svelte'
+  import { onNotificationActivated } from '$lib/api/client'
+  import { OVERVIEW_KIND_ID } from '$stores/session.svelte'
   import { forwards } from '$stores/forwards.svelte'
   import { nodeShells } from '$stores/nodeShells.svelte'
   import { shortcutSheet } from '$stores/shortcutSheet.svelte'
@@ -52,6 +55,25 @@
     // Arming here means the first click or keypress of the session wakes it,
     // so an alert never arrives to find the speaker asleep.
     alertPlayer.arm()
+    // What the platform will do about desktop notifications, asked once so
+    // the first critical finding of a session does not have to wait on a
+    // round trip to find out. It asks for no permission — that happens when
+    // the operator turns the preference on, because on macOS it is a visible
+    // system prompt.
+    void notifications.probe()
+    // Clicking one raises the window in Go, before this fires; what is left
+    // here is going to the place the finding is. The tab first and then its
+    // overview, which is the same order workspace.openInCluster uses and for
+    // the same reason: a session that has never been shown is not loaded
+    // until it is focused.
+    const unwatchNotifications = onNotificationActivated((event) => {
+      if (event.clusterId === '') return
+      void (async () => {
+        await workspace.focus(event.clusterId)
+        const session = workspace.sessions.find((entry) => entry.cluster.id === event.clusterId)
+        await session?.selectKind(OVERVIEW_KIND_ID)
+      })()
+    })
     // The update check, on its own delay and off the startup path entirely.
     // Nothing here waits for it, and it does nothing at all when the operator
     // has switched it off — see updates.svelte.ts.
@@ -71,6 +93,7 @@
     return () => {
       unwatchForwards()
       unwatchNodeShells()
+      unwatchNotifications()
       updates.stop()
       workspace.dispose()
     }

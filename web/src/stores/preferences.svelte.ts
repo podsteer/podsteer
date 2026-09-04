@@ -480,6 +480,16 @@ interface PersistedShape {
   criticalEnabled?: boolean
   /** Whether a newly raised finding makes a sound at all. */
   alertSoundsEnabled: boolean
+  /**
+   * Whether a newly raised CRITICAL finding also posts an OS notification.
+   *
+   * Separate from alertSoundsEnabled rather than one "tell me" switch: a
+   * sound is over in half a second and is heard only by somebody at the
+   * window, while a notification persists in a tray and is the thing that
+   * reaches somebody who has walked away. People want them on different
+   * terms, and a machine that can do one and not the other is ordinary.
+   */
+  desktopNotificationsEnabled: boolean
   /** severity -> the id of the motif it plays, or SILENT. */
   alertSounds: Record<AlertSeverity, string>
   /**
@@ -551,6 +561,11 @@ const DEFAULTS: PersistedShape = {
   // people mute at the operating system, taking the alarm they DID want with
   // it. Whoever wants this turns it on, and hears the sound as they choose it.
   alertSoundsEnabled: false,
+  // Off, for the reason above and one more that is specific to this: on macOS
+  // the first notification triggers a system permission prompt, and a prompt
+  // nobody asked for is one people deny permanently — taking with it the
+  // notification they would have wanted later. Turning it on is what asks.
+  desktopNotificationsEnabled: false,
   alertSounds: DEFAULT_ALERT_SOUNDS,
   columns: {},
   customColumns: {},
@@ -604,6 +619,7 @@ export interface ExportedPreferences {
   updateChecksEnabled: boolean
   sections: Record<string, boolean>
   alertSoundsEnabled: boolean
+  desktopNotificationsEnabled: boolean
   alertSounds: Record<AlertSeverity, string>
   columns: Record<string, Record<string, ColumnPreference>>
   customColumns: Record<string, CustomColumnSpec[]>
@@ -764,6 +780,9 @@ class Preferences {
 
   /** Whether a newly raised warning or critical finding makes a sound. */
   alertSoundsEnabled = $state<boolean>(DEFAULTS.alertSoundsEnabled)
+
+  /** Whether a newly raised CRITICAL finding also posts an OS notification. */
+  desktopNotificationsEnabled = $state<boolean>(DEFAULTS.desktopNotificationsEnabled)
 
   /** Which motif each severity plays, by id, or SILENT for none. */
   alertSounds = $state<Record<AlertSeverity, string>>({ ...DEFAULTS.alertSounds })
@@ -1112,6 +1131,20 @@ class Preferences {
   }
 
   /**
+   * Records the desktop-notification choice.
+   *
+   * Only the choice. Asking the operating system for permission is the
+   * Settings pane's job, because it is a visible prompt on macOS and belongs
+   * to the gesture that caused it — a store that requested permission as a
+   * side effect of an import would pop one at somebody who was restoring a
+   * colleague's column layout.
+   */
+  setDesktopNotificationsEnabled = (enabled: boolean): void => {
+    this.desktopNotificationsEnabled = enabled
+    this.#save()
+  }
+
+  /**
    * Chooses one severity's motif, and plays it.
    *
    * Choosing a sound without hearing it is choosing from a few words, so the
@@ -1317,6 +1350,7 @@ class Preferences {
     updateChecksEnabled: this.updateChecksEnabled,
     sections: { ...this.sections },
     alertSoundsEnabled: this.alertSoundsEnabled,
+    desktopNotificationsEnabled: this.desktopNotificationsEnabled,
     alertSounds: { ...this.alertSounds },
     columns: plainCopy(this.columns),
     customColumns: plainCopy(this.customColumns),
@@ -1356,6 +1390,7 @@ class Preferences {
     this.updateChecksEnabled = next.updateChecksEnabled
     this.sections = { ...next.sections }
     this.alertSoundsEnabled = next.alertSoundsEnabled
+    this.desktopNotificationsEnabled = next.desktopNotificationsEnabled
     this.alertSounds = { ...next.alertSounds }
     this.columns = plainCopy(next.columns)
     this.customColumns = plainCopy(next.customColumns)
@@ -1508,6 +1543,9 @@ class Preferences {
       if (typeof stored.alertSoundsEnabled === 'boolean') {
         this.alertSoundsEnabled = stored.alertSoundsEnabled
       }
+      if (typeof stored.desktopNotificationsEnabled === 'boolean') {
+        this.desktopNotificationsEnabled = stored.desktopNotificationsEnabled
+      }
       // The one sound earlier builds stored becomes the warning sound, before
       // the per-severity map is read over it.
       if (isAlertSound(stored.alertSound)) {
@@ -1575,6 +1613,7 @@ class Preferences {
         dismissedUpdate: this.dismissedUpdate,
         sections: this.sections,
         alertSoundsEnabled: this.alertSoundsEnabled,
+        desktopNotificationsEnabled: this.desktopNotificationsEnabled,
         alertSounds: this.alertSounds,
         columns: this.columns,
         customColumns: this.customColumns,
@@ -1665,6 +1704,7 @@ export const EXPORTED_PREFERENCE_FIELDS = [
   'updateChecksEnabled',
   'sections',
   'alertSoundsEnabled',
+  'desktopNotificationsEnabled',
   'alertSounds',
   'columns',
   'customColumns',
@@ -1795,6 +1835,7 @@ const PREFERENCE_READERS: {
   updateChecksEnabled: asBoolean,
   sections: asRecordOf(asBoolean),
   alertSoundsEnabled: asBoolean,
+  desktopNotificationsEnabled: asBoolean,
   alertSounds: asAlertSounds,
   columns: asRecordOf(asRecordOf(asColumnPreference)),
   // Validated spec by spec by the same function the column picker and storage
@@ -1921,6 +1962,7 @@ const PREFERENCE_LABELS: Record<keyof ExportedPreferences, { label: string; unit
   updateChecksEnabled: { label: 'Check for updates' },
   sections: { label: 'Detail sections opened or closed', unit: 'sections' },
   alertSoundsEnabled: { label: 'Sound on a new finding' },
+  desktopNotificationsEnabled: { label: 'Desktop notification on a new critical finding' },
   alertSounds: { label: 'Sound per severity' },
   columns: { label: 'Saved column layouts', unit: 'kinds' },
   customColumns: { label: 'Custom columns', unit: 'kinds' },

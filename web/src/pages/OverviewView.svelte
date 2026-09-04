@@ -21,6 +21,7 @@
   import FindingCard from '$lib/components/FindingCard.svelte'
   import NodeLoadGrid from '$lib/components/NodeLoadGrid.svelte'
   import MetricsBackendNote from '$lib/components/MetricsBackendNote.svelte'
+  import KubeStateNote from '$lib/components/KubeStateNote.svelte'
   import TrendChart from '$lib/components/TrendChart.svelte'
   import Select from '$lib/components/Select.svelte'
   import { formatAge } from '$lib/format'
@@ -739,6 +740,15 @@
           backend={overview.backend}
           windowLabel={history.hasTrend ? `the last ${formatAge(history.spanSeconds)}` : undefined}
         />
+
+        <!--
+          Beside it and not folded into it: a cluster commonly has one and not
+          the other, and the two answer different questions — where a longer
+          history is kept, and where the object gauges in a dashboard come
+          from. One line saying "monitoring is installed" would answer
+          neither properly.
+        -->
+        <KubeStateNote kubeState={overview.kubeState} />
       </section>
 
       <div class="grid gap-4 lg:grid-cols-2">

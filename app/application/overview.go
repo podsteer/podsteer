@@ -374,6 +374,7 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID, targe
 		podUsage  map[string]domain.PodUsage
 		nodeDisks map[string]domain.NodeFilesystems
 		backend   domain.MetricsBackend
+		kubeState domain.KubeStateMetrics
 		volumes   []domain.PersistentVolume
 		claims    []domain.PersistentVolumeClaim
 		measured  bool
@@ -530,6 +531,26 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID, targe
 		mu.Unlock()
 	})
 
+	// kube-state-metrics rides the assessment on exactly the same terms, and
+	// deliberately not through `run` for the same reason: not having it is
+	// the ordinary state of a cluster, and being refused the look is the
+	// ordinary state of an account. Neither belongs in the list of sources
+	// that failed, and neither changes a single number on this screen — the
+	// note exists so an operator can be told where their Grafana's object
+	// gauges come from and where PodSteer's own figures do not.
+	wg.Go(func() {
+		result, err := s.metrics.DiscoverKubeStateMetrics(ctx, id)
+		if err != nil {
+			s.logger.Debug("kube-state-metrics discovery skipped",
+				slog.String("cluster", string(id)),
+				slog.String("error", err.Error()))
+			return
+		}
+		mu.Lock()
+		kubeState = result
+		mu.Unlock()
+	})
+
 	// UPGRADE-IMPACT DISCOVERY AND WRITER SCANS. Not run through `run`: a
 	// failure here must not print as an "Unavailable" source the way a
 	// metrics or events failure does — apisKnown already carries the fact
@@ -643,6 +664,7 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID, targe
 		MetricsMeasured: measured,
 		Metrics:         metricsStatus,
 		Backend:         backend,
+		KubeState:       kubeState,
 		ServedAPIs:      servedAPIs,
 		APIsKnown:       apisKnown,
 		APIUsage:        apiUsage,

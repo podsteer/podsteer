@@ -353,6 +353,13 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, errNotFound),
 		errors.Is(err, errEmptySuggestedName),
 		errors.Is(err, errUnreadableTextFile),
+		// Both notification refusals are the frontend asking for something
+		// it should not have — an empty headline, or a body long enough to
+		// have started listing objects. Invalid input rather than internal,
+		// so the message reaches whoever is looking at it.
+		errors.Is(err, errEmptyNotification),
+		errors.Is(err, errNotificationTooLong),
+		errors.Is(err, errNotificationUnavailable),
 		errors.Is(err, errInvalidBulkAction),
 		errors.Is(err, domain.ErrEmptyResourceName),
 		errors.Is(err, errNoLocalPath),

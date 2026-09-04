@@ -70,6 +70,10 @@ import { alertPlayer } from './alerts.svelte'
 import { forgetConfigMaps } from './configMaps.svelte'
 import { forgetVulnerabilities } from './vulnerabilities.svelte'
 import { timeline } from './timeline.svelte'
+import { notifications } from './notifications.svelte'
+// The ONE finding diff, shared with the session timeline — see #adopt.
+import { diffFindings } from '$lib/timeline'
+import { sourcesAreComparable } from '$lib/notify'
 import { usageHistory, usageKey } from './usageHistory.svelte'
 import { preferences } from './preferences.svelte'
 import { fleet } from './fleet.svelte'
@@ -552,11 +556,28 @@ export class ClusterSession {
   upgradeTarget = $state<string | null>(null)
 
   /**
-   * The non-info finding ids of the previous assessment, or null before the
-   * first one has landed. Not reactive: nothing renders it, and it exists
+   * The previous assessment's non-info findings, keyed by id, or null before
+   * the first one has landed. Not reactive: nothing renders it, and it exists
    * only to decide what is new.
+   *
+   * A MAP RATHER THAN A SET OF IDS, because `diffFindings` is what compares
+   * them — the same function the session timeline is built from, held once.
+   * There used to be a second differ here, hand-written over a Set, and two
+   * differs mean two baselines: one could report a finding appearing on a
+   * refresh the other did not, so the sound, the notification and the
+   * timeline row would describe different instants.
    */
-  #lastFindingIds: Set<string> | null = null
+  #lastFindings: Map<string, Finding> | null = null
+
+  /**
+   * The sources the previous assessment could not read.
+   *
+   * Kept beside #lastFindings and assigned in the same place, because it is
+   * half of the same baseline: a source that was missing last refresh and
+   * answered this one hands over every finding it produces at once, and not
+   * one of them is new. See `sourcesAreComparable`.
+   */
+  #lastUnavailable: string[] | null = null
 
   status = $state<LoadStatus>('idle')
   error = $state<ApiError | null>(null)
@@ -1550,7 +1571,7 @@ export class ClusterSession {
   }
 
   /**
-   * Takes a new assessment, sounding anything it raised.
+   * Takes a new assessment, raising anything it added.
    *
    * "New" is measured against the previous assessment rather than against
    * everything ever seen, so a problem that clears and comes back is
@@ -1561,30 +1582,44 @@ export class ClusterSession {
    * a cluster that has been broken since Tuesday is not news happening now,
    * and greeting an operator with a chord of every finding at once is how a
    * feature like this gets switched off in its first minute.
+   *
+   * ONE DIFF FEEDS ALL THREE — the sound, the desktop notification and the
+   * timeline. `diffFindings` ($lib/timeline) is that diff, and it is the only
+   * one: this method used to hand-roll a second comparison over a Set of ids,
+   * which meant two baselines that could drift and three surfaces that could
+   * disagree about the instant a finding arrived. It also carries the rule
+   * this is easiest to get wrong about, so it is worth not re-deriving: a
+   * null baseline announces nothing, and a refresh that produced no
+   * assessment is passed null rather than an empty set.
    */
   #adopt(overview: Overview): void {
-    const previous = this.#lastFindingIds
-    const current = new Set(
-      overview.findings.filter((finding) => finding.severity !== 'info').map((finding) => finding.id),
+    const previous = this.#lastFindings
+    const previousUnavailable = this.#lastUnavailable
+
+    // Info findings are outside this entirely. They are worth reading and are
+    // never worth interrupting anybody over, so keeping them out of the
+    // baseline keeps the diff about the things that can raise something.
+    const current = new Map(
+      overview.findings
+        .filter((finding) => finding.severity !== 'info')
+        .map((finding) => [finding.id, finding]),
     )
-    this.#lastFindingIds = current
+    const diff = diffFindings(previous, current)
+    this.#lastFindings = diff.next
+    this.#lastUnavailable = [...overview.unavailable]
+
     this.overview = overview
     this.#retainNodeUsage(overview)
-    // The same comparison, kept once: this method already decides what is
-    // new to sound an alert about, and the timeline needs what CLEARED as
-    // well. Rather than diff twice against two baselines that could drift
-    // apart, the store holds its own and is handed the whole assessment.
+    // The timeline is handed the WHOLE assessment rather than this diff: it
+    // records what cleared as well, and it renders info findings that never
+    // reach the baseline above. It runs the same `diffFindings` against its
+    // own copy of the same data, which is why the two cannot disagree.
     timeline.recordFindings(this.cluster.id, overview.findings)
 
-    if (previous === null) return
-
     // Snoozed findings are silent by definition, and so is un-snoozing one:
-    // the id was in the previous set throughout, because that set is not
+    // the id was in the baseline throughout, because the baseline is not
     // filtered by snoozing.
-    const raised = overview.findings.filter(
-      (finding) =>
-        finding.severity !== 'info' && !previous.has(finding.id) && !this.isFullySnoozed(finding),
-    )
+    const raised = diff.appeared.filter((finding) => !this.isFullySnoozed(finding))
     if (raised.length === 0) return
 
     // One sound for the batch, at the worst severity in it. Six pods failing
@@ -1597,6 +1632,24 @@ export class ClusterSession {
         : 'warning'
       void alertPlayer.play(preferences.alertSoundFor(worst))
     }
+
+    // And the desktop, for the operator who is not looking at the window.
+    // Every rule about whether one is posted — critical only, snoozed
+    // excluded, one per batch, at most one a minute — is in $lib/notify, and
+    // the two arguments it cannot work out for itself are handed over here:
+    // whether the operator asked for this, and whether this assessment read
+    // the same sources as the one it is being compared against.
+    void notifications.raise({
+      clusterId: this.cluster.id,
+      enabled: preferences.desktopNotificationsEnabled,
+      // The UNFILTERED diff, with the snooze rule handed over rather than
+      // applied first: the sound and the notification snooze on the same
+      // fact but are separate decisions, and each keeps its own rule where
+      // it can be argued with.
+      appeared: diff.appeared,
+      comparable: sourcesAreComparable(previousUnavailable, overview.unavailable),
+      isSnoozed: (finding) => this.isFullySnoozed(finding),
+    })
   }
 
   /** Issues the call the active view needs. */

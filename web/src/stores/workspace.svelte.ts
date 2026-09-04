@@ -23,6 +23,7 @@ import { ApiError, toApiError } from '$lib/api/errors'
 import type { FleetTarget } from '$lib/fleet'
 import { clusterActivity } from './activity.svelte'
 import { fleet } from './fleet.svelte'
+import { notifications } from './notifications.svelte'
 import { organisation } from './organisation.svelte'
 import {
   ClusterSession,
@@ -171,6 +172,12 @@ class Workspace {
   close = async (clusterId: string): Promise<void> => {
     const session = this.sessions.find((entry) => entry.cluster.id === clusterId)
     session?.dispose()
+    // The notification cooldown goes with the tab. A closed cluster has no
+    // baseline any more — reopening it establishes a fresh one and announces
+    // nothing until something actually changes — so holding "this cluster was
+    // interrupted forty seconds ago" would only mute the first real change
+    // after a reconnect.
+    notifications.forget(clusterId)
 
     const index = this.sessions.findIndex((entry) => entry.cluster.id === clusterId)
     this.sessions = this.sessions.filter((entry) => entry.cluster.id !== clusterId)

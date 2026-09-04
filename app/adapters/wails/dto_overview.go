@@ -584,6 +584,15 @@ type Overview struct {
 	// a system that already keeps months of the same figures PodSteer keeps
 	// minutes of, instead of presenting its own window as the whole picture.
 	Backend MetricsBackend `json:"backend"`
+	// KubeState names a kube-state-metrics installation found in this
+	// cluster, when one was found — empty otherwise, which is the ordinary
+	// case.
+	//
+	// It changes nothing PodSteer measures either, and unlike Backend it is
+	// not even a candidate for being read: it is a scrape endpoint, and the
+	// note built on it says in as many words that the figures on this screen
+	// come from the metrics API and from PodSteer's own samples instead.
+	KubeState KubeStateMetrics `json:"kubeState"`
 	// Counts the findings by severity, so the header does not have to.
 	CriticalCount int `json:"criticalCount"`
 	WarningCount  int `json:"warningCount"`
@@ -610,6 +619,35 @@ type MetricsBackend struct {
 	Port      string `json:"port"`
 }
 
+// KubeStateMetrics is a kube-state-metrics installation found in the cluster.
+//
+// No proxy target and no query surface, deliberately — see
+// domain.KubeStateMetrics. What crosses the bridge is what a person needs to
+// go and look at it.
+type KubeStateMetrics struct {
+	// Found reports whether anything was discovered. A boolean rather than
+	// leaving the frontend to test Service for emptiness, so "is it there"
+	// is answered by the same rule on both sides of the bridge.
+	Found bool `json:"found"`
+	// Label is what to show a person, e.g. "kube-state-metrics in monitoring".
+	Label     string `json:"label"`
+	Namespace string `json:"namespace"`
+	Service   string `json:"service"`
+	// Port may be empty: a service whose metrics port this build does not
+	// recognise is still kube-state-metrics, and nothing here connects to it.
+	Port string `json:"port"`
+}
+
+func toKubeStateMetrics(state domain.KubeStateMetrics) KubeStateMetrics {
+	return KubeStateMetrics{
+		Found:     state.Found(),
+		Label:     state.Describe(),
+		Namespace: string(state.Namespace),
+		Service:   state.Service,
+		Port:      state.Port,
+	}
+}
+
 func toMetricsBackend(backend domain.MetricsBackend) MetricsBackend {
 	return MetricsBackend{
 		Kind:      backend.Kind,
@@ -618,6 +656,16 @@ func toMetricsBackend(backend domain.MetricsBackend) MetricsBackend {
 		Service:   backend.Service,
 		Port:      backend.Port,
 	}
+}
+
+// sources renders the unavailable-source list as an empty array rather than
+// null when nothing failed, which is also the truthful encoding: "nothing
+// could not be read" is a fact about the assessment, not the absence of one.
+func sources(names []string) []string {
+	if names == nil {
+		return []string{}
+	}
+	return names
 }
 
 func toOverview(overview domain.Overview) Overview {
@@ -638,13 +686,20 @@ func toOverview(overview domain.Overview) Overview {
 			ByMemory: toConsumers(overview.Consumers.ByMemory, false),
 			Measured: overview.Consumers.Measured,
 		},
-		Pods:        toPodSummary(overview.Pods),
-		Workloads:   toWorkloadSummaries(overview.Workloads),
-		Namespaces:  toNamespaceLoads(overview.Namespaces, overview.Capacity),
-		Restarts:    toRestartHotspots(overview.Restarts),
-		Unavailable: overview.Unavailable,
+		Pods:       toPodSummary(overview.Pods),
+		Workloads:  toWorkloadSummaries(overview.Workloads),
+		Namespaces: toNamespaceLoads(overview.Namespaces, overview.Capacity),
+		Restarts:   toRestartHotspots(overview.Restarts),
+		// NEVER NULL ON THE WIRE. A nil slice marshals as `null`, and both
+		// readers of this field test its length on every render — the
+		// overview's "assessed without …" line, and the notification rule
+		// that compares one refresh's source set with the last. `toFindings`
+		// and the rest of this file already build their slices with `make`
+		// for the same reason; this one was the exception.
+		Unavailable: sources(overview.Unavailable),
 		Metrics:     string(overview.Metrics),
 		Backend:     toMetricsBackend(overview.Backend),
+		KubeState:   toKubeStateMetrics(overview.KubeState),
 		Upgrade:     toUpgradeSummary(overview.Upgrade),
 		KnownMinors: domain.KnownMinors(),
 	}

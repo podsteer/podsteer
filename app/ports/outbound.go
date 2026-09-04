@@ -191,6 +191,21 @@ type MetricsPort interface {
 	// application has been open, and a cluster that already keeps months of
 	// the same figures should be pointed at rather than competed with.
 	DiscoverMetricsBackend(ctx context.Context, id domain.ClusterID) (domain.MetricsBackend, error)
+
+	// DiscoverKubeStateMetrics looks for kube-state-metrics in the cluster.
+	//
+	// The same contract as DiscoverMetricsBackend, and separate from it
+	// because they are separate things: Prometheus stores series, and
+	// kube-state-metrics produces the object-state series that a great many
+	// of them are. Finding nothing — and being refused the look — are both
+	// ordinary and both return a zero KubeStateMetrics.
+	//
+	// PODSTEER NEVER READS WHAT IT FINDS. It exists so an operator can be
+	// told why the Deployment and Job gauges in their Grafana exist while
+	// PodSteer's own figures come from the metrics API and its own samples,
+	// which is a question about where numbers come from rather than a source
+	// of any number here.
+	DiscoverKubeStateMetrics(ctx context.Context, id domain.ClusterID) (domain.KubeStateMetrics, error)
 }
 
 // HistoryPort stores and reads the samples PodSteer takes of a cluster.

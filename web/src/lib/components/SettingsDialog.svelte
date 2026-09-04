@@ -65,6 +65,7 @@
   } from '$stores/history.svelte'
   import { shortcut } from '$lib/shortcuts'
   import { updates } from '$stores/updates.svelte'
+  import { notifications } from '$stores/notifications.svelte'
   import Button from './Button.svelte'
   import CreditsPane from './CreditsPane.svelte'
   import {
@@ -158,6 +159,34 @@
   $effect(() => {
     if (open && !historySettings.loaded) void historySettings.load()
   })
+
+  /**
+   * Re-asks the platform about notifications each time Settings opens.
+   *
+   * Not cached for the session, unlike the history settings above: the
+   * operator can revoke this application's permission in their own system
+   * preferences while PodSteer is running, and a switch that kept claiming it
+   * worked would be lying about the one thing it exists to control.
+   */
+  $effect(() => {
+    if (open) void notifications.probe()
+  })
+
+  /**
+   * Records the choice, and asks the OS for permission when it is turned on.
+   *
+   * THE REQUEST BELONGS TO THIS GESTURE. On macOS it is a visible system
+   * prompt, so it has to arrive because somebody pressed On — not at startup,
+   * where nobody asked, and not on the path of an actual finding, where it
+   * would arrive at the worst possible moment. The preference is stored
+   * either way: a denial is the operating system's answer, not the
+   * operator's, and it can be granted later without them having to find this
+   * switch again.
+   */
+  function setDesktopNotifications(enabled: boolean): void {
+    preferences.setDesktopNotificationsEnabled(enabled)
+    if (enabled) void notifications.authorise()
+  }
 
   function onKeydown(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || !open) return
@@ -681,6 +710,59 @@
               {#if !alertPlayer.available}
                 <p class="mt-2 text-body-small text-warning">
                   This machine has no audio output PodSteer can reach, so nothing will be heard.
+                </p>
+              {/if}
+            </div>
+
+            <!--
+              SEPARATE FROM THE SOUND, not a second checkbox under one "tell
+              me" heading. A sound is over in half a second and is heard only
+              by somebody at the window; a notification persists in a tray and
+              is what reaches somebody who has walked away. They are wanted on
+              different terms, and a machine can do one and not the other.
+            -->
+            <div class="border-t border-outline-variant pt-5">
+              <h3 class="text-title-medium text-on-surface">Desktop notification on a critical</h3>
+              <p class="mt-0.5 text-body-small text-on-surface-variant">
+                Posts one notification when a CRITICAL finding appears that was not there
+                before — never for a warning, which the sound above covers, and never for
+                anything snoozed. A batch arriving together is one notification naming the
+                count, and one cluster posts at most one a minute. Clicking it brings PodSteer
+                forward on that cluster.
+              </p>
+              <p class="mt-1 text-body-small text-on-surface-variant/70">
+                It names the cluster and the rule that fired, never a pod, node or namespace:
+                your operating system keeps the notifications it has shown you, so the same
+                rule applies as to anything else PodSteer writes. Do Not Disturb still decides
+                whether one is put in front of you.
+              </p>
+
+              <div class="mt-3 flex gap-2">
+                {#each [true, false] as choice (choice)}
+                  <button
+                    type="button"
+                    onclick={() => setDesktopNotifications(choice)}
+                    aria-pressed={preferences.desktopNotificationsEnabled === choice}
+                    class="state-layer h-9 min-w-24 rounded-xs border px-4 text-label-large
+                           transition-colors duration-150 ease-standard
+                           {preferences.desktopNotificationsEnabled === choice
+                             ? 'border-transparent bg-secondary-container text-on-secondary-container'
+                             : 'border-outline text-on-surface-variant'}"
+                  >
+                    {choice ? 'On' : 'Off'}
+                  </button>
+                {/each}
+              </div>
+
+              {#if notifications.capability && !notifications.capability.supported}
+                <p class="mt-2 text-body-small text-warning">
+                  This build cannot show desktop notifications, so nothing will appear.
+                </p>
+              {:else if preferences.desktopNotificationsEnabled && notifications.capability && !notifications.capability.authorised}
+                <p class="mt-2 text-body-small text-warning">
+                  Your operating system has not granted PodSteer permission to show
+                  notifications, so nothing will appear until you allow it in your system
+                  settings.
                 </p>
               {/if}
             </div>
