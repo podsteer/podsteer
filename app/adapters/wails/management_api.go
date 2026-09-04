@@ -38,8 +38,13 @@ type ManagementAPI struct {
 	// pattern BrowseAPI.ClassifyConditions uses for a domain rule that
 	// reaches no cluster.
 	workloads ports.WorkloadService
-	app       *App
-	logger    *slog.Logger
+	// nodeShells is the node-shell transport, used directly like forwards
+	// above: the activity list needs to list what is running and stop one, and
+	// a node shell's pod is created and torn down where its terminal session
+	// is (TerminalAPI). This surface is only the list and the stop.
+	nodeShells ports.NodeShellPort
+	app        *App
+	logger     *slog.Logger
 
 	// Active log streams, keyed by stream ID, with their cancel function.
 	streamsMu sync.Mutex
@@ -47,12 +52,14 @@ type ManagementAPI struct {
 }
 
 // NewManagementAPI returns a new management API.
-func NewManagementAPI(management *application.ManagementService, forwards ports.PortForwardPort, workloads ports.WorkloadService, app *App, logger *slog.Logger) (*ManagementAPI, error) {
+func NewManagementAPI(management *application.ManagementService, forwards ports.PortForwardPort, nodeShells ports.NodeShellPort, workloads ports.WorkloadService, app *App, logger *slog.Logger) (*ManagementAPI, error) {
 	switch {
 	case management == nil:
 		return nil, errors.New("wails: ManagementAPI requires a ManagementService")
 	case forwards == nil:
 		return nil, errors.New("wails: ManagementAPI requires a PortForwardPort")
+	case nodeShells == nil:
+		return nil, errors.New("wails: ManagementAPI requires a NodeShellPort")
 	case workloads == nil:
 		return nil, errors.New("wails: ManagementAPI requires a WorkloadService")
 	case app == nil:
@@ -66,6 +73,7 @@ func NewManagementAPI(management *application.ManagementService, forwards ports.
 	return &ManagementAPI{
 		management: management,
 		forwards:   forwards,
+		nodeShells: nodeShells,
 		workloads:  workloads,
 		app:        app,
 		logger:     logger.With(slog.String("api", "management")),
@@ -803,6 +811,58 @@ func (m *ManagementAPI) FreeLocalPort() (int, error) {
 		return 0, apiError(m.logger, "FreeLocalPort", err)
 	}
 	return port, nil
+}
+
+// NodeShell is one live node shell, as the activity list shows it.
+type NodeShell struct {
+	ID        string `json:"id"`
+	ClusterID string `json:"clusterId"`
+	Namespace string `json:"namespace"`
+	Pod       string `json:"pod"`
+	Node      string `json:"node"`
+	Image     string `json:"image"`
+}
+
+func toNodeShell(shell domain.NodeShell) NodeShell {
+	return NodeShell{
+		ID:        shell.ID,
+		ClusterID: shell.ClusterID.String(),
+		Namespace: shell.Namespace.String(),
+		Pod:       shell.PodName,
+		Node:      shell.NodeName,
+		Image:     shell.Image,
+	}
+}
+
+// ListNodeShells reports the node shells running right now — the live
+// registry, exactly like ListPortForwards, so the activity list shows only
+// pods that still exist rather than a record of ones that were asked for.
+func (m *ManagementAPI) ListNodeShells() ([]NodeShell, error) {
+	shells := m.nodeShells.ListNodeShells()
+
+	out := make([]NodeShell, 0, len(shells))
+	for _, shell := range shells {
+		out = append(out, toNodeShell(shell))
+	}
+	return out, nil
+}
+
+// StopNodeShell deletes the pod behind one node shell — the stop control in
+// the activity list. The attach session ending deletes the pod on its own, so
+// this and that both reaching the same shell is not an error.
+func (m *ManagementAPI) StopNodeShell(shellID string) error {
+	if err := m.nodeShells.StopNodeShell(shellID); err != nil {
+		return apiError(m.logger, "StopNodeShell", err)
+	}
+	return nil
+}
+
+// StopAllNodeShells deletes every node-shell pod, across every cluster — the
+// "Stop all" companion for node shells, and what the composition root calls on
+// shutdown so nothing privileged is left running on a node.
+func (m *ManagementAPI) StopAllNodeShells() error {
+	m.nodeShells.StopAllNodeShells()
+	return nil
 }
 
 // --- Bulk actions -----------------------------------------------------------

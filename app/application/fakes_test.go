@@ -509,6 +509,13 @@ type fakeManagementPort struct {
 	rollbackDryRun     bool
 	rollbackOutcome    domain.RollbackOutcome
 
+	debugErr           error
+	debugCalled        bool
+	debugID            domain.ClusterID
+	debugNS            domain.NamespaceName
+	debugPod           string
+	debugSpec          domain.DebugContainerSpec
+	debugContainerName string
 	// What the bulk methods' concurrent fan-out reached, per object.
 	//
 	// Names are recorded per write so a test can assert exactly which
@@ -622,6 +629,26 @@ func (f *fakeManagementPort) ExecInPodWithTTY(context.Context, domain.ClusterID,
 
 func (f *fakeManagementPort) AttachToPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, io.Reader, io.Writer, io.Writer, ports.TerminalSizeQueue) error {
 	f.record("AttachToPod")
+	return f.err
+}
+
+func (f *fakeManagementPort) AddEphemeralContainer(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, spec domain.DebugContainerSpec) (string, error) {
+	f.record("AddEphemeralContainer")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.debugCalled = true
+	f.debugID = id
+	f.debugNS = namespace
+	f.debugPod = podName
+	f.debugSpec = spec
+	if f.debugErr != nil {
+		return "", f.debugErr
+	}
+	return f.debugContainerName, nil
+}
+
+func (f *fakeManagementPort) WaitForEphemeralContainerRunning(context.Context, domain.ClusterID, domain.NamespaceName, string, string) error {
+	f.record("WaitForEphemeralContainerRunning")
 	return f.err
 }
 

@@ -75,6 +75,9 @@ import {
   ProbeLocalPort as bindProbeLocalPort,
   FreeLocalPort as bindFreeLocalPort,
   RollbackWorkload as bindRollbackWorkload,
+  ListNodeShells as bindListNodeShells,
+  StopNodeShell as bindStopNodeShell,
+  StopAllNodeShells as bindStopAllNodeShells,
   PlanBulk as bindPlanBulk,
   BulkDelete as bindBulkDelete,
   BulkRestart as bindBulkRestart,
@@ -123,6 +126,8 @@ export type Pod = wails.Pod
 export type Container = wails.Container
 /** One live port-forward, as the backend is actually holding it. */
 export type PortForward = wails.PortForward
+/** One live node shell, as the backend is actually holding it. */
+export type NodeShell = wails.NodeShell
 /** A cluster node. */
 export type Node = wails.Node
 /** A pod-managing controller. */
@@ -748,6 +753,22 @@ export function listPortForwards(): Promise<PortForward[]> {
 /** Closes every running forward, across every cluster. */
 export function stopAllPortForwards(): Promise<void> {
   return call(() => bindStopAllPortForwards())
+}
+
+/** Reports the node shells running right now — the live registry, not intent. */
+export function listNodeShells(): Promise<NodeShell[]> {
+  return call(() => bindListNodeShells())
+}
+
+/** Deletes the pod behind one node shell. The attach session ending does this
+ * too, so both reaching the same shell is not an error. */
+export function stopNodeShell(shellId: string): Promise<void> {
+  return call(() => bindStopNodeShell(shellId))
+}
+
+/** Deletes every node-shell pod, across every cluster. */
+export function stopAllNodeShells(): Promise<void> {
+  return call(() => bindStopAllNodeShells())
 }
 
 /**

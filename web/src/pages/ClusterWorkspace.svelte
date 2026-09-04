@@ -9,6 +9,7 @@
 -->
 <script lang="ts">
   import DetailDrawer from '$lib/components/DetailDrawer.svelte'
+  import SessionOverlay from '$lib/components/SessionOverlay.svelte'
   import CreateResourceDialog from '$lib/components/CreateResourceDialog.svelte'
   import BulkActionBar from '$lib/components/BulkActionBar.svelte'
   import BulkActionDialog from '$lib/components/BulkActionDialog.svelte'
@@ -449,6 +450,11 @@
 />
 
 <DetailDrawer {session} />
+
+<!-- The debug-container and node-shell dialogs and their terminals, mounted
+     once here so they can be launched from the drawer or the node row menu and
+     outlive whichever surface launched them. -->
+<SessionOverlay />
 
 {#if session.selectedKind}
   <CreateResourceDialog

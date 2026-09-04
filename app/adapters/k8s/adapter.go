@@ -47,6 +47,10 @@ type Adapter struct {
 	// service, because each one is a goroutine holding a socket and the thing
 	// that must not happen is the record and the goroutine parting company.
 	forwards portForwards
+	// nodeShells are the live node shells. Owned here for the same reason as
+	// forwards: each is a privileged pod PodSteer created, and the record of
+	// it must never outlive or predecease the pod itself. See nodeshell.go.
+	nodeShells nodeShells
 	// backends caches metrics-backend discovery, which answers a question
 	// whose value moves in days: a monitoring stack is installed once.
 	backends backendCache
@@ -73,6 +77,7 @@ var (
 	_ ports.ResourcePort    = (*Adapter)(nil)
 	_ ports.ManagementPort  = (*Adapter)(nil)
 	_ ports.PortForwardPort = (*Adapter)(nil)
+	_ ports.NodeShellPort   = (*Adapter)(nil)
 )
 
 // New returns a Kubernetes adapter configured by cfg.
@@ -90,10 +95,11 @@ func New(cfg Config, logger *slog.Logger) *Adapter {
 	factory.logger = scoped
 
 	return &Adapter{
-		factory:  factory,
-		logger:   scoped,
-		watches:  newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery, recheckEvery),
-		forwards: portForwards{byID: make(map[string]*forwarder)},
+		factory:    factory,
+		logger:     scoped,
+		watches:    newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery, recheckEvery),
+		forwards:   portForwards{byID: make(map[string]*forwarder)},
+		nodeShells: nodeShells{byID: make(map[string]domain.NodeShell)},
 	}
 }
 

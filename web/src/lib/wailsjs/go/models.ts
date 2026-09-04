@@ -1689,6 +1689,28 @@ export namespace wails {
 	        this.diskMeasured = source["diskMeasured"];
 	    }
 	}
+	export class NodeShell {
+	    id: string;
+	    clusterId: string;
+	    namespace: string;
+	    pod: string;
+	    node: string;
+	    image: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new NodeShell(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.clusterId = source["clusterId"];
+	        this.namespace = source["namespace"];
+	        this.pod = source["pod"];
+	        this.node = source["node"];
+	        this.image = source["image"];
+	    }
+	}
 	export class VersionCount {
 	    version: string;
 	    nodes: number;

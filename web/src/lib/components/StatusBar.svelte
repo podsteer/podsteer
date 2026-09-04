@@ -13,6 +13,7 @@
   import { preferences } from '$stores/preferences.svelte'
   import { shortcutSheet } from '$stores/shortcutSheet.svelte'
   import { forwards } from '$stores/forwards.svelte'
+  import { nodeShells } from '$stores/nodeShells.svelte'
   import { formatClockTime } from '$lib/format'
   import { iconForKind } from '$lib/kindIcons'
   import { shortcut } from '$lib/shortcuts'
@@ -20,6 +21,7 @@
   import { ExternalLink, Clock, Server, RefreshCw, Keyboard, Lock } from '@lucide/svelte'
   import ShareMenu from './ShareMenu.svelte'
   import PortForwardsPanel from './PortForwardsPanel.svelte'
+  import NodeShellsPanel from './NodeShellsPanel.svelte'
   import GithubIcon from './icons/GithubIcon.svelte'
   import LinkedinIcon from './icons/LinkedinIcon.svelte'
   import BlueskyIcon from './icons/BlueskyIcon.svelte'
@@ -140,6 +142,14 @@
   {#if forwards.active.length > 0}
     {@render sep()}
     <PortForwardsPanel />
+  {/if}
+
+  <!-- Node shells, beside forwards and for the same reason: a running node
+       shell is a privileged pod, and it must be visible and stoppable from
+       here no matter which tab opened it. -->
+  {#if nodeShells.active.length > 0}
+    {@render sep()}
+    <NodeShellsPanel />
   {/if}
 
   <div class="ml-auto flex items-center gap-3">

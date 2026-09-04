@@ -33,8 +33,9 @@ func newTestAdapter(id domain.ClusterID, client kubernetes.Interface) *Adapter {
 	factory := newClientFactory(Config{})
 	factory.clients[id] = &clients{typed: client}
 	return &Adapter{
-		factory: factory,
-		logger:  slog.New(slog.DiscardHandler),
+		factory:    factory,
+		logger:     slog.New(slog.DiscardHandler),
+		nodeShells: nodeShells{byID: make(map[string]domain.NodeShell)},
 	}
 }
 

@@ -3,6 +3,8 @@ import {
   apply,
   attach,
   applyDryRun,
+  debug,
+  debugNode,
   cordon,
   cpFromPod,
   cpToPod,
@@ -320,6 +322,42 @@ describe('attach', () => {
     expect(attach('prod', 'web-1', 'default', 'app')).toBe(
       'kubectl --context prod -n default attach -it web-1 -c app',
     )
+  })
+})
+
+describe('debug', () => {
+  it('builds the ephemeral debug command with an image and a target', () => {
+    expect(debug('prod', 'web-1', 'default', 'busybox:1.37', 'app')).toBe(
+      'kubectl --context prod -n default debug -it web-1 --image=busybox:1.37 --target=app -- sh',
+    )
+  })
+
+  it('omits --target when nothing is targeted', () => {
+    expect(debug('prod', 'web-1', 'default', 'busybox:1.37')).toBe(
+      'kubectl --context prod -n default debug -it web-1 --image=busybox:1.37 -- sh',
+    )
+  })
+
+  it('quotes an image an operator could paste something surprising into', () => {
+    expect(debug('prod', 'web-1', 'default', 'my image', 'app')).toContain("--image='my image'")
+  })
+
+  it('accepts a custom command', () => {
+    expect(debug('prod', 'web-1', 'default', 'busybox:1.37', 'app', ['bash', '-l'])).toBe(
+      'kubectl --context prod -n default debug -it web-1 --image=busybox:1.37 --target=app -- bash -l',
+    )
+  })
+})
+
+describe('debugNode', () => {
+  it('builds the node debug command with the sysadmin profile and no namespace', () => {
+    expect(debugNode('prod', 'node-1', 'docker.io/library/alpine:3.20')).toBe(
+      'kubectl --context prod debug node/node-1 -it --image=docker.io/library/alpine:3.20 --profile=sysadmin',
+    )
+  })
+
+  it('is cluster-scoped — it never carries -n', () => {
+    expect(debugNode('prod', 'node-1', 'alpine:3.20')).not.toContain('-n ')
   })
 })
 

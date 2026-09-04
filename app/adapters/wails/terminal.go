@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
@@ -105,6 +106,11 @@ type TerminalExitEvent struct {
 // interactive programs like top, htop, vim, less, and interactive shells.
 type TerminalAPI struct {
 	management *application.ManagementService
+	// nodeShells creates and deletes the privileged pod behind a node shell.
+	// A node shell's pod is created before its attach session opens and
+	// deleted when the session ends, so the terminal API — which owns the
+	// session's lifetime — is what ties the two together.
+	nodeShells ports.NodeShellPort
 	app        *App
 	logger     *slog.Logger
 
@@ -113,10 +119,12 @@ type TerminalAPI struct {
 }
 
 // NewTerminalAPI returns a new terminal API.
-func NewTerminalAPI(management *application.ManagementService, app *App, logger *slog.Logger) (*TerminalAPI, error) {
+func NewTerminalAPI(management *application.ManagementService, nodeShells ports.NodeShellPort, app *App, logger *slog.Logger) (*TerminalAPI, error) {
 	switch {
 	case management == nil:
 		return nil, errors.New("wails: TerminalAPI requires a ManagementService")
+	case nodeShells == nil:
+		return nil, errors.New("wails: TerminalAPI requires a NodeShellPort")
 	case app == nil:
 		return nil, errors.New("wails: TerminalAPI requires an App")
 	}
@@ -127,6 +135,7 @@ func NewTerminalAPI(management *application.ManagementService, app *App, logger 
 
 	return &TerminalAPI{
 		management: management,
+		nodeShells: nodeShells,
 		app:        app,
 		logger:     logger.With(slog.String("api", "terminal")),
 		sessions:   make(map[string]*terminalSession),
@@ -368,6 +377,268 @@ func (t *TerminalAPI) StartAttachSession(clusterID, namespace, podName, containe
 		slog.String("session", sessionID),
 		slog.String("pod", podName),
 		slog.String("container", containerName))
+
+	return sessionID, nil
+}
+
+// debugPrepTimeout bounds adding the ephemeral container and waiting for it to
+// run — an image pull, mostly. Generous, because the shell must not be opened
+// before the container is up, and the alternative to waiting is a session that
+// connects to nothing.
+const debugPrepTimeout = 90 * time.Second
+
+// nodeShellPrepTimeout bounds creating the node-shell pod and waiting for it to
+// schedule and run, for the same reason.
+const nodeShellPrepTimeout = 90 * time.Second
+
+// StartDebugSession adds an ephemeral debug container to a pod — the way
+// `kubectl debug -it POD --image=… --target=CONTAINER` does — waits for it to
+// run, and opens an interactive shell into it through the SAME exec path
+// StartSession uses. It returns the session ID.
+//
+// The container it adds cannot be removed: an ephemeral container stays in the
+// pod's spec until the pod is deleted, which is Kubernetes' behaviour and what
+// the dialog offering this states. There is therefore nothing to track and no
+// teardown here — unlike a node shell, whose pod PodSteer must delete.
+func (t *TerminalAPI) StartDebugSession(clusterID, namespace, podName, targetContainer, image string, command []string, cols, rows int) (string, error) {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return "", apiError(t.logger, "StartDebugSession", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return "", apiError(t.logger, "StartDebugSession", err)
+	}
+
+	// Adding a debug container mutates the pod, so it gets the same
+	// synchronous read-only refusal StartSession makes — before any container
+	// is added, not after. ManagementService.AddEphemeralContainer checks
+	// again; this is the fast path that avoids growing a pod a debugger nobody
+	// will be allowed to use.
+	if t.management.ReadOnly(id) {
+		return "", apiError(t.logger, "StartDebugSession",
+			fmt.Errorf("starting debug session: %w", ports.ErrReadOnly))
+	}
+
+	if len(command) == 0 {
+		command = []string{"sh"}
+	}
+	spec := domain.DebugContainerSpec{
+		Image:           image,
+		TargetContainer: targetContainer,
+		Command:         command,
+		TTY:             true,
+		Stdin:           true,
+	}
+
+	parent, ok := t.app.runtimeContext()
+	if !ok {
+		return "", errors.New("application is shutting down")
+	}
+
+	// Adding and waiting run on a bounded context of their own, separate from
+	// the session's: this call returns once the shell is open, and the shell
+	// then lives on the application-lifetime context like every other session.
+	prepCtx, cancelPrep := context.WithTimeout(parent, debugPrepTimeout)
+	defer cancelPrep()
+
+	containerName, err := t.management.AddEphemeralContainer(prepCtx, id, ns, podName, spec)
+	if err != nil {
+		return "", apiError(t.logger, "StartDebugSession", err)
+	}
+
+	if err := t.management.WaitForEphemeralContainerRunning(prepCtx, id, ns, podName, containerName); err != nil {
+		return "", apiError(t.logger, "StartDebugSession", err)
+	}
+
+	sessionID, err := t.openExecSession(parent, id, ns, podName, containerName, cols, rows, "debug session")
+	if err != nil {
+		return "", err
+	}
+
+	t.logger.Info("debug session started",
+		slog.String("session", sessionID),
+		slog.String("pod", podName),
+		slog.String("container", containerName),
+		slog.String("image", image))
+
+	return sessionID, nil
+}
+
+// StartNodeShellSession creates a privileged pod on a node that enters the
+// node's host namespaces — the way `kubectl node-shell` and Lens do — and
+// attaches to its login shell. It returns the session ID.
+//
+// The pod is DELETED when this session ends, so the pod and the terminal that
+// makes it useful are bound together the way CLAUDE.md's node-shell lifecycle
+// requires: nothing privileged is left running on a node once the operator has
+// closed the shell. The activeDeadlineSeconds the pod carries is only a
+// backstop for the one case this cannot cover — PodSteer crashing.
+func (t *TerminalAPI) StartNodeShellSession(clusterID, namespace, nodeName, image string, cols, rows int) (string, error) {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return "", apiError(t.logger, "StartNodeShellSession", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return "", apiError(t.logger, "StartNodeShellSession", err)
+	}
+
+	// Creating a privileged pod is a write, so it gets the same synchronous
+	// read-only refusal — before the pod is created, not after.
+	if t.management.ReadOnly(id) {
+		return "", apiError(t.logger, "StartNodeShellSession",
+			fmt.Errorf("starting node shell: %w", ports.ErrReadOnly))
+	}
+
+	parent, ok := t.app.runtimeContext()
+	if !ok {
+		return "", errors.New("application is shutting down")
+	}
+
+	prepCtx, cancelPrep := context.WithTimeout(parent, nodeShellPrepTimeout)
+	defer cancelPrep()
+
+	shell, err := t.nodeShells.StartNodeShell(prepCtx, id, ns, nodeName, image)
+	if err != nil {
+		return "", apiError(t.logger, "StartNodeShellSession", err)
+	}
+
+	// The pod is deleted when the attach session ends — see the onExit hook.
+	sessionID, err := t.openAttachSession(parent, id, ns, shell.PodName, shell.ContainerName, cols, rows, "node shell session", func() {
+		if err := t.nodeShells.StopNodeShell(shell.ID); err != nil {
+			t.logger.Error("failed to delete node shell pod",
+				slog.String("pod", shell.PodName),
+				slog.String("error", err.Error()))
+		}
+	})
+	if err != nil {
+		// The session never started, so nothing will delete the pod on exit.
+		// Remove it here rather than leak a privileged pod nobody is attached
+		// to.
+		_ = t.nodeShells.StopNodeShell(shell.ID)
+		return "", err
+	}
+
+	t.logger.Info("node shell session started",
+		slog.String("session", sessionID),
+		slog.String("node", nodeName),
+		slog.String("pod", shell.PodName),
+		slog.String("image", image))
+
+	return sessionID, nil
+}
+
+// openExecSession allocates a session, spawns the exec goroutine and returns
+// the session ID. Shared by StartDebugSession and, below, by the plumbing that
+// makes a debug shell indistinguishable from an ordinary one — the only thing
+// that differs is which container name is passed in.
+//
+// parent is the application-lifetime context; the session runs on a cancelable
+// child of it, exactly as StartSession does.
+func (t *TerminalAPI) openExecSession(parent context.Context, id domain.ClusterID, ns domain.NamespaceName, podName, containerName string, cols, rows int, label string) (string, error) {
+	ctx, cancel := context.WithCancel(parent)
+
+	sessionID := generateTerminalID()
+	stdinReader, stdinWriter := io.Pipe()
+	sizeQueue := newTerminalSizeQueue()
+	sizeQueue.send(ports.TerminalSize{Width: uint16(cols), Height: uint16(rows)})
+
+	session := &terminalSession{
+		id:        sessionID,
+		cancel:    cancel,
+		stdinPipe: stdinWriter,
+		sizeQueue: sizeQueue,
+	}
+
+	t.mu.Lock()
+	t.sessions[sessionID] = session
+	t.mu.Unlock()
+
+	stdoutWriter := &terminalOutputWriter{sessionID: sessionID, app: t.app}
+
+	go func() {
+		defer func() {
+			t.mu.Lock()
+			delete(t.sessions, sessionID)
+			t.mu.Unlock()
+
+			_ = stdinWriter.Close()
+			sizeQueue.close()
+		}()
+
+		err := t.management.ExecInPodWithTTY(ctx, id, ns, podName, containerName,
+			[]string{"/bin/sh"}, stdinReader, stdoutWriter, stdoutWriter, sizeQueue)
+
+		reason := ""
+		if err != nil && !errors.Is(err, context.Canceled) {
+			reason = err.Error()
+			t.logger.Error(label+" ended with error",
+				slog.String("session", sessionID),
+				slog.String("error", err.Error()))
+		}
+
+		t.app.emit("terminal:exit", TerminalExitEvent{SessionID: sessionID, Reason: reason})
+	}()
+
+	return sessionID, nil
+}
+
+// openAttachSession is openExecSession's attach twin — it connects to the
+// container's OWN running process rather than starting a new one, which is
+// what makes a node shell a node shell: the pod's process is the login shell
+// in the host's namespaces, and attaching lands the operator on it. onExit, if
+// set, runs after the session ends — a node shell uses it to delete its pod.
+func (t *TerminalAPI) openAttachSession(parent context.Context, id domain.ClusterID, ns domain.NamespaceName, podName, containerName string, cols, rows int, label string, onExit func()) (string, error) {
+	ctx, cancel := context.WithCancel(parent)
+
+	sessionID := generateTerminalID()
+	stdinReader, stdinWriter := io.Pipe()
+	sizeQueue := newTerminalSizeQueue()
+	sizeQueue.send(ports.TerminalSize{Width: uint16(cols), Height: uint16(rows)})
+
+	session := &terminalSession{
+		id:        sessionID,
+		cancel:    cancel,
+		stdinPipe: stdinWriter,
+		sizeQueue: sizeQueue,
+	}
+
+	t.mu.Lock()
+	t.sessions[sessionID] = session
+	t.mu.Unlock()
+
+	stdoutWriter := &terminalOutputWriter{sessionID: sessionID, app: t.app}
+
+	go func() {
+		defer func() {
+			t.mu.Lock()
+			delete(t.sessions, sessionID)
+			t.mu.Unlock()
+
+			_ = stdinWriter.Close()
+			sizeQueue.close()
+
+			if onExit != nil {
+				onExit()
+			}
+		}()
+
+		err := t.management.AttachToPod(ctx, id, ns, podName, containerName,
+			stdinReader, stdoutWriter, stdoutWriter, sizeQueue)
+
+		reason := ""
+		if err != nil && !errors.Is(err, context.Canceled) {
+			reason = err.Error()
+			t.logger.Error(label+" ended with error",
+				slog.String("session", sessionID),
+				slog.String("error", err.Error()))
+		}
+
+		t.app.emit("terminal:exit", TerminalExitEvent{SessionID: sessionID, Reason: reason})
+	}()
 
 	return sessionID, nil
 }

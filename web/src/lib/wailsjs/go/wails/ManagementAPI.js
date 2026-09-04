@@ -42,6 +42,10 @@ export function FreeLocalPort() {
   return window['go']['wails']['ManagementAPI']['FreeLocalPort']();
 }
 
+export function ListNodeShells() {
+  return window['go']['wails']['ManagementAPI']['ListNodeShells']();
+}
+
 export function ListPortForwards() {
   return window['go']['wails']['ManagementAPI']['ListPortForwards']();
 }
@@ -86,12 +90,20 @@ export function StartPortForward(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8,
   return window['go']['wails']['ManagementAPI']['StartPortForward'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
 }
 
+export function StopAllNodeShells() {
+  return window['go']['wails']['ManagementAPI']['StopAllNodeShells']();
+}
+
 export function StopAllPortForwards() {
   return window['go']['wails']['ManagementAPI']['StopAllPortForwards']();
 }
 
 export function StopLogStream(arg1) {
   return window['go']['wails']['ManagementAPI']['StopLogStream'](arg1);
+}
+
+export function StopNodeShell(arg1) {
+  return window['go']['wails']['ManagementAPI']['StopNodeShell'](arg1);
 }
 
 export function StopPortForward(arg1) {

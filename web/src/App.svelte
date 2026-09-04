@@ -18,6 +18,7 @@
   import { updates } from '$stores/updates.svelte'
   import { alertPlayer } from '$stores/alerts.svelte'
   import { forwards } from '$stores/forwards.svelte'
+  import { nodeShells } from '$stores/nodeShells.svelte'
   import { shortcutSheet } from '$stores/shortcutSheet.svelte'
   import { palette } from '$stores/palette.svelte'
   import { isTypingTarget, shortcut } from '$lib/shortcuts'
@@ -42,6 +43,10 @@
     // would otherwise show a Forward button for a port that is already open.
     void forwards.refresh()
     const unwatchForwards = forwards.watch()
+    // Node shells the same way, and for the same reason: a window reopened over
+    // a running backend must show what is still running so it can be stopped.
+    void nodeShells.refresh()
+    const unwatchNodeShells = nodeShells.watch()
     // Audio output is only allowed to start from a user gesture, and a context
     // created before one exists stays suspended for the life of the process.
     // Arming here means the first click or keypress of the session wakes it,
@@ -65,6 +70,7 @@
       })
     return () => {
       unwatchForwards()
+      unwatchNodeShells()
       updates.stop()
       workspace.dispose()
     }

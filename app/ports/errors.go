@@ -135,6 +135,18 @@ var (
 	// the same stale resourceVersion and fail again.
 	ErrConflict = errors.New("object changed on the cluster since it was read")
 
+	// ErrEphemeralContainersUnsupported means the API server would not accept a
+	// write to a pod's ephemeralcontainers subresource.
+	//
+	// Its own sentinel because the advice is unlike a plain 404. The
+	// subresource is absent on a cluster older than 1.23, or one where the
+	// EphemeralContainers feature gate is off — the pod is right there and the
+	// request is well-formed, so reporting the API server's bare "not found"
+	// would send an operator to look for a pod that exists. The adapter
+	// distinguishes the two by reading the pod after the failure: a pod that
+	// is present means the subresource, not the object, is what was missing.
+	ErrEphemeralContainersUnsupported = errors.New("this cluster does not support ephemeral debug containers")
+
 	// ErrManifestRejected means the API server accepted the REQUEST but
 	// declined the OBJECT (HTTP 422/Invalid) — a schema validation failure,
 	// or an admission webhook's rejection. Distinct from

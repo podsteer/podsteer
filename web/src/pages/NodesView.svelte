@@ -18,6 +18,8 @@
   import { formatAge } from '$lib/format'
   import { get as kubectlGet } from '$lib/kubectl'
   import { preferences } from '$stores/preferences.svelte'
+  import { organisation } from '$stores/organisation.svelte'
+  import { sessionLauncher } from '$stores/sessionLauncher.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import type { Node } from '$lib/api/client'
   import { Server, CircleDot } from '@lucide/svelte'
@@ -28,9 +30,29 @@
 
   let { session }: Props = $props()
 
+  /** This cluster's guardrail settings, read fresh so a change in Organise
+   * takes effect at once — the same pattern the drawer uses. */
+  const placement = $derived(organisation.placementOf(session.cluster.id))
+  const groupSettings = $derived(organisation.settingsFor(placement.project, placement.group))
+  const groupName = $derived(
+    organisation.groupsIn(placement.project).find((group) => group.id === placement.group)?.name ??
+      'Default',
+  )
+  const productionGroup = $derived(groupSettings.environment === 'production' ? groupName : null)
+
   /** Nodes are cluster-scoped, so there is no namespace to pass. */
   function actionsFor(node: Node): RowAction[] {
     return [
+      {
+        label: 'Node shell',
+        onclick: () =>
+          sessionLauncher.requestNodeShell({
+            clusterId: session.cluster.id,
+            node: node.name,
+            readOnly: groupSettings.readOnly,
+            productionGroup,
+          }),
+      },
       {
         label: 'Copy as kubectl',
         kind: 'copy',
