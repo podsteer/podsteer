@@ -78,6 +78,24 @@ export const SHORTCUTS: Shortcut[] = [
     matches: accel('k'),
   },
   {
+    id: 'command-palette',
+    // Two accelerators for one action, both spelled out because
+    // accelerator() only ever formats a single combo — see 'switch-tab'
+    // above for the same reason. ⌘⇧P matches every other application's
+    // "command palette" convention (VS Code, Slack, Linear); ⌘P is offered
+    // alongside it because k9s and Lens both train the same muscle memory
+    // on a bare accelerator+P, and neither collides with anything already
+    // in this table. ⌘K is deliberately left alone — see focus-search.
+    keys: isMac ? '⌘⇧P or ⌘P' : 'Ctrl+Shift+P or Ctrl+P',
+    description: 'Open the command palette',
+    scope: 'global',
+    // Shift is not checked: a letter's `event.key` case already differs
+    // when Shift is held, and matching case-insensitively (as accel() does)
+    // is what makes ⌘P and ⌘⇧P both land here without two separate ids
+    // fighting over which one the sheet displays.
+    matches: accel('p'),
+  },
+  {
     id: 'next-tab',
     keys: accelerator(']'),
     description: 'Switch to the next tab',
