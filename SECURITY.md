@@ -41,6 +41,12 @@ a one-hour `activeDeadlineSeconds` as a backstop for the case PodSteer cannot.
 It does all of this with the credentials your kubeconfig already grants, using
 the same client library `kubectl` uses.
 
+**PodSteer can also start a program on your own computer.** This is new, and it
+is different in kind from everything above, so it is set out in full below
+under "The local terminal, and the program it can start". Nothing in a cluster
+is involved: it runs your login shell, or a coding agent you already have
+installed, on this machine.
+
 **PodSteer enforces no permissions of its own, and cannot.** It is a client. If
 an account should not be able to delete a namespace, that has to be true in the
 cluster's RBAC — there is no setting here that can make it so. Restricting what
@@ -49,6 +55,13 @@ PodSteer may do means restricting the credentials it runs with. The per-group
 your own mistakes, set on this machine and checked again by the backend as a
 defence against the UI's own bugs, never a permission — turning it on does not
 remove anything your credentials could otherwise do.
+
+**The local terminal is deliberately outside that guard, and says so in the
+pane.** The read-only setting governs what *PodSteer* writes to a cluster. A
+shell you opened on your own machine, with your own credentials, is not
+something this application can or should police: it does not sit between that
+shell and anything, and a control claiming otherwise would be describing a
+restriction that does not exist.
 
 **It talks to your clusters, and to GitHub only if you let it.** No account and
 no telemetry — those remain absolute, and there is no code here that could send
@@ -125,6 +138,68 @@ cluster, namespace, pod, container, the path inside the container, the
 direction and the byte count — never a file's contents, and never the local
 path.
 
+## The local terminal, and the program it can start
+
+PodSteer can open a terminal running **a process on your own computer**, rather
+than in a cluster. Everything else in this file is about requests to an API
+server; this is not, so it is described on its own.
+
+**What is started.** Your login shell — whatever `$SHELL` names — with `-l`, on
+a pseudo-terminal, in your home directory. Or, if you choose one, a coding
+agent CLI you already have installed: Claude Code, Codex, Gemini CLI or
+Copilot CLI, started with an opening prompt naming the cluster tab and the
+object you had open.
+
+**Nothing is ever downloaded, bundled or installed.** PodSteer does not ship
+kubectl, helm, or any coding agent, and never offers to fetch one. It looks for
+binaries already on your PATH and runs those; a machine without them gets a
+"command not found" from your own shell.
+
+**What the process inherits.** PodSteer's own environment, with four
+additions and no removals:
+
+- `KUBECONFIG`, set to exactly the kubeconfig files PodSteer itself reads — the
+  standard resolution, plus anything `PODSTEER_KUBECONFIG_DIR` names — in the
+  same order. Your files, named, never copied.
+- `PODSTEER_CONTEXT`, naming the cluster tab that was in front. Informational:
+  no Kubernetes tool reads it.
+- `TERM` and `COLORTERM`, so the shell is not a dumb terminal.
+- `PODSTEER_AGENT` and, only when you leave the read-only default on for an
+  agent, `PODSTEER_AGENT_READ_ONLY`.
+
+Everything else you had set is passed through unchanged, including the PATH
+PodSteer adopted from your login shell at startup. That means the process has
+the same credentials, cloud profiles and credential plugins your own terminal
+does — because it is your own shell.
+
+**Your kubeconfig is read, never written.** In particular `current-context` is
+left exactly as it was, so kubectl in another terminal does not change target
+because you opened a pane here. Since there is no environment variable kubectl
+reads for a context, and writing either your kubeconfig or a per-session copy
+of your credentials to disk is refused, the terminal prints a one-line notice
+naming the context and telling you to pass `--context`. No file is written
+anywhere.
+
+**A coding agent has whatever access your kubeconfig grants.** Its opening
+prompt says so in those words. The read-only default adds a request — keep to
+read-only kubectl unless told otherwise — as a line in that prompt and a marker
+in the environment. **It is a request, not a restriction.** The agent runs with
+your credentials, and PodSteer cannot narrow them; only your cluster's RBAC can.
+If that matters for a given cluster, use credentials that are read-only.
+
+**PodSteer sends nothing anywhere.** Launching an agent is a local process
+start. Whatever that agent then does with its own provider is between you and
+the tool you installed, exactly as it is when you run it in your own terminal.
+There is no PodSteer service in that path, no account, and no telemetry — the
+same commitment the rest of this file makes.
+
+**The process has an owner and an end.** It is ended when its pane closes and
+when PodSteer exits, by signalling its whole process group, and PodSteer waits
+for it to be gone rather than assuming.
+
+**Not available on Windows.** There is no pseudo-terminal for it in this build;
+the control is absent and says why, rather than failing when pressed.
+
 ### In scope
 
 - Anything that lets PodSteer act on a cluster beyond what the loaded
@@ -141,6 +216,10 @@ path.
   annotations, log output or an API server's table columns rendered in a way
   that executes, or that escapes into the terminal or the manifest editor.
 - Code execution from opening a manifest, a log stream, or an exec session.
+- The local terminal starting anything other than the shell or agent you chose,
+  or the environment it is given carrying more than the variables listed above
+  — in particular a kubeconfig being written, copied to disk, or having its
+  `current-context` changed.
 - A file downloaded from a container landing anywhere outside the folder you
   chose, or keeping a setuid or setgid bit — however the archive the
   container sent was crafted.
@@ -152,6 +231,11 @@ path.
 - Permissions your kubeconfig genuinely grants. PodSteer deleting a resource
   you asked it to delete, with credentials that allow it, is the product
   working.
+- What you, or a coding agent you launched, then do in the local terminal. It
+  is your shell with your credentials; the read-only request in an agent's
+  prompt is a request, and an agent ignoring it is not a PodSteer
+  vulnerability. Nor is a vulnerability in an agent CLI you installed — report
+  that to whoever ships it.
 - Vulnerabilities in Kubernetes itself, in your cluster's configuration, or in
   the operating system's webview — report those upstream, though we would still
   like to hear if PodSteer makes one materially worse.

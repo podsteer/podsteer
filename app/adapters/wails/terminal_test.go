@@ -170,6 +170,60 @@ func (stubNodeShellPort) StartNodeShell(context.Context, domain.ClusterID, domai
 func (stubNodeShellPort) StopNodeShell(string) error         { return nil }
 func (stubNodeShellPort) ListNodeShells() []domain.NodeShell { return nil }
 func (stubNodeShellPort) StopAllNodeShells()                 {}
+
+// stubLocalShellPort is a stand-in for ports.LocalShellPort. It starts no
+// process: it records the spec it was handed and reports a session, which is
+// everything the tests here need — whether a local session is refused, and
+// what environment the spec carries.
+type stubLocalShellPort struct {
+	mu      sync.Mutex
+	started []domain.LocalShellSpec
+	stopped []string
+	agents  []domain.CodingAgent
+	// startErr makes every start fail, standing in for the platform that has
+	// no pseudo-terminal and the machine with no shell to run.
+	startErr error
+}
+
+// errRefusedLocalShell is the sentence a platform without a pseudo-terminal
+// answers with, quoted here so the test asserts it travels rather than
+// asserting on a message it invented itself.
+var errRefusedLocalShell = errors.New("a local shell needs a pseudo-terminal, which this build does not provide")
+
+var _ ports.LocalShellPort = (*stubLocalShellPort)(nil)
+
+func (s *stubLocalShellPort) LocalShellSupported() (bool, string) { return true, "" }
+
+func (s *stubLocalShellPort) DetectAgents() []domain.CodingAgent { return s.agents }
+
+func (s *stubLocalShellPort) StartLocalShell(spec domain.LocalShellSpec, _ io.Writer, _ func(string)) (domain.LocalShell, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.startErr != nil {
+		return domain.LocalShell{}, s.startErr
+	}
+	s.started = append(s.started, spec)
+	return domain.LocalShell{ID: "shell-1", Context: spec.Context, Agent: spec.Agent}, nil
+}
+
+func (s *stubLocalShellPort) WriteLocalShell(string, []byte) error          { return nil }
+func (s *stubLocalShellPort) ResizeLocalShell(string, uint16, uint16) error { return nil }
+
+func (s *stubLocalShellPort) StopLocalShell(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopped = append(s.stopped, id)
+	return nil
+}
+
+func (s *stubLocalShellPort) ListLocalShells() []domain.LocalShell { return nil }
+func (s *stubLocalShellPort) StopAllLocalShells()                  {}
+
+func (s *stubLocalShellPort) starts() []domain.LocalShellSpec {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]domain.LocalShellSpec(nil), s.started...)
+}
 func (stubManagementPort) CopyFromPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, string, io.Writer) error {
 	return nil
 }
@@ -195,7 +249,7 @@ func TestStartSessionRefusesOnReadOnlyCluster(t *testing.T) {
 		t.Fatalf("NewManagementService() error = %v", err)
 	}
 
-	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, NewApp(nil, 0), nil)
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, &stubLocalShellPort{}, NewApp(nil, 0), nil)
 	if err != nil {
 		t.Fatalf("NewTerminalAPI() error = %v", err)
 	}
@@ -239,7 +293,7 @@ func TestStartSessionAllowsOnOrdinaryCluster(t *testing.T) {
 		t.Fatalf("NewManagementService() error = %v", err)
 	}
 
-	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, NewApp(nil, 0), nil)
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, &stubLocalShellPort{}, NewApp(nil, 0), nil)
 	if err != nil {
 		t.Fatalf("NewTerminalAPI() error = %v", err)
 	}
@@ -276,7 +330,7 @@ func TestStartAttachSessionRefusesOnReadOnlyCluster(t *testing.T) {
 		t.Fatalf("NewManagementService() error = %v", err)
 	}
 
-	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, NewApp(nil, 0), nil)
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, &stubLocalShellPort{}, NewApp(nil, 0), nil)
 	if err != nil {
 		t.Fatalf("NewTerminalAPI() error = %v", err)
 	}
@@ -321,7 +375,7 @@ func TestStartAttachSessionAllowsOnOrdinaryCluster(t *testing.T) {
 		t.Fatalf("NewManagementService() error = %v", err)
 	}
 
-	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, NewApp(nil, 0), nil)
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, &stubLocalShellPort{}, NewApp(nil, 0), nil)
 	if err != nil {
 		t.Fatalf("NewTerminalAPI() error = %v", err)
 	}
@@ -354,7 +408,7 @@ func TestStartDebugSessionRefusesOnReadOnlyCluster(t *testing.T) {
 		t.Fatalf("NewManagementService() error = %v", err)
 	}
 
-	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, NewApp(nil, 0), nil)
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, &stubLocalShellPort{}, NewApp(nil, 0), nil)
 	if err != nil {
 		t.Fatalf("NewTerminalAPI() error = %v", err)
 	}
@@ -395,7 +449,7 @@ func TestStartNodeShellSessionRefusesOnReadOnlyCluster(t *testing.T) {
 		t.Fatalf("NewManagementService() error = %v", err)
 	}
 
-	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, NewApp(nil, 0), nil)
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, &stubLocalShellPort{}, NewApp(nil, 0), nil)
 	if err != nil {
 		t.Fatalf("NewTerminalAPI() error = %v", err)
 	}

@@ -75,12 +75,23 @@ func (q *terminalSizeQueue) close() {
 	close(q.ch)
 }
 
-// terminalSession represents a live exec session with a pod container.
+// terminalSession represents a live session behind one pane.
+//
+// TWO KINDS BEHIND ONE RECORD. Almost every session here is an exec or attach
+// against a container, resized by handing client-go a size through sizeQueue.
+// A LOCAL session is a process on this machine on a pseudo-terminal, resized
+// by an ioctl on that terminal — so it carries a resize function instead, and
+// exactly one of the two fields is ever set. Keeping both kinds in one
+// registry is what lets Write, Resize and StopSession work on a session id
+// without the frontend knowing which kind it holds.
 type terminalSession struct {
 	id        string
 	cancel    context.CancelFunc
 	stdinPipe io.WriteCloser
+	// sizeQueue resizes a cluster session; nil for a local shell.
 	sizeQueue *terminalSizeQueue
+	// resize resizes a local shell; nil for a cluster session.
+	resize func(cols, rows uint16) error
 }
 
 // TerminalDataEvent is the payload of the "terminal:data" event.
@@ -111,20 +122,27 @@ type TerminalAPI struct {
 	// deleted when the session ends, so the terminal API — which owns the
 	// session's lifetime — is what ties the two together.
 	nodeShells ports.NodeShellPort
-	app        *App
-	logger     *slog.Logger
+	// localShells runs shells on the OPERATOR'S OWN MACHINE. Held here rather
+	// than in a second bound object so a local session's id lives in the same
+	// registry as every other one, and Write/Resize/StopSession need no
+	// second binding on the frontend.
+	localShells ports.LocalShellPort
+	app         *App
+	logger      *slog.Logger
 
 	mu       sync.Mutex
 	sessions map[string]*terminalSession
 }
 
 // NewTerminalAPI returns a new terminal API.
-func NewTerminalAPI(management *application.ManagementService, nodeShells ports.NodeShellPort, app *App, logger *slog.Logger) (*TerminalAPI, error) {
+func NewTerminalAPI(management *application.ManagementService, nodeShells ports.NodeShellPort, localShells ports.LocalShellPort, app *App, logger *slog.Logger) (*TerminalAPI, error) {
 	switch {
 	case management == nil:
 		return nil, errors.New("wails: TerminalAPI requires a ManagementService")
 	case nodeShells == nil:
 		return nil, errors.New("wails: TerminalAPI requires a NodeShellPort")
+	case localShells == nil:
+		return nil, errors.New("wails: TerminalAPI requires a LocalShellPort")
 	case app == nil:
 		return nil, errors.New("wails: TerminalAPI requires an App")
 	}
@@ -134,11 +152,12 @@ func NewTerminalAPI(management *application.ManagementService, nodeShells ports.
 	}
 
 	return &TerminalAPI{
-		management: management,
-		nodeShells: nodeShells,
-		app:        app,
-		logger:     logger.With(slog.String("api", "terminal")),
-		sessions:   make(map[string]*terminalSession),
+		management:  management,
+		nodeShells:  nodeShells,
+		localShells: localShells,
+		app:         app,
+		logger:      logger.With(slog.String("api", "terminal")),
+		sessions:    make(map[string]*terminalSession),
 	}, nil
 }
 
@@ -673,6 +692,12 @@ func (t *TerminalAPI) Resize(sessionID string, cols, rows int) error {
 		return errors.New("terminal session not found")
 	}
 
+	// A local shell resizes its own pseudo-terminal; only a cluster session
+	// has a size queue to put a size on.
+	if session.resize != nil {
+		return session.resize(uint16(cols), uint16(rows))
+	}
+
 	// The queue decides whether it can still take one. Reading the session
 	// out of the map and then sending is inherently a window in which the
 	// exec goroutine can finish and close the queue underneath us.
@@ -701,6 +726,174 @@ func (t *TerminalAPI) StopSession(sessionID string) error {
 	t.logger.Info("terminal session stopped", slog.String("session", sessionID))
 	return nil
 }
+
+// CodingAgentDTO is one coding agent found on the operator's machine.
+type CodingAgentDTO struct {
+	// ID is the binary's name, and what StartAgentSession takes back.
+	ID string `json:"id"`
+	// Label is what the operator reads.
+	Label string `json:"label"`
+	// Path is where it was found, shown so it is obvious WHICH binary this is
+	// — a machine can easily have two.
+	Path string `json:"path"`
+}
+
+// LocalShellSupportDTO reports whether this platform can open a local shell.
+type LocalShellSupportDTO struct {
+	// Supported is false on Windows, where there is no pseudo-terminal here.
+	Supported bool `json:"supported"`
+	// Reason is the sentence to show when it is not, empty when it is.
+	Reason string `json:"reason"`
+}
+
+// LocalShellSupported reports whether a local shell can be opened here.
+//
+// Asked by the interface before the control is offered, so an operator on a
+// platform without it reads one honest sentence rather than pressing something
+// that fails.
+func (t *TerminalAPI) LocalShellSupported() LocalShellSupportDTO {
+	ok, reason := t.localShells.LocalShellSupported()
+	return LocalShellSupportDTO{Supported: ok, Reason: reason}
+}
+
+// DetectAgents reports the coding agents present on the operator's PATH.
+//
+// FOUND, NOT INSTALLED, and that distinction is the whole feature: PodSteer
+// looks for binaries the operator already has and offers those. It downloads
+// nothing, suggests installing nothing, and an empty list is an ordinary
+// answer for a machine with no agent on it.
+func (t *TerminalAPI) DetectAgents() []CodingAgentDTO {
+	agents := t.localShells.DetectAgents()
+	out := make([]CodingAgentDTO, 0, len(agents))
+	for _, agent := range agents {
+		out = append(out, CodingAgentDTO{ID: agent.ID, Label: agent.Label, Path: agent.Path})
+	}
+	return out
+}
+
+// StartLocalSession opens the operator's own login shell on THIS machine, with
+// KUBECONFIG set to the same files PodSteer reads and a notice naming the open
+// tab's context. It returns the session ID.
+//
+// NO READ-ONLY REFUSAL, and its absence is deliberate rather than an omission.
+// Every other Start method here checks ManagementService.ReadOnly first,
+// because each of them makes PodSteer write to a cluster. This one starts a
+// process on the operator's laptop that PodSteer neither mediates nor observes
+// — the guard is about this application's own writes, and a shell somebody
+// opened on their own machine with their own credentials is not something it
+// can or should police. The pane says exactly that, and so does SECURITY.md.
+func (t *TerminalAPI) StartLocalSession(clusterContext string, cols, rows int) (string, error) {
+	return t.openLocalSession(domain.LocalShellSpec{
+		Context: clusterContext,
+		Cols:    uint16(cols),
+		Rows:    uint16(rows),
+	}, "local shell")
+}
+
+// StartAgentSession opens the operator's own coding agent CLI in a local
+// shell's place, in the same environment, with an opening prompt naming the
+// cluster and the object they had open. It returns the session ID.
+//
+// NOTHING IS SENT ANYWHERE BY PODSTEER. This starts a local process and hands
+// it an argument; whatever the agent then does with its own provider is
+// between the operator and the tool they installed. That is what keeps this
+// consistent with the no-account, no-telemetry commitment — there is no
+// PodSteer service in the path, and adding one would be a different decision
+// requiring a different record.
+//
+// readOnly is the default the launcher offers: it sets a marker in the
+// environment and asks, in the prompt, for read-only kubectl unless the
+// operator says otherwise. A REQUEST, not a restriction — the agent holds the
+// operator's own credentials and nothing here can narrow them.
+func (t *TerminalAPI) StartAgentSession(clusterContext, agent, kind, namespace, name string, readOnly bool, cols, rows int) (string, error) {
+	if agent == "" {
+		return "", apiError(t.logger, "StartAgentSession", errors.New("no coding agent named"))
+	}
+	return t.openLocalSession(domain.LocalShellSpec{
+		Context:  clusterContext,
+		Cols:     uint16(cols),
+		Rows:     uint16(rows),
+		Agent:    agent,
+		ReadOnly: readOnly,
+		Subject:  domain.TerminalSubject{Kind: kind, Namespace: namespace, Name: name},
+	}, "agent session")
+}
+
+// openLocalSession starts the process and registers it beside every cluster
+// session, so Write, Resize and StopSession reach it by id alone.
+func (t *TerminalAPI) openLocalSession(spec domain.LocalShellSpec, label string) (string, error) {
+	sessionID := generateTerminalID()
+	stdout := &terminalOutputWriter{sessionID: sessionID, app: t.app}
+
+	// Registered BEFORE the process starts. The shell writes its prompt within
+	// microseconds and the exit hook can fire almost as fast for a command
+	// that refuses to run, so a session that appeared in the map afterwards
+	// could be removed by its own exit before it was ever added.
+	session := &terminalSession{id: sessionID}
+	t.mu.Lock()
+	t.sessions[sessionID] = session
+	t.mu.Unlock()
+
+	shell, err := t.localShells.StartLocalShell(spec, stdout, func(reason string) {
+		t.mu.Lock()
+		delete(t.sessions, sessionID)
+		t.mu.Unlock()
+
+		if reason != "" {
+			t.logger.Error(label+" ended with error",
+				slog.String("session", sessionID), slog.String("error", reason))
+		}
+		// The SAME event a cluster session's exit uses: the pane treats a
+		// local shell ending exactly as it treats a container's.
+		t.app.emit("terminal:exit", TerminalExitEvent{SessionID: sessionID, Reason: reason})
+	})
+	if err != nil {
+		t.mu.Lock()
+		delete(t.sessions, sessionID)
+		t.mu.Unlock()
+		return "", apiError(t.logger, "StartLocalSession", err)
+	}
+
+	// Filled in now the process behind them exists. The frontend cannot have
+	// sent a keystroke yet — it has not been given the session id — so this is
+	// the last moment before the record is reachable from outside.
+	t.mu.Lock()
+	session.stdinPipe = &localShellWriter{shells: t.localShells, id: shell.ID}
+	session.resize = func(cols, rows uint16) error {
+		return t.localShells.ResizeLocalShell(shell.ID, cols, rows)
+	}
+	// Not a context cancellation: a local process is ended by signalling it,
+	// and the manager waits for it to be gone.
+	session.cancel = func() { _ = t.localShells.StopLocalShell(shell.ID) }
+	t.mu.Unlock()
+
+	t.logger.Info(label+" started",
+		slog.String("session", sessionID),
+		slog.String("context", spec.Context),
+		slog.String("agent", spec.Agent))
+
+	return sessionID, nil
+}
+
+// localShellWriter carries keystrokes to a local shell.
+//
+// An io.WriteCloser so a local session sits in the same field as a cluster
+// session's stdin pipe. Close is a no-op on purpose: hanging the terminal up
+// is what StopLocalShell does, and StopSession closes this pipe right after
+// cancelling, which would otherwise be the second hangup.
+type localShellWriter struct {
+	shells ports.LocalShellPort
+	id     string
+}
+
+func (w *localShellWriter) Write(p []byte) (int, error) {
+	if err := w.shells.WriteLocalShell(w.id, p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (w *localShellWriter) Close() error { return nil }
 
 // terminalOutputWriter forwards writes to the frontend as terminal:data events.
 type terminalOutputWriter struct {

@@ -33,6 +33,8 @@
     StartAttachSession,
     StartDebugSession,
     StartNodeShellSession,
+    StartLocalSession,
+    StartAgentSession,
     Write,
     Resize,
     StopSession,
@@ -40,7 +42,8 @@
   import { EventsOn } from '$lib/wailsjs/runtime/runtime'
   import { terminalTheme, onThemeChange } from '$lib/terminalTheme'
   import { matchFractions } from '$lib/terminalSearch'
-  import { terminalSessions, sessionKey } from '$stores/terminalSessions.svelte'
+  import { terminalSessions, sessionKey, localSessionKey } from '$stores/terminalSessions.svelte'
+  import { localShellNotice } from '$lib/localShell'
   import PaneToolbar from './PaneToolbar.svelte'
   import ToolbarButton from './ToolbarButton.svelte'
   import ToolbarSearch from './ToolbarSearch.svelte'
@@ -84,11 +87,13 @@
      * 'container' is the ordinary pod terminal (Shell / Attach). 'debug' adds
      * an ephemeral debug container to the pod and opens a shell into it;
      * 'nodeshell' creates a privileged pod on a node and attaches to a host
-     * shell. The two special variants reuse everything else about this
-     * component — the buffer, the toolbar, search, copy-on-select — and only
-     * differ in how the session is started.
+     * shell. 'local' is the odd one out and reaches no cluster at all: it runs
+     * the operator's own login shell, or a coding agent they already have, on
+     * THIS machine. All three special variants reuse everything else about
+     * this component — the buffer, the toolbar, search, copy-on-select — and
+     * differ only in how the session is started.
      */
-    variant?: 'container' | 'debug' | 'nodeshell'
+    variant?: 'container' | 'debug' | 'nodeshell' | 'local'
     /** debug: the container whose process namespace to share (--target). */
     debugTarget?: string
     /** debug: the image to run. */
@@ -101,6 +106,12 @@
     nodeShellNamespace?: string
     /** nodeshell: the image the pod runs. */
     nodeShellImage?: string
+    /** local: the coding agent to run, or null for the operator's login shell. */
+    agent?: string | null
+    /** local: whether the agent was asked to keep to read-only kubectl. */
+    agentReadOnly?: boolean
+    /** local: the object open in the drawer, named in the agent's first prompt. */
+    subject?: { kind: string; namespace: string; name: string }
     /**
      * Offered on the container terminal's toolbar, beside Shell/Attach, to
      * start a debug container — the drawer wires it to the debug dialog. Absent
@@ -128,6 +139,9 @@
     nodeName = '',
     nodeShellNamespace = '',
     nodeShellImage = '',
+    agent = null,
+    agentReadOnly = false,
+    subject = { kind: '', namespace: '', name: '' },
     ondebug,
     onstarted,
     onmaximize,
@@ -147,6 +161,12 @@
   const NODE_SHELL_NOTE =
     'You are root on the node, in its host namespaces. This pod is deleted when you close ' +
     'this pane; it also self-destructs after one hour as a backstop.'
+
+  /**
+   * The local pane's own note, which has to say the read-only guard does not
+   * apply here — see localShellNotice for why saying it matters.
+   */
+  const localNote = $derived(localShellNotice(clusterId))
 
   // Seeded by the effect below; reading the prop here would capture only its
   // initial value and leave the selector stale after switching pods.
@@ -222,10 +242,17 @@
       EventsOn('terminal:exit', handleTerminalExit),
     ]
 
-    if (readOnly) {
+    if (readOnly && variant !== 'local') {
       // No PTY, no goroutine, no exec call at all — the same fast-fail
       // TerminalAPI.StartSession makes server-side, taken before ever
       // reaching it. See the readOnly prop's own doc comment.
+      //
+      // The local variant is EXEMPT, deliberately. That guard is about
+      // PodSteer's writes to a cluster; this pane starts a process on the
+      // operator's own machine with their own credentials, which is not
+      // something this application can or should police. The backend makes no
+      // such check either — see TerminalAPI.StartLocalSession — and the note
+      // above the buffer says so.
       connectionState = 'disconnected'
       terminal?.writeln(`\x1b[33m${READ_ONLY_REASON}\x1b[0m`)
     } else {
@@ -471,6 +498,22 @@
         return StartDebugSession(clusterId, namespace, podName, debugTarget, debugImage, debugCommand, cols, rows)
       case 'nodeshell':
         return StartNodeShellSession(clusterId, nodeShellNamespace, nodeName, nodeShellImage, cols, rows)
+      case 'local':
+        // Two calls rather than one with a nullable argument: an agent session
+        // carries a prompt and a read-only request a plain shell has no notion
+        // of, and the backend refuses an empty agent id outright.
+        return agent === null
+          ? StartLocalSession(clusterId, cols, rows)
+          : StartAgentSession(
+              clusterId,
+              agent,
+              subject.kind,
+              subject.namespace,
+              subject.name,
+              agentReadOnly,
+              cols,
+              rows,
+            )
       default:
         return mode === 'attach'
           ? StartAttachSession(clusterId, namespace, podName, activeContainer, cols, rows)
@@ -482,6 +525,7 @@
   function sessionLabel(): string {
     if (variant === 'debug') return 'debug'
     if (variant === 'nodeshell') return 'node shell'
+    if (variant === 'local') return agent === null ? 'local shell' : agent
     return mode === 'attach' ? 'attach' : 'terminal'
   }
 
@@ -511,7 +555,9 @@
   }
 
   async function reconnect(): Promise<void> {
-    if (readOnly) return
+    // Exempt for the same reason the first start is: a local shell is not
+    // governed by the cluster's read-only setting.
+    if (readOnly && variant !== 'local') return
     terminalSessions.forget(currentKey())
     if (sessionId) {
       await StopSession(sessionId).catch(() => {})
@@ -556,6 +602,7 @@
     // ever re-attaching one to another.
     if (variant === 'debug') return sessionKey(clusterId, namespace, podName, '', 'debug')
     if (variant === 'nodeshell') return sessionKey(clusterId, nodeShellNamespace, nodeName, '', 'nodeshell')
+    if (variant === 'local') return localSessionKey(clusterId, agent)
     return sessionKey(clusterId, namespace, podName, activeContainer, mode)
   }
 
@@ -675,7 +722,13 @@
       {/if}
     {:else}
       <span class="shrink-0 truncate pl-1 text-body-small text-on-surface-variant">
-        {#if variant === 'debug'}Debug container{:else}Node shell · {nodeName}{/if}
+        {#if variant === 'debug'}
+          Debug container
+        {:else if variant === 'local'}
+          {agent === null ? 'Your shell' : agent} · {clusterId || 'no cluster'}
+        {:else}
+          Node shell · {nodeName}
+        {/if}
       </span>
     {/if}
 
@@ -731,12 +784,12 @@
       <ToolbarButton
         icon={RotateCw}
         label="Reconnect"
-        title={readOnly
+        title={readOnly && variant !== 'local'
           ? READ_ONLY_REASON
           : connectionState === 'connected'
             ? 'Reconnect this session'
             : 'Start a new session'}
-        disabled={readOnly}
+        disabled={readOnly && variant !== 'local'}
         onclick={() => void reconnect()}
       />
       {#if onmaximize}
@@ -775,6 +828,20 @@
              text-body-small text-on-surface-variant"
     >
       {NODE_SHELL_NOTE}
+    </p>
+  {:else if variant === 'local'}
+    <!--
+      A banner rather than a line in the buffer, like the attach note: the
+      buffer belongs to the operator's shell, and this is PodSteer's own
+      statement about the pane. The one-line notice naming the context IS
+      written into the buffer, by the Go side, before the shell starts — that
+      one is about the session, this one is about the surface.
+    -->
+    <p
+      class="shrink-0 border-b border-outline-variant/60 bg-surface-container-low px-3 py-1
+             text-body-small text-on-surface-variant"
+    >
+      {localNote}
     </p>
   {/if}
 

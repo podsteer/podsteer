@@ -946,6 +946,22 @@ export namespace wails {
 		    return a;
 		}
 	}
+	export class CodingAgentDTO {
+	    id: string;
+	    label: string;
+	    path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CodingAgentDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.path = source["path"];
+	    }
+	}
 	export class ConditionCount {
 	    condition: string;
 	    nodes: number;
@@ -1361,6 +1377,20 @@ export namespace wails {
 	        this.added = source["added"];
 	        this.conflicts = source["conflicts"];
 	        this.path = source["path"];
+	    }
+	}
+	export class LocalShellSupportDTO {
+	    supported: boolean;
+	    reason: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LocalShellSupportDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.supported = source["supported"];
+	        this.reason = source["reason"];
 	    }
 	}
 	export class MetricsBackend {

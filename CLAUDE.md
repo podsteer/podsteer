@@ -1107,6 +1107,74 @@ opposite: it is NOT tracked and NOT deleted, because Kubernetes will not remove
 an ephemeral container — it stays in the pod's spec until the pod is deleted,
 which the dialog states plainly.
 
+## The local terminal runs the operator's own tools, and pins nothing
+
+`app/adapters/localshell` opens a shell on the **operator's own machine** — the
+one terminal here that reaches no cluster at all — and can start a coding agent
+they already have in it (`TerminalAPI.StartLocalSession` / `StartAgentSession`,
+`Terminal.svelte`'s `local` variant, launched by `sessionLauncher`). Three
+rules govern it and each is asserted in a test.
+
+**Nothing is bundled, downloaded or installed — ever.** Not kubectl, not helm,
+not a coding agent. The shell runs whatever the operator already has on the
+PATH `app/adapters/shellpath` adopted; a machine without kubectl gets the
+shell's own "command not found", which is the honest answer and their business
+to fix. Agents are FOUND (`DetectAgents`, a fixed preference order that does
+not depend on the shape of the PATH) and offered; a machine with none has no
+agent row and deliberately no link to obtain one. Shipping a binary would mean
+shipping its updates, its licence and its CVEs, and would put PodSteer between
+an operator and a tool they are perfectly capable of installing themselves.
+
+**`current-context` is never touched, so the context is stated rather than
+pinned.** `KUBECONFIG` is set to exactly the files the Kubernetes adapter reads
+(`Adapter.KubeconfigFiles`, the one implementation of "which files", quoted in
+both places, `PODSTEER_KUBECONFIG_DIR` included), and a one-line notice above
+the prompt names the open tab's context and says to pass `--context`. There is
+no honest way to do better: kubectl selects a context from `current-context` or
+from an explicit flag and nothing else — no environment variable carries one —
+which leaves writing the operator's kubeconfig (refused outright by the
+kubeconfig section above; kubectl in the terminal beside this one must not
+change target), writing a per-session copy of their credentials to disk, or
+injecting a shell alias, which cannot be done without REPLACING their own
+startup files: bash's `--rcfile` and zsh's `ZDOTDIR` substitute rather than add,
+so they would lose their prompt, functions and aliases in exchange for one of
+ours. Stating the context costs one line and lies about nothing.
+
+**The read-only guard does not apply, and the pane says so.** Every other Start
+method on `TerminalAPI` refuses synchronously on a cluster the operator marked
+read-only. `StartLocalSession` does not, and adding the check "for consistency"
+is the mistake `terminal_local_test.go` exists to prevent: that guard is about
+PodSteer's own writes to a cluster, and a shell somebody opened on their own
+machine with their own credentials is not something this application can or
+should police. The agent's read-only default is the same shape — an environment
+marker plus a sentence in the opening prompt asking for read-only kubectl
+unless the operator says otherwise. A request, never a restriction, because
+the agent holds the operator's credentials and nothing here can narrow them.
+
+Lifecycle follows the port-forward and node-shell registries exactly: the
+record and the process are created and destroyed together, a session ends when
+its pane closes, and `StopAllLocalShells` runs in `OnShutdown` beside
+`StopAllNodeShells`. Ending one signals its whole process GROUP — a shell's
+children go with it — and waits, so "stopped" means gone rather than asked.
+
+**Windows has no local terminal**, and says so instead of half-working. The
+pseudo-terminal dependency (`github.com/creack/pty`, MIT) reports unsupported
+on Windows for both allocation and resize; ConPTY is a different API and would
+be a second, Windows-only implementation of start, resize and teardown. The
+dependency sits behind a build tag so it is not linked into the Windows binary
+at all, `LocalShellSupported` reports false with one sentence, and the control
+is absent rather than present and failing. Nothing about a Windows build is
+worse for it: kubectl in the operator's own terminal was always the answer
+there, and needs nothing PodSteer provides, since Windows hands a GUI process
+the same PATH it hands a console one.
+
+Nothing is sent anywhere by PodSteer. Launching an agent is a local process
+start with an argument; whatever the agent then does with its own provider is
+between the operator and the tool they installed. There is no PodSteer service
+in that path, which is what keeps this consistent with the no-account,
+no-telemetry commitment — putting one there would be a different decision
+needing its own record.
+
 ## Configuration
 
 All optional, all prefixed `PODSTEER_`: `KUBECONFIG`, `KUBECONFIG_DIR`, `QPS`,

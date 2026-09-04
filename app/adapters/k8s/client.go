@@ -305,6 +305,22 @@ func (f *clientFactory) loadingRules() *clientcmd.ClientConfigLoadingRules {
 	return rules
 }
 
+// KubeconfigFiles reports the kubeconfig files this adapter reads, in
+// precedence order.
+//
+// Exists so the local terminal can hand a shell the SAME KUBECONFIG PodSteer
+// itself uses — the explicit override or the default chain, plus every file
+// the kubeconfig directory contributes — rather than a second, hand-built
+// answer that would drift the moment either resolution changed. One
+// implementation of "which files", quoted in two places.
+//
+// Re-resolved on every call, like everything else about the kubeconfig here: a
+// file dropped into the directory appears in the next shell without a restart.
+// The paths are the operator's own; nothing is copied and nothing is written.
+func (f *clientFactory) KubeconfigFiles() []string {
+	return f.loadingRules().Precedence
+}
+
 // clientConfig returns a client-go ClientConfig scoped to id's context, or to
 // whatever current-context the merged kubeconfig itself names when id is
 // zero.

@@ -48,7 +48,14 @@
   import WorkloadsView from './WorkloadsView.svelte'
   import FleetView from './FleetView.svelte'
   import { fleet } from '$stores/fleet.svelte'
-  import { PanelLeft, AlertTriangle, Download, Check, Plus } from '@lucide/svelte'
+  import { PanelLeft, AlertTriangle, Download, Check, Plus, Laptop } from '@lucide/svelte'
+  import { onMount } from 'svelte'
+  import { sessionLauncher } from '$stores/sessionLauncher.svelte'
+  import type { CodingAgent } from '$lib/localShell'
+  import {
+    DetectAgents,
+    LocalShellSupported,
+  } from '$lib/wailsjs/go/wails/TerminalAPI'
 
   interface Props {
     session: ClusterSession
@@ -57,6 +64,61 @@
   let { session }: Props = $props()
 
   let searchField: { focus: () => void } | undefined = $state()
+
+  /**
+   * Whether this platform can open a shell on the operator's own machine, and
+   * which coding agents are on their PATH.
+   *
+   * ASKED ONCE, ON MOUNT. Both answers are about the machine rather than about
+   * a cluster: the platform does not change while the window is open, and an
+   * agent installed mid-session is rare enough not to be worth a poll on a
+   * surface that already polls a cluster. Neither call reaches the network.
+   */
+  let localShellSupported = $state(false)
+  let localShellReason = $state('')
+  let codingAgents = $state.raw<CodingAgent[]>([])
+
+  onMount(() => {
+    void (async () => {
+      try {
+        const support = await LocalShellSupported()
+        localShellSupported = support.supported
+        localShellReason = support.reason
+        // Only worth asking where a shell can be opened at all — an agent that
+        // cannot be launched is not information, it is a list of regrets.
+        if (support.supported) codingAgents = await DetectAgents()
+      } catch {
+        // A local terminal is a convenience beside a cluster client. Failing
+        // to establish whether it is available leaves the control absent
+        // rather than taking anything else down with it.
+        localShellSupported = false
+      }
+    })()
+  })
+
+  /**
+   * The object to name in a coding agent's first prompt.
+   *
+   * The most recently opened object in this tab, resolved through the
+   * catalogue so the agent is told the Kubernetes Kind ("Deployment") rather
+   * than the catalogue id. Empty when nothing has been opened, which the
+   * prompt handles by simply not claiming an object.
+   */
+  const agentSubject = $derived.by(() => {
+    const recent = session.recentObjects[0]
+    if (!recent) return { kind: '', namespace: '', name: '' }
+    const kind = session.kinds.find((entry) => entry.id === recent.kindId)?.kind ?? ''
+    return { kind, namespace: recent.namespace, name: recent.name }
+  })
+
+  /** Opens the local-terminal dialog for the tab in front. */
+  function onOpenLocalTerminal(): void {
+    sessionLauncher.requestLocal({
+      clusterId: session.cluster.id,
+      agents: codingAgents,
+      subject: agentSubject,
+    })
+  }
 
   /** The path an export was just saved to, shown in the button's title while
       `exported.on`. Kept even after the flash expires — the button's title
@@ -398,6 +460,36 @@
             onclick={onExportCSV}
           />
         {/if}
+      {/if}
+
+      <!-- A shell on THIS machine, not in the cluster.
+           OUTSIDE the list-only controls above, and last in the row: it is
+           scoped to the cluster TAB rather than to whatever kind is selected —
+           KUBECONFIG and the tab's context are the whole of what PodSteer
+           contributes to it — so it belongs on the overview and the
+           all-clusters view exactly as much as on a table.
+
+           Absent where the platform cannot open one, with the reason in the
+           title rather than a control that does nothing. -->
+      {#if localShellSupported}
+        <div class="ms-auto h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+
+        <ToolbarButton
+          icon={Laptop}
+          label="Local terminal"
+          title="Open a shell on this machine, with KUBECONFIG set for this cluster"
+          onclick={onOpenLocalTerminal}
+        />
+      {:else if localShellReason}
+        <div class="ms-auto h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+
+        <ToolbarButton
+          icon={Laptop}
+          label="Local terminal"
+          title={localShellReason}
+          disabled
+          onclick={() => {}}
+        />
       {/if}
     </div>
 
