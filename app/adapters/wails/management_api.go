@@ -484,6 +484,12 @@ type PortForward struct {
 	RemotePort int    `json:"remotePort"`
 	// Address is where to point a browser, scheme included.
 	Address string `json:"address"`
+	// Scheme is "http" or "https", guessed from the container port's name —
+	// see domain.SchemeForPort. Carried separately from Address, which is
+	// meant for display against "localhost", so the frontend can build the
+	// 127.0.0.1 form OpenURL needs without re-parsing a string built for
+	// something else.
+	Scheme string `json:"scheme"`
 	// Reconnecting reports that the pod behind this forward went away and a
 	// replacement is being sought. The local port stays bound throughout, so
 	// whatever is pointed at it keeps its address and simply stalls.
@@ -499,6 +505,7 @@ func toPortForward(forward domain.Forward) PortForward {
 		LocalPort:    forward.LocalPort,
 		RemotePort:   forward.RemotePort,
 		Address:      forward.Address(),
+		Scheme:       forward.Scheme,
 		Reconnecting: forward.Reconnecting,
 	}
 }
@@ -660,4 +667,45 @@ func (m *ManagementAPI) DrainNode(clusterID, name string, force, deleteEmptyDirD
 	}
 
 	return toDrainReport(report), nil
+}
+
+// StopAllPortForwards closes every running forward, across every cluster,
+// and waits for each local port to be released before returning.
+//
+// Previously reachable only from OnShutdown, where nothing was waiting on the
+// answer. The "Stop all" control in the forwards panel needs the same
+// guarantee StopPortForward already makes for one forward — that the port is
+// free before the call returns — which the underlying registry teardown
+// already provides; this only exposes it.
+func (m *ManagementAPI) StopAllPortForwards() error {
+	m.forwards.StopAllPortForwards()
+	return nil
+}
+
+// ProbeLocalPort reports whether a TCP port on THIS machine — never the
+// cluster — is free to bind.
+//
+// Placed beside the other port-forward calls rather than on SystemAPI: it
+// exists purely to serve the local-port picker in the forward-start UI, the
+// transport it is asking about is the same forwards.PortForwardPort this
+// struct already holds, and splitting "local port" concerns across two bound
+// APIs over a single feature would cost the frontend two imports for one
+// idea. It never touches a cluster.
+func (m *ManagementAPI) ProbeLocalPort(port int) (bool, error) {
+	free, err := m.forwards.ProbeLocalPort(port)
+	if err != nil {
+		return false, apiError(m.logger, "ProbeLocalPort", err)
+	}
+	return free, nil
+}
+
+// FreeLocalPort asks the operating system for a local TCP port nothing is
+// using, so the "Pick a free port" control can offer one instead of asking
+// the operator to guess.
+func (m *ManagementAPI) FreeLocalPort() (int, error) {
+	port, err := m.forwards.FreeLocalPort()
+	if err != nil {
+		return 0, apiError(m.logger, "FreeLocalPort", err)
+	}
+	return port, nil
 }

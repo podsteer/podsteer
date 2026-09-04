@@ -120,4 +120,8 @@ var (
 	// operator who clears the flag in Organise can make the exact same write
 	// a moment later. See SECURITY.md, "What PodSteer can do".
 	ErrReadOnly = errors.New("cluster is read-only")
+	// ErrInvalidPort means a port number handed to a local-port operation —
+	// probing or binding one on the operator's own machine — falls outside
+	// the range TCP actually has, 1-65535.
+	ErrInvalidPort = errors.New("port must be between 1 and 65535")
 )

@@ -1062,7 +1062,9 @@
             <span
               class="inline-flex shrink-0 items-center gap-1 rounded bg-primary/12 px-1.5
                      text-body-small text-primary"
-              title="{forward.address} → container port {forward.remotePort}"
+              title={forward.reconnecting
+                ? `Waiting for a replacement pod — was ${forward.address}`
+                : `${forward.address} → container port ${forward.remotePort}`}
             >
               {#if forward.reconnecting}
                 <Loader class="size-3 animate-spin" strokeWidth={2} />

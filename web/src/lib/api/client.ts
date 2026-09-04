@@ -62,6 +62,9 @@ import {
   EvictPod as bindEvictPod,
   PlanDrain as bindPlanDrain,
   DrainNode as bindDrainNode,
+  StopAllPortForwards as bindStopAllPortForwards,
+  ProbeLocalPort as bindProbeLocalPort,
+  FreeLocalPort as bindFreeLocalPort,
 } from '$lib/wailsjs/go/wails/ManagementAPI'
 import { GetOverview as bindGetOverview } from '$lib/wailsjs/go/wails/OverviewAPI'
 import {
@@ -569,6 +572,39 @@ export function stopPortForward(forwardId: string): Promise<void> {
 /** Reports what is forwarded right now — the live registry, not intent. */
 export function listPortForwards(): Promise<PortForward[]> {
   return call(() => bindListPortForwards())
+}
+
+/** Closes every running forward, across every cluster. */
+export function stopAllPortForwards(): Promise<void> {
+  return call(() => bindStopAllPortForwards())
+}
+
+/**
+ * Reports whether a TCP port on THIS machine is free to bind.
+ *
+ * Never the cluster — the local-port picker in the forward-start dialog is
+ * asking about a collision on the operator's own machine, which is the one
+ * kind of collision Kubernetes cannot warn about.
+ */
+export function probeLocalPort(port: number): Promise<boolean> {
+  return call(() => bindProbeLocalPort(port))
+}
+
+/** Asks the operating system for a local TCP port nothing is using. */
+export function freeLocalPort(): Promise<number> {
+  return call(() => bindFreeLocalPort())
+}
+
+/**
+ * Where "Open" should send the operator for a running forward.
+ *
+ * 127.0.0.1 rather than the `localhost` in PortForward.address: that field is
+ * meant for DISPLAY, and this is meant for OpenURL, which the CSP-tightened
+ * webview never touches — only the OS's own resolver does, and 127.0.0.1
+ * skips it needing to resolve anything at all.
+ */
+export function forwardBrowserURL(forward: PortForward): string {
+  return `${forward.scheme}://127.0.0.1:${forward.localPort}/`
 }
 
 // --- System -----------------------------------------------------------------

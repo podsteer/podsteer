@@ -394,6 +394,14 @@ interface PersistedShape {
    * recentObjects, which is deliberately NOT persisted here or anywhere else.
    */
   pinnedKinds: Record<string, string[]>
+  /**
+   * Remembered local ports for the port-forward dialog, by the REMOTE port
+   * number. See localPortByPortName below for why there are two of these, and
+   * the class field for what is deliberately never in either one.
+   */
+  localPortByRemotePort: Record<string, number>
+  /** The same idea, keyed by the container port's NAME when it has one. */
+  localPortByPortName: Record<string, number>
   /** clusterId -> snoozeKey() -> epoch milliseconds when the snooze lapses. */
   snoozes: Record<string, Record<string, number>>
   /** Per-surface threshold lines. */
@@ -463,6 +471,8 @@ const DEFAULTS: PersistedShape = {
   showManagedFields: false,
   namespaceByCluster: {},
   pinnedKinds: {},
+  localPortByRemotePort: {},
+  localPortByPortName: {},
   snoozes: {},
   // Both lines on, everywhere. An operator who only wants to hear about the
   // serious case can turn the first one off, but a default that says nothing
@@ -548,6 +558,27 @@ class Preferences {
 
   /** clusterId -> pinned kind ids, in the order pinned. See the shape above. */
   pinnedKinds = $state<Record<string, string[]>>({})
+
+  /**
+   * Remembered local ports for the port-forward dialog.
+   *
+   * ONLY remotePort -> localPort and portName -> localPort live here — never
+   * the pod, the workload, the namespace or the cluster a forward was to.
+   * SECURITY.md enumerates what PodSteer writes to this machine's disk, and
+   * object names are deliberately not on that list; a mapping keyed by one
+   * would put them there through the back door of "remembering a port".
+   * remotePort and portName are properties of a CONTAINER IMAGE, not of any
+   * particular cluster's objects, which is what makes them safe to keep and
+   * useful across every pod that exposes them.
+   *
+   * Two maps rather than one because the two keys answer different
+   * questions: 5432 means Postgres everywhere it is a container's remote
+   * port, so it is worth keying on alone; a NAME is more specific still — see
+   * proposeLocalPort for which one wins when both are on record.
+   */
+  localPortByRemotePort = $state<Record<string, number>>({})
+  /** The same idea, keyed by the container port's NAME when it has one. */
+  localPortByPortName = $state<Record<string, number>>({})
 
   /**
    * Objects the operator has deliberately quietened, per cluster.
@@ -784,6 +815,47 @@ class Preferences {
     this.pinnedKinds = {
       ...this.pinnedKinds,
       [clusterId]: existing.filter((id) => id !== kindId),
+    }
+    this.#save()
+  }
+
+  // --- Remembered local ports ------------------------------------------------
+
+  /**
+   * What the port-forward dialog should propose for a container port, if
+   * anything is on record.
+   *
+   * NAME TAKES PRECEDENCE. A container port named "postgres" keeps whatever
+   * local port an operator settled on wherever it turns up, which is more
+   * specific than the bare remote port number — 5432 is also Postgres on a
+   * pod nobody has decided should share that mapping. Falling back to the
+   * remote port when there is no name (or no memory of that name yet) is
+   * still useful: it is the majority of what "remember the port" means in
+   * practice, most containers exposing one port they care about.
+   */
+  proposeLocalPort = (remotePort: number, portName: string): number | undefined => {
+    const byName = portName ? this.localPortByPortName[portName] : undefined
+    return byName ?? this.localPortByRemotePort[String(remotePort)]
+  }
+
+  /**
+   * Records the local port a forward actually bound, so the next forward to
+   * this remote port — or to this NAMED port on any other pod — proposes it
+   * again.
+   *
+   * Called with whatever the forward actually bound, whether the operator
+   * typed it or the operating system chose it: both are worth remembering,
+   * and treating only a deliberate choice as worth keeping would mean the
+   * common case — nobody types anything, ever — never builds up any memory
+   * at all.
+   */
+  rememberLocalPort = (remotePort: number, portName: string, localPort: number): void => {
+    this.localPortByRemotePort = {
+      ...this.localPortByRemotePort,
+      [String(remotePort)]: localPort,
+    }
+    if (portName) {
+      this.localPortByPortName = { ...this.localPortByPortName, [portName]: localPort }
     }
     this.#save()
   }
@@ -1099,6 +1171,11 @@ class Preferences {
           }
         }
         this.pinnedKinds = cleaned
+      if (stored.localPortByRemotePort && typeof stored.localPortByRemotePort === 'object') {
+        this.localPortByRemotePort = stored.localPortByRemotePort
+      }
+      if (stored.localPortByPortName && typeof stored.localPortByPortName === 'object') {
+        this.localPortByPortName = stored.localPortByPortName
       }
       if (stored.snoozes && typeof stored.snoozes === 'object') {
         this.snoozes = stored.snoozes
@@ -1190,6 +1267,8 @@ class Preferences {
         showManagedFields: this.showManagedFields,
         namespaceByCluster: this.namespaceByCluster,
         pinnedKinds: this.pinnedKinds,
+        localPortByRemotePort: this.localPortByRemotePort,
+        localPortByPortName: this.localPortByPortName,
         snoozes: this.#pruneSnoozes(),
         thresholds: this.thresholds,
         podMeasure: this.podMeasure,

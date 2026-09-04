@@ -12,12 +12,14 @@
   import { organisation } from '$stores/organisation.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import { shortcutSheet } from '$stores/shortcutSheet.svelte'
+  import { forwards } from '$stores/forwards.svelte'
   import { formatClockTime } from '$lib/format'
   import { iconForKind } from '$lib/kindIcons'
   import { shortcut } from '$lib/shortcuts'
   import { openURL } from '$lib/api/client'
   import { ExternalLink, Clock, Server, RefreshCw, Keyboard, Lock } from '@lucide/svelte'
   import ShareMenu from './ShareMenu.svelte'
+  import PortForwardsPanel from './PortForwardsPanel.svelte'
   import GithubIcon from './icons/GithubIcon.svelte'
   import LinkedinIcon from './icons/LinkedinIcon.svelte'
   import BlueskyIcon from './icons/BlueskyIcon.svelte'
@@ -131,6 +133,13 @@
     </span>
   {:else}
     <span class="opacity-60">No cluster open</span>
+  {/if}
+
+  <!-- Global: a forward is not scoped to the active tab, so this shows
+       whether or not a session is even selected right now. -->
+  {#if forwards.active.length > 0}
+    {@render sep()}
+    <PortForwardsPanel />
   {/if}
 
   <div class="ml-auto flex items-center gap-3">
