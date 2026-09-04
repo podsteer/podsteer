@@ -26,6 +26,8 @@ export function ScaleWorkload(arg1:string,arg2:string,arg3:string,arg4:string,ar
 
 export function SetConfigMapKey(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;
 
+export function SetImage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:boolean):Promise<void>;
+
 export function SetSecretKey(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;
 
 export function StartPortForward(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number,arg7:string,arg8:string,arg9:Record<string, string>):Promise<wails.PortForward>;

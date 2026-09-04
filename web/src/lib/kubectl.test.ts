@@ -13,6 +13,7 @@ import {
   revealSecretKey,
   rolloutRestart,
   scale,
+  setImage,
   shellQuote,
 } from './kubectl'
 
@@ -132,6 +133,35 @@ describe('rolloutRestart', () => {
   it('lowercases the kind and always carries the namespace', () => {
     expect(rolloutRestart('prod', 'DaemonSet', 'agent', 'kube-system')).toBe(
       'kubectl --context prod -n kube-system rollout restart daemonset/agent',
+    )
+  })
+})
+
+describe('setImage', () => {
+  it('lowercases the kind and always carries the namespace', () => {
+    expect(setImage('prod', 'Deployment', 'web', 'default', 'app', 'nginx:1.25')).toBe(
+      'kubectl --context prod -n default set image deployment/web app=nginx:1.25',
+    )
+  })
+
+  it('leaves a digest reference unquoted', () => {
+    expect(
+      setImage(
+        'prod',
+        'StatefulSet',
+        'db',
+        'data',
+        'db',
+        'postgres@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85',
+      ),
+    ).toBe(
+      'kubectl --context prod -n data set image statefulset/db db=postgres@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85',
+    )
+  })
+
+  it('quotes an image containing a space', () => {
+    expect(setImage('prod', 'DaemonSet', 'agent', 'kube-system', 'agent', 'my registry/app:v1')).toBe(
+      "kubectl --context prod -n kube-system set image daemonset/agent agent='my registry/app:v1'",
     )
   })
 })

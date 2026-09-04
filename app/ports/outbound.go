@@ -349,6 +349,23 @@ type ManagementPort interface {
 	// object; the kind and namespace in the manifest override the parameters.
 	UpdateResource(ctx context.Context, id domain.ClusterID, manifest string) error
 
+	// SetImage sets one container's image on a Deployment, StatefulSet or
+	// DaemonSet — the three controller kinds whose pod template sits at
+	// spec.template, which is what the patch this sends targets. Only those
+	// three kinds support it; the application layer rejects any other kind
+	// before this is reached, mirroring SuspendWorkload's own kind check.
+	//
+	// A STRATEGIC MERGE PATCH, not a JSON merge patch: spec.template.spec.
+	// containers is a list, and a JSON merge patch replaces a list wholesale
+	// — sending one container would delete every other one in the pod. The
+	// strategic merge patch instead merges list entries by their `name` key,
+	// which is what lets this name one container and leave the rest of the
+	// template untouched, the same way `kubectl set image` does.
+	//
+	// initContainer redirects the patch to spec.template.spec.initContainers
+	// instead, for the same container-by-name merge.
+	SetImage(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name, container, image string, initContainer bool) error
+
 	// SetSecretKey writes one key of one Secret, leaving every other key
 	// untouched.
 	//

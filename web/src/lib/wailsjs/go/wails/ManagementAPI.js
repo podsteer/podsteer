@@ -50,6 +50,10 @@ export function SetConfigMapKey(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['wails']['ManagementAPI']['SetConfigMapKey'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function SetImage(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['wails']['ManagementAPI']['SetImage'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+}
+
 export function SetSecretKey(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['wails']['ManagementAPI']['SetSecretKey'](arg1, arg2, arg3, arg4, arg5);
 }

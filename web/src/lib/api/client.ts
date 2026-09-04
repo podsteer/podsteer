@@ -52,6 +52,7 @@ import {
   RestartRollout as bindRestartRollout,
   TriggerCronJob as bindTriggerCronJob,
   SuspendWorkload as bindSuspendWorkload,
+  SetImage as bindSetImage,
   SetSecretKey as bindSetSecretKey,
   SetConfigMapKey as bindSetConfigMapKey,
   StreamLogs as bindStreamLogs,
@@ -759,6 +760,26 @@ export function setConfigMapKey(
   value: string,
 ): Promise<void> {
   return call(() => bindSetConfigMapKey(clusterId, namespace, name, key, value))
+}
+
+/**
+ * Sets one container's (or, with initContainer true, one init container's)
+ * image on a Deployment, StatefulSet or DaemonSet.
+ *
+ * Applies to exactly one container per call — SetImageDialog calls this once
+ * per changed row rather than sending every container in one request, so a
+ * refusal partway through names exactly which containers already changed.
+ */
+export function setImage(
+  clusterId: string,
+  kind: string,
+  namespace: string,
+  name: string,
+  container: string,
+  image: string,
+  initContainer: boolean,
+): Promise<void> {
+  return call(() => bindSetImage(clusterId, kind, namespace, name, container, image, initContainer))
 }
 
 /** Suspends or resumes a CronJob's schedule, or a Job's pods. */

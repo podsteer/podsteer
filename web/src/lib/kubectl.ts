@@ -113,6 +113,33 @@ export function rolloutRestart(ctx: string, kind: string, name: string, ns: stri
   return [...base(ctx, ns), 'rollout', 'restart', `${kind.toLowerCase()}/${name}`].join(' ')
 }
 
+/**
+ * `kubectl --context c -n ns set image <kind>/<name> <container>=<image>`.
+ *
+ * Always namespaced, for the same reason `scale` and `rolloutRestart` are —
+ * every kind this applies to (Deployment, StatefulSet, DaemonSet) is
+ * namespaced. `container` is not quoted: like a kind or an object name, it is
+ * a Kubernetes identifier and never contains shell-special characters —
+ * `image` is the one argument here an operator could paste something
+ * surprising into, which is what `shellQuote` is for.
+ */
+export function setImage(
+  ctx: string,
+  kind: string,
+  name: string,
+  ns: string,
+  container: string,
+  image: string,
+): string {
+  return [
+    ...base(ctx, ns),
+    'set',
+    'image',
+    `${kind.toLowerCase()}/${name}`,
+    `${container}=${shellQuote(image)}`,
+  ].join(' ')
+}
+
 /** `kubectl --context c [-n ns] delete <resource> <name>`. */
 export function del(ctx: string, resource: string, name: string, ns?: string): string {
   return [...base(ctx, ns), 'delete', resource, name].join(' ')
