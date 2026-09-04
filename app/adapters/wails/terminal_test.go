@@ -1,9 +1,15 @@
 package wails
 
 import (
+	"context"
+	"errors"
+	"io"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/podsteer/podsteer/app/application"
+	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
 )
 
@@ -110,5 +116,112 @@ func TestSizeQueueDropsWhenFull(t *testing.T) {
 	got := q.Next()
 	if got == nil || got.Width != 1 {
 		t.Fatalf("Next() = %v, want the first size", got)
+	}
+}
+
+// stubManagementPort is a minimal stand-in for ports.ManagementPort, local to
+// this package: application_test's own fake is unexported and lives in a
+// different package. ExecInPodWithTTY errors loudly if reached at all, since
+// the one thing the test below asserts is that a refused session never gets
+// there.
+type stubManagementPort struct{}
+
+var _ ports.ManagementPort = (*stubManagementPort)(nil)
+
+func (stubManagementPort) StreamLogs(context.Context, domain.ClusterID, domain.NamespaceName, string, string, bool, int64, chan<- string) error {
+	return nil
+}
+func (stubManagementPort) DeleteResource(context.Context, domain.ResourceRef) error { return nil }
+func (stubManagementPort) ScaleWorkload(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, int32) error {
+	return nil
+}
+func (stubManagementPort) RestartRollout(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string) error {
+	return nil
+}
+func (stubManagementPort) UpdateResource(context.Context, domain.ClusterID, string) error { return nil }
+func (stubManagementPort) ExecInPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, bool) error {
+	return nil
+}
+func (stubManagementPort) ExecInPodWithTTY(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, ports.TerminalSizeQueue) error {
+	return errors.New("ExecInPodWithTTY reached: a refused StartSession must never get this far")
+}
+
+// TestStartSessionRefusesOnReadOnlyCluster pins the fast path CLAUDE.md's
+// read-only section promises: an interactive shell refuses synchronously,
+// before a PTY is allocated or a goroutine started, rather than opening a
+// session that fails on its first keystroke.
+func TestStartSessionRefusesOnReadOnlyCluster(t *testing.T) {
+	t.Parallel()
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly("prod", true)
+
+	management, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: stubManagementPort{},
+		Registry:   registry,
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+
+	terminal, err := NewTerminalAPI(management, NewApp(nil, 0), nil)
+	if err != nil {
+		t.Fatalf("NewTerminalAPI() error = %v", err)
+	}
+
+	sessionID, err := terminal.StartSession("prod", "default", "web-0", "app", 80, 24)
+	if err == nil {
+		t.Fatal("StartSession() error = nil, want a read-only refusal")
+	}
+	if !strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("StartSession() error = %q, want it classified read_only", err)
+	}
+	if sessionID != "" {
+		t.Fatalf("StartSession() session id = %q, want empty on refusal", sessionID)
+	}
+
+	terminal.mu.Lock()
+	live := len(terminal.sessions)
+	terminal.mu.Unlock()
+	if live != 0 {
+		t.Fatalf("live sessions = %d, want 0 — a refused start must never allocate one", live)
+	}
+}
+
+// TestStartSessionAllowsOnOrdinaryCluster is the other half: the guard must
+// not refuse a cluster nothing marked, and StartSession has to get far enough
+// to try opening a stream — asserted by watching stubManagementPort get past
+// the read-only gate, since a fully connected session needs a live Wails
+// runtime this test does not have.
+func TestStartSessionAllowsOnOrdinaryCluster(t *testing.T) {
+	t.Parallel()
+
+	registry := application.NewRegistry()
+	// Marked, but a different cluster — the guard has to be per-cluster.
+	registry.SetReadOnly("prod", true)
+
+	management, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: stubManagementPort{},
+		Registry:   registry,
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+
+	terminal, err := NewTerminalAPI(management, NewApp(nil, 0), nil)
+	if err != nil {
+		t.Fatalf("NewTerminalAPI() error = %v", err)
+	}
+
+	// No Wails runtime is running, so the call fails past the read-only
+	// check — at "application is shutting down" — rather than succeeding.
+	// That failure is what proves the guard let it through: a read-only
+	// refusal never reaches that line at all.
+	_, err = terminal.StartSession("staging", "default", "web-0", "app", 80, 24)
+	if err == nil {
+		t.Fatal("StartSession() error = nil, want a failure reaching for the (absent) Wails runtime")
+	}
+	if strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("StartSession() error = %q, an unmarked cluster must not be refused as read-only", err)
 	}
 }

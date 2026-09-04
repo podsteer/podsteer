@@ -253,12 +253,12 @@ func (m *ManagementAPI) DeleteResource(clusterID, kindGroup, kindVersion, kindKi
 
 	cluster, err := domain.NewClusterID(clusterID)
 	if err != nil {
-		return err
+		return apiError(m.logger, "DeleteResource", err)
 	}
 
 	ns, err := domain.NewNamespaceName(namespace)
 	if err != nil {
-		return err
+		return apiError(m.logger, "DeleteResource", err)
 	}
 
 	kind := domain.ResourceKind{
@@ -273,7 +273,10 @@ func (m *ManagementAPI) DeleteResource(clusterID, kindGroup, kindVersion, kindKi
 		Name:      name,
 	}
 
-	return m.management.DeleteResource(ctx, ref)
+	if err := m.management.DeleteResource(ctx, ref); err != nil {
+		return apiError(m.logger, "DeleteResource", err)
+	}
+	return nil
 }
 
 // ScaleWorkload sets the replica count for a workload.
@@ -283,15 +286,18 @@ func (m *ManagementAPI) ScaleWorkload(clusterID, kind, namespace, name string, r
 
 	id, err := domain.NewClusterID(clusterID)
 	if err != nil {
-		return err
+		return apiError(m.logger, "ScaleWorkload", err)
 	}
 
 	ns, err := domain.NewNamespaceName(namespace)
 	if err != nil {
-		return err
+		return apiError(m.logger, "ScaleWorkload", err)
 	}
 
-	return m.management.ScaleWorkload(ctx, id, domain.WorkloadKind(kind), ns, name, int32(replicas))
+	if err := m.management.ScaleWorkload(ctx, id, domain.WorkloadKind(kind), ns, name, int32(replicas)); err != nil {
+		return apiError(m.logger, "ScaleWorkload", err)
+	}
+	return nil
 }
 
 // RestartRollout triggers a rolling restart of a Deployment or StatefulSet.
@@ -301,15 +307,18 @@ func (m *ManagementAPI) RestartRollout(clusterID, kind, namespace, name string) 
 
 	id, err := domain.NewClusterID(clusterID)
 	if err != nil {
-		return err
+		return apiError(m.logger, "RestartRollout", err)
 	}
 
 	ns, err := domain.NewNamespaceName(namespace)
 	if err != nil {
-		return err
+		return apiError(m.logger, "RestartRollout", err)
 	}
 
-	return m.management.RestartRollout(ctx, id, domain.WorkloadKind(kind), ns, name)
+	if err := m.management.RestartRollout(ctx, id, domain.WorkloadKind(kind), ns, name); err != nil {
+		return apiError(m.logger, "RestartRollout", err)
+	}
+	return nil
 }
 
 // UpdateResource applies a YAML manifest to the cluster.
@@ -319,10 +328,13 @@ func (m *ManagementAPI) UpdateResource(clusterID, manifest string) error {
 
 	id, err := domain.NewClusterID(clusterID)
 	if err != nil {
-		return err
+		return apiError(m.logger, "UpdateResource", err)
 	}
 
-	return m.management.UpdateResource(ctx, id, manifest)
+	if err := m.management.UpdateResource(ctx, id, manifest); err != nil {
+		return apiError(m.logger, "UpdateResource", err)
+	}
+	return nil
 }
 
 // ExecInPod executes a command in a pod container.
@@ -335,18 +347,18 @@ func (m *ManagementAPI) ExecInPod(clusterID, namespace, podName, containerName s
 
 	id, err := domain.NewClusterID(clusterID)
 	if err != nil {
-		return "", err
+		return "", apiError(m.logger, "ExecInPod", err)
 	}
 
 	ns, err := domain.NewNamespaceName(namespace)
 	if err != nil {
-		return "", err
+		return "", apiError(m.logger, "ExecInPod", err)
 	}
 
 	var stdout, stderr bytes.Buffer
 	err = m.management.ExecInPod(ctx, id, ns, podName, containerName, command, nil, &stdout, &stderr, false)
 	if err != nil {
-		return "", err
+		return "", apiError(m.logger, "ExecInPod", err)
 	}
 
 	return stdout.String(), nil

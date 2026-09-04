@@ -43,6 +43,7 @@
   import { formatConnection, formatConnectionTitle } from '$lib/format'
   import { clusterActivity } from '$stores/activity.svelte'
   import { groupKey, organisation } from '$stores/organisation.svelte'
+  import { groupBgClass } from '$lib/groupColour'
   import { workspace } from '$stores/workspace.svelte'
   import {
     Server,
@@ -241,6 +242,9 @@
       const at = organisation.placementOf(clusterId)
       if (at.project !== projectId || at.group !== groupId) {
         organisation.place(clusterId, projectId, groupId)
+        // The destination group's read-only setting may differ from the
+        // group this cluster just left — see workspace.syncReadOnly.
+        void workspace.syncReadOnly(clusterId)
       }
     }
     endDrag()
@@ -528,6 +532,18 @@
                                    transition-all duration-150 hover:border-outline hover:shadow-sm
                                    {open ? 'border-primary/30 bg-primary/[0.03]' : ''}"
                           >
+                            <!-- The group's own colour, an edge rather than a
+                                 fill: it marks which group this cluster is
+                                 in without competing with the reachability
+                                 and open-state colours already on the card. -->
+                            {#if group.settings.colour}
+                              <span
+                                class="absolute inset-y-0 left-0 w-1 rounded-l-sm {groupBgClass(
+                                  group.settings.colour,
+                                )}"
+                                aria-hidden="true"
+                              ></span>
+                            {/if}
                             <div class="mb-3 flex gap-3">
                             <div class="grid size-9 shrink-0 place-items-center rounded-sm
                                         {open ? 'bg-primary/10' : 'bg-surface-container-high'}">
@@ -566,6 +582,16 @@
                                   <span class="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px]
                                                font-medium text-primary">
                                     open
+                                  </span>
+                                {/if}
+                                {#if group.settings.environment}
+                                  <span
+                                    class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium
+                                           {group.settings.environment === 'production'
+                                      ? 'bg-error/15 text-error'
+                                      : 'bg-surface-container-high text-on-surface-variant'}"
+                                  >
+                                    {group.settings.environment}
                                   </span>
                                 {/if}
                               </div>

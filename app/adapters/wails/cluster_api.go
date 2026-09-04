@@ -234,6 +234,30 @@ func (c *ClusterAPI) AddKubeconfig(raw string) (KubeconfigMerge, error) {
 	return toKubeconfigMerge(merge), nil
 }
 
+// SetReadOnly marks a connected cluster read-only in PodSteer, or lifts the
+// mark.
+//
+// A LOCAL GUARD, NOT A PERMISSION. The frontend calls this right after a
+// successful Connect and again whenever the group setting or the cluster's
+// group changes, and every write in ManagementService refuses while it is
+// set — but the flag lives here, in this process's memory, set by this
+// client. RBAC is what actually decides what the credentials behind this
+// connection may do; see SECURITY.md, "What PodSteer can do".
+func (c *ClusterAPI) SetReadOnly(clusterID string, readOnly bool) error {
+	ctx, cancel := c.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(c.logger, "SetReadOnly", err)
+	}
+
+	if err := c.clusters.SetReadOnly(ctx, id, readOnly); err != nil {
+		return apiError(c.logger, "SetReadOnly", err)
+	}
+	return nil
+}
+
 // ReadKubeconfigFile opens a native file picker and returns what was chosen.
 //
 // The file is read HERE rather than handed to the frontend as a path, because

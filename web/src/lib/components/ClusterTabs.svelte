@@ -40,11 +40,13 @@
 <script lang="ts">
   import { isMac, accelerator } from '$lib/platform'
   import { workspace } from '$stores/workspace.svelte'
+  import { organisation } from '$stores/organisation.svelte'
+  import { groupBgClass } from '$lib/groupColour'
   import { preferences, THEME_LABELS } from '$stores/preferences.svelte'
   import { windowState } from '$stores/windowState.svelte'
   import SettingsDialog from './SettingsDialog.svelte'
   import UpdateBadge from './UpdateBadge.svelte'
-  import { Home, Server, Plus, X, RefreshCw, Moon, Sun, Monitor, Settings } from '@lucide/svelte'
+  import { Home, Server, Plus, X, RefreshCw, Moon, Sun, Monitor, Settings, Lock } from '@lucide/svelte'
 
   let settingsOpen = $state(false)
 
@@ -123,6 +125,8 @@
   <div class="flex min-w-0 flex-1 items-stretch gap-0.5 overflow-x-auto">
     {#each workspace.sessions as session (session.cluster.id)}
       {@const active = session.cluster.id === workspace.activeClusterId}
+      {@const placement = organisation.placementOf(session.cluster.id)}
+      {@const settings = organisation.settingsFor(placement.project, placement.group)}
 
       <div class="group relative flex items-center" role="presentation">
         <button
@@ -130,10 +134,14 @@
           onclick={() => workspace.focus(session.cluster.id)}
           title="{session.cluster.id} — {session.cluster.host} — {session.cluster.isReachable
             ? 'reachable'
-            : 'not reachable'}"
+            : 'not reachable'}{settings.environment ? ` — ${settings.environment}` : ''}{settings.readOnly
+            ? ' — read-only'
+            : ''}"
           aria-label="{session.cluster.id}, {session.cluster.isReachable
             ? 'reachable'
-            : 'not reachable'}"
+            : 'not reachable'}{settings.environment
+            ? `, ${settings.environment}`
+            : ''}{settings.readOnly ? ', read-only' : ''}"
           aria-current={active ? 'page' : undefined}
           class="no-drag flex h-full max-w-52 items-center gap-2 pl-3 pr-7
                  text-label-medium transition-all duration-150 ease-standard
@@ -157,7 +165,38 @@
             class="size-1.5 shrink-0 rounded-full {toneFor(session.cluster.isReachable)}"
             aria-hidden="true"
           ></span>
+          <!-- The group's own colour, a second dot rather than an underline:
+               the underline already means "this tab is active", and reusing
+               it for something unrelated would make the active tab of an
+               uncoloured group look like it lost its colour rather than
+               never having had one. -->
+          {#if settings.colour}
+            <span
+              class="size-1.5 shrink-0 rounded-full {groupBgClass(settings.colour)}"
+              aria-hidden="true"
+            ></span>
+          {/if}
           <span class="truncate">{session.cluster.id}</span>
+          <!-- Only production gets a chip here — every other environment is
+               colour alone, which is what keeps a tab that has to fit eight
+               of them on a laptop screen from growing a label per cluster.
+               Production earns the exception: it is the one guardrail an
+               operator must be able to read without opening the picker. -->
+          {#if settings.environment === 'production'}
+            <span
+              class="shrink-0 rounded-full bg-error/15 px-1 py-px text-[9px] font-semibold
+                     tracking-wide text-error uppercase"
+            >
+              prod
+            </span>
+          {/if}
+          {#if settings.readOnly}
+            <Lock
+              class="size-3 shrink-0 {active ? 'text-on-surface-variant' : 'text-on-surface-variant/60'}"
+              strokeWidth={2}
+              aria-hidden="true"
+            />
+          {/if}
         </button>
 
         <!-- Close button -->

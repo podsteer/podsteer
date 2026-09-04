@@ -42,3 +42,26 @@ func TestClassifyErrorPrefersThePluginOverTheTransport(t *testing.T) {
 		t.Fatalf("code %q, want %q", code, CodeCredentialPlugin)
 	}
 }
+
+// TestClassifyErrorReadOnlyIsNotForbidden pins the reason CodeReadOnly is its
+// own code: CodeForbidden's message sends somebody to a cluster administrator,
+// and a read-only refusal has no administrator to ask — the fix is under
+// Organise, on this machine, so the two must never collapse into one code.
+func TestClassifyErrorReadOnlyIsNotForbidden(t *testing.T) {
+	err := fmt.Errorf("deleting resource: cluster %q: %w", "prod", ports.ErrReadOnly)
+
+	code, message := classifyError(err)
+
+	if code != CodeReadOnly {
+		t.Fatalf("code %q, want %q", code, CodeReadOnly)
+	}
+	if code == CodeForbidden {
+		t.Fatal("a read-only refusal must never classify as forbidden")
+	}
+	if !strings.Contains(message, "read-only") {
+		t.Fatalf("message does not say the cluster is read-only: %q", message)
+	}
+	if !strings.Contains(message, "Organise") {
+		t.Fatalf("message does not point at where to change it: %q", message)
+	}
+}

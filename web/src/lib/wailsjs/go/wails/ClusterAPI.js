@@ -41,3 +41,7 @@ export function PreviewKubeconfig(arg1) {
 export function ReadKubeconfigFile() {
   return window['go']['wails']['ClusterAPI']['ReadKubeconfigFile']();
 }
+
+export function SetReadOnly(arg1, arg2) {
+  return window['go']['wails']['ClusterAPI']['SetReadOnly'](arg1, arg2);
+}

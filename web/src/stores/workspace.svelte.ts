@@ -15,11 +15,13 @@ import {
   disconnect,
   listClusters,
   onClusterUnreachable,
+  setReadOnly,
   type Cluster,
   type Unsubscribe,
 } from '$lib/api/client'
 import { ApiError, toApiError } from '$lib/api/errors'
 import { clusterActivity } from './activity.svelte'
+import { organisation } from './organisation.svelte'
 import { ClusterSession, type LoadStatus } from './session.svelte'
 
 class Workspace {
@@ -66,6 +68,12 @@ class Workspace {
       const open = await connections()
       for (const cluster of open) {
         this.#adopt(cluster)
+        // Reassert rather than trust the backend's own memory. This path is
+        // taken during a `wails dev` hot reload, where the Go process (and
+        // therefore its Registry) outlives the page — see this function's
+        // own doc comment — and the organisation may have changed on disk
+        // since that connection's flag was last set.
+        void this.syncReadOnly(cluster.id)
       }
       if (!this.activeClusterId && this.sessions.length > 0) {
         this.activeClusterId = this.sessions[0].cluster.id
@@ -122,6 +130,14 @@ class Workspace {
       // Mark it open in the picker without re-reading the kubeconfig.
       this.clusters = this.clusters.map((entry) => (entry.id === cluster.id ? cluster : entry))
 
+      // The backend's read-only policy starts empty on every connect — see
+      // application.Registry.Close — so the client re-asserts whatever the
+      // cluster's CURRENT group says right away, rather than leaving a
+      // production cluster whose group is marked read-only briefly
+      // unguarded server-side between Connect returning and this call
+      // landing.
+      void this.syncReadOnly(cluster.id)
+
       await session.initialise()
     } catch (cause) {
       this.error = toApiError(cause)
@@ -165,6 +181,48 @@ class Workspace {
   /** Returns to the cluster picker without closing anything. */
   showPicker = (): void => {
     this.activeClusterId = null
+  }
+
+  /**
+   * Pushes one open cluster's CURRENT read-only setting to the backend.
+   *
+   * This is the client re-asserting its own local guard (CLAUDE.md's
+   * read-only section) — never a permission — so a failure here is logged
+   * and swallowed rather than surfaced: the frontend's own disabling of
+   * write controls, which reads `organisation` directly and does not depend
+   * on this call succeeding, is what actually protects an operator in the
+   * moment. A cluster that is not open is skipped rather than erroring, so a
+   * stale call racing a closed tab does nothing rather than reopening one.
+   */
+  syncReadOnly = async (clusterId: string): Promise<void> => {
+    if (!this.openIds.has(clusterId)) return
+
+    const { project, group } = organisation.placementOf(clusterId)
+    const { readOnly } = organisation.settingsFor(project, group)
+
+    try {
+      await setReadOnly(clusterId, readOnly)
+    } catch (cause) {
+      console.error(`podsteer: could not sync the read-only policy for ${clusterId}`, cause)
+    }
+  }
+
+  /**
+   * Re-syncs every open cluster's read-only setting.
+   *
+   * Called after anything in `organisation` that could have changed what any
+   * open cluster's group says — a group's own settings, which cluster is in
+   * which group, or a group moving to another project — rather than after
+   * each specific mutation individually. Every one of those is an
+   * infrequent, operator-driven edit in OrganiseDialog or the picker, so
+   * resyncing the whole (typically small) set of open tabs costs nothing
+   * worth optimising and cannot miss a case the way tracking each mutation
+   * by hand could.
+   */
+  syncAllReadOnly = (): void => {
+    for (const session of this.sessions) {
+      void this.syncReadOnly(session.cluster.id)
+    }
   }
 
   /**

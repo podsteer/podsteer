@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"io"
 	"maps"
 	"sync"
 	"testing"
@@ -349,4 +350,65 @@ func (f *fakeKubeconfig) Merge(_ context.Context, raw string) (domain.Kubeconfig
 	}
 	f.merged = raw
 	return f.merge, nil
+}
+
+// fakeManagementPort is a stand-in for the adapter ManagementService writes
+// through. It records which method was called and on what cluster, so a test
+// can assert a refused write never reached the port at all — the property
+// that actually matters here, since a call that merely RETURNED an error
+// after doing the write would be too late.
+type fakeManagementPort struct {
+	mu    sync.Mutex
+	calls []string
+	err   error
+}
+
+var _ ports.ManagementPort = (*fakeManagementPort)(nil)
+
+func (f *fakeManagementPort) record(call string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, call)
+}
+
+// recordedCalls returns what reached the port, in order.
+func (f *fakeManagementPort) recordedCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+func (f *fakeManagementPort) StreamLogs(context.Context, domain.ClusterID, domain.NamespaceName, string, string, bool, int64, chan<- string) error {
+	f.record("StreamLogs")
+	return f.err
+}
+
+func (f *fakeManagementPort) DeleteResource(context.Context, domain.ResourceRef) error {
+	f.record("DeleteResource")
+	return f.err
+}
+
+func (f *fakeManagementPort) ScaleWorkload(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, int32) error {
+	f.record("ScaleWorkload")
+	return f.err
+}
+
+func (f *fakeManagementPort) RestartRollout(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string) error {
+	f.record("RestartRollout")
+	return f.err
+}
+
+func (f *fakeManagementPort) UpdateResource(context.Context, domain.ClusterID, string) error {
+	f.record("UpdateResource")
+	return f.err
+}
+
+func (f *fakeManagementPort) ExecInPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, bool) error {
+	f.record("ExecInPod")
+	return f.err
+}
+
+func (f *fakeManagementPort) ExecInPodWithTTY(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, ports.TerminalSizeQueue) error {
+	f.record("ExecInPodWithTTY")
+	return f.err
 }

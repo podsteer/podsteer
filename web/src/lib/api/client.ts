@@ -21,6 +21,7 @@ import {
   ListNodes as bindListNodes,
   PreviewKubeconfig as bindPreviewKubeconfig,
   ReadKubeconfigFile as bindReadKubeconfigFile,
+  SetReadOnly as bindSetReadOnly,
 } from '$lib/wailsjs/go/wails/ClusterAPI'
 import {
   GetManifest as bindGetManifest,
@@ -215,6 +216,19 @@ export function connect(clusterId: string): Promise<Cluster> {
 /** Closes a cluster, for when its tab is closed. */
 export function disconnect(clusterId: string): Promise<void> {
   return call(() => bindDisconnect(clusterId))
+}
+
+/**
+ * Marks a connected cluster read-only in PodSteer, or lifts the mark.
+ *
+ * A LOCAL GUARD, NOT A PERMISSION — the flag lives in this process's memory
+ * and every write PodSteer makes checks it, but RBAC is what actually decides
+ * what the underlying credentials may do. Call this right after a successful
+ * {@link connect}, and again whenever the group setting or the cluster's
+ * group changes (see stores/organisation.svelte.ts and workspace.svelte.ts).
+ */
+export function setReadOnly(clusterId: string, readOnly: boolean): Promise<void> {
+  return call(() => bindSetReadOnly(clusterId, readOnly))
 }
 
 /** Returns the open clusters, in the order they were opened. */

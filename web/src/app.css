@@ -110,6 +110,22 @@
   --code-comment: #8f8a97;
   --code-punctuation: #6f6a77;
   --code-meta: #efb8c8;
+
+  /* Group colours: a fixed, six-name palette an operator picks from in
+   * OrganiseDialog to mark a group — a colour bar on its cluster cards, a
+   * dot on its tab. Themed like the rest of the scheme (unlike the gauge
+   * colours above, which stay constant because they ARE the reading) because
+   * these are chrome an operator recognises by hue, and a hue tuned for a
+   * dark surface routinely reads as a different colour on a light one. Kept
+   * visibly distinct from `--primary` on purpose: a "blue" group must never
+   * be mistaken for the open-tab/selection colour that already means
+   * something else throughout this interface. */
+  --group-red: #f28b82;
+  --group-orange: #fcad70;
+  --group-yellow: #fdd663;
+  --group-green: #81c995;
+  --group-blue: #7fcfff;
+  --group-purple: #d7aefb;
 }
 
 /* ---- Google Blue scheme, light ------------------------------------------- */
@@ -168,6 +184,15 @@
   --code-comment: #6b6773;
   --code-punctuation: #8c8794;
   --code-meta: #7d5260;
+
+  /* Same six names, retuned for a pale surface — see the dark block above
+   * for why these exist and why they are themed rather than fixed. */
+  --group-red: #c5221f;
+  --group-orange: #b06000;
+  --group-yellow: #976900;
+  --group-green: #188038;
+  --group-blue: #0b7fab;
+  --group-purple: #8430ce;
 }
 
 /*
@@ -227,6 +252,13 @@
   --color-inverse-surface: var(--inverse-surface);
   --color-inverse-on-surface: var(--inverse-on-surface);
   --color-inverse-primary: var(--inverse-primary);
+
+  --color-group-red: var(--group-red);
+  --color-group-orange: var(--group-orange);
+  --color-group-yellow: var(--group-yellow);
+  --color-group-green: var(--group-green);
+  --color-group-blue: var(--group-blue);
+  --color-group-purple: var(--group-purple);
 }
 
 @theme {

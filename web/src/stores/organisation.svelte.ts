@@ -27,8 +27,57 @@ export interface Project {
   name: string
 }
 
+/**
+ * What environment a group represents, for colour-coding and the production
+ * guardrails (a banner on a write dialog, a name-typed confirmation). Empty
+ * string means unset — deliberately not defaulted to anything, because
+ * guessing "production" would be as wrong as guessing "development", and
+ * guessing wrong here is worse than saying nothing: an unmarked group that
+ * silently behaved like production would train someone to distrust the
+ * marking, and one that behaved like development would fail to guard the
+ * cluster it was protecting.
+ */
+export type Environment = 'production' | 'staging' | 'development' | 'other' | ''
+
+/** Every choice the environment select offers, in the order it offers them. */
+export const ENVIRONMENTS: Array<{ value: Environment; label: string }> = [
+  { value: '', label: 'Not set' },
+  { value: 'production', label: 'Production' },
+  { value: 'staging', label: 'Staging' },
+  { value: 'development', label: 'Development' },
+  { value: 'other', label: 'Other' },
+]
+
+/**
+ * The fixed palette a group's colour is chosen from.
+ *
+ * Named tokens, not free hex: a colour picker turns "what does blue mean on
+ * this cluster" into a question with sixty answers across an organisation,
+ * where six tokens keep it into one everyone can learn. The values live
+ * beside the Material tokens in app.css, themed for light and dark.
+ */
+export const GROUP_COLOURS = ['red', 'orange', 'yellow', 'green', 'blue', 'purple'] as const
+export type GroupColour = (typeof GROUP_COLOURS)[number]
+
+/**
+ * A group's guardrail settings: what it is, how it is marked, and whether
+ * PodSteer will act on it.
+ *
+ * One shape for both kinds of group — see `settingsFor` and `setGroupSettings`
+ * for how a project's Default group (which has no `Group` record of its own)
+ * and an operator-created one are read and written through it alike.
+ */
+export interface GroupSettings {
+  environment: Environment
+  colour: GroupColour | ''
+  readOnly: boolean
+}
+
+/** What an unmarked group's settings are — every field at its "not set". */
+const NO_GROUP_SETTINGS: GroupSettings = { environment: '', colour: '', readOnly: false }
+
 /** One operator-created group, always inside exactly one project. */
-export interface Group {
+export interface Group extends GroupSettings {
   id: string
   name: string
   projectId: string
@@ -54,6 +103,7 @@ export interface GroupSection {
   isDefault: boolean
   projectId: string
   clusters: Cluster[]
+  settings: GroupSettings
 }
 
 /** One project's block in the picker. */
@@ -94,6 +144,13 @@ interface PersistedShape {
   defaultProjectName?: string
   /** Project id -> that project's default group name, where changed. */
   defaultGroupNames?: Record<string, string>
+  /**
+   * Project id -> that project's default group's guardrail settings, where
+   * changed. The same "changed" shape as defaultGroupNames, and for the same
+   * reason: the Default group has no Group record of its own to carry them
+   * on, since every project's Default shares DEFAULT_GROUP_ID.
+   */
+  defaultGroupSettings?: Record<string, Partial<GroupSettings>>
   /** Cluster context name -> where it sits. Absent means both Defaults. */
   assignments: Record<string, Placement>
   /** Project and group ids the operator collapsed. Absent means expanded. */
@@ -128,6 +185,8 @@ class Organisation {
    */
   defaultProjectName = $state<string>(DEFAULT_PROJECT_NAME)
   defaultGroupNames = $state<Record<string, string>>({})
+  /** Project id -> that project's default group's guardrail settings. */
+  defaultGroupSettings = $state<Record<string, GroupSettings>>({})
   assignments = $state<Record<string, Placement>>(DEFAULTS.assignments)
 
   /**
@@ -180,12 +239,69 @@ class Organisation {
   defaultGroupNameFor = (projectId: string): string =>
     this.defaultGroupNames[projectId] ?? DEFAULT_GROUP_NAME
 
+  /**
+   * A group's guardrail settings, repaired the same way `placementOf` repairs
+   * a placement: a group that no longer exists reports the unmarked default
+   * rather than throwing, since a stale caller — a session for a cluster
+   * whose group was deleted a moment ago — is an ordinary race, not a bug.
+   *
+   * The Default group has no `Group` record of its own to hold these on,
+   * because DEFAULT_GROUP_ID is shared by every project's Default — the same
+   * reason `defaultGroupNameFor` reads a side table instead of a field.
+   */
+  settingsFor = (projectId: string, groupId: string): GroupSettings => {
+    if (groupId === DEFAULT_GROUP_ID) {
+      return this.defaultGroupSettings[projectId] ?? NO_GROUP_SETTINGS
+    }
+    const group = this.groups.find(
+      (candidate) => candidate.id === groupId && candidate.projectId === projectId,
+    )
+    return group
+      ? { environment: group.environment, colour: group.colour, readOnly: group.readOnly }
+      : NO_GROUP_SETTINGS
+  }
+
+  /**
+   * Changes one or more of a group's guardrail settings, leaving the rest.
+   *
+   * A custom group's settings live directly on its `Group` record, so they
+   * travel for free when `moveGroupToProject` reparents it — the same way its
+   * name already does. The Default group's live in `defaultGroupSettings`,
+   * keyed by project, mirroring `defaultGroupNames`.
+   */
+  setGroupSettings = (projectId: string, groupId: string, patch: Partial<GroupSettings>): void => {
+    if (groupId === DEFAULT_GROUP_ID) {
+      const current = this.defaultGroupSettings[projectId] ?? NO_GROUP_SETTINGS
+      this.defaultGroupSettings = {
+        ...this.defaultGroupSettings,
+        [projectId]: { ...current, ...patch },
+      }
+    } else {
+      this.groups = this.groups.map((candidate) =>
+        candidate.id === groupId ? { ...candidate, ...patch } : candidate,
+      )
+    }
+    this.#save()
+  }
+
   /** Every group in a project, its Default first. */
-  groupsIn = (projectId: string): Array<{ id: string; name: string; isDefault: boolean }> => [
-    { id: DEFAULT_GROUP_ID, name: this.defaultGroupNameFor(projectId), isDefault: true },
+  groupsIn = (
+    projectId: string,
+  ): Array<{ id: string; name: string; isDefault: boolean; settings: GroupSettings }> => [
+    {
+      id: DEFAULT_GROUP_ID,
+      name: this.defaultGroupNameFor(projectId),
+      isDefault: true,
+      settings: this.settingsFor(projectId, DEFAULT_GROUP_ID),
+    },
     ...this.groups
       .filter((group) => group.projectId === projectId)
-      .map((group) => ({ id: group.id, name: group.name, isDefault: false })),
+      .map((group) => ({
+        id: group.id,
+        name: group.name,
+        isDefault: false,
+        settings: this.settingsFor(projectId, group.id),
+      })),
   ]
 
   /** Every project, the Default first, in the operator's order. */
@@ -226,6 +342,7 @@ class Organisation {
             isDefault: group.isDefault,
             projectId: project.id,
             clusters: members,
+            settings: group.settings,
           })
         }
       }
@@ -339,6 +456,11 @@ class Organisation {
       delete names[id]
       this.defaultGroupNames = names
     }
+    if (id in this.defaultGroupSettings) {
+      const settings = { ...this.defaultGroupSettings }
+      delete settings[id]
+      this.defaultGroupSettings = settings
+    }
 
     this.#forgetCollapsed([id, groupKey(id, DEFAULT_GROUP_ID), ...orphanedKeys])
     this.#save()
@@ -351,7 +473,10 @@ class Organisation {
     const problem = this.#validateGroup(name, projectId)
     if (problem) return problem
 
-    this.groups = [...this.groups, { id: newId('group'), name: name.trim(), projectId }]
+    this.groups = [
+      ...this.groups,
+      { id: newId('group'), name: name.trim(), projectId, ...NO_GROUP_SETTINGS },
+    ]
     this.#save()
     return null
   }
@@ -577,13 +702,20 @@ class Organisation {
 
     const knownProjects = new Set(projects.map((project) => project.id))
     const groups = Array.isArray(stored.groups)
-      ? stored.groups.filter(
-          (group): group is Group =>
-            isNamedRecord(group) &&
-            typeof (group as Group).projectId === 'string' &&
-            ((group as Group).projectId === DEFAULT_PROJECT_ID ||
-              knownProjects.has((group as Group).projectId)),
-        )
+      ? stored.groups
+          .filter(
+            (group): group is Group =>
+              isNamedRecord(group) &&
+              typeof (group as Group).projectId === 'string' &&
+              ((group as Group).projectId === DEFAULT_PROJECT_ID ||
+                knownProjects.has((group as Group).projectId)),
+          )
+          // Backward-compatible read: a group persisted before guardrail
+          // settings existed carries none of these three fields, and each
+          // normalises to its "not set" value rather than being dropped —
+          // the group itself is still perfectly valid, it simply predates the
+          // feature.
+          .map((group) => ({ ...group, ...normaliseSettings(group) }))
       : []
     this.groups = groups
 
@@ -599,6 +731,16 @@ class Organisation {
         if (lives && typeof name === 'string' && name.trim()) names[projectId] = name
       }
       this.defaultGroupNames = names
+    }
+    if (stored.defaultGroupSettings && typeof stored.defaultGroupSettings === 'object') {
+      const settings: Record<string, GroupSettings> = {}
+      for (const [projectId, raw] of Object.entries(stored.defaultGroupSettings)) {
+        const lives = projectId === DEFAULT_PROJECT_ID || knownProjects.has(projectId)
+        if (lives && raw && typeof raw === 'object') settings[projectId] = normaliseSettings(raw)
+      }
+      this.defaultGroupSettings = settings
+    } else {
+      this.defaultGroupSettings = {}
     }
 
     // Placements are repaired on read by placementOf, so storage only has to
@@ -650,7 +792,11 @@ class Organisation {
     }
 
     const groups = Array.isArray(stored.groups) ? stored.groups.filter(isNamedRecord) : []
-    this.groups = groups.map((group) => ({ ...group, projectId: DEFAULT_PROJECT_ID }))
+    this.groups = groups.map((group) => ({
+      ...group,
+      projectId: DEFAULT_PROJECT_ID,
+      ...NO_GROUP_SETTINGS,
+    }))
 
     const known = new Set(groups.map((group) => group.id))
     const assignments: Record<string, Placement> = {}
@@ -683,6 +829,7 @@ class Organisation {
         groups: this.groups,
         defaultProjectName: this.defaultProjectName,
         defaultGroupNames: this.defaultGroupNames,
+        defaultGroupSettings: this.defaultGroupSettings,
         assignments: this.assignments,
         collapsed: [...this.collapsed],
       }
@@ -702,6 +849,37 @@ function isNamedRecord(value: unknown): value is { id: string; name: string } {
     typeof (value as { id?: unknown }).id === 'string' &&
     typeof (value as { name?: unknown }).name === 'string'
   )
+}
+
+function isEnvironment(value: unknown): value is Environment {
+  return (
+    value === '' ||
+    value === 'production' ||
+    value === 'staging' ||
+    value === 'development' ||
+    value === 'other'
+  )
+}
+
+function isGroupColour(value: unknown): value is GroupColour | '' {
+  return value === '' || (GROUP_COLOURS as readonly string[]).includes(value as string)
+}
+
+/**
+ * Reads a `GroupSettings` out of an arbitrary object, defaulting whatever is
+ * missing or malformed to "not set" rather than dropping the whole record.
+ *
+ * The one function both read paths for guardrail settings go through — a
+ * persisted `Group` (which carries these fields inline) and a persisted
+ * `defaultGroupSettings` entry (which is exactly this shape on its own) — so
+ * "what counts as a valid environment" is decided once.
+ */
+function normaliseSettings(raw: Partial<GroupSettings> | undefined): GroupSettings {
+  return {
+    environment: isEnvironment(raw?.environment) ? raw.environment : '',
+    colour: isGroupColour(raw?.colour) ? raw.colour : '',
+    readOnly: raw?.readOnly === true,
+  }
 }
 
 /**

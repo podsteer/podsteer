@@ -21,6 +21,7 @@
     DEFAULT_PROJECT_ID,
     organisation,
   } from '$stores/organisation.svelte'
+  import { workspace } from '$stores/workspace.svelte'
   import { Check, FolderInput } from '@lucide/svelte'
 
   interface Props {
@@ -57,6 +58,10 @@
 
   function choose(projectId: string, groupId: string): void {
     organisation.place(clusterId, projectId, groupId)
+    // The destination group's read-only setting may differ from the one this
+    // cluster just left, and if it is open in a tab right now that tab's
+    // backend policy has to follow it there — see workspace.syncReadOnly.
+    void workspace.syncReadOnly(clusterId)
     open = false
   }
 

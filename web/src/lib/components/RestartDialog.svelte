@@ -5,16 +5,24 @@
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
   import Button from './Button.svelte'
+  import { TriangleAlert } from '@lucide/svelte'
 
   interface Props {
     open: boolean
     workloadName: string | null
     workloadKind: string
+    /**
+     * The group's name, when this workload's cluster is marked production —
+     * null or undefined otherwise. Shows a banner only; a restart does not
+     * take a workload off the air the way a delete or a scale-to-zero does,
+     * so it does not gain the type-the-name gate those two do.
+     */
+    productionGroup?: string | null
     onclose: () => void
     onconfirm: () => void
   }
 
-  let { open, workloadName, workloadKind, onclose, onconfirm }: Props = $props()
+  let { open, workloadName, workloadKind, productionGroup, onclose, onconfirm }: Props = $props()
 
   /**
    * Escape closes; Enter confirms, but only where Enter meant nothing else.
@@ -71,6 +79,16 @@
     aria-label="Restart rollout"
   >
     <h2 class="text-headline-small text-on-surface">Restart {workloadKind}</h2>
+
+    {#if productionGroup}
+      <p
+        class="mt-4 flex items-start gap-2 rounded-sm border border-error/30 bg-error-container/40
+               px-3 py-2 text-body-small text-on-error-container"
+      >
+        <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
+        This cluster is in {productionGroup}, marked production.
+      </p>
+    {/if}
 
     <p class="mt-4 text-body-medium text-on-surface-variant">
       Are you sure you want to restart <strong class="text-on-surface" data-selectable>{workloadName}</strong>?

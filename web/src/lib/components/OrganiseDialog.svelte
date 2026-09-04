@@ -28,7 +28,15 @@
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
   import Button from './Button.svelte'
-  import { DEFAULT_PROJECT_ID, organisation } from '$stores/organisation.svelte'
+  import Select from './Select.svelte'
+  import {
+    DEFAULT_PROJECT_ID,
+    ENVIRONMENTS,
+    GROUP_COLOURS,
+    organisation,
+    type Environment,
+  } from '$stores/organisation.svelte'
+  import { groupBgClass, GROUP_COLOUR_LABELS } from '$lib/groupColour'
   import { workspace } from '$stores/workspace.svelte'
   import {
     ChevronUp,
@@ -39,6 +47,7 @@
     Pencil,
     Plus,
     Trash2,
+    X,
   } from '@lucide/svelte'
 
   interface Props {
@@ -147,10 +156,41 @@
     if (event.key === 'Escape') cancelRename()
   }
 
+  /**
+   * The read-only toggle's full explanation.
+   *
+   * Said in exactly these terms because "read-only" alone invites reading it
+   * as a permission PodSteer grants, which it is not: RBAC is the only thing
+   * that actually decides what these credentials may do, and this is a guard
+   * against clicking the wrong button on the right cluster, not against a
+   * credential that should not have write access at all.
+   */
+  const READ_ONLY_EXPLANATION =
+    'PodSteer will refuse to change anything in these clusters. This is a guard against your own mistakes, not a permission — RBAC still decides what your credentials may do.'
+
+  /** Changes one setting for a group, then re-pushes read-only to every open
+   * cluster: cheap, and the only way this cannot miss a cluster whose group
+   * just changed underneath it. See workspace.syncAllReadOnly. */
+  function changeGroupSettings(
+    projectId: string,
+    groupId: string,
+    patch: { environment?: Environment; colour?: (typeof GROUP_COLOURS)[number] | '' },
+  ): void {
+    organisation.setGroupSettings(projectId, groupId, patch)
+  }
+
+  function toggleReadOnly(projectId: string, groupId: string, readOnly: boolean): void {
+    organisation.setGroupSettings(projectId, groupId, { readOnly })
+    workspace.syncAllReadOnly()
+  }
+
   function remove(row: Row): void {
     if (row.kind === 'project') organisation.removeProject(row.id)
     else organisation.removeGroup(row.id)
     confirmDelete = null
+    // Whatever fell back to a Default group may now be read-only, or may
+    // have just stopped being — see workspace.syncAllReadOnly.
+    workspace.syncAllReadOnly()
   }
 
   function openMenu(row: Row, event: MouseEvent, alreadyOpen: boolean): void {
@@ -261,6 +301,9 @@
       organisation.placeProjectBefore(dragging.id, target.id)
     } else if (target.kind === 'project') {
       organisation.moveGroupToProject(dragging.id, target.id)
+      // The group's own settings travel with it, but any OPEN cluster inside
+      // it still needs the backend told — see workspace.syncAllReadOnly.
+      workspace.syncAllReadOnly()
     } else {
       organisation.placeGroupBefore(dragging.id, target.id)
     }
@@ -591,6 +634,7 @@
                             disabled={target.id === project.id}
                             onclick={() => {
                               organisation.moveGroupToProject(group.id, target.id)
+                              workspace.syncAllReadOnly()
                               closeMenu()
                             }}
                             class="state-layer flex w-full items-center gap-2.5 px-3 py-2 text-left
@@ -645,6 +689,85 @@
                     </div>
                   {/if}
                 {/if}
+              </li>
+
+              <!--
+                Guardrails, ALWAYS shown — including for the Default group,
+                which has no menu of its own to hide them in. One row per
+                group rather than behind an overflow item: an environment
+                and a read-only flag change what PodSteer will let somebody
+                do to real clusters, and that belongs where it is seen every
+                time this dialog is open, not one click deeper.
+              -->
+              <li class="mb-1 flex flex-wrap items-center gap-x-4 gap-y-1.5 py-1 pr-2 pl-9 text-body-small">
+                <div class="flex items-center gap-1.5">
+                  <span class="text-on-surface-variant/60">Environment</span>
+                  <Select
+                    label="Environment for {group.name}"
+                    accessibleName="Environment for {group.name}"
+                    value={group.settings.environment}
+                    options={ENVIRONMENTS}
+                    compact
+                    onchange={(value) =>
+                      changeGroupSettings(project.id, group.id, { environment: value as Environment })}
+                  />
+                </div>
+
+                <div
+                  role="radiogroup"
+                  aria-label="Colour for {group.name}"
+                  class="flex items-center gap-1.5"
+                >
+                  {#each GROUP_COLOURS as colour (colour)}
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={group.settings.colour === colour}
+                      aria-label={GROUP_COLOUR_LABELS[colour]}
+                      title={GROUP_COLOUR_LABELS[colour]}
+                      onclick={() => changeGroupSettings(project.id, group.id, { colour })}
+                      class="size-4 shrink-0 rounded-full {groupBgClass(colour)}
+                             ring-offset-2 ring-offset-surface-container-high transition-transform
+                             duration-100 hover:scale-110
+                             {group.settings.colour === colour ? 'ring-2 ring-on-surface' : ''}"
+                    ></button>
+                  {/each}
+                  {#if group.settings.colour}
+                    <button
+                      type="button"
+                      onclick={() => changeGroupSettings(project.id, group.id, { colour: '' })}
+                      aria-label="Clear the colour for {group.name}"
+                      title="No colour"
+                      class="state-layer grid size-4 shrink-0 place-items-center rounded-full border
+                             border-dashed border-on-surface-variant/40 text-on-surface-variant/50
+                             hover:text-on-surface-variant"
+                    >
+                      <X class="size-2.5" strokeWidth={2.5} />
+                    </button>
+                  {/if}
+                </div>
+
+                <!--
+                  "Read-only" alone would read as a permission PodSteer
+                  grants. It is not one — RBAC still decides what the
+                  credentials can do — and the full copy says so, both in the
+                  accessible name and in the tooltip, rather than only where
+                  a mouse happens to hover.
+                -->
+                <label
+                  class="ml-auto flex cursor-pointer items-center gap-1.5 text-on-surface-variant"
+                  title={READ_ONLY_EXPLANATION}
+                >
+                  <input
+                    type="checkbox"
+                    checked={group.settings.readOnly}
+                    onchange={(event) =>
+                      toggleReadOnly(project.id, group.id, event.currentTarget.checked)}
+                    aria-label="Read-only for {group.name}: {READ_ONLY_EXPLANATION}"
+                    class="size-3.5 accent-primary"
+                  />
+                  Read-only
+                </label>
               </li>
             {/each}
 

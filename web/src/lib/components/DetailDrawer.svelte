@@ -29,6 +29,7 @@
   import { withoutManagedFields } from '$lib/manifest'
   import { gitOpsOwner, revertWarning } from '$lib/gitops'
   import GitOpsBadge from './GitOpsBadge.svelte'
+  import { organisation } from '$stores/organisation.svelte'
   import {
     preferences,
     detailWidthBounds,
@@ -112,6 +113,33 @@
   const isSecret = $derived(session.selectedKindId === 'core/v1/secrets')
 
   /**
+   * The guardrails for the group this cluster sits in.
+   *
+   * Read fresh on every access rather than cached on connect, because an
+   * operator can change a group's environment or read-only flag in Organise
+   * while a tab for one of its clusters is sitting open right here — the
+   * banner and the disabled controls below have to follow that immediately,
+   * not on the next reconnect.
+   */
+  const groupPlacement = $derived(organisation.placementOf(session.cluster.id))
+  const groupName = $derived(
+    organisation
+      .groupsIn(groupPlacement.project)
+      .find((group) => group.id === groupPlacement.group)?.name ?? 'Default',
+  )
+  const groupSettings = $derived(
+    organisation.settingsFor(groupPlacement.project, groupPlacement.group),
+  )
+  const isProduction = $derived(groupSettings.environment === 'production')
+  /** Non-null exactly when the production banner below should show. */
+  const productionGroup = $derived(isProduction ? groupName : null)
+  const isReadOnly = $derived(groupSettings.readOnly)
+  // Matches the backend's own message (see app/adapters/wails/errors.go's
+  // CodeReadOnly and Terminal.svelte's READ_ONLY_REASON) so an operator sees
+  // one sentence for this, however they reach it.
+  const readOnlyReason = 'This cluster is marked read-only in PodSteer. Change that under Organise.'
+
+  /**
    * The manifest as shown, which is not always the manifest as fetched.
    *
    * Filtered here rather than in the Go adapter so the toggle is instant and
@@ -161,16 +189,18 @@
     session.selectedKindId === 'core/v1/secrets' && !session.secretsRevealed && !!session.manifest,
   )
 
-  const canEdit = $derived(!!session.manifest && !isEvent && !secretsHidden)
+  const canEdit = $derived(!!session.manifest && !isEvent && !secretsHidden && !isReadOnly)
 
   const editHint = $derived(
-    isEvent
-      ? 'An event is a record of something that happened — there is nothing to change'
-      : secretsHidden
-        ? 'Reveal the values first — saving now would overwrite them with their placeholders'
-        : session.manifest
-          ? 'Edit YAML'
-          : 'Nothing loaded yet',
+    isReadOnly
+      ? readOnlyReason
+      : isEvent
+        ? 'An event is a record of something that happened — there is nothing to change'
+        : secretsHidden
+          ? 'Reveal the values first — saving now would overwrite them with their placeholders'
+          : session.manifest
+            ? 'Edit YAML'
+            : 'Nothing loaded yet',
   )
 
   /**
@@ -624,6 +654,24 @@
   {/if}
 {/snippet}
 
+<!--
+  The one-line warning every write dialog shows on a production cluster —
+  see CLAUDE.md, "Where the environment shows". The YAML tab has no dialog
+  of its own (editing is a mode of the pane, not a modal), so this is where
+  the same fact reaches an operator about to press Apply.
+-->
+{#snippet productionBanner()}
+  {#if productionGroup}
+    <p
+      class="flex w-full items-start gap-2 rounded-sm border border-error/30 bg-error-container/40
+             px-3 py-2 text-body-small text-on-error-container"
+    >
+      <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
+      This cluster is in {productionGroup}, marked production.
+    </p>
+  {/if}
+{/snippet}
+
 {#snippet logsSurface()}
   <!--
     KEYED ON THE WHOLE IDENTITY, because both panes attach on mount and
@@ -687,6 +735,7 @@
       podName={selectedPod.name}
       containerName={selectedPod.containers?.[0]?.name ?? ''}
       containers={selectedPod.containers?.map((c) => c.name) ?? []}
+      readOnly={isReadOnly}
       onmaximize={maximized === 'terminal' ? undefined : () => (maximized = 'terminal')}
     />
     {:else if isWorkloadWithLogs && workloadPods.length > 0}
@@ -696,6 +745,7 @@
       podName={workloadPods[0].name}
       containerName={workloadPods[0].containers?.[0]?.name ?? ''}
       containers={workloadPods[0].containers?.map((c: any) => c.name) ?? []}
+      readOnly={isReadOnly}
       onmaximize={maximized === 'terminal' ? undefined : () => (maximized = 'terminal')}
     />
     {/if}
@@ -959,15 +1009,24 @@
       </div>
 
       <!-- Action buttons -->
+      <!-- NEVER HIDDEN FOR READ-ONLY. A disabled button with a reason is a
+           feature somebody can find and understand; a missing one reads as a
+           feature that does not exist. See CLAUDE.md's read-only section. -->
+      {#if isReadOnly}
+        <p id="drawer-readonly-hint" class="sr-only">{readOnlyReason}</p>
+      {/if}
       <div class="flex items-center gap-0.5">
         {#if isRestartable}
           <button
             type="button"
             onclick={() => (restartDialogOpen = true)}
+            disabled={isReadOnly}
             aria-label="Restart rollout"
-            title="Restart rollout"
+            aria-describedby={isReadOnly ? 'drawer-readonly-hint' : undefined}
+            title={isReadOnly ? readOnlyReason : 'Restart rollout'}
             class="state-layer grid size-8 shrink-0 place-items-center rounded-full
-                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
+                   disabled:pointer-events-none disabled:opacity-38"
           >
             <RotateCcw class="size-4" strokeWidth={1.8} />
           </button>
@@ -977,10 +1036,13 @@
           <button
             type="button"
             onclick={() => (scaleDialogOpen = true)}
+            disabled={isReadOnly}
             aria-label="Scale"
-            title="Scale replicas"
+            aria-describedby={isReadOnly ? 'drawer-readonly-hint' : undefined}
+            title={isReadOnly ? readOnlyReason : 'Scale replicas'}
             class="state-layer grid size-8 shrink-0 place-items-center rounded-full
-                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
+                   disabled:pointer-events-none disabled:opacity-38"
           >
             <Scale class="size-4" strokeWidth={1.8} />
           </button>
@@ -1000,10 +1062,13 @@
         <button
           type="button"
           onclick={() => (deleteDialogOpen = true)}
+          disabled={isReadOnly}
           aria-label="Delete"
-          title="Delete resource"
+          aria-describedby={isReadOnly ? 'drawer-readonly-hint' : undefined}
+          title={isReadOnly ? readOnlyReason : 'Delete resource'}
           class="state-layer grid size-8 shrink-0 place-items-center rounded-full
-                 text-on-surface-variant transition-colors duration-100 hover:bg-error/10 hover:text-error"
+                 text-on-surface-variant transition-colors duration-100 hover:bg-error/10 hover:text-error
+                 disabled:pointer-events-none disabled:opacity-38"
         >
           <Trash2 class="size-4" strokeWidth={1.8} />
         </button>
@@ -1231,10 +1296,11 @@
         class="flex shrink-0 flex-col gap-3 border-t border-outline-variant/60
                bg-surface-container-low px-4 py-3"
       >
+        {@render productionBanner()}
         {@render revertNotice()}
         <div class="flex items-center justify-end gap-3">
           <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
-          <Button variant="filled" onclick={applyEdit}>Apply</Button>
+          <Button variant="filled" disabled={isReadOnly} onclick={applyEdit}>Apply</Button>
         </div>
       </div>
     {/if}
@@ -1245,6 +1311,7 @@
     open={deleteDialogOpen}
     resourceName={session.selectedName}
     resourceKind={session.selectedKind?.singular ?? 'resource'}
+    {productionGroup}
     onclose={() => (deleteDialogOpen = false)}
     onconfirm={handleDelete}
   />
@@ -1253,6 +1320,8 @@
     <ScaleDialog
       open={scaleDialogOpen}
       currentReplicas={selectedWorkload.desired}
+      workloadName={selectedWorkload.name}
+      {productionGroup}
       onclose={() => (scaleDialogOpen = false)}
       onconfirm={handleScale}
     />
@@ -1272,9 +1341,10 @@
 
     {#snippet footer()}
       {#if editing}
+        {@render productionBanner()}
         {@render revertNotice()}
         <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
-        <Button variant="filled" onclick={applyEdit}>Apply</Button>
+        <Button variant="filled" disabled={isReadOnly} onclick={applyEdit}>Apply</Button>
       {/if}
     {/snippet}
   </PaneDialog>
@@ -1317,6 +1387,7 @@
       open={restartDialogOpen}
       workloadName={selectedWorkload.name}
       workloadKind={session.selectedKind?.singular ?? 'workload'}
+      {productionGroup}
       onclose={() => (restartDialogOpen = false)}
       onconfirm={async () => {
         restartDialogOpen = false
