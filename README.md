@@ -138,6 +138,32 @@ complaint. Downloaded release artefacts are a different matter — see
 
 &nbsp;
 
+## Asking about your cluster from a coding agent
+
+The same binary is a [Model Context Protocol](https://modelcontextprotocol.io)
+server, so the agent you already use can read your clusters through PodSteer:
+
+```sh
+podsteer mcp
+```
+
+Point your agent's MCP configuration at that command — it starts the server
+itself and talks to it over stdin and stdout. No port is opened, nothing is
+served over HTTP, and nothing PodSteer operates is contacted.
+
+Every tool is **read-only**: lists, manifests, bounded log reads, events, the
+cluster and pod assessments, the dependency map and the RBAC reviews. There is
+no delete, scale, apply, exec or port-forward, and no tool that reveals a
+Secret's values. It reads your own kubeconfig with your own credentials, so it
+can see exactly what your account can see and nothing more — a refusal comes
+back as a refusal rather than as an empty list.
+
+&nbsp;
+
+🔝 [back to top](#podsteer)
+
+&nbsp;
+
 ## Architecture
 
 Hexagonal (ports and adapters) with a domain-driven core. The whole point of

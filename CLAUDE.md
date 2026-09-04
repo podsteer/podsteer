@@ -20,6 +20,7 @@ app/
 ├── adapters/
 │   ├── k8s/        client-go + cli-runtime; satisfies the Kubernetes ports
 │   ├── wails/      bound structs and DTOs; the frontend API contract
+│   ├── mcp/        read-only tools for a coding agent, over stdio
 │   └── assets/     embeds the built frontend
 └── config/         environment-driven configuration
 ```
@@ -826,6 +827,15 @@ its working directory set to the project root and no package argument
 The root file is a three-line shim; the real entry point is `app/cmd/main.go`,
 which is `package cmd` for the same reason.
 
+That is also why `cmd.Main` reads its arguments the way it does. Wails
+generates bindings by compiling and RUNNING this binary with no arguments of
+its own, so **the argument-free path must always be the window** — a
+subcommand is additive and is reached only when the first argument names it.
+`route` is split out of `dispatch` precisely so `main_test.go` can assert that
+without starting a window, which is the one thing a test of this path cannot
+do. Anything that put a flag, a prompt or a usage message in front of a bare
+launch would take `wails build`, `wails dev` and `make bindings` down with it.
+
 **Vite builds into `app/adapters/assets/dist`.** Go's `//go:embed` cannot
 reference a parent directory, so the bundle has to land beside the package that
 embeds it. Frontend *source* stays in `web/`; only build output crosses over.
@@ -1161,6 +1171,11 @@ The local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`, plus whatever
 plus, since v0.2.0, `api.github.com` for the update check, and nothing else.
 No telemetry, no account, and still no network access from the webview (see
 the CSP in `web/index.html`).
+
+**`podsteer mcp` adds nothing to that list**, and the section above says why:
+it speaks to its parent process over stdio and to the same API servers this
+one does. A change that gave it a listener, or any other transport, would be a
+change to this list and needs to be argued for here.
 
 The webview's own policy is tightened at BUILD time, not in `index.html`:
 `connect-src 'self' ws: wss:` is what Vite's hot reload needs, and a bare
@@ -1529,6 +1544,79 @@ between the operator and the tool they installed. There is no PodSteer service
 in that path, which is what keeps this consistent with the no-account,
 no-telemetry commitment — putting one there would be a different decision
 needing its own record.
+
+## The MCP server is a subcommand, it is local, and it only reads
+
+`podsteer mcp` (`app/adapters/mcp`, wired in `app/cmd/mcp.go`) serves PodSteer's
+reads to the operator's own coding agent over the Model Context Protocol. It is
+the other half of the bridge `app/adapters/localshell` starts: that one hands
+an agent a terminal, this one hands it the reads the window makes.
+
+**Local, stdio, no listener.** The agent spawns the process and owns the pipes;
+no socket is bound, nothing is served over HTTP, and nothing PodSteer operates
+is contacted — the only traffic is the same cluster traffic the window makes,
+with the same kubeconfig. A loopback listener would have been easier for some
+clients to attach to and is refused anyway: it would make PodSteer reachable by
+anything else running on the machine and would need an authentication story
+this application has deliberately never had. That is the same reasoning as the
+local terminal's, and it is what keeps this consistent with the no-account,
+no-telemetry commitment in the licensing section above and with SECURITY.md's
+external-systems list, which it does not extend.
+
+**A subcommand rather than a service the window runs.** A background server
+started by the desktop app would have to be discovered, would outlive the tab
+whose credentials it was using, and would be running whether or not anybody was
+asking it anything. A subprocess starts with the agent and ends with it. It
+never reaches `wails.Run`, so the single-instance lock is untouched and an
+agent can start one while the window is open.
+
+**Read-only, and structurally so.** The server takes narrowed reading
+interfaces (`ClusterReader`, `ResourceReader` and the rest in `server.go`)
+rather than the inbound ports whole, so it cannot NAME `AddKubeconfig`,
+`RevealSecretKey` or any `ManagementService` write, let alone call one.
+`tools_test.go` asserts that by reflection as well as by tool name. **There are
+no write tools and this is not an oversight**: every write in the UI is guarded
+by a confirmation an operator reads — the type-the-name gate on a production
+rollout, the drain preview, the bulk review dialog, the Secret-key reveal — and
+an agent cannot be shown one. The honest options were a write with no
+confirmation or a confirmation nobody sees. If a write is ever added, the
+confirmation problem has to be solved first and recorded in
+`podsteer/business-docs`, not worked around here.
+
+**RBAC decides and a refusal arrives as a refusal.** Every tool goes through
+the same use cases the window calls, so the server grants nothing the account
+did not already have, and `errors.go` classifies a failure into the same
+vocabulary `adapters/wails/errors.go` uses — kept separate rather than shared,
+because one adapter must not import another, and because the readers differ. A
+403 comes back as a tool result carrying `isError` and the word "forbidden",
+never as an empty list: an agent handed an empty array reports that the cluster
+holds no such objects, with complete confidence. The same rule shapes the rest
+of the surface — a truncated list states its true total, an absent pod is
+reported rather than assessed as healthy, and a bounded log read says it was
+bounded.
+
+**Secrets follow the doctrine above unchanged.** `GetManifest` is called with
+`revealSecrets` false in exactly one expression, so a Secret's values are
+replaced by their decoded size in the adapter before anything is serialised,
+and there is no tool that reveals a key or parses a TLS certificate.
+
+**The protocol is implemented directly** — JSON-RPC 2.0 over newline-delimited
+stdio, about 150 lines in `jsonrpc.go` and `server.go` — rather than by taking
+an SDK. The surface actually needed is five methods (`initialize`,
+`tools/list`, `tools/call`, `ping`, and ignoring notifications), an SDK would be
+a dependency whose own protocol revisions this repository would then track, and
+`docs/LICENCE-POLICY.md` makes every shipped dependency a decision rather than
+a convenience. Line-delimited reading rather than a streaming decoder is what
+makes a malformed message survivable: a decoder left mid-value cannot
+resynchronise, whereas a bad line is answered with a parse error and the next
+one is read normally. One request is handled at a time, deliberately.
+
+Two smaller decisions worth not re-deriving: the process runs with
+`LiveWatch: false`, because a mirror pays for itself under a UI re-reading the
+same lists every few seconds and not under an agent asking a handful of
+questions minutes apart; and its user agent is `podsteer-mcp/<version>`, so an
+operator reading their API server's audit log can tell a question their agent
+asked from a pane they had open.
 
 ## Configuration
 

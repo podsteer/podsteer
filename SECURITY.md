@@ -50,6 +50,13 @@ under "The local terminal, and the program it can start". Nothing in a cluster
 is involved: it runs your login shell, or a coding agent you already have
 installed, on this machine.
 
+**The same binary is also an MCP server a coding agent can start**, with
+`podsteer mcp`. It is set out in full below under "The MCP subprocess, and what
+it can read". Two things about it are worth having here: it runs on stdio, so
+it opens no port and serves nothing over a network; and every tool it offers is
+a read — it cannot delete, scale, restart, apply, exec, port-forward or reveal
+a Secret's values.
+
 **PodSteer enforces no permissions of its own, and cannot.** It is a client. If
 an account should not be able to delete a namespace, that has to be true in the
 cluster's RBAC — there is no setting here that can make it so. Restricting what
@@ -238,6 +245,53 @@ for it to be gone rather than assuming.
 **Not available on Windows.** There is no pseudo-terminal for it in this build;
 the control is absent and says why, rather than failing when pressed.
 
+## The MCP subprocess, and what it can read
+
+`podsteer mcp` runs the same binary as a **Model Context Protocol server**, so
+a coding agent you already use can read your clusters through PodSteer. Your
+agent starts it; you do not run it by hand.
+
+**It is a subprocess on stdio, not a server.** It binds no socket, opens no
+port, serves nothing over HTTP and contacts nothing we operate. It talks JSON
+over its own standard input and output, to the process that started it and to
+nothing else, and it exists only for as long as that process keeps the pipe
+open. There is no account and no telemetry here either — the same commitment
+the rest of this file makes.
+
+**Everything it offers is a read**, and that is structural rather than a
+promise: the application code it is given carries no writing methods at all, so
+there is no delete, scale, restart, apply, exec, port-forward, file copy,
+manifest edit or node shell in it, and none can be added by writing a handler.
+The reason there are none is that every write in the interface is guarded by a
+confirmation an operator reads — a type-the-name gate, a drain preview, a bulk
+review — and an agent cannot be shown one.
+
+What it can read is what the interface already shows you: the clusters in your
+kubeconfig, namespaces, kinds, pods, workloads, nodes, any kind at all as the
+API server prints it, one object's manifest, a bounded tail of a container's
+log, Kubernetes Events, the cluster assessment, a pod's assessment, the
+dependency map, and the RBAC reviews.
+
+**It has exactly your permissions.** Every read goes to the API server with
+your kubeconfig, so the cluster's own RBAC decides what answers — the server
+grants nothing your account does not already have. A refusal is reported as a
+refusal naming what was refused, never as an empty list, so an agent cannot
+conclude that a namespace is empty because it was not allowed to look.
+
+**A Secret's values never leave**, whichever tool is called. A manifest read
+through it has each value replaced by its decoded size before the object is
+serialised — the same masking the YAML tab uses, applied in the same place —
+and the two calls that can return key material (the per-key reveal and the TLS
+certificate inspection) are not reachable from it at all. Tests assert both.
+
+**Nothing is written anywhere.** No file, no kubeconfig — `current-context`
+included — and no history. Its log lines go to stderr, never to the transport,
+and they name operations and errors rather than the contents of any answer.
+
+The agent's own behaviour remains between you and the tool you installed, as
+with the local terminal above: what it does with what it reads, and whatever
+else it can reach with your credentials, is not something PodSteer mediates.
+
 ### In scope
 
 - Anything that lets PodSteer act on a cluster beyond what the loaded
@@ -261,6 +315,11 @@ the control is absent and says why, rather than failing when pressed.
 - A file downloaded from a container landing anywhere outside the folder you
   chose, or keeping a setuid or setgid bit — however the archive the
   container sent was crafted.
+- The MCP subprocess doing anything but read: a tool that changes a cluster,
+  a Secret's values reaching it, a network listener of any kind, or anything
+  it writes to disk. Also anything by which the process that started it
+  reaches a cluster your kubeconfig does not name, or a refusal being
+  presented to the agent as an absence.
 - An exported settings file containing anything the list above says it does
   not: a credential, a cluster address, or the name of any object in any
   cluster. The file is made to be shared, so anything that leaks into it
