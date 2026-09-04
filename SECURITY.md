@@ -28,10 +28,10 @@ This is worth stating plainly, because it shapes what counts as a
 vulnerability.
 
 **PodSteer both reads and writes.** It lists and inspects resources, and it can
-also delete objects, scale and restart workloads, apply edited manifests, and
-open an interactive shell inside a container. It does all of this with the
-credentials your kubeconfig already grants, using the same client library
-`kubectl` uses.
+also delete objects, scale and restart workloads, apply edited manifests, write
+a single decoded key of a Secret or a ConfigMap, and open an interactive shell
+inside a container. It does all of this with the credentials your kubeconfig
+already grants, using the same client library `kubectl` uses.
 
 **PodSteer enforces no permissions of its own, and cannot.** It is a client. If
 an account should not be able to delete a namespace, that has to be true in the

@@ -313,6 +313,28 @@ type ManagementPort interface {
 	// object; the kind and namespace in the manifest override the parameters.
 	UpdateResource(ctx context.Context, id domain.ClusterID, manifest string) error
 
+	// SetSecretKey writes one key of one Secret, leaving every other key
+	// untouched.
+	//
+	// The same deliberate, audited act as RevealSecretKey, in the other
+	// direction: it exists so an operator can fix a value they have already
+	// looked at without hand-rolling base64, and every call is one line in a
+	// cluster's audit log naming the key — never the value. Refuses with
+	// domain.ErrInvalidKey when key is empty or not
+	// `[-._a-zA-Z0-9]+`, before any request reaches the cluster.
+	SetSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string, value []byte) error
+
+	// SetConfigMapKey writes one key of one ConfigMap, leaving every other
+	// key untouched.
+	//
+	// Unlike SetSecretKey this reads the object first: a ConfigMap key can
+	// live in `data` (text) or `binaryData` (base64), and a text write that
+	// merged into `data` while the key already lived in `binaryData` would
+	// silently duplicate it under a new field rather than editing it in
+	// place. Refuses with domain.ErrInvalidKey for that case, and for the
+	// same key-format check SetSecretKey makes.
+	SetConfigMapKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key, value string) error
+
 	// ExecInPod executes a command in a pod container.
 	// Stdin, stdout, and stderr are streamed through the provided readers/writers.
 	ExecInPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, command []string, stdin io.Reader, stdout, stderr io.Writer, tty bool) error

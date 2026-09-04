@@ -22,6 +22,14 @@ export function ScaleWorkload(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['wails']['ManagementAPI']['ScaleWorkload'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function SetConfigMapKey(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['wails']['ManagementAPI']['SetConfigMapKey'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function SetSecretKey(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['wails']['ManagementAPI']['SetSecretKey'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function StartPortForward(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
   return window['go']['wails']['ManagementAPI']['StartPortForward'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
 }

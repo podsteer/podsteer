@@ -595,6 +595,97 @@ func (a *Adapter) UpdateResource(ctx context.Context, id domain.ClusterID, manif
 	return nil
 }
 
+// SetSecretKey writes one key of one Secret via a JSON merge patch on `data`.
+//
+// NO GET IS MADE. Reading the whole Secret to write one key is exactly the
+// pattern RevealSecretKey — and the CLAUDE.md section above it — exists to
+// avoid: this patches blind, the same way `kubectl patch secret --type
+// merge` does. json.Marshal encodes a []byte as base64 automatically, which
+// is precisely the wire format the Secret `data` field expects, so nothing
+// here does its own encoding — mirroring how RevealSecretKey relies on
+// client-go to decode rather than doing it by hand.
+func (a *Adapter) SetSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string, value []byte) error {
+	defer a.forgetReads(id)
+
+	if !domain.ValidDataKey(key) {
+		return fmt.Errorf("writing key %q of secret %q: %w", key, name, domain.ErrInvalidKey)
+	}
+
+	client, err := a.factory.clientFor(id)
+	if err != nil {
+		return err
+	}
+
+	patch := map[string]any{
+		"data": map[string]any{
+			key: value,
+		},
+	}
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("marshaling secret key patch: %w", err)
+	}
+
+	_, err = client.CoreV1().Secrets(namespace.String()).Patch(ctx, name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	if err != nil {
+		return classify("writing key of secret", err)
+	}
+
+	return nil
+}
+
+// SetConfigMapKey writes one key of one ConfigMap via a JSON merge patch on
+// `data`.
+//
+// ONE GET FIRST, CONFIGMAPS ONLY. A ConfigMap key lives in either `data`
+// (text) or `binaryData` (base64), and merging a text value into `data`
+// while the key currently lives in `binaryData` would not edit it — it would
+// leave the binary entry in place and add a second, text one under the same
+// key name in a different field, which is not what a save button means. The
+// existing object is read once to refuse that case; a Secret has no such
+// split (everything is `data`), which is why SetSecretKey makes no read at
+// all.
+func (a *Adapter) SetConfigMapKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key, value string) error {
+	defer a.forgetReads(id)
+
+	if !domain.ValidDataKey(key) {
+		return fmt.Errorf("writing key %q of configmap %q: %w", key, name, domain.ErrInvalidKey)
+	}
+
+	client, err := a.factory.clientFor(id)
+	if err != nil {
+		return err
+	}
+
+	ns := namespace.String()
+
+	existing, err := client.CoreV1().ConfigMaps(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return classify("writing key of configmap", err)
+	}
+	if _, inBinary := existing.BinaryData[key]; inBinary {
+		return fmt.Errorf("writing key %q of configmap %q: %w: key holds binary data, not text",
+			key, name, domain.ErrInvalidKey)
+	}
+
+	patch := map[string]any{
+		"data": map[string]any{
+			key: value,
+		},
+	}
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("marshaling configmap key patch: %w", err)
+	}
+
+	_, err = client.CoreV1().ConfigMaps(ns).Patch(ctx, name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	if err != nil {
+		return classify("writing key of configmap", err)
+	}
+
+	return nil
+}
+
 // terminalSizeQueueAdapter wraps ports.TerminalSizeQueue to satisfy
 // remotecommand.TerminalSizeQueue.
 type terminalSizeQueueAdapter struct {

@@ -1,8 +1,11 @@
 package application_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/podsteer/podsteer/app/application"
@@ -132,5 +135,161 @@ func TestSuspendWorkloadPropagatesTheAdapterError(t *testing.T) {
 	err := service.SuspendWorkload(context.Background(), "dev", domain.WorkloadCronJob, "batch", "nightly", false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("SuspendWorkload() error = %v, want %v", err, wantErr)
+	}
+}
+
+// newManagementServiceWithLogger is newManagementService with a caller-owned
+// logger, for the tests that must inspect what was actually written — every
+// other test here only cares that a call succeeded or failed.
+func newManagementServiceWithLogger(t *testing.T, management *fakeManagementPort, logger *slog.Logger) *application.ManagementService {
+	t.Helper()
+
+	service, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: management,
+		Logger:     logger,
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+	return service
+}
+
+func TestSetSecretKeyPassesArgumentsThroughAndNeverLogsTheValue(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+
+	management := &fakeManagementPort{}
+	service := newManagementServiceWithLogger(t, management, logger)
+
+	value := []byte("s3cr3t-value-that-must-never-appear-in-a-log-line")
+	if err := service.SetSecretKey(context.Background(), "dev", "app", "creds", "password", value); err != nil {
+		t.Fatalf("SetSecretKey() error = %v", err)
+	}
+
+	if !management.setSecretKeyCalled {
+		t.Fatal("SetSecretKey() never reached the adapter")
+	}
+	if management.setSecretID != "dev" {
+		t.Errorf("cluster = %q, want %q", management.setSecretID, "dev")
+	}
+	if management.setSecretNS != "app" {
+		t.Errorf("namespace = %q, want %q", management.setSecretNS, "app")
+	}
+	if management.setSecretName != "creds" {
+		t.Errorf("name = %q, want %q", management.setSecretName, "creds")
+	}
+	if management.setSecretKeyName != "password" {
+		t.Errorf("key = %q, want %q", management.setSecretKeyName, "password")
+	}
+	if !bytes.Equal(management.setSecretValue, value) {
+		t.Errorf("value = %q, want %q", management.setSecretValue, value)
+	}
+
+	logged := logs.String()
+	if !strings.Contains(logged, "password") {
+		t.Error("log output does not mention the key, want the audit line to name it")
+	}
+	if strings.Contains(logged, string(value)) {
+		t.Error("log output contains the secret VALUE — the audit line must never carry it")
+	}
+}
+
+func TestSetSecretKeyRefusesAnInvalidKeyBeforeTheAdapter(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management)
+
+	err := service.SetSecretKey(context.Background(), "dev", "app", "creds", "not a valid key!", []byte("x"))
+	if !errors.Is(err, domain.ErrInvalidKey) {
+		t.Errorf("SetSecretKey() error = %v, want %v", err, domain.ErrInvalidKey)
+	}
+	if management.setSecretKeyCalled {
+		t.Error("SetSecretKey() reached the adapter for an invalid key")
+	}
+}
+
+func TestSetSecretKeyPropagatesTheAdapterError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("boom")
+	management := &fakeManagementPort{setSecretKeyErr: wantErr}
+	service := newManagementService(t, management)
+
+	err := service.SetSecretKey(context.Background(), "dev", "app", "creds", "password", []byte("x"))
+	if !errors.Is(err, wantErr) {
+		t.Errorf("SetSecretKey() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestSetConfigMapKeyPassesArgumentsThroughAndNeverLogsTheValue(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+
+	management := &fakeManagementPort{}
+	service := newManagementServiceWithLogger(t, management, logger)
+
+	const value = "the-configmap-value-must-not-appear-in-a-log-line"
+	if err := service.SetConfigMapKey(context.Background(), "dev", "app", "settings", "greeting", value); err != nil {
+		t.Fatalf("SetConfigMapKey() error = %v", err)
+	}
+
+	if !management.setConfigMapKeyCalled {
+		t.Fatal("SetConfigMapKey() never reached the adapter")
+	}
+	if management.setConfigMapID != "dev" {
+		t.Errorf("cluster = %q, want %q", management.setConfigMapID, "dev")
+	}
+	if management.setConfigMapNS != "app" {
+		t.Errorf("namespace = %q, want %q", management.setConfigMapNS, "app")
+	}
+	if management.setConfigMapName != "settings" {
+		t.Errorf("name = %q, want %q", management.setConfigMapName, "settings")
+	}
+	if management.setConfigMapKeyName != "greeting" {
+		t.Errorf("key = %q, want %q", management.setConfigMapKeyName, "greeting")
+	}
+	if management.setConfigMapValue != value {
+		t.Errorf("value = %q, want %q", management.setConfigMapValue, value)
+	}
+
+	logged := logs.String()
+	if !strings.Contains(logged, "greeting") {
+		t.Error("log output does not mention the key, want the audit line to name it")
+	}
+	if strings.Contains(logged, value) {
+		t.Error("log output contains the configmap VALUE — the audit line must never carry it")
+	}
+}
+
+func TestSetConfigMapKeyRefusesAnInvalidKeyBeforeTheAdapter(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management)
+
+	err := service.SetConfigMapKey(context.Background(), "dev", "app", "settings", "", "value")
+	if !errors.Is(err, domain.ErrInvalidKey) {
+		t.Errorf("SetConfigMapKey() error = %v, want %v", err, domain.ErrInvalidKey)
+	}
+	if management.setConfigMapKeyCalled {
+		t.Error("SetConfigMapKey() reached the adapter for an invalid key")
+	}
+}
+
+func TestSetConfigMapKeyPropagatesTheAdapterError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("boom")
+	management := &fakeManagementPort{setConfigMapKeyErr: wantErr}
+	service := newManagementService(t, management)
+
+	err := service.SetConfigMapKey(context.Background(), "dev", "app", "settings", "greeting", "hi")
+	if !errors.Is(err, wantErr) {
+		t.Errorf("SetConfigMapKey() error = %v, want %v", err, wantErr)
 	}
 }

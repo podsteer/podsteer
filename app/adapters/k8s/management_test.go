@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"reflect"
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	clientgotesting "k8s.io/client-go/testing"
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
@@ -224,5 +226,186 @@ func TestSuspendWorkloadRefusesAnUnsupportedKind(t *testing.T) {
 	err := adapter.SuspendWorkload(context.Background(), "dev", domain.WorkloadDeployment, "web", "api", true)
 	if err == nil {
 		t.Error("SuspendWorkload() with an unsupported kind succeeded, want an error")
+	}
+}
+
+// lastPatchData returns the `data` map of the most recent patch action's
+// body, so a test can assert on the shape of what was actually sent rather
+// than only on the state the fake ended up in.
+func lastPatchData(t *testing.T, client *fake.Clientset) map[string]any {
+	t.Helper()
+
+	actions := client.Actions()
+	for i := len(actions) - 1; i >= 0; i-- {
+		patch, ok := actions[i].(clientgotesting.PatchAction)
+		if !ok {
+			continue
+		}
+
+		var body map[string]any
+		if err := json.Unmarshal(patch.GetPatch(), &body); err != nil {
+			t.Fatalf("decoding patch body: %v", err)
+		}
+		data, _ := body["data"].(map[string]any)
+		return data
+	}
+
+	t.Fatal("no patch action was recorded")
+	return nil
+}
+
+func TestSetSecretKeyPatchesExactlyOneKeyAndPreservesTheRest(t *testing.T) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "creds", Namespace: "app"},
+		Data:       map[string][]byte{"existing": []byte("keep-me")},
+	}
+	client := fake.NewSimpleClientset(secret)
+	adapter := newTestAdapter("dev", client)
+
+	value := []byte("s3cr3t! with \x00 bytes and 🔑")
+	err := adapter.SetSecretKey(context.Background(), "dev", "app", "creds", "password", value)
+	if err != nil {
+		t.Fatalf("SetSecretKey() error = %v", err)
+	}
+
+	// The patch itself named exactly the one key being written — not the
+	// whole object, and not a key that happened not to change.
+	data := lastPatchData(t, client)
+	if len(data) != 1 {
+		t.Fatalf("patch data = %v, want exactly one key", data)
+	}
+	if _, ok := data["password"]; !ok {
+		t.Fatalf("patch data = %v, want it to name %q", data, "password")
+	}
+
+	// Read back through the fake: corev1.Secret.Data is decoded by
+	// client-go, so an exact byte match proves json.Marshal's base64
+	// encoding of the []byte round-tripped correctly — the wire format
+	// RevealSecretKey relies on client-go to decode on the way out.
+	got, err := client.CoreV1().Secrets("app").Get(context.Background(), "creds", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting secret: %v", err)
+	}
+	if !reflect.DeepEqual(got.Data["password"], value) {
+		t.Errorf("Data[password] = %v, want %v", got.Data["password"], value)
+	}
+	// The key nobody touched must still be there, unchanged.
+	if string(got.Data["existing"]) != "keep-me" {
+		t.Errorf("Data[existing] = %q, want %q — SetSecretKey must not disturb other keys",
+			got.Data["existing"], "keep-me")
+	}
+}
+
+func TestSetSecretKeyRefusesAnInvalidKey(t *testing.T) {
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "creds", Namespace: "app"}}
+	client := fake.NewSimpleClientset(secret)
+	adapter := newTestAdapter("dev", client)
+
+	err := adapter.SetSecretKey(context.Background(), "dev", "app", "creds", "not a valid key!", []byte("x"))
+	if !errors.Is(err, domain.ErrInvalidKey) {
+		t.Errorf("SetSecretKey() error = %v, want %v", err, domain.ErrInvalidKey)
+	}
+
+	// Refused before any request reached the cluster.
+	if len(client.Actions()) != 0 {
+		t.Errorf("SetSecretKey() with an invalid key made %d requests, want 0", len(client.Actions()))
+	}
+}
+
+func TestSetSecretKeyOnAMissingSecretIsNotFound(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	adapter := newTestAdapter("dev", client)
+
+	err := adapter.SetSecretKey(context.Background(), "dev", "app", "missing", "password", []byte("x"))
+	if !errors.Is(err, ports.ErrNotFound) {
+		t.Errorf("SetSecretKey() error = %v, want %v", err, ports.ErrNotFound)
+	}
+}
+
+func TestSetConfigMapKeyWritesTextAndPreservesTheRest(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app"},
+		Data:       map[string]string{"existing": "keep-me"},
+	}
+	client := fake.NewSimpleClientset(cm)
+	adapter := newTestAdapter("dev", client)
+
+	err := adapter.SetConfigMapKey(context.Background(), "dev", "app", "settings", "greeting", "hello world")
+	if err != nil {
+		t.Fatalf("SetConfigMapKey() error = %v", err)
+	}
+
+	data := lastPatchData(t, client)
+	if len(data) != 1 {
+		t.Fatalf("patch data = %v, want exactly one key", data)
+	}
+	if got := data["greeting"]; got != "hello world" {
+		t.Fatalf("patch data[greeting] = %v, want %q", got, "hello world")
+	}
+
+	got, err := client.CoreV1().ConfigMaps("app").Get(context.Background(), "settings", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting configmap: %v", err)
+	}
+	if got.Data["greeting"] != "hello world" {
+		t.Errorf("Data[greeting] = %q, want %q", got.Data["greeting"], "hello world")
+	}
+	if got.Data["existing"] != "keep-me" {
+		t.Errorf("Data[existing] = %q, want %q — SetConfigMapKey must not disturb other keys",
+			got.Data["existing"], "keep-me")
+	}
+}
+
+func TestSetConfigMapKeyRefusesAKeyThatHoldsBinaryData(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app"},
+		BinaryData: map[string][]byte{"blob": {0x01, 0x02, 0x03}},
+	}
+	client := fake.NewSimpleClientset(cm)
+	adapter := newTestAdapter("dev", client)
+
+	err := adapter.SetConfigMapKey(context.Background(), "dev", "app", "settings", "blob", "oops")
+	if !errors.Is(err, domain.ErrInvalidKey) {
+		t.Errorf("SetConfigMapKey() error = %v, want %v", err, domain.ErrInvalidKey)
+	}
+
+	// A text write must never have reached the cluster: writing it would
+	// have left the binary entry in place and added a second, text one
+	// under the same name in `data`, which is not what refusing means.
+	got, getErr := client.CoreV1().ConfigMaps("app").Get(context.Background(), "settings", metav1.GetOptions{})
+	if getErr != nil {
+		t.Fatalf("getting configmap: %v", getErr)
+	}
+	if _, inData := got.Data["blob"]; inData {
+		t.Error("blob appeared in Data after a refused write — the binaryData key was moved rather than left alone")
+	}
+	if !reflect.DeepEqual(got.BinaryData["blob"], []byte{0x01, 0x02, 0x03}) {
+		t.Errorf("BinaryData[blob] = %v, want it untouched", got.BinaryData["blob"])
+	}
+}
+
+func TestSetConfigMapKeyRefusesAnInvalidKey(t *testing.T) {
+	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app"}}
+	client := fake.NewSimpleClientset(cm)
+	adapter := newTestAdapter("dev", client)
+
+	err := adapter.SetConfigMapKey(context.Background(), "dev", "app", "settings", "", "value")
+	if !errors.Is(err, domain.ErrInvalidKey) {
+		t.Errorf("SetConfigMapKey() error = %v, want %v", err, domain.ErrInvalidKey)
+	}
+
+	// Refused before even the Get that the binaryData check needs.
+	if len(client.Actions()) != 0 {
+		t.Errorf("SetConfigMapKey() with an invalid key made %d requests, want 0", len(client.Actions()))
+	}
+}
+
+func TestSetConfigMapKeyOnAMissingConfigMapIsNotFound(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	adapter := newTestAdapter("dev", client)
+
+	err := adapter.SetConfigMapKey(context.Background(), "dev", "app", "missing", "greeting", "hi")
+	if !errors.Is(err, ports.ErrNotFound) {
+		t.Errorf("SetConfigMapKey() error = %v, want %v", err, ports.ErrNotFound)
 	}
 }

@@ -37,7 +37,7 @@
   import { menuKeys } from '$lib/menuKeys'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import type { Component } from 'svelte'
-  import { Check, Copy, Eye, EyeOff, Link2, MoreVertical } from '@lucide/svelte'
+  import { Check, Copy, Eye, EyeOff, Link2, MoreVertical, Pencil } from '@lucide/svelte'
 
   export interface RowAction {
     label: string
@@ -47,7 +47,7 @@
      * Chooses the icon, and singles out the copy — which confirms itself in
      * place before the menu closes, the way the status bar's share menu does.
      */
-    kind?: 'reference' | 'copy' | 'reveal' | 'hide'
+    kind?: 'reference' | 'copy' | 'reveal' | 'hide' | 'edit'
     onclick: () => void
   }
 
@@ -56,6 +56,7 @@
     copy: Copy,
     reveal: Eye,
     hide: EyeOff,
+    edit: Pencil,
   }
 
   interface Props {

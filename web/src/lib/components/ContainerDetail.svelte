@@ -36,9 +36,9 @@
     type PodManifest,
   } from '$lib/container'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
-  import type { Container } from '$lib/api/client'
+  import { setConfigMapKey, type Container } from '$lib/api/client'
   import { forwards } from '$stores/forwards.svelte'
-  import { configMapData } from '$stores/configMaps.svelte'
+  import { configMapData, refreshConfigMap } from '$stores/configMaps.svelte'
   import { secretReveals } from '$stores/secretReveals.svelte'
   import { BrowserOpenURL } from '$lib/wailsjs/runtime/runtime'
   import { EyeOff, ExternalLink, Loader, Plug, Unplug } from '@lucide/svelte'
@@ -268,6 +268,18 @@
                 onclick: () =>
                   void secretReveals.reveal(key, clusterId, namespace, secretName, secretKey),
               },
+          // ONLY OFFERED ONCE REVEALED. Editing a value nobody has looked at
+          // is the mistake this ordering exists to prevent — the Edit
+          // control simply is not there until shown.value is something,
+          // rather than being present but disabled with an explanation
+          // nobody reads. secretReveals.write enforces the same rule again,
+          // one layer down.
+          edit: shown.value
+            ? {
+                onSave: (value: string) =>
+                  secretReveals.write(key, clusterId, namespace, secretName, secretKey, value),
+              }
+            : undefined,
         }
       }
 
@@ -328,6 +340,24 @@
         // contents blue and clickable would be pointing at something the text
         // does not mention.
         reference: configMap?.name ? follow('ConfigMap', configMap.name, namespace) : undefined,
+        // No reveal precondition here — unlike a Secret, this value is
+        // already resolved on sight (see the ConfigMap contents effect
+        // above), so `resolved !== undefined` is the only gate: a downward
+        // API field or a literal has nothing here to write back to.
+        edit:
+          resolved !== undefined && configMap?.name && configMap?.key
+            ? {
+                onSave: async (value: string) => {
+                  await setConfigMapKey(clusterId, namespace, configMap.name!, configMap.key!, value)
+                  // The cache exists to spare twenty variables twenty reads
+                  // of the same object, not to keep showing what this pane
+                  // itself just overwrote — so the entry this write touched
+                  // is forced fresh rather than merely assumed.
+                  const fresh = await refreshConfigMap(clusterId, namespace, configMap.name!)
+                  configMaps = { ...configMaps, [configMap.name!]: fresh }
+                },
+              }
+            : undefined,
       }
     }),
   )

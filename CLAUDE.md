@@ -459,7 +459,11 @@ when a pane opens, because Kubernetes' own guidance tells cluster operators to
 alert on exactly that pattern; `RevealSecretKey` returns one key and discards
 the rest in the adapter; and a Secret's values in the YAML tab are replaced
 with their decoded size before the object is serialised, because base64 is an
-encoding and not a cipher.
+encoding and not a cipher. A Secret key can be WRITTEN the same way it is
+read: `SetSecretKey` takes one key, on explicit request, only after that key
+has been revealed in the pane doing the writing, and is audited the same way
+— cluster, namespace, name and key, never the value — never through a read of
+the whole object.
 
 ## Escape belongs to one layer, and the layers say which
 

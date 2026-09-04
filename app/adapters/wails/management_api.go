@@ -358,6 +358,60 @@ func (m *ManagementAPI) SuspendWorkload(clusterID, kind, namespace, name string,
 	return nil
 }
 
+// SetSecretKey writes one key of one Secret.
+//
+// value is the operator's typed, decoded text — not base64 — converted to
+// bytes here rather than asking the frontend to encode anything, mirroring
+// how RevealSecretKey hands back the decoded string in the other direction.
+//
+// Bound as its own narrow method for the same reason RevealSecretKey is: it
+// is only ever called from a deliberate Save on a key the operator has
+// already revealed, which is what keeps each entry in a cluster's audit log
+// interpretable. See web/src/lib/components/ContainerDetail.svelte and
+// CLAUDE.md's "Secrets are read on request, never on render".
+func (m *ManagementAPI) SetSecretKey(clusterID, namespace, name, key, value string) error {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(m.logger, "SetSecretKey", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return apiError(m.logger, "SetSecretKey", err)
+	}
+
+	if err := m.management.SetSecretKey(ctx, id, ns, name, key, []byte(value)); err != nil {
+		return apiError(m.logger, "SetSecretKey", err)
+	}
+
+	return nil
+}
+
+// SetConfigMapKey writes one key of one ConfigMap.
+func (m *ManagementAPI) SetConfigMapKey(clusterID, namespace, name, key, value string) error {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(m.logger, "SetConfigMapKey", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return apiError(m.logger, "SetConfigMapKey", err)
+	}
+
+	if err := m.management.SetConfigMapKey(ctx, id, ns, name, key, value); err != nil {
+		return apiError(m.logger, "SetConfigMapKey", err)
+	}
+
+	return nil
+}
+
 // UpdateResource applies a YAML manifest to the cluster.
 func (m *ManagementAPI) UpdateResource(clusterID, manifest string) error {
 	ctx, cancel := m.app.requestContext()

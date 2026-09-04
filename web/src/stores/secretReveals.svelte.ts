@@ -28,7 +28,7 @@
  * wholesale when the window is not being looked at.
  */
 
-import { revealSecretKey } from '$lib/api/client'
+import { revealSecretKey, setSecretKey } from '$lib/api/client'
 import { toApiError } from '$lib/api/errors'
 
 /** How long a revealed value stays on screen. */
@@ -90,6 +90,33 @@ class SecretReveals {
     } catch (cause) {
       this.#shown[key] = { value: null, error: toApiError(cause).message, loading: false }
     }
+  }
+
+  /**
+   * Writes one key of a Secret, then re-reveals it through the same audited
+   * read `reveal` uses — so what ends up on screen afterwards is what the
+   * cluster now holds, never merely what was typed.
+   *
+   * REFUSES UNLESS THE KEY IS ALREADY SHOWN. Editing a value nobody has
+   * looked at is the mistake the whole reveal-before-edit ordering exists to
+   * prevent, and this is the last place that ordering can be enforced before
+   * the write actually happens — a caller offering the control too early is
+   * a bug here, not merely in the caller.
+   */
+  write = async (
+    key: string,
+    clusterId: string,
+    namespace: string,
+    secret: string,
+    secretKey: string,
+    value: string,
+  ): Promise<void> => {
+    if (!this.isShown(key)) {
+      throw new Error('reveal this key before editing it')
+    }
+
+    await setSecretKey(clusterId, namespace, secret, secretKey, value)
+    await this.reveal(key, clusterId, namespace, secret, secretKey)
   }
 
   /** Puts one value away. */
