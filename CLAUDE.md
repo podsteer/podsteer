@@ -463,14 +463,15 @@ Three rules there have subtleties worth not re-deriving:
 - **A correctly configured pod produces no findings**, and a test asserts it. A
   panel that always has something to say is one people stop reading.
 
-## The dependency map is two shapes, not one
+## The dependency map is three shapes, not one
 
-`app/domain/graph.go` builds both, and they are separate functions because the
-SUBJECT decides the structure: a pod's map is a chain with the pod in the
-middle, a workload's is a fan — one controller over however many pods it
-currently has. Pretending they are one shape would mean a pod field that is
-sometimes a list, and edges that mean different things depending on which it
-was.
+`app/domain/graph.go` builds two of them and `app/domain/object_graph.go` the
+third, and they are separate functions because the SUBJECT decides the
+structure: a pod's map is a chain with the pod in the middle, a workload's is a
+fan — one controller over however many pods it currently has — and any other
+object's is a neighbourhood. Pretending they are one shape would mean a pod
+field that is sometimes a list, and edges that mean different things depending
+on which it was.
 
 **EVERY EDGE IS A RELATIONSHIP KUBERNETES ACTUALLY HAS.** That rule is worth
 stating on its own, because breaking it is always the convenient thing to do
@@ -557,6 +558,74 @@ resolves references against the navigator's catalogue, which is keyed by
 `Kind` — so a lowercased plural matches nothing and the click silently does
 nothing at all. That is what it did on every node of every kind until it was
 noticed.
+
+### The third shape is a neighbourhood, and it is offered on every kind
+
+`NewObjectGraph` (`app/domain/object_graph.go`) draws anything the generic
+table lists — a Service, a ConfigMap, a Secret, an Ingress, a PVC, a CRD
+instance — with the subject in the middle, what its spec names below it and
+what owns it above. It is a third function rather than a widening of the other
+two for the reason the other two are separate: those two subjects have a
+structure worth asserting, and an arbitrary object has none beyond "it names
+some objects and some name it".
+
+**It is still every-edge-is-real, and the rules are in the domain.**
+`ReferencesFromManifest` (`app/domain/object_references.go`) is a pure function
+over the DECODED MANIFEST — `map[string]any`, so no client-go and no Go type
+for a CRD — that says which field of which kind names what: an Ingress's
+`ingressClassName`, its backends (the default one included) and its
+`tls[].secretName`; a PVC's `volumeName`, `storageClassName` and data source; a
+PersistentVolume's `claimRef` (the one genuinely cross-namespace reference the
+map meets) and class; a ServiceAccount's secrets and pull secrets; an HPA's
+`scaleTargetRef`; a binding's `roleRef` and its ServiceAccount subjects, never
+its User or Group ones, which are strings an authenticator produced rather than
+objects. **A kind with no rule draws its owner chain and nothing else.**
+Guessing at a field that merely looks like a reference — anything ending in
+`Ref` — would draw lines out of a CRD's spec its author never meant as
+references, which is the same class of mistake as reading a label as ownership.
+
+**A reference that resolves to nothing is drawn, marked, and never dropped.**
+`GraphNode.Missing` is its own field beside `Healthy`, because an object that
+exists and is failing and one that was named and is absent call for opposite
+next steps; the map outlines a missing box dashed, and `graphFold.ts` counts
+missing members separately from unwell ones so a folded set says "3 not found"
+rather than "3 not ready". **A refusal is not an absence**: a 403 resolving a
+reference leaves the box unmarked and names the refusal in `Unreadable`, since
+telling an account that may not read Secrets that the Secret does not exist
+sends somebody to recreate an object that is sitting there.
+
+### Downward navigation is bounded, and the panel says why
+
+Upward is free and is taken: `ownerReferences` are already on the object, so
+each hop is one GET of a name Kubernetes itself wrote. It is still capped at
+`domain.ObjectOwnerDepth` (three) and terminates on a repeat keyed by UID —
+Kubernetes does not forbid an ownerReference cycle, and an unbounded walk is a
+drawer somebody else's object can make issue reads without limit. Outward is
+capped too: `graphReferenceLimit` (12) distinct references, resolved four at a
+time, with anything past the bound named rather than silently dropped.
+
+**Downward is attempted only where Kubernetes gives a cheap answer**, which
+today is one case: a Service's selector against one list of one kind in one
+namespace, read through `readcache.go` so it coalesces with the tab's own poll.
+Everything else somebody might want below an object — which pods mount this
+ConfigMap, which PVCs use this StorageClass — has no server-side index at all,
+and answering it would mean listing every kind in the namespace every time a
+pane opened: a request per kind per open drawer, which is exactly the polling
+storm the read-cache section above exists to prevent. So it is not done, and
+`domain.DownwardBound` puts one short line in the panel instead.
+
+**That line is `PodGraph.Bounded`, and it is NOT `Unreadable`.** Collapsing the
+two would be the mistake this codebase keeps refusing to make elsewhere
+(`MetricsStatus`, `ClusterReadStatus`): `Unreadable` means a read was attempted
+and refused, so a permission would fix it; `Bounded` means no read was
+attempted, deliberately, and no permission changes that. Empty space under an
+object with neither line would read as "nothing depends on this", which is a
+claim nothing here checked.
+
+Nothing on this path runs on a refresh tick — `BrowseAPI.ObjectGraph` is called
+when the pane opens and not again — because a neighbourhood changes when
+somebody changes it, and redrawing a map under a reader is worse than it being
+a few seconds stale.
 
 ## Secrets are read on request, never on render
 
@@ -803,6 +872,135 @@ exists so the UI can say "the last 40 minutes" instead of implying more.
 - **A sample is derived from the overview**, not from a second read of the
   cluster, so the chart and the numbers above it can never disagree.
 - Samples hold capacity figures only: no object names, no logs, no manifests.
+
+## The settings file carries arrangements, never anything about a cluster's contents
+
+Settings → Export & import writes the two localStorage stores — `preferences`
+and `organisation` — as one pretty-printed JSON document an operator can keep
+in git and hand to a colleague (`web/src/lib/settingsFile.ts`,
+`SettingsTransfer.svelte`). JSON rather than YAML because the stores are
+already JSON, so the document is a projection rather than a translation and no
+value can change meaning on the way through — YAML's implicit typing would
+read a group called `no` as false; because `JSON.parse` is the platform's, so
+nothing but code in this repository stands between somebody's file and their
+settings; and because the file exists to live in git, where two-space JSON
+diffs one setting to a line. JSON has no comments, so the header is a
+`_readme` array of strings at the top of the document.
+
+**What must never travel is the whole point of the file, and it is the
+no-object-names commitment SECURITY.md makes.** The export is an ALLOWLIST
+built field by field in each store's `exportable()`, never a spread of the
+persisted shape — a spread would carry whatever the shape grows next, and two
+things it has already grown hold object names: `snoozes`, whose keys are a
+finding id, a NAMESPACE and an OBJECT NAME, and `namespaceByCluster`. Both are
+held back, along with the update check's machine state. No credential,
+kubeconfig or cluster address is in either store, so none can reach the file.
+
+**One cluster-shaped thing does travel: the kubeconfig CONTEXT NAME**, as the
+key of `pinnedKinds` and of the organisation's placements — "staging is
+read-only" cannot be said without naming staging. It is a handle the
+recipient's own kubeconfig already gives them and it identifies nothing inside
+any cluster, but a colleague reading the file will see which contexts a
+teammate has, so the document's own header says so and the Settings pane says
+so before the Export button rather than after.
+
+`settingsFile.test.ts` is what keeps this true: it populates both stores with
+every forbidden category — a snoozed pod and node, a namespace filter, a
+server URL, a token — serialises, and asserts none of them appear; and it
+asserts the exported key set against a LITERAL list, so a field carrying
+object names cannot join the export without somebody editing that list and
+arguing for it. Redaction that is only a comment is redaction that lapses.
+
+Import is a REVIEW, not an overwrite: `previewImport` computes the state an
+apply will set and derives the review from it, so the two cannot disagree —
+the same rule `domain.PlanBulk` follows. Merge (the default) keeps everything
+the file does not mention, key by key within a map; replace makes the exported
+surface exactly the file's. **Neither mode touches what the file never
+carried** — a replace leaves the snoozes and the namespace filter alone,
+because destroying data on the strength of a document's silence would turn the
+redaction rules into a way to lose things. A malformed document is refused
+whole with the reason and never partly applied; an unknown field is counted
+and ignored, so a file from a newer build still imports what this build
+understands, and a version from the future is stated rather than refused.
+
+Reading the file needs `SystemAPI.ReadTextFile`, which opens the picker and
+returns the CONTENTS — `ChooseFile` returns a path, and the webview cannot
+turn one into content. Its dialog is filtered where `ChooseFile`'s is
+deliberately not. `SaveTextFile`'s save dialog now derives its filter from the
+suggested name's extension: it was pinned to CSV, and macOS enforces a filter
+as the extension, so a `.json` document would have been written as
+`.json.csv` — which the log download was already quietly suffering.
+
+## The session timeline is in memory, and that is the design
+
+`web/src/stores/timeline.svelte.ts` keeps, per cluster and per object, what
+happened while the tab was open: the Kubernetes Events an object produced, the
+findings that appeared and cleared underneath it, and the writes PodSteer
+itself made. It is shown as a Timeline tab in the detail drawer and as a
+fourth pinned pseudo-entry beside the overview, Applications and All clusters
+— `podsteer/timeline`, a record rather than a kind, and absent from
+`domain/catalog.go` for the reason the other three are.
+
+**It is in the frontend, and it costs nothing on the wire.** Everything it
+records had already crossed the bridge for another reason: the assessment is
+fetched on every refresh whatever view is open, a pod's findings ride every
+row of the pod list (`Pod.findings`), the event lists are the rows of the
+views that show them, and a write's outcome is resolved in
+`web/src/lib/api/client.ts` before anything is recorded. So there is no
+backend state, no extra request, no goroutine, and no Wails event to wait on
+— the same trade `usageHistory` makes with the measurements a list response
+was already carrying.
+
+**Nothing reaches disk, deliberately.** A timeline is made almost entirely of
+object names, and object names are not on the list of things SECURITY.md says
+PodSteer writes on an operator's behalf — the same commitment
+`ClusterSession.recentObjects` keeps for the navigator's Recent section and
+the sampled capacity history keeps by carrying no names at all. Do not add a
+preference that would persist it. What that buys is that there is nothing to
+leak, nothing to clean up and no retention policy to get wrong; what it costs
+is honest and has to be SAID rather than implied, so the panel carries one
+line stating that it covers this session only and goes when the tab closes —
+the same job `SeriesResult.spanSeconds` does for the sampled charts. The
+durable version, backed by storage that outlives the process, is the planned
+paid tier, and the seam belongs where `HistoryPort` puts it rather than in a
+file this process writes.
+
+Four rules there are load-bearing, each with a test in
+`web/src/lib/timeline.test.ts` or `web/src/stores/timeline.test.ts`:
+
+- **A finding appearing or clearing is DERIVED, and "gone" is not "not looked
+  at".** `diffFindings` compares one assessment against the last, and a
+  refresh that produced nothing passes `null` rather than an empty set: read
+  as an assessment it reports every outstanding problem in the cluster
+  clearing in the same instant. The same trap has a second shape for pod
+  findings, which are scoped to a POD rather than to the cluster — the row
+  buffers are mutually exclusive and the namespace filter narrows them, so a
+  pod missing from a list has not been looked at, and only pods a list
+  actually carried are diffed. A pod finding has no id, so its TITLE is the
+  identity; that holds because the per-container rules put the container name
+  in their title, and it lets the detail's numbers move without the finding
+  reading as cleared and raised again.
+- **Repeats are grouped, and grouping is a VIEW decision.** An event carries
+  the API server's own `count`, so one entry is recorded per Event object
+  however many refreshes re-read it, and `groupTimeline` collapses identical
+  entries into one row carrying the summed count and the span. Every entry is
+  in exactly one group and the count is on the row — the completeness rule
+  `graphFold.ts` already holds the folded dependency map to.
+- **It is bounded at both ends.** `MAX_ENTRIES_PER_OBJECT` (200) so one pod in
+  CrashLoopBackOff cannot crowd out every other object, and
+  `MAX_ENTRIES_PER_CLUSTER` (2000) so a session left open over a weekend
+  cannot grow without limit. Oldest first, and an evicted event's observation
+  identity is dropped with it or it could never be recorded again.
+- **Every write is recorded in one place.** `writing` in
+  `web/src/lib/api/client.ts` wraps each `ManagementAPI` call, so a dialog
+  added later cannot forget — the same discipline that makes
+  `ClusterSession.#recordRecent` the only place an object becomes recently
+  opened. A refusal is recorded too, because "I pressed delete and nothing
+  happened" is exactly the question this answers. Nothing that leaves the
+  cluster unchanged goes through it — `ValidateResource`, `PlanDrain`,
+  `PlanBulk` and a dry-run rollback are reads — and **no value is ever
+  recorded**: writing one key of a Secret records the key, never what was
+  written, exactly as `ManagementService`'s own audit line does.
 
 ## Licences are policy, and the build enforces it
 

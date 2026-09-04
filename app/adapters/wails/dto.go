@@ -722,6 +722,11 @@ type GraphNode struct {
 	Healthy bool `json:"healthy"`
 	// Subject marks the object the map was opened from.
 	Subject bool `json:"subject"`
+	// Missing marks a reference resolved against the cluster and found to name
+	// nothing. Distinct from an unhealthy node: an unwell object exists and is
+	// failing, a missing one was named by something and is not there, and the
+	// two call for opposite next steps.
+	Missing bool `json:"missing"`
 	// Group names the node whose children this is one of, for folding a
 	// sibling set. Empty for anything with no natural set. The graph is always
 	// complete — what is drawn is the view's decision.
@@ -742,6 +747,11 @@ type PodGraph struct {
 	// Unreadable names sources that could not be read, so the map can say it
 	// is incomplete rather than implying nothing is there.
 	Unreadable []string `json:"unreadable"`
+	// Bounded is one short line saying why nothing is drawn below the subject,
+	// on a map whose subject has no cheap downward answer. Empty on a pod or
+	// workload map. Not the same fact as Unreadable: that means a read was
+	// refused, this means none was attempted.
+	Bounded string `json:"bounded"`
 }
 
 func toPodGraph(graph domain.PodGraph) PodGraph {
@@ -749,6 +759,7 @@ func toPodGraph(graph domain.PodGraph) PodGraph {
 		Nodes:      make([]GraphNode, 0, len(graph.Nodes)),
 		Edges:      make([]GraphEdge, 0, len(graph.Edges)),
 		Unreadable: graph.Unreadable,
+		Bounded:    graph.Bounded,
 	}
 
 	for _, node := range graph.Nodes {
@@ -762,6 +773,7 @@ func toPodGraph(graph domain.PodGraph) PodGraph {
 			Detail:    node.Detail,
 			Healthy:   node.Healthy,
 			Subject:   node.Subject,
+			Missing:   node.Missing,
 			Group:     node.Group,
 		})
 	}

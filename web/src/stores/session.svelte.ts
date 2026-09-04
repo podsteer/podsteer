@@ -68,6 +68,7 @@ import {
 } from '$lib/sort'
 import { alertPlayer } from './alerts.svelte'
 import { forgetConfigMaps } from './configMaps.svelte'
+import { timeline } from './timeline.svelte'
 import { usageHistory, usageKey } from './usageHistory.svelte'
 import { preferences } from './preferences.svelte'
 import { fleet } from './fleet.svelte'
@@ -219,6 +220,19 @@ export function fleetTableId(tab: FleetTab): string {
   return `${FLEET_KIND_ID}/${tab}`
 }
 
+/**
+ * The session timeline's navigation id, the fourth pinned pseudo-entry.
+ *
+ * NOT A KIND, for the reason the other three are not: there is no object to
+ * GET called a timeline. It is the record this tab kept of what it saw while
+ * it was open — events, findings appearing and clearing, and the writes
+ * PodSteer made — so a catalogue entry would offer it to every consumer that
+ * expects to be able to fetch what it names. It is also the only view that
+ * fetches nothing at all: everything in it already crossed the bridge for
+ * some other reason. See $stores/timeline.
+ */
+export const TIMELINE_KIND_ID = 'podsteer/timeline'
+
 export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
 
 /** Kind ids PodSteer renders with purpose-built columns rather than generically. */
@@ -272,6 +286,7 @@ export type ViewMode =
   | 'applications'
   | 'fleet'
   | 'rbac'
+  | 'timeline'
   | 'pods'
   | 'nodes'
   | 'events'
@@ -621,6 +636,7 @@ export class ClusterSession {
     if (id === APPLICATIONS_KIND_ID) return 'applications'
     if (id === FLEET_KIND_ID) return 'fleet'
     if (id === RBAC_KIND_ID) return 'rbac'
+    if (id === TIMELINE_KIND_ID) return 'timeline'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
     if (id === RICH_KIND_IDS.events) return 'events'
@@ -631,7 +647,9 @@ export class ClusterSession {
 
   /** Whether the selected kind carries namespaces. */
   readonly isNamespaced = $derived(
-    this.viewMode === 'overview' ? false : (this.selectedKind?.namespaced ?? true),
+    this.viewMode === 'overview' || this.viewMode === 'timeline'
+      ? false
+      : (this.selectedKind?.namespaced ?? true),
   )
 
   /**
@@ -643,7 +661,9 @@ export class ClusterSession {
    * questions and their answers, not rows — and it additionally must not
    * offer the bulk action bar, which acts on a selection no pane here has.
    */
-  readonly isList = $derived(this.viewMode !== 'overview' && this.viewMode !== 'rbac')
+  readonly isList = $derived(
+    this.viewMode !== 'overview' && this.viewMode !== 'rbac' && this.viewMode !== 'timeline',
+  )
 
   /**
    * The search term parsed into a filter language query — regex, negation and
@@ -860,6 +880,7 @@ export class ClusterSession {
     switch (this.viewMode) {
       case 'overview':
       case 'rbac':
+      case 'timeline':
         return 0
       case 'pods':
         return this.visiblePods.length
@@ -1517,6 +1538,13 @@ export class ClusterSession {
     } catch {
       // The next cycle tries again. A missed assessment is a stale badge for
       // one interval, not something to interrupt anyone over.
+      //
+      // The timeline is told so EXPLICITLY rather than by silence: a refresh
+      // that failed carries no findings, and anything reading that as an
+      // assessment would report every outstanding problem in the cluster
+      // clearing in the same instant. Passing null keeps the baseline the
+      // next successful assessment is compared against — see diffFindings.
+      timeline.recordFindings(this.cluster.id, null)
     }
   }
 
@@ -1541,6 +1569,11 @@ export class ClusterSession {
     this.#lastFindingIds = current
     this.overview = overview
     this.#retainNodeUsage(overview)
+    // The same comparison, kept once: this method already decides what is
+    // new to sound an alert about, and the timeline needs what CLEARED as
+    // well. Rather than diff twice against two baselines that could drift
+    // apart, the store holds its own and is handed the whole assessment.
+    timeline.recordFindings(this.cluster.id, overview.findings)
 
     if (previous === null) return
 
@@ -1580,6 +1613,11 @@ export class ClusterSession {
     if (this.viewMode !== 'overview') void this.#refreshAssessment()
 
     switch (this.viewMode) {
+      case 'timeline':
+        // NOTHING IS FETCHED. The timeline is a record of what other reads
+        // already carried, so a poll landing on this view costs exactly the
+        // assessment above — which runs whatever is on screen anyway.
+        return null
       case 'overview':
         // The explicit target only applies to the view an operator is
         // actually looking at. #refreshAssessment (below) always asks for
@@ -1690,6 +1728,10 @@ export class ClusterSession {
       case 'overview':
         this.#adopt(rows as Overview)
         break
+      case 'timeline':
+        // Nothing to hold: the entries live in $stores/timeline, written by
+        // whatever produced them rather than by this refresh.
+        break
       case 'fleet':
         // Nothing to hold: the merged rows are the workspace's, in
         // $stores/fleet, and the fetch folded them in itself.
@@ -1724,7 +1766,27 @@ export class ClusterSession {
     }
 
     this.#retainUsage()
+    this.#recordTimeline()
     this.#refreshSelection()
+  }
+
+  /**
+   * Files what this refresh carried on the session timeline.
+   *
+   * COSTS NOTHING ON THE WIRE, which is the whole reason the timeline is
+   * built here rather than in Go: the pod assessment rides every row of the
+   * pod list and the events are the rows of the event list, so both were
+   * already fetched and both were already discarded. Same trade as
+   * `#retainUsage` above.
+   *
+   * A view that did not fetch pods passes null rather than an empty list.
+   * The row buffers are mutually exclusive — a poll on the Nodes page leaves
+   * `pods` empty — and an empty list read as an assessment would announce
+   * every pod in the cluster recovering the moment somebody changed view.
+   */
+  #recordTimeline(): void {
+    timeline.recordPodFindings(this.cluster.id, this.viewMode === 'pods' ? this.pods : null)
+    if (this.viewMode === 'events') timeline.recordEvents(this.cluster.id, this.events)
   }
 
   /**
@@ -2162,6 +2224,11 @@ export class ClusterSession {
     // it re-read ConfigMaps it already has.
     usageHistory.forget(this.cluster.id)
     forgetConfigMaps(this.cluster.id)
+    // The timeline goes with the tab, like the Recent section below and for
+    // the same reason: it is made of object names, it was never written
+    // anywhere, and a reconnect starts a fresh record rather than resuming
+    // one from a session that ended.
+    timeline.forget(this.cluster.id)
     // Recent objects are in-memory only and scoped to this connection — see
     // recentObjects above. A reconnect to the same cluster starts the list
     // over rather than resurrecting names from a session that ended.

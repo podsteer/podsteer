@@ -108,6 +108,14 @@ var errNotFound = errors.New("not found")
 // a filename to seed the dialog with.
 var errEmptySuggestedName = errors.New("a suggested filename is required")
 
+// errUnreadableTextFile is raised when ReadTextFile is pointed at a file it
+// will not hand the webview — one past maxTextFileBytes, or an empty one,
+// which is otherwise indistinguishable from the operator cancelling.
+//
+// Invalid input rather than an internal failure: the operator chose the file,
+// so the message names what is wrong with it and they choose again.
+var errUnreadableTextFile = errors.New("that file cannot be read as text")
+
 // errInvalidBulkAction is raised when PlanBulk is asked to plan an action
 // that is not one of domain's BulkAction values — a frontend bug, reported
 // as invalid input rather than swallowed into an empty plan.
@@ -307,6 +315,7 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, errInvalidURL),
 		errors.Is(err, errNotFound),
 		errors.Is(err, errEmptySuggestedName),
+		errors.Is(err, errUnreadableTextFile),
 		errors.Is(err, errInvalidBulkAction),
 		errors.Is(err, domain.ErrEmptyResourceName),
 		errors.Is(err, errNoLocalPath),

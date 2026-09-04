@@ -277,6 +277,16 @@ type ResourceService interface {
 	// GetManifest returns one object as YAML.
 	GetManifest(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, name string, revealSecrets bool) (string, error)
 
+	// ObjectGraph returns the neighbourhood of one object of ANY kind: the
+	// subject in the middle, what its spec names below it, what owns it above.
+	//
+	// The third map shape, beside a pod's chain and a workload's fan. Those
+	// two stay separate because the subject decides the structure; this one
+	// covers everything the generic table lists — a Service, a ConfigMap, a
+	// PVC, a CRD instance — where the only structure that holds is "some
+	// objects are named by this one and some name it".
+	ObjectGraph(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, name string) (domain.PodGraph, error)
+
 	// RevealSecretKey returns one decoded Secret value, on explicit request.
 	RevealSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string) (string, error)
 

@@ -16,6 +16,8 @@
   import LogViewer from './LogViewer.svelte'
   import ResourceOverview from './ResourceOverview.svelte'
   import EventsView from './EventsView.svelte'
+  import TimelinePanel from './TimelinePanel.svelte'
+  import { timeline } from '$stores/timeline.svelte'
   import EventDetail from './EventDetail.svelte'
   import ApplicationDetail from './ApplicationDetail.svelte'
   import { iconForKind } from '$lib/kindIcons'
@@ -92,6 +94,7 @@
     Ban,
     LogOut,
     History as HistoryIcon,
+    Clock,
   } from '@lucide/svelte'
 
   interface Props {
@@ -100,7 +103,15 @@
 
   let { session }: Props = $props()
 
-  type Tab = 'overview' | 'logs' | 'terminal' | 'map' | 'history' | 'events' | 'yaml'
+  type Tab =
+    | 'overview'
+    | 'logs'
+    | 'terminal'
+    | 'map'
+    | 'history'
+    | 'events'
+    | 'timeline'
+    | 'yaml'
   let activeTab = $state<Tab>('overview')
   const copied = flash(1500)
   let deleteDialogOpen = $state(false)
@@ -194,6 +205,23 @@
   )
 
   const isPod = $derived(session.selectedKindId === 'core/v1/pods')
+
+  /**
+   * What the session timeline holds about the object on screen.
+   *
+   * Keyed by the Kubernetes Kind rather than the catalogue id, because that
+   * is what an entry carries: an event names its involved object's kind, and
+   * a recorded write names the kind the write was made against. Empty until
+   * something happens, which is the ordinary state of a quiet object.
+   */
+  const objectTimeline = $derived(
+    timeline.forObject(
+      session.cluster.id,
+      session.selectedKind?.kind ?? '',
+      session.selectedKind?.namespaced ? session.selectedNamespace : '',
+      session.selectedName ?? '',
+    ),
+  )
 
   const isEvent = $derived(session.selectedKindId === 'core/v1/events')
   const isApplication = $derived(!!session.selectedApplication)
@@ -473,6 +501,19 @@
 
   /** Whether the open object is one of the six controllers. */
   const isWorkloadKind = $derived(Boolean(mappedWorkloadKind))
+
+  /**
+   * Whether there is a map to draw.
+   *
+   * A real object of any kind has one. The pinned pseudo-entries do not: the
+   * overview is an assessment, and Applications and the fleet view are
+   * aggregations across clusters — none of them is something a cluster can be
+   * asked to GET, which is what a map is drawn from. `selectedApplication` is
+   * the third case, an inventory row rather than a catalogue kind.
+   */
+  const hasMap = $derived(
+    Boolean(session.selectedKindId && session.selectedName) && !isApplication,
+  )
 
   const isWorkloadWithLogs = $derived(
     session.selectedKindId === 'apps/v1/deployments' ||
@@ -922,11 +963,15 @@
     { id: 'overview', label: 'Overview', icon: Info, show: () => true },
     { id: 'logs', label: 'Logs', icon: ScrollText, show: () => isPod || isWorkloadWithLogs },
     { id: 'terminal', label: 'Terminal', icon: TerminalSquare, show: () => isPod || isWorkloadWithLogs },
-    // Pods and the six controllers. A pod's map is a chain with the pod in
-    // the middle; a workload's is a fan — one controller over the pods it
-    // currently has — and both are worth walking, which is what the map is
-    // for. Nothing else has dependencies to draw.
-    { id: 'map', label: 'Map', icon: Workflow, show: () => isPod || isWorkloadKind },
+    // EVERY OBJECT, not only pods and the six controllers. A pod's map is a
+    // chain with the pod in the middle, a workload's is a fan, and everything
+    // else — a Service, a ConfigMap, a PVC, a CRD instance — is the
+    // neighbourhood: the object in the middle, what its spec names below it,
+    // what owns it above. Three shapes, because the subject decides the
+    // structure. What is NOT offered is the aggregations, which are not
+    // objects and have nothing to GET: the overview, the applications view and
+    // the fleet view.
+    { id: 'map', label: 'Map', icon: Workflow, show: () => hasMap },
     // Deployments, StatefulSets and DaemonSets only — the three kinds a
     // revision exists for. See hasRolloutHistory's own doc comment.
     { id: 'history', label: 'History', icon: HistoryIcon, show: () => hasRolloutHistory },
@@ -934,6 +979,12 @@
     // empty list that means "nothing recent" — which reads as a fault here
     // rather than as the tautology it is.
     { id: 'events', label: 'Events', icon: Activity, show: () => !isEvent && !isApplication },
+    // What happened to THIS object while the tab has been open: its events,
+    // its findings appearing and clearing, and the writes PodSteer made to
+    // it. Hidden on the same two as Events and for the same reason — an
+    // Event is not a thing things happen to, and an application is not an
+    // object at all. See $stores/timeline for why it is in memory only.
+    { id: 'timeline', label: 'Timeline', icon: Clock, show: () => !isEvent && !isApplication },
     // AN APPLICATION HAS NO MANIFEST. It is a set of objects that agree about
     // a label, so there is nothing to GET by that name, nothing to edit and
     // nothing to delete — and a YAML tab offering to show one would be an
@@ -1163,6 +1214,22 @@
       namespace={session.selectedNamespace}
       name={session.selectedName}
       kind={mappedWorkloadKind}
+      onopen={openObject}
+      onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
+    />
+  {:else if hasMap && session.selectedKind && session.selectedName}
+    <!--
+      The neighbourhood shape. The catalogue id goes with the kind because the
+      backend needs the API group, version and resource to read an arbitrary
+      object, and a Kind name alone does not carry them — "Application" exists
+      in three API groups.
+    -->
+    <DependencyMap
+      clusterId={session.cluster.id}
+      namespace={session.selectedNamespace}
+      name={session.selectedName}
+      kind={session.selectedKind.kind}
+      kindId={session.selectedKind.id}
       onopen={openObject}
       onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
     />
@@ -1838,12 +1905,12 @@
               Showing the map in a larger window.
             </p>
           </div>
-        {:else if (isPod && selectedPod) || mappedWorkloadKind}
+        {:else if (isPod && selectedPod) || mappedWorkloadKind || hasMap}
           {@render mapSurface()}
         {:else}
           <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
             <Workflow class="size-8" strokeWidth={1.2} />
-            <p class="text-body-medium">This kind has no dependencies to map</p>
+            <p class="text-body-medium">There is nothing here to map</p>
           </div>
         {/if}
       {:else if activeTab === 'history'}
@@ -1870,6 +1937,11 @@
           namespace={session.selectedNamespace}
           kind={session.selectedKind?.kind ?? ''}
           name={session.selectedName ?? ''}
+        />
+      {:else if activeTab === 'timeline'}
+        <TimelinePanel
+          entries={objectTimeline}
+          startedAt={timeline.startedAt(session.cluster.id)}
         />
       {:else if activeTab === 'yaml'}
         <div class="h-full">

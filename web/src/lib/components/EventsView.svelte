@@ -15,6 +15,7 @@
   import { formatAge } from '$lib/format'
   import { toApiError } from '$lib/api/errors'
   import { AlertTriangle, Activity } from '@lucide/svelte'
+  import { timeline } from '$stores/timeline.svelte'
 
   interface Props {
     clusterId: string
@@ -41,6 +42,12 @@
         if (!current) return
         events = result
         status = 'ready'
+        // Filed on the session timeline on the way past — the events of the
+        // object whose drawer is open, which no list view fetches unless the
+        // operator happens to be on the Events page. It already crossed the
+        // bridge, so the Timeline tab beside this one costs no read of its
+        // own. See $stores/timeline.
+        timeline.recordEvents(target.clusterId, result)
       })
       .catch((cause) => {
         if (!current) return

@@ -37,6 +37,7 @@ export interface FoldNode {
   detail: string
   healthy: boolean
   subject: boolean
+  missing: boolean
   group: string
 }
 
@@ -64,6 +65,16 @@ export interface FoldedGroup {
   count: number
   /** How many of them are unwell, so a fold never hides a problem. */
   unhealthy: number
+  /**
+   * How many of them name something that is not there.
+   *
+   * COUNTED SEPARATELY FROM `unhealthy` even though a missing node is drawn
+   * unwell: an object that exists and is failing and one that was named and is
+   * absent call for opposite next steps, and a folded box that said "3 not
+   * ready" for three references to objects nobody ever created would send
+   * somebody to read events that do not exist.
+   */
+  missing: number
 }
 
 export interface FoldedGraph {
@@ -116,6 +127,7 @@ export function fold(graph: FoldableGraph, expanded: Set<string>): FoldedGraph {
       kind: members[0].kind,
       count: members.length,
       unhealthy: members.filter((member) => !member.healthy).length,
+      missing: members.filter((member) => member.missing).length,
     }
     groups.push(group)
 
@@ -158,11 +170,23 @@ export function fold(graph: FoldableGraph, expanded: Set<string>): FoldedGraph {
       name: `${group.count} ${group.apiKind}${group.count === 1 ? '' : 's'}`,
       namespace: '',
       tier: 0,
-      detail: group.unhealthy > 0 ? `${group.unhealthy} not ready` : '',
+      // The missing count wins the line when there is one, because "named and
+      // absent" is the more actionable of the two and a box has room for one
+      // qualifier.
+      detail:
+        group.missing > 0
+          ? `${group.missing} not found`
+          : group.unhealthy > 0
+            ? `${group.unhealthy} not ready`
+            : '',
       // UNWELL IF ANY MEMBER IS. Folding must never hide a problem: a set with
       // one failing pod in thirty is drawn as a set with a problem.
       healthy: group.unhealthy === 0,
       subject: false,
+      // A GROUP IS NOT ITSELF A MISSING OBJECT. It stands for its members, and
+      // the count above says how many of them are — drawing the box itself as
+      // missing would claim the set does not exist.
+      missing: false,
       group: '',
       fold: group,
     })

@@ -76,7 +76,18 @@
   } from '$stores/alerts.svelte'
   import Select from './Select.svelte'
   import GaugeTrack from './GaugeTrack.svelte'
-  import { RefreshCw, Palette, Database, Scale, Bell, Gauge, Play, X } from '@lucide/svelte'
+  import SettingsTransfer from './SettingsTransfer.svelte'
+  import {
+    RefreshCw,
+    Palette,
+    Database,
+    Scale,
+    Bell,
+    Gauge,
+    Play,
+    ArrowLeftRight,
+    X,
+  } from '@lucide/svelte'
 
   /**
    * The values a threshold may take, every five per cent.
@@ -121,6 +132,9 @@
     { id: 'thresholds', label: 'Thresholds', icon: Gauge },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'data', label: 'Data', icon: Database },
+    // Next to Data, because both are about what leaves this machine, and
+    // before Credits, which is the one section nobody browses for.
+    { id: 'transfer', label: 'Export & import', icon: ArrowLeftRight },
     { id: 'credits', label: 'Credits', icon: Scale },
   ] as const
 
@@ -795,6 +809,8 @@
               <span class="text-on-surface">Don't record</span> erases what has already been kept.
             </p>
           </section>
+        {:else if section === 'transfer'}
+          <SettingsTransfer />
         {:else}
           <CreditsPane />
         {/if}

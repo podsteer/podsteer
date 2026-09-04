@@ -33,6 +33,14 @@ type fakeResources struct {
 	chain      domain.CertificateChain
 	inspectErr error
 
+	// graphInput and graphErr shape what ObjectGraphSources answers, and
+	// graphRef records the reference it was asked for — which is the half of
+	// BrowseService.ObjectGraph worth asserting at this layer, since the
+	// catalogue lookup and the cluster-scoped namespace reset both land there.
+	graphInput domain.ObjectGraphInput
+	graphErr   error
+	graphRef   domain.ResourceRef
+
 	mu       sync.Mutex
 	inFlight int
 	peak     int
@@ -81,6 +89,17 @@ func (f *fakeResources) GetManifest(context.Context, domain.ResourceRef, bool) (
 
 func (f *fakeResources) RevealSecretKey(context.Context, domain.ClusterID, domain.NamespaceName, string, string) (string, error) {
 	return "", nil
+}
+
+func (f *fakeResources) ObjectGraphSources(_ context.Context, ref domain.ResourceRef) (domain.ObjectGraphInput, error) {
+	f.mu.Lock()
+	f.graphRef = ref
+	f.mu.Unlock()
+
+	if f.graphErr != nil {
+		return domain.ObjectGraphInput{}, f.graphErr
+	}
+	return f.graphInput, nil
 }
 
 // chain is returned by InspectTLSSecret when it is set, so a test can shape
@@ -307,5 +326,62 @@ func TestInspectTLSSecretWrapsThePortsError(t *testing.T) {
 	_, err := service.InspectTLSSecret(context.Background(), "dev", "web", "not-a-tls-secret")
 	if err == nil {
 		t.Fatal("InspectTLSSecret() error = nil, want the port's refusal to surface")
+	}
+}
+
+// The catalogue lookup and the cluster-scoped namespace reset both land in
+// ObjectGraph, so what it hands the port is worth asserting: a cluster-scoped
+// kind queried with a namespace produces a path that 404s, and the drawer
+// always has SOME namespace selected.
+func TestObjectGraphReadsTheKindTheCatalogueNames(t *testing.T) {
+	t.Parallel()
+
+	resources := &fakeResources{}
+	service := newBrowseService(t, resources)
+
+	if _, err := service.ObjectGraph(context.Background(), "dev", "core/v1/nodes", "web", "node-1"); err != nil {
+		t.Fatalf("ObjectGraph() error = %v", err)
+	}
+
+	resources.mu.Lock()
+	defer resources.mu.Unlock()
+
+	if resources.graphRef.Kind.Kind != "Node" {
+		t.Errorf("read kind %q, want the one the catalogue id names", resources.graphRef.Kind.Kind)
+	}
+	if !resources.graphRef.Namespace.IsAll() {
+		t.Errorf("namespace = %q, want none on a cluster-scoped kind", resources.graphRef.Namespace)
+	}
+}
+
+// An unknown catalogue id is refused rather than read: a kind nothing serves
+// has no object to draw a map around, and guessing at one would issue a read
+// against a path the cluster does not have.
+func TestObjectGraphRefusesAnUnknownKind(t *testing.T) {
+	t.Parallel()
+
+	service := newBrowseService(t, &fakeResources{})
+
+	if _, err := service.ObjectGraph(context.Background(), "dev", "example.com/v1/widgets", "shop", "left"); err == nil {
+		t.Fatal("ObjectGraph() error = nil, want a refusal naming the unknown kind")
+	}
+}
+
+// An empty name is refused before any read. The drawer can be open on a kind
+// with no row selected, and a GET of "" is a LIST of the whole collection.
+func TestObjectGraphRefusesAnEmptyName(t *testing.T) {
+	t.Parallel()
+
+	resources := &fakeResources{}
+	service := newBrowseService(t, resources)
+
+	if _, err := service.ObjectGraph(context.Background(), "dev", "core/v1/configmaps", "shop", ""); err == nil {
+		t.Fatal("ObjectGraph() error = nil, want a refusal")
+	}
+
+	resources.mu.Lock()
+	defer resources.mu.Unlock()
+	if resources.graphRef.Name != "" {
+		t.Error("a read was made for an object with no name")
 	}
 }

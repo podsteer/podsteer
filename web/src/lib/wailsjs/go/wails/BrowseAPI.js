@@ -34,6 +34,10 @@ export function NamespaceInventory(arg1, arg2) {
   return window['go']['wails']['BrowseAPI']['NamespaceInventory'](arg1, arg2);
 }
 
+export function ObjectGraph(arg1, arg2, arg3, arg4) {
+  return window['go']['wails']['BrowseAPI']['ObjectGraph'](arg1, arg2, arg3, arg4);
+}
+
 export function RevealSecretKey(arg1, arg2, arg3, arg4) {
   return window['go']['wails']['BrowseAPI']['RevealSecretKey'](arg1, arg2, arg3, arg4);
 }
