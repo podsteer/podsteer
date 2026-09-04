@@ -254,3 +254,33 @@ func (b *BrowseAPI) RevealSecretKey(clusterID, namespace, name, key string) (str
 
 	return value, nil
 }
+
+// InspectTLSSecret parses one Secret's certificate material, for a
+// deliberate inspection.
+//
+// The same discipline as RevealSecretKey: nothing in PodSteer calls this
+// except a person pressing "Inspect certificate" in the Secret pane, because
+// reading a Secret is audited whichever half of it somebody wanted. The
+// private key itself never crosses this boundary — only whether it matched
+// the certificate, as a bool on the returned chain.
+func (b *BrowseAPI) InspectTLSSecret(clusterID, namespace, name string) (CertificateChainDTO, error) {
+	ctx, cancel := b.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return CertificateChainDTO{}, apiError(b.logger, "InspectTLSSecret", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return CertificateChainDTO{}, apiError(b.logger, "InspectTLSSecret", err)
+	}
+
+	chain, err := b.resources.InspectTLSSecret(ctx, id, ns, name)
+	if err != nil {
+		return CertificateChainDTO{}, apiError(b.logger, "InspectTLSSecret", err)
+	}
+
+	return toCertificateChain(chain, time.Now()), nil
+}

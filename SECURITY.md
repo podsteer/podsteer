@@ -90,6 +90,9 @@ storage rather than in that directory.
 - Exposure of kubeconfig contents, bearer tokens, or credential-plugin output —
   in logs, in the recorded history, in an error surfaced to the frontend, or
   anywhere on disk.
+- A Secret value — including a TLS Secret's private key, when its certificate
+  is inspected — resolved anywhere other than the deliberate, per-key
+  reveal or per-Secret inspection the operator asked for.
 - A bypass of the webview CSP, or any path by which page content reaches the
   network directly.
 - Injection through cluster-controlled data — resource names, labels,

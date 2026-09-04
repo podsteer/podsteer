@@ -10,6 +10,10 @@ export function GetManifest(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['wails']['BrowseAPI']['GetManifest'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function InspectTLSSecret(arg1, arg2, arg3) {
+  return window['go']['wails']['BrowseAPI']['InspectTLSSecret'](arg1, arg2, arg3);
+}
+
 export function ListEvents(arg1, arg2) {
   return window['go']['wails']['BrowseAPI']['ListEvents'](arg1, arg2);
 }

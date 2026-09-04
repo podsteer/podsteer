@@ -27,6 +27,12 @@ type fakeResources struct {
 	// and any assertion about pacing passes whether or not it is paced.
 	hold chan struct{}
 
+	// chain and inspectErr shape what InspectTLSSecret answers, for the
+	// application-level tests of BrowseService.InspectTLSSecret — no cluster
+	// and no real certificate involved at this layer.
+	chain      domain.CertificateChain
+	inspectErr error
+
 	mu       sync.Mutex
 	inFlight int
 	peak     int
@@ -75,6 +81,15 @@ func (f *fakeResources) GetManifest(context.Context, domain.ResourceRef, bool) (
 
 func (f *fakeResources) RevealSecretKey(context.Context, domain.ClusterID, domain.NamespaceName, string, string) (string, error) {
 	return "", nil
+}
+
+// chain is returned by InspectTLSSecret when it is set, so a test can shape
+// the answer without a cluster or a certificate.
+func (f *fakeResources) InspectTLSSecret(context.Context, domain.ClusterID, domain.NamespaceName, string) (domain.CertificateChain, error) {
+	if f.inspectErr != nil {
+		return domain.CertificateChain{}, f.inspectErr
+	}
+	return f.chain, nil
 }
 
 // Compile-time proof the fake still matches the port it stands in for.
@@ -221,5 +236,76 @@ func TestCountingEveryNamespaceAtOnceIsRefused(t *testing.T) {
 	}
 	if resources.calls.Load() != 0 {
 		t.Fatalf("made %d requests before refusing", resources.calls.Load())
+	}
+}
+
+func TestInspectTLSSecretPassesTheChainThrough(t *testing.T) {
+	t.Parallel()
+
+	matches := true
+	want := domain.CertificateChain{
+		Leaf:       domain.Certificate{Subject: "CN=app.example.com"},
+		KeyMatches: &matches,
+	}
+	resources := &fakeResources{chain: want}
+	service := newBrowseService(t, resources)
+
+	got, err := service.InspectTLSSecret(context.Background(), "dev", "web", "app-tls")
+	if err != nil {
+		t.Fatalf("InspectTLSSecret() error = %v", err)
+	}
+	if got.Leaf.Subject != want.Leaf.Subject {
+		t.Errorf("Leaf.Subject = %q, want %q — the use case must not reshape what the port returned", got.Leaf.Subject, want.Leaf.Subject)
+	}
+	if got.KeyMatches == nil || *got.KeyMatches != true {
+		t.Errorf("KeyMatches = %v, want a pointer to true", got.KeyMatches)
+	}
+}
+
+func TestInspectTLSSecretRefusesAnEmptyName(t *testing.T) {
+	t.Parallel()
+
+	resources := &fakeResources{}
+	service := newBrowseService(t, resources)
+
+	if _, err := service.InspectTLSSecret(context.Background(), "dev", "web", ""); err == nil {
+		t.Fatal("InspectTLSSecret() with an empty name, want an error")
+	}
+}
+
+func TestInspectTLSSecretRefusesADisconnectedCluster(t *testing.T) {
+	t.Parallel()
+
+	resources := &fakeResources{}
+	// A registry with nothing open, unlike newBrowseService's — this Secret
+	// belongs to a cluster PodSteer has not connected to.
+	registry := application.NewRegistry()
+	service, err := application.NewBrowseService(application.BrowseServiceDeps{
+		Resources: resources,
+		Events:    &fakeEvents{},
+		Registry:  registry,
+		Catalog:   domain.NewCatalog(),
+	})
+	if err != nil {
+		t.Fatalf("NewBrowseService() error = %v", err)
+	}
+
+	if _, err := service.InspectTLSSecret(context.Background(), "dev", "web", "app-tls"); err == nil {
+		t.Fatal("InspectTLSSecret() on an unconnected cluster, want an error")
+	}
+	if got := resources.calls.Load(); got != 0 {
+		t.Fatalf("reached the port %d times before checking the connection", got)
+	}
+}
+
+func TestInspectTLSSecretWrapsThePortsError(t *testing.T) {
+	t.Parallel()
+
+	resources := &fakeResources{inspectErr: domain.ErrNotTLSSecret}
+	service := newBrowseService(t, resources)
+
+	_, err := service.InspectTLSSecret(context.Background(), "dev", "web", "not-a-tls-secret")
+	if err == nil {
+		t.Fatal("InspectTLSSecret() error = nil, want the port's refusal to surface")
 	}
 }

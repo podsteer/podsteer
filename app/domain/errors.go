@@ -59,4 +59,14 @@ var (
 	// and either is worth saying rather than rendering nothing and letting it
 	// read as "this variable is blank".
 	ErrSecretKeyNotFound = errors.New("secret key not found")
+
+	// ErrNotTLSSecret reports that InspectTLSSecret was asked to parse a
+	// Secret that is neither type kubernetes.io/tls nor carries a tls.crt
+	// key by convention — there is no certificate here to inspect at all.
+	ErrNotTLSSecret = errors.New("secret is not a TLS secret")
+
+	// ErrInvalidCertificate reports that certificate material could not be
+	// parsed as PEM-encoded X.509 — a Secret whose tls.crt or ca.crt holds
+	// something else, or nothing.
+	ErrInvalidCertificate = errors.New("invalid certificate data")
 )

@@ -6,6 +6,8 @@ export function ClassifyConditions(arg1:Array<wails.ConditionRef>):Promise<Array
 
 export function GetManifest(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<string>;
 
+export function InspectTLSSecret(arg1:string,arg2:string,arg3:string):Promise<wails.CertificateChainDTO>;
+
 export function ListEvents(arg1:string,arg2:string):Promise<Array<wails.Event>>;
 
 export function ListEventsForResource(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Array<wails.Event>>;

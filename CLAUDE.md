@@ -455,6 +455,11 @@ the rest in the adapter; and a Secret's values in the YAML tab are replaced
 with their decoded size before the object is serialised, because base64 is an
 encoding and not a cipher.
 
+`InspectTLSSecret` follows the same rule for a TLS Secret's certificate: the
+certificate itself is public material, but it lives beside the private key in
+the same object, so it is parsed only on the same deliberate, per-Secret
+request `RevealSecretKey` requires, never when the Secret pane opens.
+
 ## Escape belongs to one layer, and the layers say which
 
 Seventeen components listen for Escape on the window, so `stopPropagation`

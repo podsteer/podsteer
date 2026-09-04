@@ -25,6 +25,7 @@ import {
 import {
   GetManifest as bindGetManifest,
   RevealSecretKey as bindRevealSecretKey,
+  InspectTLSSecret as bindInspectTLSSecret,
   ListEvents as bindListEvents,
   ListEventsForResource as bindListEventsForResource,
   ListKinds as bindListKinds,
@@ -120,6 +121,13 @@ export type SeriesResult = wails.SeriesResult
 export type HistorySettings = wails.HistorySettings
 /** An assessed cluster: what is wrong, what is left, what is running. */
 export type Overview = wails.Overview
+/** One X.509 certificate, as shown by a TLS Secret's certificate inspection. */
+export type Certificate = wails.Certificate
+/** One thing worth knowing about an inspected certificate chain. */
+export type CertificateInsight = wails.CertificateInsight
+/** A TLS Secret's parsed certificate material — the leaf, its issuers, and
+ * what is worth knowing about them. Never fetched except by inspectTLSSecret. */
+export type CertificateChain = wails.CertificateChainDTO
 export type MetricsBackend = wails.MetricsBackend
 export type PodGraph = wails.PodGraph
 /** One problem, aggregated across the objects it affects. */
@@ -491,6 +499,26 @@ export function revealSecretKey(
   key: string,
 ): Promise<string> {
   return call(() => bindRevealSecretKey(clusterId, namespace, name, key))
+}
+
+/**
+ * Parses a TLS Secret's certificate material, for a deliberate inspection.
+ *
+ * The certificate equivalent of revealSecretKey, and NEVER call this
+ * speculatively for the same reason: the certificate is public material, but
+ * it lives inside the same Secret object as the private key, and a read of
+ * that object is a read of that object regardless of which half somebody
+ * wants. One call, one press of "Inspect certificate".
+ *
+ * The private key itself never crosses this boundary at all — the backend
+ * only ever hands back whether it matched, as `keyMatches` on the result.
+ */
+export function inspectTLSSecret(
+  clusterId: string,
+  namespace: string,
+  name: string,
+): Promise<CertificateChain> {
+  return call(() => bindInspectTLSSecret(clusterId, namespace, name))
 }
 
 // --- Port forwards ----------------------------------------------------------
