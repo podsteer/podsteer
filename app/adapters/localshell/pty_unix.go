@@ -5,6 +5,7 @@ package localshell
 import (
 	"os"
 	"os/exec"
+	"sync"
 	"syscall"
 
 	"github.com/creack/pty"
@@ -18,8 +19,22 @@ import (
 // pair and making the child's terminal its controlling terminal are ioctls the
 // standard library does not expose.
 type ptyProcess struct {
-	ptmx *os.File
-	cmd  *exec.Cmd
+	// mu guards the MASTER'S LIFETIME, not its I/O. Read and Write go
+	// straight to the file, which is safe concurrently and must not be
+	// serialised — a read blocks until the shell says something, and holding
+	// a lock across that would stall every write behind it.
+	//
+	// What is not safe is the pair this lock does cover: an ioctl reads the
+	// descriptor out of the file, and Close invalidates it. The pump closes
+	// the master the moment the shell exits, and a resize can arrive from the
+	// interface at that instant — a window dragged as a session ends is
+	// exactly the case. The race detector found it as a test reading the size
+	// while the pump closed underneath, but the production pair is
+	// ResizeLocalShell against a shell that has just exited.
+	mu     sync.Mutex
+	closed bool
+	ptmx   *os.File
+	cmd    *exec.Cmd
 }
 
 // supported reports that this platform can open a local shell.
@@ -61,11 +76,25 @@ func (p *ptyProcess) Resize(cols, rows uint16) error {
 	if cols == 0 || rows == 0 {
 		return nil
 	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		// The shell has gone. Nothing to resize, and it is not an error worth
+		// showing somebody: the pane is about to close anyway.
+		return nil
+	}
 	return pty.Setsize(p.ptmx, &pty.Winsize{Cols: cols, Rows: rows})
 }
 
 // size reports the terminal's current window size.
 func (p *ptyProcess) size() (cols, rows uint16, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return 0, 0, os.ErrClosed
+	}
+
 	ws, err := pty.GetsizeFull(p.ptmx)
 	if err != nil {
 		return 0, 0, err
@@ -106,4 +135,15 @@ func (p *ptyProcess) signal(sig syscall.Signal) {
 func (p *ptyProcess) Wait() error { return p.cmd.Wait() }
 
 // Close releases the master, tolerating the Hangup that already closed it.
-func (p *ptyProcess) Close() { _ = p.ptmx.Close() }
+//
+// Idempotent, and it marks the master closed under the same lock the size and
+// resize paths take, so neither can be holding the descriptor while it goes.
+func (p *ptyProcess) Close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return
+	}
+	p.closed = true
+	_ = p.ptmx.Close()
+}
