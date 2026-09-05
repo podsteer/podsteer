@@ -56,6 +56,32 @@ type ClusterInvalidator interface {
 	Invalidate(id domain.ClusterID)
 }
 
+// Invalidators fans one invalidation out to several holders, in order.
+//
+// A DISCONNECT HAS MORE THAN ONE THING TO RELEASE, and they are not all in
+// the adapter: the Kubernetes adapter holds the clients, the watch and the
+// per-cluster caches, and OverviewService holds the last assessment. Both are
+// stale in exactly the same way and for exactly the same reason — a
+// kubeconfig context routinely gets re-pointed at a different cluster between
+// a disconnect and the reconnect — so both are released from the one hook
+// Disconnect already calls, rather than by a second hook somebody has to
+// remember to add a service to.
+//
+// Composed once, in the composition root, and never mutated afterwards: a
+// slice appended to after the application is running would be read from
+// Disconnect while it grew.
+type Invalidators []ClusterInvalidator
+
+// Invalidate releases id from every holder. A nil member is skipped, so a
+// service that was not wired costs the caller no branch of its own.
+func (is Invalidators) Invalidate(id domain.ClusterID) {
+	for _, invalidator := range is {
+		if invalidator != nil {
+			invalidator.Invalidate(id)
+		}
+	}
+}
+
 type ClusterService struct {
 	kubeconfig  ports.KubeconfigPort
 	cluster     ports.ClusterPort

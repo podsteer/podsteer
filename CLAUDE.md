@@ -992,15 +992,75 @@ That makes the coverage the window the app was open, which is weaker than a
 monitoring stack and **must be presented as such** — `SeriesResult.spanSeconds`
 exists so the UI can say "the last 40 minutes" instead of implying more.
 
-- **The sampler is the only long-lived goroutine.** One owner, one way to stop
-  (`Close`), and it waits for the write in flight before returning. It is
-  started from `OnStartup` and stopped from `OnShutdown`.
+- **The sampler has one owner and one way to stop** (`Close`), and it waits for
+  the write in flight before returning. It is started from `OnStartup` and
+  stopped from `OnShutdown`. It is emphatically **not** the only long-lived
+  goroutine — this file claimed that for a long time and it was never true —
+  see the rule below.
 - **Retention lives in Go, not in the UI preferences.** It governs what reaches
   the disk, so the process doing the writing owns it. Zero means record nothing
   *and* erase what exists — an operator choosing it means both.
 - **A sample is derived from the overview**, not from a second read of the
   cluster, so the chart and the numbers above it can never disagree.
 - Samples hold capacity figures only: no object names, no logs, no manifests.
+
+## Every goroutine has an owner and one way to stop
+
+There are many long-lived goroutines here, not one: the history sampler, the
+watch sweeper, every reflector and its supervisor, every port-forward
+supervisor, every exec and attach session, every local-shell pump, every log
+stream and every file transfer. The rule is not that there is only one — it is
+that **each has exactly one owner, one way to stop, and a stop that WAITS
+rather than signals**, so a record and the goroutine behind it can never part
+company. That is the sentence `portForwards`, `nodeShells`, the local-shell
+`Manager` and `watchManager` each restate in their own words, and it is the
+one to hold new code to.
+
+**Shutdown teardown cannot rely on context cancellation, because nothing
+cancels anything.** The framework's runtime context is never cancelled —
+`App.OnShutdown` only clears the pointer to it — so a goroutine parked on
+`ctx.Done()` at exit would park forever. Teardown is therefore explicit and
+enumerated in `OnShutdown`: `StopAllPortForwards`, `StopAllNodeShells`,
+`StopAllLocalShells`, `StopAllWatches`, `historyService.Close()`. There is no
+ambient cancellation to fall back on; a new owner that needs stopping needs a
+line there.
+
+**A sweep closes its registry, and a start racing one is refused.** Copying a
+map and stopping what was in it leaves the window between the copy and a start
+that finishes after it — and a node shell is the sharp case, because starting
+one waits up to a minute for a privileged pod to schedule and pull, and
+nothing cancels that wait. So `nodeShells`, the local-shell `Manager` and
+`watchManager` each carry a `closed` flag their sweep sets: a start finding it
+set deletes its pod (or kills its process) and returns an error rather than
+registering into a map nobody will read again.
+
+**A port-forward goes with its connection, not just with the process.**
+`Adapter.Invalidate` stops that cluster's forwards and waits for them, FIRST,
+before it drops the client or forgets the watch — so disconnecting a tab ends
+its forwards everywhere, the same rule `Registry.Close` already follows. That
+ordering is load-bearing rather than tidy: a supervisor whose pod has died
+lists pods every three seconds for two minutes looking for a replacement, on a
+transport it built itself and that invalidating the client does not touch, and
+that list rebuilds the client, re-executes the credential plugin and ensures a
+fresh watch set. It is the resurrection the client-first ordering exists to
+prevent, arriving through a door that ordering does not cover.
+
+The search itself takes the **unexported** `listPods` as defence in depth, so
+it can never ensure a watch and a cancelled search actually stops. That second
+half matters because `readcache.go` detaches its shared fetch from whoever
+started it: through the exported `ListPods`, a search already in flight when
+the stop landed would outlive its own cancellation and could rebuild the
+client behind `Invalidate`'s back. The coalescing given up is worth nothing
+here — the search runs once every three seconds, longer than `readTTL`.
+
+**Three things are deliberately NOT swept at shutdown, and die with the
+process**: terminal sessions (exec, attach, debug), log streams, and file
+transfers. They hold a stream to the API server and nothing in a cluster, so
+the process exiting is a complete teardown — with one exception that is
+already handled elsewhere: a node-shell attach session deletes its pod on
+exit, and `StopAllNodeShells` covers the same pod from the other side. Do not
+read `OnShutdown`'s list as "everything with a goroutine is stopped"; read it
+as "everything that would otherwise leave something behind is stopped".
 
 ## The settings file carries arrangements, never anything about a cluster's contents
 
