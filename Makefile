@@ -64,22 +64,22 @@ RELEASE_TAGS := production$(if $(LINUX_BACKEND_TAG),$(comma)$(LINUX_BACKEND_TAG)
 # compiler.
 export CGO_ENABLED := 1
 
-# WINDOWS LINKS INTERNALLY, AND THE REASON IS A SECURITY PROPERTY. Go builds
-# windows/amd64 position-independent by default and links PIE EXTERNALLY,
-# which needs runtime/cgo — a package a pure-Go program never pulls in, so
-# the link fails looking for a symbol only cgo defines, whether or not cgo is
-# enabled. The obvious escape, -buildmode=exe, silently drops address-space
-# randomisation: the shipped v0.2.0 binary was read and carries DYNAMIC_BASE,
-# HIGH_ENTROPY_VA and NX_COMPAT, so that would hand Windows users a weaker
-# binary than the release it replaces. Linking internally keeps all three —
-# verified by building one and reading its PE header — and needs no C
-# toolchain at all. v2 got here via the Wails CLI; a plain go build has to
-# ask for it.
+# WINDOWS BUILD FLAGS, TAKEN FROM THE WAILS CLI'S OWN RECIPE rather than
+# invented here. `wails3 build` is a thin wrapper around a Taskfile task, and
+# this project deliberately has no Taskfile — but the task it would run is in
+# the framework's templates, and this is what it passes:
+#
+#   -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"
+#
+# `-H windowsgui` is the one that matters and the one this migration had
+# dropped: without it the PE subsystem stays console, and a double-clicked
+# PodSteer opens a command window behind itself. No buildmode or linkmode
+# override, because the framework does not use one and every override tried
+# here made the link worse rather than better.
 WINDOWS_LINK :=
 WINDOWS_LDFLAGS :=
 ifeq ($(OS),Windows_NT)
-WINDOWS_LINK := -buildmode=pie
-WINDOWS_LDFLAGS := -linkmode=internal
+WINDOWS_LDFLAGS := -H windowsgui
 endif
 BUILD_TAGS := $(LINUX_BACKEND_TAG)
 
