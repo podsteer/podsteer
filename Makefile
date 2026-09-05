@@ -380,7 +380,7 @@ check:
 	@echo -e "${BLUE}vitest${NC}"
 	@$(NPM) --prefix web run test
 	@echo -e "${BLUE}node --test build/licences${NC}"
-	@node --test build/licences/
+	@node --test build/licences/*.test.mjs
 	@echo ""
 	@echo -e "${GREEN}All checks passed.${NC}"
 

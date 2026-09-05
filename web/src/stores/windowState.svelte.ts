@@ -26,11 +26,25 @@ import { Window } from '@wailsio/runtime'
 class WindowState {
   isFullscreen = $state(false)
 
-  constructor() {
-    if (typeof window === 'undefined') return
+  /**
+   * NOTHING IS ASKED OF THE RUNTIME UNTIL `start` IS CALLED. Under v2 a poll
+   * from this constructor failed silently in a test, because the bridge the
+   * webview injects simply was not there. v3's runtime has a real HTTP
+   * transport, so the same poll opens a socket to a dev server that is not
+   * running — once per test file, from the mere act of importing anything
+   * that reaches this module. A store that performs IPC as a side effect of
+   * being imported is the defect; the listener and the first poll now belong
+   * to the application's own startup, which is the thing that knows a window
+   * exists.
+   */
+  start(): void {
+    if (typeof window === 'undefined' || this.#started) return
+    this.#started = true
     void this.#check()
     window.addEventListener('resize', this.#onResize)
   }
+
+  #started = false
 
   /**
    * Pending re-check, so a drag costs one poll rather than one per frame.

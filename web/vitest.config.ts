@@ -28,6 +28,11 @@ export default defineConfig({
       $pages: fileURLToPath(new URL('./src/pages', import.meta.url)),
       // Mirrors vite.config.ts's BINDINGS_DIR — see the comment there for why
       // the path is that deep.
+      // The runtime is stubbed, not reachable — see src/test/wailsRuntimeStub.ts
+      // for why v3 made this necessary where v2 held by accident.
+      '@wailsio/runtime': fileURLToPath(
+        new URL('./src/test/wailsRuntimeStub.ts', import.meta.url),
+      ),
       $bindings: fileURLToPath(
         new URL(
           './src/lib/bindings/github.com/podsteer/podsteer/app/adapters/wails',

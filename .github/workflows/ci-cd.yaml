@@ -96,7 +96,7 @@ jobs:
       # covers the shipped/build/graph-only partition, which decides what the
       # licence gate below classifies at all.
       - name: Test Build Scripts
-        run: node --test build/licences/
+        run: node --test build/licences/*.test.mjs
 
       - name: Build
         run: go build ./...
