@@ -46,6 +46,17 @@ ifeq ($(shell uname -s),Linux)
 LINUX_BACKEND_TAG := gtk3
 endif
 RELEASE_TAGS := production$(if $(LINUX_BACKEND_TAG),$(comma)$(LINUX_BACKEND_TAG))
+
+# Whether the build links C, stated rather than inherited. macOS links Cocoa
+# and Linux links GTK, so both need a toolchain; v3's Windows backend is pure
+# Go (its own pkg/w32, where v2 used go-webview2), so Windows needs none.
+# Leaving this to the environment is what broke the Windows package: the
+# runner carries mingw on PATH, so cgo defaulted on, and the link failed
+# looking for a runtime/cgo that a pure-Go target never built.
+CGO := 1
+ifeq ($(OS),Windows_NT)
+CGO := 0
+endif
 BUILD_TAGS := $(LINUX_BACKEND_TAG)
 
 # Where the build leaves things. On macOS the executable is inside the .app
@@ -236,7 +247,7 @@ ifeq ($(PLATFORM),darwin/universal)
 	lipo -create -output $(BIN_DIR)/podsteer $(BIN_DIR)/podsteer-amd64 $(BIN_DIR)/podsteer-arm64
 	@rm -f $(BIN_DIR)/podsteer-amd64 $(BIN_DIR)/podsteer-arm64
 else
-	go build -tags $(RELEASE_TAGS) -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(notdir $(APP_BIN)) .
+	CGO_ENABLED=$(CGO) go build -tags $(RELEASE_TAGS) -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(notdir $(APP_BIN)) .
 endif
 ifdef APP_BUNDLE
 	@# The EXECUTABLE stays lowercase: it is what a Linux package and a
