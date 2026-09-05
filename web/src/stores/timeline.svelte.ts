@@ -308,7 +308,7 @@ class SessionTimeline {
     for (const pod of pods) {
       const key = objectKey('Pod', pod.namespace, pod.name)
       const current = new Map<string, RememberedPodFinding>(
-        pod.findings.map((finding) => [
+        (pod.findings ?? []).map((finding) => [
           finding.title,
           { title: finding.title, severity: finding.severity, detail: finding.detail },
         ]),
@@ -414,7 +414,8 @@ class SessionTimeline {
     // several is filed cluster-wide: it is a statement about the group, and
     // picking one of its subjects to hang it on would put a row on a pod that
     // is not what the finding is about.
-    const subject = finding.subjects.length === 1 ? finding.subjects[0] : null
+    const subjects = finding.subjects ?? []
+    const subject = subjects.length === 1 ? subjects[0] : null
 
     return {
       id: `f${++this.#sequence}`,

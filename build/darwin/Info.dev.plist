@@ -1,35 +1,49 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    The DEVELOPMENT bundle's Info.plist, used by `make dev` and `make dev-build`
+    for build/bin/PodSteer.dev.app.
+
+    It differs from Info.plist in exactly one thing: NSAllowsLocalNetworking,
+    which is what lets the webview reach Vite's dev server on localhost. That
+    allowance must never reach a release bundle — the shipped application talks
+    to no local server at all — which is the whole reason there are two files.
+
+    A literal file rather than a Go template, for the reason Info.plist says.
+-->
 <plist version="1.0">
     <dict>
         <key>CFBundlePackageType</key>
         <string>APPL</string>
         <key>CFBundleName</key>
-        <string>{{.Info.ProductName}}</string>
+        <string>PodSteer</string>
         <!-- The name macOS actually SHOWS: the Dock's hover label, Finder, the
              Force Quit list. CFBundleName above is the menu-bar name and is
              capped at 15 characters; without CFBundleDisplayName the Dock falls
-             back to the bundle's filename, which is the lowercase
-             "podsteer.app". -->
+             back to the bundle's filename. -->
         <key>CFBundleDisplayName</key>
-        <string>{{.Info.ProductName}}</string>
+        <string>PodSteer</string>
         <key>CFBundleExecutable</key>
-        <string>{{.OutputFilename}}</string>
+        <string>podsteer</string>
+        <!-- The same identifier the release bundle carries, deliberately: the
+             notification service and the single-instance lock are both keyed
+             on it, and a development build that behaved differently in either
+             would be testing something other than the application. -->
         <key>CFBundleIdentifier</key>
         <string>com.podsteer.desktop</string>
         <key>CFBundleVersion</key>
-        <string>{{.Info.ProductVersion}}</string>
+        <string>0.0.0</string>
         <key>CFBundleGetInfoString</key>
-        <string>{{.Info.Comments}}</string>
+        <string>A fast, native Kubernetes client.</string>
         <key>CFBundleShortVersionString</key>
-        <string>{{.Info.ProductVersion}}</string>
+        <string>0.0.0</string>
         <key>CFBundleIconFile</key>
         <string>iconfile</string>
         <key>LSMinimumSystemVersion</key>
-        <string>10.13.0</string>
+        <string>12.0.0</string>
         <key>NSHighResolutionCapable</key>
         <string>true</string>
         <key>NSHumanReadableCopyright</key>
-        <string>{{.Info.Copyright}}</string>
+        <string>Copyright © 2026 PodSteer. Apache-2.0 licensed.</string>
         <!-- Why a Kubernetes client asks for your Documents folder.
              PodSteer reads one file it did not choose: the kubeconfig, at
              $KUBECONFIG or ~/.kube/config. Plenty of people keep that
@@ -54,42 +68,9 @@
         <string>PodSteer reads this only if your kubeconfig, or a certificate it names, is stored on a network volume.</string>
         <key>NSRemovableVolumesUsageDescription</key>
         <string>PodSteer reads this only if your kubeconfig, or a certificate it names, is stored on a removable volume.</string>
-        {{if .Info.FileAssociations}}
-        <key>CFBundleDocumentTypes</key>
-        <array>
-          {{range .Info.FileAssociations}}
-          <dict>
-            <key>CFBundleTypeExtensions</key>
-            <array>
-              <string>{{.Ext}}</string>
-            </array>
-            <key>CFBundleTypeName</key>
-            <string>{{.Name}}</string>
-            <key>CFBundleTypeRole</key>
-            <string>{{.Role}}</string>
-            <key>CFBundleTypeIconFile</key>
-            <string>{{.IconName}}</string>
-          </dict>
-          {{end}}
-        </array>
-        {{end}}
-        {{if .Info.Protocols}}
-        <key>CFBundleURLTypes</key>
-        <array>
-          {{range .Info.Protocols}}
-            <dict>
-                <key>CFBundleURLName</key>
-                <string>com.wails.{{.Scheme}}</string>
-                <key>CFBundleURLSchemes</key>
-                <array>
-                    <string>{{.Scheme}}</string>
-                </array>
-                <key>CFBundleTypeRole</key>
-                <string>{{.Role}}</string>
-            </dict>
-          {{end}}
-        </array>
-        {{end}}
+        <!-- DEVELOPMENT ONLY. The webview loads the page from Vite on
+             localhost while `make dev` is running; the shipped bundle serves
+             it from the binary and needs no such allowance. -->
         <key>NSAppTransportSecurity</key>
         <dict>
             <key>NSAllowsLocalNetworking</key>

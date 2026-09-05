@@ -1,12 +1,13 @@
 /**
  * Structured errors for calls into the Go backend.
  *
- * Wails serialises a Go error to a plain string and rejects the promise with
- * it, so there is no structured error object on the wire. The Go side works
- * around this by prefixing every failure with a machine-readable code —
- * `[forbidden] your account is not allowed …` — and this module parses it back
- * out. See app/adapters/wails/errors.go for the producing end; the two must be
- * changed together.
+ * Wails carries a Go error across as its `Error()` STRING and nothing else —
+ * v2 rejected with the bare string, v3 rejects with a `RuntimeError` whose
+ * message is that same string — so there is still no structured error object
+ * on the wire. The Go side works around this by prefixing every failure with a
+ * machine-readable code — `[forbidden] your account is not allowed …` — and
+ * this module parses it back out. See app/adapters/wails/errors.go for the
+ * producing end; the two must be changed together.
  */
 
 /** Every code the backend can produce. Mirrors ErrorCode in Go. */
@@ -106,10 +107,12 @@ export class ApiError extends Error {
 /**
  * Normalises anything thrown by a binding call into an ApiError.
  *
- * Rejection values arrive as strings from Wails, but a bug in the frontend can
- * just as easily throw a TypeError through the same call site — so this
- * accepts `unknown` and always produces something renderable rather than
- * letting `undefined` reach the UI.
+ * Rejection values arrive from Wails as an Error carrying the Go message, but
+ * a bug in the frontend can just as easily throw a TypeError through the same
+ * call site — and a v2-era bare string is still accepted, since the shape is
+ * the framework's to choose and this parser should not be what breaks if it
+ * changes again. So this accepts `unknown` and always produces something
+ * renderable rather than letting `undefined` reach the UI.
  */
 export function toApiError(cause: unknown): ApiError {
   if (cause instanceof ApiError) {

@@ -97,12 +97,12 @@
     gracePeriodInput = ''
   })
 
-  const evictCount = $derived(plan?.evict.length ?? 0)
-  const skippedCount = $derived(plan?.skipped.length ?? 0)
-  const refusedCount = $derived(plan?.refused.length ?? 0)
+  const evictCount = $derived(plan?.evict?.length ?? 0)
+  const skippedCount = $derived(plan?.skipped?.length ?? 0)
+  const refusedCount = $derived(plan?.refused?.length ?? 0)
   const refusedReasons = $derived.by(() => {
     if (!plan) return ''
-    return [...new Set(plan.refused.map((entry) => entry.reason))].join('; ')
+    return [...new Set((plan.refused ?? []).map((entry) => entry.reason))].join('; ')
   })
   const canConfirm = $derived(!!plan?.runnable && !planLoading && !running)
 
@@ -245,16 +245,20 @@
         Draining…
       </p>
     {:else if report}
+      <!-- An empty evicted/failed list marshals to null, same as the plan
+           above — the arithmetic and the each-block both need the empty form. -->
+      {@const evicted = report.evicted ?? []}
+      {@const failed = report.failed ?? []}
       <div class="mt-4 text-body-medium text-on-surface">
         <p>
-          Evicted {report.evicted.length} of {report.evicted.length + report.failed.length}
+          Evicted {evicted.length} of {evicted.length + failed.length}
           {#if report.timedOut}
             <span class="text-error">— timed out waiting on the rest</span>
           {/if}
         </p>
-        {#if report.failed.length > 0}
+        {#if failed.length > 0}
           <ul class="mt-2 flex flex-col gap-1 text-body-small text-on-surface-variant">
-            {#each report.failed as failure (failure.pod)}
+            {#each failed as failure (failure.pod)}
               <li><strong class="text-on-surface" data-selectable>{failure.pod}</strong>: {failure.reason}</li>
             {/each}
           </ul>

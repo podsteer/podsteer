@@ -34,7 +34,15 @@ const SIGNATURES = [
   [/Apache License/i, 'Apache-2.0'],
   [/BSD Zero.Clause License|Zero-Clause BSD/i, '0BSD'],
   [/All advertising materials mentioning features/i, 'BSD-4-Clause'],
-  [/Permission to use, copy, modify, and\/or distribute this software/i, 'ISC'],
+  // ISC HAS TWO WORDINGS AND BOTH ARE ISC. The 2007 revision dropped the
+  // "and/or" and the "and" form is what ISC itself and a good many projects
+  // publish (github.com/coder/websocket is the one that found this: the
+  // classifier read its perfectly ordinary ISC text as UNKNOWN and blocked a
+  // build on an allowed licence). Matching only the newer wording is a
+  // false NEGATIVE, which routes a permissive licence to human review — the
+  // opposite direction from the mistakes the rest of this list guards, but a
+  // mistake all the same.
+  [/Permission to use, copy, modify, and(\/or)? distribute this software/i, 'ISC'],
   [/Permission is hereby granted, free of charge/i, 'MIT'],
   [/Redistribution and use in source and binary forms/i, 'BSD-3-Clause'],
   [/DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE/i, 'WTFPL'],

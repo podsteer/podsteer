@@ -33,7 +33,7 @@
   import { classifyConditions, type ConditionRef } from '$lib/api/client'
   import { ingressAddresses, ingressCertificates, ingressRoutes, isOpenable } from '$lib/ingress'
   import { isCordoned, nodeTaints } from '$lib/taints'
-  import { BrowserOpenURL } from '$lib/wailsjs/runtime/runtime'
+  import { Browser } from '@wailsio/runtime'
   import type { UsageSample } from '$stores/session.svelte'
 
   interface Props {
@@ -331,7 +331,7 @@
       info: `${route.pathType} path to ${route.backend}${route.secure ? ', TLS terminated here' : ', not encrypted'}`,
       // Opened in the real browser, not the webview: this is somebody else's
       // site, and loading it inside the application would replace PodSteer.
-      onclick: isOpenable(route) ? () => BrowserOpenURL(route.url) : undefined,
+      onclick: isOpenable(route) ? () => void Browser.OpenURL(route.url) : undefined,
       external: isOpenable(route),
       tone: route.secure ? undefined : ('warn' as const),
     })),

@@ -1,9 +1,17 @@
 # PodSteer developer tasks.
 #
-# The Wails CLI drives dev and release builds; everything else is the native
-# tooling for the two halves of the codebase. The tagging targets follow the
-# ParliTrack release standard: dev tags are cut on `develop`, and `main`
-# promotes the latest one to production.
+# THIS FILE IS THE BUILD, and under Wails v3 that is more literally true than
+# it was. v2's CLI compiled the application, ran it to generate bindings, built
+# the frontend and assembled the bundle, all behind `wails build`. v3 splits
+# those apart: the binary is an ordinary `go build`, the bindings come from
+# static analysis, and packaging is a handful of file copies. A v3 project
+# scaffolded by `wails3 init` wires that up through a tree of Taskfiles;
+# PodSteer already had a Makefile and CI doing the same job, so the CLI is used
+# for the two things only it can do — generating bindings and rendering icons —
+# and everything else is spelled out here where it can be read.
+#
+# The tagging targets follow the ParliTrack release standard: dev tags are cut
+# on `develop`, and `main` promotes the latest one to production.
 
 MAKEFLAGS += --no-print-directory
 
@@ -11,7 +19,7 @@ BASE = podsteer
 RAW_NAME = podsteer
 APPLICATION_NAME = PodSteer
 
-WAILS ?= wails
+WAILS ?= wails3
 NPM   ?= npm
 SHELL := /bin/bash
 # `git branch --show-current` rather than `rev-parse --abbrev-ref HEAD`: the
@@ -19,23 +27,41 @@ SHELL := /bin/bash
 # every branch guard below would reject a freshly initialised repository.
 BRANCH := $(shell git branch --show-current 2>/dev/null)
 
-# Ubuntu ships webkit2gtk 4.1 while Wails still defaults to 4.0, so Linux
-# builds must opt in or cgo cannot resolve the package.
-ifeq ($(shell uname -s),Linux)
-	BUILD_TAGS := -tags webkit2_41
-else
-	BUILD_TAGS :=
-endif
+# Build tags.
+#
+# `production` is v3's own: it strips the devtools and the dev-server support
+# out of the binary, and is what every release build carries. It is NOT set for
+# `make dev`, which needs both.
+#
+# webkit2gtk 4.1 is no longer among them. v2 defaulted to 4.0 and Ubuntu ships
+# only 4.1, so every Linux build had to opt in with a tag; v3 targets 4.1
+# directly and the tag does not exist.
+RELEASE_TAGS := production
+BUILD_TAGS :=
 
-# Where `wails build` leaves the executable. On macOS it is buried inside the
-# .app bundle; elsewhere it sits directly in build/bin.
+# Where the build leaves things. On macOS the executable is inside the .app
+# bundle this file assembles; elsewhere it sits directly in build/bin.
+BIN_DIR := build/bin
 ifeq ($(shell uname -s),Darwin)
-	APP_BIN := build/bin/PodSteer.app/Contents/MacOS/podsteer
-	APP_BUNDLE := build/bin/PodSteer.app
+	APP_BIN := $(BIN_DIR)/PodSteer.app/Contents/MacOS/podsteer
+	APP_BUNDLE := $(BIN_DIR)/PodSteer.app
+	DEV_BUNDLE := $(BIN_DIR)/PodSteer.dev.app
+	DEV_BIN := $(DEV_BUNDLE)/Contents/MacOS/podsteer
+	# v3's Cocoa layer is compiled against a 12.0 deployment target. All three
+	# are needed and they are not redundant: MACOSX_DEPLOYMENT_TARGET is what
+	# the compiler reads, and the two CGO flags are what the LINKER reads —
+	# without them every build ends in a page of "object file was built for
+	# newer macOS version than being linked" and the binary claims a floor it
+	# cannot honour. Matches LSMinimumSystemVersion in build/darwin/Info.plist.
+	export MACOSX_DEPLOYMENT_TARGET := 12.0
+	export CGO_CFLAGS := -mmacosx-version-min=12.0
+	export CGO_LDFLAGS := -mmacosx-version-min=12.0
 else ifeq ($(OS),Windows_NT)
-	APP_BIN := build/bin/podsteer.exe
+	APP_BIN := $(BIN_DIR)/podsteer.exe
+	DEV_BIN := $(BIN_DIR)/podsteer.exe
 else
-	APP_BIN := build/bin/podsteer
+	APP_BIN := $(BIN_DIR)/podsteer
+	DEV_BIN := $(BIN_DIR)/podsteer
 endif
 
 # Colors
@@ -46,7 +72,7 @@ BLUE   := \033[0;34m
 CYAN   := \033[0;36m
 NC     := \033[0m
 
-.PHONY: help dev build run open bindings notices sbom brand test check web-build embed-stub deps clean \
+.PHONY: help dev dev-build dev-run build package run open bindings icons notices sbom brand test check web-build embed-stub deps clean \
         tag tag-show-inner tag-patch-inner tag-minor-inner tag-major-inner \
         tag-rc-inner tag-main-inner bump-inner ensure-branch ensure-clean \
         ensure-notices fetch
@@ -80,6 +106,7 @@ help:
 	@echo "  make build               - Package the application into build/bin"
 	@echo "  make web-build           - Build the frontend bundle only"
 	@echo "  make bindings            - Regenerate the TypeScript bindings"
+	@echo "  make icons               - Re-render the packaging icons from build/appicon.png"
 	@echo "  make deps                - Install frontend deps and tidy go.mod"
 	@echo "  make clean               - Remove build output"
 	@echo ""
@@ -106,17 +133,48 @@ help:
 
 # --- Development ------------------------------------------------------------
 
-# Every Wails command below depends on web-build for the same reason: Wails
-# generates bindings by COMPILING AND RUNNING the application, and it does that
-# BEFORE it builds the frontend. PodSteer refuses to start without an embedded
-# bundle (app/adapters/assets), so on a clean checkout — where the embed
-# directory holds only its .gitkeep — that first run exits 1 and takes the whole
-# command with it. Building the frontend first breaks the cycle.
+# THE FRONTEND IS STILL BUILT FIRST, but for one reason now rather than two.
 #
-# `-s` then tells Wails to skip its own frontend step rather than repeat ours.
+# Under v2 there were two: `//go:embed all:dist` needs a bundle to compile at
+# all, AND binding generation compiled and RAN the application, which
+# app/adapters/assets refuses to let start without one. v3 generates bindings
+# by reading the source, so only the first reason survives — and it is still
+# enough, which is why `build` depends on web-build and `bindings` on the
+# lighter embed-stub.
 
+# `wails3 dev` watches the Go files listed in build/config.yml and re-runs the
+# commands there: `make dev-build`, Vite, then `make dev-run`. It exports
+# FRONTEND_DEVSERVER_URL, which is what points the webview at Vite instead of
+# at the embedded bundle.
+#
+# web-build first all the same: the embed has to compile before the first
+# dev-build can, and the bundle it produces is what the window falls back to
+# if Vite is not up yet.
 dev: web-build
-	$(WAILS) dev $(BUILD_TAGS)
+	$(WAILS) dev -config ./build/config.yml -port 5173
+
+# The development binary, and on macOS the .dev.app around it.
+#
+# THE BUNDLE IS NOT OPTIONAL ON macOS, and this is the one thing about the dev
+# loop that changed shape: v3's notification service refuses to start without a
+# bundle identifier, so a bare binary reports notifications as unsupported and
+# that half of the application cannot be exercised at all. The bundle costs
+# three file copies. `-tags production` is deliberately absent — dev wants the
+# devtools and the dev-server support that tag strips out.
+dev-build: embed-stub icons
+	@mkdir -p $(BIN_DIR)
+	go build -gcflags=all="-l" -o $(DEV_BIN) .
+ifdef DEV_BUNDLE
+	@mkdir -p $(DEV_BUNDLE)/Contents/Resources
+	@cp build/darwin/Info.dev.plist $(DEV_BUNDLE)/Contents/Info.plist
+	@cp build/darwin/iconfile.icns $(DEV_BUNDLE)/Contents/Resources/
+	@# Ad-hoc, because macOS will not hand an unsigned bundle a stable
+	@# identity — and the identity is the whole reason the bundle exists.
+	@codesign --force --sign - $(DEV_BUNDLE) 2>/dev/null || true
+endif
+
+dev-run:
+	@$(DEV_BIN)
 
 # `notices` as well, because the licence inventory is EMBEDDED in the binary
 # this produces. A packaged application whose Credits pane disagrees with the
@@ -134,24 +192,77 @@ dev: web-build
 # when HEAD is exactly that tag; anything else, including one commit past it,
 # falls back to "dev" and says so.
 VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || echo dev)
-LDFLAGS = -X github.com/podsteer/podsteer/app/config.version=$(VERSION)
+LDFLAGS = -X github.com/podsteer/podsteer/app/config.version=$(VERSION) -w -s
 
-build: web-build notices
-	$(WAILS) build -clean -trimpath -s -ldflags "$(LDFLAGS)" $(BUILD_TAGS)
+# PLATFORM selects the target, and exists for exactly one caller: CI's macOS
+# job, which asks for `darwin/universal`. Anything else builds for this host.
+PLATFORM ?=
+
+# The packaged application, plus the two gates that must hold before one is
+# real: a built frontend to embed, and a licence inventory that matches what
+# the binary links.
+build: web-build notices package
+
+# The compile and the bundling, without those gates.
+#
+# SPLIT OUT FOR CI, which builds the frontend in a step of its own and runs the
+# licence gate once in the `quality` job rather than three more times across
+# the packaging matrix. Locally `make build` is still the whole thing.
+#
+# v2's `wails build` did the compile, the icon rendering and the bundling in
+# one command. Here they are three steps, and the bundle is assembled from
+# build/darwin/ — which is why that directory's Info.plist is now a literal
+# file rather than a Go template the v2 CLI expanded.
+package: icons
+	@rm -rf $(BIN_DIR)
+	@mkdir -p $(BIN_DIR)
+ifeq ($(PLATFORM),darwin/universal)
+	@# ONE UNIVERSAL BINARY, for the reason CI's comment gives: it is the
+	@# single URL a Homebrew cask needs and it runs on Intel Macs, which a
+	@# runner-native arm64 build silently does not. v2 spelled this
+	@# `-platform darwin/universal`; v3 has no such flag, so it is two builds
+	@# and a lipo — which is what that flag did.
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 go build -tags $(RELEASE_TAGS) -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/podsteer-amd64 .
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go build -tags $(RELEASE_TAGS) -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/podsteer-arm64 .
+	lipo -create -output $(BIN_DIR)/podsteer $(BIN_DIR)/podsteer-amd64 $(BIN_DIR)/podsteer-arm64
+	@rm -f $(BIN_DIR)/podsteer-amd64 $(BIN_DIR)/podsteer-arm64
+else
+	go build -tags $(RELEASE_TAGS) -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(notdir $(APP_BIN)) .
+endif
 ifdef APP_BUNDLE
-	@# Wails names the bundle after `outputfilename`, which has to stay
-	@# lowercase: it is also the executable name, and that is what a Linux
-	@# package and a Homebrew cask put on a PATH. The BUNDLE is what a person
-	@# sees in /Applications, so it is renamed here — in one place, rather
-	@# than in CI and locally separately.
-	@# Through a temporary name, because APFS is case-INSENSITIVE by default:
-	@# `podsteer.app` and `PodSteer.app` are the same path, so removing the
-	@# destination first deletes the bundle being renamed, and a direct `mv`
-	@# is a no-op that leaves the old casing in place.
-	@if [ -d build/bin/podsteer.app ]; then \
-		mv build/bin/podsteer.app build/bin/.podsteer-rename.app; \
-		mv build/bin/.podsteer-rename.app $(APP_BUNDLE); \
-	fi
+	@# The EXECUTABLE stays lowercase: it is what a Linux package and a
+	@# Homebrew cask put on a PATH. The BUNDLE is what a person sees in
+	@# /Applications, so it is capitalised — in one place, rather than in CI
+	@# and locally separately.
+	@mkdir -p $(APP_BUNDLE)/Contents/MacOS $(APP_BUNDLE)/Contents/Resources
+	@mv $(BIN_DIR)/podsteer $(APP_BUNDLE)/Contents/MacOS/podsteer
+	@cp build/darwin/iconfile.icns $(APP_BUNDLE)/Contents/Resources/
+	@# The version is substituted into the COPY, never into the source file:
+	@# a working tree that reported itself as a release would be the same
+	@# mistake VERSION above exists to prevent.
+	@sed 's|<string>0\.0\.0</string>|<string>$(VERSION)</string>|g' \
+		build/darwin/Info.plist > $(APP_BUNDLE)/Contents/Info.plist
+endif
+
+# Renders the packaging assets from build/appicon.png and build/windows/.
+#
+# Generated on every build rather than committed, for the reason the frontend
+# bundle is: they are a function of a source that IS committed, and a stale
+# binary copy of one is worse than no copy. Under v2 the CLI did this silently
+# inside `wails build`; v3 exposes it, so it is a step with a name.
+icons:
+	@mkdir -p build/darwin build/windows
+	@$(WAILS) generate icons -input build/appicon.png \
+		-macfilename build/darwin/iconfile.icns \
+		-windowsfilename build/windows/icon.ico >/dev/null
+ifeq ($(OS),Windows_NT)
+	@# The resource object carries the icon, the version metadata and the
+	@# DPI-aware manifest. It has to sit beside main.go for the linker to
+	@# find it, which is why it is git-ignored at the root.
+	@$(WAILS) generate syso -icon build/windows/icon.ico \
+		-info build/windows/info.json \
+		-manifest build/windows/podsteer.exe.manifest \
+		-out podsteer.syso >/dev/null
 endif
 
 # Builds a release binary and launches it in the foreground, so application
@@ -176,11 +287,11 @@ open: build
 	@open $(APP_BUNDLE)
 endif
 
-# Bindings are generated from the Go types alone, so this deliberately does NOT
-# build the frontend. Building it first would deadlock the natural workflow:
-# adding a new bound API means the frontend imports bindings that do not exist
-# yet, so the build fails, so the bindings never get generated. A stub is all
-# the embed needs to compile.
+# Bindings are generated from the Go SOURCE alone, so this deliberately does
+# NOT build the frontend. Building it first would deadlock the natural
+# workflow: adding a new bound API means the frontend imports bindings that do
+# not exist yet, so the build fails, so the bindings never get generated. A
+# stub is all the embed needs to type-check.
 # Refreshes the Kubernetes support-window table from the release team's own
 # schedule. Needs network; run it when preparing a release, not on every build,
 # so an offline build stays reproducible.
@@ -188,14 +299,24 @@ releases:
 	go run ./tools/releasegen
 	@gofmt -w app/domain/release_schedule.go
 
+# `-ts` for TypeScript, `-i` for interfaces rather than classes.
+#
+# INTERFACES ARE A PERFORMANCE DECISION, not a taste one. With classes the
+# generated code reconstructs every returned object through the runtime's
+# `Create` helpers — which on the pod list means deep-copying five thousand
+# rows on every tick, on top of the bridge payload the performance notes
+# already call the second-worst cost in the application. Nothing here treats a
+# DTO as anything but data, so the copy buys nothing.
+#
+# The output mirrors the Go IMPORT PATH under -d, which is why the frontend
+# reaches it through the `$bindings` alias — see web/vite.config.ts.
 bindings: embed-stub
-	$(WAILS) generate module $(BUILD_TAGS)
-	@# Wails writes the go/ bindings 755 but copies the runtime/ files straight
-	@# out of Go's read-only module cache, so their permission bits vary by
-	@# platform and by Wails version. None of them are executable. Left alone,
-	@# regeneration produces a mode-only diff and the CI drift check fails on a
-	@# change that has no content behind it at all.
-	@find web/src/lib/wailsjs -type f -exec chmod 644 {} +
+	$(WAILS) generate bindings -ts -i -d web/src/lib/bindings ./...
+	@# The generator writes files out of Go's module cache in places, so their
+	@# permission bits vary by platform and by Wails version. None of them are
+	@# executable. Left alone, regeneration produces a mode-only diff and the
+	@# CI drift check fails on a change that has no content behind it at all.
+	@find web/src/lib/bindings -type f -exec chmod 644 {} +
 
 web-build:
 	$(NPM) --prefix web run build

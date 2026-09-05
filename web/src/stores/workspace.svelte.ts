@@ -91,7 +91,7 @@ class Workspace {
       for (const cluster of open) {
         this.#adopt(cluster)
         // Reassert rather than trust the backend's own memory. This path is
-        // taken during a `wails dev` hot reload, where the Go process (and
+        // taken during a `make dev` hot reload, where the Go process (and
         // therefore its Registry) outlives the page — see this function's
         // own doc comment — and the organisation may have changed on disk
         // since that connection's flag was last set.

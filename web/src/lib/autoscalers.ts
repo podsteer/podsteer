@@ -59,7 +59,9 @@ export function describeAutoscaler(ref: AutoscalerRef): string {
 
 /** Finds a column by its header, case-insensitively. -1 when the server did not print it. */
 function columnIndex(table: ResourceTable, header: string): number {
-  return table.columns.findIndex((column) => column.name.toLowerCase() === header.toLowerCase())
+  return (table.columns ?? []).findIndex(
+    (column) => column.name.toLowerCase() === header.toLowerCase(),
+  )
 }
 
 /**
@@ -96,8 +98,8 @@ function findHorizontalPodAutoscalers(
   const maxIdx = columnIndex(table, 'MAXPODS')
 
   const found: AutoscalerRef[] = []
-  for (const row of table.rows) {
-    const reference = row.cells[referenceIdx]
+  for (const row of table.rows ?? []) {
+    const reference = row.cells?.[referenceIdx]
     if (!reference) continue
 
     // "Deployment/web" — Kubernetes' own separator between the target's kind
@@ -111,8 +113,8 @@ function findHorizontalPodAutoscalers(
     found.push({
       name: row.name,
       kind: 'HorizontalPodAutoscaler',
-      minReplicas: minIdx === -1 ? undefined : row.cells[minIdx],
-      maxReplicas: maxIdx === -1 ? undefined : row.cells[maxIdx],
+      minReplicas: minIdx === -1 ? undefined : row.cells?.[minIdx],
+      maxReplicas: maxIdx === -1 ? undefined : row.cells?.[maxIdx],
     })
   }
   return found
@@ -144,14 +146,16 @@ function findScaledObjects(
   const maxIdx = columnIndex(table, 'MAX')
 
   const found: AutoscalerRef[] = []
-  for (const row of table.rows) {
-    if (bareKind(row.cells[kindIdx]) !== target.kind || row.cells[nameIdx] !== target.name) continue
+  for (const row of table.rows ?? []) {
+    if (bareKind(row.cells?.[kindIdx]) !== target.kind || row.cells?.[nameIdx] !== target.name) {
+      continue
+    }
 
     found.push({
       name: row.name,
       kind: 'ScaledObject',
-      minReplicas: minIdx === -1 ? undefined : row.cells[minIdx],
-      maxReplicas: maxIdx === -1 ? undefined : row.cells[maxIdx],
+      minReplicas: minIdx === -1 ? undefined : row.cells?.[minIdx],
+      maxReplicas: maxIdx === -1 ? undefined : row.cells?.[maxIdx],
     })
   }
   return found

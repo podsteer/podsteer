@@ -57,7 +57,7 @@ import TimelineView from './TimelineView.svelte'
   import {
     DetectAgents,
     LocalShellSupported,
-  } from '$lib/wailsjs/go/wails/TerminalAPI'
+  } from '$bindings/terminalapi'
 
   interface Props {
     session: ClusterSession
@@ -88,7 +88,7 @@ import TimelineView from './TimelineView.svelte'
         localShellReason = support.reason
         // Only worth asking where a shell can be opened at all — an agent that
         // cannot be launched is not information, it is a list of regrets.
-        if (support.supported) codingAgents = await DetectAgents()
+        if (support.supported) codingAgents = (await DetectAgents()) ?? []
       } catch {
         // A local terminal is a convenience beside a cluster client. Failing
         // to establish whether it is available leaves the control absent

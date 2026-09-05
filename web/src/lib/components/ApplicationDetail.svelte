@@ -94,7 +94,7 @@
   }
 
   const memberRows = $derived.by<DetailRow[]>(() =>
-    application.members.map((member) => ({
+    (application.members ?? []).map((member) => ({
       // Named for how many there are: "Pods 4", "Pod 1". A count and a noun
       // that disagree read as a label somebody forgot to finish.
       label: countedKind(member.kind, member.count),

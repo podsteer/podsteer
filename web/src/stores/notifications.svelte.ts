@@ -18,7 +18,7 @@
  * one people deny for ever.
  */
 
-import { Capability, Notify, Request } from '$lib/wailsjs/go/wails/NotificationAPI'
+import { Capability, Notify, Request } from '$bindings/notificationapi'
 import { decideNotification, type NotifiableFinding, type NotificationPlan } from '$lib/notify'
 
 /** What the platform says it will do. */

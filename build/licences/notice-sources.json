@@ -1,5 +1,5 @@
 {
-  "$comment": "Licence notices for packages that publish none in their own artefact. MIT and BSD both require the notice to be REPRODUCED in distributions; a package omitting it from its tarball does not remove that duty, it just means the text has to be fetched from where the project actually keeps it. Each entry names a sibling package, already in the inventory, whose licence file IS the same project's — never a text typed out by hand. `make notices` fails if the sibling is absent or if the package it covers has since started shipping its own.",
+  "$comment": "Licence notices for packages that publish none in their own artefact. MIT and BSD both require the notice to be REPRODUCED in distributions; a package omitting it from its tarball does not remove that duty, it just means the text has to be fetched from where the project actually keeps it. Each entry names a sibling package, already in the inventory, whose licence file IS the same project's — never a text typed out by hand. A sibling in ANOTHER ecosystem is named with `inheritsFromEcosystem`; one repository publishing both a Go module and an npm package under one licence is ordinary, and refusing to look across the boundary would force exactly the hand-typed prose this file exists to avoid. `make notices` fails if the sibling is absent or if the package it covers has since started shipping its own.",
   "sources": [
     {
       "package": "@xterm/addon-serialize",
@@ -8,6 +8,15 @@
       "justification": "Both are packages of the xterm.js monorepo (xtermjs/xterm.js), published together from one repository under one MIT licence held by 'The xterm.js authors'. addon-search ships that licence file in its tarball and addon-serialize omits it; the licence, the holder and the terms are identical, so reproducing the sibling's file discharges the notice requirement for both. Verified by comparing the shipped LICENSE files of the sibling addons, which are byte-identical to each other.",
       "approvedBy": "sebastian.gogoasa@cloudresty.com",
       "approvedOn": "2026-09-01"
+    },
+    {
+      "package": "@wailsio/runtime",
+      "ecosystem": "npm",
+      "inheritsFrom": "github.com/wailsapp/wails/v3",
+      "inheritsFromEcosystem": "go",
+      "justification": "The npm package is built and published out of the Wails repository itself (v3/internal/runtime/desktop/@wailsio/runtime), declares MIT in its package.json, and ships no licence file in its tarball. The Go module of the same repository is already in this inventory and carries that repository's MIT LICENSE — same project, same licence, same holder (The Wails Project). Reproducing that file is what discharges the notice requirement for the runtime the frontend links. PENDING MAINTAINER APPROVAL: added while migrating to Wails v3 and not yet signed off by a person; see the migration report.",
+      "approvedBy": "pending",
+      "approvedOn": "2026-09-05"
     }
   ]
 }

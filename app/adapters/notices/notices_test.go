@@ -119,9 +119,9 @@ func TestEveryReferencedTextResolves(t *testing.T) {
 	}
 }
 
-// The three modules only the Windows binary links. They were missing from the
-// first version of this inventory because `go list -deps` ran on the host
-// platform alone, which is precisely the regression this guards.
+// The modules only the Windows binary links. They were missing from the first
+// version of this inventory because `go list -deps` ran on the host platform
+// alone, which is precisely the regression this guards.
 func TestWindowsOnlyModulesAreCovered(t *testing.T) {
 	t.Parallel()
 
@@ -135,13 +135,21 @@ func TestWindowsOnlyModulesAreCovered(t *testing.T) {
 		present[entry.Name] = true
 	}
 
-	// Only go-webview2 is left on this list. go-ansiterm and mousetrap used
-	// to be here too, but both arrived through k8s.io/cli-runtime's cobra
-	// dependency, and nothing has shipped that module since the kubeconfig
-	// loading rules stopped going through genericclioptions — the inventory
-	// dropping them is the generator being right, not being single-platform.
+	// THE LIST IS THE CURRENT TRUTH, not a growing record. go-ansiterm and
+	// mousetrap were once here and left when the kubeconfig loading rules
+	// stopped going through genericclioptions; go-webview2 left with Wails v2,
+	// which used it for the WebView2 loader where v3 goes through its own
+	// pkg/w32. In each case the inventory dropping them was the generator
+	// being right rather than being single-platform, which is why this list is
+	// re-derived from `go list -deps` under GOOS=windows when it changes.
+	//
+	// What v3 puts here instead is the toast-notification stack: go-toast and
+	// its go-ole dependency are how NotificationAPI reaches the Action Centre
+	// on Windows, and neither is compiled on any other platform.
 	for _, name := range []string{
-		"github.com/wailsapp/go-webview2",
+		"git.sr.ht/~jackmordaunt/go-toast/v2",
+		"github.com/go-ole/go-ole",
+		"github.com/mattn/go-colorable",
 	} {
 		if !present[name] {
 			t.Errorf("%s is linked into the Windows build but is absent from the notices; "+

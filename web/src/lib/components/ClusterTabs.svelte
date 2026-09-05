@@ -31,11 +31,12 @@
   sidebar's text sits in below it, rather than an arbitrary one.
 
   The traffic lights' vertical position is native AppKit chrome fixed by
-  `mac.TitleBarHiddenInset()` — nothing in this file's CSS can move them.
-  Wails v2 has no supported API for it (see wailsapp/wails#4227, open as of
-  this writing); the only real fix is repositioning the NSWindow's standard
-  window buttons from native Go/Cgo code, which this app does not currently
-  have any of.
+  `application.MacTitleBarHiddenInset` — nothing in this file's CSS can move
+  them, and Wails still exposes no supported API for it in v3 (see
+  wailsapp/wails#4227). The fix is repositioning the NSWindow's standard window
+  buttons from native Go/Cgo code, which `app/adapters/macwindow` does; the
+  offset it applies is `trafficLightVerticalNudge` in `app/cmd/main.go`, and it
+  is tuned against the height this bar renders at.
 -->
 <script lang="ts">
   import { isMac } from '$lib/platform'

@@ -1,8 +1,13 @@
 # PodSteer
 
-A desktop Kubernetes client built on Wails v2 (Go backend + the OS's native
+A desktop Kubernetes client built on Wails v3 (Go backend + the OS's native
 webview) rather than Electron, so that it starts fast and stays small in
 memory.
+
+Wails v3 is a BETA (`v3.0.0-beta.16`, pinned exactly in `go.mod` and in
+`.github/workflows/ci-cd.yaml`). It is pinned rather than floated because a
+beta renames things between releases, and `@latest` in CI would break a build
+nobody changed.
 
 ## Layout
 
@@ -19,7 +24,7 @@ app/
 ├── ports/          inbound (driving) + outbound (driven) interfaces
 ├── adapters/
 │   ├── k8s/        client-go + cli-runtime; satisfies the Kubernetes ports
-│   ├── wails/      bound structs and DTOs; the frontend API contract
+│   ├── wails/      bound SERVICES and DTOs; the frontend API contract
 │   ├── mcp/        read-only tools for a coding agent, over stdio
 │   └── assets/     embeds the built frontend
 └── config/         environment-driven configuration
@@ -940,20 +945,28 @@ they are ever offered, belong in memory beside the navigator's Recent section.
 
 ## Two structural facts that look like mistakes
 
-**`main.go` sits at the repository root.** The Wails CLI runs `go build` with
-its working directory set to the project root and no package argument
-(`pkg/commands/build/base.go`), and exposes no setting to point it elsewhere.
-The root file is a three-line shim; the real entry point is `app/cmd/main.go`,
-which is `package cmd` for the same reason.
+**`main.go` sits at the repository root.** It is a three-line shim; the real
+entry point is `app/cmd/main.go`, which is `package cmd`.
 
-That is also why `cmd.Main` reads its arguments the way it does. Wails
-generates bindings by compiling and RUNNING this binary with no arguments of
-its own, so **the argument-free path must always be the window** — a
-subcommand is additive and is reached only when the first argument names it.
-`route` is split out of `dispatch` precisely so `main_test.go` can assert that
-without starting a window, which is the one thing a test of this path cannot
-do. Anything that put a flag, a prompt or a usage message in front of a bare
-launch would take `wails build`, `wails dev` and `make bindings` down with it.
+**That was forced under Wails v2 and is now a convention.** The v2 CLI ran
+`go build` with its working directory set to the project root and no package
+argument, and exposed no setting to point it elsewhere. v3 does not build the
+application at all — `make build` is `go build` and `wails3 generate bindings`
+takes an explicit package pattern — so nothing now requires the `main` package
+to be at the root. Moving it would mean renaming `app/cmd` to `package main`
+and repointing the Makefile and CI, which is a separate change with its own
+diff; until somebody makes it, the shim's comment says why it is there.
+
+`cmd.Main` still reads its arguments the way it does, but the reason has
+narrowed. Under v2 it was mechanical: binding generation compiled and RAN this
+binary argument-free, so anything else on that path took the build down. v3
+generates bindings by reading the SOURCE, so that consequence is gone and what
+remains is the product rule — **a bare launch must always be the window**,
+because a double-click, a Dock icon and `brew install --cask podsteer` all run
+this binary with nothing after its name. A subcommand is additive and is
+reached only when the first argument names it. `route` is split out of
+`dispatch` precisely so `main_test.go` can assert that without starting a
+window, which is the one thing a test of this path cannot do.
 
 **Vite builds into `app/adapters/assets/dist`.** Go's `//go:embed` cannot
 reference a parent directory, so the bundle has to land beside the package that
@@ -965,17 +978,26 @@ That directory's contents are git-ignored except a tracked `.gitkeep`, because
 clone. `emptyOutDir` deletes the placeholder on every build, so a small Vite
 plugin (`podsteer:keep-embed-directory`) rewrites it — do not remove it.
 
-**The frontend must be built before any Wails command.** Wails generates its
-bindings by compiling *and running* the application, and it does that before it
-builds the frontend. `assets.FS()` refuses to start without an embedded bundle,
-so on a clean checkout that first run exits 1 and takes `wails build`,
-`wails dev` and `wails generate module` down with it. This is why `dev`, `build`
-and `bindings` all depend on `web-build` in the Makefile, and why CI builds the
-frontend before invoking Wails. `-s` then stops Wails repeating the work.
+**The frontend is still built before the Go build, for ONE reason rather than
+two.** `//go:embed all:dist` will not compile against an empty directory, so
+`build` depends on `web-build` in the Makefile and CI builds the frontend
+first. The second reason is gone: `wails3 generate bindings` reads the source
+and executes nothing, so `bindings` needs only `embed-stub` — a placeholder
+index.html — where under v2 it needed a real bundle because generation started
+the application and `assets.FS()` refuses to let one start without one.
 
-Do not "fix" this by softening the check in `app/adapters/assets/assets.go` —
+Do not "fix" the check in `app/adapters/assets/assets.go` by softening it —
 it is what turns "compiled without a frontend" into a startup error instead of
-a blank window nobody can diagnose.
+a blank window nobody can diagnose, and that is as true when the asset server
+is v3's `application.AssetFileServerFS` as it was under v2's.
+
+**There is one window, and it is NAMED.** v3 is a multi-window framework:
+`app.Window.Current()` answers with the FOCUSED window, which is none at all
+when the application is hidden or minimised — exactly the state a notification
+click or a second launch is trying to leave. So the window carries
+`wails.MainWindowName` and `App.RaiseWindow` looks it up by name. Genuine
+multi-window support is now possible for the first time and is deliberately
+not built here.
 
 ## History is sampled, and says so
 
@@ -994,7 +1016,8 @@ exists so the UI can say "the last 40 minutes" instead of implying more.
 
 - **The sampler is the only long-lived goroutine.** One owner, one way to stop
   (`Close`), and it waits for the write in flight before returning. It is
-  started from `OnStartup` and stopped from `OnShutdown`.
+  started from the `events.Common.ApplicationStarted` hook — v3's shape of
+  what v2 called `OnStartup` — and stopped from `Options.OnShutdown`.
 - **Retention lives in Go, not in the UI preferences.** It governs what reaches
   the disk, so the process doing the writing owns it. Zero means record nothing
   *and* erase what exists — an operator choosing it means both.
@@ -1185,14 +1208,30 @@ PodSteer posts and the platform decides whether to present — guessing would
 mean guessing wrong in the direction that silences an alarm somebody asked
 for.
 
-The lifecycle (`InitializeNotifications`, the click handler,
-`CleanupNotifications`) lives on `App` and **not** on the bound
-`NotificationAPI`, because Wails binds every exported method of a bound
-struct: a `Start` there would be a webview-callable way to re-register the
-click handler and a `Stop` a webview-callable way to tear the platform's
-connection down. Clicking one raises the window in Go — before the event is
-emitted, so a tab never switches behind a hidden window — and `App.svelte`
-then focuses that cluster and opens its overview.
+**The platform service is started by hand and never registered**, and that is
+the v3 form of a rule that predates it. Wails v3 ships notifications as an
+ordinary SERVICE (`v3/pkg/services/notifications`), and a registered service
+has every exported method bound — which for this one would put
+`RemoveAllDeliveredNotifications` and the rest of its management surface
+within reach of the page. So `App.StartNotifications` constructs it, calls its
+`ServiceStartup` directly, keeps the handle, and leaves it out of
+`Options.Services`; `NotificationAPI` exposes three methods and decides
+nothing. Under v2 the same rule kept `InitializeNotifications` and
+`CleanupNotifications` off the bound struct, for the identical reason: Wails
+binds every exported method of what it is given.
+
+**"Supported" now means the service started.** v2 had `IsNotificationAvailable`
+to ask; v3's platform backend reports the same thing by FAILING its own
+startup — no notification centre, or, on macOS, no bundle identifier because
+the binary is running outside a `.app`. That last case is why `make dev`
+builds `PodSteer.dev.app` rather than running a bare binary: a development
+build that reported notifications as unsupported could not exercise this
+feature at all.
+
+Clicking one raises the window in Go — before the event is emitted, so a tab
+never switches behind a hidden window — through `App.RaiseWindow`, which the
+single-instance callback shares. `App.svelte` then focuses that cluster and
+opens its overview.
 
 ## Licences are policy, and the build enforces it
 
@@ -1210,6 +1249,15 @@ Three things about the scope are easy to get wrong and are handled in
   `go-webview2` and two others are reached only under `GOOS=windows`, so a
   macOS-generated inventory omitted modules the Windows binary contains.
   `CGO_ENABLED=1` is forced, or cross-GOOS silently prunes cgo dependencies.
+  The Linux entry carries no build tag any more: v2 defaulted to webkit2gtk
+  4.0 and the tag chose 4.1, which changed which files — and therefore which
+  imports — were in scope. v3 targets 4.1 directly.
+- **A licence the classifier does not recognise blocks the build**, which
+  makes a false negative in `build/licences/classify.mjs` as expensive as a
+  false positive. ISC has two published wordings, and matching only the newer
+  one sent `coder/websocket` — perfectly ordinary ISC, an ALLOWED tier — to
+  human review. The signature list is ordered and each entry is load-bearing;
+  read the comments there before adding one.
 - **A package imported by `web/src/` ships, whatever `package.json` says.**
   The import scan cross-checks this and fails the build; mislabelling one as a
   `devDependency` would hide it from the inventory and break
@@ -1240,20 +1288,32 @@ machine with no Node.
 ## Commands
 
 ```sh
-make dev        # wails dev — hot-reloads the frontend, rebuilds Go on change
+make dev        # wails3 dev — Vite for the frontend, Go rebuilt on change
 make build      # packaged application into build/bin
+make package    # the same, minus the frontend build and the licence gate
 make test       # go test -race ./...
 make check      # gofmt + go vet + svelte-check
 make bindings   # regenerate TypeScript bindings after changing a bound method
+make icons      # re-render the packaging icons from build/appicon.png
 make notices    # regenerate the licence inventory and enforce the policy
 make sbom       # emit a CycloneDX SBOM into build/bin/sbom
 ```
 
-Regenerate bindings whenever a method on `ClusterAPI`/`WorkloadAPI` or a DTO in
-`app/adapters/wails/dto.go` changes — `wails dev` and `wails build` do it
-automatically, `go build` does not. The generated output in
-`web/src/lib/wailsjs/` is **committed**, and the `bindings` CI job fails on any
-drift, so a forgotten regeneration is caught in CI rather than at runtime.
+`make dev` runs `wails3 dev` against `build/config.yml`, whose `executes` are
+this project's own targets rather than the v3 template's tasks: `dev-build`
+compiles the Go side (and, on macOS, the `.dev.app` around it), Vite serves the
+frontend, and `dev-run` launches the binary. `wails3 dev` exports
+`FRONTEND_DEVSERVER_URL`, which is what points the webview at Vite instead of
+at the embedded bundle.
+
+**NOTHING ELSE REGENERATES THE BINDINGS.** Under v2, `wails dev` and
+`wails build` did it as a side effect; v3's build is a plain `go build`, so
+`make bindings` is the only thing that writes them and a forgotten
+regeneration is a stale frontend contract until CI says so. Run it whenever a
+method on a bound service or a DTO in `app/adapters/wails/` changes. The
+generated output in `web/src/lib/bindings/` is **committed**, the frontend
+reaches it through the `$bindings` alias, and the `bindings` CI job fails on
+any drift.
 
 ## Branching and releases
 
@@ -1281,12 +1341,13 @@ release.
 
 ## Where this deviates from the Service Blueprint
 
-Two deviations, both forced by Wails rather than chosen:
+Two deviations, one of them now inherited rather than forced:
 
-- **`go.mod` is at the repository root, not in `app/`.** The Wails CLI compiles
-  the root package, so the `main` package must live there — and it must be
-  inside the module. CI therefore uses `go-version-file: go.mod`, not
-  `app/go.mod`.
+- **`go.mod` is at the repository root, not in `app/`.** Wails v2's CLI
+  compiled the root package, so the `main` package had to live there — and it
+  had to be inside the module. v3 imposes neither, so this is now a layout
+  nothing enforces and nothing has moved; see "Two structural facts that look
+  like mistakes". CI uses `go-version-file: go.mod`, not `app/go.mod`.
 - **No `app/internal/` layer.** The blueprint nests `application/`, `domain/`
   and `adapters/` under `app/internal/`; here they sit directly under `app/`,
   with `ports/` as a sibling package rather than interfaces living beside their
@@ -1364,6 +1425,14 @@ The webview's own policy is tightened at BUILD time, not in `index.html`:
 scheme source permits a WebSocket to any host. A Vite plugin strips it from
 the shipped page and `app/adapters/assets/csp_test.go` asserts the result on
 the embedded bundle, so dev keeps what it needs and the two cannot drift.
+
+**`connect-src 'self'` is load-bearing under v3 in a way it was not under v2**,
+and it still says what it said. v2's bridge was JavaScript injected into the
+page; v3's is an HTTP request to `/wails/runtime` on the asset server, which is
+the page's OWN origin. So the shipped policy permits exactly one destination —
+this process — and nothing else, which is the same commitment expressed against
+a different mechanism. Anything that moved the IPC to a different origin, or to
+a WebSocket transport (v3 offers one), would need this line reopened.
 
 **The update check is the only outbound call that is not a cluster**, and the
 constraints on it are not negotiable style preferences. It sends no identifier
@@ -1455,8 +1524,17 @@ same as one already in the explicit file.
 - **Error classification crosses three layers.** `adapters/k8s/errors.go` maps
   client-go failures onto the `ports.Err*` sentinels; `adapters/wails/errors.go`
   maps those onto an `ErrorCode` and encodes it as a `[code] message` prefix,
-  because Wails can only send an error as a string. `web/src/lib/api/errors.ts`
-  parses it back. Changing the codes means changing both ends.
+  because Wails carries an error across as its `Error()` STRING and nothing
+  else — v2 rejected with the bare string, v3 rejects with a `RuntimeError`
+  whose message is that same string, and neither carries structure.
+  `web/src/lib/api/errors.ts` parses it back. Changing the codes means
+  changing both ends.
+- **A nil Go slice or map arrives as `null`, and the v3 bindings say so.**
+  v2's generator declared every list `T[]` and simply did not model it, which
+  is how `Overview.unavailable` reached a component that dereferenced it. The
+  v3 types are `T[] | null`, and `callList` in `web/src/lib/api/client.ts`
+  normalises a list to `[]` at the seam so no view has to remember. A nested
+  field on a DTO does not pass through it and is guarded at the reader.
 - **The navigator's Recent section is in memory only, deliberately.**
   `ClusterSession.recentObjects` (`web/src/stores/session.svelte.ts`) holds the
   last objects opened in the detail drawer and is gone when the tab closes,
@@ -1716,7 +1794,7 @@ pod and the thing that deletes it are created and torn down together, because
 every leak in the clients that offer this comes from those two parting company.
 The pod is **deleted when its terminal session ends** — the attach session's
 goroutine deletes it on exit — **and on application shutdown** (`StopAllNodeShells`
-in `OnShutdown`, beside `StopAllPortForwards`), and it must appear in the
+in the shutdown hook, beside `StopAllPortForwards`), and it must appear in the
 activity list with a stop control (`NodeShellsPanel`, the way `PortForwardsPanel`
 does) so an operator can always see and end a root shell still running on a
 node. The pod also carries `activeDeadlineSeconds` of one hour — NOT the normal
@@ -1774,7 +1852,7 @@ the agent holds the operator's credentials and nothing here can narrow them.
 
 Lifecycle follows the port-forward and node-shell registries exactly: the
 record and the process are created and destroyed together, a session ends when
-its pane closes, and `StopAllLocalShells` runs in `OnShutdown` beside
+its pane closes, and `StopAllLocalShells` runs in the shutdown hook beside
 `StopAllNodeShells`. Ending one signals its whole process GROUP — a shell's
 children go with it — and waits, so "stopped" means gone rather than asked.
 
@@ -1818,8 +1896,8 @@ external-systems list, which it does not extend.
 started by the desktop app would have to be discovered, would outlive the tab
 whose credentials it was using, and would be running whether or not anybody was
 asking it anything. A subprocess starts with the agent and ends with it. It
-never reaches `wails.Run`, so the single-instance lock is untouched and an
-agent can start one while the window is open.
+never reaches `application.New` or `app.Run`, so the single-instance lock is
+untouched and an agent can start one while the window is open.
 
 **Read-only, and structurally so.** The server takes narrowed reading
 interfaces (`ClusterReader`, `ResourceReader` and the rest in `server.go`)

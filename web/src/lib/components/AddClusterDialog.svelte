@@ -133,7 +133,10 @@
   }
 
   const canAdd = $derived(
-    !busy && preview !== null && preview.added.length > 0 && preview.conflicts.length === 0,
+    !busy &&
+      preview !== null &&
+      (preview.added?.length ?? 0) > 0 &&
+      (preview.conflicts?.length ?? 0) === 0,
   )
 
   /** Escape belongs to the innermost open layer. See $lib/escape. */
@@ -176,11 +179,11 @@
           <CheckCircle2 class="mt-0.5 size-6 shrink-0 text-success" strokeWidth={1.8} />
           <div class="min-w-0">
             <h2 class="text-headline-small text-on-surface">
-              Added {added.added.length}
-              {added.added.length === 1 ? 'context' : 'contexts'}
+              Added {added.added?.length ?? 0}
+              {added.added?.length === 1 ? 'context' : 'contexts'}
             </h2>
             <p class="mt-1 text-body-medium text-on-surface-variant">
-              {added.added.join(', ')} — now in your picker, under the default project.
+              {(added.added ?? []).join(', ')} — now in your picker, under the default project.
             </p>
             <p class="mt-3 text-body-small text-on-surface-variant/70">
               Written to <span class="font-mono" data-selectable>{added.path}</span>. The previous
@@ -211,19 +214,19 @@
 
         <!-- One row, so the panel does not jump as the message changes. -->
         <div class="mt-3 min-h-10 text-body-small">
-          {#if preview && preview.conflicts.length > 0}
+          {#if preview && (preview.conflicts?.length ?? 0) > 0}
             <p class="flex items-start gap-2 text-warning">
               <AlertTriangle class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
               <span>
-                Your kubeconfig already has {preview.conflicts.length === 1 ? 'a context' : 'contexts'}
-                named <strong>{preview.conflicts.join(', ')}</strong>. Rename
-                {preview.conflicts.length === 1 ? 'it' : 'them'} in the text above and try again —
+                Your kubeconfig already has {preview.conflicts?.length === 1 ? 'a context' : 'contexts'}
+                named <strong>{(preview.conflicts ?? []).join(', ')}</strong>. Rename
+                {preview.conflicts?.length === 1 ? 'it' : 'them'} in the text above and try again —
                 PodSteer will not overwrite credentials that already work.
               </span>
             </p>
-          {:else if preview && preview.added.length > 0}
+          {:else if preview && (preview.added?.length ?? 0) > 0}
             <p class="text-on-surface-variant">
-              Adds <strong class="text-on-surface">{preview.added.join(', ')}</strong>
+              Adds <strong class="text-on-surface">{(preview.added ?? []).join(', ')}</strong>
               to <span class="font-mono">{preview.path}</span>
             </p>
           {:else if previewError}

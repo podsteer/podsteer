@@ -1,0 +1,15 @@
+{
+  "fixed": {
+    "file_version": "0.0.0"
+  },
+  "info": {
+    "0000": {
+      "Comments": "A fast, native Kubernetes client.",
+      "CompanyName": "PodSteer",
+      "FileDescription": "A fast, native Kubernetes client.",
+      "LegalCopyright": "Copyright © 2026 PodSteer. Apache-2.0 licensed.",
+      "ProductName": "PodSteer",
+      "ProductVersion": "0.0.0"
+    }
+  }
+}

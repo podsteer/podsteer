@@ -26,6 +26,14 @@ export default defineConfig({
       $lib: fileURLToPath(new URL('./src/lib', import.meta.url)),
       $stores: fileURLToPath(new URL('./src/stores', import.meta.url)),
       $pages: fileURLToPath(new URL('./src/pages', import.meta.url)),
+      // Mirrors vite.config.ts's BINDINGS_DIR — see the comment there for why
+      // the path is that deep.
+      $bindings: fileURLToPath(
+        new URL(
+          './src/lib/bindings/github.com/podsteer/podsteer/app/adapters/wails',
+          import.meta.url,
+        ),
+      ),
     },
     // The browser build of Svelte, so components mount and update rather than
     // render once to a string.

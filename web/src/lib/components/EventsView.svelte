@@ -10,8 +10,8 @@
   never as an error.
 -->
 <script lang="ts">
-  import { ListEventsForResource } from '$lib/wailsjs/go/wails/BrowseAPI'
-  import type { wails } from '$lib/wailsjs/go/models'
+  import { ListEventsForResource } from '$bindings/browseapi'
+  import type * as wails from '$bindings/models'
   import { formatAge } from '$lib/format'
   import { toApiError } from '$lib/api/errors'
   import { AlertTriangle, Activity } from '@lucide/svelte'
@@ -40,14 +40,17 @@
     void ListEventsForResource(target.clusterId, target.namespace, target.kind, target.name)
       .then((result) => {
         if (!current) return
-        events = result
+        // No events is the ordinary answer for a quiet object, not an
+        // absence of the list itself — see the module comment.
+        const list = result ?? []
+        events = list
         status = 'ready'
         // Filed on the session timeline on the way past — the events of the
         // object whose drawer is open, which no list view fetches unless the
         // operator happens to be on the Events page. It already crossed the
         // bridge, so the Timeline tab beside this one costs no read of its
         // own. See $stores/timeline.
-        timeline.recordEvents(target.clusterId, result)
+        timeline.recordEvents(target.clusterId, list)
       })
       .catch((cause) => {
         if (!current) return

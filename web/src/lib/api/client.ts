@@ -1,13 +1,15 @@
 /**
  * The single seam between the PodSteer UI and the Go backend.
  *
- * Nothing outside this module imports from `$lib/wailsjs` — those files are
+ * Nothing outside this module imports from `$bindings` — those files are
  * regenerated on every build and their shape is dictated by the Go binder, so
  * keeping the rest of the app one step removed means a change over there lands
- * in one place. This module also normalises the two things the raw bindings
- * get wrong for our purposes: rejection values arrive as bare strings (see
- * errors.ts), and Go's positional `arg1, arg2` signatures say nothing about
- * what the arguments mean.
+ * in one place. This module also normalises the three things the raw bindings
+ * get wrong for our purposes: a rejection carries the Go message and no
+ * structure (see errors.ts), Go's positional `arg1, arg2` signatures say
+ * nothing about what the arguments mean, and an event arrives wrapped in the
+ * framework's own envelope rather than as the payload the backend emitted
+ * (see `subscribe`).
  */
 
 import {
@@ -22,7 +24,7 @@ import {
   PreviewKubeconfig as bindPreviewKubeconfig,
   ReadKubeconfigFile as bindReadKubeconfigFile,
   SetReadOnly as bindSetReadOnly,
-} from '$lib/wailsjs/go/wails/ClusterAPI'
+} from '$bindings/clusterapi'
 import {
   GetManifest as bindGetManifest,
   RevealSecretKey as bindRevealSecretKey,
@@ -36,7 +38,7 @@ import {
   AssessCertificateRenewal as bindAssessCertificateRenewal,
   VulnerabilitySummaries as bindVulnerabilitySummaries,
   ObjectGraph as bindObjectGraph,
-} from '$lib/wailsjs/go/wails/BrowseAPI'
+} from '$bindings/browseapi'
 import {
   ListPods as bindListPods,
   ListWorkloads as bindListWorkloads,
@@ -48,17 +50,17 @@ import {
   PodGraph as bindPodGraph,
   WorkloadGraph as bindWorkloadGraph,
   RolloutHistory as bindRolloutHistory,
-} from '$lib/wailsjs/go/wails/WorkloadAPI'
+} from '$bindings/workloadapi'
 import {
   ListEvents as bindListFleetEvents,
   ListPods as bindListFleetPods,
   ListWorkloads as bindListFleetWorkloads,
-} from '$lib/wailsjs/go/wails/FleetAPI'
+} from '$bindings/fleetapi'
 import {
   CanI as bindCanI,
   InspectRole as bindInspectRole,
   SubjectRules as bindSubjectRules,
-} from '$lib/wailsjs/go/wails/RBACAPI'
+} from '$bindings/rbacapi'
 import {
   ScaleWorkload as bindScaleWorkload,
   UpdateResource as bindUpdateResource,
@@ -93,17 +95,17 @@ import {
   BulkCordon as bindBulkCordon,
   PromoteRollout as bindPromoteRollout,
   AbortRollout as bindAbortRollout,
-} from '$lib/wailsjs/go/wails/ManagementAPI'
+} from '$bindings/managementapi'
 import {
   GetOverview as bindGetOverview,
   GetOverviewForTarget as bindGetOverviewForTarget,
-} from '$lib/wailsjs/go/wails/OverviewAPI'
+} from '$bindings/overviewapi'
 import {
   GetSettings as bindGetHistorySettings,
   GetSeries as bindGetSeries,
   SetRetention as bindSetRetention,
   SetSamplingInterval as bindSetSamplingInterval,
-} from '$lib/wailsjs/go/wails/HistoryAPI'
+} from '$bindings/historyapi'
 import {
   ChooseDirectory as bindChooseDirectory,
   ChooseFile as bindChooseFile,
@@ -113,19 +115,19 @@ import {
   OpenURL as bindOpenURL,
   ReadTextFile as bindReadTextFile,
   SaveTextFile as bindSaveTextFile,
-} from '$lib/wailsjs/go/wails/SystemAPI'
+} from '$bindings/systemapi'
 import {
   Cancel as bindCancelFileCopy,
   StartDownload as bindStartDownload,
   StartUpload as bindStartUpload,
-} from '$lib/wailsjs/go/wails/FileCopyAPI'
+} from '$bindings/filecopyapi'
 import {
   ImageReport as bindImageReport,
   ProbeFromHere as bindProbeFromHere,
   ProbeFromPod as bindProbeFromPod,
-} from '$lib/wailsjs/go/wails/InspectAPI'
-import { EventsOn } from '$lib/wailsjs/runtime/runtime'
-import type { wails } from '$lib/wailsjs/go/models'
+} from '$bindings/inspectapi'
+import { Events } from '@wailsio/runtime'
+import type * as wails from '$bindings/models'
 import { toApiError } from './errors'
 // The session timeline records every write made through this module — see
 // `writing` below. Type-only in the other direction, so the two modules
@@ -350,6 +352,27 @@ async function call<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Runs a binding call that returns a LIST, and turns `null` into `[]`.
+ *
+ * A nil Go slice marshals to `null`, so every list method here can answer
+ * with one — a cluster with no nodes, a namespace with no events, an account
+ * whose filter matched nothing. The v2 bindings declared these as `T[]` and
+ * simply did not say so; the v3 generator types them `T[] | null`, which is
+ * the truth and which every caller would otherwise have to guard.
+ *
+ * NORMALISED HERE RATHER THAN AT EACH READER, because that is what this
+ * module is for and because the alternative has already gone wrong once:
+ * `Overview.unavailable` reached a component that dereferenced it, and the
+ * only reason it was not a crash on every refresh is that the field was
+ * rarely nil. An empty list is what "the cluster holds none of these" means
+ * on every surface that renders one, and a reader that has to remember the
+ * difference is a reader that will forget.
+ */
+async function callList<T>(operation: () => Promise<T[] | null>): Promise<T[]> {
+  return (await call(operation)) ?? []
+}
+
+/**
  * Runs a write and records it on the session timeline, however it ended.
  *
  * HERE, AND ONLY HERE, for the same reason `ClusterSession.#recordRecent` is
@@ -404,7 +427,7 @@ function at(kind: string, namespace: string, name: string): TimelineTarget {
 
 /** Lists every cluster in the local kubeconfig. Works before connecting. */
 export function listClusters(): Promise<Cluster[]> {
-  return call(() => bindListClusters())
+  return callList(() => bindListClusters())
 }
 
 /** Reports what adding a kubeconfig would change, without touching the file. */
@@ -458,12 +481,12 @@ export function setReadOnly(clusterId: string, readOnly: boolean): Promise<void>
 
 /** Returns the open clusters, in the order they were opened. */
 export function connections(): Promise<Cluster[]> {
-  return call(() => bindConnections())
+  return callList(() => bindConnections())
 }
 
 /** Lists the namespaces of a connected cluster. */
 export function listNamespaces(clusterId: string): Promise<Namespace[]> {
-  return call(() => bindListNamespaces(clusterId))
+  return callList(() => bindListNamespaces(clusterId))
 }
 
 /**
@@ -482,7 +505,7 @@ export function listNamespaceSummaries(
   clusterId: string,
   annotationKeys: string[] = [],
 ): Promise<NamespaceSummary[]> {
-  return call(() => bindListNamespaceSummaries(clusterId, annotationKeys))
+  return callList(() => bindListNamespaceSummaries(clusterId, annotationKeys))
 }
 
 /**
@@ -502,7 +525,7 @@ export function listNamespaceSummaries(
 export function assessCertificateRenewal(
   certificate: CertificateRenewalRef,
 ): Promise<CertificateInsight[]> {
-  return call(() => bindAssessCertificateRenewal(certificate))
+  return callList(() => bindAssessCertificateRenewal(certificate))
 }
 
 /**
@@ -520,7 +543,7 @@ export function vulnerabilitySummaries(
   clusterId: string,
   namespace: string,
 ): Promise<VulnerabilitySummary[]> {
-  return call(() => bindVulnerabilitySummaries(clusterId, namespace))
+  return callList(() => bindVulnerabilitySummaries(clusterId, namespace))
 }
 
 /**
@@ -531,13 +554,13 @@ export function vulnerabilitySummaries(
  * invisible until somebody reads the wrong colour during an incident.
  */
 export function classifyConditions(conditions: ConditionRef[]): Promise<string[]> {
-  return call(() => bindClassifyConditions(conditions))
+  return callList(() => bindClassifyConditions(conditions))
 }
 
 /** Lists the nodes of a connected cluster, with usage where available.
     `annotationKeys` is the projection listNamespaceSummaries describes. */
 export function listNodes(clusterId: string, annotationKeys: string[] = []): Promise<Node[]> {
-  return call(() => bindListNodes(clusterId, annotationKeys))
+  return callList(() => bindListNodes(clusterId, annotationKeys))
 }
 
 // --- Overview ---------------------------------------------------------------
@@ -613,7 +636,7 @@ export function setSamplingInterval(seconds: number): Promise<void> {
  * operators appear in the tree with no frontend change.
  */
 export function listKinds(clusterId: string): Promise<ResourceKind[]> {
-  return call(() => bindListKinds(clusterId))
+  return callList(() => bindListKinds(clusterId))
 }
 
 // --- Workloads --------------------------------------------------------------
@@ -625,7 +648,7 @@ export function listPods(
   namespace: string,
   annotationKeys: string[] = [],
 ): Promise<Pod[]> {
-  return call(() => bindListPods(clusterId, namespace, annotationKeys))
+  return callList(() => bindListPods(clusterId, namespace, annotationKeys))
 }
 
 /** Lists controllers of one kind, named as "Deployment", "StatefulSet", etc.
@@ -636,7 +659,7 @@ export function listWorkloads(
   namespace: string,
   annotationKeys: string[] = [],
 ): Promise<Workload[]> {
-  return call(() => bindListWorkloads(clusterId, kind, namespace, annotationKeys))
+  return callList(() => bindListWorkloads(clusterId, kind, namespace, annotationKeys))
 }
 
 /** The dependency chain around one pod, from what routes to it to what it needs. */
@@ -674,7 +697,7 @@ export function objectGraph(
 
 /** Lists the pods the scheduler has placed on one node, across namespaces. */
 export function listPodsOnNode(clusterId: string, nodeName: string): Promise<Pod[]> {
-  return call(() => bindListPodsOnNode(clusterId, nodeName))
+  return callList(() => bindListPodsOnNode(clusterId, nodeName))
 }
 
 /**
@@ -705,7 +728,19 @@ export function workloadConsumption(
   kind: string,
   namespace: string,
 ): Promise<Record<string, Consumption>> {
-  return call(() => bindWorkloadConsumption(clusterId, kind, namespace))
+  // A MAP DTO, not a list — callList's array normalisation (`?? []`) does not
+  // fit its shape, so a nil Go map is normalised to `{}` here instead. The
+  // generator also marks every value optional, which a Go map never actually
+  // leaves unset (a key is either present with a value or absent entirely),
+  // so an entry is only dropped if that ever stops being true.
+  return call(async () => {
+    const raw = (await bindWorkloadConsumption(clusterId, kind, namespace)) ?? {}
+    const consumption: Record<string, Consumption> = {}
+    for (const [key, value] of Object.entries(raw)) {
+      if (value !== undefined) consumption[key] = value
+    }
+    return consumption
+  })
 }
 
 /**
@@ -733,7 +768,7 @@ export function rolloutHistory(
   namespace: string,
   name: string,
 ): Promise<Revision[]> {
-  return call(() => bindRolloutHistory(clusterId, kind, namespace, name))
+  return callList(() => bindRolloutHistory(clusterId, kind, namespace, name))
 }
 
 /** Lists all pods owned by a specific workload. */
@@ -743,7 +778,7 @@ export function listPodsForWorkload(
   kind: string,
   name: string,
 ): Promise<Pod[]> {
-  return call(() => bindListPodsForWorkload(clusterId, namespace, kind, name))
+  return callList(() => bindListPodsForWorkload(clusterId, namespace, kind, name))
 }
 
 // --- Fleet ------------------------------------------------------------------
@@ -756,7 +791,7 @@ export function listPodsForWorkload(
 
 /** Lists pods across the named open clusters, grouped per cluster in tab order. */
 export function listFleetPods(clusterIds: string[], namespace: string): Promise<ClusterPods[]> {
-  return call(() => bindListFleetPods(clusterIds, namespace))
+  return callList(() => bindListFleetPods(clusterIds, namespace))
 }
 
 /** Lists every controller kind but ReplicaSet across the named open clusters. */
@@ -764,12 +799,12 @@ export function listFleetWorkloads(
   clusterIds: string[],
   namespace: string,
 ): Promise<ClusterWorkloads[]> {
-  return call(() => bindListFleetWorkloads(clusterIds, namespace))
+  return callList(() => bindListFleetWorkloads(clusterIds, namespace))
 }
 
 /** Lists events across the named open clusters. */
 export function listFleetEvents(clusterIds: string[], namespace: string): Promise<ClusterEvents[]> {
-  return call(() => bindListFleetEvents(clusterIds, namespace))
+  return callList(() => bindListFleetEvents(clusterIds, namespace))
 }
 
 // --- RBAC explorer ----------------------------------------------------------
@@ -825,7 +860,7 @@ export function listEvents(
   namespace: string,
   annotationKeys: string[] = [],
 ): Promise<K8sEvent[]> {
-  return call(() => bindListEvents(clusterId, namespace, annotationKeys))
+  return callList(() => bindListEvents(clusterId, namespace, annotationKeys))
 }
 
 /** Lists events for one specific object — what the detail drawer's Events tab shows. */
@@ -835,7 +870,7 @@ export function listEventsForResource(
   kind: string,
   name: string,
 ): Promise<K8sEvent[]> {
-  return call(() => bindListEventsForResource(clusterId, namespace, kind, name))
+  return callList(() => bindListEventsForResource(clusterId, namespace, kind, name))
 }
 
 // --- Generic browsing -------------------------------------------------------
@@ -1039,7 +1074,7 @@ export function stopPortForward(forwardId: string): Promise<void> {
 
 /** Reports what is forwarded right now — the live registry, not intent. */
 export function listPortForwards(): Promise<PortForward[]> {
-  return call(() => bindListPortForwards())
+  return callList(() => bindListPortForwards())
 }
 
 /** Closes every running forward, across every cluster. */
@@ -1049,7 +1084,7 @@ export function stopAllPortForwards(): Promise<void> {
 
 /** Reports the node shells running right now — the live registry, not intent. */
 export function listNodeShells(): Promise<NodeShell[]> {
-  return call(() => bindListNodeShells())
+  return callList(() => bindListNodeShells())
 }
 
 /** Deletes the pod behind one node shell. The attach session ending does this
@@ -1106,7 +1141,7 @@ export function appInfo(): Promise<AppInfo> {
  * nowhere to put them except its own Credits pane.
  */
 export function listCredits(): Promise<Credit[]> {
-  return call(() => bindCredits())
+  return callList(() => bindCredits())
 }
 
 /** Fetches one licence's full text, on demand. */
@@ -1552,7 +1587,7 @@ export function drainNode(
       // asked to do: a drain that timed out having evicted three of nine is
       // not the same event as one that finished, and the row has to say so.
       detail: report
-        ? `${report.evicted.length} evicted, ${report.failed.length} failed` +
+        ? `${report.evicted?.length ?? 0} evicted, ${report.failed?.length ?? 0} failed` +
           (report.timedOut ? ', timed out' : '')
         : '',
     }),
@@ -1640,10 +1675,10 @@ async function bulkWriting(
   action: string,
   detail: string,
   items: BulkItemDTO[],
-  operation: () => Promise<BulkResult[]>,
+  operation: () => Promise<BulkResult[] | null>,
 ): Promise<BulkResult[]> {
   try {
-    const results = await call(operation)
+    const results = await callList(operation)
     recordBulk(clusterId, action, detail, items, results)
     return results
   } catch (cause) {
@@ -1734,28 +1769,44 @@ export function stopLogStream(streamId: string): Promise<void> {
 
 // --- Events from the backend ------------------------------------------------
 
+/**
+ * Subscribes to one backend event, handing the handler the PAYLOAD.
+ *
+ * Wails v3 delivers an envelope — `{ name, data, sender }` — where v2 spread
+ * the emitted value straight into the callback's arguments. Unwrapping it in
+ * one place is what keeps every subscriber below, and every component that
+ * listens for a stream, written against the payload the Go side actually
+ * emitted rather than against the framework's carrier.
+ *
+ * Exported because the log viewer and the terminal subscribe to their own
+ * streams: those are the two places outside this module that need an event,
+ * and routing them through here is what keeps this module the only importer
+ * of the Wails runtime.
+ */
+export function subscribe<T>(name: string, handler: (payload: T) => void): Unsubscribe {
+  return Events.On(name, (event) => handler(event.data as T))
+}
+
 /** Subscribes to successful cluster connections. Returns an unsubscribe fn. */
 export function onClusterConnected(handler: (event: ClusterConnectedEvent) => void): Unsubscribe {
-  return EventsOn('cluster:connected', (event: ClusterConnectedEvent) => handler(event))
+  return subscribe<ClusterConnectedEvent>('cluster:connected', handler)
 }
 
 /** Subscribes to failed connection attempts. Returns an unsubscribe fn. */
 export function onClusterUnreachable(
   handler: (event: ClusterUnreachableEvent) => void,
 ): Unsubscribe {
-  return EventsOn('cluster:unreachable', (event: ClusterUnreachableEvent) => handler(event))
+  return subscribe<ClusterUnreachableEvent>('cluster:unreachable', handler)
 }
 
 /** Subscribes to a file copy's byte count, throttled by the backend. */
-export function onFileCopyProgress(
-  handler: (event: FileCopyProgressEvent) => void,
-): Unsubscribe {
-  return EventsOn('filecopy:progress', (event: FileCopyProgressEvent) => handler(event))
+export function onFileCopyProgress(handler: (event: FileCopyProgressEvent) => void): Unsubscribe {
+  return subscribe<FileCopyProgressEvent>('filecopy:progress', handler)
 }
 
 /** Subscribes to file copies ending, however they end. */
 export function onFileCopyDone(handler: (event: FileCopyDoneEvent) => void): Unsubscribe {
-  return EventsOn('filecopy:done', (event: FileCopyDoneEvent) => handler(event))
+  return subscribe<FileCopyDoneEvent>('filecopy:done', handler)
 }
 
 /**
@@ -1771,7 +1822,5 @@ export function onFileCopyDone(handler: (event: FileCopyDoneEvent) => void): Uns
 export function onNotificationActivated(
   handler: (event: NotificationActivatedEvent) => void,
 ): Unsubscribe {
-  return EventsOn('notification:activated', (event: NotificationActivatedEvent) =>
-    handler(event),
-  )
+  return subscribe<NotificationActivatedEvent>('notification:activated', handler)
 }

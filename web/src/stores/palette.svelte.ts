@@ -616,7 +616,7 @@ class CommandPaletteStore {
     // resolving — a stale table must not overwrite whatever is current.
     if (this.#effectiveKindId !== kindId) return
     this.#scopedKind = { id: kindId, namespaced: table.namespaced }
-    this.#scopedRows = table.rows
+    this.#scopedRows = table.rows ?? []
   }
 
   async #runKindSearch(session: ClusterSession, kindId: string, cacheKey: string): Promise<void> {
@@ -635,7 +635,7 @@ class CommandPaletteStore {
       this.#kindSearchCache.set(cacheKey, table)
       if (this.#effectiveKindId === kindId) {
         this.#scopedKind = { id: kindId, namespaced: table.namespaced }
-        this.#scopedRows = table.rows
+        this.#scopedRows = table.rows ?? []
       }
     } catch {
       // NEVER CACHED. The same rule readcache.go and every other cache in

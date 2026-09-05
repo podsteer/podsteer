@@ -56,9 +56,11 @@ const NOTICE_FILES = ['NOTICE', 'NOTICE.txt', 'NOTICE.md']
 const PLATFORMS = [
   { GOOS: 'darwin', GOARCH: 'arm64', tags: [] },
   { GOOS: 'windows', GOARCH: 'amd64', tags: [] },
-  // Ubuntu ships webkit2gtk 4.1 only; the Linux build opts in, and the tag
-  // changes which files — and therefore which imports — are in scope.
-  { GOOS: 'linux', GOARCH: 'amd64', tags: ['webkit2_41'] },
+  // No webkit2_41 tag any more: Wails v2 defaulted to webkit2gtk 4.0 and the
+  // Linux build had to opt in, which changed which files — and therefore which
+  // imports — were in scope. v3 targets 4.1 directly, so there is one Linux
+  // build and no tag to keep in step with the Makefile's.
+  { GOOS: 'linux', GOARCH: 'amd64', tags: [] },
 ]
 
 const MODULE_TEMPLATE = '{{if not .Standard}}{{with .Module}}{{.Path}}@{{.Version}}{{end}}{{end}}'
@@ -273,7 +275,7 @@ function importedPackages(webRoot) {
       const path = join(dir, entry.name)
       if (entry.isDirectory()) {
         // Generated bindings are not a dependency; they are our own output.
-        if (entry.name !== 'wailsjs' && entry.name !== 'node_modules') walk(path)
+        if (entry.name !== 'bindings' && entry.name !== 'node_modules') walk(path)
         continue
       }
       if (!/\.(svelte|ts|js|mjs)$/.test(entry.name)) continue
@@ -420,6 +422,16 @@ export function collect(repoRoot) {
  * licence, same holder, and a file we can point at rather than prose somebody
  * typed out. `build/licences/notice-sources.json` records which, and why.
  *
+ * The sibling may be in ANOTHER ECOSYSTEM, named by `inheritsFromEcosystem`.
+ * That is not a loosening: one repository routinely publishes both a Go module
+ * and an npm package under one licence held by one project, and Wails is
+ * exactly that — `@wailsio/runtime` is built out of the same tree as
+ * `github.com/wailsapp/wails/v3` and ships no licence file of its own. Refusing
+ * to look across the boundary would force one of the two alternatives this
+ * mechanism exists to avoid: prose typed out from memory, or a false claim that
+ * no notice exists. The default is still the target's own ecosystem, so an
+ * entry meaning a sibling package says so by omission.
+ *
  * Three things make it fail rather than fudge:
  *
  *   - a sibling that is not in the tree, so the entry cannot silently do
@@ -447,22 +459,27 @@ function applyNoticeSources(root, packages) {
       )
     }
 
-    const donor = byName.get(`${source.ecosystem}:${source.inheritsFrom}`)
+    const donorEcosystem = source.inheritsFromEcosystem ?? source.ecosystem
+    const donorKey = `${donorEcosystem}:${source.inheritsFrom}`
+    const donor = byName.get(donorKey)
     if (!donor) {
       throw new Error(
-        `${key} inherits its notice from ${source.inheritsFrom}, which is not in the ` +
+        `${key} inherits its notice from ${donorKey}, which is not in the ` +
           `dependency tree — the entry is stale`,
       )
     }
     if (!donor.text) {
-      throw new Error(`${key} inherits its notice from ${source.inheritsFrom}, which has none`)
+      throw new Error(`${key} inherits its notice from ${donorKey}, which has none`)
     }
 
     target.text = donor.text
     target.copyright = donor.copyright
     // Recorded on the entry so the inventory says where the text came from
-    // rather than implying the package shipped it.
-    target.noticeFrom = source.inheritsFrom
+    // rather than implying the package shipped it. Qualified by ecosystem when
+    // the donor is in another one, so the Credits pane cannot read
+    // "@wailsio/runtime inherits from github.com/wailsapp/wails/v3" as a
+    // package name it could look up beside it.
+    target.noticeFrom = donorEcosystem === target.ecosystem ? source.inheritsFrom : donorKey
   }
 
   return packages

@@ -30,11 +30,19 @@ export interface CustomColumnSpec {
   key: string
 }
 
-/** The metadata a row must carry for custom columns to read it. Every list
-    DTO carries both (empty objects when the object has none). */
+/**
+ * The metadata a row must carry for custom columns to read it.
+ *
+ * NULL IS PART OF THE SHAPE, and that is the Go side showing through: a nil
+ * map marshals to `null`, not to `{}`, so a row whose object carries no
+ * labels arrives with `labels: null`. The v3 bindings say so in their own
+ * types where v2's did not, and this interface has to admit it or every list
+ * DTO fails to satisfy it. Every reader below already guards, because the
+ * value was always reachable — it was merely undeclared.
+ */
 export interface MetadataRow {
-  labels?: Record<string, string>
-  annotations?: Record<string, string>
+  labels?: { [key: string]: string | undefined } | null
+  annotations?: { [key: string]: string | undefined } | null
 }
 
 /** The keys present on the rows on screen, for the column picker. */

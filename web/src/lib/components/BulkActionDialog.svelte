@@ -161,7 +161,7 @@
     })
   })
 
-  const acting = $derived(plan?.lines.filter((line) => line.act) ?? [])
+  const acting = $derived(plan?.lines?.filter((line) => line.act) ?? [])
 
   /** The kubectl for what the plan will actually touch — never the whole selection. */
   const command = $derived(
@@ -357,13 +357,13 @@
         <p class="text-body-medium text-on-surface">
           Will {copy.label.toLowerCase()}
           <span class="tabular-nums">{plan.acting}</span> of
-          <span class="tabular-nums">{plan.lines.length}</span>
+          <span class="tabular-nums">{plan.lines?.length ?? 0}</span>
           {#if plan.skipped > 0}
             · skipping <span class="tabular-nums">{plan.skipped}</span>
           {/if}
         </p>
         <ul class="mt-2 flex flex-col gap-1 text-body-small">
-          {#each plan.lines as line (label(line))}
+          {#each plan.lines ?? [] as line (label(line))}
             {@const check = autoscalers[rowKey(line.namespace, line.name)]}
             <li class="flex items-start gap-2">
               {#if line.act}

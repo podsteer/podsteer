@@ -134,15 +134,17 @@ func TestNotificationCapabilityReportsNothingWithoutAWindow(t *testing.T) {
 func TestNotificationStartAndStopAreSafeWithoutAWindow(t *testing.T) {
 	t.Parallel()
 
-	// Both run from the Wails lifecycle hooks, and both must be inert when
-	// there is no runtime context — a startup that failed before the window
-	// existed must not take the shutdown path down with it.
+	// Both run from the composition root's lifecycle hooks, and both must be
+	// inert when there is no application — a startup that failed before the
+	// window existed must not take the shutdown path down with it.
 	//
-	// They live on App and NOT on the bound API on purpose, which this test
-	// also pins by calling them there: Wails binds every exported method of a
-	// bound struct, so a Start here would be a webview-callable way to
-	// re-register the click handler, and a Stop a webview-callable way to
-	// tear the platform's connection down under the application.
+	// They live on App and NOT on the bound service on purpose, which this
+	// test also pins by calling them there: Wails binds every exported method
+	// of every registered service, so a Start here would be a webview-callable
+	// way to re-register the click handler, and a Stop a webview-callable way
+	// to tear the platform's connection down under the application. App is not
+	// a service, which is also why v3's own notification service is started by
+	// hand rather than registered — see App.StartNotifications.
 	app := NewApp(slog.New(slog.DiscardHandler), 0)
 	app.StartNotifications()
 	app.StopNotifications()

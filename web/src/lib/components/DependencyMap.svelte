@@ -123,7 +123,13 @@
    */
   let expanded = $state.raw<Set<string>>(new Set())
 
-  const folded = $derived(graph ? fold(graph, expanded) : null)
+  // A nil Go slice marshals to `null`, never to an absent map with missing
+  // entries — `fold` wants a complete, if possibly empty, node/edge list, and
+  // "no nodes" and "not fetched yet" are already told apart by `graph` itself
+  // being null above.
+  const folded = $derived(
+    graph ? fold({ nodes: graph.nodes ?? [], edges: graph.edges ?? [] }, expanded) : null,
+  )
 
   const plan = $derived<Layout | null>(
     folded ? layout(folded, orientation === 'horizontal') : null,
@@ -471,7 +477,7 @@
           never change what the map says it found, or a collapsed set becomes
           a way to under-report a cluster.
         -->
-        {graph.nodes.length} resources
+        {(graph.nodes ?? []).length} resources
       {:else}
         Dependencies
       {/if}
@@ -643,7 +649,7 @@
       </p>
     {/if}
 
-    {#if graph && graph.unreadable.length > 0}
+    {#if graph && (graph.unreadable ?? []).length > 0}
       <!--
         An incomplete map has to say so. An account that cannot list ingresses
         gets a map with no ingress tier, and without this it looks like a pod
@@ -653,7 +659,7 @@
         class="shrink-0 border-t border-outline-variant/40 bg-surface-container-low px-4 py-2
                text-body-small text-on-surface-variant"
       >
-        Could not read {graph.unreadable.join(' or ')} in this namespace, so anything reached
+        Could not read {(graph.unreadable ?? []).join(' or ')} in this namespace, so anything reached
         through them is missing from this map.
       </p>
     {/if}

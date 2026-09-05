@@ -61,8 +61,8 @@
   import RollbackDialog from './RollbackDialog.svelte'
   import Terminal from './Terminal.svelte'
   import DependencyMap from './DependencyMap.svelte'
-  import { DeleteResource, RestartRollout } from '$lib/wailsjs/go/wails/ManagementAPI'
-  import { ListPodsForWorkload } from '$lib/wailsjs/go/wails/WorkloadAPI'
+  import { DeleteResource, RestartRollout } from '$bindings/managementapi'
+  import { ListPodsForWorkload } from '$bindings/workloadapi'
   import { triggerCronJob, suspendWorkload, cordonNode, evictPod, type Pod, type Revision } from '$lib/api/client'
   import { podTemplateOf, type PodTemplate } from '$lib/podTemplate'
   import {
@@ -527,7 +527,7 @@
   )
 
   const containerNames = $derived(
-    selectedPod?.containers.map(c => c.name) ?? []
+    selectedPod?.containers?.map(c => c.name) ?? []
   )
 
   // Broader than isScalable: Trigger and Suspend act on CronJobs and Jobs
@@ -570,7 +570,7 @@
         session.selectedName
       )
       if (request !== podRequest) return
-      workloadPods = pods
+      workloadPods = pods ?? []
     } catch (error) {
       if (request !== podRequest) return
       console.error('Failed to load workload pods:', error)

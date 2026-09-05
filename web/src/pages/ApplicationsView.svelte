@@ -84,7 +84,7 @@
         case 'memory':
           return application.hasMetrics ? application.memory : '—'
         case 'members':
-          return application.members
+          return (application.members ?? [])
             .map((member) => `${member.count} ${countedKind(member.kind, member.count)}`)
             .join(' · ')
         default:
@@ -196,7 +196,7 @@
                  application at a glance, which is the reason to group at
                  all. -->
             <td class="truncate px-3 py-1.5 text-on-surface-variant">
-              {application.members
+              {(application.members ?? [])
                 .map((member) => `${member.count} ${countedKind(member.kind, member.count)}`)
                 .join(' · ')}
             </td>

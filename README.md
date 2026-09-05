@@ -17,7 +17,7 @@ what is wrong. PodSteer reads the cluster and tells you — findings ranked and
 grouped, capacity measured against what pods actually reserved, and every custom
 resource your operators install browsable without an update here.
 
-It is built on [Wails](https://wails.io) v2: a Go backend talking to the
+It is built on [Wails](https://v3.wails.io) v3: a Go backend talking to the
 operating system's own webview, rather than a bundled Chromium. There is no
 second browser engine in the process tree, which is where most of an
 Electron-based client's memory and startup time go.
@@ -99,8 +99,9 @@ downloads with a little more context.
 
 - Go 1.26+
 - Node.js 20+
-- The [Wails CLI](https://wails.io/docs/gettingstarted/installation):
-  `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
+- The [Wails v3 CLI](https://v3.wails.io), pinned to the beta this repository
+  builds against:
+  `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16`
 - A kubeconfig at `$KUBECONFIG` or `~/.kube/config`
 
 &nbsp;
@@ -128,8 +129,9 @@ save and rebuilds the Go side on change, rather than repackaging each time. On
 macOS, `make open` launches the built `.app` the way Finder would, with its own
 Dock icon.
 
-A locally built app is self-signed by Wails, so macOS runs it without
-complaint. Downloaded release artefacts are a different matter — see
+A locally built `.app` is ad-hoc signed by `make dev` and unsigned by
+`make build`, which macOS accepts for something built on the machine running
+it. Downloaded release artefacts are a different matter — see
 [docs/RELEASING.md](docs/RELEASING.md#code-signing).
 
 &nbsp;

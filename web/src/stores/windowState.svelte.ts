@@ -7,15 +7,21 @@
  * they were reserved for in the tab bar) with it. The header needs to know
  * that happened so it can reclaim that space instead of leaving it blank.
  *
- * Wails v2 has no push event for this — `WindowIsFullscreen` is a one-shot
- * poll, not a subscription — so the best available signal is the DOM's own
- * `resize` event, which the webview does receive when the native window
- * changes size for any reason, fullscreen included. A resize re-checks the
- * poll; nothing here claims that is instantaneous, only that it lands within
- * one animation frame of the OS finishing its transition. Those resizes are
- * coalesced to one poll per frame — see #onResize.
+ * `Window.IsFullscreen()` is a one-shot poll, not a subscription, so the best
+ * available signal is the DOM's own `resize` event, which the webview does
+ * receive when the native window changes size for any reason, fullscreen
+ * included. A resize re-checks the poll; nothing here claims that is
+ * instantaneous, only that it lands within one animation frame of the OS
+ * finishing its transition. Those resizes are coalesced to one poll per frame
+ * — see #onResize.
+ *
+ * Wails v3 DOES emit window events (WindowDidEnterFullScreen and its
+ * counterpart), which would make this a subscription rather than a poll. It
+ * is deliberately not taken here: that is a behaviour change riding on a
+ * framework migration, and the resize path is what this component has been
+ * tested against.
  */
-import { WindowIsFullscreen } from '$lib/wailsjs/runtime/runtime'
+import { Window } from '@wailsio/runtime'
 
 class WindowState {
   isFullscreen = $state(false)
@@ -48,7 +54,7 @@ class WindowState {
 
   async #check(): Promise<void> {
     try {
-      this.isFullscreen = await WindowIsFullscreen()
+      this.isFullscreen = await Window.IsFullscreen()
     } catch {
       // The runtime bridge is not ready yet on the very first paint — the
       // next resize (or the app's own layout settling) checks again.

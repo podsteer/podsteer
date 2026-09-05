@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"strings"
 
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"github.com/podsteer/podsteer/app/adapters/notices"
 )
@@ -42,7 +42,7 @@ type SystemAPI struct {
 	// chooseSavePath opens the native save dialog and returns the operator's
 	// choice, or "" if they cancelled.
 	//
-	// A field rather than a direct call to wailsruntime.SaveFileDialog, so a
+	// A field rather than a direct call to the Wails save dialog, so a
 	// test can stub the chosen path instead of popping a real dialog — which
 	// would hang `go test` waiting for an operator who is not there.
 	chooseSavePath func(suggestedName string) (string, error)
@@ -164,18 +164,18 @@ func (s *SystemAPI) LicenceText(textID string) (string, error) {
 // Anything unrecognised gets an unrestricted dialog rather than a guess: the
 // operator named the file, and second-guessing them costs more than the tidy
 // filter is worth.
-func saveDialogFor(suggestedName string) (title string, filters []wailsruntime.FileFilter) {
+func saveDialogFor(suggestedName string) (title string, filters []application.FileFilter) {
 	switch strings.ToLower(filepath.Ext(suggestedName)) {
 	case ".csv":
-		return "Export CSV", []wailsruntime.FileFilter{
+		return "Export CSV", []application.FileFilter{
 			{DisplayName: "CSV (*.csv)", Pattern: "*.csv"},
 		}
 	case ".json":
-		return "Export", []wailsruntime.FileFilter{
+		return "Export", []application.FileFilter{
 			{DisplayName: "JSON (*.json)", Pattern: "*.json"},
 		}
 	case ".log":
-		return "Download logs", []wailsruntime.FileFilter{
+		return "Download logs", []application.FileFilter{
 			{DisplayName: "Log (*.log)", Pattern: "*.log"},
 			{DisplayName: "All files", Pattern: "*"},
 		}
@@ -187,18 +187,18 @@ func saveDialogFor(suggestedName string) (title string, filters []wailsruntime.F
 // showSaveDialog is chooseSavePath's real implementation: the native save
 // dialog, seeded with the suggested filename and filtered by its extension.
 func (s *SystemAPI) showSaveDialog(suggestedName string) (string, error) {
-	ctx, ok := s.app.runtimeContext()
+	wailsApp, ok := s.app.wailsApp()
 	if !ok {
 		return "", fmt.Errorf("the window is not running")
 	}
 
 	title, filters := saveDialogFor(suggestedName)
 
-	return wailsruntime.SaveFileDialog(ctx, wailsruntime.SaveDialogOptions{
-		Title:           title,
-		DefaultFilename: suggestedName,
-		Filters:         filters,
-	})
+	return wailsApp.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+		Title:    title,
+		Filename: suggestedName,
+		Filters:  filters,
+	}).PromptForSingleSelection()
 }
 
 // SaveTextFile opens a native save dialog seeded with suggestedName and
@@ -242,46 +242,54 @@ func (s *SystemAPI) SaveTextFile(suggestedName, content string) (string, error) 
 // folder picker, allowed to create a folder on the way, because "a new
 // folder for this download" is the commonest answer to the question.
 func (s *SystemAPI) showDirectoryDialog(title string) (string, error) {
-	ctx, ok := s.app.runtimeContext()
+	wailsApp, ok := s.app.wailsApp()
 	if !ok {
 		return "", fmt.Errorf("the window is not running")
 	}
 
-	return wailsruntime.OpenDirectoryDialog(ctx, wailsruntime.OpenDialogOptions{
+	// Wails v3 has ONE open dialog where v2 had two functions, so which of
+	// the two this is comes from the flags rather than from the name. Both
+	// are spelled out: leaving CanChooseFiles unset is what keeps this a
+	// folder picker, and an unset flag is easy to read as an oversight.
+	return wailsApp.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
 		Title:                title,
+		CanChooseDirectories: true,
+		CanChooseFiles:       false,
 		CanCreateDirectories: true,
-	})
+	}).PromptForSingleSelection()
 }
 
 // showOpenDialog is chooseFile's real implementation: the native file
 // picker, unfiltered, because anything can be copied into a container.
 func (s *SystemAPI) showOpenDialog(title string) (string, error) {
-	ctx, ok := s.app.runtimeContext()
+	wailsApp, ok := s.app.wailsApp()
 	if !ok {
 		return "", fmt.Errorf("the window is not running")
 	}
 
-	return wailsruntime.OpenFileDialog(ctx, wailsruntime.OpenDialogOptions{
-		Title: title,
-	})
+	return wailsApp.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title:          title,
+		CanChooseFiles: true,
+	}).PromptForSingleSelection()
 }
 
 // showTextOpenDialog is chooseTextPath's real implementation: the native file
 // picker, filtered to JSON but offering everything, because an operator who
 // renamed their settings file should not be told it does not exist.
 func (s *SystemAPI) showTextOpenDialog(title string) (string, error) {
-	ctx, ok := s.app.runtimeContext()
+	wailsApp, ok := s.app.wailsApp()
 	if !ok {
 		return "", fmt.Errorf("the window is not running")
 	}
 
-	return wailsruntime.OpenFileDialog(ctx, wailsruntime.OpenDialogOptions{
-		Title: title,
-		Filters: []wailsruntime.FileFilter{
+	return wailsApp.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title:          title,
+		CanChooseFiles: true,
+		Filters: []application.FileFilter{
 			{DisplayName: "JSON (*.json)", Pattern: "*.json"},
 			{DisplayName: "All files", Pattern: "*"},
 		},
-	})
+	}).PromptForSingleSelection()
 }
 
 // maxTextFileBytes caps what ReadTextFile will hand the webview.
@@ -419,12 +427,18 @@ func (s *SystemAPI) OpenURL(raw string) error {
 			errInvalidURL, raw))
 	}
 
-	ctx, ok := s.app.runtimeContext()
+	wailsApp, ok := s.app.wailsApp()
 	if !ok {
 		return apiError(s.logger, "OpenURL", fmt.Errorf("%w: the window is not running",
 			errInvalidURL))
 	}
 
-	wailsruntime.BrowserOpenURL(ctx, parsed.String())
+	// Wails v3 reports whether the OS accepted the hand-off; v2's
+	// BrowserOpenURL returned nothing at all. The refusal is surfaced rather
+	// than dropped — a link that silently does nothing is indistinguishable
+	// from one this method rejected, and the two need different fixes.
+	if err := wailsApp.Browser.OpenURL(parsed.String()); err != nil {
+		return apiError(s.logger, "OpenURL", err)
+	}
 	return nil
 }
