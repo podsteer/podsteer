@@ -1018,12 +1018,78 @@ exists so the UI can say "the last 40 minutes" instead of implying more.
   (`Close`), and it waits for the write in flight before returning. It is
   started from the `events.Common.ApplicationStarted` hook — v3's shape of
   what v2 called `OnStartup` — and stopped from `Options.OnShutdown`.
-- **Retention lives in Go, not in the UI preferences.** It governs what reaches
-  the disk, so the process doing the writing owns it. Zero means record nothing
-  *and* erase what exists — an operator choosing it means both.
+- **Retention lives in Go, and it is an instance of the general rule.** A
+  setting is BACKEND-OWNED when the Go process must act on it before or without
+  a window, or when it decides what reaches disk or the network; everything
+  else stays in the webview's own storage. The test for a new one is: *if this
+  process had no webview — `podsteer mcp`, a sampler tick before any pane has
+  loaded, the cluster picker on launch — would the setting still have to
+  exist?* Retention answers yes twice over, which is why it is here. A column
+  width answers no to both, which is why it is not. **Object names stay out
+  whatever the rule says**: the snoozed findings and the per-cluster namespace
+  filter keep their home in localStorage, because moving them into a file this
+  process writes would break the exhaustive claim SECURITY.md makes about that
+  file. Zero retention means record nothing *and* erase what exists — an
+  operator choosing it means both.
 - **A sample is derived from the overview**, not from a second read of the
   cluster, so the chart and the numbers above it can never disagree.
 - Samples hold capacity figures only: no object names, no logs, no manifests.
+
+## There are TWO settings files, and they are unrelated
+
+`app/adapters/settings` writes **`os.UserConfigDir()/PodSteer/settings.json`**,
+the settings the GO PROCESS acts on. `web/src/lib/settingsFile.ts` writes the
+**exported** document an operator saves and sends to a colleague. They share a
+`_readme` header and nothing else: the kinds differ deliberately
+(`PodSteerBackendSettings` against `PodSteerSettings`) so one dropped in as the
+other is refused rather than misread, the backend file is not part of the
+export, and the export never reads it.
+
+The backend file is not new so much as **absorbed**: `history.json` has been
+written beside the history directory since retention became configurable — two
+integers, a plain `os.WriteFile`, no version, no kind — and SECURITY.md already
+disclosed it. `Store.adopt` reads it once on a first run, writes the new
+document, and only then removes it, because v0.2.0 shipped it and an operator
+who set retention to zero must not find recording back on after an upgrade.
+
+Five things about it are load-bearing:
+
+- **Its path comes from `os.UserConfigDir` directly, never from the history
+  directory.** That dependency ran the wrong way in `main.go` and is reversed:
+  history is state, settings are configuration, and on Linux those are meant to
+  part company. Only `app/cmd/settings.go` knows both paths, which is why the
+  legacy file is passed in as `Options.AdoptFrom` rather than derived inside
+  the store.
+- **One value under one mutex, and there is no `Save`.** Every mutation is
+  `Update(ctx, func(*domain.Settings) error)` doing the read, the change, the
+  validation and the whole-document atomic write inside the lock. A `Save`
+  taking a whole value would let two callers each read, each change a different
+  field, and the second silently discard the first — which is exactly what the
+  old two-integer file did, invisibly, because nothing else was in it yet.
+- **`Normalise` never fails; `Validate` refuses — and `Update` runs Validate
+  FIRST.** Normalise is the read path: a hand-edited value falls back to its
+  default, is counted, and PodSteer starts. Validate is the write path: a bad
+  value from the interface is a bug worth not persisting. Running Normalise
+  first would repair the value out from under Validate and make every refusal
+  unreachable.
+- **A malformed file is set aside, never repaired and never overwritten**
+  (`settings.json.invalid-<unix>`, stamped so a second bad edit does not
+  clobber the first), and an unknown top-level SECTION round-trips verbatim
+  through `document.Unknown` so an older build cannot erase a newer one's. That
+  protects against an added section and NOT against a field that moved between
+  sections, which is why a file declaring a **higher version is read and never
+  written back** (`ports.ErrSettingsFromFuture`, one line in Settings).
+- **`podsteer mcp` opens it read-only**, and `app/cmd/main_test.go` asserts
+  that the whole MCP composition leaves the configuration directory
+  byte-identical. That is what keeps SECURITY.md's "nothing is written
+  anywhere" literally true rather than a thing everybody has to remember.
+
+Consumers take narrow interfaces at the consumer: `HistoryService` takes a
+two-method `HistorySettingsStore`, not `ports.SettingsPort`, because the
+sampler has no business being able to name the kubeconfig sources or the proxy.
+**Order matters in the composition root**: the store is opened before the
+Kubernetes adapter and before the history service, or the first sampler tick
+runs under the defaults on a machine where recording was turned off.
 
 ## The settings file carries arrangements, never anything about a cluster's contents
 
@@ -1511,6 +1577,43 @@ the operator owns those files and may be syncing them from somewhere PodSteer
 has no business writing to. Its existence check does look at the merged view,
 though, so a name already taken by a directory-only context is refused the
 same as one already in the explicit file.
+
+**The in-app source list is the same read-side extension, made editable.**
+`settings.json` holds an ordered list of `{path, kind: file|directory}`,
+absolute paths only, and `client.go`'s `loadingRules` appends what they
+contribute AFTER the environment's entries:
+
+```text
+Precedence = explicit-or-default chain  ++  PODSTEER_KUBECONFIG_DIR  ++  settings sources
+```
+
+**Environment first, always**, and the three reasons are worth keeping. (1)
+client-go keeps the FIRST file's definition of a context name, so an in-app
+source can never shadow a context the machine's own configuration provided.
+(2) `Merge` writes `Precedence[0]`, so a source is *structurally* incapable of
+being the write target — which is why there is no "write here" flag to offer
+and no way to ask for one, and why
+`TestMergeStillWritesTheExplicitFileWhenSourcesArePresent` is the load-bearing
+test of this feature rather than any of the ones about clusters appearing.
+(3) A packager's or an enterprise's variable beats the UI, the same precedence
+`PODSTEER_UPDATE_CHECK=false` has over the toggle beside it.
+
+A **folder** source is scanned by `kubeconfigFilesIn` — `kubeconfigDirFiles`
+generalised to take a path — so the skip rules cannot drift between it and
+`PODSTEER_KUBECONFIG_DIR`. A listed path that does not exist is **kept and
+reported missing**, never dropped: a synced folder is routinely absent for the
+first minute after a login. `current-context` is still never touched.
+
+`Cluster.Source` carries clientcmd's `LocationOfOrigin`, so the picker can say
+WHICH file contributed a context, and `SettingsAPI` derives from the composed
+report which contexts an entry LOST and to whom. That computation lives in Go
+because it is a statement about the merge rule, not about a component. The
+local terminal picks the sources up for free through `KubeconfigFiles()`, so
+its exported `KUBECONFIG` names the same files.
+
+The pane deliberately offers no write target, no context editing or deletion,
+no current-context control and no paste — the last is Add cluster, which parses
+the paste, refuses a collision and backs the file up first.
 
 ## Domain quirks worth knowing
 

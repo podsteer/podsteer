@@ -333,3 +333,37 @@ type ResourceService interface {
 	// of any list call.
 	VulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.VulnerabilitySummary, error)
 }
+
+// SettingsService is the use-case surface for the backend-owned settings.
+//
+// Deliberately NOT a generic "write this settings value" call. Each method
+// changes one thing, and each is a read-modify-write inside the store's lock,
+// so two panes changing two different settings cannot each write a whole
+// document and have the second discard the first. It is also what keeps the
+// bound surface honest: there is no method here that could carry an object
+// name or a credential into the file, because there is no method here that
+// takes a whole document.
+type SettingsService interface {
+	// State reports where the settings live and whether a change made now
+	// would reach the disk. The pane shows this as one line when it says
+	// anything but "writable".
+	State(ctx context.Context) (domain.SettingsState, error)
+
+	// KubeconfigSources reports the composed loading list in precedence
+	// order, each entry carrying where it came from, whether it is present,
+	// and which contexts it contributed.
+	KubeconfigSources(ctx context.Context) ([]domain.KubeconfigEntry, error)
+
+	// AddKubeconfigSource appends a file or folder to the operator's own
+	// source list. A path already listed is not added twice.
+	AddKubeconfigSource(ctx context.Context, source domain.KubeconfigSource) error
+
+	// RemoveKubeconfigSource drops the source with the given path. Removing
+	// one that is not there succeeds: the list ends up as asked.
+	RemoveKubeconfigSource(ctx context.Context, path string) error
+
+	// MoveKubeconfigSource shifts a source by delta places within the list,
+	// clamped to its ends. Order is precedence, so this is the control that
+	// decides which of two sources defining the same context name wins.
+	MoveKubeconfigSource(ctx context.Context, path string, delta int) error
+}

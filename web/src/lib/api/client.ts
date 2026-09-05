@@ -107,6 +107,14 @@ import {
   SetSamplingInterval as bindSetSamplingInterval,
 } from '$bindings/historyapi'
 import {
+  AddKubeconfigFile as bindAddKubeconfigFile,
+  AddKubeconfigFolder as bindAddKubeconfigFolder,
+  GetKubeconfigSources as bindGetKubeconfigSources,
+  GetState as bindGetSettingsState,
+  MoveKubeconfigSource as bindMoveKubeconfigSource,
+  RemoveKubeconfigSource as bindRemoveKubeconfigSource,
+} from '$bindings/settingsapi'
+import {
   ChooseDirectory as bindChooseDirectory,
   ChooseFile as bindChooseFile,
   Credits as bindCredits,
@@ -221,6 +229,11 @@ export type Sample = wails.Sample
 export type SeriesResult = wails.SeriesResult
 /** What PodSteer records locally, and how often. */
 export type HistorySettings = wails.HistorySettings
+
+/** Where the backend settings live, and whether they can be saved. */
+export type SettingsState = wails.SettingsState
+/** One entry of the composed kubeconfig loading list. */
+export type KubeconfigSource = wails.KubeconfigSource
 /** An assessed cluster: what is wrong, what is left, what is running. */
 export type Overview = wails.Overview
 /** One X.509 certificate, as shown by a TLS Secret's certificate inspection. */
@@ -610,6 +623,52 @@ export function getSeries(
 /** Reports what is recorded on this machine, and how often. */
 export function getHistorySettings(): Promise<HistorySettings> {
   return call(() => bindGetHistorySettings())
+}
+
+// --- Backend settings -------------------------------------------------------
+//
+// The settings the GO PROCESS owns, as against the ones this interface keeps
+// for itself in localStorage. There is deliberately no "save these settings"
+// call: each one changes a single thing, so nothing on this seam could carry
+// an object name or a credential into a file PodSteer writes.
+
+/** Reports where the settings file is and whether a change would reach it. */
+export function getSettingsState(): Promise<SettingsState> {
+  return call(() => bindGetSettingsState())
+}
+
+/** Reports the composed kubeconfig loading list, in precedence order. */
+export function getKubeconfigSources(): Promise<KubeconfigSource[]> {
+  return callList(() => bindGetKubeconfigSources())
+}
+
+/** Adds one kubeconfig file to the operator's own sources. */
+export function addKubeconfigFile(path: string): Promise<void> {
+  return call(() => bindAddKubeconfigFile(path))
+}
+
+/** Adds a folder of kubeconfig files to the operator's own sources. */
+export function addKubeconfigFolder(path: string): Promise<void> {
+  return call(() => bindAddKubeconfigFolder(path))
+}
+
+/**
+ * Drops one of the operator's own sources.
+ *
+ * It removes an ENTRY, never a file: nothing on disk is touched.
+ */
+export function removeKubeconfigSource(path: string): Promise<void> {
+  return call(() => bindRemoveKubeconfigSource(path))
+}
+
+/**
+ * Shifts one of the operator's sources by `delta` places.
+ *
+ * Order is precedence, so this decides which of two sources defining the same
+ * context name wins. A move past either end is clamped rather than refused.
+ */
+export function moveKubeconfigSource(path: string, delta: number): Promise<void> {
+  return call(() => bindMoveKubeconfigSource(path, delta))
 }
 
 /** Changes how long samples are kept. Zero stops recording and erases what exists. */

@@ -74,9 +74,19 @@ func runMCP(args []string) error {
 		logger.Debug("resolved PATH", slog.String("result", shellpath.Resolve(context.Background())))
 	}()
 
+	// READ-ONLY, and that flag is how SECURITY.md's "nothing is written
+	// anywhere" stays literally true for this subcommand. The store reads the
+	// operator's kubeconfig sources so an agent sees the same clusters the
+	// window does, and it creates no directory, writes no file and adopts
+	// nothing — Update returns ports.ErrSettingsReadOnly before it looks at
+	// anything. main_test.go asserts the directory is byte-identical after
+	// this composition has run.
+	settingsStore := openSettings(true, logger)
+
 	kubernetes := k8s.New(k8s.Config{
 		KubeconfigPath: cfg.Kubernetes.KubeconfigPath,
 		KubeconfigDir:  cfg.Kubernetes.KubeconfigDir,
+		Sources:        kubeconfigSources(settingsStore),
 		QPS:            cfg.Kubernetes.QPS,
 		Burst:          cfg.Kubernetes.Burst,
 		// Named apart from the window's own agent string so an operator

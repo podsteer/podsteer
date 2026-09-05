@@ -2,12 +2,9 @@ package application
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -40,9 +37,10 @@ type HistoryServiceDeps struct {
 	Overview ports.OverviewService
 	// Registry tracks which clusters are open. Required.
 	Registry *Registry
-	// SettingsPath is the file retention is persisted to. Optional; when
-	// empty, retention lives only for the life of the process.
-	SettingsPath string
+	// Settings is where the recording policy is read from and written back
+	// to. Optional; when nil, retention lives only for the life of the
+	// process, which is what a test that is not about persistence passes.
+	Settings HistorySettingsStore
 	// Logger receives diagnostics. Optional; defaults to slog.Default.
 	Logger *slog.Logger
 }
@@ -52,7 +50,7 @@ type HistoryService struct {
 	history  ports.HistoryPort
 	overview ports.OverviewService
 	registry *Registry
-	settings string
+	settings HistorySettingsStore
 	logger   *slog.Logger
 
 	mu        sync.RWMutex
@@ -108,7 +106,7 @@ func NewHistoryService(deps HistoryServiceDeps) (*HistoryService, error) {
 		history:  deps.History,
 		overview: deps.Overview,
 		registry: deps.Registry,
-		settings: deps.SettingsPath,
+		settings: deps.Settings,
 		logger:   logger.With(slog.String("service", "history")),
 		// The default records a day. Long enough for the trend on the
 		// dashboard to be useful across a working day, short enough that
@@ -389,60 +387,69 @@ func (s *HistoryService) SetRetention(ctx context.Context, retention domain.Rete
 // Kept on the Go side rather than with the UI preferences in localStorage,
 // because it governs what gets written to disk. A setting that says "record
 // nothing" has to be honoured by the process doing the recording, even on the
-// run where the window never opens.
+// run where the window never opens. That is the general ownership rule now,
+// and it is written out on domain.Settings.
 
-type persistedSettings struct {
-	RetentionDays   int `json:"retentionDays"`
-	IntervalSeconds int `json:"intervalSeconds"`
+// HistorySettingsStore is the NARROW VIEW this service needs of the
+// backend-owned settings: read the recording policy, and change it.
+//
+// DEFINED HERE, AT THE CONSUMER, rather than taking ports.SettingsPort whole.
+// The port also carries the kubeconfig sources, the proxy and the per-cluster
+// switches, and the sampler has no business being able to name any of them —
+// a service that CAN reach a setting is a service somebody will eventually
+// have reach it. Two methods is the whole of what recording needs.
+type HistorySettingsStore interface {
+	Load(ctx context.Context) (domain.Settings, error)
+	Update(ctx context.Context, mutate func(*domain.Settings) error) (domain.Settings, error)
 }
 
 // loadSettings reads the persisted retention and cadence, falling back to the
-// service's defaults for anything missing or unreadable.
+// service's defaults when there is no store.
+//
+// The store never fails on a missing or unreadable file — it reports that
+// through its own state and hands back defaults — so there is nothing here
+// that can stop the sampler being constructed.
 func (s *HistoryService) loadSettings() (domain.Retention, time.Duration) {
-	if s.settings == "" {
+	if s.settings == nil {
 		return s.retention, s.interval
 	}
 
-	raw, err := os.ReadFile(s.settings)
+	settings, err := s.settings.Load(context.Background())
 	if err != nil {
-		// No file yet is the ordinary first run.
-		if !errors.Is(err, os.ErrNotExist) {
-			s.logger.Warn("reading history settings failed", slog.String("error", err.Error()))
-		}
-		return s.retention, s.interval
-	}
-
-	var stored persistedSettings
-	if err := json.Unmarshal(raw, &stored); err != nil {
-		s.logger.Warn("history settings are unreadable, using the defaults",
+		s.logger.Warn("reading the recording settings failed, using the defaults",
 			slog.String("error", err.Error()))
 		return s.retention, s.interval
 	}
 
-	// A file written before the cadence was configurable has no interval;
-	// NewSamplingInterval turns that zero into the default.
-	return domain.NewRetention(stored.RetentionDays),
-		domain.NewSamplingInterval(time.Duration(stored.IntervalSeconds) * time.Second)
+	return settings.History.Retention, settings.History.SamplingInterval
 }
 
+// saveSettings persists the recording policy.
+//
+// A READ-MODIFY-WRITE THROUGH THE STORE, never a whole-document write. The old
+// implementation marshalled two integers and called os.WriteFile, which was
+// both non-atomic and a last-writer-wins over everything else in the file —
+// harmless while the file held only these two fields, and a way to lose a
+// kubeconfig source the moment it held anything more.
+//
+// A refusal is logged rather than returned: the setting has already taken
+// effect in this process, and failing SetRetention after the retention has
+// changed would leave the caller unable to tell what state anything is in. The
+// two cases that reach here are a read-only store (`podsteer mcp`, which has
+// no sampler) and a file from a newer PodSteer, which the settings pane
+// already states in a line of its own.
 func (s *HistoryService) saveSettings(retention domain.Retention, interval time.Duration) {
-	if s.settings == "" {
+	if s.settings == nil {
 		return
 	}
 
-	if err := os.MkdirAll(filepath.Dir(s.settings), 0o700); err != nil {
-		s.logger.Warn("saving history settings failed", slog.String("error", err.Error()))
-		return
-	}
-
-	raw, err := json.Marshal(persistedSettings{
-		RetentionDays:   retention.Days,
-		IntervalSeconds: int(interval.Seconds()),
+	_, err := s.settings.Update(context.Background(), func(settings *domain.Settings) error {
+		settings.History.Retention = retention
+		settings.History.SamplingInterval = interval
+		return nil
 	})
 	if err != nil {
-		return
-	}
-	if err := os.WriteFile(s.settings, raw, 0o600); err != nil {
-		s.logger.Warn("saving history settings failed", slog.String("error", err.Error()))
+		s.logger.Warn("saving the recording settings failed",
+			slog.String("error", err.Error()))
 	}
 }

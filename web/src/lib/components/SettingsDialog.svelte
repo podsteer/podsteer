@@ -78,6 +78,7 @@
   import Select from './Select.svelte'
   import GaugeTrack from './GaugeTrack.svelte'
   import SettingsTransfer from './SettingsTransfer.svelte'
+  import KubeconfigSources from './KubeconfigSources.svelte'
   import {
     RefreshCw,
     Palette,
@@ -87,6 +88,7 @@
     Gauge,
     Play,
     ArrowLeftRight,
+    FolderCog,
     X,
   } from '@lucide/svelte'
 
@@ -133,6 +135,9 @@
     { id: 'thresholds', label: 'Thresholds', icon: Gauge },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'data', label: 'Data', icon: Database },
+    // Beside Data because both are about this machine's own disk: one is what
+    // PodSteer writes there, the other what it reads from there.
+    { id: 'kubeconfig', label: 'Kubeconfig', icon: FolderCog },
     // Next to Data, because both are about what leaves this machine, and
     // before Credits, which is the one section nobody browses for.
     { id: 'transfer', label: 'Export & import', icon: ArrowLeftRight },
@@ -891,6 +896,8 @@
               <span class="text-on-surface">Don't record</span> erases what has already been kept.
             </p>
           </section>
+        {:else if section === 'kubeconfig'}
+          <KubeconfigSources />
         {:else if section === 'transfer'}
           <SettingsTransfer />
         {:else}

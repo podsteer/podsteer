@@ -44,6 +44,17 @@ type KubeconfigPort interface {
 	// wrapping ErrKubeconfigConflict when the incoming config names one that
 	// already exists.
 	Merge(ctx context.Context, raw string) (domain.KubeconfigMerge, error)
+
+	// KubeconfigSources reports the composed loading list, in precedence
+	// order: the explicit or default chain, then the directory the
+	// environment names, then the operator's own sources.
+	//
+	// A REPORT AND NOT A SETTING. It is derived on every call from the
+	// environment plus the stored sources, so the pane showing it can say
+	// which entry contributed which context and which the merge shadowed —
+	// facts only the thing that performs the merge is in a position to state.
+	// An entry whose path does not exist is reported missing, never dropped.
+	KubeconfigSources(ctx context.Context) ([]domain.KubeconfigEntry, error)
 }
 
 // ClusterPort reads cluster-scoped facts from an API server.
@@ -844,4 +855,40 @@ type InspectPort interface {
 	// account without `get nodes` should still see the digest and the
 	// references, and a refusal is not an absence.
 	ImageFacts(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string) (domain.ImageFacts, error)
+}
+
+// SettingsPort is the backend-owned settings, as they live on disk.
+//
+// A port because the settings are STORAGE — a file, with a version, a format
+// and failure modes of its own — and because the application layer has no
+// business knowing which of those it is. What it needs is a value it can read
+// and a way to change one field of it without racing another change.
+//
+// ONE WRITER, ONE VALUE. There is no Save taking a whole settings value:
+// every mutation goes through Update, which does the read, the change, the
+// validation and the write inside one lock. A Save would let two callers each
+// read, each change a different field, and each write the whole document back
+// — with the second silently discarding the first's change, which is exactly
+// the bug the retention setting had when it was written with os.WriteFile.
+type SettingsPort interface {
+	// Load returns a copy of the current settings. Never fails on a missing
+	// or unreadable file: those produce the defaults, and State says so.
+	Load(ctx context.Context) (domain.Settings, error)
+
+	// Update applies mutate to the current settings and writes the whole
+	// document atomically, returning the result.
+	//
+	// mutate runs under the store's lock, so it must not call back into the
+	// store and must not block. A mutate that returns an error leaves the
+	// stored value untouched and nothing is written.
+	//
+	// Wraps ErrSettingsReadOnly when this process does not write settings at
+	// all, and ErrSettingsFromFuture when the file on disk was written by a
+	// newer PodSteer — in both cases before mutate is called, so a caller
+	// cannot mistake a refusal for a change that did not take.
+	Update(ctx context.Context, mutate func(*domain.Settings) error) (domain.Settings, error)
+
+	// State reports where the settings live and whether a change made now
+	// would reach the disk.
+	State() domain.SettingsState
 }

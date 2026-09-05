@@ -115,6 +115,10 @@ type ClusterSpec struct {
 	AuthInfo string
 	// IsCurrent marks the context selected by `current-context`.
 	IsCurrent bool
+	// Source is the kubeconfig file this context was read from, as client-go
+	// reports it. Descriptive only, and a path on this machine — never a
+	// file's contents.
+	Source KubeconfigLocation
 }
 
 // Cluster is a Kubernetes cluster PodSteer can talk to, as described by one
@@ -128,6 +132,7 @@ type Cluster struct {
 	defaultNamespace NamespaceName
 	authInfo         string
 	isCurrent        bool
+	source           KubeconfigLocation
 	version          ServerVersion
 }
 
@@ -146,6 +151,7 @@ func NewCluster(spec ClusterSpec) (Cluster, error) {
 		defaultNamespace: spec.DefaultNamespace,
 		authInfo:         strings.TrimSpace(spec.AuthInfo),
 		isCurrent:        spec.IsCurrent,
+		source:           spec.Source,
 	}, nil
 }
 
@@ -164,6 +170,20 @@ func (c Cluster) AuthInfo() string { return c.authInfo }
 
 // IsCurrent reports whether this is the kubeconfig's current context.
 func (c Cluster) IsCurrent() bool { return c.isCurrent }
+
+// Source returns the kubeconfig file this context came from.
+//
+// It exists so the cluster picker can say WHICH file contributed a context
+// when several are merged — the explicit one, a folder the environment names,
+// or a source the operator added — and so a context defined in two of them can
+// be shown against the path that actually won. client-go's merge keeps the
+// first file's definition and says nothing about it otherwise, which turns a
+// duplicated context name into a cluster that connects to somewhere the
+// operator was not expecting, with no way to see why.
+//
+// A path on this machine and never a file's contents. Empty when the
+// configuration did not come from a file at all.
+func (c Cluster) Source() KubeconfigLocation { return c.source }
 
 // Version returns the observed API server version. It is the zero value until
 // the cluster has been reached.

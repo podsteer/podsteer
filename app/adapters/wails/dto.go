@@ -33,6 +33,16 @@ type Cluster struct {
 	Version string `json:"version"`
 	// Platform is the API server's os/arch, empty until reached.
 	Platform string `json:"platform"`
+	// Source is the kubeconfig FILE this context was read from, as client-go
+	// reports it. A path on this machine, never a file's contents, and empty
+	// when the configuration did not come from a file.
+	//
+	// It exists because several files are merged — the explicit or default
+	// chain, a folder the environment names, and the operator's own sources —
+	// and client-go keeps the FIRST definition of a context name. Without
+	// this, a name defined twice is a cluster that connects somewhere the
+	// operator was not expecting with nothing on screen to say why.
+	Source string `json:"source"`
 }
 
 // toCluster converts a domain cluster into its wire representation.
@@ -48,6 +58,7 @@ func toCluster(cluster domain.Cluster) Cluster {
 		IsReachable:      cluster.IsReachable(),
 		Version:          version.GitVersion,
 		Platform:         version.Platform,
+		Source:           cluster.Source().String(),
 	}
 }
 
