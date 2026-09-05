@@ -14,7 +14,7 @@
       "ecosystem": "npm",
       "inheritsFrom": "github.com/wailsapp/wails/v3",
       "inheritsFromEcosystem": "go",
-      "justification": "The npm package is built and published out of the Wails repository itself (v3/internal/runtime/desktop/@wailsio/runtime), declares MIT in its package.json, and ships no licence file in its tarball. The Go module of the same repository is already in this inventory and carries that repository's MIT LICENSE — same project, same licence, same holder (The Wails Project). Reproducing that file is what discharges the notice requirement for the runtime the frontend links. PENDING MAINTAINER APPROVAL: added while migrating to Wails v3 and not yet signed off by a person; see the migration report.",
+      "justification": "The package declares MIT and names its own source in its package.json: repository wailsapp/wails, directory v3/internal/runtime/desktop/@wailsio/runtime. It ships no licence file in its tarball. That directory sits inside the v3/ module root of github.com/wailsapp/wails/v3@v3.0.0-beta.16, already in this inventory, whose LICENSE is MIT, 'Copyright (c) 2018-Present Lea Anthony' — the nearest licence file governing the package's own source. Same repository, same version, same licence, same holder; reproducing that file is what discharges the notice requirement for the runtime the frontend links. Verified by reading both files on 2026-09-05. PENDING MAINTAINER APPROVAL: added while migrating to Wails v3 and not yet signed off by a person; see the migration report.",
       "approvedBy": "pending",
       "approvedOn": "2026-09-05"
     }

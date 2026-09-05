@@ -1252,6 +1252,13 @@ Three things about the scope are easy to get wrong and are handled in
   The Linux entry carries no build tag any more: v2 defaulted to webkit2gtk
   4.0 and the tag chose 4.1, which changed which files — and therefore which
   imports — were in scope. v3 targets 4.1 directly.
+- **Build scope is MEMBERSHIP, not cache presence.** A Go module is build-only
+  when `go list -deps -test` reaches it on some release platform and no
+  binary links it (`build/licences/scope.mjs`, pure and unit-tested by
+  `node --test build/licences/`). It used to mean "in the local module cache",
+  which made the gate's verdict depend on what a machine had downloaded and
+  flipped in CI with the shared `setup-go` cache. Modules the graph mentions
+  that nothing reaches are counted, never classified.
 - **A licence the classifier does not recognise blocks the build**, which
   makes a false negative in `build/licences/classify.mjs` as expensive as a
   false positive. ISC has two published wordings, and matching only the newer

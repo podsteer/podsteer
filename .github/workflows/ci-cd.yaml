@@ -91,6 +91,13 @@ jobs:
       - name: Test Frontend
         run: npm --prefix web run test
 
+      # The build scripts have no runner of their own — vitest is scoped to
+      # web/ — so this is plain `node:test` and needs nothing installed. It
+      # covers the shipped/build/graph-only partition, which decides what the
+      # licence gate below classifies at all.
+      - name: Test Build Scripts
+        run: node --test build/licences/
+
       - name: Build
         run: go build ./...
 
@@ -113,10 +120,15 @@ jobs:
       # independently; here a licence violation stops the release the same way
       # a failing test does.
       #
-      # Ordering matters: this must follow `go build ./...` so the module cache
-      # is warm, and the frontend build so the embed directory exists — the
-      # generator asks `go list` what the binary links, across all three
-      # release platforms.
+      # Ordering: this must follow the frontend build, because the generator
+      # asks `go list` what the binary links and `//go:embed all:dist` will not
+      # evaluate against an empty directory. Following `go build ./...` is for
+      # SPEED ONLY — `go list` downloads whatever it lists, so a cold cache
+      # costs time and changes nothing. It used to be a correctness
+      # requirement, back when build scope meant "present in the module cache"
+      # and this job's verdict therefore depended on which job last wrote the
+      # shared `setup-go` cache. Scope is membership now; see
+      # docs/LICENCE-POLICY.md.
       - name: Verify Licence Policy And Notices
         env:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}

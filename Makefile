@@ -379,6 +379,8 @@ check:
 	@$(NPM) --prefix web run check
 	@echo -e "${BLUE}vitest${NC}"
 	@$(NPM) --prefix web run test
+	@echo -e "${BLUE}node --test build/licences${NC}"
+	@node --test build/licences/
 	@echo ""
 	@echo -e "${GREEN}All checks passed.${NC}"
 
