@@ -33,11 +33,20 @@ BRANCH := $(shell git branch --show-current 2>/dev/null)
 # out of the binary, and is what every release build carries. It is NOT set for
 # `make dev`, which needs both.
 #
-# webkit2gtk 4.1 is no longer among them. v2 defaulted to 4.0 and Ubuntu ships
-# only 4.1, so every Linux build had to opt in with a tag; v3 targets 4.1
-# directly and the tag does not exist.
-RELEASE_TAGS := production
-BUILD_TAGS :=
+comma := ,
+# On Linux the tag still matters, in the other direction. v3 DEFAULTS to gtk4
+# with webkitgtk-6.0, which Ubuntu 22.04 LTS does not carry at all, so taking
+# the default would drop a distribution PodSteer supports today and give the
+# operator nothing they can see for it. v3 ships its gtk3 backend as a
+# first-class build tag against the same gtk+-3.0 and webkit2gtk-4.1 v2 used,
+# so Linux builds opt into that and the system dependencies are unchanged.
+# Moving to gtk4 is a user-visible platform decision, not a migration detail.
+LINUX_BACKEND_TAG :=
+ifeq ($(shell uname -s),Linux)
+LINUX_BACKEND_TAG := gtk3
+endif
+RELEASE_TAGS := production$(if $(LINUX_BACKEND_TAG),$(comma)$(LINUX_BACKEND_TAG))
+BUILD_TAGS := $(LINUX_BACKEND_TAG)
 
 # Where the build leaves things. On macOS the executable is inside the .app
 # bundle this file assembles; elsewhere it sits directly in build/bin.

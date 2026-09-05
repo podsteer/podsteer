@@ -30,9 +30,12 @@ env:
   # renames things between releases, and `@latest` here would break a build
   # nobody changed.
   WAILS_VERSION: v3.0.0-beta.16
-  # No LINUX_TAGS any more: v2 defaulted to webkit2gtk 4.0 and Ubuntu ships
-  # only 4.1, so the Linux build had to opt in with a tag. v3 targets 4.1
-  # directly and the tag does not exist.
+  # LINUX_TAGS pins v3's GTK3 backend. v3 defaults to gtk4 + webkitgtk-6.0,
+  # which Ubuntu 22.04 LTS does not carry at all, so defaulting would drop a
+  # distribution PodSteer supports today for no gain the operator can see.
+  # v3 ships the gtk3 backend as a first-class build tag against the same
+  # gtk+-3.0 and webkit2gtk-4.1 this workflow already installs.
+  LINUX_TAGS: gtk3
 
 jobs:
   quality:
@@ -99,16 +102,17 @@ jobs:
         run: node --test build/licences/*.test.mjs
 
       - name: Build
-        run: go build ./...
+        # The gtk3 tag is why the apt list above is still GTK3 — see LINUX_TAGS.
+        run: go build -tags ${{ env.LINUX_TAGS }} ./...
 
       - name: Vet
-        run: go vet ./...
+        run: go vet -tags ${{ env.LINUX_TAGS }} ./...
 
       # -race here rather than in a separate job: the Session and the client
       # cache are both shared mutable state reached from concurrent UI calls,
       # which is exactly the class of bug a plain `go test` will not see.
       - name: Test
-        run: go test -race -count=1 ./...
+        run: go test -tags ${{ env.LINUX_TAGS }} -race -count=1 ./...
 
       - name: Lint
         uses: golangci/golangci-lint-action@v9
