@@ -15,10 +15,18 @@ import (
 // This file records what a cluster looked like over time, so the dashboard can
 // show a trend rather than an instant.
 //
-// The sampler is the only long-lived goroutine in PodSteer. It has one owner
-// (this service), one way to stop (Close), and it waits for its work to finish
-// before it returns — which is the standard this codebase holds goroutines to,
-// and matters more here than usual because it writes files.
+// The sampler holds to the rule every long-lived goroutine here holds to: one
+// owner (this service), one way to stop (Close), and it waits for its work to
+// finish before returning. It is not the only one — the watch sweeper, the
+// reflectors and their supervisors, the port-forward supervisors, exec and
+// attach sessions, local-shell pumps, log streams and file transfers all own
+// goroutines — and the rule matters more here than in most of them because
+// this one writes files.
+//
+// NOTHING CANCELS A CONTEXT AT SHUTDOWN. The framework's runtime context is
+// never cancelled — the shutdown hook only clears the pointer to it — so Close
+// is the whole mechanism, exactly as StopAllPortForwards and StopAllWatches
+// are theirs. A goroutine here that waited to be cancelled would never be.
 
 const (
 	// pruneInterval is how often expired samples are swept. Hourly is far

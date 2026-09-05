@@ -262,6 +262,21 @@ func (s *OverviewService) OverviewWithin(
 	return call.overview, call.err
 }
 
+// Invalidate drops a cluster's held assessment, for a disconnect.
+//
+// IT SATISFIES ClusterInvalidator, and is wired beside the Kubernetes
+// adapter's own Invalidate so a disconnect drops this cache too. Reading the
+// registry was not enough on its own: the check at the top of OverviewWithin
+// only forgets when somebody READS a cluster that is no longer registered,
+// and a disconnect followed by a reconnect of the same context name inside
+// the freshness window never produces such a read — the first read after the
+// reconnect finds the cluster registered again and is served the PREVIOUS
+// connection's assessment. That matters because re-pointing a kubeconfig
+// context at a different cluster is routine: the sampler would write one
+// sample of the old cluster into the new one's history file, and the
+// dashboard would show the old cluster's verdict for a shorter window.
+func (s *OverviewService) Invalidate(id domain.ClusterID) { s.forget(id) }
+
 // forget drops a cluster's held assessment.
 func (s *OverviewService) forget(id domain.ClusterID) {
 	s.mu.Lock()

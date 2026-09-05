@@ -141,6 +141,11 @@ const reconnectBackoff = 3 * time.Second
 // return is the leak this whole design exists to avoid.
 const reconnectWindow = 2 * time.Minute
 
+// findReplacementTimeout bounds one search for a replacement pod. It is the
+// ceiling on the read, not on the wait for a stop: a deliberate stop cancels
+// it early — see findReplacementPod.
+const findReplacementTimeout = 10 * time.Second
+
 // superviseForward keeps a forward alive across the death of its pod.
 //
 // THE MOST-REQUESTED BEHAVIOUR IN THE CATEGORY AND THE ONE NOBODY SHIPS.
@@ -204,7 +209,7 @@ func (a *Adapter) reconnect(entry *forwarder, forward domain.Forward, portName s
 		case <-time.After(reconnectBackoff):
 		}
 
-		replacement, err := a.findReplacementPod(forward)
+		replacement, err := a.findReplacementPod(entry, forward)
 		if err != nil || replacement == "" {
 			continue
 		}
@@ -233,15 +238,44 @@ func (a *Adapter) reconnect(entry *forwarder, forward domain.Forward, portName s
 // pod-template-hash — so a replacement is a sibling of the same revision, not
 // a pod of whatever rolled out since. Silently moving a forward onto
 // different code would be worse than not reconnecting at all.
-func (a *Adapter) findReplacementPod(forward domain.Forward) (string, error) {
+func (a *Adapter) findReplacementPod(entry *forwarder, forward domain.Forward) (string, error) {
 	if len(forward.Selector) == 0 {
 		return "", nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), findReplacementTimeout)
 	defer cancel()
 
-	pods, err := a.ListPods(ctx, forward.ClusterID, forward.Namespace, domain.Projection{})
+	// A DELIBERATE STOP MUST NOT WAIT OUT THIS READ. Disconnecting a cluster
+	// stops its forwards and WAITS for them (stopPortForwardsFor), and a
+	// supervisor parked in a ten-second list would block the disconnect for
+	// as long as it takes. The watcher ends with this call either way.
+	watching := make(chan struct{})
+	defer close(watching)
+	go func() {
+		select {
+		case <-entry.stop:
+			cancel()
+		case <-watching:
+		}
+	}()
+
+	// THE UNEXPORTED READ, DELIBERATELY, and it is defence in depth rather
+	// than the fix. Invalidate stops this cluster's forwards before it drops
+	// anything, so a supervisor is not supposed to be able to run against a
+	// disconnected cluster at all — but the exported ListPods reaches
+	// watches.ensure and the read cache, and the read cache DETACHES its
+	// shared fetch from whoever started it, so a read already in flight when
+	// the stop lands keeps running: it outlives the cancel above, and its
+	// clientFor can rebuild a client Invalidate has just discarded, executing
+	// the operator's credential plugin once more.
+	//
+	// Going straight to the narrow list closes that: nothing here ensures a
+	// watch, the client is resolved once at the top, and cancelling the
+	// context genuinely aborts the request rather than orphaning it. The
+	// coalescing given up is worth nothing on this path anyway — the search
+	// runs once every three seconds, which is longer than readTTL.
+	pods, err := a.listPods(ctx, forward.ClusterID, forward.Namespace, domain.Projection{})
 	if err != nil {
 		return "", err
 	}
@@ -312,6 +346,48 @@ func (a *Adapter) StopAllPortForwards() {
 	}
 	a.forwards.mu.Unlock()
 
+	stopForwards(entries)
+}
+
+// stopPortForwardsFor tears down one cluster's forwards and waits for them.
+//
+// THE FORWARD GOES WITH THE CONNECTION, and that is what makes Invalidate's
+// ordering comment true rather than nearly true. A supervisor whose pod has
+// died calls findReplacementPod every three seconds for two minutes, and that
+// goes through the EXPORTED ListPods — which on an unregistered cluster
+// rebuilds the client (re-executing the credential plugin), ensures a watch
+// set of three reflectors, and repopulates the read cache. That is precisely
+// the resurrection Invalidate exists to prevent, arriving through a door
+// Invalidate was not watching: the forward built its own transport at dial
+// time, so nothing it holds is invalidated by dropping the cached client.
+//
+// Waiting rather than signalling is the same promise StopPortForward makes:
+// once this returns, no goroutine of this cluster's is left to ensure
+// anything, so the factory and the watch can be torn down behind it.
+func (a *Adapter) stopPortForwardsFor(id domain.ClusterID) {
+	a.forwards.mu.Lock()
+	entries := make([]*forwarder, 0, len(a.forwards.byID))
+	for forwardID, entry := range a.forwards.byID {
+		// ClusterID is the one field of a forward the supervisor never
+		// rewrites — a replacement pod is found in the same cluster or not at
+		// all — so reading it off the snapshot is stable.
+		if entry.snapshot().ClusterID != id {
+			continue
+		}
+		entries = append(entries, entry)
+		delete(a.forwards.byID, forwardID)
+	}
+	a.forwards.mu.Unlock()
+
+	stopForwards(entries)
+}
+
+// stopForwards ends each supervisor and waits for it, outside any lock.
+//
+// Outside the registry's lock deliberately: a supervisor giving up deletes
+// its own entry, which needs that mutex, so holding it across the wait is a
+// deadlock.
+func stopForwards(entries []*forwarder) {
 	for _, entry := range entries {
 		close(entry.stop)
 		<-entry.done

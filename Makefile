@@ -46,6 +46,41 @@ ifeq ($(shell uname -s),Linux)
 LINUX_BACKEND_TAG := gtk3
 endif
 RELEASE_TAGS := production$(if $(LINUX_BACKEND_TAG),$(comma)$(LINUX_BACKEND_TAG))
+
+# Whether the build links C, stated rather than inherited. macOS links Cocoa
+# and Linux links GTK, so both need a toolchain; v3's Windows backend is pure
+# Go (its own pkg/w32, where v2 used go-webview2), so Windows needs none.
+# Leaving this to the environment is what broke the Windows package: the
+# runner carries mingw on PATH, so cgo defaulted on, and the link failed
+# looking for a runtime/cgo that a pure-Go target never built.
+# C linking is on: macOS links Cocoa and Linux links GTK. Windows' backend is
+# pure Go and needs none, but leaving cgo on there costs nothing because
+# nothing imports C, and stating one value is clearer than a conditional
+# whose only branch never mattered.
+#
+# EXPORTED, not written as a recipe prefix: a `VAR=value cmd` prefix is shell
+# syntax, and make on Windows may hand a recipe to cmd.exe, which has no such
+# form — the flag would then appear in the echoed line and never reach the
+# compiler.
+export CGO_ENABLED := 1
+
+# WINDOWS BUILD FLAGS, TAKEN FROM THE WAILS CLI'S OWN RECIPE rather than
+# invented here. `wails3 build` is a thin wrapper around a Taskfile task, and
+# this project deliberately has no Taskfile — but the task it would run is in
+# the framework's templates, and this is what it passes:
+#
+#   -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"
+#
+# `-H windowsgui` is the one that matters and the one this migration had
+# dropped: without it the PE subsystem stays console, and a double-clicked
+# PodSteer opens a command window behind itself. No buildmode or linkmode
+# override, because the framework does not use one and every override tried
+# here made the link worse rather than better.
+WINDOWS_LINK :=
+WINDOWS_LDFLAGS :=
+ifeq ($(OS),Windows_NT)
+WINDOWS_LDFLAGS := -H windowsgui
+endif
 BUILD_TAGS := $(LINUX_BACKEND_TAG)
 
 # Where the build leaves things. On macOS the executable is inside the .app
@@ -236,7 +271,7 @@ ifeq ($(PLATFORM),darwin/universal)
 	lipo -create -output $(BIN_DIR)/podsteer $(BIN_DIR)/podsteer-amd64 $(BIN_DIR)/podsteer-arm64
 	@rm -f $(BIN_DIR)/podsteer-amd64 $(BIN_DIR)/podsteer-arm64
 else
-	go build -tags $(RELEASE_TAGS) -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(notdir $(APP_BIN)) .
+	go build -tags $(RELEASE_TAGS) $(WINDOWS_LINK) -trimpath -buildvcs=false -ldflags "$(LDFLAGS) $(WINDOWS_LDFLAGS)" -o $(BIN_DIR)/$(notdir $(APP_BIN)) .
 endif
 ifdef APP_BUNDLE
 	@# The EXECUTABLE stays lowercase: it is what a Linux package and a

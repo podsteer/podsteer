@@ -5,6 +5,7 @@ package localshell
 import (
 	"os"
 	"os/exec"
+	"sync"
 	"syscall"
 
 	"github.com/creack/pty"
@@ -18,8 +19,22 @@ import (
 // pair and making the child's terminal its controlling terminal are ioctls the
 // standard library does not expose.
 type ptyProcess struct {
-	ptmx *os.File
-	cmd  *exec.Cmd
+	// mu guards the MASTER'S LIFETIME, not its I/O. Read and Write go
+	// straight to the file, which is safe concurrently and must not be
+	// serialised — a read blocks until the shell says something, and holding
+	// a lock across that would stall every write behind it.
+	//
+	// What is not safe is the pair this lock does cover: an ioctl reads the
+	// descriptor out of the file, and Close invalidates it. The pump closes
+	// the master the moment the shell exits, and a resize can arrive from the
+	// interface at that instant — a window dragged as a session ends is
+	// exactly the case. The race detector found it as a test reading the size
+	// while the pump closed underneath, but the production pair is
+	// ResizeLocalShell against a shell that has just exited.
+	mu     sync.Mutex
+	closed bool
+	ptmx   *os.File
+	cmd    *exec.Cmd
 }
 
 // supported reports that this platform can open a local shell.
@@ -49,7 +64,44 @@ func startPTY(cmd *exec.Cmd, cols, rows uint16) (*ptyProcess, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ptyProcess{ptmx: ptmx, cmd: cmd}, nil
+	return &ptyProcess{ptmx: pollable(ptmx), cmd: cmd}, nil
+}
+
+// pollable returns the master as a file the runtime can interrupt, falling
+// back to the original if it cannot.
+//
+// WITHOUT THIS, CLOSING THE MASTER DOES NOT WAKE A READ ALREADY PARKED IN THE
+// KERNEL, and the pump goroutine blocks for the life of the process. The
+// library hands back a file opened in blocking mode, which the runtime does
+// not register with its poller, so a read goes straight to the syscall and
+// stays there — Close marks the file closed without disturbing it.
+//
+// That only becomes visible when something still holds the slave open. A
+// shell's child that puts ITSELF in a new process group survives the group
+// signal, is reparented away, and keeps the terminal open: on Linux `sh`
+// running `sleep` does exactly that, which is how this was found. The shell
+// dies, nothing reaps it, the master never reaches end of file, and stopping
+// the session never returns.
+//
+// Duplicating the descriptor and re-wrapping it non-blocking puts it under
+// the poller, so Close interrupts the read with a plain "file already closed"
+// and the pump leaves. A failure here is not worth refusing a shell over: the
+// caller gets the blocking file it would have had anyway.
+func pollable(f *os.File) *os.File {
+	fd, err := syscall.Dup(int(f.Fd()))
+	if err != nil {
+		return f
+	}
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		_ = syscall.Close(fd)
+		return f
+	}
+	dup := os.NewFile(uintptr(fd), f.Name())
+	// The original wrapper goes, not the terminal: the duplicate holds it
+	// open, and leaving both would mean two files racing to close one
+	// descriptor.
+	_ = f.Close()
+	return dup
 }
 
 func (p *ptyProcess) Read(b []byte) (int, error)  { return p.ptmx.Read(b) }
@@ -61,11 +113,25 @@ func (p *ptyProcess) Resize(cols, rows uint16) error {
 	if cols == 0 || rows == 0 {
 		return nil
 	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		// The shell has gone. Nothing to resize, and it is not an error worth
+		// showing somebody: the pane is about to close anyway.
+		return nil
+	}
 	return pty.Setsize(p.ptmx, &pty.Winsize{Cols: cols, Rows: rows})
 }
 
 // size reports the terminal's current window size.
 func (p *ptyProcess) size() (cols, rows uint16, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return 0, 0, os.ErrClosed
+	}
+
 	ws, err := pty.GetsizeFull(p.ptmx)
 	if err != nil {
 		return 0, 0, err
@@ -83,7 +149,12 @@ func (p *ptyProcess) Hangup() {
 	p.signal(syscall.SIGHUP)
 	// Closing the master hands the child's reads an EOF as well, so a shell
 	// blocked on input leaves even if it ignored the signal.
-	_ = p.ptmx.Close()
+	//
+	// THROUGH Close, NOT DIRECTLY. There must be exactly one path that closes
+	// the master, or the lifetime lock guards nothing: closing here would let
+	// a resize pass the closed check and then read the descriptor while this
+	// call destroys it. Closing a pane mid-window-drag is that sequence.
+	p.Close()
 }
 
 // Kill ends the process group outright, for something that ignored the hangup.
@@ -106,4 +177,15 @@ func (p *ptyProcess) signal(sig syscall.Signal) {
 func (p *ptyProcess) Wait() error { return p.cmd.Wait() }
 
 // Close releases the master, tolerating the Hangup that already closed it.
-func (p *ptyProcess) Close() { _ = p.ptmx.Close() }
+//
+// Idempotent, and it marks the master closed under the same lock the size and
+// resize paths take, so neither can be holding the descriptor while it goes.
+func (p *ptyProcess) Close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return
+	}
+	p.closed = true
+	_ = p.ptmx.Close()
+}

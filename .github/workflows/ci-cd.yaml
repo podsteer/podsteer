@@ -202,7 +202,10 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
+        # The CLI compiles Wails' own packages, so on Linux it needs the same
+        # backend tag the application does or it resolves them against gtk4
+        # headers this runner deliberately does not install. See LINUX_TAGS.
+        run: go install -tags ${{ env.LINUX_TAGS }} github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
 
       # Deliberately `make bindings` rather than calling Wails directly: the
       # target also stubs the embed directory (`//go:embed all:dist` will not
@@ -302,7 +305,12 @@ jobs:
       # the packaging step needs. Nothing here compiles through the CLI any
       # more: `make package` is `go build` plus file copies.
       - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
+        # The CLI compiles Wails' own packages, so on Linux it needs the same
+        # backend tag the application does or it resolves them against gtk4
+        # headers that runner deliberately does not install. This job is a
+        # platform matrix, so the tag is applied only where it means
+        # something. See LINUX_TAGS.
+        run: go install ${{ runner.os == 'Linux' && format('-tags {0}', env.LINUX_TAGS) || '' }} github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
 
       # `//go:embed all:dist` needs a real bundle before the Go build, so the
       # frontend is built first. That was true under v2 as well; what is gone

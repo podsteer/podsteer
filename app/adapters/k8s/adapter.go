@@ -159,13 +159,33 @@ func (a *Adapter) ServerVersion(ctx context.Context, id domain.ClusterID) (domai
 	return mapServerVersion(&info), nil
 }
 
-// Invalidate drops the cached clients for id.
+// Invalidate releases everything this adapter holds for id: its cached
+// clients, its per-cluster caches, its watch — and its port-forwards, which
+// are goroutines rather than cached answers and are stopped and waited for
+// first.
 //
 // Exposed beyond the ports so the composition root can react to a kubeconfig
 // change on disk, and so disconnecting a cluster genuinely releases its
 // connections rather than leaving them pooled.
 func (a *Adapter) Invalidate(id domain.ClusterID) {
-	// THE CLIENT GOES FIRST, AND THE ORDER IS LOAD-BEARING. A read racing
+	// THE FORWARDS GO BEFORE EVERYTHING, INCLUDING THE CLIENT. A forward's
+	// supervisor is a goroutine of this cluster's that OUTLIVES the client it
+	// dialled with — the stream runs on a transport it built itself — and
+	// when its pod dies it lists pods every three seconds for two minutes
+	// looking for a replacement. That list rebuilds the discarded client,
+	// re-executes the credential plugin, ensures a fresh watch set and
+	// repopulates the read cache: the resurrection the ordering below exists
+	// to prevent, arriving through a door the ordering does not cover. So the
+	// goroutine is ended and WAITED for first, and nothing of this cluster's
+	// is left running to race what follows.
+	//
+	// This is why a forward does not outlive the tab that opened it. Nothing
+	// in the interface or the documentation ever promised it would — the
+	// frontend has no way to forget one cluster's forwards, so before this a
+	// disconnected cluster's forward simply stayed in the activity list,
+	// labelled with a cluster nothing was connected to.
+	a.stopPortForwardsFor(id)
+	// THE CLIENT GOES NEXT, AND THE ORDER IS LOAD-BEARING. A read racing
 	// this call can re-`ensure` a watch set at any point, so the invalidation
 	// has to happen while `forget` is still ahead of it: the racing read gets
 	// a rebuilt client, and `forget` then destroys whatever set exists.
