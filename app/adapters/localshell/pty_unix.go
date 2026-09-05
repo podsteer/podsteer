@@ -64,7 +64,44 @@ func startPTY(cmd *exec.Cmd, cols, rows uint16) (*ptyProcess, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ptyProcess{ptmx: ptmx, cmd: cmd}, nil
+	return &ptyProcess{ptmx: pollable(ptmx), cmd: cmd}, nil
+}
+
+// pollable returns the master as a file the runtime can interrupt, falling
+// back to the original if it cannot.
+//
+// WITHOUT THIS, CLOSING THE MASTER DOES NOT WAKE A READ ALREADY PARKED IN THE
+// KERNEL, and the pump goroutine blocks for the life of the process. The
+// library hands back a file opened in blocking mode, which the runtime does
+// not register with its poller, so a read goes straight to the syscall and
+// stays there — Close marks the file closed without disturbing it.
+//
+// That only becomes visible when something still holds the slave open. A
+// shell's child that puts ITSELF in a new process group survives the group
+// signal, is reparented away, and keeps the terminal open: on Linux `sh`
+// running `sleep` does exactly that, which is how this was found. The shell
+// dies, nothing reaps it, the master never reaches end of file, and stopping
+// the session never returns.
+//
+// Duplicating the descriptor and re-wrapping it non-blocking puts it under
+// the poller, so Close interrupts the read with a plain "file already closed"
+// and the pump leaves. A failure here is not worth refusing a shell over: the
+// caller gets the blocking file it would have had anyway.
+func pollable(f *os.File) *os.File {
+	fd, err := syscall.Dup(int(f.Fd()))
+	if err != nil {
+		return f
+	}
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		_ = syscall.Close(fd)
+		return f
+	}
+	dup := os.NewFile(uintptr(fd), f.Name())
+	// The original wrapper goes, not the terminal: the duplicate holds it
+	// open, and leaving both would mean two files racing to close one
+	// descriptor.
+	_ = f.Close()
+	return dup
 }
 
 func (p *ptyProcess) Read(b []byte) (int, error)  { return p.ptmx.Read(b) }
