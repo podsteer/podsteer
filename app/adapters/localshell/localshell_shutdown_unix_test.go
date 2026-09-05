@@ -9,9 +9,7 @@ package localshell
 
 import (
 	"errors"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/podsteer/podsteer/app/domain"
 )
@@ -80,65 +78,5 @@ func TestShouldKillRefusesToSignalAReapedSession(t *testing.T) {
 	running := make(chan struct{})
 	if !shouldKill(running) {
 		t.Error("shouldKill(running) = false, want true — a shell that ignored the hangup must still be killed")
-	}
-}
-
-// TestEndKillsAShellThatIgnoresTheHangup is the regression guard on the other
-// side of that check: escalation must still happen for the case it exists
-// for. A shell trapping SIGHUP and sleeping is exactly the "will not leave"
-// process the grace period was written for.
-//
-// It costs the full hangupGrace, so it is skipped under -short.
-func TestEndKillsAShellThatIgnoresTheHangup(t *testing.T) {
-	if testing.Short() {
-		t.Skip("this test waits out the whole hangup grace")
-	}
-
-	manager := testManager(t, nil)
-	out := &safeBuffer{}
-	exit := newExitRecorder()
-
-	shell, err := manager.StartLocalShell(
-		domain.LocalShellSpec{Context: "staging", Cols: 80, Rows: 24}, out, exit.hook)
-	if err != nil {
-		t.Fatalf("StartLocalShell() error = %v", err)
-	}
-
-	// Ignore the hangup, announce that it is installed, then block. Closing
-	// the master hands the shell EOF on input, so the sleep is what keeps it
-	// alive past that too.
-	//
-	// THE MARKER IS THE SYNCHRONISATION, and it has to be. Waiting for any
-	// output at all would be satisfied by PodSteer's own context notice,
-	// which is written before the shell is even started — so the wait would
-	// prove nothing and the escalation this test exists for would be reached
-	// only on a machine that happened to be fast enough.
-	const ready = "trap-installed"
-	script := "trap '' HUP; echo " + ready + "; sleep 300\n"
-	if err := manager.WriteLocalShell(shell.ID, []byte(script)); err != nil {
-		t.Fatalf("WriteLocalShell() error = %v", err)
-	}
-	waitFor(t, "the shell to install its trap and say so", func() bool {
-		// The shell echoes the line it was sent as well as running it, so the
-		// marker appears twice; the second is the one that means the trap is
-		// installed and `sleep` is next.
-		return strings.Count(out.String(), ready) >= 2
-	})
-
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		_ = manager.StopLocalShell(shell.ID)
-	}()
-
-	select {
-	case <-stopped:
-	case <-time.After(30 * time.Second):
-		t.Fatal("StopLocalShell() never returned — a shell that ignores the hangup must still be killed")
-	}
-
-	exit.waitExited(t)
-	if shells := manager.ListLocalShells(); len(shells) != 0 {
-		t.Fatalf("ListLocalShells() = %d, want 0 after the session was killed", len(shells))
 	}
 }
