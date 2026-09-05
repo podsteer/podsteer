@@ -57,6 +57,11 @@ CGO := 1
 ifeq ($(OS),Windows_NT)
 CGO := 0
 endif
+# EXPORTED, not written as a recipe prefix. A `VAR=value cmd` prefix is shell
+# syntax, and make on Windows may hand a recipe to cmd.exe, which has no such
+# form — the flag then appears in the echoed line and never reaches the
+# compiler, which is exactly how this was first mis-diagnosed as fixed.
+export CGO_ENABLED := $(CGO)
 BUILD_TAGS := $(LINUX_BACKEND_TAG)
 
 # Where the build leaves things. On macOS the executable is inside the .app
@@ -247,7 +252,7 @@ ifeq ($(PLATFORM),darwin/universal)
 	lipo -create -output $(BIN_DIR)/podsteer $(BIN_DIR)/podsteer-amd64 $(BIN_DIR)/podsteer-arm64
 	@rm -f $(BIN_DIR)/podsteer-amd64 $(BIN_DIR)/podsteer-arm64
 else
-	CGO_ENABLED=$(CGO) go build -tags $(RELEASE_TAGS) -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(notdir $(APP_BIN)) .
+	go build -tags $(RELEASE_TAGS) -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(notdir $(APP_BIN)) .
 endif
 ifdef APP_BUNDLE
 	@# The EXECUTABLE stays lowercase: it is what a Linux package and a
