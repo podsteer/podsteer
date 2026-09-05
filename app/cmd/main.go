@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	// Aliased because this repository has an `application` package of its own —
 	// the use-case layer — and the composition root is the one file that
@@ -171,9 +170,18 @@ func run() error {
 	// adapter performs no I/O here: a machine with an unreachable cluster, or
 	// none at all, still reaches a usable window.
 
+	// THE SETTINGS STORE COMES FIRST, and the order is load-bearing twice
+	// over. The Kubernetes adapter reads the operator's kubeconfig sources
+	// through it, and the history service reads the recording policy from it
+	// before its first tick — a sampler constructed ahead of the store would
+	// run that tick under the defaults and record a cluster on a machine
+	// where the operator had turned recording off.
+	settingsStore := openSettings(false, logger)
+
 	kubernetes := k8s.New(k8s.Config{
 		KubeconfigPath: cfg.Kubernetes.KubeconfigPath,
 		KubeconfigDir:  cfg.Kubernetes.KubeconfigDir,
+		Sources:        kubeconfigSources(settingsStore),
 		QPS:            cfg.Kubernetes.QPS,
 		Burst:          cfg.Kubernetes.Burst,
 		UserAgent:      fmt.Sprintf("%s/%s", cfg.App.Name, cfg.App.Version),
@@ -307,11 +315,14 @@ func run() error {
 	}
 
 	historyService, err := application.NewHistoryService(application.HistoryServiceDeps{
-		History:      historystore.New(historyDir),
-		Overview:     overviewService,
-		Registry:     registry,
-		SettingsPath: filepath.Join(filepath.Dir(historyDir), "history.json"),
-		Logger:       logger,
+		History:  historystore.New(historyDir),
+		Overview: overviewService,
+		Registry: registry,
+		// The recording policy now lives in the one backend settings file,
+		// which was opened above. The service takes a two-method view of it
+		// rather than the whole store — see HistorySettingsStore.
+		Settings: settingsStore,
+		Logger:   logger,
 	})
 	if err != nil {
 		return fmt.Errorf("wiring history service: %w", err)
@@ -354,6 +365,18 @@ func run() error {
 	})
 	if err != nil {
 		return fmt.Errorf("wiring inspect service: %w", err)
+	}
+
+	// The backend settings, as a use case. It reads the composed kubeconfig
+	// loading list through the Kubernetes adapter, because only the thing
+	// that performs the merge can say which file contributed which context.
+	settingsService, err := application.NewSettingsService(application.SettingsServiceDeps{
+		Settings:   settingsStore,
+		Kubeconfig: kubernetes,
+		Logger:     logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring settings service: %w", err)
 	}
 
 	// --- Driving (inbound) adapters ---------------------------------------
@@ -419,6 +442,11 @@ func run() error {
 	historyAPI, err := wailsadapter.NewHistoryAPI(historyService, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring history API: %w", err)
+	}
+
+	settingsAPI, err := wailsadapter.NewSettingsAPI(settingsService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring settings API: %w", err)
 	}
 
 	// The update check. Its adapter is the ONLY thing in PodSteer that talks
@@ -491,6 +519,7 @@ func run() error {
 			wailsapp.NewService(fleetAPI),
 			wailsapp.NewService(rbacAPI),
 			wailsapp.NewService(historyAPI),
+			wailsapp.NewService(settingsAPI),
 			wailsapp.NewService(managementAPI),
 			wailsapp.NewService(terminalAPI),
 			wailsapp.NewService(fileCopyAPI),

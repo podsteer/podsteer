@@ -11,6 +11,7 @@ import * as ManagementAPI from "./managementapi.js";
 import * as NotificationAPI from "./notificationapi.js";
 import * as OverviewAPI from "./overviewapi.js";
 import * as RBACAPI from "./rbacapi.js";
+import * as SettingsAPI from "./settingsapi.js";
 import * as SystemAPI from "./systemapi.js";
 import * as TerminalAPI from "./terminalapi.js";
 import * as UpdateAPI from "./updateapi.js";
@@ -26,6 +27,7 @@ export {
     NotificationAPI,
     OverviewAPI,
     RBACAPI,
+    SettingsAPI,
     SystemAPI,
     TerminalAPI,
     UpdateAPI,
@@ -73,6 +75,7 @@ export type {
     ImageReport,
     KubeStateMetrics,
     KubeconfigMerge,
+    KubeconfigSource,
     LocalShellSupportDTO,
     MetricsBackend,
     Namespace,
@@ -111,6 +114,7 @@ export type {
     RollbackOutcomeDTO,
     Sample,
     SeriesResult,
+    SettingsState,
     StorageClassUsage,
     StorageSummary,
     Subject,

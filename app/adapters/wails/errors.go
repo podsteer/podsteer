@@ -104,6 +104,19 @@ const (
 	// is pressed, the same Bounded-not-Unreadable distinction the dependency
 	// map already makes.
 	CodeProbeUnavailable ErrorCode = "probe_unavailable"
+	// CodeSettingsReadOnly means this process does not write the settings
+	// file at all. Its own code rather than internal because nothing failed:
+	// the answer is a fact about how PodSteer was started.
+	CodeSettingsReadOnly ErrorCode = "settings_read_only"
+	// CodeSettingsFromFuture means the settings file was written by a newer
+	// PodSteer, so it is read and never saved over. Its own code because the
+	// only recovery is outside the application — upgrade, or move the file
+	// aside — and offering a retry would repeat a refusal that is working as
+	// designed.
+	CodeSettingsFromFuture ErrorCode = "settings_from_future"
+	// CodeSettingsUnavailable means the settings could not be written: no
+	// configuration directory, or a failed write.
+	CodeSettingsUnavailable ErrorCode = "settings_unavailable"
 	// CodeInternal is the fallback for anything unclassified.
 	CodeInternal ErrorCode = "internal"
 )
@@ -314,6 +327,31 @@ func classifyError(err error) (ErrorCode, string) {
 
 	case errors.Is(err, ports.ErrUnreachable):
 		return CodeUnreachable, "The cluster could not be contacted"
+
+	// BEFORE the generic cases: none of the three is a failure of anything.
+	// Each says what PodSteer will not do and why, and each has a different
+	// remedy — none of which is trying again.
+	case errors.Is(err, ports.ErrSettingsReadOnly):
+		return CodeSettingsReadOnly, "This PodSteer is not saving settings, so that change was not stored."
+
+	case errors.Is(err, ports.ErrSettingsFromFuture):
+		return CodeSettingsFromFuture, "Your settings file was written by a newer version of PodSteer. PodSteer will not save over it, because doing so could discard settings this version does not understand. Upgrade PodSteer, or move the file aside to start again from the defaults."
+
+	case errors.Is(err, ports.ErrSettingsUnavailable):
+		return CodeSettingsUnavailable, "That setting could not be saved to disk."
+
+	case errors.Is(err, domain.ErrSettingsSourcePath),
+		errors.Is(err, domain.ErrSettingsSourceKind),
+		errors.Is(err, domain.ErrSettingsProxyMode),
+		errors.Is(err, domain.ErrSettingsProxyURL):
+		return CodeInvalidInput, err.Error()
+
+	// Its own message rather than the verbatim one above, because this is the
+	// one refusal in the settings that is a POLICY: no credential is written
+	// to a file PodSteer owns, and the operator needs to be told where the
+	// credential does belong rather than only that this was rejected.
+	case errors.Is(err, domain.ErrSettingsProxyCredential):
+		return CodeInvalidInput, "A proxy URL must not contain a username or password: PodSteer never writes a credential to its own settings file. Set HTTPS_PROXY in your environment instead."
 
 	case errors.Is(err, ports.ErrKubeconfigUnavailable):
 		return CodeKubeconfig, "Your kubeconfig could not be read"

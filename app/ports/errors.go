@@ -184,4 +184,32 @@ var (
 	// the cluster, the credentials or the network is wrong, and retrying
 	// cannot help; another container is the answer.
 	ErrProbeToolMissing = errors.New("the container has nothing to probe with")
+
+	// ErrSettingsReadOnly means this process opened the settings without the
+	// ability to write them.
+	//
+	// It exists for `podsteer mcp`, which SECURITY.md promises writes nothing
+	// anywhere. The promise is kept structurally rather than by everyone
+	// remembering: the subcommand opens the store read-only, and any code
+	// path that later tried to change a setting is refused here rather than
+	// quietly creating a file in somebody's configuration directory.
+	ErrSettingsReadOnly = errors.New("settings are open read-only")
+
+	// ErrSettingsFromFuture means the settings file declares a version this
+	// build does not understand, so it is read for what is recognisable and
+	// never written back.
+	//
+	// REFUSING TO WRITE IS THE ONLY OUTCOME THAT CANNOT LOSE ANYTHING.
+	// Unknown top-level sections round-trip verbatim, which protects against
+	// a newer build ADDING one — but not against a field having MOVED between
+	// sections, which this build would read into the old section and write
+	// back there, silently undoing the newer build's migration. So a newer
+	// file is treated as read-only: the operator keeps their settings, and
+	// the interface says why a change did not stick.
+	ErrSettingsFromFuture = errors.New("the settings file was written by a newer version of PodSteer")
+
+	// ErrSettingsUnavailable means the settings file could not be written —
+	// the configuration directory could not be located, or the write itself
+	// failed.
+	ErrSettingsUnavailable = errors.New("settings could not be saved")
 )

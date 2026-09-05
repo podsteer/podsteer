@@ -81,6 +81,21 @@ type Config struct {
 	// defaultUserAgent.
 	UserAgent string
 
+	// Sources reports the operator's OWN kubeconfig source list — the files
+	// and folders added in Settings — in precedence order.
+	//
+	// A FUNCTION, not a slice, for the same reason the local terminal takes
+	// KubeconfigFiles as one: the list changes while PodSteer runs, and every
+	// resolution here already re-reads the world so that a file dropped into
+	// a folder appears without a restart. Nil means there are none, which is
+	// what `podsteer mcp` passes when it is given no store and what every
+	// test that does not care about sources leaves unset.
+	//
+	// It is called on the read path only. Nothing in this adapter writes a
+	// source, and nothing can: see loadingRules for why a source is
+	// structurally incapable of being the merge's write target.
+	Sources func() []domain.KubeconfigSource
+
 	// LiveWatch mirrors a cluster's pods locally instead of re-listing them
 	// on every refresh. See watch.go.
 	//
@@ -189,11 +204,18 @@ type clientFactory struct {
 	// happened — see apply_test.go — rather than inferring it from timing or
 	// from a real discovery fake.
 	mapperBuilder func(discovery.DiscoveryInterface) (meta.RESTMapper, error)
-	// dirWarnOnce guards the one warning an unreadable KubeconfigDir produces.
-	// See kubeconfigDirFiles: every call re-scans the directory, and an
-	// unreadable one fails the same way each time, so logging it more than
-	// once would just repeat the same fact on every refresh.
-	dirWarnOnce sync.Once
+	// warnedDirs holds the directories already reported as unlistable, so an
+	// unreadable one is named once rather than on every one of the reads the
+	// kubeconfig gets. See kubeconfigFilesIn: every call re-scans, and an
+	// unreadable directory fails the same way each time, so logging it more
+	// than once would just repeat the same fact on every refresh.
+	//
+	// KEYED BY PATH rather than a bare sync.Once, because there is no longer
+	// only one directory: PODSTEER_KUBECONFIG_DIR and every folder source in
+	// the settings are scanned by the same function, and a single Once would
+	// mean the first unreadable folder silenced the report for all the
+	// others. An entry is dropped the moment the directory reads again.
+	warnedDirs sync.Map
 	// warnedFiles holds the directory files already reported as unparsable,
 	// so a junk file is named once rather than on every one of the reads the
 	// kubeconfig gets — several a second under a 5-second refresh. An entry
@@ -302,7 +324,53 @@ func (f *clientFactory) loadingRules() *clientcmd.ClientConfigLoadingRules {
 		rules.Precedence = []string{f.cfg.KubeconfigPath}
 	}
 	rules.Precedence = append(rules.Precedence, f.kubeconfigDirFiles()...)
+	rules.Precedence = append(rules.Precedence, f.sourceFiles()...)
 	return rules
+}
+
+// sourceFiles returns the files the operator's own settings sources
+// contribute, in list order.
+//
+// LAST, AFTER THE ENVIRONMENT, ALWAYS. Three reasons, and the first is the one
+// that makes it structural rather than a preference:
+//
+//   - client-go's merge keeps the FIRST file's definition of a context name.
+//     Appending here means an in-app source can never shadow a context the
+//     machine's own configuration already provided — the operator's kubeconfig
+//     keeps winning, whatever they add in the interface.
+//   - The one write PodSteer makes to a kubeconfig goes to Precedence[0].
+//     A source can never be first, so a source can never be written to, so
+//     there is no "write here" flag to offer and no way to ask for one.
+//   - A packager's or an enterprise's environment variable beats the UI, the
+//     same precedence PODSTEER_UPDATE_CHECK=false already has over the toggle
+//     beside it.
+//
+// A DIRECTORY SOURCE IS SCANNED BY THE SAME FUNCTION the environment's
+// directory is — kubeconfigFilesIn, which is kubeconfigDirFiles generalised to
+// take a path — so the skip rules cannot drift between the two: dotfiles,
+// subdirectories, non-regular files and anything that does not parse as a
+// kubeconfig are excluded identically wherever the folder came from.
+func (f *clientFactory) sourceFiles() []string {
+	if f.cfg.Sources == nil {
+		return nil
+	}
+
+	var files []string
+	for _, source := range f.cfg.Sources() {
+		switch source.Kind {
+		case domain.SourceDirectory:
+			files = append(files, f.kubeconfigFilesIn(source.Path)...)
+		default:
+			// A file is taken at its word rather than parsed first. A listed
+			// path that has gone missing, or that is temporarily unreadable
+			// while something syncs it, stays in the precedence list where
+			// client-go skips it — the same leniency the loading rules
+			// already show a missing ~/.kube/config — and the settings pane
+			// reports it as missing rather than the list quietly shrinking.
+			files = append(files, source.Path)
+		}
+	}
+	return files
 }
 
 // KubeconfigFiles reports the kubeconfig files this adapter reads, in
@@ -343,8 +411,8 @@ func (f *clientFactory) clientConfig(id domain.ClusterID) clientcmd.ClientConfig
 //
 // A directory that does not exist is the ordinary state of a machine that has
 // not set PODSTEER_KUBECONFIG_DIR up, and is not logged. One that exists but
-// cannot be listed is logged once per process rather than on every call —
-// dirWarnOnce — because the cluster picker and every connection attempt would
+// cannot be listed is logged once per directory rather than on every call —
+// warnedDirs — because the cluster picker and every connection attempt would
 // otherwise repeat the same fact for the same unchanging reason.
 //
 // Dotfiles, subdirectories, and anything that is not a regular file after
@@ -355,7 +423,17 @@ func (f *clientFactory) clientConfig(id domain.ClusterID) clientcmd.ClientConfig
 // only its path — never its contents — the same discipline Clusters already
 // applies to one bad context inside a single file.
 func (f *clientFactory) kubeconfigDirFiles() []string {
-	dir := f.cfg.KubeconfigDir
+	return f.kubeconfigFilesIn(f.cfg.KubeconfigDir)
+}
+
+// kubeconfigFilesIn is the scan itself, over any directory.
+//
+// Split out of kubeconfigDirFiles so an in-app folder source and
+// PODSTEER_KUBECONFIG_DIR are scanned by ONE function rather than two that
+// agree today. Everything the doc comment above describes — the skips, the
+// sort, the once-per-path warning — applies to both, because it is this code
+// in both cases.
+func (f *clientFactory) kubeconfigFilesIn(dir string) []string {
 	if dir == "" {
 		return nil
 	}
@@ -363,13 +441,14 @@ func (f *clientFactory) kubeconfigDirFiles() []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			f.dirWarnOnce.Do(func() {
+			if _, already := f.warnedDirs.LoadOrStore(dir, struct{}{}); !already {
 				f.logger.Warn("kubeconfig directory cannot be listed",
 					slog.String("path", dir), slog.String("error", err.Error()))
-			})
+			}
 		}
 		return nil
 	}
+	f.warnedDirs.Delete(dir)
 
 	candidates := make([]string, 0, len(entries))
 	for _, entry := range entries {

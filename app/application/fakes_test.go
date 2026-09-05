@@ -24,6 +24,10 @@ type fakeKubeconfig struct {
 	clusters []domain.Cluster
 	err      error
 
+	// sources is what KubeconfigSources reports — the composed loading list
+	// the settings pane shows.
+	sources []domain.KubeconfigEntry
+
 	// merged records what Merge was asked to add, so a test can assert the
 	// service forwarded the paste rather than inventing one.
 	merged string
@@ -39,6 +43,13 @@ func (f *fakeKubeconfig) Clusters(context.Context) ([]domain.Cluster, error) {
 	// A copy, so a service that sorts in place cannot disturb the fixture and
 	// make a later assertion in the same test pass for the wrong reason.
 	return append([]domain.Cluster(nil), f.clusters...), nil
+}
+
+func (f *fakeKubeconfig) KubeconfigSources(context.Context) ([]domain.KubeconfigEntry, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return append([]domain.KubeconfigEntry(nil), f.sources...), nil
 }
 
 func (f *fakeKubeconfig) Cluster(_ context.Context, id domain.ClusterID) (domain.Cluster, error) {

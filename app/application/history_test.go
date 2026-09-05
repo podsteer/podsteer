@@ -80,18 +80,73 @@ func (s stubOverview) OverviewForTarget(ctx context.Context, id domain.ClusterID
 	return s.Overview(ctx, id)
 }
 
+// memorySettings is a settings store that keeps one value.
+//
+// It stands in for the file-backed one so that the SERVICE'S half of the
+// contract can be asserted here — that it reads the recording policy when it
+// is constructed, and writes a change back through Update rather than
+// replacing a whole document — while the file's own behaviour (the envelope,
+// the atomic write, the malformed and from-the-future cases) is asserted in
+// app/adapters/settings, where it belongs.
+type memorySettings struct {
+	mu    sync.Mutex
+	value domain.Settings
+	// updates counts the read-modify-writes, so a test can assert a change
+	// went through one rather than being applied only in memory.
+	updates int
+}
+
+func newMemorySettings() *memorySettings {
+	return &memorySettings{value: domain.DefaultSettings()}
+}
+
+func (m *memorySettings) Load(context.Context) (domain.Settings, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.value.Clone(), nil
+}
+
+func (m *memorySettings) Update(
+	_ context.Context,
+	mutate func(*domain.Settings) error,
+) (domain.Settings, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	next := m.value.Clone()
+	if err := mutate(&next); err != nil {
+		return domain.Settings{}, err
+	}
+	next.Normalise()
+	m.value = next
+	m.updates++
+	return next.Clone(), nil
+}
+
+// refusingSettings refuses every write, the way the store does under
+// `podsteer mcp` and against a file from a newer PodSteer.
+type refusingSettings struct{ *memorySettings }
+
+func (refusingSettings) Update(context.Context, func(*domain.Settings) error) (domain.Settings, error) {
+	return domain.Settings{}, ports.ErrSettingsReadOnly
+}
+
 // newHistoryService wires a service around the fakes, with one cluster open.
-func newHistoryService(t *testing.T, store ports.HistoryPort, settingsPath string) *application.HistoryService {
+func newHistoryService(
+	t *testing.T,
+	store ports.HistoryPort,
+	settings application.HistorySettingsStore,
+) *application.HistoryService {
 	t.Helper()
 
 	registry := application.NewRegistry()
 	registry.Open(mustCluster(t, "dev", true))
 
 	service, err := application.NewHistoryService(application.HistoryServiceDeps{
-		History:      store,
-		Overview:     stubOverview{},
-		Registry:     registry,
-		SettingsPath: settingsPath,
+		History:  store,
+		Overview: stubOverview{},
+		Registry: registry,
+		Settings: settings,
 	})
 	if err != nil {
 		t.Fatalf("NewHistoryService() error = %v", err)
@@ -133,7 +188,7 @@ func TestSamplerRecordsImmediatelyOnStart(t *testing.T) {
 	t.Parallel()
 
 	store := newRecordingHistory()
-	service := newHistoryService(t, store, "")
+	service := newHistoryService(t, store, nil)
 	if err := service.SetRetention(context.Background(), domain.NewRetention(1)); err != nil {
 		t.Fatalf("SetRetention() error = %v", err)
 	}
@@ -159,7 +214,7 @@ func TestSamplerWritesNothingWhenRecordingIsOff(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		store := newRecordingHistory()
-		service := newHistoryService(t, store, "")
+		service := newHistoryService(t, store, nil)
 		if err := service.SetRetention(context.Background(), domain.NewRetention(0)); err != nil {
 			t.Fatalf("SetRetention() error = %v", err)
 		}
@@ -211,7 +266,7 @@ func TestSamplingIntervalIsClamped(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			service := newHistoryService(t, newRecordingHistory(), "")
+			service := newHistoryService(t, newRecordingHistory(), nil)
 			if err := service.SetSamplingInterval(test.set); err != nil {
 				t.Fatalf("SetSamplingInterval() error = %v", err)
 			}
@@ -227,7 +282,7 @@ func TestSamplingIntervalIsClamped(t *testing.T) {
 func TestSetSamplingIntervalDoesNotBlockOnTheSampler(t *testing.T) {
 	t.Parallel()
 
-	service := newHistoryService(t, newRecordingHistory(), "")
+	service := newHistoryService(t, newRecordingHistory(), nil)
 	service.Start(context.Background())
 	defer service.Close()
 
@@ -254,13 +309,13 @@ func TestSetSamplingIntervalDoesNotBlockOnTheSampler(t *testing.T) {
 	}
 }
 
-// Both settings survive a restart, and the file carries them together.
+// Both settings survive a restart, and one store carries them together.
 func TestSettingsPersistAcrossRestart(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "history.json")
+	settings := newMemorySettings()
 
-	first := newHistoryService(t, newRecordingHistory(), path)
+	first := newHistoryService(t, newRecordingHistory(), settings)
 	if err := first.SetRetention(context.Background(), domain.NewRetention(7)); err != nil {
 		t.Fatalf("SetRetention() error = %v", err)
 	}
@@ -268,7 +323,7 @@ func TestSettingsPersistAcrossRestart(t *testing.T) {
 		t.Fatalf("SetSamplingInterval() error = %v", err)
 	}
 
-	second := newHistoryService(t, newRecordingHistory(), path)
+	second := newHistoryService(t, newRecordingHistory(), settings)
 
 	retention, err := second.Retention(context.Background())
 	if err != nil {
@@ -282,12 +337,76 @@ func TestSettingsPersistAcrossRestart(t *testing.T) {
 	}
 }
 
+// Each change is a read-modify-write on the shared settings, never a
+// whole-document replacement.
+//
+// This is the bug the old `history.json` had and could not show: it marshalled
+// its two integers and called os.WriteFile, so anything else in the file was
+// discarded on every retention change. Nothing else was in the file yet. Now
+// there is, and the guard is that a change to retention leaves an unrelated
+// section exactly as it was.
+func TestChangingRetentionLeavesTheRestOfTheSettingsAlone(t *testing.T) {
+	t.Parallel()
+
+	settings := newMemorySettings()
+	if _, err := settings.Update(context.Background(), func(s *domain.Settings) error {
+		s.Kubeconfig.Sources = []domain.KubeconfigSource{
+			{Path: filepath.Join(t.TempDir(), "team"), Kind: domain.SourceDirectory},
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seeding settings: %v", err)
+	}
+
+	service := newHistoryService(t, newRecordingHistory(), settings)
+	if err := service.SetRetention(context.Background(), domain.NewRetention(3)); err != nil {
+		t.Fatalf("SetRetention() error = %v", err)
+	}
+
+	stored, err := settings.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if stored.History.Retention.Days != 3 {
+		t.Errorf("retention = %d days, want 3", stored.History.Retention.Days)
+	}
+	if len(stored.Kubeconfig.Sources) != 1 {
+		t.Fatalf("kubeconfig sources = %d, want the one that was there before", len(stored.Kubeconfig.Sources))
+	}
+}
+
+// A store that refuses writes must not stop the setting taking effect in this
+// process.
+//
+// `podsteer mcp` opens the store read-only and a file from a newer PodSteer is
+// refused the same way. Neither is a reason for SetRetention to fail after the
+// retention has already changed — the caller would be left unable to tell what
+// state anything is in — so the refusal is logged and the change stands for
+// the life of the process.
+func TestARefusedSaveStillChangesTheRetentionInThisProcess(t *testing.T) {
+	t.Parallel()
+
+	service := newHistoryService(t, newRecordingHistory(), refusingSettings{newMemorySettings()})
+
+	if err := service.SetRetention(context.Background(), domain.NewRetention(7)); err != nil {
+		t.Fatalf("SetRetention() error = %v", err)
+	}
+
+	retention, err := service.Retention(context.Background())
+	if err != nil {
+		t.Fatalf("Retention() error = %v", err)
+	}
+	if retention.Days != 7 {
+		t.Errorf("retention = %d days, want 7 even though the save was refused", retention.Days)
+	}
+}
+
 // Closing must be safe however it is reached: the composition root defers it
 // AND the window's shutdown hook calls it, so it runs twice on every exit.
 func TestCloseIsIdempotent(t *testing.T) {
 	t.Parallel()
 
-	service := newHistoryService(t, newRecordingHistory(), "")
+	service := newHistoryService(t, newRecordingHistory(), nil)
 	service.Start(context.Background())
 
 	service.Close()
@@ -299,7 +418,7 @@ func TestCloseIsIdempotent(t *testing.T) {
 func TestCloseWithoutStartDoesNotHang(t *testing.T) {
 	t.Parallel()
 
-	service := newHistoryService(t, newRecordingHistory(), "")
+	service := newHistoryService(t, newRecordingHistory(), nil)
 
 	done := make(chan struct{})
 	go func() {
@@ -320,7 +439,7 @@ func TestSamplerPrunesAtStartup(t *testing.T) {
 	t.Parallel()
 
 	store := newRecordingHistory()
-	service := newHistoryService(t, store, "")
+	service := newHistoryService(t, store, nil)
 	service.Start(context.Background())
 
 	select {

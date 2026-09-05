@@ -51,6 +51,7 @@
     FolderTree,
     Layers,
     ChevronDown,
+    FileCog,
     Globe,
     GripVertical,
     Plug,
@@ -611,6 +612,25 @@
                                 <Globe class="size-3 shrink-0" strokeWidth={1.8} />
                                 <span class="truncate">{cluster.host}</span>
                               </p>
+                              <!-- WHICH FILE this context came from. Several
+                                   are merged — your kubeconfig, a folder the
+                                   environment names, and anything added under
+                                   Settings → Kubeconfig — and client-go keeps
+                                   the FIRST definition of a name, so without
+                                   this a context defined twice is a tab that
+                                   connects somewhere unexpected with the right
+                                   name on it. Only shown when there is one:
+                                   a configuration that came from no file has
+                                   nothing to say here. -->
+                              {#if cluster.source}
+                                <p class="flex items-center gap-1.5 truncate text-body-small
+                                          text-on-surface-variant/70">
+                                  <FileCog class="size-3 shrink-0" strokeWidth={1.8} />
+                                  <span class="truncate" title={cluster.source}>
+                                    {cluster.source}
+                                  </span>
+                                </p>
+                              {/if}
                             </div>
 
                             <!-- The star belongs to identity, so it stays in

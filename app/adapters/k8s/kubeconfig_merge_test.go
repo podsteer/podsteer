@@ -18,6 +18,7 @@ import (
 
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
 )
 
@@ -314,5 +315,128 @@ func TestPreviewMergeReportsWithoutWriting(t *testing.T) {
 	}
 	if _, err := os.Stat(path + ".podsteer.bak"); err == nil {
 		t.Error("PreviewMerge left a backup, so it opened the file for writing")
+	}
+}
+
+// THE LOAD-BEARING TEST FOR THE IN-APP SOURCE LIST.
+//
+// A source is structurally incapable of being written to: the merge writes
+// Precedence[0], and sources are only ever APPENDED after the explicit or
+// default chain and after the environment's directory. That is why there is no
+// "write here" flag to offer and no way to ask for one — and this asserts the
+// property rather than the comment, because the day somebody prepends a source
+// to the precedence list for a plausible reason, this is what says the write
+// target moved with it.
+func TestMergeStillWritesTheExplicitFileWhenSourcesArePresent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := writeExisting(t, dir, existingConfig)
+
+	sourceDir := t.TempDir()
+	sourceFile := filepath.Join(sourceDir, "team.yaml")
+	if err := os.WriteFile(sourceFile, []byte(existingConfig), 0o600); err != nil {
+		t.Fatalf("seeding a source: %v", err)
+	}
+	sourceBefore, err := os.ReadFile(sourceFile)
+	if err != nil {
+		t.Fatalf("reading the source: %v", err)
+	}
+
+	adapter := New(Config{
+		KubeconfigPath: path,
+		Sources: func() []domain.KubeconfigSource {
+			return []domain.KubeconfigSource{
+				{Path: sourceFile, Kind: domain.SourceFile},
+				{Path: sourceDir, Kind: domain.SourceDirectory},
+			}
+		},
+	}, nil)
+
+	merge, err := adapter.Merge(context.Background(), incomingConfig)
+	if err != nil {
+		t.Fatalf("Merge() error = %v", err)
+	}
+
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolving the seeded path: %v", err)
+	}
+	if merge.Path != resolved {
+		t.Errorf("Merge() wrote %q, want the explicit kubeconfig %q", merge.Path, resolved)
+	}
+
+	written, err := clientcmd.LoadFromFile(path)
+	if err != nil {
+		t.Fatalf("re-reading the kubeconfig: %v", err)
+	}
+	if _, added := written.Contexts["added"]; !added {
+		t.Error("the new context did not land in the explicit kubeconfig")
+	}
+
+	// AND THE SOURCE IS UNTOUCHED, byte for byte. The operator may be syncing
+	// it from a password manager or a shared folder, which PodSteer has no
+	// business writing to.
+	sourceAfter, err := os.ReadFile(sourceFile)
+	if err != nil {
+		t.Fatalf("re-reading the source: %v", err)
+	}
+	if string(sourceAfter) != string(sourceBefore) {
+		t.Errorf("the merge wrote to a source file:\n%s", sourceAfter)
+	}
+	if _, err := os.Stat(sourceFile + ".podsteer.bak"); err == nil {
+		t.Error("the merge opened a source file for writing")
+	}
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		t.Fatalf("listing the source folder: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("the merge left %d entries in the source folder, want the one that was there", len(entries))
+	}
+}
+
+// A context a SOURCE already defines is refused the same as one the explicit
+// file defines.
+//
+// The existence check reads the MERGED view for exactly this reason: PodSteer
+// would otherwise add the name to the explicit file while the source's own
+// definition still won the read, which is a confusing way to discover a name
+// was never free. It is the rule PODSTEER_KUBECONFIG_DIR already follows, and
+// a source has to follow it too or the two behave differently for no reason
+// the operator can see.
+func TestMergeRefusesAContextASourceAlreadyDefines(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := writeExisting(t, dir, existingConfig)
+
+	sourceDir := t.TempDir()
+	sourceFile := filepath.Join(sourceDir, "team.yaml")
+	if err := os.WriteFile(sourceFile, []byte(incomingConfig), 0o600); err != nil {
+		t.Fatalf("seeding a source: %v", err)
+	}
+
+	adapter := New(Config{
+		KubeconfigPath: path,
+		Sources: func() []domain.KubeconfigSource {
+			return []domain.KubeconfigSource{{Path: sourceFile, Kind: domain.SourceFile}}
+		},
+	}, nil)
+
+	merge, err := adapter.Merge(context.Background(), incomingConfig)
+	if !errors.Is(err, ports.ErrKubeconfigConflict) {
+		t.Fatalf("Merge() error = %v, want ErrKubeconfigConflict", err)
+	}
+	if len(merge.Conflicts) != 1 || merge.Conflicts[0] != "added" {
+		t.Errorf("Merge() conflicts = %v, want [added]", merge.Conflicts)
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("re-reading the kubeconfig: %v", err)
+	}
+	if string(after) != existingConfig {
+		t.Error("a refused merge modified the kubeconfig")
 	}
 }

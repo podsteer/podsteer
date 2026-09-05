@@ -589,6 +589,19 @@ export interface Cluster {
      * Platform is the API server's os/arch, empty until reached.
      */
     "platform": string;
+
+    /**
+     * Source is the kubeconfig FILE this context was read from, as client-go
+     * reports it. A path on this machine, never a file's contents, and empty
+     * when the configuration did not come from a file.
+     * 
+     * It exists because several files are merged — the explicit or default
+     * chain, a folder the environment names, and the operator's own sources —
+     * and client-go keeps the FIRST definition of a context name. Without
+     * this, a name defined twice is a cluster that connects somewhere the
+     * operator was not expecting with nothing on screen to say why.
+     */
+    "source": string;
 }
 
 /**
@@ -1331,6 +1344,62 @@ export interface KubeconfigMerge {
      * Path is the file that was, or would be, written.
      */
     "path": string;
+}
+
+/**
+ * KubeconfigSource is one entry of the composed loading list.
+ */
+export interface KubeconfigSource {
+    /**
+     * Path is the file or folder.
+     */
+    "path": string;
+
+    /**
+     * Kind is "file" or "directory".
+     */
+    "kind": string;
+
+    /**
+     * Origin is "default", "environment" or "settings". Only a settings entry
+     * may be removed or reordered; the other two are shown as read-only rows,
+     * because nothing in this application can change an environment variable
+     * or the operator's own $KUBECONFIG.
+     */
+    "origin": string;
+
+    /**
+     * Editable is Origin == "settings", carried explicitly so the interface
+     * never has to know which origins those are.
+     */
+    "editable": boolean;
+
+    /**
+     * Missing reports that nothing is at Path right now. The row stays.
+     */
+    "missing": boolean;
+
+    /**
+     * Files are the kubeconfig files this entry contributed.
+     */
+    "files": string[] | null;
+
+    /**
+     * Contexts are the context names defined in those files.
+     */
+    "contexts": string[] | null;
+
+    /**
+     * ShadowedBy maps a context name this entry defines to the path of the
+     * entry that actually won it — empty for every context this entry
+     * provides.
+     * 
+     * COMPUTED HERE, once, rather than in the interface: it is a statement
+     * about client-go's merge (the first file's definition of a name wins),
+     * and that rule belongs beside the code that composes the precedence
+     * rather than in a component that would have to re-derive it.
+     */
+    "shadowedBy": { [_ in string]?: string } | null;
 }
 
 /**
@@ -2910,6 +2979,33 @@ export interface SeriesResult {
      * Recording reports whether sampling is on at all.
      */
     "recording": boolean;
+}
+
+/**
+ * SettingsState is where the settings live and whether they can be saved.
+ */
+export interface SettingsState {
+    /**
+     * Path is the settings file, whether or not it exists yet.
+     */
+    "path": string;
+
+    /**
+     * Writable reports that a change made now would reach the disk. When it
+     * is false, Notice says why in one sentence.
+     */
+    "writable": boolean;
+
+    /**
+     * Notice is the one line the pane shows when anything is not ordinary:
+     * the file is from a newer PodSteer, could not be read, or held values
+     * that fell back to their defaults. Empty when there is nothing to say.
+     * 
+     * COMPOSED IN GO rather than assembled from flags in the interface,
+     * because the sentence is the whole of what an operator can act on and
+     * splitting it across two layers is how it ends up saying two things.
+     */
+    "notice": string;
 }
 
 /**

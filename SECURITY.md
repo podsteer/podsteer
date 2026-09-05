@@ -135,13 +135,37 @@ you, and described here before it ships.
 
 The webview still has no network access at all: a content security
 policy in `web/index.html` forbids every remote origin, and all cluster traffic
-goes through the Go process rather than the page. Two things are written to
-your own machine and transmitted nowhere: sampled capacity history and its
-retention setting, under the per-user application directory at mode 0600
-(`~/Library/Application Support/PodSteer` on macOS, `~/.config/PodSteer` on
-Linux, `%AppData%\PodSteer` on Windows); and display preferences — theme,
-page size, column widths — which the interface keeps in the webview's own
-storage rather than in that directory.
+goes through the Go process rather than the page. Three things are written to
+your own machine and transmitted nowhere: sampled capacity history; a settings
+file PodSteer itself acts on, described below; both under the per-user
+application directory at mode 0600 (`~/Library/Application Support/PodSteer` on
+macOS, `~/.config/PodSteer` on Linux, `%AppData%\PodSteer` on Windows); and
+display preferences — theme, page size, column widths — which the interface
+keeps in the webview's own storage rather than in that directory.
+
+**The settings file is `settings.json` in that directory**, and it holds only
+what the Go process itself has to act on before or without a window. What is in
+it: how long capacity history is kept and how often it is sampled; the
+kubeconfig files and folders you have added, **as paths** — never the contents
+of a kubeconfig, never a credential, and never a cluster address; a proxy, if
+you configure one; per-cluster switches, keyed by your kubeconfig context name;
+and window positions. Everything else — theme, columns, groups, snoozed
+findings, the namespace each cluster was last left on — stays in the webview's
+own storage, and the two settings that hold OBJECT NAMES are deliberately among
+them, so that the claim above about this file stays exhaustive.
+
+How it behaves is as much of the answer as what it holds. It is rewritten
+whole and atomically, into a temporary file in the same directory which is
+synced and renamed over it, at mode 0600 restored on every write. It is **not**
+part of the exported settings file below and the export never reads it. It is
+read by `podsteer mcp`, which opens it read-only and writes nothing at all —
+see "The MCP subprocess" below. A file that cannot be read is **set aside**
+under an `.invalid-<timestamp>` name rather than overwritten, because whatever
+you meant by a hand edit is not PodSteer's to destroy. And a file written by a
+**newer** version of PodSteer is read for what this one understands and never
+saved over, with one line in Settings saying so: an older build cannot know
+where a newer one moved a setting to, and refusing to write is the only outcome
+that cannot lose anything.
 
 **One cluster-shaped thing is in that directory, in the file names.** A
 history file is named after the kubeconfig context it records, sanitised for
@@ -150,9 +174,9 @@ in punctuation cannot collide — so somebody with access to your home directory
 can see which clusters you have opened, though not what is in them. The
 samples themselves hold capacity figures and nothing else: no object names, no
 logs, no manifests, and no address or credential for any cluster. This is the
-same disclosure the settings file makes further down, for the same reason: a
-context name is a handle your own kubeconfig already gives you, and naming it
-is what makes the file readable to you.
+same disclosure `settings.json` and the exported settings file both make, for
+the same reason: a context name is a handle your own kubeconfig already gives
+you, and naming it is what makes the file readable to you.
 
 A third kind of write is a CSV export, only where you choose to save it,
 containing exactly the rows and columns a table is showing you at the moment
@@ -175,7 +199,7 @@ reproduced; and a transfer stops at 1 GiB or 100,000 entries unless
 `PODSTEER_COPY_MAX_BYTES` and `PODSTEER_COPY_MAX_ENTRIES` say otherwise. The
 tests for each of those are in `app/adapters/archive/archive_test.go`.
 
-The same feature is also one of the **two things PodSteer reads from your disk
+The same feature is also one of the **three things PodSteer reads from your disk
 that are not a kubeconfig**: a file or folder you chose in the native dialog,
 uploaded into a container. It follows no symlink that leaves what you chose,
 and it is refused on a cluster marked read-only, like every other write into a
@@ -184,8 +208,11 @@ the cluster, namespace, pod, container, the path inside the container, the
 direction and the byte count — never a file's contents, and never the local
 path.
 
-A fifth kind of write, and the second thing read from your disk, is the
-**settings file** — Settings → Export & import. It is the arrangement you have
+A fifth kind of write, and the third thing read from your disk, is the
+**exported settings file** — Settings → Export & import. (The second is the
+`settings.json` described above, which PodSteer both reads and writes; the two
+are unrelated documents and each declares a different `kind` so that one
+offered in place of the other is refused rather than misread.) It is the arrangement you have
 made on this machine, in one JSON document you can keep in git or send to a
 colleague: projects and groups with their environment, colour and read-only
 marks, pinned kinds, saved column layouts and custom columns, thresholds,
@@ -269,8 +296,9 @@ binaries already on your PATH and runs those; a machine without them gets a
 additions and no removals:
 
 - `KUBECONFIG`, set to exactly the kubeconfig files PodSteer itself reads — the
-  standard resolution, plus anything `PODSTEER_KUBECONFIG_DIR` names — in the
-  same order. Your files, named, never copied.
+  standard resolution, plus anything `PODSTEER_KUBECONFIG_DIR` names, plus the
+  files and folders you listed under Settings → Kubeconfig — in the same order.
+  Your files, named, never copied.
 - `PODSTEER_CONTEXT`, naming the cluster tab that was in front. Informational:
   no Kubernetes tool reads it.
 - `TERM` and `COLORTERM`, so the shell is not a dumb terminal.
@@ -350,7 +378,12 @@ and the two calls that can return key material (the per-key reveal and the TLS
 certificate inspection) are not reachable from it at all. Tests assert both.
 
 **Nothing is written anywhere.** No file, no kubeconfig — `current-context`
-included — and no history. Its log lines go to stderr, never to the transport,
+included — no history, and not PodSteer's own `settings.json` either: the
+subprocess opens it READ-ONLY, so it creates no directory, saves no change and
+does not even perform the one-off adoption of the pre-0.3 settings file that
+the window does. That is structural rather than a promise anybody has to
+remember, and there is a test asserting that a whole MCP composition leaves the
+configuration directory byte-identical. Its log lines go to stderr, never to the transport,
 and they name operations and errors rather than the contents of any answer.
 
 The agent's own behaviour remains between you and the tool you installed, as
@@ -378,7 +411,8 @@ else it can reach with your credentials, is not something PodSteer mediates.
   or a probe's target reaching the shell as syntax rather than as data.
 - PodSteer opening a connection to anything that is not an API server your
   kubeconfig names or, for the update check, `api.github.com` — a container
-  registry included.
+  registry included — or to anything other than a proxy you configured, on the
+  way to one of those.
 - The local terminal starting anything other than the shell or agent you chose,
   or the environment it is given carrying more than the variables listed above
   — in particular a kubeconfig being written, copied to disk, or having its
@@ -395,6 +429,11 @@ else it can reach with your credentials, is not something PodSteer mediates.
   not: a credential, a cluster address, or the name of any object in any
   cluster. The file is made to be shared, so anything that leaks into it
   leaks to whoever it was shared with.
+- A credential of any kind reaching PodSteer's own `settings.json`, or that
+  file carrying the name of any object in any cluster. It is not made to be
+  shared, but it is exactly the file that ends up in a support bundle, a
+  screenshot or a dotfile repository — so the same rule applies to it, and it
+  is stated separately because a different piece of code writes it.
 - A desktop notification carrying the name of any object in any cluster, or
   any Secret or credential material. Your operating system retains what it
   has shown you, so anything that reaches a notification reaches whatever

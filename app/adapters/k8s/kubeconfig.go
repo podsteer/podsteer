@@ -135,6 +135,12 @@ func (a *Adapter) toCluster(name string, kubeContext *clientcmdapi.Context, raw 
 		DefaultNamespace: namespace,
 		AuthInfo:         kubeContext.AuthInfo,
 		IsCurrent:        name == raw.CurrentContext,
+		// client-go stamps every context with the file it was read from when
+		// it merges a precedence list, and that stamp is the ONLY record of
+		// which of several files won a duplicated context name. Carried into
+		// the domain so the picker can show it; it is a path on this machine,
+		// which is the same class of thing the settings file already holds.
+		Source: domain.KubeconfigLocation(kubeContext.LocationOfOrigin),
 	})
 }
 
