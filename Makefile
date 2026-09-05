@@ -53,23 +53,34 @@ RELEASE_TAGS := production$(if $(LINUX_BACKEND_TAG),$(comma)$(LINUX_BACKEND_TAG)
 # Leaving this to the environment is what broke the Windows package: the
 # runner carries mingw on PATH, so cgo defaulted on, and the link failed
 # looking for a runtime/cgo that a pure-Go target never built.
-# C linking is on everywhere, and Windows is the one that needs explaining.
-# Its backend is pure Go, so nothing in our own code calls C — but Go builds
-# windows/amd64 as a position-independent executable by default, PIE on
-# Windows can only be linked EXTERNALLY, and an external link needs
-# runtime/cgo. Turning cgo off there produces exactly the failure that
-# suggests turning it off: "cannot find runtime/cgo".
-#
-# Not a free choice, either. The shipped v0.2.0 binary was checked and
-# carries DYNAMIC_BASE, HIGH_ENTROPY_VA and NX_COMPAT, so building
-# -buildmode=exe to avoid the external link would quietly ship a Windows
-# binary with weaker address-space randomisation than the one it replaces.
+# C linking is on: macOS links Cocoa and Linux links GTK. Windows' backend is
+# pure Go and needs none, but leaving cgo on there costs nothing because
+# nothing imports C, and stating one value is clearer than a conditional
+# whose only branch never mattered.
 #
 # EXPORTED, not written as a recipe prefix: a `VAR=value cmd` prefix is shell
 # syntax, and make on Windows may hand a recipe to cmd.exe, which has no such
-# form — the flag then appears in the echoed line and never reaches the
+# form — the flag would then appear in the echoed line and never reach the
 # compiler.
 export CGO_ENABLED := 1
+
+# WINDOWS LINKS INTERNALLY, AND THE REASON IS A SECURITY PROPERTY. Go builds
+# windows/amd64 position-independent by default and links PIE EXTERNALLY,
+# which needs runtime/cgo — a package a pure-Go program never pulls in, so
+# the link fails looking for a symbol only cgo defines, whether or not cgo is
+# enabled. The obvious escape, -buildmode=exe, silently drops address-space
+# randomisation: the shipped v0.2.0 binary was read and carries DYNAMIC_BASE,
+# HIGH_ENTROPY_VA and NX_COMPAT, so that would hand Windows users a weaker
+# binary than the release it replaces. Linking internally keeps all three —
+# verified by building one and reading its PE header — and needs no C
+# toolchain at all. v2 got here via the Wails CLI; a plain go build has to
+# ask for it.
+WINDOWS_LINK :=
+WINDOWS_LDFLAGS :=
+ifeq ($(OS),Windows_NT)
+WINDOWS_LINK := -buildmode=pie
+WINDOWS_LDFLAGS := -linkmode=internal
+endif
 BUILD_TAGS := $(LINUX_BACKEND_TAG)
 
 # Where the build leaves things. On macOS the executable is inside the .app
@@ -260,7 +271,7 @@ ifeq ($(PLATFORM),darwin/universal)
 	lipo -create -output $(BIN_DIR)/podsteer $(BIN_DIR)/podsteer-amd64 $(BIN_DIR)/podsteer-arm64
 	@rm -f $(BIN_DIR)/podsteer-amd64 $(BIN_DIR)/podsteer-arm64
 else
-	go build -tags $(RELEASE_TAGS) -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(notdir $(APP_BIN)) .
+	go build -tags $(RELEASE_TAGS) $(WINDOWS_LINK) -trimpath -buildvcs=false -ldflags "$(LDFLAGS) $(WINDOWS_LDFLAGS)" -o $(BIN_DIR)/$(notdir $(APP_BIN)) .
 endif
 ifdef APP_BUNDLE
 	@# The EXECUTABLE stays lowercase: it is what a Linux package and a
