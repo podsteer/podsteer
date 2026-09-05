@@ -118,6 +118,10 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.13.1
+          # The linter type-checks, so it needs the same backend tag the build
+          # uses or it resolves Wails' Linux files against gtk4 headers that
+          # are deliberately not installed. See LINUX_TAGS.
+          args: --build-tags ${{ env.LINUX_TAGS }}
 
       # Inside the gate rather than in a job of its own, deliberately. A
       # separate job would need `needs: quality` and could be skipped
