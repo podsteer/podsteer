@@ -112,7 +112,12 @@ func (p *ptyProcess) Hangup() {
 	p.signal(syscall.SIGHUP)
 	// Closing the master hands the child's reads an EOF as well, so a shell
 	// blocked on input leaves even if it ignored the signal.
-	_ = p.ptmx.Close()
+	//
+	// THROUGH Close, NOT DIRECTLY. There must be exactly one path that closes
+	// the master, or the lifetime lock guards nothing: closing here would let
+	// a resize pass the closed check and then read the descriptor while this
+	// call destroys it. Closing a pane mid-window-drag is that sequence.
+	p.Close()
 }
 
 // Kill ends the process group outright, for something that ignored the hangup.
