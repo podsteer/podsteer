@@ -53,15 +53,23 @@ RELEASE_TAGS := production$(if $(LINUX_BACKEND_TAG),$(comma)$(LINUX_BACKEND_TAG)
 # Leaving this to the environment is what broke the Windows package: the
 # runner carries mingw on PATH, so cgo defaulted on, and the link failed
 # looking for a runtime/cgo that a pure-Go target never built.
-CGO := 1
-ifeq ($(OS),Windows_NT)
-CGO := 0
-endif
-# EXPORTED, not written as a recipe prefix. A `VAR=value cmd` prefix is shell
+# C linking is on everywhere, and Windows is the one that needs explaining.
+# Its backend is pure Go, so nothing in our own code calls C — but Go builds
+# windows/amd64 as a position-independent executable by default, PIE on
+# Windows can only be linked EXTERNALLY, and an external link needs
+# runtime/cgo. Turning cgo off there produces exactly the failure that
+# suggests turning it off: "cannot find runtime/cgo".
+#
+# Not a free choice, either. The shipped v0.2.0 binary was checked and
+# carries DYNAMIC_BASE, HIGH_ENTROPY_VA and NX_COMPAT, so building
+# -buildmode=exe to avoid the external link would quietly ship a Windows
+# binary with weaker address-space randomisation than the one it replaces.
+#
+# EXPORTED, not written as a recipe prefix: a `VAR=value cmd` prefix is shell
 # syntax, and make on Windows may hand a recipe to cmd.exe, which has no such
 # form — the flag then appears in the echoed line and never reaches the
-# compiler, which is exactly how this was first mis-diagnosed as fixed.
-export CGO_ENABLED := $(CGO)
+# compiler.
+export CGO_ENABLED := 1
 BUILD_TAGS := $(LINUX_BACKEND_TAG)
 
 # Where the build leaves things. On macOS the executable is inside the .app
