@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
@@ -14,9 +14,9 @@ import (
 
 // ClusterAPI exposes the cluster use cases to the frontend.
 //
-// Wails binds this struct's exported methods as `ClusterAPI.ListClusters()`
-// and so on, generating matching TypeScript. Method names and signatures are
-// therefore public API.
+// Registered as a Wails service, which binds every exported method as
+// `ClusterAPI.ListClusters()` and so on and generates matching TypeScript from
+// the source. Method names and signatures are therefore public API.
 //
 // Every method that touches a cluster takes its id: the UI holds one tab per
 // connected cluster and the backend keeps no notion of which one is in front.
@@ -269,19 +269,20 @@ func (c *ClusterAPI) SetReadOnly(clusterID string, readOnly bool) error {
 // the webview cannot open files — and should not be able to. An empty string
 // means the operator cancelled, which is not an error.
 func (c *ClusterAPI) ReadKubeconfigFile() (string, error) {
-	runtimeCtx, ok := c.app.runtimeContext()
+	wailsApp, ok := c.app.wailsApp()
 	if !ok {
 		return "", apiError(c.logger, "ReadKubeconfigFile",
 			errors.New("the window is not ready"))
 	}
 
-	path, err := wailsruntime.OpenFileDialog(runtimeCtx, wailsruntime.OpenDialogOptions{
-		Title: "Choose a kubeconfig",
-		Filters: []wailsruntime.FileFilter{
+	path, err := wailsApp.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title:          "Choose a kubeconfig",
+		CanChooseFiles: true,
+		Filters: []application.FileFilter{
 			{DisplayName: "Kubeconfig (*.yaml, *.yml, *.conf, config)", Pattern: "*.yaml;*.yml;*.conf;config"},
 			{DisplayName: "All files", Pattern: "*"},
 		},
-	})
+	}).PromptForSingleSelection()
 	if err != nil {
 		return "", apiError(c.logger, "ReadKubeconfigFile", err)
 	}

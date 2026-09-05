@@ -114,7 +114,7 @@
         case 'name':
           return node.name
         case 'roles':
-          return node.roles.length ? node.roles.join(', ') : 'worker'
+          return node.roles?.length ? node.roles.join(', ') : 'worker'
         case 'cpu':
           return node.cpu
         case 'memory':
@@ -202,7 +202,7 @@
               easier when the only thing changing is the word.
             -->
             <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-small text-on-surface-variant">
-              {node.roles.length ? node.roles.join(', ') : 'worker'}
+              {node.roles?.length ? node.roles.join(', ') : 'worker'}
             </span>
           </td>
         {/if}

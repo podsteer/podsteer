@@ -83,12 +83,15 @@
     { value: String(30 * DAY), label: '30 days' },
   ]
 
+  /** Affected objects — absent, like an empty list, means none are named. */
+  const subjects = $derived(finding.subjects ?? [])
+
   /** How many listed objects are quiet, which decides how the card reads. */
   const snoozedCount = $derived(
-    finding.subjects.filter((subject) => snoozedUntil(subject.namespace, subject.name) > 0).length,
+    subjects.filter((subject) => snoozedUntil(subject.namespace, subject.name) > 0).length,
   )
   const allSnoozed = $derived(
-    finding.subjects.length > 0 && !finding.truncated && snoozedCount === finding.subjects.length,
+    subjects.length > 0 && !finding.truncated && snoozedCount === subjects.length,
   )
 
   const SEVERITY = {
@@ -114,7 +117,7 @@
 
   const style = $derived(SEVERITY[finding.severity as keyof typeof SEVERITY] ?? SEVERITY.info)
   const Icon = $derived(style.icon)
-  const hasSubjects = $derived(finding.subjects.length > 0)
+  const hasSubjects = $derived(subjects.length > 0)
 
   /**
    * What the disclosure promises to show, which is rows and not events.
@@ -126,7 +129,7 @@
    * the total because the remainder is stated at the bottom.
    */
   const disclosure = $derived.by(() => {
-    const listed = finding.truncated ? finding.count : finding.subjects.length
+    const listed = finding.truncated ? finding.count : subjects.length
     return listed === 1 ? 'the object' : `all ${listed}`
   })
 
@@ -214,7 +217,7 @@
             class="ml-auto flex items-center gap-1.5 text-label-medium text-on-surface-variant/70"
           >
             <BellOff class="size-3.5" strokeWidth={2} />
-            {allSnoozed ? 'All snoozed' : `${snoozedCount} of ${finding.subjects.length} snoozed`}
+            {allSnoozed ? 'All snoozed' : `${snoozedCount} of ${subjects.length} snoozed`}
           </span>
         {/if}
       </div>
@@ -230,7 +233,7 @@
            object — a pod that logged two different warnings is two lines —
            and a duplicate key aborts the whole block, which is why this list
            used to render as nothing at all. -->
-      {#each finding.subjects as subject, index (index + ':' + subject.namespace + '/' + subject.name)}
+      {#each subjects as subject, index (index + ':' + subject.namespace + '/' + subject.name)}
         {@const until = snoozedUntil(subject.namespace, subject.name)}
         <li class="flex items-center gap-2 pr-3">
           <!-- The object and its snooze are siblings rather than nested: a
@@ -296,7 +299,7 @@
       <!-- Never let a capped list read as a complete one. -->
       {#if finding.truncated}
         <li class="px-4 py-2.5 text-body-small text-on-surface-variant/60">
-          and {finding.count - finding.subjects.length} more
+          and {finding.count - subjects.length} more
         </li>
       {/if}
     </ul>

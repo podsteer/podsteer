@@ -17,7 +17,8 @@
     "paths": {
       "$lib/*": ["./src/lib/*"],
       "$stores/*": ["./src/stores/*"],
-      "$pages/*": ["./src/pages/*"]
+      "$pages/*": ["./src/pages/*"],
+      "$bindings/*": ["./src/lib/bindings/github.com/podsteer/podsteer/app/adapters/wails/*"]
     },
     "types": ["svelte", "vite/client"]
   },

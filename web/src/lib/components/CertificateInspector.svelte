@@ -171,9 +171,9 @@
         <p class="text-body-small text-error" role="alert">{error}</p>
       {/if}
 
-      {#if chain.insights.length > 0}
+      {#if (chain.insights?.length ?? 0) > 0}
         <div class="flex flex-col gap-2">
-          {#each chain.insights as insight, index (index)}
+          {#each chain.insights ?? [] as insight, index (index)}
             {@const style = styleFor(insight)}
             {@const Icon = style.icon}
             <div class="flex items-start gap-2 rounded-sm border p-3 {style.card}">
@@ -199,13 +199,13 @@
            row. -->
       <div class="flex flex-col gap-1">
         <p class="text-label-medium text-on-surface-variant/70">
-          Subject Alternative Names {chain.leaf.sans.length ? `(${chain.leaf.sans.length})` : ''}
+          Subject Alternative Names {chain.leaf.sans?.length ? `(${chain.leaf.sans.length})` : ''}
         </p>
-        {#if chain.leaf.sans.length === 0}
+        {#if !chain.leaf.sans?.length}
           <p class="text-body-small text-on-surface-variant/60">None</p>
         {:else}
           <ul class="flex flex-col divide-y divide-outline-variant/20 rounded-sm border border-outline-variant/40">
-            {#each chain.leaf.sans as san, index (index)}
+            {#each chain.leaf.sans ?? [] as san, index (index)}
               <li class="flex items-center gap-2 px-2.5 py-1.5">
                 <span class="min-w-0 flex-1 truncate font-mono text-body-small text-on-surface" data-selectable>
                   {san}
@@ -229,13 +229,13 @@
         {/if}
       </div>
 
-      {#if chain.intermediates.length > 0}
+      {#if (chain.intermediates?.length ?? 0) > 0}
         <div class="flex flex-col gap-1">
           <p class="text-label-medium text-on-surface-variant/70">
-            Intermediates ({chain.intermediates.length})
+            Intermediates ({chain.intermediates?.length ?? 0})
           </p>
           <ul class="flex flex-col divide-y divide-outline-variant/20 rounded-sm border border-outline-variant/40">
-            {#each chain.intermediates as intermediate, index (index)}
+            {#each chain.intermediates ?? [] as intermediate, index (index)}
               <li class="px-2.5 py-1.5">
                 <p class="truncate text-body-small text-on-surface" data-selectable title={intermediate.subject}>
                   {intermediate.subject || '—'}

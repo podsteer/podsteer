@@ -46,7 +46,7 @@
     type CertificateInsight,
   } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
-  import { BrowserOpenURL } from '$lib/wailsjs/runtime/runtime'
+  import { Browser } from '@wailsio/runtime'
   import { AlertOctagon, AlertTriangle, ExternalLink, Info } from '@lucide/svelte'
 
   type RowTone = DetailRow['tone']
@@ -889,7 +889,7 @@
                      application would replace PodSteer. -->
                 <button
                   type="button"
-                  onclick={() => BrowserOpenURL(link)}
+                  onclick={() => void Browser.OpenURL(link)}
                   class="resource-link inline-flex min-w-0 items-center gap-1 truncate text-left"
                   title={vulnerability.title || vulnerability.id}
                 >

@@ -62,7 +62,7 @@ export const POD_STATUS_CHIPS: PodStatusChip[] = [
     // the per-container field is needed here and nowhere else on this page.
     predicate: (pod) =>
       pod.statusReason === 'OOMKilled' ||
-      pod.containers.some((container) => container.lastTermination?.reason === 'OOMKilled'),
+      (pod.containers ?? []).some((container) => container.lastTermination?.reason === 'OOMKilled'),
   },
   {
     id: 'imagepullbackoff',

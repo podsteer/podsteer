@@ -176,7 +176,8 @@
     const nodes = overview?.nodes
     if (!nodes) return []
 
-    const versions = nodes.kubeletVersions
+    // A nil slice marshals to null: no kubelet answered with a version at all.
+    const versions = nodes.kubeletVersions ?? []
     const skewed = versions.length > 1
 
     return [
@@ -242,7 +243,7 @@
 
   /** How many claims are in one phase, zero when none are. */
   function claimPhase(phase: string): number {
-    return overview?.storage.claims.find((entry) => entry.phase === phase)?.count ?? 0
+    return overview?.storage.claims?.find((entry) => entry.phase === phase)?.count ?? 0
   }
 
   /**
@@ -256,7 +257,7 @@
     const storage = overview?.storage
     if (!storage) return []
 
-    const volumesBound = storage.volumes.find((entry) => entry.phase === 'Bound')?.count ?? 0
+    const volumesBound = storage.volumes?.find((entry) => entry.phase === 'Bound')?.count ?? 0
 
     return [
       {
@@ -587,14 +588,15 @@
       {/if}
       </section>
 
-      <!-- A source that could not be read is stated, never silently zeroed. -->
-      {#if overview.unavailable.length > 0}
+      <!-- A source that could not be read is stated, never silently zeroed.
+           An absent list is the same as an empty one: nothing was unreadable. -->
+      {#if (overview.unavailable ?? []).length > 0}
         <p
           class="flex items-center gap-2 rounded-sm border border-outline-variant/40 bg-surface-container-low
                  px-3 py-2 text-body-small text-on-surface-variant"
         >
           <CircleSlash class="size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
-          Assessed without {overview.unavailable.join(', ')} — those figures are missing rather than zero.
+          Assessed without {(overview.unavailable ?? []).join(', ')} — those figures are missing rather than zero.
         </p>
       {/if}
 
@@ -759,11 +761,11 @@
             Workloads
           </h3>
 
-          {#if overview.workloads.length === 0}
+          {#if (overview.workloads ?? []).length === 0}
             <p class="text-body-small text-on-surface-variant/60">Nothing deployed.</p>
           {:else}
             <ul class="flex flex-col divide-y divide-outline-variant/30">
-              {#each overview.workloads as kind (kind.kindId)}
+              {#each overview.workloads ?? [] as kind (kind.kindId)}
                 <li>
                   <button
                     type="button"
@@ -931,12 +933,12 @@
 
             <!-- By class, because a cluster quietly paying for premium disks
                  it did not mean to buy cannot see that anywhere else. -->
-            {#if storage.classes.length > 0}
+            {#if (storage.classes ?? []).length > 0}
               <div class="flex flex-col gap-1.5">
                 <p class="text-label-small uppercase tracking-wider text-on-surface-variant">
                   By storage class
                 </p>
-                {#each storage.classes as class_ (class_.name)}
+                {#each storage.classes ?? [] as class_ (class_.name)}
                   <div class="flex items-center gap-3">
                     <span
                       class="w-32 shrink-0 truncate text-body-medium text-on-surface"
@@ -1002,7 +1004,7 @@
            evenly loaded cluster from one where half the nodes are full, and
            only the second explains a pod that will not schedule on a cluster
            reading 46% requested. -->
-      {#if overview.nodeLoads.length > 1}
+      {#if (overview.nodeLoads ?? []).length > 1}
         <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
           <div class="flex items-baseline justify-between gap-3">
             <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
@@ -1015,12 +1017,12 @@
                  eighteen is the sort of small untruth this page cannot
                  afford. The Nodes page is where the rest live. -->
             <span class="text-body-small text-on-surface-variant/70">
-              {overview.nodeLoads.length > 6 ? 'Busiest 6' : 'Busiest first'}
+              {(overview.nodeLoads ?? []).length > 6 ? 'Busiest 6' : 'Busiest first'}
             </span>
           </div>
 
           <NodeLoadGrid
-            loads={overview.nodeLoads}
+            loads={overview.nodeLoads ?? []}
             onselect={(name) => void openObject('core/v1/nodes', name, '')}
           />
         </section>
@@ -1036,7 +1038,7 @@
            a node name carries, the pod on its own line beneath, then the bar
            and its figures — because they answer the same question from
            opposite ends: which node is full, and what filled it. -->
-      {#if overview.consumers.measured && overview.consumers.byCpu.length > 0}
+      {#if overview.consumers.measured && (overview.consumers.byCpu ?? []).length > 0}
         <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
           <div class="flex items-baseline justify-between gap-3">
             <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
@@ -1131,7 +1133,7 @@
             <span class="text-body-small text-on-surface-variant/70">by CPU requested</span>
           </div>
 
-          {#if overview.namespaces.length === 0}
+          {#if (overview.namespaces ?? []).length === 0}
             <p class="text-body-small text-on-surface-variant/60">Nothing scheduled.</p>
           {:else}
             <!-- Laid out like the consumers and the node grid: the name on
@@ -1140,7 +1142,7 @@
                  fill a cluster — the usage beside it is how much of that
                  reservation is real. -->
             <ul class="flex flex-col gap-2">
-              {#each overview.namespaces as load (load.name)}
+              {#each overview.namespaces ?? [] as load (load.name)}
                 <li class="flex min-w-0 flex-col gap-1">
                   <div class="flex items-baseline justify-between gap-3">
                     <button
@@ -1208,7 +1210,7 @@
             </span>
           </div>
 
-          {#if overview.restarts.length === 0}
+          {#if (overview.restarts ?? []).length === 0}
             <p class="text-body-small text-on-surface-variant/60">Nothing has restarted.</p>
           {:else}
             <!-- Divided rows at the same weight as Workloads and Nodes: the
@@ -1216,7 +1218,7 @@
                  of the row is for the two things that change what the count
                  means — why it restarted, and whether it is up now. -->
             <ul class="flex flex-col divide-y divide-outline-variant/30">
-              {#each overview.restarts as hotspot (hotspot.namespace + '/' + hotspot.name)}
+              {#each overview.restarts ?? [] as hotspot (hotspot.namespace + '/' + hotspot.name)}
                 <li>
                   <button
                     type="button"

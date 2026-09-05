@@ -323,7 +323,7 @@ const POD_SORT: SortAccessors<Pod> = {
 const NODE_SORT: SortAccessors<Node> = {
   status: (node) => node.status,
   name: (node) => node.name,
-  roles: (node) => (node.roles.length ? node.roles.join(', ') : 'worker'),
+  roles: (node) => ((node.roles ?? []).length ? (node.roles ?? []).join(', ') : 'worker'),
   cpu: (node) => (node.hasMetrics ? node.cpuPercent : null),
   memory: (node) => (node.hasMetrics ? node.memoryPercent : null),
   // Sorted by how FULL it is, not by bytes used. A 900GiB disk with 100GiB
@@ -374,7 +374,7 @@ const WORKLOAD_SORT: SortAccessors<Workload> = {
   ready: (workload) => workload.readyCount,
   updated: (workload) => workload.updated,
   available: (workload) => workload.available,
-  images: (workload) => workload.images.join(', '),
+  images: (workload) => (workload.images ?? []).join(', '),
   controlledBy: (workload) => workload.controlledBy,
   age: (workload) => workload.ageSeconds,
 }
@@ -770,7 +770,7 @@ export class ClusterSession {
     filterRows(
       this.nodes,
       this.query,
-      (node) => [node.name, node.status, ...node.roles, ...this.#customText(node)],
+      (node) => [node.name, node.status, ...(node.roles ?? []), ...this.#customText(node)],
       (node) => node.labels,
       () => this.cluster.id,
     ),
@@ -826,7 +826,7 @@ export class ClusterSession {
     filterRows(
       this.table?.rows ?? [],
       this.query,
-      (row) => [row.name, row.namespace, ...row.cells, ...this.#customText(row)],
+      (row) => [row.name, row.namespace, ...(row.cells ?? []), ...this.#customText(row)],
       (row) => row.labels,
       () => this.cluster.id,
     ),
@@ -988,10 +988,10 @@ export class ClusterSession {
     const index = state ? /^c(\d+)$/.exec(state.columnId)?.[1] : undefined
     if (!state || !table || index === undefined) return this.visibleTableRows
 
-    const column = table.columns[Number(index)]
+    const column = table.columns?.[Number(index)]
     if (!column) return this.visibleTableRows
 
-    const cell = (row: TableRow): string => row.cells[Number(index)] ?? ''
+    const cell = (row: TableRow): string => row.cells?.[Number(index)] ?? ''
     let accessor: (row: TableRow) => string | number | null
     if (column.type === 'integer' || column.type === 'number') {
       accessor = (row) => {
@@ -1053,7 +1053,7 @@ export class ClusterSession {
 
   /** How many of a finding's listed objects are snoozed. */
   snoozedSubjectCount = (finding: Finding): number =>
-    finding.subjects.filter(
+    (finding.subjects ?? []).filter(
       (subject) =>
         preferences.snoozedUntil(this.cluster.id, finding.id, subject.namespace, subject.name) > 0,
     ).length
@@ -1067,9 +1067,9 @@ export class ClusterSession {
    * finding whose greater part was never seen.
    */
   isFullySnoozed = (finding: Finding): boolean =>
-    finding.subjects.length > 0 &&
+    (finding.subjects?.length ?? 0) > 0 &&
     !finding.truncated &&
-    this.snoozedSubjectCount(finding) === finding.subjects.length
+    this.snoozedSubjectCount(finding) === (finding.subjects?.length ?? 0)
 
   /**
    * How many findings need attention, from the last assessment.
@@ -1600,13 +1600,13 @@ export class ClusterSession {
     // never worth interrupting anybody over, so keeping them out of the
     // baseline keeps the diff about the things that can raise something.
     const current = new Map(
-      overview.findings
+      (overview.findings ?? [])
         .filter((finding) => finding.severity !== 'info')
         .map((finding) => [finding.id, finding]),
     )
     const diff = diffFindings(previous, current)
     this.#lastFindings = diff.next
-    this.#lastUnavailable = [...overview.unavailable]
+    this.#lastUnavailable = [...(overview.unavailable ?? [])]
 
     this.overview = overview
     this.#retainNodeUsage(overview)
@@ -1647,7 +1647,7 @@ export class ClusterSession {
       // fact but are separate decisions, and each keeps its own rule where
       // it can be argued with.
       appeared: diff.appeared,
-      comparable: sourcesAreComparable(previousUnavailable, overview.unavailable),
+      comparable: sourcesAreComparable(previousUnavailable, overview.unavailable ?? []),
       isSnoozed: (finding) => this.isFullySnoozed(finding),
     })
   }
@@ -1808,7 +1808,7 @@ export class ClusterSession {
         break
       case 'applications': {
         const inventory = rows as ApplicationInventory
-        this.applications = inventory.applications
+        this.applications = inventory.applications ?? []
         this.unlabelled = inventory.unlabelled
         break
       }
@@ -1920,7 +1920,7 @@ export class ClusterSession {
   #retainNodeUsage(overview: Overview): void {
     const at = Date.now()
 
-    for (const load of overview.nodeLoads) {
+    for (const load of overview.nodeLoads ?? []) {
       // An unmeasured node is skipped rather than recorded as zero: a cluster
       // with no metrics-server would otherwise accumulate a confident flat
       // line along the axis.
@@ -2437,7 +2437,7 @@ function filterRows<T>(
   rows: T[],
   query: Query,
   text: (row: T) => (string | undefined)[],
-  labels?: (row: T) => Record<string, string> | undefined,
+  labels?: (row: T) => { [key: string]: string | undefined } | null,
   cluster?: (row: T) => string | undefined,
 ): T[] {
   if (query.terms.length === 0) return rows
@@ -2445,8 +2445,27 @@ function filterRows<T>(
   return rows.filter((row) =>
     matches(query, {
       text: text(row).filter((field): field is string => Boolean(field)).join(' '),
-      labels: labels?.(row),
+      labels: toLabelRecord(labels?.(row)),
       cluster: cluster?.(row),
     } satisfies Row),
   )
+}
+
+/**
+ * A nil Go map marshals to `null` for the WHOLE map, never per key, so a
+ * present key's value is always a string — the generated `| undefined` on
+ * each value is the binding generator being conservative about index access,
+ * not a real possibility. This narrows back to what `Row.labels` (`$lib/
+ * query`) expects, in the one place every label map passes through on its
+ * way into a search.
+ */
+function toLabelRecord(
+  labels: { [key: string]: string | undefined } | null | undefined,
+): Record<string, string> | undefined {
+  if (!labels) return undefined
+  const record: Record<string, string> = {}
+  for (const [key, value] of Object.entries(labels)) {
+    if (value !== undefined) record[key] = value
+  }
+  return record
 }

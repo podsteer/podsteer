@@ -26,10 +26,16 @@ on:
 env:
   GO_VERSION_FILE: go.mod
   NODE_VERSION: '24'
-  WAILS_VERSION: v2.15.0
-  # Ubuntu 24.04 ships webkit2gtk 4.1 only; Wails still defaults to 4.0, so the
-  # Linux build has to opt in explicitly or cgo fails to find the package.
-  LINUX_TAGS: webkit2_41
+  # Wails v3. Pinned to the exact beta the repository builds against — a beta
+  # renames things between releases, and `@latest` here would break a build
+  # nobody changed.
+  WAILS_VERSION: v3.0.0-beta.16
+  # LINUX_TAGS pins v3's GTK3 backend. v3 defaults to gtk4 + webkitgtk-6.0,
+  # which Ubuntu 22.04 LTS does not carry at all, so defaulting would drop a
+  # distribution PodSteer supports today for no gain the operator can see.
+  # v3 ships the gtk3 backend as a first-class build tag against the same
+  # gtk+-3.0 and webkit2gtk-4.1 this workflow already installs.
+  LINUX_TAGS: gtk3
 
 jobs:
   quality:
@@ -59,6 +65,16 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      # `go build ./...` reaches app/cmd, which imports Wails' application
+      # package, which is cgo against GTK and WebKit on Linux. The headers are
+      # therefore a prerequisite for the plain Go steps below, not only for the
+      # packaging job — v3 moved the window into a package the composition root
+      # imports directly, where v2 kept more of it behind the CLI.
+      - name: Install Linux Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
       # The embed directory is tracked but empty on a clean checkout, and
       # `//go:embed all:dist` will not compile without an index.html inside it.
       # Building the frontend first is therefore a prerequisite for `go build`,
@@ -78,32 +94,49 @@ jobs:
       - name: Test Frontend
         run: npm --prefix web run test
 
+      # The build scripts have no runner of their own — vitest is scoped to
+      # web/ — so this is plain `node:test` and needs nothing installed. It
+      # covers the shipped/build/graph-only partition, which decides what the
+      # licence gate below classifies at all.
+      - name: Test Build Scripts
+        run: node --test build/licences/*.test.mjs
+
       - name: Build
-        run: go build ./...
+        # The gtk3 tag is why the apt list above is still GTK3 — see LINUX_TAGS.
+        run: go build -tags ${{ env.LINUX_TAGS }} ./...
 
       - name: Vet
-        run: go vet ./...
+        run: go vet -tags ${{ env.LINUX_TAGS }} ./...
 
       # -race here rather than in a separate job: the Session and the client
       # cache are both shared mutable state reached from concurrent UI calls,
       # which is exactly the class of bug a plain `go test` will not see.
       - name: Test
-        run: go test -race -count=1 ./...
+        run: go test -tags ${{ env.LINUX_TAGS }} -race -count=1 ./...
 
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.13.1
+          # The linter type-checks, so it needs the same backend tag the build
+          # uses or it resolves Wails' Linux files against gtk4 headers that
+          # are deliberately not installed. See LINUX_TAGS.
+          args: --build-tags ${{ env.LINUX_TAGS }}
 
       # Inside the gate rather than in a job of its own, deliberately. A
       # separate job would need `needs: quality` and could be skipped
       # independently; here a licence violation stops the release the same way
       # a failing test does.
       #
-      # Ordering matters: this must follow `go build ./...` so the module cache
-      # is warm, and the frontend build so the embed directory exists — the
-      # generator asks `go list` what the binary links, across all three
-      # release platforms.
+      # Ordering: this must follow the frontend build, because the generator
+      # asks `go list` what the binary links and `//go:embed all:dist` will not
+      # evaluate against an empty directory. Following `go build ./...` is for
+      # SPEED ONLY — `go list` downloads whatever it lists, so a cold cache
+      # costs time and changes nothing. It used to be a correctness
+      # requirement, back when build scope meant "present in the module cache"
+      # and this job's verdict therefore depended on which job last wrote the
+      # shared `setup-go` cache. Scope is membership now; see
+      # docs/LICENCE-POLICY.md.
       - name: Verify Licence Policy And Notices
         env:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
@@ -145,7 +178,7 @@ jobs:
     name: Bindings Up To Date
     runs-on: ubuntu-latest
     needs: quality
-    # The generated TypeScript in web/src/lib/wailsjs is committed so that a
+    # The generated TypeScript in web/src/lib/bindings is committed so that a
     # fresh clone type-checks and IDEs resolve imports without anyone having
     # run Wails. That only stays honest if CI proves it matches the Go it was
     # generated from — otherwise a changed DTO ships a stale frontend contract
@@ -160,19 +193,30 @@ jobs:
           go-version-file: ${{ env.GO_VERSION_FILE }}
           cache-dependency-path: go.sum
 
+      # Still needed even though nothing is executed here: `wails3 generate
+      # bindings` type-checks the packages it scans, and the Linux build of
+      # pkg/application is cgo against GTK and WebKit.
       - name: Install Linux Build Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+        # The CLI compiles Wails' own packages, so on Linux it needs the same
+        # backend tag the application does or it resolves them against gtk4
+        # headers this runner deliberately does not install. See LINUX_TAGS.
+        run: go install -tags ${{ env.LINUX_TAGS }} github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
 
       # Deliberately `make bindings` rather than calling Wails directly: the
-      # target also stubs the embed directory (generation compiles AND RUNS the
-      # app, which will not start without an embedded bundle) and normalises the
-      # generated files' permission bits. Duplicating that here would let the
-      # two drift apart, and this job exists precisely to catch drift.
+      # target also stubs the embed directory (`//go:embed all:dist` will not
+      # type-check against an empty one) and normalises the generated files'
+      # permission bits. Duplicating that here would let the two drift apart,
+      # and this job exists precisely to catch drift.
+      #
+      # It no longer needs a built frontend, and that is the v3 change: v2
+      # generated bindings by compiling AND RUNNING the application, which
+      # app/adapters/assets refuses to let start without a real bundle. v3
+      # reads the source, so a stub is enough.
       - name: Regenerate Bindings
         run: make bindings
 
@@ -180,9 +224,9 @@ jobs:
         run: |
           # core.fileMode=false so a permission-bit difference between runner
           # and developer machine cannot fail a check about generated content.
-          if ! git -c core.fileMode=false diff --quiet -- web/src/lib/wailsjs; then
+          if ! git -c core.fileMode=false diff --quiet -- web/src/lib/bindings; then
             echo "::error::Generated bindings are out of date. Run 'make bindings' and commit the result."
-            git -c core.fileMode=false diff --stat -- web/src/lib/wailsjs
+            git -c core.fileMode=false diff --stat -- web/src/lib/bindings
             exit 1
           fi
           echo "Bindings match the bound Go types."
@@ -257,38 +301,36 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
+      # Only for `wails3 generate icons`, which renders the .icns and the .ico
+      # the packaging step needs. Nothing here compiles through the CLI any
+      # more: `make package` is `go build` plus file copies.
       - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+        # The CLI compiles Wails' own packages, so on Linux it needs the same
+        # backend tag the application does or it resolves them against gtk4
+        # headers that runner deliberately does not install. This job is a
+        # platform matrix, so the tag is applied only where it means
+        # something. See LINUX_TAGS.
+        run: go install ${{ runner.os == 'Linux' && format('-tags {0}', env.LINUX_TAGS) || '' }} github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
 
-      # Wails generates bindings by compiling and RUNNING the application, and
-      # it does so before building the frontend. PodSteer refuses to start
-      # without an embedded bundle, so on a clean checkout that first run exits
-      # 1 and fails the build. Building the frontend here breaks the cycle; the
-      # `-s` below then stops Wails repeating the work.
+      # `//go:embed all:dist` needs a real bundle before the Go build, so the
+      # frontend is built first. That was true under v2 as well; what is gone
+      # is the second reason — binding generation no longer runs the binary.
       - name: Build Frontend
         run: |
           npm --prefix web ci
           npm --prefix web run build
 
+      # `make package` rather than `make build`: the licence gate and the
+      # frontend build are the two things `build` adds, and both have already
+      # run — the gate once, in `quality`, rather than three more times across
+      # this matrix. The Makefile owns the compile flags, the bundle layout and
+      # the .app's capitalised name, so this job and a developer's machine
+      # cannot produce different artefacts.
       - name: Build Application
-        if: runner.os != 'Linux'
-        run: wails build -clean -trimpath -s -ldflags "-X github.com/podsteer/podsteer/app/config.version=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}" ${{ matrix.platform && format('-platform {0}', matrix.platform) || '' }}
-
-      # The bundle is renamed for the same reason the Makefile renames it: the
-      # executable stays lowercase for PATHs, the bundle is what a person sees
-      # in /Applications. Through a temporary name because the runner's disk is
-      # case-insensitive.
-      - name: Name The macOS Bundle
-        if: runner.os == 'macOS'
-        run: |
-          if [ -d build/bin/podsteer.app ]; then
-            mv build/bin/podsteer.app build/bin/.rename.app
-            mv build/bin/.rename.app build/bin/PodSteer.app
-          fi
-
-      - name: Build Application (Linux)
-        if: runner.os == 'Linux'
-        run: wails build -clean -trimpath -s -ldflags "-X github.com/podsteer/podsteer/app/config.version=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}" -tags ${{ env.LINUX_TAGS }}
+        run: make package
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+          PLATFORM: ${{ matrix.platform }}
 
       # --- macOS signing and notarisation -----------------------------------
       #

@@ -138,9 +138,9 @@ export function report(collected, outcome) {
     lines.push(`  ${String(count).padStart(3)}  ${identifier}`)
   }
   lines.push(`${collected.build.length} build-only dependencies (not distributed)`)
-  if (collected.unfetchedGo.length > 0) {
+  if (collected.graphOnlyGo.length > 0) {
     lines.push(
-      `${collected.unfetchedGo.length} Go modules in the graph but never fetched (nothing builds with them)`,
+      `${collected.graphOnlyGo.length} Go modules in the module graph but in no build or test on any release platform (not classified)`,
     )
   }
 

@@ -6,7 +6,8 @@ import (
 	"sync"
 	"time"
 
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
@@ -19,15 +20,30 @@ import (
 // operator can see instead of a spinner that never resolves.
 const DefaultRequestTimeout = 30 * time.Second
 
+// MainWindowName is the name the composition root gives the one window.
+//
+// Wails v3 is a multi-window framework: every window is addressable, and
+// App.Window.Current() answers with whichever one has focus — which is none
+// at all when the application is hidden or minimised, exactly the state a
+// notification click has to recover from. PodSteer has one window, so it is
+// named and looked up by name; see App.mainWindow.
+const MainWindowName = "main"
+
 // App owns the Wails application lifetime.
 //
-// It captures the runtime context Wails hands over at startup, which is the
-// only handle through which the backend can emit events or drive the window.
-// Every bound API derives its per-call context from it, so all in-flight work
-// is cancelled when the window closes.
+// It holds the *application.App the composition root built, which is the only
+// handle through which the backend can emit events, open a native dialog or
+// drive the window. Every bound service derives its per-call context from the
+// application context, so all in-flight work is cancelled when the window
+// closes.
 //
 // App also implements ports.EventPublisher: domain events raised deep in the
 // application layer come back out here and become Wails events.
+//
+// IT IS DELIBERATELY NOT A SERVICE. Wails v3 binds every exported method of
+// every registered service, so keeping the lifecycle here — rather than on
+// NotificationAPI, where it started — is what keeps StartNotifications and
+// StopNotifications out of reach of the webview.
 //
 // It is safe for concurrent use.
 type App struct {
@@ -35,7 +51,11 @@ type App struct {
 	requestTimeout time.Duration
 
 	mu  sync.RWMutex
-	ctx context.Context
+	app *application.App
+	// notifier is the platform notification service, started by
+	// StartNotifications. Nil until then, and nil for ever on a machine that
+	// cannot deliver — which is what NotificationAPI.Capability reports.
+	notifier *notifications.NotificationService
 }
 
 // Compile-time proof that App can publish domain events.
@@ -57,19 +77,31 @@ func NewApp(logger *slog.Logger, requestTimeout time.Duration) *App {
 	}
 }
 
-// OnStartup is the Wails startup hook. It records the runtime context.
-func (a *App) OnStartup(ctx context.Context) {
+// Attach records the Wails application.
+//
+// Called by the composition root immediately after application.New and before
+// app.Run. The order is forced rather than chosen: the services this type
+// serves are built BEFORE application.New, because they ARE its Services
+// argument, so the handle they share cannot be a constructor parameter. Under
+// Wails v2 the same handle arrived asynchronously in the OnStartup hook; here
+// it exists as soon as the application is constructed, which is strictly
+// earlier.
+func (a *App) Attach(app *application.App) {
 	a.mu.Lock()
-	a.ctx = ctx
+	a.app = app
 	a.mu.Unlock()
 
 	a.logger.Info("application started")
 }
 
-// OnShutdown is the Wails shutdown hook.
-func (a *App) OnShutdown(_ context.Context) {
+// Detach drops the Wails application handle.
+//
+// Called from the shutdown hook, after everything that needs the runtime has
+// had its turn. Events published after this point are dropped with a log line
+// rather than reaching a webview that has gone.
+func (a *App) Detach() {
 	a.mu.Lock()
-	a.ctx = nil
+	a.app = nil
 	a.mu.Unlock()
 
 	a.logger.Info("application stopped")
@@ -78,15 +110,17 @@ func (a *App) OnShutdown(_ context.Context) {
 // StartNotifications prepares the desktop notification service and registers
 // the handler for somebody clicking one.
 //
-// ON App RATHER THAN ON NotificationAPI, which is where it started. Wails
-// binds every exported method of a bound struct, so a Start and a Stop there
-// were reachable from the webview — a page that could re-register the click
-// handler, or tear down the platform's connection under the application. The
-// lifecycle belongs to the lifecycle handler, which is deliberately not in
-// the Bind list, and the bound API keeps only what the frontend legitimately
-// asks for.
+// THE SERVICE IS STARTED BY HAND RATHER THAN REGISTERED. Wails v3 ships
+// notifications as an ordinary service, and a registered service has every
+// exported method bound — which for this one would put
+// RemoveAllDeliveredNotifications and the rest of its management surface
+// within reach of the page. So it is constructed here and given its
+// ServiceStartup directly; nothing about it reaches the webview except through
+// NotificationAPI, which exposes three methods and decides nothing. This is
+// the v3 shape of the same rule that put the lifecycle on App rather than on
+// NotificationAPI under v2.
 //
-// Called from the composition root's OnStartup, after this type's own.
+// Called from the composition root once the application exists.
 // FAILING IS NOT FATAL and is deliberately not surfaced: a machine that will
 // not initialise notifications is a machine that shows none, which is exactly
 // what NotificationAPI.Capability then reports to the Settings pane. Refusing
@@ -103,7 +137,12 @@ func (a *App) StartNotifications() {
 		return
 	}
 
-	if err := wailsruntime.InitializeNotifications(ctx); err != nil {
+	service := notifications.New()
+	if err := service.ServiceStartup(ctx, application.ServiceOptions{}); err != nil {
+		// The v3 equivalent of v2's IsNotificationAvailable: the platform
+		// backend refuses to start when it cannot deliver — no notification
+		// centre, or, on macOS, no bundle identifier because the binary is
+		// running outside a .app.
 		a.logger.Debug("desktop notifications are not available",
 			slog.String("error", err.Error()))
 		return
@@ -111,7 +150,7 @@ func (a *App) StartNotifications() {
 
 	// Wails delivers the response on its own goroutine, so everything in here
 	// is a runtime call or an event emit — both safe from one.
-	wailsruntime.OnNotificationResponse(ctx, func(result wailsruntime.NotificationResult) {
+	service.OnNotificationResponse(func(result notifications.NotificationResult) {
 		if result.Error != nil {
 			a.logger.Debug("notification response carried an error",
 				slog.String("error", result.Error.Error()))
@@ -122,8 +161,7 @@ func (a *App) StartNotifications() {
 		// request to look at something, and an event that switched tabs
 		// behind a hidden window would move the operator's application
 		// without ever showing it to them.
-		wailsruntime.WindowUnminimise(ctx)
-		wailsruntime.WindowShow(ctx)
+		a.RaiseWindow()
 
 		// Whatever came back, and nothing more: the notification carried one
 		// kubeconfig context name and no object name, so there is nothing
@@ -132,35 +170,100 @@ func (a *App) StartNotifications() {
 		cluster, _ := result.Response.UserInfo["clusterId"].(string)
 		a.emit(notificationActivatedEvent, NotificationActivatedEvent{ClusterID: cluster})
 	})
+
+	a.mu.Lock()
+	a.notifier = service
+	a.mu.Unlock()
 }
 
 // StopNotifications releases whatever the platform held — on Linux, a D-Bus
 // connection.
 //
-// Called from OnShutdown beside the port-forward, node-shell and local-shell
-// teardown, and for the reason those are there: PodSteer opened it, so
-// PodSteer closes it.
+// Called from the shutdown hook beside the port-forward, node-shell and
+// local-shell teardown, and for the reason those are there: PodSteer opened
+// it, so PodSteer closes it.
 func (a *App) StopNotifications() {
-	ctx, ok := a.runtimeContext()
-	if !ok {
+	a.mu.Lock()
+	service := a.notifier
+	a.notifier = nil
+	a.mu.Unlock()
+
+	if service == nil {
 		return
 	}
-	wailsruntime.CleanupNotifications(ctx)
+	if err := service.ServiceShutdown(); err != nil {
+		a.logger.Debug("could not release the notification service",
+			slog.String("error", err.Error()))
+	}
 }
 
-// runtimeContext returns the Wails runtime context, and whether it is
-// available.
+// notificationService returns the started notification service, and whether
+// there is one.
 //
-// It is unavailable before OnStartup and after OnShutdown — a narrow window,
-// but one an event published during teardown lands in.
-func (a *App) runtimeContext() (context.Context, bool) {
+// Nil means this platform, or this launch, cannot deliver — which is the
+// question NotificationAPI.Capability answers first.
+func (a *App) notificationService() (*notifications.NotificationService, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	if a.ctx == nil {
+	if a.notifier == nil {
 		return nil, false
 	}
-	return a.ctx, true
+	return a.notifier, true
+}
+
+// wailsApp returns the Wails application, and whether it is available.
+//
+// It is unavailable before Attach and after Detach — a narrow window, but one
+// an event published during teardown lands in — and in every test, which
+// never builds one.
+func (a *App) wailsApp() (*application.App, bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if a.app == nil {
+		return nil, false
+	}
+	return a.app, true
+}
+
+// RaiseWindow brings PodSteer's one window to the front, if there is one.
+//
+// Two callers, both of them somebody asking to look at the application: a
+// click on a desktop notification, and a second launch that the single-instance
+// lock turned into a request to raise the first. Both need the same three
+// calls in the same order, and both are no-ops before the window exists.
+//
+// The window is found by NAME rather than through Window.Current, which
+// answers with the FOCUSED window and therefore with nothing at all when the
+// application is hidden or minimised — the exact state both callers are
+// trying to leave. It is exported because the composition root wires the
+// single-instance callback, and unreachable from the webview for the reason
+// the rest of this type is: App is not a service.
+func (a *App) RaiseWindow() {
+	app, ok := a.wailsApp()
+	if !ok {
+		return
+	}
+
+	window, ok := app.Window.Get(MainWindowName)
+	if !ok {
+		return
+	}
+
+	window.UnMinimise()
+	window.Show()
+	window.Focus()
+}
+
+// runtimeContext returns the application-lifetime context, and whether it is
+// available.
+func (a *App) runtimeContext() (context.Context, bool) {
+	app, ok := a.wailsApp()
+	if !ok {
+		return nil, false
+	}
+	return app.Context(), true
 }
 
 // requestContext derives a bounded context for one call from the frontend.
@@ -168,8 +271,9 @@ func (a *App) runtimeContext() (context.Context, bool) {
 // The caller must always call the returned cancel func, conventionally with
 // defer, so the timer is released as soon as the call returns.
 //
-// Before startup it falls back to context.Background rather than failing: it
-// keeps the bound APIs usable from tests that never run a window.
+// Before the application exists it falls back to context.Background rather
+// than failing: it keeps the bound services usable from tests that never run
+// a window.
 func (a *App) requestContext() (context.Context, context.CancelFunc) {
 	parent, ok := a.runtimeContext()
 	if !ok {
@@ -207,9 +311,8 @@ func (a *App) requestContextFor(requests int) (context.Context, context.CancelFu
 // Publish delivers a domain event to the frontend over the Wails event bus.
 //
 // The ctx parameter is the *request* context of whichever use case raised the
-// event; it is deliberately ignored, because emitting must use the
-// application-lifetime context Wails supplied. Publishing on a request context
-// would break the moment that request completed.
+// event; it is deliberately ignored, because an emit is an application-wide
+// act and tying it to a request would break the moment that request completed.
 //
 // Failures are logged and dropped: an event is a notification, and no use case
 // should fail because the UI was not listening.
@@ -218,7 +321,7 @@ func (a *App) Publish(_ context.Context, event domain.DomainEvent) {
 		return
 	}
 
-	runtimeCtx, ok := a.runtimeContext()
+	app, ok := a.wailsApp()
 	if !ok {
 		a.logger.Debug("dropping event raised outside the application lifetime",
 			slog.String("event", string(event.Name())))
@@ -232,23 +335,22 @@ func (a *App) Publish(_ context.Context, event domain.DomainEvent) {
 		return
 	}
 
-	wailsruntime.EventsEmit(runtimeCtx, string(event.Name()), payload)
+	app.Event.Emit(string(event.Name()), payload)
 }
 
 // emit sends an event to the frontend.
 //
 // This is a low-level helper used by both Publish (for domain events) and
-// the management API (for log streaming). It handles the Wails runtime call
-// and logs any errors.
+// the management API (for log streaming).
 func (a *App) emit(name string, payload any) {
-	runtimeCtx, ok := a.runtimeContext()
+	app, ok := a.wailsApp()
 	if !ok {
 		a.logger.Debug("dropping event, app context not initialized",
 			slog.String("event", name))
 		return
 	}
 
-	wailsruntime.EventsEmit(runtimeCtx, name, payload)
+	app.Event.Emit(name, payload)
 }
 
 // toEventPayload converts a domain event into its wire payload.

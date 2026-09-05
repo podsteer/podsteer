@@ -140,7 +140,7 @@
     function cell(row: TableRow, id: string): string {
       const spec = parseCustomColumnId(id)
       if (spec) return customCell(row, spec)
-      return row.cells[Number(id.slice(1))] ?? ''
+      return row.cells?.[Number(id.slice(1))] ?? ''
     }
 
     return {
@@ -207,9 +207,9 @@
               class="truncate py-1.5
                      {index === 0 ? 'pr-3 pl-3 text-on-surface' : 'px-3 text-on-surface-variant'}
                      {column.numeric ? 'text-right tabular-nums' : ''}"
-              title={row.cells[index]}
+              title={row.cells?.[index]}
             >
-              {row.cells[index]}
+              {row.cells?.[index]}
             </td>
           {/if}
         {/each}

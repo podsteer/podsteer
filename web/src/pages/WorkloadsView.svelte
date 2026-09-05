@@ -171,7 +171,7 @@
         case 'memory':
           return usage.hasMetrics ? usage.memory : '—'
         case 'images':
-          return workload.images.join(', ') || '—'
+          return (workload.images ?? []).join(', ') || '—'
         case 'gitops': {
           const owner = gitOpsOwner({
             metadata: { labels: workload.labels, annotations: workload.annotations },
@@ -317,10 +317,10 @@
           </td>
         {/if}
         {#if isVisible('images')}
-          <td class="truncate px-3 py-1.5" title={workload.images.join(', ')}>
+          <td class="truncate px-3 py-1.5" title={(workload.images ?? []).join(', ')}>
             <span class="flex items-center gap-1.5 text-body-medium text-on-surface-variant">
               <Container class="size-3.5 shrink-0 text-on-surface-variant/40" strokeWidth={1.5} />
-              <span class="truncate">{workload.images.join(', ') || '—'}</span>
+              <span class="truncate">{(workload.images ?? []).join(', ') || '—'}</span>
             </span>
           </td>
         {/if}

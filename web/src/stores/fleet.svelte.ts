@@ -50,7 +50,7 @@ import { timeline } from './timeline.svelte'
 
 /** Lifts a per-kind wire answer into the shape the merge rules read. */
 function asRead<T>(
-  answer: { cluster: string; status: string; reason: string; missing: string[] },
+  answer: { cluster: string; status: string; reason: string; missing: string[] | null },
   items: T[] | null | undefined,
 ): ClusterRead<T> {
   return {

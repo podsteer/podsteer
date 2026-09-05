@@ -158,7 +158,7 @@
               </div>
 
               <p class="mt-0.5 truncate text-body-small text-on-surface-variant" data-selectable>
-                {revision.images.join(', ') || 'no images recorded'}
+                {(revision.images ?? []).join(', ') || 'no images recorded'}
               </p>
 
               {#if revision.changeCause}

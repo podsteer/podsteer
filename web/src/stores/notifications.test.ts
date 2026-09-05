@@ -4,7 +4,7 @@ const capability = vi.fn()
 const notify = vi.fn()
 const request = vi.fn()
 
-vi.mock('$lib/wailsjs/go/wails/NotificationAPI', () => ({
+vi.mock('$bindings/notificationapi', () => ({
   Capability: () => capability(),
   Notify: (options: unknown) => notify(options),
   Request: () => request(),

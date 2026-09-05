@@ -217,7 +217,7 @@
             case 'ready':
               return workload.ready
             case 'images':
-              return workload.images.join(', ')
+              return (workload.images ?? []).join(', ')
             case 'age':
               return formatAge(workload.ageSeconds)
             default:
@@ -584,8 +584,8 @@
               </td>
             {/if}
             {#if isVisible('images')}
-              <td class="truncate px-3 py-1.5 text-on-surface-variant" title={workload.images.join('\n')}>
-                {workload.images.join(', ')}
+              <td class="truncate px-3 py-1.5 text-on-surface-variant" title={(workload.images ?? []).join('\n')}>
+                {(workload.images ?? []).join(', ')}
               </td>
             {/if}
             {#if isVisible('age')}

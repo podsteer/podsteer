@@ -38,8 +38,8 @@
     Write,
     Resize,
     StopSession,
-  } from '$lib/wailsjs/go/wails/TerminalAPI'
-  import { EventsOn } from '$lib/wailsjs/runtime/runtime'
+  } from '$bindings/terminalapi'
+  import { subscribe } from '$lib/api/client'
   import { terminalTheme, onThemeChange } from '$lib/terminalTheme'
   import { matchFractions } from '$lib/terminalSearch'
   import { terminalSessions, sessionKey, localSessionKey } from '$stores/terminalSessions.svelte'
@@ -238,8 +238,8 @@
     initTerminal()
 
     unsubscribe = [
-      EventsOn('terminal:data', handleTerminalData),
-      EventsOn('terminal:exit', handleTerminalExit),
+      subscribe<{ sessionId: string; data: string }>('terminal:data', handleTerminalData),
+      subscribe<{ sessionId: string; reason?: string }>('terminal:exit', handleTerminalExit),
     ]
 
     if (readOnly && variant !== 'local') {

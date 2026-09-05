@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 )
 
 // notificationActivatedEvent is emitted when somebody clicks a notification.
@@ -91,12 +91,19 @@ type NotificationCapability struct {
 
 // NotificationAPI shows OS notifications, and does nothing else.
 //
-// It is a bound API rather than a runtime call the frontend makes directly
-// because the webview has no route to the desktop: Wails' notification
+// It is a bound service rather than a runtime call the frontend makes
+// directly because the webview has no route to the desktop: Wails' notification
 // support is Go-side (UNUserNotificationCenter on macOS, toast XML on
 // Windows, D-Bus on Linux), and the browser Notification API the page could
 // otherwise reach is exactly the sort of thing the CSP and the no-network
 // commitment exist to keep out of the page.
+//
+// IT IS ALSO THE ONLY PART OF THAT SUPPORT THE PAGE CAN REACH. Wails v3
+// ships notifications as a service of its own, whose exported methods would
+// all be bound if it were registered — the removal and category-management
+// surface included. So App starts it by hand and keeps the handle, and these
+// three methods are the whole of what crosses the bridge. See
+// App.StartNotifications.
 //
 // WHAT IT DOES NOT DO IS DECIDE ANYTHING. Whether a finding is new, whether
 // it is snoozed, whether the operator asked for this at all and whether one
@@ -129,18 +136,17 @@ func NewNotificationAPI(app *App, logger *slog.Logger) (*NotificationAPI, error)
 // nothing rather than sitting there looking as though it works — the same job
 // alertPlayer.available does for the sound.
 func (n *NotificationAPI) Capability() NotificationCapability {
-	ctx, ok := n.app.runtimeContext()
+	service, ok := n.app.notificationService()
 	if !ok {
-		// Before the window exists, or after it has gone. Not an error: the
-		// pane is asking a question about a running application.
+		// Before the window exists, after it has gone, or on a machine where
+		// the platform service refused to start — which is the v3 form of
+		// v2's IsNotificationAvailable, since the backend reports that by
+		// failing its own startup. Not an error: the pane is asking a
+		// question about a running application.
 		return NotificationCapability{}
 	}
 
-	if !wailsruntime.IsNotificationAvailable(ctx) {
-		return NotificationCapability{}
-	}
-
-	authorised, err := wailsruntime.CheckNotificationAuthorization(ctx)
+	authorised, err := service.CheckNotificationAuthorization()
 	if err != nil {
 		// SUPPORTED, AND NOT AUTHORISED. Failing to ask is not the operator
 		// saying no, but nothing can be posted either way, and the pane's two
@@ -164,16 +170,12 @@ func (n *NotificationAPI) Capability() NotificationCapability {
 // one people deny. On platforms with no such concept it is a no-op returning
 // true.
 func (n *NotificationAPI) Request() (bool, error) {
-	ctx, ok := n.app.runtimeContext()
+	service, ok := n.app.notificationService()
 	if !ok {
-		return false, apiError(n.logger, "Request", fmt.Errorf(
-			"%w: the window is not running", errNotificationUnavailable))
-	}
-	if !wailsruntime.IsNotificationAvailable(ctx) {
 		return false, apiError(n.logger, "Request", errNotificationUnavailable)
 	}
 
-	granted, err := wailsruntime.RequestNotificationAuthorization(ctx)
+	granted, err := service.RequestNotificationAuthorization()
 	if err != nil {
 		return false, apiError(n.logger, "Request", err)
 	}
@@ -210,12 +212,8 @@ func (n *NotificationAPI) Notify(request NotificationRequest) error {
 			errNotificationTooLong, len(body), maxNotificationBodyBytes))
 	}
 
-	ctx, ok := n.app.runtimeContext()
+	service, ok := n.app.notificationService()
 	if !ok {
-		return apiError(n.logger, "Notify", fmt.Errorf(
-			"%w: the window is not running", errNotificationUnavailable))
-	}
-	if !wailsruntime.IsNotificationAvailable(ctx) {
 		return apiError(n.logger, "Notify", errNotificationUnavailable)
 	}
 
@@ -224,7 +222,7 @@ func (n *NotificationAPI) Notify(request NotificationRequest) error {
 		id = "podsteer-finding"
 	}
 
-	err := wailsruntime.SendNotification(ctx, wailsruntime.NotificationOptions{
+	err := service.SendNotification(notifications.NotificationOptions{
 		ID:    id,
 		Title: title,
 		Body:  body,

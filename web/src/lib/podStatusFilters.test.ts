@@ -79,7 +79,7 @@ describe('OOMKilled', () => {
     const target = pod({
       statusReason: 'CrashLoopBackOff',
       containers: [
-        { name: 'app', lastTermination: { reason: 'OOMKilled' } } as Pod['containers'][number],
+        { name: 'app', lastTermination: { reason: 'OOMKilled' } } as NonNullable<Pod['containers']>[number],
       ],
     })
     expect(chip('oomkilled').predicate(target)).toBe(true)
@@ -89,7 +89,7 @@ describe('OOMKilled', () => {
     const target = pod({
       statusReason: 'CrashLoopBackOff',
       containers: [
-        { name: 'app', lastTermination: { reason: 'Error' } } as Pod['containers'][number],
+        { name: 'app', lastTermination: { reason: 'Error' } } as NonNullable<Pod['containers']>[number],
       ],
     })
     expect(chip('oomkilled').predicate(target)).toBe(false)

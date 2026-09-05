@@ -113,11 +113,11 @@ shipping GPL text is either mislabelled or relicensed, and both need a human.
 The distinction carries real weight, so it is computed rather than asserted.
 
 **Go** — the union of `go list -deps` across all three release platforms
-(`darwin/arm64`, `windows/amd64`, `linux/amd64` with `-tags webkit2_41`), with
-`CGO_ENABLED=1` forced. Running it once on the host is a trap that has already
-caught us: three modules, including `github.com/wailsapp/go-webview2`, are
-reached only under `GOOS=windows`, so a macOS-generated inventory omitted
-modules the Windows binary actually contains.
+(`darwin/arm64`, `windows/amd64`, `linux/amd64`), with `CGO_ENABLED=1` forced.
+Running it once on the host is a trap that has already caught us: three
+modules — under Wails v3 the Windows toast stack, `go-toast`, `go-ole` and
+`go-colorable` — are reached only under `GOOS=windows`, so a macOS-generated
+inventory omitted modules the Windows binary actually contains.
 
 **npm** — the `--omit=dev` tree, **cross-checked against what `web/src`
 actually imports**. This is the only silent way shipped scope goes wrong: a
@@ -126,9 +126,54 @@ bundled into the app while being absent from every inventory built from
 `dependencies`. That has also already happened here, to CodeMirror, xterm.js
 and Svelte. The check now fails the build.
 
-Modules present in `go list -m all` but never downloaded are neither shipped
-nor executed — nothing imports them on any build path — and are reported
-separately rather than classified.
+### Amendment, 2026-09-05: build scope is membership, not cache presence
+
+**Build scope is now `go list -deps -test` membership across the release
+platforms, minus the shipped set.** A Go module is build-only when some build
+or test on `darwin/arm64`, `windows/amd64` or `linux/amd64` compiles it and no
+platform's binary links it. Shipped scope is unchanged, and so are the
+inventory and the SBOM: they are still built from the same `go list -deps`
+union, and this amendment landed with no diff to
+[`app/adapters/notices/notices.json`](../app/adapters/notices/notices.json).
+
+Modules that appear in `go list -m all` and that neither listing reaches are
+**graph-only**: reported by count and **not classified**. They are
+requirements of our requirements that nothing here imports — a fact about
+somebody else's `go.mod` — so recording a licence verdict on them would
+describe an inventory PodSteer does not distribute. Anything that *is*
+classified must be present in the module cache, and its absence is now an
+error naming `go mod download` rather than a silent reclassification.
+
+**Why the previous test was wrong.** Build scope used to mean "present in the
+local Go module cache". That asks whether a machine happened to download
+something, which is not the same question as whether it participates. It was
+machine-dependent in both directions: on the machine this was measured on, 133
+of 210 graph modules were called build-scope purely because they had been
+downloaded, while on a cold cache a module that genuinely does participate
+would have been dropped from the inventory instead of classified. CI made this
+concrete rather than theoretical — the `setup-go` cache is keyed on `go.sum`
+and shared between the quality, bindings and packaging jobs, so whichever job
+last wrote it decided the verdict, and the gate flipped between red and green
+without a line of the repository changing. The 2026-08-20 decision said scope
+is *computed, never asserted*; cache presence asserted it.
+
+The module that forced the issue is `github.com/konoui/go-qsort`, which
+publishes no licence file, appears in zero builds, and is in the cache only
+because `go install .../cmd/wails3` pulled it in. A narrow exception was
+rejected: an exception matching nothing fails as stale, so on a cold cache it
+would have gone red for the opposite reason, and it would have recorded the
+module in a scope it does not occupy — which is the one thing an auditor reads
+an exception for.
+
+**Test-only modules are build scope, not a fourth scope.** They are never
+distributed, so they carry the same obligations a compiler does.
+
+**The toolchain is outside the inventory entirely.** The `wails3` CLI, Node,
+`gcc` and the rest are tools PodSteer is built *with*, not dependencies it is
+built *from*; nothing obliges you to credit them, and they are not listed.
+That is why the CLI's own requirements are not ours even when they land in the
+same module graph — `wails3` ships from the same module as the Wails library,
+so its dependencies arrive in `go list -m all` without ever entering a build.
 
 ## Exceptions
 

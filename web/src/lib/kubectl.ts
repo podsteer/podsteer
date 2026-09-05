@@ -55,7 +55,7 @@ export function resourceArg(kind: { group: string; resource: string }): string {
  * Recovers the `resource` segment for `resourceArg` from a `ResourceKind` as
  * the frontend actually has it.
  *
- * The wire type (`web/src/lib/wailsjs/go/models.ts`) carries `id` and `group`
+ * The wire type (`$bindings/models`) carries `id` and `group`
  * but not `resource` on its own — `id` is `domain.ResourceKind.ID()`, i.e.
  * "group/version/resource" with the core group rendered as "core". This is
  * the one place that knows that wire format, so every call site can pass the

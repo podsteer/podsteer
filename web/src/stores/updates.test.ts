@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const check = vi.fn()
 const permitted = vi.fn(async () => true)
 
-vi.mock('$lib/wailsjs/go/wails/UpdateAPI', () => ({
+vi.mock('$bindings/updateapi', () => ({
   CheckForUpdate: (force: boolean) => check(force),
   UpdateChecksPermitted: () => permitted(),
 }))

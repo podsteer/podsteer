@@ -23,8 +23,8 @@
 -->
 <script lang="ts">
   import { flash } from '$lib/flash.svelte'
-  import { EventsOn } from '$lib/wailsjs/runtime/runtime'
-  import { StreamLogs, StopLogStream } from '$lib/wailsjs/go/wails/ManagementAPI'
+  import { subscribe } from '$lib/api/client'
+  import { StreamLogs, StopLogStream } from '$bindings/managementapi'
   import { onMount, onDestroy, untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
   import { preferences } from '$stores/preferences.svelte'
@@ -61,7 +61,7 @@
    *
    * Wails only generates TS types for structs that appear in a *bound
    * method's* signature — these are emitted ad hoc via app.emit() instead,
-   * so wailsjs/go/models has no corresponding export. Typed here to match
+   * so the generated models have no corresponding export. Typed here to match
    * the JSON app/adapters/wails/dto.go actually sends (`streamId`, `lines`).
    */
   interface LogLinesEvent {
@@ -984,8 +984,8 @@
     // listener for that name across the whole application, which is harmless
     // while one log pane is mounted and wrong the moment two are.
     unsubscribe = [
-      EventsOn('log:lines', handleLogLines),
-      EventsOn('log:end', handleLogEnd),
+      subscribe<LogLinesEvent>('log:lines', handleLogLines),
+      subscribe<LogEndEvent>('log:end', handleLogEnd),
     ]
     startStream()
   })

@@ -94,7 +94,7 @@ export class ClusterHistory {
       const result: SeriesResult = await getSeries(this.clusterId, this.windowMinutes, MAX_POINTS)
       if (request !== this.#request) return
 
-      this.samples = result.samples
+      this.samples = result.samples ?? []
       this.spanSeconds = result.spanSeconds
       this.recording = result.recording
       this.intervalSeconds = result.intervalSeconds

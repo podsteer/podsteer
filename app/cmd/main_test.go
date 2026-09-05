@@ -5,10 +5,21 @@ import (
 	"testing"
 )
 
-// The property this test exists for is not tidiness: `wails build` generates
-// its TypeScript bindings by compiling and RUNNING this binary with no
-// arguments, so an argument-free launch that did anything but start the
-// window would take every build and every `make bindings` down with it.
+// The reason this test exists CHANGED with Wails v3, and the test did not.
+//
+// Under v2 the rule was mechanical: binding generation compiled and RAN this
+// binary with no arguments, so an argument-free launch that did anything but
+// start the window took every build down with it. `wails3 generate bindings`
+// reads the Go source instead — nothing is executed — so that particular
+// consequence is gone.
+//
+// What remains is the product rule, which is the one that was always the
+// point: double-clicking PodSteer, or launching it from the Dock, passes no
+// arguments, and that MUST open the window. A flag, a prompt or a usage
+// message in front of a bare launch would make the application unstartable
+// the way anybody actually starts it, and nothing else in the code says so.
+// `route` is split out of `dispatch` so this can be asserted without starting
+// a window, which is the one thing a test of this path cannot do.
 func TestNoArgumentsStillMeansTheDesktopWindow(t *testing.T) {
 	chosen, rest, err := route(nil)
 	if err != nil {

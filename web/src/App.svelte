@@ -14,6 +14,7 @@
   import ClusterView from '$pages/ClusterView.svelte'
   import ClusterWorkspace from '$pages/ClusterWorkspace.svelte'
   import { workspace } from '$stores/workspace.svelte'
+  import { windowState } from '$stores/windowState.svelte'
   import { loadAppInfo } from '$stores/system.svelte'
   import { updates } from '$stores/updates.svelte'
   import { alertPlayer } from '$stores/alerts.svelte'
@@ -39,6 +40,10 @@
   // Discover clusters once when the shell mounts, and release every tab's
   // timer and the event subscription when it goes away.
   $effect(() => {
+    // The window's own state is polled from here rather than from the store's
+    // constructor, so importing a module never opens a socket — see
+    // windowState.start.
+    windowState.start()
     void loadAppInfo()
     // Ask what is already forwarded. Nothing survives a restart of the
     // application — every forward is a goroutine in this process — but a

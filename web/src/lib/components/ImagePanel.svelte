@@ -153,14 +153,14 @@
         </p>
       {/if}
 
-      {#if report.otherNames.length > 0}
+      {#if (report.otherNames?.length ?? 0) > 0}
         <div class="flex flex-col gap-1">
           <p class="text-body-small font-medium text-on-surface">
             Also known on this node as
           </p>
           <!-- Frequently the most useful thing here: a moved tag shows up as
                one image carrying two names. -->
-          {#each report.otherNames as name (name)}
+          {#each report.otherNames ?? [] as name (name)}
             <p class="truncate text-body-small text-on-surface-variant" title={name} data-selectable>
               {name}
             </p>
@@ -174,7 +174,7 @@
             Pulled with credentials
           </p>
           <p class="text-body-small text-on-surface-variant">
-            {report.pullSecrets.join(', ')}
+            {(report.pullSecrets ?? []).join(', ')}
           </p>
           <p class="text-body-small leading-relaxed text-on-surface-variant/80">
             {report.credentialNote}

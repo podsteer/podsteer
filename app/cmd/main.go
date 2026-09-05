@@ -7,11 +7,14 @@
 //
 // # Why this is not package main
 //
-// The Wails CLI compiles the package in the project root — `wails build` runs
+// The Wails v2 CLI compiled the package in the project root — `wails build` ran
 // `go build` with its working directory set there and no package argument — so
-// the `main` package has to live at the repository root. That root main.go is
+// the `main` package had to live at the repository root. That root main.go is
 // a three-line shim that calls Main below; every line of real wiring is here,
-// under app/, where the project layout requires it.
+// under app/, where the project layout puts it.
+//
+// Wails v3 imposes no such rule, so this is now inherited rather than forced.
+// See the root main.go for what moving it would involve.
 package cmd
 
 import (
@@ -21,10 +24,11 @@ import (
 	"os"
 	"path/filepath"
 
-	wailsapp "github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	// Aliased because this repository has an `application` package of its own —
+	// the use-case layer — and the composition root is the one file that
+	// names both.
+	wailsapp "github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"github.com/podsteer/podsteer/app/adapters/archive"
 	"github.com/podsteer/podsteer/app/adapters/assets"
@@ -66,14 +70,19 @@ func Main() {
 
 // dispatch chooses between the desktop application and the subcommands.
 //
-// NO ARGUMENTS MEANS THE WINDOW, and that is not merely the default — it is
-// what keeps `wails build` working. Wails generates its TypeScript bindings
-// by compiling and RUNNING this binary with no arguments of its own (see
-// CLAUDE.md, "Two structural facts that look like mistakes"), so anything
-// that changed the argument-free path — a required flag, a usage message, a
-// prompt — would take the build down with it. A subcommand is therefore
+// NO ARGUMENTS MEANS THE WINDOW, and that is not merely the default: it is
+// how the application is actually started. A double-click in Finder, a Dock
+// icon, a desktop launcher and `brew install --cask podsteer` all run this
+// binary with nothing after its name, so a required flag, a usage message or
+// a prompt in front of that path would make PodSteer unstartable for
+// everybody who has never opened a terminal. A subcommand is therefore
 // additive: it is reached only when the first argument names it, and every
 // other launch behaves exactly as it did before this existed.
+//
+// Under Wails v2 there was a second, mechanical reason — binding generation
+// compiled and RAN this binary argument-free — and it is gone: `wails3
+// generate bindings` reads the source. The rule outlived it; see
+// main_test.go.
 func dispatch(args []string) error {
 	chosen, rest, err := route(args)
 	if err != nil {
@@ -442,37 +451,75 @@ func run() error {
 		return err
 	}
 
-	// --- Window ------------------------------------------------------------
+	// --- Application and window --------------------------------------------
+	//
+	// Wails v3 separates the two: the application holds the services, the
+	// assets and the process lifetime, and a window is a thing it is asked to
+	// open. PodSteer opens exactly one and names it, because every runtime
+	// call in v3 is made on a window and Window.Current answers with the
+	// focused one — which is none at all when the application is hidden.
 
-	err = wailsapp.Run(&options.App{
-		Title:     cfg.App.Title,
-		Width:     cfg.Window.Width,
-		Height:    cfg.Window.Height,
-		MinWidth:  cfg.Window.MinWidth,
-		MinHeight: cfg.Window.MinHeight,
+	desktopApp := wailsapp.New(wailsapp.Options{
+		Name: cfg.App.Title,
+		// Shown in the platform's own About box, which is where v2's
+		// mac.AboutInfo.Message went.
+		Description: "A fast, native Kubernetes client.\nVersion " + cfg.App.Version,
 
-		AssetServer: &assetserver.Options{Assets: frontend},
+		// Wails' OWN logging, not the application's. It shares the handler so
+		// there is one stream to read, and sits at warn because the v3 asset
+		// server otherwise logs a line per request — every chunk of every
+		// bundle, on every launch.
+		Logger:   logger,
+		LogLevel: slog.LevelWarn,
 
-		// Matches the frontend's dark surface colour, which the splash screen
-		// shares regardless of the operator's theme. Without it the webview
-		// paints white for the frame or two before the first render, which
-		// reads as a flash every launch.
-		BackgroundColour: &options.RGBA{R: 20, G: 18, B: 24, A: 1},
-
-		OnStartup: func(ctx context.Context) {
-			desktop.OnStartup(ctx)
-			// No-op on every platform but macOS. See trafficLightVerticalNudge.
-			macwindow.NudgeTrafficLights(trafficLightVerticalNudge)
-			// Sampling is bounded by the window's own lifetime: it starts when
-			// the application does and stops when it closes, which is exactly
-			// the window the recorded history claims to cover.
-			historyService.Start(ctx)
-			// After desktop.OnStartup, which is what gives it a runtime
-			// context to work with. It asks for no permission here — see
-			// App.StartNotifications — and failing is not fatal.
-			desktop.StartNotifications()
+		Assets: wailsapp.AssetOptions{
+			Handler:        wailsapp.AssetFileServerFS(frontend),
+			DisableLogging: true,
 		},
-		OnShutdown: func(ctx context.Context) {
+
+		// Everything registered here becomes callable from TypeScript, and
+		// `wails3 generate bindings` reads THIS LIST by static analysis to
+		// produce the declarations — it no longer compiles and runs the
+		// binary to find them out. Every exported method of every service is
+		// bound, which is why App itself is not one: see
+		// wails.App.StartNotifications.
+		Services: []wailsapp.Service{
+			wailsapp.NewService(clusterAPI),
+			wailsapp.NewService(workloadAPI),
+			wailsapp.NewService(browseAPI),
+			wailsapp.NewService(overviewAPI),
+			wailsapp.NewService(fleetAPI),
+			wailsapp.NewService(rbacAPI),
+			wailsapp.NewService(historyAPI),
+			wailsapp.NewService(managementAPI),
+			wailsapp.NewService(terminalAPI),
+			wailsapp.NewService(fileCopyAPI),
+			wailsapp.NewService(inspectAPI),
+			wailsapp.NewService(systemAPI),
+			wailsapp.NewService(updateAPI),
+			wailsapp.NewService(notificationAPI),
+		},
+
+		// Only one PodSteer should hold the kubeconfig and its client caches;
+		// a second launch raises the existing window instead of opening a
+		// second one. Under v2 the raise was the framework's; here the
+		// callback is where it happens, which is also the only way the second
+		// process's launch is observable at all.
+		SingleInstance: &wailsapp.SingleInstanceOptions{
+			UniqueID: "com.podsteer.desktop",
+			OnSecondInstanceLaunch: func(wailsapp.SecondInstanceData) {
+				desktop.RaiseWindow()
+			},
+		},
+
+		Mac: wailsapp.MacOptions{
+			// v3 keeps an application alive with no windows — it is built for
+			// tray and multi-window applications. PodSteer has one window, so
+			// closing it means quitting, which is what v2 did unconditionally.
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
+
+		OnShutdown: func() {
 			// Forwards first: each one holds a local socket, and a process
 			// that exits without releasing them leaves ports bound until the
 			// operating system reaps them. That is the orphaned-port
@@ -495,53 +542,61 @@ func run() error {
 			// connections, and every one of them has an owner that stops it.
 			kubernetes.StopAllWatches()
 			historyService.Close()
-			// Before desktop.OnShutdown, which drops the runtime context this
-			// needs to release what the platform held — a D-Bus connection on
-			// Linux. Same rule as the three above: PodSteer opened it.
+			// Before Detach, which drops the handle this needs to release
+			// what the platform held — a D-Bus connection on Linux. Same rule
+			// as the three above: PodSteer opened it.
 			desktop.StopNotifications()
-			desktop.OnShutdown(ctx)
+			desktop.Detach()
 		},
+	})
 
-		// Everything bound here becomes callable from TypeScript, and Wails
-		// generates the declarations for it into web/src/lib/wailsjs.
-		Bind: []any{
-			clusterAPI,
-			workloadAPI,
-			browseAPI,
-			overviewAPI,
-			fleetAPI,
-			rbacAPI,
-			historyAPI,
-			managementAPI,
-			terminalAPI,
-			fileCopyAPI,
-			inspectAPI,
-			systemAPI,
-			updateAPI,
-			notificationAPI,
-		},
+	// The handle every bound service reaches the runtime through. It cannot be
+	// a constructor argument: those services are this application's own
+	// Services list, so they exist first. See wails.App.Attach.
+	desktop.Attach(desktopApp)
 
-		// Only one PodSteer should hold the kubeconfig and its client caches;
-		// a second launch raises the existing window instead.
-		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId: "com.podsteer.desktop",
-		},
+	desktopApp.Window.NewWithOptions(wailsapp.WebviewWindowOptions{
+		Name:      wailsadapter.MainWindowName,
+		Title:     cfg.App.Title,
+		Width:     cfg.Window.Width,
+		Height:    cfg.Window.Height,
+		MinWidth:  cfg.Window.MinWidth,
+		MinHeight: cfg.Window.MinHeight,
+		URL:       "/",
 
-		Mac: &mac.Options{
+		// Matches the frontend's dark surface colour, which the splash screen
+		// shares regardless of the operator's theme. Without it the webview
+		// paints white for the frame or two before the first render, which
+		// reads as a flash every launch.
+		BackgroundColour: wailsapp.NewRGB(20, 18, 24),
+
+		Mac: wailsapp.MacWindow{
 			// An inset title bar lets the UI's own header double as the drag
 			// region, which is the native-feeling MD3 layout on macOS.
-			TitleBar: mac.TitleBarHiddenInset(),
+			TitleBar: wailsapp.MacTitleBarHiddenInset,
 			// No appearance pin: the frontend offers a light/dark toggle and
 			// there is no runtime handle to re-pin NSAppearance with it, so
 			// the window frame follows the OS instead of contradicting one
 			// of the two themes.
-			About: &mac.AboutInfo{
-				Title:   cfg.App.Title,
-				Message: "A fast, native Kubernetes client.\nVersion " + cfg.App.Version,
-			},
 		},
 	})
-	if err != nil {
+
+	// v2's OnStartup hook, in the shape v3 offers it. The work is the same and
+	// so is the timing: after the platform has finished launching, which on
+	// macOS is when the window and its traffic lights actually exist.
+	desktopApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*wailsapp.ApplicationEvent) {
+		// No-op on every platform but macOS. See trafficLightVerticalNudge.
+		macwindow.NudgeTrafficLights(trafficLightVerticalNudge)
+		// Sampling is bounded by the window's own lifetime: it starts when
+		// the application does and stops when it closes, which is exactly
+		// the window the recorded history claims to cover.
+		historyService.Start(desktopApp.Context())
+		// It asks for no permission here — see App.StartNotifications — and
+		// failing is not fatal.
+		desktop.StartNotifications()
+	})
+
+	if err := desktopApp.Run(); err != nil {
 		return fmt.Errorf("running application: %w", err)
 	}
 
