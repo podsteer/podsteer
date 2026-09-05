@@ -201,6 +201,23 @@ func run() error {
 	registry := application.NewRegistry()
 	catalog := domain.NewCatalog()
 
+	// BEFORE the cluster service, which is the only reason it is up here
+	// rather than beside the history service it feeds: it holds a cluster's
+	// last assessment, so it is one of the two things a disconnect has to
+	// release, and it has to exist before the invalidator list is composed.
+	overviewService, err := application.NewOverviewService(application.OverviewServiceDeps{
+		Cluster:   kubernetes,
+		Workloads: kubernetes,
+		Events:    kubernetes,
+		Metrics:   kubernetes,
+		APIs:      kubernetes,
+		Registry:  registry,
+		Logger:    logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring overview service: %w", err)
+	}
+
 	clusterService, err := application.NewClusterService(application.ClusterServiceDeps{
 		Kubeconfig: kubernetes,
 		Cluster:    kubernetes,
@@ -210,10 +227,15 @@ func run() error {
 		Registry:   registry,
 		Catalog:    catalog,
 		Logger:     logger,
-		// The adapter's own caches are released here on disconnect, which is
-		// the composition root's job precisely because Invalidate is not a
-		// port — it exists to serve the adapter's caching, not the domain.
-		Invalidator: kubernetes,
+		// What a disconnect releases, in one list, composed here for the
+		// reason Invalidate is not a port: it exists to serve caching and
+		// goroutine ownership, not the domain. The adapter releases its
+		// clients, its watch, its per-cluster caches and its port-forwards;
+		// the overview releases the assessment it is holding, which would
+		// otherwise be served to a reconnect of the same context name inside
+		// the freshness window — and that context may now point at an
+		// entirely different cluster.
+		Invalidator: application.Invalidators{kubernetes, overviewService},
 	})
 	if err != nil {
 		return fmt.Errorf("wiring cluster service: %w", err)
@@ -263,19 +285,6 @@ func run() error {
 	})
 	if err != nil {
 		return fmt.Errorf("wiring rbac service: %w", err)
-	}
-
-	overviewService, err := application.NewOverviewService(application.OverviewServiceDeps{
-		Cluster:   kubernetes,
-		Workloads: kubernetes,
-		Events:    kubernetes,
-		Metrics:   kubernetes,
-		APIs:      kubernetes,
-		Registry:  registry,
-		Logger:    logger,
-	})
-	if err != nil {
-		return fmt.Errorf("wiring overview service: %w", err)
 	}
 
 	// Sampling records what each open cluster looks like over time, so the

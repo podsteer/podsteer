@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -57,10 +58,29 @@ func ptrTo[T any](v T) *T { return &v }
 // node shell can never show as running after its pod is gone, nor linger as a
 // pod after it has left the list.
 type nodeShells struct {
-	mu     sync.Mutex
+	mu sync.Mutex
+	// closed is set by StopAllNodeShells and never cleared: the process is on
+	// its way out.
+	//
+	// SHUTTING DOWN, SO REGISTER NOTHING. Creating a node shell is not
+	// instant — the pod has to be scheduled, its image pulled and the kubelet
+	// has to report Running, which waitPodRunning allows a full minute for —
+	// and nothing cancels that wait at shutdown, because the framework never
+	// cancels its runtime context. So a start that was in flight when the
+	// sweep ran would otherwise insert its pod into a map nobody reads again,
+	// the process would exit, and a PRIVILEGED pod in the node's process and
+	// network namespaces would be left running until its one-hour deadline
+	// reaped it. The record and the pod would have parted company, which is
+	// the one thing this registry promises cannot happen — the same rule, and
+	// the same flag, as watchManager.ensure.
+	closed bool
 	byID   map[string]domain.NodeShell
 	nextID int
 }
+
+// errNodeShellsClosed reports a node shell abandoned because PodSteer is
+// shutting down. Its pod is deleted before this is returned.
+var errNodeShellsClosed = errors.New("PodSteer is shutting down, so the node shell was removed")
 
 // buildNodeShellPod builds the privileged pod that becomes a node shell.
 //
@@ -151,6 +171,22 @@ func (a *Adapter) StartNodeShell(ctx context.Context, id domain.ClusterID, names
 	}
 
 	a.nodeShells.mu.Lock()
+	if a.nodeShells.closed {
+		// StopAllNodeShells swept while this pod was being scheduled, so the
+		// sweep did not see it and nothing will read this map again. Delete
+		// the pod HERE — on the same fresh, bounded context the failed-wait
+		// path above already uses, because the caller's may be cancelled and
+		// this delete is the only thing standing between shutdown and a
+		// privileged pod left running on a node.
+		a.nodeShells.mu.Unlock()
+
+		deleteCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := client.CoreV1().Pods(ns).Delete(deleteCtx, created.Name, metav1.DeleteOptions{}); err != nil {
+			return domain.NodeShell{}, fmt.Errorf("%s: %w: %w", op, errNodeShellsClosed, classify("deleting the node shell pod", err))
+		}
+		return domain.NodeShell{}, fmt.Errorf("%s: %w", op, errNodeShellsClosed)
+	}
 	a.nodeShells.nextID++
 	shell := domain.NodeShell{
 		ID:            strconv.Itoa(a.nodeShells.nextID),
@@ -198,8 +234,13 @@ func (a *Adapter) ListNodeShells() []domain.NodeShell {
 }
 
 // StopAllNodeShells deletes every node-shell pod, for shutdown.
+//
+// It also CLOSES the registry, permanently. A start racing this sweep would
+// otherwise register its pod after the copy was taken and leave a privileged
+// pod behind; see the closed field. Safe to call twice.
 func (a *Adapter) StopAllNodeShells() {
 	a.nodeShells.mu.Lock()
+	a.nodeShells.closed = true
 	shells := make([]domain.NodeShell, 0, len(a.nodeShells.byID))
 	for id, shell := range a.nodeShells.byID {
 		shells = append(shells, shell)

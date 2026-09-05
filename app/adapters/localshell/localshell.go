@@ -93,10 +93,30 @@ type Manager struct {
 	cfg    Config
 	logger *slog.Logger
 
-	mu     sync.Mutex
+	mu sync.Mutex
+	// closed is set by StopAllLocalShells and never cleared: the process is on
+	// its way out.
+	//
+	// SHUTTING DOWN, SO REGISTER NOTHING — the same flag, and the same rule,
+	// as the node-shell registry and watchManager.ensure. BELT AND BRACES
+	// RATHER THAN A LIVE BUG, and it is worth saying which: a local shell
+	// leaks nothing into a cluster, and the kernel hangs the child up anyway
+	// when the master descriptor closes as the process exits, so a session
+	// registered after the sweep dies with PodSteer regardless. What it buys
+	// is that the rule holds without depending on that: a session started
+	// during shutdown is refused outright and torn down here, rather than
+	// left in a map nobody reads again and reaped by a side effect of process
+	// exit. The node shell next door has no such side effect to fall back on,
+	// and consistency between the two registries is what stops somebody
+	// reading one and assuming the other.
+	closed bool
 	byID   map[string]*session
 	nextID int
 }
+
+// errShellsClosed reports a local shell refused because PodSteer is shutting
+// down. The process it started is ended before this is returned.
+var errShellsClosed = errors.New("PodSteer is shutting down, so no local shell was opened")
 
 // Compile-time proof that the manager satisfies the port it is injected as.
 var _ ports.LocalShellPort = (*Manager)(nil)
@@ -179,6 +199,21 @@ func (m *Manager) StartLocalShell(spec domain.LocalShellSpec, out io.Writer, onE
 	}
 
 	m.mu.Lock()
+	if m.closed {
+		// StopAllLocalShells swept before this process was started, so the
+		// sweep did not see it. End it here rather than register it. No pump
+		// goroutine exists yet, so end's wait on done has nothing to wait
+		// for and the teardown is written out: hang up, kill, reap, close.
+		// No grace period either — nothing has been typed into a shell
+		// nobody was ever shown, and the caller is a shutdown in progress.
+		m.mu.Unlock()
+
+		proc.Hangup()
+		proc.Kill()
+		_ = proc.Wait()
+		proc.Close()
+		return domain.LocalShell{}, errShellsClosed
+	}
 	m.nextID++
 	id := "local_" + strconv.Itoa(m.nextID)
 	shell := domain.LocalShell{
@@ -361,8 +396,13 @@ func (m *Manager) StopLocalShell(id string) error {
 // the reason the port-forward registry does the same: ending a session blocks
 // until its reader goroutine has retired the record, and that goroutine needs
 // this mutex.
+//
+// It also CLOSES the registry, permanently, so a start racing this sweep is
+// refused rather than registered behind it. See the closed field. Safe to
+// call twice.
 func (m *Manager) StopAllLocalShells() {
 	m.mu.Lock()
+	m.closed = true
 	entries := make([]*session, 0, len(m.byID))
 	for _, entry := range m.byID {
 		entries = append(entries, entry)
@@ -396,10 +436,42 @@ func (m *Manager) end(entry *session) {
 	case <-time.After(hangupGrace):
 	}
 
+	if !shouldKill(entry.done) {
+		<-entry.done
+		return
+	}
+
 	// Ignored the hangup. The process group goes, not just the leader: a
 	// shell's children are what would otherwise be left running.
 	entry.proc.Kill()
 	<-entry.done
+}
+
+// shouldKill reports whether a session that outlasted the hangup grace is
+// still there to be signalled.
+//
+// RE-CHECKED IMMEDIATELY BEFORE Kill, BECAUSE THE TIMER FIRING IS NOT THE
+// SAME ANSWER. The pump can reap the child and close done in the window
+// between the grace elapsing and the signal, and Kill signals the process
+// GROUP by raw id — `syscall.Kill(-pid, …)`. os.Process.Signal would have
+// refused to signal a process it knows has been reaped; a raw group signal
+// has no such knowledge, and once the child is reaped its pid, and therefore
+// its group id, is free for the kernel to hand to something else.
+//
+// A RESIDUAL WINDOW IS INHERENT to signalling a group by id, and this does
+// not close it: the process can still be reaped between this check and the
+// syscall a few instructions later. What it does is shrink the window from
+// the whole grace period — two seconds, during which a shell that was merely
+// slow to leave routinely finishes — to those few instructions. Closing it
+// entirely would mean giving up the group signal, and the group is the whole
+// point: it is what stops a shell's children being left running.
+func shouldKill(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return false
+	default:
+		return true
+	}
 }
 
 // defaultLoginShell names the shell to run when nothing else says.
