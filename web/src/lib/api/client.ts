@@ -107,6 +107,7 @@ import {
   SetRetention as bindSetRetention,
   SetSamplingInterval as bindSetSamplingInterval,
 } from '$bindings/historyapi'
+import { GetSeries as bindGetBackendSeries } from '$bindings/metricsqueryapi'
 import {
   AddKubeconfigFile as bindAddKubeconfigFile,
   AddKubeconfigFolder as bindAddKubeconfigFolder,
@@ -241,6 +242,22 @@ export type Sample = wails.Sample
 export type SeriesResult = wails.SeriesResult
 /** What PodSteer records locally, and how often. */
 export type HistorySettings = wails.HistorySettings
+
+/**
+ * A monitoring backend's answer, and an account of how far it was checked.
+ *
+ * DELIBERATELY NOT `SeriesResult`. That one is PodSteer's own record, derived
+ * from the overview; this is somebody else's measurement, taken at somebody
+ * else's interval through somebody else's recording rules. Two types is what
+ * stops a component treating one as a continuation of the other.
+ */
+export type BackendSeriesResult = wails.BackendSeriesResult
+/** One labelled series a backend answered with. */
+export type BackendSeries = wails.BackendSeries
+/** One instant of a backend series. */
+export type BackendPoint = wails.BackendPoint
+/** Whose measurement a series is, and how far it was checked. */
+export type SeriesProvenance = wails.SeriesProvenance
 
 /** Where the backend settings live, and whether they can be saved. */
 export type SettingsState = wails.SettingsState
@@ -640,6 +657,35 @@ export function getHistorySettings(): Promise<HistorySettings> {
   return call(() => bindGetHistorySettings())
 }
 
+// --- Monitoring backend -----------------------------------------------------
+//
+// The one call in this module that sends something PodSteer composed to a
+// system that is not the API server's own object store. It travels through the
+// API server's service proxy on the credential the tab already holds, so it
+// adds no outbound host — but the backend logs the expression and the cluster's
+// audit log records a `get` on that Service, which is why it is off until an
+// operator switches it on per cluster. See SECURITY.md and ADR 7.
+
+/**
+ * Asks the cluster's monitoring backend for one metric over a window.
+ *
+ * NEVER CALL THIS FROM A REFRESH TICK. A tick is this application deciding on
+ * its own to put PromQL onto somebody's production Prometheus; a chart opening
+ * is somebody looking at something. `$stores/backendTrend` is the only caller
+ * and holds that rule, with a test that counts calls across driven refreshes.
+ *
+ * There is no expression parameter and there never will be one: the metric and
+ * the scope select from a fixed table in the Go domain.
+ */
+export function getBackendSeries(
+  clusterId: string,
+  metric: 'cpu' | 'memory' | 'pods',
+  scope: 'cluster' | 'node',
+  windowMinutes: number,
+): Promise<BackendSeriesResult> {
+  return call(() => bindGetBackendSeries(clusterId, metric, scope, windowMinutes))
+}
+
 // --- Backend settings -------------------------------------------------------
 //
 // The settings the GO PROCESS owns, as against the ones this interface keeps
@@ -704,7 +750,8 @@ export function getClusterSettings(clusterIds: string[]): Promise<ClusterSetting
  * cluster, which one answers, and on what terms.
  *
  * NOTHING IS SENT ANYWHERE BY THIS. It writes the switch; reading from a
- * monitoring backend is a separate change. Passing both preferred names empty
+ * monitoring backend goes through `getBackendSeries` above, which consults
+ * exactly what this writes. Passing both preferred names empty
  * returns the cluster to PodSteer's own ranked pick, which is the state in
  * which no Service name is written to disk at all.
  */

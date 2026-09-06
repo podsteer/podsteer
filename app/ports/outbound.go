@@ -238,6 +238,58 @@ type MetricsPort interface {
 	DiscoverKubeStateMetrics(ctx context.Context, id domain.ClusterID) (domain.KubeStateMetrics, error)
 }
 
+// MetricsQueryPort sends PromQL PodSteer composed to a monitoring backend
+// discovered in a cluster.
+//
+// A PORT OF ITS OWN RATHER THAN TWO MORE METHODS ON MetricsPort, and the
+// reason is `podsteer mcp`: this is the one interface in the whole outbound
+// surface that makes a request whose CONTENT PodSteer wrote, to a system that
+// logs it under the operator's identity, and it narrows by interface so a
+// composition that must not be able to do that cannot NAME it. The Helm port
+// is split for the same reason and the rule is the same one.
+//
+// EVERYTHING HERE IS A GET, THROUGH THE API SERVER'S SERVICE PROXY. No new
+// outbound host is contacted, no second credential is stored, and the webview
+// CSP is untouched — the socket is the one the kubeconfig already opened for
+// that tab. A POST is refused rather than merely unused: posting to the
+// service proxy is the RBAC verb `create` on services/proxy, a DIFFERENT
+// permission from the `get` every proxying account already holds, so a
+// form-body query would fail for exactly the tightly-permissioned accounts
+// this application is careful about. That is why an oversized node filter is
+// refused (domain.ErrQueryTooLong) rather than moved into a body.
+//
+// Three failures are ordinary rather than exceptional and each has its own
+// sentinel: ErrForbidden (the account may not proxy — routine, and cached by
+// the implementation because an account that may never proxy never will be
+// able to), ErrMetricsQueryRejected (the backend's own words, verbatim) and
+// ErrMetricsQueryTooLarge (an answer larger than the implementation will
+// read, refused undecoded).
+type MetricsQueryPort interface {
+	// QueryNodes asks a backend which nodes it holds series for, as an
+	// instant query, and returns the names.
+	//
+	// The expression is domain.NodeProbeExpression and is not the caller's to
+	// choose. It exists so an aggregate is never drawn from a backend that
+	// answers for other clusters — see domain.VerifyBackendNodes — and using
+	// the metric and the label the charts themselves depend on is what makes
+	// the check unable to pass while the feature would fail.
+	QueryNodes(ctx context.Context, id domain.ClusterID, backend domain.MetricsBackend) ([]string, error)
+
+	// QueryRange evaluates one expression over a range at a step.
+	//
+	// The expression comes from domain.ComposeExpression and nowhere else:
+	// there is no query box, no URL to type, and no path by which a string
+	// the operator wrote reaches here.
+	QueryRange(
+		ctx context.Context,
+		id domain.ClusterID,
+		backend domain.MetricsBackend,
+		expression string,
+		start, end time.Time,
+		step time.Duration,
+	) ([]domain.PromSeries, error)
+}
+
 // HistoryPort stores and reads the samples PodSteer takes of a cluster.
 //
 // A port rather than a detail of the service because "keep this on disk for

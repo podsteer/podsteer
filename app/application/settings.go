@@ -176,9 +176,11 @@ func (s *SettingsService) Cluster(
 // SetMetricsQuery records ADR 7's per-cluster value: whether a discovered
 // monitoring backend may be queried, which one answers, and on what terms.
 //
-// NOTHING HERE SENDS A QUERY, and nothing in this build does. This writes the
-// switch; the reader that acts on it is a separate change, which is what
-// keeps that change's review about the request rather than about the setting.
+// NOTHING HERE SENDS A QUERY. This writes the switch; MetricsQueryService
+// reads it before discovery runs, before the node list, and before anything
+// reaches the network — so a cluster left off makes no request at all rather
+// than one whose answer is discarded, which metricsquery_test.go asserts by
+// counting requests.
 //
 // A value equal to the defaults leaves no stanza behind: the store's Normalise
 // drops an entry that says nothing, so turning this back off removes the

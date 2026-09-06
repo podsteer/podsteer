@@ -8,12 +8,14 @@
   the whole picture, and far more honest than persisting samples to disk to
   fake a history that would be full of gaps whenever the app was closed.
 
-  It is ADVICE: this note claims nothing about what the backend contains.
+  IT IS STILL ADVICE, AND IT CLAIMS NOTHING ABOUT WHAT THE BACKEND CONTAINS.
   Discovery found a service whose name and labels say Prometheus or
   VictoriaMetrics; whether it scrapes this cluster's kubelets is not something
-  a service listing can establish. Reading from one is off until an operator
-  turns it on per cluster under Settings → Clusters, and no build has a reader
-  yet — so today this remains a sentence and nothing more.
+  a service listing can establish, and this note is built on the listing alone.
+  Reading from one is a separate thing, off until an operator turns it on per
+  cluster under Settings → Clusters — and when it IS on, what was actually read
+  is said by `BackendSeriesNote` beside this, never by widening what this
+  sentence claims.
 
   `backend.label` NAMES THE PRODUCT rather than always saying Prometheus.
   Telling somebody they run Prometheus when they run VictoriaMetrics sends

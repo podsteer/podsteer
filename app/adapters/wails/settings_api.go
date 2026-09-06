@@ -317,9 +317,10 @@ func toClusterSettings(id string, cluster domain.ClusterSettings) ClusterSetting
 // SetMetricsQuery records whether a discovered monitoring backend may be
 // queried for one cluster, which one answers, and on what terms.
 //
-// NOTHING HERE SENDS A QUERY. This build has no reader; it writes the switch
-// the reader will consult, which is what keeps that change's review about the
-// request rather than about the setting.
+// NOTHING HERE SENDS A QUERY, though what it records now decides whether a
+// chart may: this writes the switch, and application.MetricsQueryService is
+// what consults it before anything reaches a monitoring backend. Off is the
+// default and off means no request is made.
 //
 // LOOSE STRINGS, VALIDATED IN THE DOMAIN. An unknown mode, an unknown policy
 // or a preferred backend that is not a pair of DNS-1123 labels is refused by

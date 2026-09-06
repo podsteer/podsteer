@@ -9,6 +9,7 @@ import * as HelmAPI from "./helmapi.js";
 import * as HistoryAPI from "./historyapi.js";
 import * as InspectAPI from "./inspectapi.js";
 import * as ManagementAPI from "./managementapi.js";
+import * as MetricsQueryAPI from "./metricsqueryapi.js";
 import * as NotificationAPI from "./notificationapi.js";
 import * as OverviewAPI from "./overviewapi.js";
 import * as RBACAPI from "./rbacapi.js";
@@ -26,6 +27,7 @@ export {
     HistoryAPI,
     InspectAPI,
     ManagementAPI,
+    MetricsQueryAPI,
     NotificationAPI,
     OverviewAPI,
     RBACAPI,
@@ -44,6 +46,9 @@ export type {
     ApplicationInventory,
     ApplicationMember,
     ApplyOutcomeDTO,
+    BackendPoint,
+    BackendSeries,
+    BackendSeriesResult,
     BulkItemDTO,
     BulkLineDTO,
     BulkPlanDTO,
@@ -119,6 +124,7 @@ export type {
     RoleInspection,
     RollbackOutcomeDTO,
     Sample,
+    SeriesProvenance,
     SeriesResult,
     SettingsState,
     StorageClassUsage,

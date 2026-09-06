@@ -415,3 +415,37 @@ type SettingsService interface {
 	// policy without the erasure it implies.
 	SetMetricsQuery(ctx context.Context, id domain.ClusterID, query domain.MetricsQuerySettings) error
 }
+
+// MetricsQueryUseCase answers a chart's request for a longer series out of a
+// monitoring backend the cluster already runs.
+//
+// THE FIRST INBOUND PORT THAT SENDS SOMETHING PODSTEER COMPOSED TO A SYSTEM
+// THAT IS NOT THE API SERVER'S OWN OBJECT STORE, and it is a port of its own
+// for that reason rather than a method on the history service beside it. The
+// two answer the same question about a cluster and are emphatically not
+// interchangeable: one is PodSteer's own record, derived from the overview,
+// and the other is somebody else's measurement taken at somebody else's
+// interval. A caller holding both interfaces cannot accidentally treat one as
+// a continuation of the other.
+//
+// NOTHING HERE MAY BE CALLED FROM A REFRESH TICK. That is a rule about
+// callers and it is stated on the port because the port is where a new caller
+// reads what it is allowed to do: a query happens when somebody opens a chart,
+// changes its range, or presses the control — the same shape
+// BrowseAPI.ObjectGraph and the reachability probes already have.
+type MetricsQueryUseCase interface {
+	// Series answers for one metric at one scope over a window.
+	//
+	// A STATUS, NOT AN ERROR, for every outcome that is a fact about
+	// somebody's cluster: not enabled, nothing discovered, forbidden,
+	// unreachable, rejected, too large, unverified, answered, and —
+	// separately from answered — answered with no matching series. An error
+	// is returned only when the request could not be shaped at all.
+	Series(
+		ctx context.Context,
+		id domain.ClusterID,
+		metric domain.MetricID,
+		scope domain.MetricScope,
+		window time.Duration,
+	) (domain.BackendSeriesResult, error)
+}
