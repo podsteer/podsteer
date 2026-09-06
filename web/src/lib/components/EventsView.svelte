@@ -45,11 +45,12 @@
         const list = result ?? []
         events = list
         status = 'ready'
-        // Filed on the session timeline on the way past — the events of the
-        // object whose drawer is open, which no list view fetches unless the
-        // operator happens to be on the Events page. It already crossed the
-        // bridge, so the Timeline tab beside this one costs no read of its
-        // own. See $stores/timeline.
+        // Filed on the session timeline on the way past. This is a read of
+        // ONE object's events, so it reaches what the assessment's
+        // cluster-wide read may have truncated at its per-query cap — and it
+        // already crossed the bridge for this pane, so the Timeline tab
+        // beside it costs no read of its own. An event both sources carried
+        // is upserted, not duplicated. See $stores/timeline.
         timeline.recordEvents(target.clusterId, list)
       })
       .catch((cause) => {

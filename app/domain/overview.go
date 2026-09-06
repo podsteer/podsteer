@@ -950,6 +950,23 @@ type Overview struct {
 	Workloads   []WorkloadKindSummary
 	Namespaces  []NamespaceLoad
 	Restarts    []RestartHotspot
+	// Events are the Kubernetes Events this assessment read, CARRIED rather
+	// than assessed.
+	//
+	// Everything else on this struct is a verdict; this is the input the
+	// event findings were derived from, passed through unchanged. It is here
+	// because the session timeline needs the events themselves and not only
+	// what was concluded from them, and because the assessment is the one
+	// read that happens on every tick whatever view is on screen — so
+	// carrying them costs no request, which is the property the timeline is
+	// built on. Recording them from the view that happened to fetch them
+	// instead made a cluster's record a function of somebody's browsing.
+	//
+	// Bounded by whatever the port returned; the Kubernetes adapter caps a
+	// single event query, and an assessment that could not read events at
+	// all leaves this empty AND names "events" in Unavailable — the two are
+	// not the same fact and a reader must not collapse them.
+	Events []Event
 	// Unavailable names the data sources that could not be read, so the UI can
 	// say "no metrics" instead of quietly showing zeroes.
 	Unavailable []string
@@ -1067,6 +1084,10 @@ func NewOverview(input OverviewInput) Overview {
 		Consumers:   topConsumers(input.Pods, input.MetricsMeasured),
 		Support:     support,
 		NodeLoads:   nodeLoads(input.Nodes, input.Pods),
+		// Cloned for the same reason Unavailable is: the caller's slice must
+		// not alias the assessment, which outlives the read that produced it
+		// by however long the overview cache holds it.
+		Events:      slices.Clone(input.Events),
 		Unavailable: slices.Clone(input.Unavailable),
 		Metrics:     input.Metrics,
 		Backend:     input.Backend,

@@ -24,6 +24,33 @@
 /** Which of the three things an entry records. */
 export type TimelineEntryKind = 'event' | 'finding' | 'write'
 
+/**
+ * The least a Kubernetes Event has to carry to be recorded.
+ *
+ * TWO SHAPES ARRIVE HERE and this is what they have in common: the assessment
+ * carries `Overview.events`, deliberately narrowed to these eight fields
+ * because it crosses the bridge on every tick whatever view is on screen, and
+ * the Events page carries the full `K8sEvent` rows it is rendering anyway.
+ * Structural rather than a union so the recorder never has to ask which one it
+ * was handed — and so a field added to one of them cannot quietly become
+ * something the recorder depends on without appearing here first.
+ *
+ * `namespace` and `name` are the EVENT OBJECT'S identity, not the involved
+ * object's: Kubernetes gives each event a unique name in its namespace and
+ * folds repeats into it by raising `count`, which is what lets one entry stand
+ * for however many occurrences the cluster actually saw.
+ */
+export interface RecordedEvent {
+  namespace: string
+  name: string
+  reason: string
+  message: string
+  involvedKind: string
+  involvedName: string
+  isWarning: boolean
+  count: number
+}
+
 /** How loudly an entry should read. The overview's own vocabulary. */
 export type TimelineSeverity = 'info' | 'warning' | 'critical'
 

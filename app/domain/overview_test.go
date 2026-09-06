@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1309,6 +1310,78 @@ func TestEventFindingsIgnoreOldEvents(t *testing.T) {
 
 	if len(overview.Findings) != 0 {
 		t.Errorf("findings = %v, want none for a two-hour-old event", titles(overview.Findings))
+	}
+}
+
+// The assessment carries the events it read, so the session timeline can
+// record what HAPPENED rather than only what was concluded.
+//
+// The two are not the same set and this test is the difference: a Normal
+// event produces no finding at all, and a warning older than the window is
+// deliberately ignored by eventFindings — yet both are things that occurred
+// while somebody was watching, and both belong on the timeline. Deriving the
+// timeline from Findings instead would silently drop them.
+func TestOverviewCarriesEveryEventItRead(t *testing.T) {
+	t.Parallel()
+
+	newEvent := func(name, reason string, eventType domain.EventType, ago time.Duration) domain.Event {
+		t.Helper()
+		event, err := domain.NewEvent(domain.EventSpec{
+			Name: name, Namespace: "default", ClusterID: "dev",
+			Type: eventType, Reason: reason, Message: "something happened",
+			InvolvedKind: "Pod", InvolvedName: "api-1", Count: 2,
+			FirstSeen: overviewNow.Add(-ago), LastSeen: overviewNow.Add(-ago),
+		})
+		if err != nil {
+			t.Fatalf("building event: %v", err)
+		}
+		return event
+	}
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Events: []domain.Event{
+			newEvent("a.1", "Scheduled", domain.EventNormal, time.Minute),
+			newEvent("a.2", "FailedMount", domain.EventWarning, 2*time.Hour),
+			newEvent("a.3", "BackOff", domain.EventWarning, time.Minute),
+		},
+		Now: overviewNow,
+	})
+
+	if len(overview.Events) != 3 {
+		t.Fatalf("events = %d, want all 3 carried through", len(overview.Events))
+	}
+	names := make([]string, 0, len(overview.Events))
+	for _, event := range overview.Events {
+		names = append(names, event.Name())
+	}
+	if !slices.Equal(names, []string{"a.1", "a.2", "a.3"}) {
+		t.Errorf("events = %v, want them verbatim and in order", names)
+	}
+
+	// And only one of the three was worth a finding, which is the point.
+	if _, ok := findingByTitle(overview.Findings, "BackOff"); !ok {
+		t.Errorf("findings = %v, want BackOff", titles(overview.Findings))
+	}
+}
+
+// An assessment that could not read events carries none — and says so
+// separately, because empty is not the same fact as refused.
+func TestOverviewCarriesNoEventsWhenTheReadFailed(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID:   "dev",
+		Unavailable: []string{"events"},
+		Now:         overviewNow,
+	})
+
+	if len(overview.Events) != 0 {
+		t.Errorf("events = %d, want none", len(overview.Events))
+	}
+	if !slices.Contains(overview.Unavailable, "events") {
+		t.Errorf("unavailable = %v, want it to name events — otherwise an empty "+
+			"list reads as nothing having happened", overview.Unavailable)
 	}
 }
 

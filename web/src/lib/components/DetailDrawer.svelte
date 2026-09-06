@@ -2029,6 +2029,7 @@
         <TimelinePanel
           entries={objectTimeline}
           startedAt={timeline.startedAt(session.cluster.id)}
+          eventsRefused={timeline.eventsRefused(session.cluster.id)}
         />
       {:else if activeTab === 'yaml'}
         <div class="h-full">

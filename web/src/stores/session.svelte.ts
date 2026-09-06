@@ -286,6 +286,18 @@ export function fleetTableId(tab: FleetTab): string {
 export const TIMELINE_KIND_ID = 'podsteer/timeline'
 
 /**
+ * What `Overview.unavailable` calls the event read when it failed.
+ *
+ * The Go side names its sources as strings and the frontend matches on them,
+ * so the one place that match is written down is here rather than inline at
+ * the comparison — the same string appears in the overview's "assessed
+ * without …" line, and an assessment carrying no events must be readable as
+ * "refused" rather than as "nothing happened". See the `run` calls in
+ * application/overview.go.
+ */
+export const EVENTS_SOURCE = 'events'
+
+/**
  * The Helm page, the SIXTH pinned pseudo-entry.
  *
  * NOT A KIND, for the reason none of the other five are: there is no object
@@ -1717,6 +1729,28 @@ export class ClusterSession {
     // own copy of the same data, which is why the two cannot disagree.
     timeline.recordFindings(this.cluster.id, overview.findings)
 
+    // AND THE EVENTS, from the same assessment and therefore on every tick
+    // whatever view is on screen. This is what makes the navigator's count
+    // true from the first refresh instead of staying empty until somebody
+    // opened a page that happened to fetch events — the whole record used to
+    // be a function of browsing history.
+    //
+    // It costs no request. The assessment gathers events regardless, because
+    // the event findings are derived from them; they simply never crossed the
+    // bridge. What it costs is bridge payload, which is why `TimelineEvent`
+    // is a narrowing of the row the Events page renders rather than the row
+    // itself.
+    //
+    // The unavailable list is passed SEPARATELY and always, because an empty
+    // event list means two different things: a quiet cluster, and one whose
+    // events this account may not read. Only `overview.unavailable` tells
+    // them apart, and the panel says which.
+    timeline.noteEventSource(
+      this.cluster.id,
+      !(overview.unavailable ?? []).includes(EVENTS_SOURCE),
+    )
+    timeline.recordEvents(this.cluster.id, overview.events ?? [])
+
     // Snoozed findings are silent by definition, and so is un-snoozing one:
     // the id was in the baseline throughout, because the baseline is not
     // filtered by snoozing.
@@ -1769,25 +1803,21 @@ export class ClusterSession {
 
     switch (this.viewMode) {
       case 'timeline':
-        // EVENTS, at this tab's cadence, and only while this view is on
-        // screen — the same call and the same namespace the Events page
-        // makes, so the two coalesce through readcache.go when they land
-        // together.
+        // NOTHING, AND NOW GENUINELY NOTHING. This view briefly fetched
+        // events on its own tick, to close a real gap: events were recorded
+        // only while the Events page was open, so opening the Timeline first
+        // showed nothing and the record a cluster produced depended on which
+        // pages somebody had visited. That fixed the PAGE and did nothing for
+        // the navigator's count, which stayed empty on every other view for
+        // exactly the same reason.
         //
-        // This view used to fetch nothing, on the reasoning that a timeline
-        // is a record of reads something else already made. That reasoning
-        // held for two of its three sources and not for the third, and the
-        // gap was visible: findings ride the assessment, which runs whatever
-        // is on screen, and writes are recorded as they are made — but events
-        // were recorded ONLY while the Events page was open. So opening the
-        // Timeline first showed nothing, opening Events and coming back
-        // filled it, and the record a cluster produced depended on which
-        // pages somebody happened to visit rather than on what happened.
-        //
-        // The cost is one `list events` per tick while this page is open,
-        // which is what the Events page already costs while IT is open. It
-        // stops the moment either is left.
-        return listEvents(id, namespace, this.annotationKeys)
+        // The events now ride the assessment (#adopt), which runs on every
+        // tick whatever is on screen — the Go side was gathering them anyway,
+        // because the event findings are derived from them. So the fetch here
+        // would be a second request for something this tab already has, and
+        // the property this view's doc claims for itself is true again:
+        // everything in it crossed the bridge for another reason.
+        return Promise.resolve(null)
       case 'overview':
         // The explicit target only applies to the view an operator is
         // actually looking at. #refreshAssessment (below) always asks for
@@ -1912,10 +1942,9 @@ export class ClusterSession {
         this.#adopt(rows as Overview)
         break
       case 'timeline':
-        // Held for the same reason the Events page holds them — so
-        // #recordTimeline can file them — and NOT for rendering: this view
-        // draws $stores/timeline, never these rows.
-        this.events = rows as K8sEvent[]
+        // Nothing to hold: this view draws $stores/timeline, and every entry
+        // in it was recorded from a read something else made — the events and
+        // the findings from the assessment, the writes as they happen.
         break
       case 'fleet':
         // Nothing to hold: the merged rows are the workspace's, in
@@ -1964,20 +1993,26 @@ export class ClusterSession {
    *
    * COSTS NOTHING ON THE WIRE, which is the whole reason the timeline is
    * built here rather than in Go: the pod assessment rides every row of the
-   * pod list and the events are the rows of the event list, so both were
-   * already fetched and both were already discarded. Same trade as
+   * pod list, so it was already fetched and already discarded. Same trade as
    * `#retainUsage` above.
    *
    * A view that did not fetch pods passes null rather than an empty list.
    * The row buffers are mutually exclusive — a poll on the Nodes page leaves
    * `pods` empty — and an empty list read as an assessment would announce
    * every pod in the cluster recovering the moment somebody changed view.
+   *
+   * EVENTS ARE NOT FILED HERE ANY MORE, or rather not only here: they ride
+   * the assessment and are recorded in `#adopt`, which runs on every tick
+   * whatever view is open. The Events page still files the rows it fetched,
+   * because its read is NAMESPACE-scoped where the assessment's is
+   * cluster-wide against a per-query cap — so on a cluster busy enough to hit
+   * that cap, the page open on one namespace sees events the cluster-wide
+   * read truncated away. Filing both is a superset of either, and an event
+   * already recorded is upserted rather than duplicated.
    */
   #recordTimeline(): void {
     timeline.recordPodFindings(this.cluster.id, this.viewMode === 'pods' ? this.pods : null)
-    // Both pages that fetch events file them. Recording from the Events page
-    // alone made the timeline's coverage a function of somebody's browsing.
-    if (this.viewMode === 'events' || this.viewMode === 'timeline') {
+    if (this.viewMode === 'events') {
       timeline.recordEvents(this.cluster.id, this.events)
     }
   }
