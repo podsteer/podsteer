@@ -1,10 +1,11 @@
 <!--
   The application's only dropdown.
 
-  A custom trigger and panel rather than a native <select>, matching the
-  console's `.sct-custom-select-*` component so the two products present the
-  same control: an 8px-radius trigger, a panel offset 4px below it, options
-  with a 4px leading bar that colours in on the selected one.
+  A custom trigger and panel rather than a native <select>, drawn the way
+  Material Design 3 draws an exposed dropdown menu: the application's one
+  field shape for the trigger, and a menu surface below it at the menu corner
+  radius, carrying a level-2 elevation and marking its chosen row with the
+  secondary container tone and a trailing check.
 
   A native select was here before and is genuinely good at some things —
   type-ahead, the platform popup, hundreds of entries — so the keyboard
@@ -21,7 +22,7 @@
   works whatever the ancestor did. It flips above when there is no room below.
 -->
 <script lang="ts">
-  import { ChevronDown } from '@lucide/svelte'
+  import { Check, ChevronDown } from '@lucide/svelte'
   import { tick, untrack } from 'svelte'
 
   interface Option {
@@ -110,6 +111,8 @@
    */
   const instance = $props.id()
   const optionId = (index: number): string => `${instance}-option-${index}`
+  /** The panel's own id, so the trigger can name what it opened. */
+  const listboxId = `${instance}-listbox`
   /**
    * The VALUE that index points at, kept alongside it.
    *
@@ -281,6 +284,17 @@
    * contents, floored at the trigger's width: "10" through "100" under a
    * "Rows" heading needs about seven characters, and stretching that to a
    * fixed minimum left most of the panel empty.
+   *
+   * IT ALSO STARTS THE ENTRANCE, and only on the last line, by writing the
+   * placement it settled on. Everything above measures the panel with
+   * `getBoundingClientRect()`, which reports the box a `transform` has moved
+   * it to rather than the box it was laid out in — so an entrance animating
+   * any property that shifts the box has to be held until the measuring is
+   * finished, or a menu opened inside a transformed dialog is corrected
+   * against its own animation and lands somewhere arbitrary. The keyframes
+   * live in app.css and wait for this attribute; a menu that never reaches
+   * here (no anchor to measure against) simply appears, which is the right
+   * failure.
    */
   function place(node: HTMLElement, rect: DOMRect | null): void {
     if (!rect) return
@@ -301,10 +315,12 @@
     const preferredLeft = compact ? rect.right - width : rect.left
     const left = Math.max(margin, Math.min(preferredLeft, window.innerWidth - width - margin))
 
+    let flipped = false
     let top = rect.bottom + 4
     if (top + height > window.innerHeight - margin) {
       const above = rect.top - height - 4
       top = above >= margin ? above : Math.max(margin, window.innerHeight - height - margin)
+      flipped = true
     }
 
     node.style.left = `${left}px`
@@ -320,6 +336,13 @@
       node.style.left = `${left - (landed.left - left)}px`
       node.style.top = `${top - (landed.top - top)}px`
     }
+
+    // Measuring is over: the menu may now move. Actions run before the
+    // browser paints, so nothing is on screen at the un-animated position
+    // first — there is no flash to avoid here, only a measurement to protect.
+    // The direction follows the flip, so a menu forced upwards rises from
+    // below instead of descending through the trigger it belongs to.
+    node.dataset.placement = flipped ? 'above' : 'below'
   }
 </script>
 
@@ -330,9 +353,10 @@
     bind:this={trigger}
     type="button"
     {disabled}
+    data-select-trigger
     aria-haspopup="listbox"
     aria-expanded={open}
-    aria-label={compact ? (accessibleName ?? label) : undefined}
+    aria-controls={open ? listboxId : undefined}
     title={compact ? (accessibleName ?? label) : undefined}
     onclick={() => (open ? hide() : show())}
     onkeydown={onTriggerKeydown}
@@ -343,6 +367,22 @@
       : 'field h-8 px-3'}
            {open && compact ? 'border-outline-variant/60' : ''}"
   >
+    <!--
+      What the control IS, said to assistive technology only.
+
+      This used to be an `aria-label`, and only on the compact variant. Both
+      halves were wrong. `aria-label` REPLACES an element's content in the
+      accessible name, so a compact trigger announced "Rows per page" and
+      never the number it was showing; and a full-width trigger, which had no
+      label at all, announced its current value with nothing saying what the
+      value was of — "production, button", no mention of namespaces.
+
+      A hidden span is CONCATENATED with the visible text instead, so both
+      variants now read as "<what it is>, <what it is set to>". The visible
+      label stays where it was, inside the panel: see the note there for why
+      it is not sitting over the field.
+    -->
+    <span class="sr-only">{accessibleName ?? label}</span>
     <span class="truncate {selected ? '' : 'text-on-surface-variant'}">
       {selected ? selected.label : placeholder}
       {#if selected?.hint}
@@ -365,7 +405,9 @@
     -->
     <div
       bind:this={panel}
+      id={listboxId}
       data-select-root
+      data-select-menu
       role="listbox"
       aria-label={accessibleName ?? label}
       aria-activedescendant={active >= 0 && options[active] ? optionId(active) : undefined}
@@ -373,9 +415,21 @@
       use:place={anchor}
       onkeydown={onPanelKeydown}
       use:claimFocus
-      class="fixed z-[70] max-h-[300px] overflow-y-auto overflow-x-hidden rounded-sm border
+      class="fixed z-[70] max-h-[300px] overflow-y-auto overflow-x-hidden rounded-xs border
              border-outline-variant bg-surface-container pb-1 shadow-level-2"
     >
+      <!--
+        The menu corner radius, deliberately tighter than the field's 8px: MD3
+        gives a menu its own shape token rather than borrowing its trigger's,
+        and matching the two made the panel read as a second field stacked
+        under the first rather than as a surface floating over it.
+
+        The outline is NOT part of that language — a menu is meant to separate
+        itself from what it covers by elevation alone. It is kept because half
+        of that mechanism does not survive this application's dark theme: a
+        shadow cast onto a near-black surface is invisible, and without the
+        outline the panel's edge disappears into whatever is behind it.
+      -->
       <!-- What the dropdown is FOR, said where it is being used rather than
            above the trigger. A label sitting over the field spent a line of
            chrome saying something only relevant once the list is open — and
@@ -387,14 +441,29 @@
            twice is worse than not showing it. -->
       <p
         aria-hidden="true"
-        class="sticky top-0 z-10 border-b border-outline-variant/60 bg-surface-container py-2 pr-3 pl-4
-               text-body-small font-semibold text-on-surface"
+        class="sticky top-0 z-10 border-b border-outline-variant/60 bg-surface-container px-3 py-2
+               text-label-medium text-on-surface-variant"
       >
         {label}
       </p>
 
       {#each options as option, index (option.value)}
         {@const isSelected = option.value === value}
+        <!--
+          The highlight is ONE class driven by `active`, which both the arrow
+          keys and `onmouseenter` set — so the pointer and the keyboard cannot
+          disagree about which row is lit, and cannot light two at once. That
+          is why it is `state-layer-active` and not the `state-layer` utility
+          sitting beside it in app.css: `state-layer` waits for `:hover`,
+          which a keyboard never delivers to an option, because focus stays on
+          the panel.
+
+          Selection is the secondary container tone plus a trailing check,
+          rather than the leading bar this control used to draw. The check is
+          rendered on EVERY row and only made visible on the chosen one: an
+          icon that came and went would change the width left to the label
+          beside it, so every row would re-truncate as the selection moved.
+        -->
         <button
           type="button"
           role="option"
@@ -403,19 +472,23 @@
           aria-selected={isSelected}
           onclick={() => choose(index)}
           onmouseenter={() => (active = index)}
-          class="flex w-full items-center gap-2 border-l-4 py-2 pr-3 pl-3 text-left text-body-medium
-                 transition-colors duration-100
+          class="flex w-full items-center gap-2 px-3 py-2 text-left text-body-medium
                  {isSelected
-            ? 'border-l-primary bg-primary-container font-medium text-on-primary-container'
-            : 'border-l-transparent text-on-surface'}
-                 {active === index && !isSelected ? 'bg-surface-container-high' : ''}"
+            ? 'bg-secondary-container text-on-secondary-container'
+            : 'text-on-surface'}
+                 {active === index ? 'state-layer-active' : ''}"
         >
           <span class="truncate">{option.label}</span>
           {#if option.hint}
-            <span class="ml-auto shrink-0 text-body-small text-on-surface-variant/70">
+            <span class="ml-auto shrink-0 text-body-small opacity-70">
               {option.hint}
             </span>
           {/if}
+          <Check
+            class="size-4 shrink-0 {option.hint ? '' : 'ml-auto'} {isSelected ? '' : 'invisible'}"
+            strokeWidth={2}
+            aria-hidden="true"
+          />
         </button>
       {/each}
     </div>

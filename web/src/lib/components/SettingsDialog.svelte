@@ -75,6 +75,7 @@
     SILENT,
     alertPlayer,
   } from '$stores/alerts.svelte'
+  import Radio from './Radio.svelte'
   import Select from './Select.svelte'
   import GaugeTrack from './GaugeTrack.svelte'
   import SettingsTransfer from './SettingsTransfer.svelte'
@@ -417,19 +418,20 @@
               How often the open view re-reads the cluster.
             </p>
 
-            <div class="mt-4 flex flex-col gap-1.5">
+            <!-- The role is stated because the heading above is the group's
+                 only label, and a heading is attached to nothing: without it
+                 the options are announced as loose radios with no name for
+                 what they are choosing between. -->
+            <div class="mt-4 flex flex-col gap-1.5" role="radiogroup" aria-label="Refresh interval">
               {#each REFRESH_INTERVALS as interval (interval.value)}
-                <label class="flex cursor-pointer items-center gap-3 text-body-medium text-on-surface">
-                  <input
-                    type="radio"
-                    name="refresh-interval"
-                    value={interval.value}
-                    checked={preferences.effectiveIntervalMs === interval.value}
-                    onchange={() => preferences.setRefreshInterval(interval.value)}
-                    class="accent-primary"
-                  />
+                <Radio
+                  name="refresh-interval"
+                  value={interval.value}
+                  checked={preferences.effectiveIntervalMs === interval.value}
+                  onchange={() => preferences.setRefreshInterval(interval.value)}
+                >
                   {interval.label}
-                </label>
+                </Radio>
               {/each}
             </div>
 
@@ -845,22 +847,20 @@
             <h4 class="mt-4 text-label-large uppercase tracking-wider text-on-surface-variant">
               Keep for
             </h4>
-            <div class="mt-2 flex flex-col gap-1.5">
+            <div class="mt-2 flex flex-col gap-1.5" role="radiogroup" aria-label="Keep history for">
               {#each RETENTION_OPTIONS as option (option.days)}
-                <label class="flex cursor-pointer items-start gap-3">
-                  <input
-                    type="radio"
-                    name="retention"
-                    value={option.days}
-                    checked={historySettings.days === option.days}
-                    onchange={() => void historySettings.setRetention(option.days)}
-                    class="mt-1 accent-primary"
-                  />
+                <Radio
+                  name="retention"
+                  value={option.days}
+                  align="start"
+                  checked={historySettings.days === option.days}
+                  onchange={() => void historySettings.setRetention(option.days)}
+                >
                   <span class="flex flex-col">
                     <span class="text-body-medium text-on-surface">{option.label}</span>
                     <span class="text-body-small text-on-surface-variant/70">{option.hint}</span>
                   </span>
-                </label>
+                </Radio>
               {/each}
             </div>
 
@@ -872,27 +872,26 @@
             >
               Sample every
             </h4>
-            <div class="mt-2 flex flex-col gap-1.5" class:opacity-50={historySettings.days === 0}>
+            <div
+              class="mt-2 flex flex-col gap-1.5"
+              class:opacity-50={historySettings.days === 0}
+              role="radiogroup"
+              aria-label="Sample every"
+            >
               {#each SAMPLING_INTERVALS as option (option.seconds)}
-                <label
-                  class="flex items-start gap-3 {historySettings.days === 0
-                    ? 'cursor-default'
-                    : 'cursor-pointer'}"
+                <Radio
+                  name="sampling-interval"
+                  value={option.seconds}
+                  align="start"
+                  disabled={historySettings.days === 0}
+                  checked={historySettings.intervalSeconds === option.seconds}
+                  onchange={() => void historySettings.setInterval(option.seconds)}
                 >
-                  <input
-                    type="radio"
-                    name="sampling-interval"
-                    value={option.seconds}
-                    disabled={historySettings.days === 0}
-                    checked={historySettings.intervalSeconds === option.seconds}
-                    onchange={() => void historySettings.setInterval(option.seconds)}
-                    class="mt-1 accent-primary"
-                  />
                   <span class="flex flex-col">
                     <span class="text-body-medium text-on-surface">{option.label}</span>
                     <span class="text-body-small text-on-surface-variant/70">{option.hint}</span>
                   </span>
-                </label>
+                </Radio>
               {/each}
             </div>
 

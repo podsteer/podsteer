@@ -56,6 +56,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte'
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
   import KubectlHint from '$lib/components/KubectlHint.svelte'
+  import Radio from '$lib/components/Radio.svelte'
   import { toApiError, type ApiError } from '$lib/api/errors'
   import { ALL_NAMESPACES, listHelmReleases, type HelmListing, type HelmRelease } from '$lib/api/client'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
@@ -531,19 +532,26 @@
             {#each opened.revisions ?? [] as revision (revision.secretName)}
               <tr class="border-b border-outline-variant/40">
                 <td class="py-1.5 pr-3 tabular-nums text-on-surface">
-                  <label class="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="radio"
-                      name="helm-rollback-target"
-                      value={revision.revision}
-                      checked={target === revision.revision}
-                      onchange={() => (target = revision.revision)}
-                    />
+                  <!-- Named for assistive technology because the visible
+                       content is a bare revision number, which does not say
+                       what choosing it would do — and what it does is name a
+                       revision in the rollback command shown below, never
+                       perform one. No radiogroup role on the column: these are
+                       table cells, and a role between the row and the cell
+                       breaks the table for anyone navigating it as one. -->
+                  <Radio
+                    name="helm-rollback-target"
+                    value={revision.revision}
+                    ariaLabel="Name revision {revision.revision} in the rollback command"
+                    dense
+                    checked={target === revision.revision}
+                    onchange={() => (target = revision.revision)}
+                  >
                     {revision.revision}
                     {#if revision.revision === opened.current.revision}
-                      <span class="text-label-small text-on-surface-variant/60">current</span>
+                      <span class="ml-2 text-label-small text-on-surface-variant/60">current</span>
                     {/if}
-                  </label>
+                  </Radio>
                 </td>
                 <td class="py-1.5 pr-3">
                   <span class="rounded-full px-1.5 py-0.5 font-mono text-label-small {statusTone(revision.status)}">
