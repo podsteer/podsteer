@@ -64,9 +64,80 @@
     actions: RowAction[]
     /** Names the row, for the control's accessible label. */
     label: string
+    /**
+     * Whether the control shows without the row being hovered.
+     *
+     * TRUE IN A TABLE, where it is a column of its own: a column whose
+     * contents appear only under the pointer reads as an empty column, and
+     * somebody looking for the control cannot find it without sweeping the
+     * table. FALSE in a detail pane, where the control sits beside a value
+     * rather than in a column, and one dot per row would be noise on every
+     * row of every pane.
+     */
+    persistent?: boolean
   }
 
-  let { actions, label }: Props = $props()
+  let { actions, label, persistent = false }: Props = $props()
+
+  /**
+   * Where the menu goes, in WINDOW coordinates.
+   *
+   * IT HAS TO ESCAPE THE TABLE, which is why this is measured rather than
+   * left to `position: absolute`. A list row sits inside the table's
+   * horizontal scrollport, and a scrollport clips: anchored to the cell, the
+   * menu was cut off at the table's right edge — the one place it always
+   * opens, since its column is pinned there. No z-index helps, because
+   * clipping is not stacking.
+   *
+   * Right-aligned to the control, because it opens at the right edge of a row
+   * and a menu growing rightwards from there would leave the window. Flipped
+   * above only when below would not fit, and clamped so neither end can land
+   * off screen.
+   */
+  const MENU_WIDTH = 192
+  const MENU_GAP = 4
+  const MENU_MARGIN = 8
+
+  let trigger = $state<HTMLButtonElement | null>(null)
+  let menuHeight = $state(0)
+  /** Bumped while open so a scroll or a resize re-measures. */
+  let moved = $state(0)
+
+  const placement = $derived.by(() => {
+    void moved
+    if (!open || !trigger) return null
+
+    const rect = trigger.getBoundingClientRect()
+    const below = rect.bottom + MENU_GAP
+    const fitsBelow = below + menuHeight <= window.innerHeight - MENU_MARGIN
+    const top = fitsBelow ? below : Math.max(MENU_MARGIN, rect.top - MENU_GAP - menuHeight)
+
+    const left = Math.min(
+      Math.max(MENU_MARGIN, rect.right - MENU_WIDTH),
+      Math.max(MENU_MARGIN, window.innerWidth - MENU_WIDTH - MENU_MARGIN),
+    )
+
+    return { top, left }
+  })
+
+  /**
+   * A menu positioned against the window does not travel with the row it
+   * belongs to, so a scroll would leave it behind. Re-measuring is cheaper
+   * than the alternative and only ever runs while one menu is open.
+   */
+  $effect(() => {
+    if (!open) return
+
+    const remeasure = (): void => {
+      moved += 1
+    }
+    window.addEventListener('scroll', remeasure, true)
+    window.addEventListener('resize', remeasure)
+    return () => {
+      window.removeEventListener('scroll', remeasure, true)
+      window.removeEventListener('resize', remeasure)
+    }
+  })
 
   /** This menu's identity, for the one open at a time. */
   const id = Symbol('row-menu')
@@ -165,7 +236,18 @@
       caller works without this component needing to know which kind of row
       it is in.
     -->
+    <!--
+      PERSISTENT DRAWS ITSELF WITH COLOUR, NOT OPACITY. Hidden entirely until
+      the row is hovered, the control is unfindable in a column of its own —
+      the column reads as empty and somebody has to sweep the table to
+      discover there was anything in it. So in a table it is always there, dim
+      at rest and brighter under the pointer, which says "you can press this"
+      without competing with the row's own text. In a detail pane it keeps the
+      old behaviour, because there it sits beside a value rather than in a
+      column and one dot per row would be noise.
+    -->
     <button
+      bind:this={trigger}
       type="button"
       onclick={() => (openMenu = open ? null : id)}
       aria-expanded={open}
@@ -175,7 +257,9 @@
              transition-all duration-100 hover:text-on-surface
              group-data-[row-hover]/row:opacity-100 group-hover/row:opacity-100
              group-focus-within/row:opacity-100 focus-visible:opacity-100
-             {open ? 'text-on-surface opacity-100' : 'text-on-surface-variant/60 opacity-0'}"
+             {persistent ? 'opacity-100' : ''}
+             {persistent && !open ? 'text-on-surface-variant/45 group-hover/row:text-on-surface-variant' : ''}
+             {open ? 'text-on-surface opacity-100' : persistent ? '' : 'text-on-surface-variant/60 opacity-0'}"
     >
       <MoreVertical class="size-3.5" strokeWidth={2} />
     </button>
@@ -187,7 +271,9 @@
            ground, same item metrics and the same muted leading icon. Two
            dropdowns in one application should not be two designs. -->
       <div
-        class="absolute top-full right-0 z-30 mt-1 w-48 overflow-hidden rounded-sm
+        bind:clientHeight={menuHeight}
+        style={placement ? `top: ${placement.top}px; left: ${placement.left}px;` : 'visibility: hidden;'}
+        class="fixed z-50 w-48 overflow-hidden rounded-sm
                border border-outline-variant/60 bg-surface-container-high py-1.5 shadow-level-2"
         role="menu"
         aria-label="More for {label}"
