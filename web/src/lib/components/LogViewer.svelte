@@ -22,6 +22,7 @@
   so they live with the other stream-shaping controls and DO restart it.
 -->
 <script lang="ts">
+  import { copyText } from '$lib/clipboard'
   import { flash } from '$lib/flash.svelte'
   import { subscribe } from '$lib/api/client'
   import { StreamLogs, StopLogStream } from '$bindings/managementapi'
@@ -287,12 +288,10 @@
   async function copyLogs(): Promise<void> {
     const text = filteredLogs.map((log) => (isMultiPod && log.podName ? `${log.podName}: ${log.line}` : log.line)).join('\n')
     if (!text) return
-    try {
-      await navigator.clipboard.writeText(text)
-      copied.show()
-    } catch {
-      copied.cancel()
-    }
+    // Confirms only what actually happened — see $lib/clipboard for why a
+    // control that assumes success is a control that lies in this webview.
+    if (await copyText(text)) copied.show()
+    else copied.cancel()
   }
 
   /**

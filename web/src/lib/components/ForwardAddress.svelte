@@ -14,6 +14,7 @@
   Open uses, so what lands in a terminal is exactly what worked here.
 -->
 <script lang="ts">
+  import { copyText } from '$lib/clipboard'
   import { flash } from '$lib/flash.svelte'
   import { openURL, forwardBrowserURL, type PortForward } from '$lib/api/client'
   import { ExternalLink, Copy, Check } from '@lucide/svelte'
@@ -27,9 +28,11 @@
   const url = $derived(forwardBrowserURL(forward))
   const copied = flash(900)
 
+  // The tick appears only if the address is actually on the clipboard: this
+  // control exists BECAUSE selecting a monospace address by hand is fiddly,
+  // so somebody who trusts the tick and pastes has no fallback in mind.
   async function copy(): Promise<void> {
-    await navigator.clipboard.writeText(url)
-    copied.show()
+    if (await copyText(url)) copied.show()
   }
 </script>
 

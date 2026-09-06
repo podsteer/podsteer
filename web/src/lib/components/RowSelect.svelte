@@ -38,11 +38,7 @@
 <!-- `data-edge` marks this as the left-hand control column. DataTable's own
      stylesheet is what acts on it, and only when the operator has that edge
      fixed — see $lib/fixedColumns. -->
-<td
-  data-edge="select"
-  class="w-10 py-1.5 align-middle"
-  onclick={(event) => event.stopPropagation()}
->
+<td data-edge="select" class="w-10 py-1.5" onclick={(event) => event.stopPropagation()}>
   <!--
     A FLEX BOX RATHER THAN AN INLINE ONE, and centred, for two reasons.
 
@@ -50,8 +46,16 @@
     so left in an inline formatting context its position is decided by the
     line box's baseline and the cell font's x-height — which put it below the
     icon and text on its own row. A block-level flex box has no strut and no
-    baseline to answer to, so the 16px box is simply centred in the cell, and
-    the cell is centred in the row.
+    baseline to answer to, so the 16px box is simply centred in the cell.
+
+    That reasoning still stands and this element is unchanged; what moved is
+    the OTHER half of it. The cell used to carry `align-middle` of its own,
+    which made this the one column in the table positioned differently from
+    its neighbours — right by itself and out of step with the icon and the
+    name, which were still on a baseline. Centring is now the rule for every
+    cell of every list, stated once in DataTable's stylesheet; do not put the
+    override back here, because a rule that half the cells state for
+    themselves is a rule the other half can be written without.
 
     Horizontal: this is a control COLUMN now, like the row menu at the other
     edge, and that one centres. Padded to one side it sat off-centre under a

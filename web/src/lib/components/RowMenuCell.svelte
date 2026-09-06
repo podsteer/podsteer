@@ -39,11 +39,15 @@
   stylesheet acts on it, and only while the operator has that edge fixed.
 -->
 <td data-edge="menu" class="px-2" onclick={(event) => event.stopPropagation()}>
-  <!-- CENTRED, not pushed to the right edge. It is a column now rather than
-       something tucked into the row's slack, and a column's contents belong
-       under its heading — right-aligned it sat against the window edge and
-       read as an afterthought rather than as the column it is. -->
-  <div class="flex justify-center">
+  <!-- CENTRED ON BOTH AXES. Horizontally because it is a column now rather
+       than something tucked into the row's slack, and a column's contents
+       belong under its heading — right-aligned it sat against the window edge
+       and read as an afterthought rather than as the column it is.
+       Vertically because that is the rule for every cell of every list (see
+       DataTable's stylesheet): `items-center` is what stops the 20px control
+       hanging off a text baseline the cell's own font invented, which is what
+       an inline box in here would do however the cell is aligned. -->
+  <div class="flex items-center justify-center">
     <RowMenu {actions} {label} persistent />
   </div>
 </td>

@@ -16,7 +16,9 @@
   import CustomCells from '$lib/components/CustomCells.svelte'
   import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
   import { formatAge } from '$lib/format'
+  import { copyText } from '$lib/clipboard'
   import { get as kubectlGet } from '$lib/kubectl'
+  import { rowActionsFor, toRowActions } from '$lib/rowActions'
   import { preferences } from '$stores/preferences.svelte'
   import { Activity, CircleDot } from '@lucide/svelte'
   import type { ClusterSession } from '$stores/session.svelte'
@@ -29,19 +31,31 @@
   let { session }: Props = $props()
 
   /** An Event is a core-group, namespaced kind — kubectl's own "events". */
+  /**
+   * THROUGH `toRowActions` LIKE EVERY OTHER LIST, even though this menu holds
+   * only what a row of this kind can be put through and that is two items.
+   * Building the array by hand here is what let this view drift from the
+   * others: it had no Overview item, and its copy carried none of the facts
+   * the menu draws its separator from. Ids with no handler are dropped by
+   * `toRowActions`, so naming the kind's whole set costs nothing and the
+   * ordering, the labels and the rule for the dividing line stay in one file.
+   *
+   * `false` for the read-only guard because neither item is a write — and it
+   * is the guard's own flag that decides that, not this argument, so a write
+   * added to this list later would be disabled the moment somebody passed the
+   * cluster's real setting.
+   */
   function actionsFor(event: K8sEvent): RowAction[] {
-    return [
+    return toRowActions(
+      rowActionsFor('Event'),
       {
-        label: 'Copy as kubectl',
-        kind: 'copy',
-        onclick: () =>
-          copyKubectl(kubectlGet(session.cluster.id, 'events', event.name, event.namespace)),
+        overview: () =>
+          void session.openDetailFor({ tab: 'overview' }, event.name, event.namespace),
+        kubectl: () =>
+          copyText(kubectlGet(session.cluster.id, 'events', event.name, event.namespace)),
       },
-    ]
-  }
-
-  function copyKubectl(command: string): void {
-    void navigator.clipboard?.writeText(command).catch(() => {})
+      false,
+    )
   }
 
   const COLUMNS: Column[] = [

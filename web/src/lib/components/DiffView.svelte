@@ -30,6 +30,7 @@
     type DiffOp,
     isCoarseDiff,
   } from '$lib/diff'
+  import { copyText } from '$lib/clipboard'
   import { flash } from '$lib/flash.svelte'
   import { isTypingTarget } from '$lib/shortcuts'
   import { ChevronDown, ChevronUp, Check, Copy, FoldVertical } from '@lucide/svelte'
@@ -249,8 +250,9 @@
 
   async function copyUnified(): Promise<void> {
     const text = unified(left, right, context)
-    await navigator.clipboard.writeText(text)
-    copied.show()
+    // Only on success — a diff is exactly the sort of thing somebody copies
+    // to paste into a ticket without looking at it again. See $lib/clipboard.
+    if (await copyText(text)) copied.show()
   }
 
   $effect(() => () => copied.cancel())

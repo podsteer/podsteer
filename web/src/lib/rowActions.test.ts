@@ -10,7 +10,14 @@ import {
 
 describe('rowActionsFor', () => {
   it('offers a pod the two panes it is opened for, then evict, then delete', () => {
-    expect(rowActionsFor('Pod')).toEqual(['logs', 'terminal', 'evict', 'delete', 'kubectl'])
+    expect(rowActionsFor('Pod')).toEqual([
+      'overview',
+      'logs',
+      'terminal',
+      'evict',
+      'delete',
+      'kubectl',
+    ])
   })
 
   it('puts evict before delete on a pod — a budget can refuse an eviction', () => {
@@ -22,8 +29,20 @@ describe('rowActionsFor', () => {
   })
 
   it('offers a Deployment and a StatefulSet restart and scale', () => {
-    expect(rowActionsFor('Deployment')).toEqual(['restart', 'scale', 'delete', 'kubectl'])
-    expect(rowActionsFor('StatefulSet')).toEqual(['restart', 'scale', 'delete', 'kubectl'])
+    expect(rowActionsFor('Deployment')).toEqual([
+      'overview',
+      'restart',
+      'scale',
+      'delete',
+      'kubectl',
+    ])
+    expect(rowActionsFor('StatefulSet')).toEqual([
+      'overview',
+      'restart',
+      'scale',
+      'delete',
+      'kubectl',
+    ])
   })
 
   it('offers a DaemonSet no scale — it runs one pod per node', () => {
@@ -33,7 +52,7 @@ describe('rowActionsFor', () => {
   it('offers a ReplicaSet no scale — the drawer has no Scale dialog for one', () => {
     // Every row item must lead to a control the drawer actually renders;
     // isScalable there covers Deployments and StatefulSets only.
-    expect(rowActionsFor('ReplicaSet')).toEqual(['delete', 'kubectl'])
+    expect(rowActionsFor('ReplicaSet')).toEqual(['overview', 'delete', 'kubectl'])
   })
 
   it('offers a CronJob Run now and a Job none — a Job has no template to run again', () => {
@@ -51,12 +70,14 @@ describe('rowActionsFor', () => {
 
   it('offers a node whichever of cordon and uncordon it is not already', () => {
     expect(rowActionsFor('Node', { unschedulable: false })).toEqual([
+      'overview',
       'cordon',
       'drain',
       'nodeShell',
       'kubectl',
     ])
     expect(rowActionsFor('Node', { unschedulable: true })).toEqual([
+      'overview',
       'uncordon',
       'drain',
       'nodeShell',
@@ -75,7 +96,7 @@ describe('rowActionsFor', () => {
 
   it('offers every other kind delete and the kubectl copy, including a CRD', () => {
     for (const kind of ['ConfigMap', 'Secret', 'Service', 'Certificate', '']) {
-      expect(rowActionsFor(kind)).toEqual(['delete', 'kubectl'])
+      expect(rowActionsFor(kind)).toEqual(['overview', 'delete', 'kubectl'])
     }
   })
 
@@ -106,6 +127,7 @@ describe('toRowActions', () => {
   it('keeps the ids in the order they were given', () => {
     const actions = toRowActions(rowActionsFor('Pod'), handlers, open)
     expect(actions.map((action) => action.label)).toEqual([
+      'Overview',
       'Logs',
       'Terminal',
       'Evict',
@@ -169,5 +191,78 @@ describe('ROW_ACTIONS', () => {
     for (const id of ['evict', 'restart', 'scale', 'trigger', 'suspend', 'resume', 'cordon', 'uncordon', 'drain', 'nodeShell', 'delete'] as RowActionId[]) {
       expect(ROW_ACTIONS[id].write).toBe(true)
     }
+  })
+})
+
+describe('the Overview item', () => {
+  it('is offered on every kind, and always first', () => {
+    // EVERY kind, without a per-kind list to keep in step: the drawer's own
+    // tab list declares Overview `show: () => true`, so unlike Logs or Scale
+    // there is no kind where this item would open a tab that is not there.
+    const kinds = [
+      'Pod',
+      'Deployment',
+      'StatefulSet',
+      'DaemonSet',
+      'ReplicaSet',
+      'CronJob',
+      'Job',
+      'Node',
+      'Namespace',
+      'Event',
+      'ConfigMap',
+      'Secret',
+      'Certificate',
+      '',
+    ]
+    for (const kind of kinds) {
+      expect(rowActionsFor(kind)[0]).toBe('overview')
+    }
+    // Including the pairs, where the set itself changes with the row.
+    expect(rowActionsFor('CronJob', { suspended: true })[0]).toBe('overview')
+    expect(rowActionsFor('Node', { unschedulable: true })[0]).toBe('overview')
+  })
+
+  it('stays usable on a cluster marked read-only', () => {
+    // It opens the object and reads it. Disabling it would leave a read-only
+    // cluster with a menu whose first item refuses, which is the opposite of
+    // what marking a cluster read-only is for.
+    const [overview] = toRowActions(rowActionsFor('Pod'), { overview: () => {} }, true)
+    expect(overview.disabled).toBe(false)
+    expect(overview.hint).toBeUndefined()
+  })
+})
+
+describe('where the separator goes', () => {
+  it('marks the kubectl copy as the one item that does not act on the cluster', () => {
+    // The flag the rule is drawn from. Every other item reaches the cluster
+    // the moment it is chosen — Overview, Logs and Terminal open the object
+    // and read it, the writes act on it — so exactly one is local and the
+    // menu can only grow one rule.
+    const local = (Object.keys(ROW_ACTIONS) as RowActionId[]).filter((id) => ROW_ACTIONS[id].local)
+    expect(local).toEqual(['kubectl'])
+  })
+
+  it('is not the same question as `write`, and Logs is the proof', () => {
+    // Sharing one flag with the read-only guard would either disable Logs or
+    // put the line above it. Both are wrong, which is why there are two.
+    expect(ROW_ACTIONS.logs.write).toBe(false)
+    expect(ROW_ACTIONS.logs.local).toBe(false)
+  })
+
+  it('carries the flag through to the items RowMenu draws', () => {
+    // toRowActions is the only thing between the table above and the menu, so
+    // a flag it dropped would leave every list without a rule and nothing
+    // failing anywhere.
+    const actions = toRowActions(
+      rowActionsFor('Pod'),
+      { overview: () => {}, logs: () => {}, kubectl: () => Promise.resolve(true) },
+      false,
+    )
+    expect(actions.map((action) => [action.label, action.local])).toEqual([
+      ['Overview', false],
+      ['Logs', false],
+      ['Copy as kubectl', true],
+    ])
   })
 })

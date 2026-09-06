@@ -13,6 +13,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { type RowAction } from '$lib/components/RowMenu.svelte'
   import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { copyText } from '$lib/clipboard'
   import { rowActionsFor, toRowActions } from '$lib/rowActions'
   import { organisation } from '$stores/organisation.svelte'
   import { isControlColumn } from '$lib/fixedColumns'
@@ -151,6 +152,7 @@
     return toRowActions(
       rowActionsFor(kind, { suspended: workload.suspended }),
       {
+        overview: open({ tab: 'overview' }),
         restart: open({ action: 'restart' }),
         scale: open({ action: 'scale' }),
         trigger: open({ action: 'trigger' }),
@@ -158,14 +160,10 @@
         resume: open({ action: 'resume' }),
         delete: open({ action: 'delete' }),
         kubectl: () =>
-          copyKubectl(kubectlGet(session.cluster.id, resource, workload.name, workload.namespace)),
+          copyText(kubectlGet(session.cluster.id, resource, workload.name, workload.namespace)),
       },
       isReadOnly,
     )
-  }
-
-  function copyKubectl(command: string): void {
-    void navigator.clipboard?.writeText(command).catch(() => {})
   }
 
   /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is

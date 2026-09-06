@@ -1,94 +1,190 @@
-import { render, fireEvent, cleanup } from '@testing-library/svelte'
-import { afterEach, describe, expect, it } from 'vitest'
+import { render } from '@testing-library/svelte'
+import { tick } from 'svelte'
+import { describe, expect, it, vi } from 'vitest'
 
-import RowMenu from './RowMenu.svelte'
+import RowMenuHarness from '../../test/RowMenuHarness.svelte'
+import { rowActionsFor, toRowActions } from '$lib/rowActions'
+import type { RowAction } from './RowMenu.svelte'
 
-afterEach(cleanup)
+/** Opens the menu and hands back its items, in order. */
+async function open(actions: RowAction[]): Promise<HTMLElement[]> {
+  const { container } = render(RowMenuHarness, { actions })
+  container
+    .querySelector('[data-row-menu] button')
+    ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await tick()
+  return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+}
 
-const actions = [{ label: 'Copy as kubectl', kind: 'copy' as const, onclick: () => {} }]
+/** The menu element itself, which is portalled onto the body. */
+function menu(): HTMLElement {
+  return document.querySelector<HTMLElement>('[role="menu"]')!
+}
 
-/**
- * These assert SHAPE rather than appearance, because the two things that went
- * wrong here are invisible to a DOM without layout: a menu clipped by an
- * ancestor's scrollport, and a control drawn at zero opacity. happy-dom
- * computes neither, so the tests pin the mechanism that produces them — the
- * menu's positioning scheme, and whether the trigger is asked to be
- * transparent at rest — which is what a regression would have to undo.
- */
-describe('the row menu', () => {
-  it('positions its menu against the window, not against the cell', async () => {
-    const view = render(RowMenu, { props: { actions, label: 'web-1' } })
+describe('RowMenu confirmations', () => {
+  it('says Copied! only when the copy actually took', async () => {
+    // THE BUG THIS SUITE EXISTS FOR. `copied.show()` used to run
+    // unconditionally after the handler returned, so the confirmation stood
+    // for a function having been called — while in the shipped webview
+    // `navigator.clipboard` is undefined and nothing reached the clipboard at
+    // all. An operator who trusted it pasted whatever was there before.
+    const items = await open([
+      { label: 'Copy as kubectl', kind: 'copy', onclick: () => Promise.resolve(true) },
+    ])
 
-    await fireEvent.click(view.getByRole('button', { name: 'More for web-1' }))
-
-    const menu = document.body.querySelector('[role="menu"]')!
-    // `absolute` anchors it inside the table's horizontal scrollport, which
-    // clips — and the menu's own column is pinned to the edge it clips at.
-    expect(menu.classList.contains('fixed')).toBe(true)
-    expect(menu.classList.contains('absolute')).toBe(false)
+    items[0].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await vi.waitFor(() => {
+      expect(document.querySelector('[role="menuitem"]')?.textContent).toContain('Copied!')
+    })
   })
 
-  it('moves the menu onto the body, out of the pinned cell that traps it', async () => {
-    const view = render(RowMenu, { props: { actions, label: 'web-1' } })
-    const trigger = view.getByRole('button', { name: 'More for web-1' })
+  it('says the copy failed rather than confirming one that did not happen', async () => {
+    const items = await open([
+      { label: 'Copy as kubectl', kind: 'copy', onclick: () => Promise.resolve(false) },
+    ])
 
-    await fireEvent.click(trigger)
-
-    const menu = document.body.querySelector('[role="menu"]')
-    expect(menu).not.toBeNull()
-    // THE POINT OF THE PORTAL. A pinned cell is `position: sticky` with a
-    // z-index, which makes it a stacking context — so a menu left inside one
-    // is painted over by every later row's pinned cell, whatever z-index it
-    // carries. Being a child of the body is what makes its z-index mean
-    // something. `fixed` alone fixed the clipping and not this.
-    expect(menu!.parentElement).toBe(document.body)
-    expect(trigger.contains(menu!)).toBe(false)
+    items[0].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await vi.waitFor(() => {
+      const text = document.querySelector('[role="menuitem"]')?.textContent
+      expect(text).toContain('Copy failed')
+      expect(text).not.toContain('Copied!')
+    })
   })
 
-  it('takes the menu away again when it closes, leaving nothing on the body', async () => {
-    const view = render(RowMenu, { props: { actions, label: 'web-1' } })
-    const trigger = view.getByRole('button', { name: 'More for web-1' })
+  it('treats a handler that reports nothing as a failure, never as a success', async () => {
+    // Silence is read as failure, which is the safe direction: a copy handler
+    // that has not been converted to report its outcome must not be able to
+    // acquire a confirmation by saying nothing.
+    const items = await open([
+      { label: 'Copy as kubectl', kind: 'copy', onclick: () => undefined },
+    ])
 
-    await fireEvent.click(trigger)
-    expect(document.body.querySelector('[role="menu"]')).not.toBeNull()
-
-    await fireEvent.click(trigger)
-    // An element moved to the body is one nothing else will clean up.
-    expect(document.body.querySelector('[role="menu"]')).toBeNull()
+    items[0].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await vi.waitFor(() => {
+      expect(document.querySelector('[role="menuitem"]')?.textContent).toContain('Copy failed')
+    })
   })
 
-  it('hides the control until the row is hovered, in a detail pane', () => {
-    const view = render(RowMenu, { props: { actions, label: 'web-1' } })
+  it('closes at once for an item that is not a copy, without waiting on anything', async () => {
+    // The other items open the drawer, whose appearing is the feedback.
+    // Awaiting them would hold the menu open over the panel underneath it.
+    const items = await open([
+      { label: 'Logs', kind: 'logs', onclick: () => {} },
+    ])
 
-    // The default: beside a value rather than in a column, where one dot per
-    // row would be noise on every row of every pane.
-    expect(view.getByRole('button', { name: 'More for web-1' }).className).toContain('opacity-0')
+    items[0].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await tick()
+
+    expect(document.querySelector('[role="menu"]')).toBeNull()
   })
+})
 
-  it('shows the control without hovering, in a column of its own', () => {
-    const view = render(RowMenu, { props: { actions, label: 'web-1', persistent: true } })
-
-    // A column whose contents appear only under the pointer reads as an empty
-    // column, and the control cannot be found without sweeping the table.
-    const trigger = view.getByRole('button', { name: 'More for web-1' })
-    expect(trigger.className).not.toContain('opacity-0')
-    expect(trigger.className).toContain('opacity-100')
-  })
-
-  it('draws the persistent control dim at rest, so it does not compete with the row', () => {
-    const view = render(RowMenu, { props: { actions, label: 'web-1', persistent: true } })
-
-    // Brightness rather than presence is what changes on hover — the row's own
-    // text is what somebody is reading, and a control at full strength in
-    // every row of two hundred would fight it.
-    expect(view.getByRole('button', { name: 'More for web-1' }).className).toContain(
-      'text-on-surface-variant/45',
+describe('RowMenu appearance', () => {
+  it('draws no destructive item in the error colour, and still marks which they are', async () => {
+    // The colour is gone because it made the menu read as a warning rather
+    // than as a list, and because it separated nothing for anybody who cannot
+    // see it. What separates a Delete from a Copy is its own word and icon,
+    // which is what a screen reader was getting all along — so the flag stays
+    // as a fact on the element rather than as a style.
+    const items = await open(
+      toRowActions(
+        rowActionsFor('Pod'),
+        {
+          overview: () => {},
+          logs: () => {},
+          terminal: () => {},
+          evict: () => {},
+          delete: () => {},
+          kubectl: () => Promise.resolve(true),
+        },
+        false,
+      ),
     )
+
+    for (const item of items) {
+      expect(item.className).not.toContain('text-error')
+      for (const icon of item.querySelectorAll('svg')) {
+        expect(icon.getAttribute('class') ?? '').not.toContain('text-error')
+      }
+    }
+
+    const marked = items
+      .filter((item) => item.hasAttribute('data-destructive'))
+      .map((item) => item.textContent?.trim())
+    expect(marked).toEqual(['Evict', 'Delete'])
   })
 
-  it('renders no control at all when the row offers nothing', () => {
-    const view = render(RowMenu, { props: { actions: [], label: 'web-1', persistent: true } })
+  it('accessible names still say which item is which', async () => {
+    // What replaced the colour, stated as an assertion rather than as a
+    // comment: the label IS the item's accessible name, and it is the only
+    // channel a screen reader ever had for this.
+    const items = await open(
+      toRowActions(rowActionsFor('Node'), { drain: () => {} }, false),
+    )
+    expect(items.map((item) => item.textContent?.trim())).toEqual(['Drain…'])
+  })
+})
 
-    expect(view.queryByRole('button', { name: 'More for web-1' })).toBeNull()
+describe('RowMenu separator', () => {
+  it('draws one rule, where the menu stops acting on the cluster', async () => {
+    await open(
+      toRowActions(
+        rowActionsFor('Pod'),
+        {
+          overview: () => {},
+          logs: () => {},
+          terminal: () => {},
+          evict: () => {},
+          delete: () => {},
+          kubectl: () => Promise.resolve(true),
+        },
+        false,
+      ),
+    )
+
+    const children = [...menu().children]
+    const rules = children.filter((child) => child.getAttribute('role') === 'separator')
+    expect(rules).toHaveLength(1)
+
+    // And it is immediately above the copy, without anything here knowing
+    // that the copy is last: the rule is `local` changing between neighbours.
+    const at = children.indexOf(rules[0])
+    expect(children[at + 1].textContent?.trim()).toBe('Copy as kubectl')
+  })
+
+  it('moves with the items rather than sitting at a fixed position', async () => {
+    // A node's menu is a different length and offers a different pair, and a
+    // read-only cluster disables items without removing them. The line has to
+    // land in the same PLACE by meaning, not by index.
+    await open(
+      toRowActions(
+        rowActionsFor('Node', { unschedulable: true }),
+        {
+          overview: () => {},
+          uncordon: () => {},
+          drain: () => {},
+          nodeShell: () => {},
+          kubectl: () => Promise.resolve(true),
+        },
+        true,
+      ),
+    )
+
+    const children = [...menu().children]
+    const at = children.findIndex((child) => child.getAttribute('role') === 'separator')
+    expect(at).toBeGreaterThan(0)
+    expect(children.filter((c) => c.getAttribute('role') === 'separator')).toHaveLength(1)
+    expect(children[at + 1].textContent?.trim()).toBe('Copy as kubectl')
+  })
+
+  it('draws none in a menu that has no such division', async () => {
+    // The detail pane's menus set `local` on nothing, and a rule through a
+    // menu that is all reads would be a division claiming something untrue.
+    await open([
+      { label: 'Copy value', kind: 'copy', onclick: () => Promise.resolve(true) },
+      { label: 'Reveal value', kind: 'reveal', onclick: () => {} },
+    ])
+
+    expect(menu().querySelector('[role="separator"]')).toBeNull()
   })
 })

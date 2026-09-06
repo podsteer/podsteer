@@ -159,7 +159,18 @@ export type DetailAction =
  * a table row.
  */
 export interface DetailIntent {
-  tab?: 'logs' | 'terminal'
+  /**
+   * Which tab the drawer should land on.
+   *
+   * `overview` IS LISTED EVEN THOUGH THE DRAWER RESETS TO IT ANYWAY, and the
+   * redundancy is the point: the row menu's Overview item states what it
+   * wants rather than relying on a default in another file continuing to be
+   * that value. The reset exists to clear the PREVIOUS object's tab, which is
+   * a different question from where this request wants to land, and the two
+   * are free to diverge — a drawer that one day remembered the last tab per
+   * kind would silently break every Overview item that had said nothing.
+   */
+  tab?: 'overview' | 'logs' | 'terminal'
   action?: DetailAction
 }
 

@@ -9,6 +9,7 @@
   it is composed.
 -->
 <script lang="ts">
+  import { copyText } from '$lib/clipboard'
   import { flash } from '$lib/flash.svelte'
   import { Check, Copy } from '@lucide/svelte'
 
@@ -40,15 +41,13 @@
   const copied = flash(1500)
 
   async function copy(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(command)
-      copied.show()
-    } catch {
-      // Silent, like every other copy control here: the command is on screen
-      // and selectable either way, and the clipboard is a permissioned API
-      // that can simply refuse.
-      copied.cancel()
-    }
+    // Quiet about failing and never wrong about succeeding: the command is on
+    // screen and selectable either way, so there is nothing useful to raise —
+    // but the tick has to mean the command is on the clipboard, because this
+    // strip exists so an operator can take that command elsewhere and run it.
+    // See $lib/clipboard.
+    if (await copyText(command)) copied.show()
+    else copied.cancel()
   }
 
   // Nothing left running behind a component that has gone away.
