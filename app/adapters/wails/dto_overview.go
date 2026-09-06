@@ -569,6 +569,14 @@ type Overview struct {
 	Workloads   []WorkloadKindSummary `json:"workloads"`
 	Namespaces  []NamespaceLoad       `json:"namespaces"`
 	Restarts    []RestartHotspot      `json:"restarts"`
+	// Events are the Kubernetes Events this assessment read, for the session
+	// timeline. NEVER NULL — see TimelineEvent for why they are here and why
+	// they are not the `Event` the Events page renders.
+	//
+	// An empty list is not evidence that nothing happened: an assessment that
+	// could not read events leaves this empty and names "events" in
+	// Unavailable, and only that field tells the two apart.
+	Events []TimelineEvent `json:"events"`
 	// Unavailable names data sources that could not be read, so the UI can
 	// say "no metrics" instead of quietly showing zeroes.
 	Unavailable []string `json:"unavailable"`
@@ -606,6 +614,67 @@ type Overview struct {
 	// versions this build can actually reason about instead of a free-text
 	// field that could ask about one neither table has heard of.
 	KnownMinors []string `json:"knownMinors"`
+}
+
+// TimelineEvent is a Kubernetes Event as the SESSION TIMELINE records it, and
+// deliberately not as the Events page renders it.
+//
+// A DELIBERATE NARROWING, because this rides the assessment and the
+// assessment crosses the bridge on every tick whatever view is on screen —
+// unlike Event, which crosses only while somebody is looking at the page that
+// asked for it. The fields here are exactly the ones the recorder reads: the
+// namespace and name are the Event object's identity, so re-reading a
+// surviving event updates the entry it already produced instead of adding
+// another; the count is the API server's own, which is what makes one entry
+// stand for however many occurrences it folded in; and the reason, message,
+// involved kind and involved name are what a row puts on screen.
+//
+// What is dropped is what nothing reads: labels and annotations (two maps per
+// row, and an Event is written by a controller rather than by a person),
+// InvolvedObject (which is InvolvedKind and InvolvedName joined), Source,
+// Type (IsWarning is the same fact, already decided), and the two formatted
+// timestamps plus the age — the timeline stamps entries with when PodSteer
+// OBSERVED them, because a list sorted on the cluster's clock and the
+// laptop's at once orders a write made a second ago below an event dated
+// before the tab opened.
+//
+// NOTHING IS CAPPED HERE. The only bound is the one the Kubernetes adapter
+// already puts on a single event query, which is the same bound the Events
+// page and the event findings are subject to — so the timeline sees exactly
+// what the assessment saw, and a shorter cap on this side would be an entry
+// the timeline never saw and could therefore never show.
+type TimelineEvent struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Reason    string `json:"reason"`
+	Message   string `json:"message"`
+	// InvolvedKind and InvolvedName are the object the row is filed against.
+	InvolvedKind string `json:"involvedKind"`
+	InvolvedName string `json:"involvedName"`
+	IsWarning    bool   `json:"isWarning"`
+	Count        int32  `json:"count"`
+}
+
+// toTimelineEvents narrows the assessment's events for the bridge.
+//
+// Built with make so an assessment that read no events answers with an empty
+// array rather than null, which is what every other list on this struct does
+// and what the recorder expects to iterate.
+func toTimelineEvents(events []domain.Event) []TimelineEvent {
+	out := make([]TimelineEvent, 0, len(events))
+	for _, event := range events {
+		out = append(out, TimelineEvent{
+			Namespace:    event.Namespace().String(),
+			Name:         event.Name(),
+			Reason:       event.Reason(),
+			Message:      event.Message(),
+			InvolvedKind: event.InvolvedKind(),
+			InvolvedName: event.InvolvedName(),
+			IsWarning:    event.IsWarning(),
+			Count:        event.Count(),
+		})
+	}
+	return out
 }
 
 // MetricsBackend is a monitoring system found running in the cluster.
@@ -701,6 +770,7 @@ func toOverview(overview domain.Overview) Overview {
 		Workloads:  toWorkloadSummaries(overview.Workloads),
 		Namespaces: toNamespaceLoads(overview.Namespaces, overview.Capacity),
 		Restarts:   toRestartHotspots(overview.Restarts),
+		Events:     toTimelineEvents(overview.Events),
 		// NEVER NULL ON THE WIRE. A nil slice marshals as `null`, and both
 		// readers of this field test its length on every render — the
 		// overview's "assessed without …" line, and the notification rule

@@ -2332,6 +2332,17 @@ export interface Overview {
     "restarts": RestartHotspot[] | null;
 
     /**
+     * Events are the Kubernetes Events this assessment read, for the session
+     * timeline. NEVER NULL — see TimelineEvent for why they are here and why
+     * they are not the `Event` the Events page renders.
+     * 
+     * An empty list is not evidence that nothing happened: an assessment that
+     * could not read events leaves this empty and names "events" in
+     * Unavailable, and only that field tells the two apart.
+     */
+    "events": TimelineEvent[] | null;
+
+    /**
      * Unavailable names data sources that could not be read, so the UI can
      * say "no metrics" instead of quietly showing zeroes.
      */
@@ -3625,6 +3636,50 @@ export interface Termination {
      */
     "finishedAt": string;
     "lifetimeSeconds": number;
+}
+
+/**
+ * TimelineEvent is a Kubernetes Event as the SESSION TIMELINE records it, and
+ * deliberately not as the Events page renders it.
+ * 
+ * A DELIBERATE NARROWING, because this rides the assessment and the
+ * assessment crosses the bridge on every tick whatever view is on screen —
+ * unlike Event, which crosses only while somebody is looking at the page that
+ * asked for it. The fields here are exactly the ones the recorder reads: the
+ * namespace and name are the Event object's identity, so re-reading a
+ * surviving event updates the entry it already produced instead of adding
+ * another; the count is the API server's own, which is what makes one entry
+ * stand for however many occurrences it folded in; and the reason, message,
+ * involved kind and involved name are what a row puts on screen.
+ * 
+ * What is dropped is what nothing reads: labels and annotations (two maps per
+ * row, and an Event is written by a controller rather than by a person),
+ * InvolvedObject (which is InvolvedKind and InvolvedName joined), Source,
+ * Type (IsWarning is the same fact, already decided), and the two formatted
+ * timestamps plus the age — the timeline stamps entries with when PodSteer
+ * OBSERVED them, because a list sorted on the cluster's clock and the
+ * laptop's at once orders a write made a second ago below an event dated
+ * before the tab opened.
+ * 
+ * NOTHING IS CAPPED HERE. The only bound is the one the Kubernetes adapter
+ * already puts on a single event query, which is the same bound the Events
+ * page and the event findings are subject to — so the timeline sees exactly
+ * what the assessment saw, and a shorter cap on this side would be an entry
+ * the timeline never saw and could therefore never show.
+ */
+export interface TimelineEvent {
+    "namespace": string;
+    "name": string;
+    "reason": string;
+    "message": string;
+
+    /**
+     * InvolvedKind and InvolvedName are the object the row is filed against.
+     */
+    "involvedKind": string;
+    "involvedName": string;
+    "isWarning": boolean;
+    "count": number;
 }
 
 /**

@@ -136,6 +136,7 @@ export type {
     TableColumn,
     TableRow,
     Termination,
+    TimelineEvent,
     TopConsumers,
     UpdateStatus,
     UpgradeSummary,

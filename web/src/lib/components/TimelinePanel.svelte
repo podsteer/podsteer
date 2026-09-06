@@ -50,9 +50,27 @@
      * no way to reach the middle of it.
      */
     paged?: boolean
+    /**
+     * Whether the last assessment was refused this cluster's events.
+     *
+     * THE ONE THING THIS RECORD CANNOT SAY FOR ITSELF. Everything else in it
+     * is something PodSteer saw; this is something it was stopped from
+     * seeing, and an absence looks identical either way — a timeline of
+     * findings and writes with no events reads as a quiet cluster whether the
+     * cluster was quiet or the account may not list events. So it is said,
+     * next to the line that already says what the timeline covers.
+     */
+    eventsRefused?: boolean
   }
 
-  let { entries, startedAt, showTarget = false, onopen, paged = false }: Props = $props()
+  let {
+    entries,
+    startedAt,
+    showTarget = false,
+    onopen,
+    paged = false,
+    eventsRefused = false,
+  }: Props = $props()
 
   const FILTERS: { id: TimelineEntryKind; label: string }[] = [
     { id: 'event', label: 'Events' },
@@ -299,6 +317,11 @@
            text-label-small text-on-surface-variant/70"
   >
     This session only{span ? `, the last ${span}` : ''}. The timeline is held in memory, is never
-    written to disk, and goes when the tab closes.
+    written to disk, and goes when the tab closes.{#if eventsRefused}
+      <span class="text-warning"
+        >&nbsp;Events could not be read in this cluster, so none are recorded — that is a refused
+        read, not a quiet cluster.</span
+      >
+    {/if}
   </p>
 </div>

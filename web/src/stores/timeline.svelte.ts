@@ -16,19 +16,26 @@
  * application entirely, and the seam belongs at a port rather than at a file
  * this process writes.
  *
- * NOTHING HERE COSTS A REQUEST. Every source already crosses the Wails
- * bridge: the assessment is fetched on every refresh whatever view is open,
- * a pod's findings ride every row of the pod list, the event lists are read
- * by the views that show them, and a write's outcome is resolved in
- * `$lib/api/client` before this is told about it. The same argument
- * `usageHistory` makes — the measurements were already on the wire.
+ * NOTHING HERE COSTS A REQUEST, and that now holds for ALL THREE SOURCES
+ * rather than for two of them. The assessment is fetched on every refresh
+ * whatever view is open, and it carries the findings, a pod's findings ride
+ * every row of the pod list, the EVENTS ride that same assessment — the
+ * assessment gathers them anyway, because the event findings are derived from
+ * them — and a write's outcome is resolved in `$lib/api/client` before this is
+ * told about it. The same argument `usageHistory` makes: everything recorded
+ * here had already crossed the bridge for another reason.
+ *
+ * That was not always true of events, and the exception was a bug rather than
+ * a saving: they were recorded only from a view that had fetched them, so the
+ * record a cluster produced was a function of which pages somebody visited.
  */
 
-import type { Finding, K8sEvent, Pod } from '$lib/api/client'
+import type { Finding, Pod } from '$lib/api/client'
 import {
   diffFindings,
   objectKey,
   targetKey,
+  type RecordedEvent,
   type TimelineEntry,
   type TimelineSeverity,
   type TimelineTarget,
@@ -77,7 +84,7 @@ interface RememberedPodFinding {
 }
 
 /** How a Kubernetes Event reads as a severity. */
-function eventSeverity(event: K8sEvent): TimelineSeverity {
+function eventSeverity(event: RecordedEvent): TimelineSeverity {
   return event.isWarning ? 'warning' : 'info'
 }
 
@@ -134,6 +141,20 @@ class SessionTimeline {
    */
   #podFindings = new Map<string, Map<string, Map<string, RememberedPodFinding>>>()
 
+  /**
+   * Clusters whose last assessment could not read events.
+   *
+   * REACTIVE, BECAUSE THE PANEL SAYS SO. A refused event read and a quiet
+   * cluster both produce an empty list, and a timeline that showed findings
+   * and writes with no events would read as "nothing else happened" when the
+   * truth is that nobody was allowed to look. `Overview.unavailable` is where
+   * the assessment records it; this is where the panel reads it.
+   *
+   * Replaced wholesale rather than mutated, like `#timelines`, and per cluster
+   * so one tab's refusal never speaks for another's.
+   */
+  #eventsRefused = $state.raw<Record<string, boolean>>({})
+
   /** Makes entry ids unique without a clock, which repeats within a tick. */
   #sequence = 0
 
@@ -183,6 +204,34 @@ class SessionTimeline {
   startedAt = (clusterId: string): number | null => this.#timelines[clusterId]?.startedAt ?? null
 
   /**
+   * Whether the last assessment was refused the cluster's events.
+   *
+   * The one thing this record cannot say for itself. Everything else it holds
+   * is something it saw; this is something it was prevented from seeing, and
+   * an absence looks identical either way.
+   */
+  eventsRefused = (clusterId: string): boolean => this.#eventsRefused[clusterId] ?? false
+
+  /**
+   * Records whether the assessment could read events at all.
+   *
+   * Taken from `Overview.unavailable`, which names every source the
+   * assessment could not read — see `sources` in the Go DTO. Called on every
+   * assessment rather than only on a refusal, so an account that regains the
+   * permission stops being warned about on the next tick instead of for the
+   * rest of the session.
+   *
+   * Deliberately NOT touched by a refresh that produced no assessment at all:
+   * that says nothing about events specifically, and the caller passes only
+   * assessments it actually received.
+   */
+  noteEventSource = (clusterId: string, readable: boolean): void => {
+    const refused = !readable
+    if ((this.#eventsRefused[clusterId] ?? false) === refused) return
+    this.#eventsRefused = { ...this.#eventsRefused, [clusterId]: refused }
+  }
+
+  /**
    * Records the Kubernetes Events one read returned.
    *
    * Idempotent: re-reading an event that is still there updates the entry it
@@ -195,8 +244,14 @@ class SessionTimeline {
    * other entry here is stamped when PodSteer saw it, and a timeline sorted
    * on two clocks at once orders a write made a second ago below an event the
    * cluster dated an hour before the tab opened. The panel says which it is.
+   *
+   * AN EMPTY LIST IS NOT AN ASSERTION, unlike the finding diffs below: events
+   * are upserted rather than compared, so a read that returned none simply
+   * records none. What an empty list must never be read AS is "no events
+   * happened" — a cluster whose events were refused also returns none, and
+   * `noteEventSource` is what keeps the two apart.
    */
-  recordEvents = (clusterId: string, events: K8sEvent[]): void => {
+  recordEvents = (clusterId: string, events: RecordedEvent[]): void => {
     if (events.length === 0) return
 
     const at = Date.now()
@@ -386,18 +441,19 @@ class SessionTimeline {
    * section makes and the point of holding this in memory at all.
    */
   forget = (clusterId: string): void => {
-    if (!(clusterId in this.#timelines)) {
-      this.#observed.delete(clusterId)
-      this.#clusterFindings.delete(clusterId)
-      this.#podFindings.delete(clusterId)
-      return
-    }
-    const next = { ...this.#timelines }
-    delete next[clusterId]
-    this.#timelines = next
     this.#observed.delete(clusterId)
     this.#clusterFindings.delete(clusterId)
     this.#podFindings.delete(clusterId)
+    if (clusterId in this.#eventsRefused) {
+      const remaining = { ...this.#eventsRefused }
+      delete remaining[clusterId]
+      this.#eventsRefused = remaining
+    }
+    if (!(clusterId in this.#timelines)) return
+
+    const next = { ...this.#timelines }
+    delete next[clusterId]
+    this.#timelines = next
   }
 
   #seenFor(clusterId: string): Map<string, TimelineEntry> {

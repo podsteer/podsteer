@@ -6,18 +6,20 @@
   timeline. It is a record this tab kept of what it saw, so a catalogue entry
   would offer it to every consumer that expects to fetch what it names.
 
-  Two of its three sources cost nothing: the assessment each refresh fetches
-  whatever view is open carries the findings, and a write's outcome is
-  recorded as it is made. The third does not, and pretending otherwise is what
-  this page used to do — EVENTS were recorded only while the Events page was
-  open, so opening the Timeline first showed nothing, opening Events and
-  coming back filled it, and the record a cluster produced depended on which
-  pages somebody had visited rather than on what happened in it.
+  ALL THREE OF ITS SOURCES COST NOTHING, and it fetches nothing itself. The
+  assessment each refresh fetches whatever view is open carries the findings
+  AND the events — the Go side gathers events on every assessment regardless,
+  because the event findings are derived from them — and a write's outcome is
+  recorded as it is made.
 
-  So this view fetches events on the tab's tick while it is on screen, which
-  is the same call, the same namespace and the same cost as the Events page
-  while THAT is open, and stops when either is left. See ClusterSession's
-  timeline case for the whole argument.
+  That was not always true of events, and the exception was a bug rather than
+  a saving. They were recorded only from a view that had fetched them, which
+  meant this page opened empty and, worse, that the navigator's count stayed
+  at nothing until somebody opened one of those pages: a tab recording nothing
+  looked identical to one with plenty to show. Giving this page its own event
+  fetch fixed the page and left the count exactly as wrong. Carrying the
+  events the assessment already had fixes both. See ClusterSession's timeline
+  case and #adopt.
 -->
 <script lang="ts">
   import type { ClusterSession } from '$stores/session.svelte'
@@ -53,6 +55,7 @@
 <TimelinePanel
   {entries}
   startedAt={timeline.startedAt(session.cluster.id)}
+  eventsRefused={timeline.eventsRefused(session.cluster.id)}
   showTarget
   paged
   onopen={(target) => void open(target)}

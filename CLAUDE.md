@@ -1816,25 +1816,73 @@ fourth pinned pseudo-entry beside the overview, Applications and All clusters
 — `podsteer/timeline`, a record rather than a kind, and absent from
 `domain/catalog.go` for the reason the other three are.
 
-**It is in the frontend, and two of its three sources cost nothing on the
-wire.** The assessment is fetched on every refresh whatever view is open, a
-pod's findings ride every row of the pod list (`Pod.findings`), and a write's
-outcome is resolved in `web/src/lib/api/client.ts` before anything is
-recorded. So there is no backend state, no goroutine, and no Wails event to
-wait on — the same trade `usageHistory` makes with the measurements a list
-response was already carrying.
+**It is in the frontend, and ALL THREE of its sources cost nothing on the
+wire.** The assessment is fetched on every refresh whatever view is open and
+carries the findings AND the events (`Overview.events`), a pod's findings ride
+every row of the pod list (`Pod.findings`), and a write's outcome is resolved
+in `web/src/lib/api/client.ts` before anything is recorded. So there is no
+backend state, no goroutine, and no Wails event to wait on — the same trade
+`usageHistory` makes with the measurements a list response was already
+carrying. The timeline records nothing that had not already crossed the bridge
+for another reason, and that is a property to keep rather than a description
+of how it happens to work today.
 
-**Events are the exception, and treating them as free was a bug rather than a
-saving.** They were recorded only while the Events page was open, because that
-is the only view that fetched them — so opening the Timeline first showed
-nothing, opening Events and returning filled it, and the record a cluster
-produced was a function of which pages somebody had visited. The Timeline view
-now fetches events on the tab's tick while it is on screen (`case 'timeline'`
-in `ClusterSession`), the same call and namespace the Events page makes, so
-`readcache.go` coalesces them when they land together and both stop the moment
-their page is left. One `list events` per tick while that page is open is what
-the Events page already costs; a timeline whose completeness depends on
-browsing history is not something a cheaper version excuses.
+**Events were the exception, and treating them as free while recording them
+from a PAGE was a bug rather than a saving.** They were recorded only from a
+view that had fetched them — for a while the Events page alone, then the
+Timeline page as well — so the record a cluster produced was a function of
+which pages somebody had visited. Two things were wrong and only one of them
+was visible: the Timeline page opened empty, and, worse, THE NAVIGATOR'S COUNT
+STAYED AT NOTHING on every other view, so a tab recording nothing looked
+identical to one with plenty to show. Giving the Timeline page its own event
+fetch fixed the page and left the count exactly as wrong, because nothing
+recorded events unless one of those two pages was open.
+
+**So the events ride the assessment.** `domain.OverviewInput.Events` was
+already gathered on every tick whatever view is on screen — the event findings
+are derived from them — and simply never crossed the bridge. `domain.Overview`
+now carries them, `Overview.events` carries them to the frontend, and
+`ClusterSession.#adopt` records them beside the findings, from the same
+assessment, on every tick. `case 'timeline'` fetches nothing again, and the
+Timeline page is once more a view over a record rather than a reader with a
+request of its own.
+
+Three things about that crossing are load-bearing:
+
+- **The DTO is a NARROWING, not the Events page's row.** `TimelineEvent`
+  (`app/adapters/wails/dto_overview.go`) carries the eight fields the recorder
+  reads — the event object's namespace and name for its identity, the API
+  server's own `count`, `isWarning`, the reason, message, involved kind and
+  involved name — and drops labels, annotations, `involvedObject`, `source`,
+  `type` and the three time fields. All of that is dropped because nothing
+  reads it, and it is worth dropping because `Event` crosses only while
+  somebody is on the Events page whereas this crosses on EVERY tick on EVERY
+  view. Order of 280–400 KB per tick at the adapter's 1000-event cap, roughly
+  40% less than the full row would be, against the 6–13 MB a tick already
+  costs on a 5,000-pod cluster. That is the price of the fix, and it is paid
+  on every view rather than on one.
+- **Nothing is capped on the bridge, deliberately.** The only bound is
+  `eventListLimit` in `app/adapters/k8s/workload.go`, which the Events page and
+  the event findings are already subject to. A tighter cap here would be an
+  entry the timeline never saw and could therefore never show, and the panel's
+  line about what it covers would become false rather than merely brief.
+- **The Events page still files the rows it fetched**
+  (`ClusterSession.#recordTimeline`). Its read is namespace-scoped where the
+  assessment's is cluster-wide against that same per-query cap, so on a cluster
+  busy enough to hit it the page open on one namespace sees events the
+  cluster-wide read truncated away. Recording both is a superset of either, and
+  an event already recorded is upserted rather than duplicated.
+
+**An empty event list is not evidence that nothing happened.** A cluster whose
+events this account may not list produces exactly the same empty list as a
+quiet one, and `Overview.unavailable` naming `events` is the only thing that
+tells them apart — the same distinction the overview's "assessed without …"
+line already draws. `ClusterSession.#adopt` passes it to
+`timeline.noteEventSource` on every assessment, and `TimelinePanel` says so
+next to the line that already states what the timeline covers. Recording it on
+every assessment rather than only on a refusal is what makes an account that
+regains the permission stop being warned on the next tick instead of for the
+rest of the session.
 
 **Nothing reaches disk, deliberately.** A timeline is made almost entirely of
 object names, and object names are not on the list of things SECURITY.md says

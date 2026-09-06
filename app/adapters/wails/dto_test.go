@@ -220,3 +220,85 @@ func TestToResourceTableCarriesRowLabelsAndProjectedAnnotations(t *testing.T) {
 		t.Errorf("Rows[1] labels/annotations = %v/%v, want {} for both", dto.Rows[1].Labels, dto.Rows[1].Annotations)
 	}
 }
+
+// TestToOverviewCarriesTimelineEventsNarrowedAndNeverNull pins both halves of
+// the bridge contract the session timeline depends on.
+//
+// NARROWED: this list rides the assessment, and the assessment crosses on
+// every tick whatever view is on screen, so it carries the eight fields the
+// recorder reads and none of the ones it does not. Every field asserted here
+// is one the timeline would be wrong without: the namespace and name are the
+// Event object's identity, the count is the API server's own, and the rest is
+// what a row puts on screen.
+//
+// NEVER NULL: a nil Go slice marshals as null, and the recorder iterates this
+// on every tick.
+func TestToOverviewCarriesTimelineEventsNarrowedAndNeverNull(t *testing.T) {
+	t.Parallel()
+
+	event, err := domain.NewEvent(domain.EventSpec{
+		Name:         "api-1.17cf",
+		Namespace:    "billing",
+		ClusterID:    "dev",
+		Type:         domain.EventWarning,
+		Reason:       "BackOff",
+		Message:      "Back-off restarting failed container",
+		InvolvedKind: "Pod",
+		InvolvedName: "api-1",
+		Source:       "kubelet",
+		Count:        9,
+		FirstSeen:    dtoNow.Add(-10 * time.Minute),
+		LastSeen:     dtoNow.Add(-time.Minute),
+		Labels:       map[string]string{"team": "billing"},
+	})
+	if err != nil {
+		t.Fatalf("building event: %v", err)
+	}
+
+	out := toOverview(domain.Overview{ClusterID: "dev", Events: []domain.Event{event}})
+
+	if len(out.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(out.Events))
+	}
+	want := TimelineEvent{
+		Namespace:    "billing",
+		Name:         "api-1.17cf",
+		Reason:       "BackOff",
+		Message:      "Back-off restarting failed container",
+		InvolvedKind: "Pod",
+		InvolvedName: "api-1",
+		IsWarning:    true,
+		Count:        9,
+	}
+	if out.Events[0] != want {
+		t.Errorf("event = %+v, want %+v", out.Events[0], want)
+	}
+
+	empty := toOverview(domain.Overview{ClusterID: "dev"})
+	if empty.Events == nil {
+		t.Error("events = nil, want an empty slice — a nil slice crosses as null")
+	}
+}
+
+// TestToOverviewSeparatesNoEventsFromEventsRefused is the constraint that an
+// empty event list must never be read as "nothing happened".
+//
+// Both assessments below carry no events. Only Unavailable tells them apart,
+// so it has to survive the crossing alongside the empty list rather than
+// instead of it.
+func TestToOverviewSeparatesNoEventsFromEventsRefused(t *testing.T) {
+	t.Parallel()
+
+	quiet := toOverview(domain.Overview{ClusterID: "dev"})
+	refused := toOverview(domain.Overview{ClusterID: "dev", Unavailable: []string{"events"}})
+
+	if len(quiet.Events) != 0 || len(refused.Events) != 0 {
+		t.Fatalf("events = %d and %d, want none in either", len(quiet.Events), len(refused.Events))
+	}
+	if len(quiet.Unavailable) != 0 {
+		t.Errorf("unavailable = %v, want empty for a cluster that simply had no events", quiet.Unavailable)
+	}
+	if len(refused.Unavailable) != 1 || refused.Unavailable[0] != "events" {
+		t.Errorf("unavailable = %v, want it to name events", refused.Unavailable)
+	}
+}

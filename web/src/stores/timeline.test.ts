@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { Finding, K8sEvent, Pod } from '$lib/api/client'
+import type { RecordedEvent } from '$lib/timeline'
 import { timeline } from './timeline.svelte'
 
 // Only the fields the store reads. Cast through unknown because each DTO is
@@ -16,6 +17,20 @@ const event = (over: Partial<K8sEvent> & { name: string }): K8sEvent =>
     count: 1,
     ...over,
   }) as unknown as K8sEvent
+
+// The narrowed shape the ASSESSMENT carries — Overview.events. Not a cast:
+// this is the whole of it, which is the point of the type. If a field the
+// recorder needs ever stops crossing the bridge, this fixture stops compiling.
+const assessed = (over: Partial<RecordedEvent> & { name: string }): RecordedEvent => ({
+  namespace: 'shop',
+  involvedKind: 'Pod',
+  involvedName: 'web-1',
+  reason: 'BackOff',
+  message: 'Back-off restarting failed container',
+  isWarning: true,
+  count: 1,
+  ...over,
+})
 
 const finding = (over: Partial<Finding> & { id: string }): Finding =>
   ({
@@ -90,6 +105,64 @@ describe('the session timeline', () => {
 
       expect(timeline.forCluster('dev')).toHaveLength(0)
       expect(timeline.forCluster('prod')).toHaveLength(1)
+    })
+
+    it('records an event carried by the assessment, which has no page behind it', () => {
+      // The shape the ASSESSMENT carries — `Overview.events`, narrowed to the
+      // eight fields the recorder reads, and with none of the ones the Events
+      // page row has. This is the whole fix: an entry lands without any view
+      // having fetched anything, so a tab that never opens a page still has a
+      // true count.
+      timeline.recordEvents('dev', [assessed({ name: 'web-1.a1' })])
+
+      const [entry] = timeline.forCluster('dev')
+      expect(entry.kind).toBe('event')
+      expect(entry.title).toBe('BackOff')
+      expect(entry.target).toEqual({ kind: 'Pod', namespace: 'shop', name: 'web-1' })
+    })
+
+    it('upserts the same event whichever source carried it', () => {
+      // The assessment reads cluster-wide against a per-query cap; the Events
+      // page reads one namespace. Both still file what they saw, so a busy
+      // cluster's narrowed page is a superset rather than a duplicate — the
+      // Event object's own identity is what keeps it one entry.
+      timeline.recordEvents('dev', [assessed({ name: 'web-1.a1', count: 3 })])
+      timeline.recordEvents('dev', [event({ name: 'web-1.a1', count: 7 })])
+
+      const entries = timeline.forCluster('dev')
+      expect(entries).toHaveLength(1)
+      expect(entries[0].count).toBe(7)
+    })
+  })
+
+  describe('events the assessment could not read', () => {
+    it('distinguishes a refused read from a quiet cluster', () => {
+      // Both produce no entries. Only this flag tells them apart, and without
+      // it a timeline of findings and writes reads as "nothing else happened"
+      // when the truth is that nobody was allowed to look.
+      expect(timeline.eventsRefused('dev')).toBe(false)
+
+      timeline.noteEventSource('dev', false)
+      expect(timeline.eventsRefused('dev')).toBe(true)
+      expect(timeline.forCluster('dev')).toHaveLength(0)
+    })
+
+    it('stops warning once the source can be read again', () => {
+      // An account that regains the permission must stop being warned about
+      // on the next assessment, not for the rest of the session.
+      timeline.noteEventSource('dev', false)
+      timeline.noteEventSource('dev', true)
+
+      expect(timeline.eventsRefused('dev')).toBe(false)
+    })
+
+    it('is per cluster, and goes with the tab', () => {
+      timeline.noteEventSource('dev', false)
+
+      expect(timeline.eventsRefused('prod')).toBe(false)
+
+      timeline.forget('dev')
+      expect(timeline.eventsRefused('dev')).toBe(false)
     })
   })
 
