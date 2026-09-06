@@ -133,8 +133,17 @@ func TestADevelopmentBuildIsNeverToldToUpgrade(t *testing.T) {
 	service := application.NewUpdateService(source, "dev", nil)
 
 	result := service.Check(context.Background(), false)
-	if result.State != domain.UpdateUnknown {
-		t.Fatalf("state %q, want unknown for a development build", result.State)
+	// NOT-COMPARABLE rather than UNKNOWN, and the change is the point. This
+	// asserted Unknown, which the settings pane renders as "Could not reach
+	// GitHub" — so this test was pinning a message that reported a network
+	// failure on a build whose request had succeeded. The rule it exists for
+	// is unchanged and still holds below: never Available, and nothing to
+	// click.
+	if result.State != domain.UpdateNotComparable {
+		t.Fatalf("state %q, want not-comparable for a development build", result.State)
+	}
+	if result.State == domain.UpdateAvailable {
+		t.Fatal("a development build was offered an upgrade")
 	}
 	// And nothing to click. A link offered beside a state that has nothing to
 	// say is a link with no basis.

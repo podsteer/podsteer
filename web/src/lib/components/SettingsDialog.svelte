@@ -694,6 +694,12 @@
                     {updates.status.latest} is available.
                   {:else if updates.status?.state === 'current'}
                     You are on the latest release.
+                  {:else if updates.status?.state === 'not-comparable'}
+                    <!-- The check WORKED. This build simply carries no release
+                         version to compare, which is what a development build
+                         is — and saying "could not reach GitHub" here, as this
+                         did, reported a failure that had not happened. -->
+                    This build carries no release version, so there is nothing to compare.
                   {:else if updates.status?.state === 'unknown'}
                     Could not reach GitHub — that is not a problem with your cluster.
                   {/if}
