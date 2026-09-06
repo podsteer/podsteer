@@ -6,11 +6,18 @@
   timeline. It is a record this tab kept of what it saw, so a catalogue entry
   would offer it to every consumer that expects to fetch what it names.
 
-  It costs nothing to show. Every entry was recorded from something that had
-  already crossed the bridge — the assessment each refresh fetches whatever
-  view is open, the findings on each row of the pod list, the event lists, and
-  the outcome of each write PodSteer made — so this view issues no request of
-  its own and there is no timer here.
+  Two of its three sources cost nothing: the assessment each refresh fetches
+  whatever view is open carries the findings, and a write's outcome is
+  recorded as it is made. The third does not, and pretending otherwise is what
+  this page used to do — EVENTS were recorded only while the Events page was
+  open, so opening the Timeline first showed nothing, opening Events and
+  coming back filled it, and the record a cluster produced depended on which
+  pages somebody had visited rather than on what happened in it.
+
+  So this view fetches events on the tab's tick while it is on screen, which
+  is the same call, the same namespace and the same cost as the Events page
+  while THAT is open, and stops when either is left. See ClusterSession's
+  timeline case for the whole argument.
 -->
 <script lang="ts">
   import type { ClusterSession } from '$stores/session.svelte'

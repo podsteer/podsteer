@@ -1609,15 +1609,25 @@ fourth pinned pseudo-entry beside the overview, Applications and All clusters
 — `podsteer/timeline`, a record rather than a kind, and absent from
 `domain/catalog.go` for the reason the other three are.
 
-**It is in the frontend, and it costs nothing on the wire.** Everything it
-records had already crossed the bridge for another reason: the assessment is
-fetched on every refresh whatever view is open, a pod's findings ride every
-row of the pod list (`Pod.findings`), the event lists are the rows of the
-views that show them, and a write's outcome is resolved in
-`web/src/lib/api/client.ts` before anything is recorded. So there is no
-backend state, no extra request, no goroutine, and no Wails event to wait on
-— the same trade `usageHistory` makes with the measurements a list response
-was already carrying.
+**It is in the frontend, and two of its three sources cost nothing on the
+wire.** The assessment is fetched on every refresh whatever view is open, a
+pod's findings ride every row of the pod list (`Pod.findings`), and a write's
+outcome is resolved in `web/src/lib/api/client.ts` before anything is
+recorded. So there is no backend state, no goroutine, and no Wails event to
+wait on — the same trade `usageHistory` makes with the measurements a list
+response was already carrying.
+
+**Events are the exception, and treating them as free was a bug rather than a
+saving.** They were recorded only while the Events page was open, because that
+is the only view that fetched them — so opening the Timeline first showed
+nothing, opening Events and returning filled it, and the record a cluster
+produced was a function of which pages somebody had visited. The Timeline view
+now fetches events on the tab's tick while it is on screen (`case 'timeline'`
+in `ClusterSession`), the same call and namespace the Events page makes, so
+`readcache.go` coalesces them when they land together and both stop the moment
+their page is left. One `list events` per tick while that page is open is what
+the Events page already costs; a timeline whose completeness depends on
+browsing history is not something a cheaper version excuses.
 
 **Nothing reaches disk, deliberately.** A timeline is made almost entirely of
 object names, and object names are not on the list of things SECURITY.md says
