@@ -16,6 +16,8 @@
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { type RowAction } from '$lib/components/RowMenu.svelte'
   import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { rowActionsFor, toRowActions } from '$lib/rowActions'
+  import { organisation } from '$stores/organisation.svelte'
   import CustomCells from '$lib/components/CustomCells.svelte'
   import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
   import RowSelect from '$lib/components/RowSelect.svelte'
@@ -39,6 +41,12 @@
    */
   const resource = $derived(session.selectedKind ? resourceArgForKind(session.selectedKind) : null)
 
+  /** See PodsView: read fresh so a change in Organise applies at once. */
+  const placement = $derived(organisation.placementOf(session.cluster.id))
+  const isReadOnly = $derived(
+    organisation.settingsFor(placement.project, placement.group).readOnly,
+  )
+
   /**
    * Absent for a row with no name — the header-ish placeholder rows the
    * server's own table printer occasionally sends, which the click handler
@@ -47,13 +55,20 @@
   function actionsFor(row: TableRow): RowAction[] {
     if (!resource || !row.name) return []
     const namespace = session.selectedKind?.namespaced ? row.namespace : undefined
-    return [
+
+    // Delete and the kubectl copy, whatever the kind — the two verbs a
+    // server-printed row supports. Delete opens the object with the drawer's
+    // own DeleteDialog engaged, which is what types the object's name on a
+    // production cluster; nothing is confirmed here.
+    return toRowActions(
+      rowActionsFor(session.selectedKind?.kind ?? ''),
       {
-        label: 'Copy as kubectl',
-        kind: 'copy',
-        onclick: () => copyKubectl(kubectlGet(session.cluster.id, resource, row.name, namespace)),
+        delete: () =>
+          void session.openDetailFor({ action: 'delete' }, row.name, namespace ?? ''),
+        kubectl: () => copyKubectl(kubectlGet(session.cluster.id, resource, row.name, namespace)),
       },
-    ]
+      isReadOnly,
+    )
   }
 
   function copyKubectl(command: string): void {

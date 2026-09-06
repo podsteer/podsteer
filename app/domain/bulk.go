@@ -9,6 +9,17 @@ type BulkAction string
 const (
 	// BulkActionDelete deletes every selected object.
 	BulkActionDelete BulkAction = "delete"
+	// BulkActionEvict evicts every selected pod through the policy/v1
+	// Eviction subresource.
+	//
+	// NOT A DELETE, and the difference is the whole reason it exists as a
+	// separate action: an eviction is the one request a PodDisruptionBudget
+	// can refuse, where a delete removes the pod whatever the budget says.
+	// So it is the more correct default of the two for a page of pods — a
+	// budget that would be violated stops it, and the operator is told which
+	// pods that was — and a delete is what somebody reaches for when they
+	// mean to overrule the budget.
+	BulkActionEvict BulkAction = "evict"
 	// BulkActionRestart triggers a rolling restart of every selected
 	// Deployment, StatefulSet or DaemonSet.
 	BulkActionRestart BulkAction = "restart"
@@ -162,7 +173,12 @@ func planBulkLine(candidate BulkCandidate, opts BulkOptions) BulkLine {
 	}
 
 	switch opts.Action {
-	case BulkActionDelete:
+	case BulkActionDelete, BulkActionEvict:
+		// The same note for both, because it answers the same question: the
+		// pod is going, and whether something puts it back is the fact an
+		// operator needs either way. An eviction a budget refuses produces
+		// no result line at all here — that is the RUN's outcome, not the
+		// plan's, since only the API server knows what the budget allows.
 		line.Note = recreationNote(candidate.Controller)
 
 	case BulkActionScale:
@@ -200,6 +216,27 @@ func bulkUnsupported(kind string, action BulkAction) string {
 		// Every kind can be deleted. Whether THIS account may is the
 		// cluster's answer, reported per object when the delete runs.
 		return ""
+
+	case BulkActionEvict:
+		// SKIPPED IN THE PLAN, never attempted: an eviction is a create on a
+		// POD's eviction subresource, so any other kind would cost one round
+		// trip per row to be told the same thing the plan can say for free.
+		switch kind {
+		case "Pod":
+			return ""
+		case "Node":
+			// Named rather than falling into the default, because "evict
+			// this node" almost always means "drain it", and a drain is
+			// deliberately one node at a time: several at once can take a
+			// cluster down, and the per-node preview PlanDrain produces is
+			// the safety that would be lost.
+			return "a node is not evicted; drain it, one node at a time"
+		case string(WorkloadDeployment), string(WorkloadStatefulSet), string(WorkloadDaemonSet),
+			string(WorkloadReplicaSet), string(WorkloadJob), string(WorkloadCronJob):
+			return fmt.Sprintf("a %s owns pods rather than being one; select its pods and evict those", kind)
+		default:
+			return fmt.Sprintf("only a pod can be evicted; this is a %s", kindOrObject(kind))
+		}
 
 	case BulkActionRestart:
 		switch kind {
@@ -247,7 +284,9 @@ func kindOrObject(kind string) string {
 	return kind
 }
 
-// recreationNote says what deleting an object with this controller leads to.
+// recreationNote says what REMOVING an object with this controller leads to —
+// by delete or by eviction, which differ in what can refuse them and not at
+// all in what happens once the object is gone.
 //
 // FROM ownerReferences, NEVER FROM A LABEL — the candidate's Controller is
 // the controlling ownerReference the adapter mapped, and a label such as

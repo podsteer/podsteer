@@ -94,6 +94,7 @@ import {
   StopAllNodeShells as bindStopAllNodeShells,
   PlanBulk as bindPlanBulk,
   BulkDelete as bindBulkDelete,
+  BulkEvict as bindBulkEvict,
   BulkRestart as bindBulkRestart,
   BulkScale as bindBulkScale,
   BulkCordon as bindBulkCordon,
@@ -1935,6 +1936,20 @@ async function bulkWriting(
 
 export function bulkDelete(clusterId: string, items: BulkItemDTO[]): Promise<BulkResult[]> {
   return bulkWriting(clusterId, 'Deleted', '', items, () => bindBulkDelete(clusterId, items))
+}
+
+/**
+ * Evicts every selected pod through the eviction subresource. Resolves like
+ * bulkDelete — and the per-row outcome matters more here than anywhere else:
+ * a PodDisruptionBudget refusing one pod is that pod's own failed result,
+ * carrying the `disruption_budget` code and the sentence naming the budget,
+ * while its neighbours are recorded as evicted. Nothing about a refusal ends
+ * the run, so the timeline shows exactly which pods a budget protected.
+ */
+export function bulkEvict(clusterId: string, items: BulkItemDTO[]): Promise<BulkResult[]> {
+  return bulkWriting(clusterId, 'Evicted', 'eviction API', items, () =>
+    bindBulkEvict(clusterId, items),
+  )
 }
 
 /** Rolling-restarts every selected Deployment, StatefulSet and DaemonSet. Resolves like bulkDelete. */

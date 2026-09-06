@@ -11,7 +11,8 @@
 <script lang="ts">
   import { flash } from '$lib/flash.svelte'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
-  import type { ClusterSession } from '$stores/session.svelte'
+  import { untrack } from 'svelte'
+  import type { ClusterSession, DetailAction } from '$stores/session.svelte'
   import { WORKLOAD_KIND_BY_ID } from '$stores/session.svelte'
   import LogViewer from './LogViewer.svelte'
   import ResourceOverview from './ResourceOverview.svelte'
@@ -611,6 +612,77 @@
     rollbackDialogOpen = false
     rollbackTarget = null
   })
+
+  /**
+   * A row menu's request, applied to the drawer's own controls.
+   *
+   * DECLARED AFTER THE RESET ABOVE, and that is load-bearing rather than
+   * tidy: opening an object from a row menu makes both effects dirty in the
+   * same flush, they run in the order they were created, and the reset sets
+   * the tab back to Overview. Put this first and every "Logs" from a row
+   * menu would land on the Overview tab.
+   *
+   * The request is TAKEN, which clears it — see ClusterSession.takeDetailIntent
+   * — inside `untrack` so clearing it does not re-run this effect against a
+   * tab the operator may have moved off since. The early return covers the
+   * ordinary case where there is no request at all, which is every click on
+   * a row.
+   */
+  $effect(() => {
+    if (!session.detailIntent) return
+    untrack(() => {
+      const intent = session.takeDetailIntent()
+      if (!intent) return
+      if (intent.tab) activeTab = intent.tab
+      if (intent.action) openDrawerAction(intent.action)
+    })
+  })
+
+  /**
+   * Engages one of the drawer's own controls, exactly as its toolbar button
+   * does — never a second implementation of the act.
+   *
+   * Two of them run at once with no dialog, and that is the drawer's own
+   * rule rather than a shortcut taken here: Resume and Uncordon each undo a
+   * visible, deliberate state rather than doing anything the cluster cannot
+   * immediately reverse, so the toolbar buttons for them act directly too.
+   * Everything else opens the dialog that already carries the confirmation
+   * — and, on a production cluster, the type-the-name gate.
+   */
+  function openDrawerAction(action: DetailAction): void {
+    switch (action) {
+      case 'delete':
+        deleteDialogOpen = true
+        break
+      case 'evict':
+        evictDialogOpen = true
+        break
+      case 'restart':
+        restartDialogOpen = true
+        break
+      case 'scale':
+        scaleDialogOpen = true
+        break
+      case 'trigger':
+        triggerDialogOpen = true
+        break
+      case 'suspend':
+        suspendDialogOpen = true
+        break
+      case 'resume':
+        void handleSuspend(false)
+        break
+      case 'cordon':
+        cordonDialogOpen = true
+        break
+      case 'uncordon':
+        void handleCordon(false)
+        break
+      case 'drain':
+        drainDialogOpen = true
+        break
+    }
+  }
 
   /**
    * Arrow keys move between tabs, which is what a tablist is for.

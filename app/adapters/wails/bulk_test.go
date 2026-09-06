@@ -2,6 +2,7 @@ package wails
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/podsteer/podsteer/app/application"
@@ -114,6 +115,40 @@ func TestToBulkResultsClassifiesEachFailureLikeASingleWrite(t *testing.T) {
 	}
 }
 
+// TestToBulkResultsKeepsADisruptionBudgetRefusalInItsOwnWords: the refusal a
+// budget produced must not reach the operator as a generic failure, or as a
+// forbidden — RBAC allowed the request, the object's own policy declined it,
+// and those call for different acts. It is its own code and its own sentence,
+// on the line of the pod it protected, beside the pods that did leave.
+func TestToBulkResultsKeepsADisruptionBudgetRefusalInItsOwnWords(t *testing.T) {
+	t.Parallel()
+
+	ref := func(name string) domain.ResourceRef {
+		return domain.ResourceRef{ClusterID: "dev", Kind: domain.ResourceKind{Kind: "Pod"}, Namespace: "web", Name: name}
+	}
+	refused := fmt.Errorf("evicting pod: %w", ports.ErrDisruptionBudget)
+
+	results := toBulkResults([]application.BulkResult{
+		{Ref: ref("web-1")},
+		{Ref: ref("web-2"), Err: refused},
+	})
+
+	if !results[0].Done {
+		t.Errorf("web-1 = %+v, want Done — one refusal never touches the others' outcomes", results[0])
+	}
+
+	budget := results[1]
+	if budget.Done || budget.Skipped {
+		t.Errorf("web-2 = %+v, want neither Done nor Skipped", budget)
+	}
+	if budget.Code != string(CodeDisruptionBudget) {
+		t.Errorf("web-2 code = %q, want %q — never folded into forbidden", budget.Code, CodeDisruptionBudget)
+	}
+	if !strings.Contains(budget.Reason, "PodDisruptionBudget") {
+		t.Errorf("web-2 reason = %q, want it to say a PodDisruptionBudget refused the eviction in those words", budget.Reason)
+	}
+}
+
 func TestToBulkPlanCountsActingAndSkipped(t *testing.T) {
 	t.Parallel()
 
@@ -137,15 +172,20 @@ func TestToBulkPlanCountsActingAndSkipped(t *testing.T) {
 func TestParseBulkActionRefusesAnUnknownVerb(t *testing.T) {
 	t.Parallel()
 
-	for _, action := range []string{"delete", "restart", "scale", "cordon", "uncordon"} {
+	for _, action := range []string{"delete", "evict", "restart", "scale", "cordon", "uncordon"} {
 		if _, err := parseBulkAction(action); err != nil {
 			t.Errorf("parseBulkAction(%q) error = %v, want nil", action, err)
 		}
 	}
 
-	_, err := parseBulkAction("evict")
+	// "drain" is the verb this deliberately does NOT take: draining several
+	// nodes at once can take a cluster down, and the per-node preview
+	// PlanDrain produces is the safety that would be lost. A frontend that
+	// asked for it must be refused as invalid input rather than silently
+	// planning nothing.
+	_, err := parseBulkAction("drain")
 	if err == nil {
-		t.Fatal("parseBulkAction(evict) succeeded, want an error")
+		t.Fatal("parseBulkAction(drain) succeeded, want an error — a bulk drain is not offered")
 	}
 	if code, _ := classifyError(err); code != CodeInvalidInput {
 		t.Errorf("classifyError() code = %q, want %q", code, CodeInvalidInput)

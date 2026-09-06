@@ -45,6 +45,16 @@ type BulkResult struct {
 // server whose client-side rate limit would queue them anyway.
 const bulkConcurrency = 4
 
+// bulkEvictGracePeriod is the grace period a bulk eviction asks for.
+//
+// Negative means "use the pod's own terminationGracePeriodSeconds" (see
+// ManagementPort.EvictPod), which is the same value the pod drawer's Evict
+// sends and what DrainOptions defaults to. A bulk run must not shorten the
+// window a workload's own spec asked for: the pods are being asked to leave,
+// not being killed, and one number typed over a page of pods would apply to
+// every one of them regardless of what each was written to need.
+const bulkEvictGracePeriod = -1
+
 // bulkWrite performs one action on one object — a single-object
 // ManagementPort method, bound to whatever the action needs beyond the ref.
 type bulkWrite func(ctx context.Context, ref domain.ResourceRef) error
@@ -58,6 +68,25 @@ func (s *ManagementService) BulkDelete(ctx context.Context, id domain.ClusterID,
 	return s.runBulk(ctx, id, candidates, domain.BulkOptions{Action: domain.BulkActionDelete},
 		func(ctx context.Context, ref domain.ResourceRef) error {
 			return s.management.DeleteResource(ctx, ref)
+		})
+}
+
+// BulkEvict evicts every selected pod through the eviction subresource; the
+// plan skips every other kind with a reason, so an unsupported kind never
+// costs a round trip to be told no.
+//
+// THE REFUSAL IS THE POINT, and it is per object. A PodDisruptionBudget
+// answering 429 arrives as ports.ErrDisruptionBudget on that pod's own
+// result, beside the pods that did leave — never as an error that ends the
+// run. RBAC allowed the request and the object's own policy declined it,
+// which calls for waiting and retrying rather than for different
+// credentials, and an operator can only act on that if the list says WHICH
+// pods a budget protected. Aborting on the first refusal would leave exactly
+// the wrong impression: that nothing was evicted.
+func (s *ManagementService) BulkEvict(ctx context.Context, id domain.ClusterID, candidates []domain.BulkCandidate) ([]BulkResult, error) {
+	return s.runBulk(ctx, id, candidates, domain.BulkOptions{Action: domain.BulkActionEvict},
+		func(ctx context.Context, ref domain.ResourceRef) error {
+			return s.management.EvictPod(ctx, id, ref.Namespace, ref.Name, bulkEvictGracePeriod)
 		})
 }
 

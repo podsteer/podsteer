@@ -76,6 +76,61 @@ func TestPlanBulkRules(t *testing.T) {
 			wantAct:   true,
 		},
 
+		// --- evict ------------------------------------------------------------
+		//
+		// The plan says only whether the request will be MADE. Whether a
+		// PodDisruptionBudget then refuses it is the cluster's answer and
+		// arrives as that pod's own result — nothing here can know it, and a
+		// plan that guessed would promise what the API server has not agreed
+		// to.
+		{
+			name:      "a pod is evicted, and carries the same recreation note a delete does",
+			candidate: domain.BulkCandidate{Ref: bulkRef("Pod", "web", "web-abc12"), Controller: bulkController("ReplicaSet", "web-abc")},
+			opts:      domain.BulkOptions{Action: domain.BulkActionEvict},
+			wantAct:   true,
+			wantNote:  "owned by ReplicaSet/web-abc, which will recreate it",
+		},
+		{
+			name:      "evicting a bare pod carries no note — nothing will act",
+			candidate: domain.BulkCandidate{Ref: bulkRef("Pod", "web", "standalone")},
+			opts:      domain.BulkOptions{Action: domain.BulkActionEvict},
+			wantAct:   true,
+		},
+		{
+			name:       "a Deployment is not evicted; its pods are",
+			candidate:  domain.BulkCandidate{Ref: bulkRef("Deployment", "web", "api")},
+			opts:       domain.BulkOptions{Action: domain.BulkActionEvict},
+			wantReason: "a Deployment owns pods rather than being one; select its pods and evict those",
+		},
+		{
+			name:       "a Job is not evicted; its pods are",
+			candidate:  domain.BulkCandidate{Ref: bulkRef("Job", "batch", "nightly-1")},
+			opts:       domain.BulkOptions{Action: domain.BulkActionEvict},
+			wantReason: "a Job owns pods rather than being one; select its pods and evict those",
+		},
+		{
+			// The skip that carries the no-bulk-drain decision: draining
+			// several nodes at once can take a cluster down, so the reason
+			// names the act an operator actually wants and says it is one at
+			// a time.
+			name:       "a node is not evicted, and the reason points at a drain",
+			candidate:  domain.BulkCandidate{Ref: bulkRef("Node", "", "node-1")},
+			opts:       domain.BulkOptions{Action: domain.BulkActionEvict},
+			wantReason: "a node is not evicted; drain it, one node at a time",
+		},
+		{
+			name:       "a ConfigMap is not evicted",
+			candidate:  domain.BulkCandidate{Ref: bulkRef("ConfigMap", "web", "settings")},
+			opts:       domain.BulkOptions{Action: domain.BulkActionEvict},
+			wantReason: "only a pod can be evicted; this is a ConfigMap",
+		},
+		{
+			name:       "a read-only cluster refuses an eviction before the kind is even read",
+			candidate:  domain.BulkCandidate{Ref: bulkRef("Pod", "web", "web-abc12"), Controller: bulkController("ReplicaSet", "web-abc")},
+			opts:       domain.BulkOptions{Action: domain.BulkActionEvict, ReadOnly: true},
+			wantReason: domain.BulkReasonReadOnly,
+		},
+
 		// --- restart ----------------------------------------------------------
 		{
 			name:      "a Deployment restarts",

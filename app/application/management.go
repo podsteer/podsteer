@@ -215,6 +215,10 @@ func (s *ManagementService) RestartRollout(ctx context.Context, id domain.Cluste
 // TriggerCronJob creates a Job from a CronJob's template right now, outside
 // its schedule.
 func (s *ManagementService) TriggerCronJob(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (string, error) {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return "", err
+	}
+
 	s.logger.InfoContext(ctx, "triggering cronjob",
 		slog.String("cluster", id.String()),
 		slog.String("namespace", namespace.String()),
@@ -239,6 +243,10 @@ func (s *ManagementService) TriggerCronJob(ctx context.Context, id domain.Cluste
 // before the adapter is ever reached, so an unsupported kind never costs a
 // round trip to the cluster to be told no.
 func (s *ManagementService) SuspendWorkload(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, suspend bool) error {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return err
+	}
+
 	s.logger.InfoContext(ctx, "suspending workload",
 		slog.String("cluster", id.String()),
 		slog.String("kind", string(kind)),
@@ -467,6 +475,10 @@ func (s *ManagementService) RollbackWorkload(ctx context.Context, id domain.Clus
 // this method. RevealSecretKey's own doc comment is the reason a write of
 // this shape exists at all; logging the material it decodes would undo it.
 func (s *ManagementService) SetSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string, value []byte) error {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return err
+	}
+
 	s.logger.InfoContext(ctx, "writing secret key",
 		slog.String("cluster", id.String()),
 		slog.String("namespace", namespace.String()),
@@ -499,6 +511,10 @@ func (s *ManagementService) SetSecretKey(ctx context.Context, id domain.ClusterI
 // value, matching every other write here: what changed is cluster,
 // namespace, name and key, not the contents.
 func (s *ManagementService) SetConfigMapKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key, value string) error {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return err
+	}
+
 	s.logger.InfoContext(ctx, "writing configmap key",
 		slog.String("cluster", id.String()),
 		slog.String("namespace", namespace.String()),
@@ -628,6 +644,10 @@ func (s *ManagementService) WaitForEphemeralContainerRunning(ctx context.Context
 
 // CordonNode marks a node schedulable or unschedulable.
 func (s *ManagementService) CordonNode(ctx context.Context, id domain.ClusterID, name string, cordon bool) error {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return err
+	}
+
 	s.logger.InfoContext(ctx, "cordoning node",
 		slog.String("cluster", id.String()),
 		slog.String("name", name),
@@ -647,6 +667,10 @@ func (s *ManagementService) CordonNode(ctx context.Context, id domain.ClusterID,
 // EvictPod evicts one pod through the eviction subresource, which a
 // PodDisruptionBudget may refuse.
 func (s *ManagementService) EvictPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string, gracePeriodSeconds int) error {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return err
+	}
+
 	s.logger.InfoContext(ctx, "evicting pod",
 		slog.String("cluster", id.String()),
 		slog.String("namespace", namespace.String()),
@@ -671,6 +695,10 @@ func (s *ManagementService) EvictPod(ctx context.Context, id domain.ClusterID, n
 // error — an ErrDrainRefused still cordoned the node, which is worth a line
 // in the log the same way a completed drain's counts are.
 func (s *ManagementService) DrainNode(ctx context.Context, id domain.ClusterID, name string, opts domain.DrainOptions) (domain.DrainReport, error) {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return domain.DrainReport{}, err
+	}
+
 	s.logger.InfoContext(ctx, "draining node",
 		slog.String("cluster", id.String()),
 		slog.String("name", name),

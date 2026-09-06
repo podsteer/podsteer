@@ -77,8 +77,17 @@ func TestTheReadingInterfacesCarryNoWriteAndNoSecretReveal(t *testing.T) {
 			// of the pane doing the asking, and an agent has no equivalent.
 			"RevealSecretKey", "InspectTLSSecret",
 		},
-		"WorkloadReader": {"ScaleWorkload", "RestartRollout", "DeleteResource"},
-		"LogReader":      {"DeleteResource", "ExecInPod", "UpdateResource", "SetSecretKey"},
+		"WorkloadReader": {"ScaleWorkload", "RestartRollout", "DeleteResource", "BulkEvict"},
+		// LogReader is the one narrowed view of ManagementService, so it is
+		// where a newly added write would show up first. The Bulk* methods
+		// are named explicitly because a bulk write is the shape most likely
+		// to be handed over as "it is just the same reads in a loop" — it is
+		// not: every one of them changes a cluster, and none can be put
+		// behind a confirmation an agent reads.
+		"LogReader": {
+			"DeleteResource", "ExecInPod", "UpdateResource", "SetSecretKey",
+			"BulkDelete", "BulkEvict", "BulkRestart", "BulkScale", "BulkCordon",
+		},
 	}
 
 	interfaces := map[string]reflect.Type{

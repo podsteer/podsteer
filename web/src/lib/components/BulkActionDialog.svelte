@@ -30,6 +30,7 @@
   import {
     bulkCordon,
     bulkDelete,
+    bulkEvict,
     bulkRestart,
     bulkScale,
     planBulk,
@@ -202,6 +203,9 @@
         case 'delete':
           outcome = await bulkDelete(cluster, rows)
           break
+        case 'evict':
+          outcome = await bulkEvict(cluster, rows)
+          break
         case 'restart':
           outcome = await bulkRestart(cluster, rows)
           break
@@ -286,6 +290,22 @@
       >
         <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
         This cluster is in {productionGroup}, marked production.
+      </p>
+    {/if}
+
+    <!--
+      Said BEFORE the run, not only after it: "refused" is a real outcome of
+      an eviction and an operator has to have been told to expect it, the same
+      reason EvictDialog's own copy says so for one pod. It also explains the
+      missing kubectl line below — kubectl has no eviction verb, and printing
+      a delete instead would name the one command that ignores the budget this
+      action exists to respect.
+    -->
+    {#if action === 'evict' && !results}
+      <p class="mt-4 text-body-small text-on-surface-variant">
+        Asks each pod to leave through the eviction API — the respectful removal a drain uses, not
+        a delete. A PodDisruptionBudget may refuse any of them; each refusal is reported against
+        its own pod below and never stops the rest.
       </p>
     {/if}
 

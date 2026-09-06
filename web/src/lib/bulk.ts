@@ -13,7 +13,7 @@
 import type { Pod, Workload, Node, TableRow, ResourceKind } from './api/client'
 import { cordon, delMany, resourceArgForKind, rolloutRestartMany, scaleMany } from './kubectl'
 
-export type BulkActionId = 'delete' | 'restart' | 'scale' | 'cordon' | 'uncordon'
+export type BulkActionId = 'delete' | 'evict' | 'restart' | 'scale' | 'cordon' | 'uncordon'
 
 /** How an action reads on a button, in a heading, and in a result. */
 export interface BulkActionCopy {
@@ -28,6 +28,7 @@ export interface BulkActionCopy {
 
 export const BULK_ACTIONS: Record<BulkActionId, BulkActionCopy> = {
   delete: { label: 'Delete', done: 'deleted', destructive: true },
+  evict: { label: 'Evict', done: 'evicted', destructive: true },
   restart: { label: 'Restart', done: 'restarted', destructive: false },
   scale: { label: 'Scale', done: 'scaled', destructive: false },
   cordon: { label: 'Cordon', done: 'cordoned', destructive: false },
@@ -39,12 +40,23 @@ export const BULK_ACTIONS: Record<BulkActionId, BulkActionCopy> = {
  *
  * Mirrors the kind rules in `domain/bulk.go`'s `bulkUnsupported`, at the
  * granularity of a list rather than an object: every kind can be deleted;
- * the three controllers with a rollout restart; the three with a replica
- * count scale; nodes cordon. Anything else — a ConfigMap, a CRD — offers
- * delete alone, which is the one verb the generic table's rows support.
+ * pods can also be evicted; the three controllers with a rollout restart;
+ * the three with a replica count scale; nodes cordon. Anything else — a
+ * ConfigMap, a CRD — offers delete alone, which is the one verb the generic
+ * table's rows support.
+ *
+ * EVICT LEADS ON PODS, and the order is the argument: an eviction is the one
+ * request a PodDisruptionBudget can refuse, where a delete removes the pod
+ * whatever the budget says — so it is the safer default for a page of them,
+ * and delete is what somebody reaches for when they mean to overrule the
+ * budget. There is deliberately no bulk Drain for nodes: draining several at
+ * once can take a cluster down, and the per-node preview `PlanDrain` produces
+ * is the safety that would be lost.
  */
 export function bulkActionsFor(kind: string): BulkActionId[] {
   switch (kind) {
+    case 'Pod':
+      return ['evict', 'delete']
     case 'Deployment':
     case 'StatefulSet':
       return ['restart', 'scale', 'delete']
@@ -102,6 +114,12 @@ export function rowKey(namespace: string, name: string): string {
  * what is about to happen rather than what was ticked. See $lib/kubectl for
  * how each verb is composed and why a selection spanning namespaces is one
  * line per namespace.
+ *
+ * NULL FOR EVICT, and that is the honest answer rather than a gap: kubectl
+ * has no eviction verb — a drain evicts, and `kubectl delete` does something
+ * else, since a delete is exactly what an eviction is not. Printing a delete
+ * here would put a command on screen that ignores the PodDisruptionBudget the
+ * operator is relying on. The caller shows no hint at all instead.
  */
 export function bulkCommand(
   ctx: string,
@@ -109,7 +127,7 @@ export function bulkCommand(
   kind: ResourceKind,
   targets: { name: string; namespace: string }[],
   replicas: number,
-): string {
+): string | null {
   const scoped = targets.map((target) => ({
     name: target.name,
     ns: kind.namespaced && target.namespace ? target.namespace : undefined,
@@ -117,6 +135,8 @@ export function bulkCommand(
   switch (action) {
     case 'delete':
       return delMany(ctx, resourceArgForKind(kind), scoped)
+    case 'evict':
+      return null
     case 'restart':
       return rolloutRestartMany(ctx, kind.kind, scoped)
     case 'scale':

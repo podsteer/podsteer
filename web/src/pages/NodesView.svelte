@@ -13,6 +13,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { type RowAction } from '$lib/components/RowMenu.svelte'
   import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { rowActionsFor, toRowActions } from '$lib/rowActions'
   import { isControlColumn } from '$lib/fixedColumns'
   import CustomCells from '$lib/components/CustomCells.svelte'
   import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
@@ -22,7 +23,7 @@
   import { preferences } from '$stores/preferences.svelte'
   import { organisation } from '$stores/organisation.svelte'
   import { sessionLauncher } from '$stores/sessionLauncher.svelte'
-  import type { ClusterSession } from '$stores/session.svelte'
+  import type { ClusterSession, DetailIntent } from '$stores/session.svelte'
   import type { Node } from '$lib/api/client'
   import { Server, CircleDot } from '@lucide/svelte'
 
@@ -42,25 +43,46 @@
   )
   const productionGroup = $derived(groupSettings.environment === 'production' ? groupName : null)
 
-  /** Nodes are cluster-scoped, so there is no namespace to pass. */
+  /**
+   * What a node row offers. Nodes are cluster-scoped, so there is no
+   * namespace to pass.
+   *
+   * Cordon and Uncordon are ONE item, chosen from the row's own
+   * `unschedulable` flag — only one of them could change anything, and an
+   * item that would refuse itself is worse than no item. Uncordon acts
+   * immediately with no dialog, which is the drawer's own rule for it: it
+   * undoes a visible, deliberate state.
+   *
+   * Drain opens the drawer's DrainDialog, which plans the drain and shows
+   * the per-node preview before anything is evicted. That preview is why
+   * there is no bulk drain: several nodes at once can take a cluster down,
+   * and the preview is the safety that would be lost.
+   *
+   * Node shell keeps launching through `sessionLauncher` rather than the
+   * drawer, because the terminal it opens outlives the surface that launched
+   * it — see $stores/sessionLauncher.
+   */
   function actionsFor(node: Node): RowAction[] {
-    return [
+    const open = (intent: DetailIntent) => () =>
+      void session.openDetailFor(intent, node.name, '', undefined, undefined, node)
+
+    return toRowActions(
+      rowActionsFor('Node', { unschedulable: node.unschedulable }),
       {
-        label: 'Node shell',
-        onclick: () =>
+        cordon: open({ action: 'cordon' }),
+        uncordon: open({ action: 'uncordon' }),
+        drain: open({ action: 'drain' }),
+        nodeShell: () =>
           sessionLauncher.requestNodeShell({
             clusterId: session.cluster.id,
             node: node.name,
             readOnly: groupSettings.readOnly,
             productionGroup,
           }),
+        kubectl: () => copyKubectl(kubectlGet(session.cluster.id, 'nodes', node.name)),
       },
-      {
-        label: 'Copy as kubectl',
-        kind: 'copy',
-        onclick: () => copyKubectl(kubectlGet(session.cluster.id, 'nodes', node.name)),
-      },
-    ]
+      groupSettings.readOnly,
+    )
   }
 
   function copyKubectl(command: string): void {

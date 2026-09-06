@@ -13,6 +13,8 @@
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { type RowAction } from '$lib/components/RowMenu.svelte'
   import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { rowActionsFor, toRowActions } from '$lib/rowActions'
+  import { organisation } from '$stores/organisation.svelte'
   import { isControlColumn } from '$lib/fixedColumns'
   import CustomCells from '$lib/components/CustomCells.svelte'
   import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
@@ -23,7 +25,7 @@
   import { preferences } from '$stores/preferences.svelte'
   import { get as kubectlGet, resourceArgForKind } from '$lib/kubectl'
   import type { Tone } from '$lib/format'
-  import type { ClusterSession } from '$stores/session.svelte'
+  import type { ClusterSession, DetailIntent } from '$stores/session.svelte'
   import type { Workload } from '$lib/api/client'
   import { Container, CircleDot } from '@lucide/svelte'
   import { iconForKind } from '$lib/kindIcons'
@@ -108,6 +110,15 @@
    */
   const resource = $derived(session.selectedKind ? resourceArgForKind(session.selectedKind) : null)
 
+  /** The Kubernetes kind this table is showing — the same for every row. */
+  const kind = $derived(session.selectedKind?.kind ?? '')
+
+  /** See PodsView: read fresh so a change in Organise applies at once. */
+  const placement = $derived(organisation.placementOf(session.cluster.id))
+  const isReadOnly = $derived(
+    organisation.settingsFor(placement.project, placement.group).readOnly,
+  )
+
   /** The rows on screen, in display order, for range and select-all. See PodsView. */
   $effect(() => {
     session.selection.visible = session.pagedWorkloads.map((workload) =>
@@ -118,16 +129,39 @@
     }
   })
 
+  /**
+   * What a controller row offers, which kind by kind.
+   *
+   * The ids come from `rowActionsFor`, which mirrors the DRAWER's own toolbar
+   * — a DaemonSet has no Scale because it has no replica count, a ReplicaSet
+   * has none because the drawer renders no Scale dialog for one, and only a
+   * CronJob offers Run now. Every write item opens the object with the
+   * drawer's control engaged, so the dialog, its confirmation and the
+   * production type-the-name gate are the ones that already existed.
+   *
+   * Suspend and Resume are one item, chosen from the row's own `suspended`
+   * flag: only one of them could do anything, and Resume acts without a
+   * dialog exactly as the drawer's button does.
+   */
   function actionsFor(workload: Workload): RowAction[] {
-    if (!resource) return []
-    return [
+    if (!resource || !kind) return []
+    const open = (intent: DetailIntent) => () =>
+      void session.openDetailFor(intent, workload.name, workload.namespace, undefined, workload)
+
+    return toRowActions(
+      rowActionsFor(kind, { suspended: workload.suspended }),
       {
-        label: 'Copy as kubectl',
-        kind: 'copy',
-        onclick: () =>
+        restart: open({ action: 'restart' }),
+        scale: open({ action: 'scale' }),
+        trigger: open({ action: 'trigger' }),
+        suspend: open({ action: 'suspend' }),
+        resume: open({ action: 'resume' }),
+        delete: open({ action: 'delete' }),
+        kubectl: () =>
           copyKubectl(kubectlGet(session.cluster.id, resource, workload.name, workload.namespace)),
       },
-    ]
+      isReadOnly,
+    )
   }
 
   function copyKubectl(command: string): void {

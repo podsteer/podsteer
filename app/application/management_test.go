@@ -1153,3 +1153,88 @@ func TestNewManagementServiceRequiresARegistry(t *testing.T) {
 		t.Fatal("NewManagementService() error = nil, want a complaint about the missing Registry")
 	}
 }
+
+// TestEverySingleObjectWriteRefusesAReadOnlyCluster is the test that would
+// have caught the gap it was written for.
+//
+// SEVEN OF THESE DID NOT CHECK THE FLAG. Delete, restart and scale did;
+// evict, cordon, drain, trigger, suspend and the two key writes did not — so
+// a cluster its operator had marked read-only would happily be drained, or
+// have a Secret's key rewritten, by anything that reached those methods.
+//
+// CLAUDE.md's own argument for enforcing this in the backend at all is that
+// the frontend disabling a button is ONE code path, and "a stray context
+// menu, a stale cache, or a future control that forgets to check the group's
+// setting is exactly the class of bug a client-only guard cannot catch". A
+// row menu offering evict, cordon, drain, trigger and suspend is precisely
+// that stray context menu, which is what turned this from a latent gap into
+// a live one.
+//
+// It is a TABLE OVER EVERY WRITE rather than seven separate tests, because
+// the fix for seven methods is worth less than the thing that catches the
+// eighth. Adding a write to ManagementService and not adding a line here
+// leaves the same hole open again.
+func TestEverySingleObjectWriteRefusesAReadOnlyCluster(t *testing.T) {
+	t.Parallel()
+
+	const id domain.ClusterID = "prod"
+	registry := application.NewRegistry()
+	registry.SetReadOnly(id, true)
+
+	port := &fakeManagementPort{}
+	service := newManagementService(t, port, registry)
+
+	ctx := context.Background()
+	const ns domain.NamespaceName = "shop"
+
+	cases := []struct {
+		name string
+		call func() error
+	}{
+		{"DeleteResource", func() error {
+			return service.DeleteResource(ctx, domain.ResourceRef{
+				ClusterID: id, Kind: domain.ResourceKind{Kind: "Pod"}, Namespace: ns, Name: "web-1",
+			})
+		}},
+		{"RestartRollout", func() error {
+			return service.RestartRollout(ctx, id, domain.WorkloadKind("Deployment"), ns, "web")
+		}},
+		{"ScaleWorkload", func() error {
+			return service.ScaleWorkload(ctx, id, domain.WorkloadKind("Deployment"), ns, "web", 2)
+		}},
+		{"EvictPod", func() error { return service.EvictPod(ctx, id, ns, "web-1", -1) }},
+		{"CordonNode", func() error { return service.CordonNode(ctx, id, "node-1", true) }},
+		{"DrainNode", func() error {
+			_, err := service.DrainNode(ctx, id, "node-1", domain.DrainOptions{})
+			return err
+		}},
+		{"TriggerCronJob", func() error {
+			_, err := service.TriggerCronJob(ctx, id, ns, "nightly")
+			return err
+		}},
+		{"SuspendWorkload", func() error {
+			return service.SuspendWorkload(ctx, id, domain.WorkloadKind("CronJob"), ns, "nightly", true)
+		}},
+		{"SetSecretKey", func() error {
+			return service.SetSecretKey(ctx, id, ns, "creds", "password", []byte("x"))
+		}},
+		{"SetConfigMapKey", func() error {
+			return service.SetConfigMapKey(ctx, id, ns, "config", "key", "value")
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); !errors.Is(err, ports.ErrReadOnly) {
+				t.Fatalf("%s() error = %v, want wrapping ports.ErrReadOnly", tc.name, err)
+			}
+		})
+	}
+
+	// The refusal has to happen BEFORE the adapter, not after it: a write
+	// that reached the cluster and was then reported as refused is the one
+	// outcome this guard exists to make impossible.
+	if calls := port.recordedCalls(); len(calls) != 0 {
+		t.Fatalf("port recorded calls %v, want none — a refused write must never reach the adapter", calls)
+	}
+}

@@ -304,6 +304,49 @@ Three things there are load-bearing and are not obvious from any one file:
   application-wide in `preferences.fixedEdges`, because keeping the tick box
   in view is a reading habit like `wrapLines` rather than a fact about pods.
 
+## A row menu asks the drawer; it never confirms or writes anything itself
+
+Every list row's menu (`RowMenu.svelte`, filled by `web/src/lib/rowActions.ts`)
+offers what that kind can be put through — a pod gets Logs, Terminal, Evict,
+Delete and the kubectl copy; a controller gets Restart, Scale, Delete; a node
+gets Cordon or Uncordon, Drain and a node shell. **Not one of those items
+performs a write or shows a confirmation.** Each sets a `DetailIntent` on the
+session and opens the object, and `DetailDrawer` engages its OWN control for
+it — so there is still exactly one Delete dialog, one Scale dialog and one
+drain preview in the application, each with the guards it already had: the
+production type-the-name gate (`nameConfirmed`, `web/src/lib/confirm.ts`), the
+drain's per-node plan, and the eviction's sentence about a budget refusing it.
+A row menu that opened its own confirmation would be a second implementation
+free to drift; one that called the API directly would be a write with no
+confirmation at all.
+
+Five rules there, each with a test in `web/src/lib/rowActions.test.ts`:
+
+- **The intent is consumed exactly once.** `takeDetailIntent` clears it as it
+  hands it over, or the next object opened by an ordinary click inherits the
+  last row menu's request — a delete dialog waiting on a pod somebody merely
+  looked at. `closeDetail` drops a pending one for the same reason.
+- **The drawer's intent effect is declared AFTER its reset effect**, because
+  both are dirty in the same flush and effects run in creation order: the
+  reset puts the tab back to Overview, so a "Logs" from a row menu declared
+  first would land on the wrong tab.
+- **An item exists only where the drawer renders a control for it.** A
+  DaemonSet has no Scale (no replica count — `PlanBulk` says so in those
+  words), a ReplicaSet has none either because `isScalable` covers Deployments
+  and StatefulSets only, a Job has no Run now (that creates a Job from a
+  CronJob's template), and a node has no Delete. The bulk bar's sets are
+  looser on purpose: `bulkActionsFor` mirrors `domain.PlanBulk`'s kind rules,
+  which are kubectl's.
+- **A pair is one item.** Cordon or Uncordon, Suspend or Resume — chosen from
+  the row's own flag, since only one of them could change anything. Resume and
+  Uncordon run without a dialog, which is the drawer's rule for them rather
+  than a shortcut taken here.
+- **A destructive item is marked and the read-only guard disables rather than
+  hides.** `RowAction.destructive` colours Delete, Evict and Drain with the
+  error token, so a Delete never looks like a Copy; `toRowActions` disables
+  every item marked `write` on a read-only cluster and carries the backend's
+  own sentence as the tooltip, while Logs and the kubectl copy stay usable.
+
 ## Counting is `limit=1`, never `len(list)`
 
 Kubernetes has no endpoint that reports how many objects a namespace holds, and
@@ -2194,8 +2237,8 @@ the paste, refuses a collision and backs the file up first.
   a workload's desired count, a node's cordoned flag, the cluster's read-only
   flag — so planning a selection costs no read. `ManagementAPI.PlanBulk`
   shows that plan in the review dialog, and `ManagementService.BulkDelete`,
-  `BulkRestart`, `BulkScale` and `BulkCordon` run the SAME function again
-  before fanning the acting lines out over the single-object
+  `BulkEvict`, `BulkRestart`, `BulkScale` and `BulkCordon` run the SAME
+  function again before fanning the acting lines out over the single-object
   `ManagementPort` methods (bounded errgroup, no shared context), so what was
   reviewed is what runs. Unlike a drain, **a failure never aborts the rest**:
   one forbidden delete is a per-object result beside forty-nine successes,
@@ -2203,6 +2246,21 @@ the paste, refuses a collision and backs the file up first.
   stopped halfway would leave the operator unable to tell from the list which
   rows were touched. The read-only guard runs once, up front, for the whole
   selection.
+  **A pod list offers Evict BEFORE Delete, and there is deliberately no bulk
+  Drain.** Eviction is the more correct default of the two for a page of pods
+  for the reason the next bullet gives — a budget can refuse it — so
+  `bulkActionsFor` (`web/src/lib/bulk.ts`) returns `['evict', 'delete']` for a
+  Pod and the order carries the argument. A budget refusing ONE pod is that
+  pod's own failed result, keeping `ports.ErrDisruptionBudget` all the way to
+  `CodeDisruptionBudget` and the sentence naming the budget, beside the pods
+  that did leave; the run itself succeeds, which is what lets an operator see
+  WHICH pods a budget protected. `bulkCommand` returns null for an eviction
+  and the dialog shows no kubectl line, because kubectl has no eviction verb
+  and printing a delete in its place would name the one command that ignores
+  the budget. A bulk drain was refused: draining several nodes at once can
+  take a cluster down, and the per-node preview `PlanDrain` produces is the
+  safety that would be lost — `parseBulkAction` refuses the verb outright,
+  with a test saying so.
 - **Eviction, never deletion, is what a drain and the pod drawer's Evict both
   use.** `ManagementPort.EvictPod` goes through the policy/v1 Eviction
   subresource specifically because it is the one request a PodDisruptionBudget

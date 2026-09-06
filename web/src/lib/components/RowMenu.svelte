@@ -37,7 +37,26 @@
   import { menuKeys } from '$lib/menuKeys'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import type { Component } from 'svelte'
-  import { Check, Copy, Eye, EyeOff, Link2, MoreVertical, Pencil } from '@lucide/svelte'
+  import {
+    Ban,
+    Check,
+    CirclePause,
+    CirclePlay,
+    Copy,
+    Eye,
+    EyeOff,
+    Link2,
+    LogOut,
+    MoreVertical,
+    Pencil,
+    Play,
+    RotateCcw,
+    Scale,
+    ScrollText,
+    SquareTerminal,
+    TerminalSquare,
+    Trash2,
+  } from '@lucide/svelte'
 
   export interface RowAction {
     label: string
@@ -46,8 +65,53 @@
      *
      * Chooses the icon, and singles out the copy — which confirms itself in
      * place before the menu closes, the way the status bar's share menu does.
+     *
+     * The verbs were added when the row menus stopped offering one item
+     * each; every one of them names the SAME act as the drawer's toolbar
+     * button for it, and uses that button's icon, so the two surfaces cannot
+     * come to look like two different features.
      */
-    kind?: 'reference' | 'copy' | 'reveal' | 'hide' | 'edit'
+    kind?:
+      | 'reference'
+      | 'copy'
+      | 'reveal'
+      | 'hide'
+      | 'edit'
+      | 'logs'
+      | 'terminal'
+      | 'shell'
+      | 'restart'
+      | 'scale'
+      | 'trigger'
+      | 'suspend'
+      | 'resume'
+      | 'cordon'
+      | 'evict'
+      | 'drain'
+      | 'delete'
+    /**
+     * Whether this item removes something, or takes something out of
+     * service.
+     *
+     * MARKS IT, rather than merely being known to whoever wrote the list. A
+     * menu whose Delete looks exactly like its Copy is a menu where the two
+     * are one slip apart, and these menus now hold both. It is the same
+     * error colour the bulk bar gives its destructive buttons and the drawer
+     * gives its Delete, so the warning reads the same wherever it appears.
+     */
+    destructive?: boolean
+    /**
+     * Whether the item is refused, and why — the read-only cluster case.
+     *
+     * DISABLED, NEVER ABSENT, which is CLAUDE.md's rule for the whole
+     * read-only surface: a disabled control with its reason is a feature
+     * somebody can find and understand, while a missing one reads as a
+     * feature that does not exist. The reason belongs in `hint`; a disabled
+     * item shows no tooltip of its own, so it is carried on the row wrapper.
+     */
+    disabled?: boolean
+    /** The item's tooltip — the refusal's reason when disabled. */
+    hint?: string
     onclick: () => void
   }
 
@@ -57,6 +121,18 @@
     reveal: Eye,
     hide: EyeOff,
     edit: Pencil,
+    logs: ScrollText,
+    terminal: TerminalSquare,
+    shell: SquareTerminal,
+    restart: RotateCcw,
+    scale: Scale,
+    trigger: Play,
+    suspend: CirclePause,
+    resume: CirclePlay,
+    cordon: Ban,
+    evict: LogOut,
+    drain: LogOut,
+    delete: Trash2,
   }
 
   interface Props {
@@ -147,6 +223,7 @@
   const copied = flash(900)
 
   function choose(action: RowAction): void {
+    if (action.disabled) return
     action.onclick()
 
     // Copying gives nothing back on its own — the clipboard is silent and the
@@ -281,23 +358,42 @@
       >
         {#each actions as action (action.label)}
           {@const Icon = ICONS[action.kind ?? 'reference']}
-          <button
-            type="button"
-            role="menuitem"
-            onclick={() => choose(action)}
-            class="state-layer flex w-full cursor-pointer items-center gap-2.5 px-3 py-1.5
-                   text-left text-body-medium transition-colors duration-75
-                   hover:bg-surface-container-highest
-                   {copied.on && action.kind === 'copy' ? 'text-success' : 'text-on-surface'}"
-          >
-            {#if copied.on && action.kind === 'copy'}
-              <Check class="size-3.5 shrink-0" strokeWidth={2.5} />
-              Copied!
-            {:else}
-              <Icon class="size-3.5 shrink-0 text-on-surface-variant/70" />
-              {action.label}
-            {/if}
-          </button>
+          <!-- The title sits on a wrapper, not the button: a disabled
+               control shows no tooltip of its own, and the refusal's reason
+               is the one thing somebody looking at a greyed-out Delete
+               needs. The same wrapper the bulk bar uses for its own. -->
+          <span title={action.hint} class="block">
+            <button
+              type="button"
+              role="menuitem"
+              disabled={action.disabled}
+              onclick={() => choose(action)}
+              class="state-layer flex w-full items-center gap-2.5 px-3 py-1.5
+                     text-left text-body-medium transition-colors duration-75
+                     cursor-pointer hover:bg-surface-container-highest
+                     disabled:pointer-events-none disabled:opacity-38
+                     {copied.on && action.kind === 'copy'
+                ? 'text-success'
+                : action.destructive
+                  ? 'text-error'
+                  : 'text-on-surface'}"
+            >
+              {#if copied.on && action.kind === 'copy'}
+                <Check class="size-3.5 shrink-0" strokeWidth={2.5} />
+                Copied!
+              {:else}
+                <!-- A destructive item's icon takes the item's own colour
+                     rather than the muted one, so the row reads as a warning
+                     at a glance instead of on being read. -->
+                <Icon
+                  class="size-3.5 shrink-0 {action.destructive
+                    ? 'text-error'
+                    : 'text-on-surface-variant/70'}"
+                />
+                {action.label}
+              {/if}
+            </button>
+          </span>
         {/each}
       </div>
     {/if}

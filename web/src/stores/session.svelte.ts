@@ -128,6 +128,42 @@ export interface RecentObject {
 }
 
 /**
+ * One of the detail drawer's own controls, named so a row menu can ask for
+ * it — see `ClusterSession.detailIntent`.
+ *
+ * Every entry names a control that already exists on the drawer's toolbar,
+ * with the dialog and the guards it already carries. Nothing here performs a
+ * write of its own: `resume` and `uncordon` are the two the drawer runs
+ * without a dialog, and they run through the drawer's own handlers for the
+ * reason it gives — each undoes a visible, deliberate state rather than
+ * doing anything the cluster cannot immediately reverse.
+ */
+export type DetailAction =
+  | 'delete'
+  | 'evict'
+  | 'restart'
+  | 'scale'
+  | 'trigger'
+  | 'suspend'
+  | 'resume'
+  | 'cordon'
+  | 'uncordon'
+  | 'drain'
+
+/**
+ * What a row menu asks the drawer to do when it opens.
+ *
+ * A tab, an action, or both. The tab is deliberately only the two panes an
+ * operator opens a pod for — an action that needs the drawer's context
+ * belongs in the drawer, at the right tab, rather than being half-rebuilt in
+ * a table row.
+ */
+export interface DetailIntent {
+  tab?: 'logs' | 'terminal'
+  action?: DetailAction
+}
+
+/**
  * How many recently opened objects the Recent section keeps.
  *
  * Twelve, the same order of magnitude as the pinned-kinds star affordance it
@@ -617,6 +653,28 @@ export class ClusterSession {
   selectedNamespaceRow = $state<NamespaceSummary | null>(null)
   /** The open application, which is not a Kubernetes object at all. */
   selectedApplication = $state<Application | null>(null)
+
+  /**
+   * What a row menu asked the drawer to do the moment it opens, or null.
+   *
+   * WHY A REQUEST RATHER THAN THE ROW DOING IT. Every write in this
+   * application goes through one dialog, and each of those dialogs is a
+   * child of DetailDrawer with its guards already attached — the type-the-
+   * name gate on a production cluster, the drain preview, the eviction's
+   * "a budget may refuse this" sentence. A row menu that opened its own
+   * confirmation would be a second implementation of the same act, free to
+   * drift from the first and free to forget the gate; a row menu that called
+   * the API directly would be a write with no confirmation at all. So the
+   * row asks for the object to be OPENED with one of the drawer's own
+   * controls already engaged, and there is still exactly one Delete in the
+   * application.
+   *
+   * `$state.raw` because it is replaced whole and never edited in place, and
+   * consumed exactly once: the drawer takes it, which clears it, so a second
+   * object opened by an ordinary click cannot inherit the first one's
+   * request.
+   */
+  detailIntent = $state.raw<DetailIntent | null>(null)
   manifest = $state<string | null>(null)
   manifestStatus = $state<LoadStatus>('idle')
 
@@ -2190,6 +2248,43 @@ export class ClusterSession {
   }
 
   /**
+   * Opens one object's drawer with one of its own controls already engaged —
+   * what a row menu's items do.
+   *
+   * The same `openDetail` an ordinary row click makes, with the request set
+   * FIRST so it is in place before the drawer reacts to the new selection.
+   * Setting it after would leave one frame in which the drawer has opened,
+   * reset itself to the Overview tab, and not yet been told what was asked
+   * for — visible as a flicker, and worse if the object it opened on had
+   * changed in between.
+   */
+  openDetailFor = async (
+    intent: DetailIntent,
+    name: string,
+    namespace: string,
+    pod?: Pod,
+    workload?: Workload,
+    node?: Node,
+  ): Promise<void> => {
+    this.detailIntent = intent
+    await this.openDetail(name, namespace, pod, workload, node)
+  }
+
+  /**
+   * Hands the pending request over and forgets it.
+   *
+   * TAKEN, NOT READ, and consumed exactly once: a request left standing
+   * would be applied again to the next object opened by an ordinary click,
+   * so somebody who used the row menu to delete one pod would find the
+   * delete dialog waiting on the next pod they merely looked at.
+   */
+  takeDetailIntent = (): DetailIntent | null => {
+    const intent = this.detailIntent
+    this.detailIntent = null
+    return intent
+  }
+
+  /**
    * Records an object as opened, most recent first, deduplicated by identity.
    *
    * Identity is kind + namespace + name, not name alone: a ConfigMap and a
@@ -2287,6 +2382,9 @@ export class ClusterSession {
 
   /** Closes the detail drawer. */
   closeDetail = (): void => {
+    // Any request that never reached the drawer goes with it, so it cannot
+    // surface on whatever is opened next.
+    this.detailIntent = null
     this.selectedName = null
     this.selectedNamespace = ''
     this.selectedPod = null

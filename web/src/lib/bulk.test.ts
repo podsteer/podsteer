@@ -29,12 +29,23 @@ describe('bulkActionsFor', () => {
     expect(bulkActionsFor('Node')).toEqual(['cordon', 'uncordon', 'delete'])
   })
 
+  it('offers pods evict before delete — a budget can refuse an eviction', () => {
+    // The order is the argument, not a preference: an eviction is the one
+    // request a PodDisruptionBudget can refuse, so it leads; a delete removes
+    // the pod whatever the budget says, which is a deliberate second choice.
+    expect(bulkActionsFor('Pod')).toEqual(['evict', 'delete'])
+  })
+
+  it('offers nodes no drain — several at once can take a cluster down', () => {
+    expect(bulkActionsFor('Node')).not.toContain('drain')
+  })
+
   it('offers every other kind delete alone, including a CRD', () => {
-    // Jobs and CronJobs have no rollout and no replica count; pods cannot be
-    // restarted; the generic table's rows support one verb. The review
+    // Jobs and CronJobs have no rollout and no replica count; only a pod can
+    // be evicted; the generic table's rows support one verb. The review
     // dialog is where the per-object reasons are shown — this only decides
     // which buttons are worth drawing.
-    for (const kind of ['Pod', 'Job', 'CronJob', 'ConfigMap', 'Secret', 'Application', '']) {
+    for (const kind of ['Job', 'CronJob', 'ConfigMap', 'Secret', 'Application', '']) {
       expect(bulkActionsFor(kind)).toEqual(['delete'])
     }
   })
@@ -126,6 +137,13 @@ describe('items', () => {
     expect(bulkCommand('prod', 'cordon', nodeKind, nodes, 0)).toBe('kubectl --context prod cordon node-1 node-2')
     expect(bulkCommand('prod', 'uncordon', nodeKind, nodes, 0)).toBe('kubectl --context prod uncordon node-1 node-2')
     expect(bulkCommand('prod', 'delete', nodeKind, nodes, 0)).toBe('kubectl --context prod delete nodes node-1 node-2')
+  })
+
+  it('gives an eviction no kubectl line — kubectl has no eviction verb', () => {
+    // Never a delete in its place: a delete is precisely the request a
+    // PodDisruptionBudget cannot refuse, so printing one would name the
+    // command that ignores what the operator chose Evict for.
+    expect(bulkCommand('prod', 'evict', podKind, [{ name: 'a', namespace: 'web' }], 0)).toBeNull()
   })
 
   it('drops the namespace of a cluster-scoped table row', () => {
