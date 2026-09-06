@@ -536,12 +536,18 @@
             {pinnedKinds.length}
           </span>
         </button>
+        <!-- The SAME rail the categories put their kinds behind, and it has to
+             be: kindRow's leading spacer is sized against this wrapper's left
+             padding, so rendering it without one puts every pinned row half a
+             unit left of the identical row under Workloads. -->
         {#if open}
-          <ul class="mt-0.5">
-            {#each pinnedKinds as kind (kind.id)}
-              {@render kindRow(kind)}
-            {/each}
-          </ul>
+          <div class="mt-0.5 border-l border-outline-variant/30 pl-2">
+            <ul>
+              {#each pinnedKinds as kind (kind.id)}
+                {@render kindRow(kind)}
+              {/each}
+            </ul>
+          </div>
         {/if}
       </div>
     {/if}
@@ -590,34 +596,36 @@
           </button>
         </div>
         {#if open}
-          <ul class="mt-0.5">
-            {#each session.recentObjects as recent (`${recent.kindId}|${recent.namespace}|${recent.name}`)}
-              {@const RecentIcon = iconForKind(kindFor(recent) ?? { kind: '' })}
-              <li>
-                <button
-                  type="button"
-                  onclick={() => void openRecent(recent)}
-                  title={recent.namespace ? `${recent.name} — ${recent.namespace}` : recent.name}
-                  class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
-                         text-on-surface-variant transition-all duration-100 ease-standard
-                         hover:bg-surface-container hover:text-on-surface"
-                >
-                  <span class="w-1.5 shrink-0" aria-hidden="true"></span>
-                  <RecentIcon
-                    class="size-4 shrink-0 text-on-surface-variant/60 transition-colors duration-100
-                           group-hover/item:text-on-surface-variant"
-                    strokeWidth={1.8}
-                  />
-                  <span class="min-w-0 flex-1 truncate text-body-medium">{recent.name}</span>
-                  {#if recent.namespace}
-                    <span class="shrink-0 truncate text-label-small text-on-surface-variant/50">
-                      {recent.namespace}
-                    </span>
-                  {/if}
-                </button>
-              </li>
-            {/each}
-          </ul>
+          <div class="mt-0.5 border-l border-outline-variant/30 pl-2">
+            <ul>
+              {#each session.recentObjects as recent (`${recent.kindId}|${recent.namespace}|${recent.name}`)}
+                {@const RecentIcon = iconForKind(kindFor(recent) ?? { kind: '' })}
+                <li>
+                  <button
+                    type="button"
+                    onclick={() => void openRecent(recent)}
+                    title={recent.namespace ? `${recent.name} — ${recent.namespace}` : recent.name}
+                    class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
+                           text-on-surface-variant transition-all duration-100 ease-standard
+                           hover:bg-surface-container hover:text-on-surface"
+                  >
+                    <span class="w-1.5 shrink-0" aria-hidden="true"></span>
+                    <RecentIcon
+                      class="size-4 shrink-0 text-on-surface-variant/60 transition-colors duration-100
+                             group-hover/item:text-on-surface-variant"
+                      strokeWidth={1.8}
+                    />
+                    <span class="min-w-0 flex-1 truncate text-body-medium">{recent.name}</span>
+                    {#if recent.namespace}
+                      <span class="shrink-0 truncate text-label-small text-on-surface-variant/50">
+                        {recent.namespace}
+                      </span>
+                    {/if}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </div>
         {/if}
       </div>
     {/if}
