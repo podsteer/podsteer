@@ -104,6 +104,27 @@ const (
 	// is pressed, the same Bounded-not-Unreadable distinction the dependency
 	// map already makes.
 	CodeProbeUnavailable ErrorCode = "probe_unavailable"
+	// CodeHelmPayloadTooLarge means a Helm release decompressed past the
+	// ceiling and was REFUSED rather than truncated.
+	//
+	// Its own code because nothing else here fits and because the advice is
+	// unlike any of them: the cluster, the credentials and the network are
+	// all fine, the object is exactly what it claimed to be, retrying cannot
+	// help, and the honest next step is `helm get manifest` in the operator's
+	// own shell. Folded into internal it would read as a fault in PodSteer;
+	// folded into invalid_input it would read as the operator's mistake. It
+	// is neither — it is a release bigger than PodSteer will decompress.
+	CodeHelmPayloadTooLarge ErrorCode = "helm_payload_too_large"
+	// CodeHelmPayloadUnreadable means a Secret named as a Helm release could
+	// not be read as one: wrong type, labels that do not match the release
+	// and revision asked for, or contents that are not a release document.
+	//
+	// Its own code rather than not_found, because the object is THERE — and
+	// reporting it as absent would send somebody looking for a release
+	// Secret that is sitting in front of them — and rather than internal,
+	// because nothing failed: PodSteer declined to decode something that did
+	// not verify as what it was asked for.
+	CodeHelmPayloadUnreadable ErrorCode = "helm_payload_unreadable"
 	// CodeSettingsReadOnly means this process does not write the settings
 	// file at all. Its own code rather than internal because nothing failed:
 	// the answer is a fact about how PodSteer was started.
@@ -149,6 +170,17 @@ var errEmptySuggestedName = errors.New("a suggested filename is required")
 // Invalid input rather than an internal failure: the operator chose the file,
 // so the message names what is wrong with it and they choose again.
 var errUnreadableTextFile = errors.New("that file cannot be read as text")
+
+// errHelmNamespaceRequired is raised when a release payload read arrives
+// scoped to every namespace.
+//
+// A release payload lives in ONE namespace's Secret, so "all namespaces" is
+// not a scope this read has. Refused as invalid input rather than passed down
+// to become a GET against whatever the client's default namespace happens to
+// be — which would be a read of the wrong object under a name that composed
+// perfectly well, the class of quiet mistake the adapter's own verification
+// exists to catch.
+var errHelmNamespaceRequired = errors.New("a namespace is required to read a Helm release")
 
 // errInvalidBulkAction is raised when PlanBulk is asked to plan an action
 // that is not one of domain's BulkAction values — a frontend bug, reported
@@ -281,6 +313,28 @@ func classifyError(err error) (ErrorCode, string) {
 	case errors.Is(err, ports.ErrForbidden):
 		return CodeForbidden, "Your account is not allowed to perform this operation"
 
+	// BEFORE ErrNotFound, and it KEEPS the not_found code deliberately. A
+	// reaped revision genuinely is not there, so the code is right and the
+	// frontend's branching on it should not change; what is wrong is the
+	// generic sentence, because this is the ORDINARY case rather than a
+	// fault — Helm's own default keeps ten revisions and deletes the rest,
+	// so a history entry routinely outlives the Secret behind it. "The
+	// requested resource no longer exists" reads as though something went
+	// wrong; this says what actually happened.
+	case errors.Is(err, domain.ErrHelmRevisionNotFound):
+		return CodeNotFound, "Helm no longer has that revision. Helm keeps only the last few revisions of a release — ten by default — and deletes the rest, so an older entry in a release's history has no Secret behind it any more."
+
+	// BEFORE THE TRANSPORT AND RBAC CASES, on the same line ErrTarMissing
+	// sits: the cluster was reached perfectly well and the object was
+	// returned. What follows is PodSteer declining to decode it, or refusing
+	// to decompress it further, and neither is a fault in anything the
+	// operator can fix by retrying or by different credentials.
+	case errors.Is(err, ports.ErrHelmPayloadTooLarge):
+		return CodeHelmPayloadTooLarge, "That release is larger than PodSteer will decompress — 32 MiB of rendered manifest, chart and values. It was refused rather than cut short, because a manifest shown as whole when it is not is worse than no manifest: read it with `helm get manifest` instead."
+
+	case errors.Is(err, ports.ErrHelmPayloadUnreadable):
+		return CodeHelmPayloadUnreadable, "That Secret is not the Helm release it was asked for: its type or its release and revision labels do not match, or what it holds is not a release document. PodSteer will not decode a Secret that does not verify as the release requested — the object name Helm uses is derived, so anyone who can create a Secret can put one at that name."
+
 	// BEFORE ErrNotFound: the subresource being unavailable arrives as its own
 	// sentinel (the adapter already told a missing subresource apart from a
 	// missing pod), and it must never read as "the pod is gone".
@@ -399,6 +453,7 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, errNotificationTooLong),
 		errors.Is(err, errNotificationUnavailable),
 		errors.Is(err, errInvalidBulkAction),
+		errors.Is(err, errHelmNamespaceRequired),
 		errors.Is(err, domain.ErrEmptyResourceName),
 		errors.Is(err, errNoLocalPath),
 		errors.Is(err, errProbeNoContainer),

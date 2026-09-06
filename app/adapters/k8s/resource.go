@@ -318,8 +318,42 @@ func maskSecretData(object any) {
 		}
 
 		for key, value := range values {
+			// A NON-STRING SCALAR IS STILL MASKED, and it used to be
+			// SKIPPED — which was a hole in this function long before the
+			// Helm pane reached it, so the fix hardens the Secrets YAML tab
+			// as well as the Helm manifest that now shares this code.
+			//
+			// The API server rejects a Secret whose value is not a string,
+			// so on a live object this cannot happen. It can and does happen
+			// on a manifest that was never accepted: Helm writes a release
+			// Secret BEFORE it applies what it rendered, so a `failed`
+			// revision's stored manifest routinely holds exactly the object
+			// the API server refused — and an unquoted `stringData: {pin:
+			// 483920}` parses as a number, which the old `continue` left
+			// sitting in the clear. What a chart's author meant by it is
+			// their business; leaving it visible was ours.
+			//
+			// A MAP OR A LIST IS LEFT ALONE, which is the one shape not
+			// masked here. It is not a value at all — no encoding of a
+			// Secret's data has that shape — so replacing it would be
+			// rewriting a structure rather than hiding a value, and the
+			// placeholder would claim something about bytes that nothing
+			// measured. It stays visible for the same reason a ConfigMap
+			// does: this function hides Secret VALUES and does not guess at
+			// arbitrary structures.
+			switch value.(type) {
+			case map[string]any, []any:
+				continue
+			}
+
 			encoded, isString := value.(string)
 			if !isString {
+				// A scalar that is not a string: masked, and honestly
+				// labelled. Its length in the source text is not something
+				// this function can recover — YAML `483920` has already
+				// become a number — so it says unreadable rather than
+				// inventing a byte count.
+				values[key] = "<hidden, unreadable>"
 				continue
 			}
 

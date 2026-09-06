@@ -286,6 +286,24 @@ type HelmService interface {
 	// bypasses that cache for one call, which is what makes the stated age
 	// beside it actionable rather than decorative.
 	ListReleases(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, refresh bool) (domain.HelmListing, error)
+
+	// ReadRelease reads ONE revision of ONE release, because somebody
+	// clicked.
+	//
+	// THE SECOND ACT OF THIS FEATURE AND A COMPLETELY DIFFERENT ONE FROM THE
+	// FIRST. ListReleases transfers no Secret contents at all; this reads a
+	// release payload whole, which is the act ADR 3 governs — so it is
+	// shaped exactly like RevealSecretKey: explicit, per-revision, never on
+	// render, never on a tick, and audited by cluster, namespace, release
+	// and revision with no value in the line.
+	//
+	// The rendered manifest arrives with its Secret documents already
+	// masked. The VALUES and the NOTES do not: a chart puts a password in
+	// its values and nothing here can know which key that is, so the caller
+	// owes both of them the re-hideable, expiring, hidden-on-blur reveal the
+	// doctrine requires — notes included, because a NOTES template is
+	// rendered from the same values and routinely prints one back.
+	ReadRelease(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, release string, revision int) (domain.HelmReleaseDetail, error)
 }
 
 // InspectService is the use-case surface for the on-request inspections: a

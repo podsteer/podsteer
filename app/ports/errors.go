@@ -185,6 +185,52 @@ var (
 	// cannot help; another container is the answer.
 	ErrProbeToolMissing = errors.New("the container has nothing to probe with")
 
+	// ErrHelmPayloadTooLarge means a Helm release payload expanded past the
+	// ceiling decompression is allowed to reach (see helmPayloadLimit in
+	// app/adapters/k8s/helm_payload.go) and was REFUSED rather than truncated.
+	//
+	// ITS OWN SENTINEL BECAUSE THE ALTERNATIVE IS THE DANGEROUS ONE. etcd's
+	// 1 MiB object limit bounds the COMPRESSED release, and gzip expands by
+	// three orders of magnitude when somebody wants it to — so the ceiling
+	// is real rather than theoretical. A truncated release rendered as if it
+	// were whole is worse than a refusal by a wide margin: the manifest tab
+	// is read in order to decide something, and a manifest missing its last
+	// documents looks exactly like a manifest that never had them. So the
+	// read stops, says which release and revision it stopped on, and shows
+	// nothing.
+	//
+	// Not retryable, and nothing about the cluster or the credentials is
+	// wrong: the release is simply bigger than PodSteer will decompress.
+	ErrHelmPayloadTooLarge = errors.New("the Helm release payload is larger than PodSteer will decompress")
+
+	// ErrHelmPayloadUnreadable means a Secret named as a Helm release could
+	// not be read as one — it is not of type `helm.sh/release.v1`, its
+	// `owner`/`name`/`version` labels do not match what was asked for, or
+	// what it holds is not a base64'd (optionally gzip'd) release document.
+	//
+	// THE TYPE AND LABEL CHECKS ARE A SHAPE CHECK, NOT A BOUNDARY, and that
+	// distinction is worth keeping straight here because it is easy to
+	// overclaim. The Secret's name is DERIVED —
+	// `sh.helm.release.v1.<release>.v<n>` — so anybody who can create a
+	// Secret in that namespace can put an object at it, and can set its type
+	// and labels while they are there. Verifying is therefore about
+	// ACCIDENTS rather than forgery: a backup, a hand-made copy or a restore
+	// under the wrong name is refused instead of being decoded and rendered
+	// as the release it is not. What makes a hostile document merely a
+	// document is the rest of the read — bounded decompression, a narrow
+	// unmarshal target, and a manifest whose Secrets are masked.
+	//
+	// The `owner=helm` label is checked because the release LISTING selects
+	// on it: without it, an object the list cannot see would still be
+	// readable here, and the two acts would disagree about what a release is.
+	//
+	// One sentinel for both halves deliberately: "this is not a release" and
+	// "this release will not decode" lead to the same next step, which is
+	// looking at the Secret itself in the Secrets catalogue, and splitting
+	// them would mean the mismatch case telling somebody something about the
+	// contents of an object nothing here decoded.
+	ErrHelmPayloadUnreadable = errors.New("that Secret could not be read as a Helm release")
+
 	// ErrSettingsReadOnly means this process opened the settings without the
 	// ability to write them.
 	//

@@ -23,6 +23,29 @@ var writeVerbs = []string{
 	"abort", "trigger", "set", "write", "reveal", "debug", "shell",
 }
 
+// neverReachable are methods no interface this package accepts may declare,
+// whatever it is called or whichever field of Deps carries it.
+//
+// THE LIST IS OF ACTS, NOT OF INTERFACES, which is what makes it hold as this
+// package grows. Every entry returns Secret material on a deliberate,
+// audited, per-thing request an operator makes in front of the pane doing the
+// asking, and an agent has no equivalent act to perform — so the absence of
+// the method IS the guarantee, and a handler cannot be written to reach one.
+//
+//   - RevealSecretKey and InspectTLSSecret are the two that predate this:
+//     one key of one Secret, and a TLS certificate that lives beside a
+//     private key in the same object.
+//   - ReadHelmRelease is the third, added with the Helm payload read. A Helm
+//     release payload is a Secret's contents — the values a chart was
+//     installed with, which is where a chart puts a database password — and
+//     it is read on exactly the terms RevealSecretKey is. LISTING releases
+//     is a different act built entirely from labels, and might one day be
+//     offered to an agent; reading a payload must not arrive alongside it
+//     because somebody handed ports.HelmPort over whole. That is the reason
+//     HelmPort exists as its own type, and this is the assertion that keeps
+//     the reason true.
+var neverReachable = []string{"RevealSecretKey", "InspectTLSSecret", "ReadHelmRelease"}
+
 func TestEveryToolIsAReadAndNoneOfThemIsNamedForAWrite(t *testing.T) {
 	server := newServer(t, newStub(t))
 
@@ -75,6 +98,50 @@ func TestTheReadingInterfacesCarryNoWriteAndNoSecretReveal(t *testing.T) {
 				t.Errorf("%s declares %s; narrowing these interfaces is what makes the tool set read-only", name, method)
 			}
 		}
+	}
+}
+
+// The same rule made STRUCTURAL, and this is the one that survives the next
+// reader being added.
+//
+// The test above enumerates interfaces by hand, so a new reading interface —
+// a HelmReader offering the release list, say — would join Deps and be
+// checked by nothing. This walks Deps itself: every interface-typed field on
+// it, whatever it is called and whenever it was added, must declare none of
+// neverReachable. A future Helm tool can therefore be offered the LIST (built
+// from labels, no Secret contents at all) and can never quietly acquire the
+// PAYLOAD read alongside it by being handed ports.HelmPort whole.
+//
+// It also re-checks the two interfaces that already exist, so the guarantee
+// does not depend on somebody having remembered to name them above.
+func TestNoInterfaceTheServerAcceptsCanNameASecretReadingMethod(t *testing.T) {
+	deps := reflect.TypeOf(Deps{})
+
+	checked := 0
+	for i := range deps.NumField() {
+		field := deps.Field(i)
+		if field.Type.Kind() != reflect.Interface {
+			continue
+		}
+		checked++
+
+		for m := range field.Type.NumMethod() {
+			method := field.Type.Method(m).Name
+			for _, forbidden := range neverReachable {
+				if method == forbidden {
+					t.Errorf(
+						"Deps.%s (%s) declares %s; this package must be structurally unable to NAME it, "+
+							"which is what makes the absence a guarantee rather than a promise",
+						field.Name, field.Type, method)
+				}
+			}
+		}
+	}
+
+	// A guard that checked nothing would pass silently, which for a guard of
+	// this shape is the failure mode worth catching.
+	if checked == 0 {
+		t.Fatal("no interface-typed field was found on Deps; this guard is checking nothing")
 	}
 }
 

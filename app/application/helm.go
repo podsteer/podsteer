@@ -117,6 +117,64 @@ func (s *HelmService) ListReleases(
 	return listing, nil
 }
 
+// ReadRelease reads ONE revision of ONE release, because somebody clicked.
+//
+// THE AUDIT LINE IS THE POINT OF THIS METHOD EXISTING AT ALL, and it is the
+// same line ManagementService writes before every write: cluster, namespace,
+// the object and — here — the revision, and NEVER a value. That is not a
+// stylistic echo. Reading a release payload is reading a Secret's contents,
+// which ADR 3 permits only as a deliberate act somebody performed, and an act
+// nothing recorded is indistinguishable from one nobody performed. The line
+// is written BEFORE the read rather than after it, so a read that hangs or
+// fails is still recorded as having been asked for.
+//
+// WHAT IS NOT IN THE LINE MATTERS AS MUCH AS WHAT IS. No value, no key, no
+// byte count, no chart name — the same omission `slog.String("value", ...)`
+// gets in SetSecretKey, and for the same reason: a log that carries what it
+// was guarding undoes the guard. A release NAME is an object name and IS in
+// the line, which is the one deliberate difference from ListReleases' own
+// debug line: that one logs shapes because a listing is about a cluster,
+// while this one is about one object and an audit entry that cannot say which
+// object was opened is not an audit entry.
+//
+// A FAILURE IS RETURNED, NOT SOFTENED. Unlike ListReleases, where being
+// refused is an ordinary answer that arrives as a status beside the rows,
+// there is nothing to render here without the payload — so a refusal, a
+// reaped revision, an undecodable Secret and an oversized one all come back
+// as errors and the pane shows the sentence in place of the tabs. Collapsing
+// them into an empty detail would put an empty values tab in front of
+// somebody and let them read it as a release installed with no values.
+func (s *HelmService) ReadRelease(
+	ctx context.Context,
+	id domain.ClusterID,
+	namespace domain.NamespaceName,
+	release string,
+	revision int,
+) (domain.HelmReleaseDetail, error) {
+	s.logger.InfoContext(ctx, "reading helm release payload",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.String("release", release),
+		slog.Int("revision", revision))
+
+	if _, err := s.registry.Get(id); err != nil {
+		return domain.HelmReleaseDetail{}, fmt.Errorf("reading Helm release: %w", err)
+	}
+
+	detail, err := s.helm.ReadHelmRelease(ctx, id, namespace, release, revision)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to read helm release payload",
+			slog.String("cluster", id.String()),
+			slog.String("namespace", namespace.String()),
+			slog.String("release", release),
+			slog.Int("revision", revision),
+			slog.String("error", err.Error()))
+		return domain.HelmReleaseDetail{}, err
+	}
+
+	return detail, nil
+}
+
 // helmFailureReason is the sentence shown in place of a listing that failed
 // for something other than a refusal.
 //

@@ -84,3 +84,56 @@ func (h *HelmAPI) ListReleases(clusterID, namespace string, refresh bool) (HelmL
 
 	return toHelmListing(listing), nil
 }
+
+// ReadRelease reads ONE revision of ONE release, because somebody clicked.
+//
+// THE SECOND METHOD ON THIS SURFACE, AND A DIFFERENT ACT FROM THE FIRST.
+// ListReleases transfers no Secret contents whatsoever; this reads a release
+// payload whole, which is the act the Secrets doctrine governs. So it is
+// shaped exactly as RevealSecretKey is: it happens because somebody pressed
+// something, on one named revision, and it is audited in the application
+// layer by cluster, namespace, release and revision — never a value.
+//
+// NOTHING MAY EVER CALL THIS ON RENDER OR ON A TICK. The page calls it from
+// a button's handler and from nowhere else; a $effect that reached it would
+// turn opening a drawer into a Secret read, which is the pattern Kubernetes'
+// own guidance tells cluster operators to alert on and the exact thing this
+// whole feature was permitted on the condition of not doing.
+//
+// A FAILURE IS A REJECTION HERE, unlike ListReleases where a refusal is an
+// ordinary answer carried beside the rows. There is nothing to render without
+// the payload, and an empty detail would let an empty values tab read as a
+// release installed with no values. The two new codes — helm_payload_too_large
+// and helm_payload_unreadable — and the Helm-specific not_found sentence are
+// in errors.go.
+func (h *HelmAPI) ReadRelease(clusterID, namespace, release string, revision int) (HelmReleaseDetail, error) {
+	ctx, cancel := h.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return HelmReleaseDetail{}, apiError(h.logger, "ReadRelease", err)
+	}
+
+	name, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return HelmReleaseDetail{}, apiError(h.logger, "ReadRelease", err)
+	}
+
+	// A RELEASE PAYLOAD LIVES IN ONE NAMESPACE'S SECRET, so "all namespaces"
+	// is not a scope this read has. Refused here rather than passed down,
+	// because the alternative — composing a Secret name against an empty
+	// namespace — is a GET against whatever the client's default happens to
+	// be, which is exactly the class of quiet wrong-object read the
+	// verification in the adapter exists to catch.
+	if name.IsAll() {
+		return HelmReleaseDetail{}, apiError(h.logger, "ReadRelease", errHelmNamespaceRequired)
+	}
+
+	detail, err := h.helm.ReadRelease(ctx, id, name, release, revision)
+	if err != nil {
+		return HelmReleaseDetail{}, apiError(h.logger, "ReadRelease", err)
+	}
+
+	return toHelmReleaseDetail(detail), nil
+}
