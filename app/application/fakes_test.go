@@ -843,13 +843,23 @@ func (f *fakeManagementPort) CordonNode(_ context.Context, id domain.ClusterID, 
 }
 func (f *fakeManagementPort) EvictPod(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string, gracePeriodSeconds int) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.evictCalled = true
 	f.evictedID = id
 	f.evictedNS = namespace
 	f.evictedName = name
 	f.evictedGrace = gracePeriodSeconds
-	return f.evictErr
+	evictErr := f.evictErr
+	f.mu.Unlock()
+
+	// Through bulkWrite like CordonNode above, so BulkEvict gets the same
+	// per-name failure and in-flight accounting — which is how a
+	// PodDisruptionBudget refusing ONE pod while its neighbours leave can be
+	// tested at all. evictErr stays the every-call failure the single-pod
+	// tests configure.
+	if err := f.bulkWrite(name); err != nil {
+		return err
+	}
+	return evictErr
 }
 func (f *fakeManagementPort) DrainNode(_ context.Context, id domain.ClusterID, name string, opts domain.DrainOptions) (domain.DrainReport, error) {
 	f.mu.Lock()

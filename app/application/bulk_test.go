@@ -128,6 +128,7 @@ func TestBulkActionsRefuseAReadOnlyClusterUpFront(t *testing.T) {
 		call func() ([]application.BulkResult, error)
 	}{
 		{"BulkDelete", func() ([]application.BulkResult, error) { return service.BulkDelete(ctx, id, candidates) }},
+		{"BulkEvict", func() ([]application.BulkResult, error) { return service.BulkEvict(ctx, id, candidates) }},
 		{"BulkRestart", func() ([]application.BulkResult, error) { return service.BulkRestart(ctx, id, candidates) }},
 		{"BulkScale", func() ([]application.BulkResult, error) { return service.BulkScale(ctx, id, candidates, 2) }},
 		{"BulkCordon", func() ([]application.BulkResult, error) { return service.BulkCordon(ctx, id, candidates, true) }},
@@ -184,6 +185,116 @@ func TestBulkRestartSkipsWhatThePlanSkipsWithoutReachingThePort(t *testing.T) {
 	}
 	if calls := port.recordedCalls(); len(calls) != 1 || calls[0] != "RestartRollout" {
 		t.Errorf("port recorded %v, want exactly one RestartRollout", calls)
+	}
+}
+
+// TestBulkEvictReportsADisruptionBudgetRefusalAsOneLineAndFinishesTheRun is
+// the property bulk eviction exists for, and the one a flattened error would
+// destroy.
+//
+// A PodDisruptionBudget refusing ONE pod is not the run failing: RBAC allowed
+// the request and the object's own policy declined it, so the other pods
+// still leave and the refusal is recorded against the pod it protected,
+// keeping ports.ErrDisruptionBudget so the Wails layer can classify it into
+// its own code and its own sentence rather than into a generic forbidden.
+// Aborting here would tell an operator nothing was evicted when most of it
+// was, and leave them unable to see WHICH pod a budget is protecting.
+func TestBulkEvictReportsADisruptionBudgetRefusalAsOneLineAndFinishesTheRun(t *testing.T) {
+	t.Parallel()
+
+	port := &fakeManagementPort{
+		bulkFailFor: map[string]error{
+			"web-2": fmt.Errorf("evicting pod %q in %q of %q: %w", "web-2", "web", "dev", ports.ErrDisruptionBudget),
+		},
+	}
+	service := newManagementService(t, port, application.NewRegistry())
+
+	candidates := []domain.BulkCandidate{
+		bulkCandidate("Pod", "web", "web-1"),
+		bulkCandidate("Pod", "web", "web-2"),
+		bulkCandidate("Pod", "web", "web-3"),
+	}
+
+	results, err := service.BulkEvict(context.Background(), "dev", candidates)
+	if err != nil {
+		t.Fatalf("BulkEvict() error = %v, want nil — a budget refusal is a per-object result, not an aborted run", err)
+	}
+	if got := names(results); strings.Join(got, ",") != "web-1,web-2,web-3" {
+		t.Fatalf("results = %v, want one per candidate in the candidates' order", got)
+	}
+
+	if !errors.Is(results[1].Err, ports.ErrDisruptionBudget) {
+		t.Errorf("results[1].Err = %v, want wrapping ports.ErrDisruptionBudget — a budget refusal must not be folded into another error", results[1].Err)
+	}
+	if errors.Is(results[1].Err, ports.ErrForbidden) {
+		t.Errorf("results[1].Err = %v, want it NOT to read as forbidden: the account was allowed, the budget said no", results[1].Err)
+	}
+	for _, result := range []application.BulkResult{results[0], results[2]} {
+		if result.Err != nil || result.Skipped {
+			t.Errorf("%s: Err = %v, Skipped = %v, want a clean eviction beside the refused one", result.Ref.Name, result.Err, result.Skipped)
+		}
+	}
+
+	if got := port.bulkAttempted(); strings.Join(got, ",") != "web-1,web-2,web-3" {
+		t.Errorf("port attempted %v, want every pod regardless of the refusal", got)
+	}
+}
+
+// TestBulkEvictSkipsEveryNonPodKindWithoutReachingThePort: an eviction is a
+// create on a POD's eviction subresource, so the plan answers for every other
+// kind and no round trip is spent being told no.
+func TestBulkEvictSkipsEveryNonPodKindWithoutReachingThePort(t *testing.T) {
+	t.Parallel()
+
+	port := &fakeManagementPort{}
+	service := newManagementService(t, port, application.NewRegistry())
+
+	candidates := []domain.BulkCandidate{
+		bulkCandidate("Pod", "web", "web-1"),
+		bulkCandidate("Deployment", "web", "api"),
+		{Ref: domain.ResourceRef{ClusterID: "dev", Kind: domain.ResourceKind{Kind: "Node"}, Name: "node-1"}},
+	}
+
+	results, err := service.BulkEvict(context.Background(), "dev", candidates)
+	if err != nil {
+		t.Fatalf("BulkEvict() error = %v", err)
+	}
+
+	if results[0].Skipped || results[0].Err != nil {
+		t.Errorf("web-1: Skipped = %v, Err = %v, want evicted", results[0].Skipped, results[0].Err)
+	}
+	if !results[1].Skipped || !strings.Contains(results[1].Reason, "Deployment") {
+		t.Errorf("api: Skipped = %v, Reason = %q, want skipped with the Deployment reason", results[1].Skipped, results[1].Reason)
+	}
+	if !results[2].Skipped || !strings.Contains(results[2].Reason, "drain") {
+		t.Errorf("node-1: Skipped = %v, Reason = %q, want skipped pointing at a drain", results[2].Skipped, results[2].Reason)
+	}
+
+	if got := port.bulkAttempted(); strings.Join(got, ",") != "web-1" {
+		t.Errorf("port attempted %v, want only the pod", got)
+	}
+}
+
+// TestBulkEvictAsksForThePodsOwnGracePeriod: a bulk run must not shorten the
+// window a workload's own spec asked for, so it sends the negative sentinel
+// the pod drawer's Evict and a drain both send.
+func TestBulkEvictAsksForThePodsOwnGracePeriod(t *testing.T) {
+	t.Parallel()
+
+	port := &fakeManagementPort{}
+	service := newManagementService(t, port, application.NewRegistry())
+
+	if _, err := service.BulkEvict(context.Background(), "dev", []domain.BulkCandidate{bulkCandidate("Pod", "web", "web-1")}); err != nil {
+		t.Fatalf("BulkEvict() error = %v", err)
+	}
+
+	port.mu.Lock()
+	defer port.mu.Unlock()
+	if !port.evictCalled || port.evictedNS != "web" || port.evictedName != "web-1" {
+		t.Fatalf("port evict call = (%v, %q, %q), want web/web-1", port.evictCalled, port.evictedNS, port.evictedName)
+	}
+	if port.evictedGrace >= 0 {
+		t.Errorf("evictedGrace = %d, want negative — the pod's own terminationGracePeriodSeconds", port.evictedGrace)
 	}
 }
 

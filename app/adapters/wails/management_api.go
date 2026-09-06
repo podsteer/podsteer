@@ -922,8 +922,8 @@ func (m *ManagementAPI) StopAllNodeShells() error {
 // refusing anything else as invalid input rather than planning nothing.
 func parseBulkAction(action string) (domain.BulkAction, error) {
 	switch parsed := domain.BulkAction(action); parsed {
-	case domain.BulkActionDelete, domain.BulkActionRestart, domain.BulkActionScale,
-		domain.BulkActionCordon, domain.BulkActionUncordon:
+	case domain.BulkActionDelete, domain.BulkActionEvict, domain.BulkActionRestart,
+		domain.BulkActionScale, domain.BulkActionCordon, domain.BulkActionUncordon:
 		return parsed, nil
 	default:
 		return "", fmt.Errorf("%w: %q", errInvalidBulkAction, action)
@@ -996,6 +996,17 @@ func (m *ManagementAPI) bulk(op, clusterID string, items []BulkItemDTO, run bulk
 // outcome.
 func (m *ManagementAPI) BulkDelete(clusterID string, items []BulkItemDTO) ([]BulkResultDTO, error) {
 	return m.bulk("BulkDelete", clusterID, items, m.management.BulkDelete)
+}
+
+// BulkEvict evicts every selected pod through the eviction subresource, and
+// reports each outcome.
+//
+// A PodDisruptionBudget refusing one pod is that pod's own result, carrying
+// CodeDisruptionBudget and the same sentence a single evict's refusal
+// carries — the run itself succeeds, and the returned error covers only what
+// stopped the whole action.
+func (m *ManagementAPI) BulkEvict(clusterID string, items []BulkItemDTO) ([]BulkResultDTO, error) {
+	return m.bulk("BulkEvict", clusterID, items, m.management.BulkEvict)
 }
 
 // BulkRestart triggers a rolling restart of every selected Deployment,

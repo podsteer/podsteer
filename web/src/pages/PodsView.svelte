@@ -17,13 +17,15 @@
   import { POD_STATUS_CHIPS } from '$lib/podStatusFilters'
   import { type RowAction } from '$lib/components/RowMenu.svelte'
   import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { rowActionsFor, toRowActions } from '$lib/rowActions'
+  import { organisation } from '$stores/organisation.svelte'
   import CustomCells from '$lib/components/CustomCells.svelte'
   import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
   import RowSelect from '$lib/components/RowSelect.svelte'
   import { rowKey } from '$lib/bulk'
   import { isControlColumn } from '$lib/fixedColumns'
   import { get as kubectlGet } from '$lib/kubectl'
-  import type { ClusterSession } from '$stores/session.svelte'
+  import type { ClusterSession, DetailIntent } from '$stores/session.svelte'
   import type { Pod } from '$lib/api/client'
   import { Box, CircleDot, TriangleAlert, Plug, Loader, ShieldAlert } from '@lucide/svelte'
   import { forwards } from '$stores/forwards.svelte'
@@ -34,6 +36,18 @@
   }
 
   let { session }: Props = $props()
+
+  /**
+   * Whether this cluster is marked read-only, read fresh so a change in
+   * Organise takes effect at once — the same pattern the drawer and the node
+   * list use. It disables the menu's write items; the backend refuses them
+   * regardless (see ManagementService), so this is the first line, not the
+   * last.
+   */
+  const placement = $derived(organisation.placementOf(session.cluster.id))
+  const isReadOnly = $derived(
+    organisation.settingsFor(placement.project, placement.group).readOnly,
+  )
 
   /**
    * How many of the search-filtered pods each chip would add, in one pass —
@@ -100,15 +114,32 @@
    * When they do not, the fill answers a question the thresholds are not
    * about, so the lines are left unmarked and only the colour carries them.
    */
-  /** What every pod row offers from its menu — just the one thing so far. */
+  /**
+   * What every pod row offers from its menu.
+   *
+   * Each write item OPENS THE POD and engages the drawer's own control for
+   * it — see $lib/rowActions and ClusterSession.detailIntent. Nothing is
+   * confirmed or written here: Evict reaches EvictDialog, which says a
+   * PodDisruptionBudget may refuse it, and Delete reaches DeleteDialog,
+   * which types the object's name on a production cluster. Logs and Terminal
+   * open the tab an operator opened the pod for, rather than a second log
+   * viewer living in a table row.
+   */
   function actionsFor(pod: Pod): RowAction[] {
-    return [
+    const open = (intent: DetailIntent) => () =>
+      void session.openDetailFor(intent, pod.name, pod.namespace, pod)
+
+    return toRowActions(
+      rowActionsFor('Pod'),
       {
-        label: 'Copy as kubectl',
-        kind: 'copy',
-        onclick: () => copyKubectl(kubectlGet(session.cluster.id, 'pods', pod.name, pod.namespace)),
+        logs: open({ tab: 'logs' }),
+        terminal: open({ tab: 'terminal' }),
+        evict: open({ action: 'evict' }),
+        delete: open({ action: 'delete' }),
+        kubectl: () => copyKubectl(kubectlGet(session.cluster.id, 'pods', pod.name, pod.namespace)),
       },
-    ]
+      isReadOnly,
+    )
   }
 
   /**

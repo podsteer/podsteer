@@ -39,6 +39,19 @@ export function BulkDelete(clusterID: string, items: $models.BulkItemDTO[] | nul
 }
 
 /**
+ * BulkEvict evicts every selected pod through the eviction subresource, and
+ * reports each outcome.
+ * 
+ * A PodDisruptionBudget refusing one pod is that pod's own result, carrying
+ * CodeDisruptionBudget and the same sentence a single evict's refusal
+ * carries — the run itself succeeds, and the returned error covers only what
+ * stopped the whole action.
+ */
+export function BulkEvict(clusterID: string, items: $models.BulkItemDTO[] | null): $CancellablePromise<$models.BulkResultDTO[] | null> {
+    return $Call.ByID(2191025209, clusterID, items);
+}
+
+/**
  * BulkRestart triggers a rolling restart of every selected Deployment,
  * StatefulSet and DaemonSet, and reports each outcome.
  */
