@@ -22,6 +22,7 @@ import {
   type AlertSeverity,
 } from './alerts.svelte'
 import { customColumnId, normaliseSpecs, type CustomColumnSpec } from '$lib/customColumns'
+import { EDGE_COLUMNS, type EdgeColumn } from '$lib/fixedColumns'
 import {
   entryFor,
   describeValue,
@@ -525,6 +526,21 @@ interface PersistedShape {
    * them live here. See $lib/customColumns.
    */
   customColumns: Record<string, CustomColumnSpec[]>
+  /**
+   * Whether each edge column stays put while a table scrolls sideways.
+   *
+   * ONE SETTING FOR EVERY LIST, not one per kind, and deliberately unlike the
+   * two fields above it. A width and a hidden column answer "the name column
+   * is too narrow on Pods", which is a fact about pods. Keeping the tick box
+   * in view is a reading habit, the way `wrapLines` is: somebody who wants to
+   * aim at it while reading the node column wants that on the node list too,
+   * and making them find the same switch on six lists would be six switches
+   * for one decision.
+   *
+   * See $lib/fixedColumns for what "fixed" means here and why it is not the
+   * same thing as `Column.pinned`.
+   */
+  fixedEdges: Record<EdgeColumn, boolean>
 }
 
 const DEFAULTS: PersistedShape = {
@@ -583,6 +599,10 @@ const DEFAULTS: PersistedShape = {
   alertSounds: DEFAULT_ALERT_SOUNDS,
   columns: {},
   customColumns: {},
+  // Both on. A control that has scrolled off screen is not a control anybody
+  // can reach, and the operator who wants the whole width for values can say
+  // so in the column menu.
+  fixedEdges: { select: true, menu: true },
 }
 
 /**
@@ -638,6 +658,7 @@ export interface ExportedPreferences {
   alertSounds: Record<AlertSeverity, string>
   columns: Record<string, Record<string, ColumnPreference>>
   customColumns: Record<string, CustomColumnSpec[]>
+  fixedEdges: Record<EdgeColumn, boolean>
 }
 
 class Preferences {
@@ -806,6 +827,7 @@ class Preferences {
   /** kindId -> columnId -> preference. */
   columns = $state<Record<string, Record<string, ColumnPreference>>>({})
   customColumns = $state<Record<string, CustomColumnSpec[]>>({})
+  fixedEdges = $state<Record<EdgeColumn, boolean>>({ ...DEFAULTS.fixedEdges })
 
   constructor() {
     this.#load()
@@ -1276,10 +1298,29 @@ class Preferences {
     })
   }
 
-  /** Drops every column override for a kind, restoring its defaults. */
+  /**
+   * Drops every column override for a kind, restoring its defaults.
+   *
+   * Widths and visibility only. `fixedEdges` is deliberately untouched: it is
+   * not per kind, so resetting it here would undo a choice made on a
+   * different list from the one whose button was pressed.
+   */
   resetColumns = (kindId: string): void => {
     const { [kindId]: _dropped, ...rest } = this.columns
     this.columns = rest
+    this.#save()
+  }
+
+  // --- Fixed edge columns ---------------------------------------------------
+
+  /** Whether an edge column stays put while the table scrolls sideways. */
+  isEdgeFixed = (edge: EdgeColumn): boolean => this.fixedEdges[edge]
+
+  toggleEdgeFixed = (edge: EdgeColumn): void => {
+    // Reassigned rather than mutated, for the reason #mutateColumn gives:
+    // $state tracks the root reference, and DataTable's placement is derived
+    // from this object.
+    this.fixedEdges = { ...this.fixedEdges, [edge]: !this.fixedEdges[edge] }
     this.#save()
   }
 
@@ -1386,6 +1427,7 @@ class Preferences {
     alertSounds: { ...this.alertSounds },
     columns: plainCopy(this.columns),
     customColumns: plainCopy(this.customColumns),
+    fixedEdges: { ...this.fixedEdges },
   })
 
   /**
@@ -1427,6 +1469,7 @@ class Preferences {
     this.alertSounds = { ...next.alertSounds }
     this.columns = plainCopy(next.columns)
     this.customColumns = plainCopy(next.customColumns)
+    this.fixedEdges = { ...next.fixedEdges }
 
     this.#applyTheme()
     this.#save()
@@ -1615,6 +1658,16 @@ class Preferences {
         }
         this.customColumns = cleaned
       }
+      // Key by key against the two that exist, so a build that grows a third
+      // edge column reads an older store as "that one is at its default"
+      // rather than as an object missing a key nothing will ever write.
+      if (stored.fixedEdges && typeof stored.fixedEdges === 'object') {
+        const restored = { ...this.fixedEdges }
+        for (const edge of EDGE_COLUMNS) {
+          if (typeof stored.fixedEdges[edge] === 'boolean') restored[edge] = stored.fixedEdges[edge]
+        }
+        this.fixedEdges = restored
+      }
     } catch {
       // Corrupt or unavailable storage must not stop the app starting. The
       // defaults are perfectly usable, and the next save repairs the entry.
@@ -1658,6 +1711,7 @@ class Preferences {
         alertSounds: this.alertSounds,
         columns: this.columns,
         customColumns: this.customColumns,
+        fixedEdges: this.fixedEdges,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
     } catch {
@@ -1750,6 +1804,7 @@ export const EXPORTED_PREFERENCE_FIELDS = [
   'alertSounds',
   'columns',
   'customColumns',
+  'fixedEdges',
 ] as const satisfies readonly (keyof ExportedPreferences)[]
 
 /** What this build sets when a replacing document does not mention a field. */
@@ -1831,6 +1886,23 @@ function asThresholds(raw: unknown): Record<ThresholdScope, ThresholdSet> | unde
   }
 }
 
+/**
+ * The two edge columns, each read on its own against what this build knows.
+ *
+ * Anything else in the object is dropped rather than carried: an unknown key
+ * here would be an edge column a later build invented, and reading it back
+ * would put a value in the store that nothing renders and nothing can clear.
+ */
+function asFixedEdges(raw: unknown): Record<EdgeColumn, boolean> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return REJECT
+  const stored = raw as Partial<Record<EdgeColumn, unknown>>
+  const out = { ...DEFAULTS.fixedEdges }
+  for (const edge of EDGE_COLUMNS) {
+    if (typeof stored[edge] === 'boolean') out[edge] = stored[edge]
+  }
+  return out
+}
+
 /** Per-severity motifs, each checked against the catalogue that exists here. */
 function asAlertSounds(raw: unknown): Record<AlertSeverity, string> | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return REJECT
@@ -1891,6 +1963,7 @@ const PREFERENCE_READERS: {
     })(raw)
     return map as Record<string, CustomColumnSpec[]> | undefined
   },
+  fixedEdges: asFixedEdges,
 }
 
 /** Reads the preferences half, reporting what it did not know or accept. */
@@ -1931,6 +2004,7 @@ const RECORD_FIELDS = new Set<keyof ExportedPreferences>([
   'alertSounds',
   'columns',
   'customColumns',
+  'fixedEdges',
 ])
 
 /**
@@ -2031,6 +2105,7 @@ const PREFERENCE_LABELS: Record<keyof ExportedPreferences, { label: string; unit
   alertSounds: { label: 'Sound per severity' },
   columns: { label: 'Saved column layouts', unit: 'kinds' },
   customColumns: { label: 'Custom columns', unit: 'kinds' },
+  fixedEdges: { label: 'Columns kept in view while a table scrolls sideways' },
 }
 
 /** The three surfaces spelled out, because the numbers ARE the decision. */
@@ -2050,6 +2125,17 @@ function describeAlertSounds(value: unknown): string {
   return ALERT_SEVERITIES.map((severity) => `${severity} ${sounds[severity]}`).join(' · ')
 }
 
+/**
+ * Which edge columns are fixed, spelled out.
+ *
+ * Two booleans would otherwise be counted as "2 entries" by the generic
+ * describer, which says nothing about what the import is going to change.
+ */
+function describeFixedEdges(value: unknown): string {
+  const edges = value as Record<EdgeColumn, boolean>
+  return EDGE_COLUMNS.map((edge) => `${edge} ${edges[edge] ? 'fixed' : 'free'}`).join(' · ')
+}
+
 /** One review line per preference field, changed or not. */
 export function describePreferenceChanges(
   current: ExportedPreferences,
@@ -2062,7 +2148,9 @@ export function describePreferenceChanges(
         ? describeThresholds
         : field === 'alertSounds'
           ? describeAlertSounds
-          : (value: unknown) => describeValue(value, meta.unit)
+          : field === 'fixedEdges'
+            ? describeFixedEdges
+            : (value: unknown) => describeValue(value, meta.unit)
     return entryFor('Preferences', meta.label, current[field], next[field], render)
   })
 }

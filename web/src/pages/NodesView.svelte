@@ -6,12 +6,14 @@
   even though capacity says otherwise.
 -->
 <script lang="ts">
-  import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import DataTable, { ROW_MENU_COLUMN, type Column } from '$lib/components/DataTable.svelte'
   import type { CSVExport } from '$stores/activeTable.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
-  import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
+  import { type RowAction } from '$lib/components/RowMenu.svelte'
+  import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { isControlColumn } from '$lib/fixedColumns'
   import CustomCells from '$lib/components/CustomCells.svelte'
   import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
   import RowSelect from '$lib/components/RowSelect.svelte'
@@ -81,8 +83,13 @@
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
 
-  /** The built-in columns, then the operator's own — see $lib/customColumns. */
-  const columns = $derived<Column[]>([...COLUMNS, ...toColumns(session.customColumns)])
+  /** The built-in columns, then the operator's own — see $lib/customColumns —
+      and the row menu last, because it is the end of the row. */
+  const columns = $derived<Column[]>([
+    ...COLUMNS,
+    ...toColumns(session.customColumns),
+    ROW_MENU_COLUMN,
+  ])
 
   /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
       repeated here rather than asked of either. */
@@ -102,8 +109,9 @@
 
   /** The node list's CSV export, mirroring exactly what each cell shows. */
   function exportCSV(): CSVExport {
-    // The tick box is a control, not a column with text in it.
-    const visible = columns.filter((column) => !column.select && isColumnVisible(column))
+    // The tick box and the row menu are controls, not columns with text in
+    // them: exported, each would be a heading over a column of empty cells.
+    const visible = columns.filter((column) => !isControlColumn(column) && isColumnVisible(column))
 
     function cell(node: Node, id: string): string {
       const custom = parseCustomColumnId(id)
@@ -166,9 +174,17 @@
     {#each session.pagedNodes as node (node.name)}
       {@const selected = session.selectedName === node.name}
       {@const ticked = session.selection.has(node.name)}
+      <!-- The state grounds are OPAQUE tokens rather than the translucent
+           `bg-primary/8` they used to be: the pinned columns inherit this
+           row's own colour, and a translucent one lets the cells scrolling
+           underneath show through them. See the row grounds in app.css. -->
       <tr
         class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
-               {selected ? 'bg-primary/8' : ticked ? 'bg-primary/5' : 'hover:bg-surface-container-low'}"
+               {selected
+          ? 'bg-row-open'
+          : ticked
+            ? 'bg-row-ticked'
+            : 'bg-surface hover:bg-surface-container-low'}"
         aria-selected={ticked}
         onclick={() => session.openDetail(node.name, '', undefined, undefined, node)}
       >
@@ -308,14 +324,7 @@
           </td>
         {/if}
         <CustomCells specs={session.customColumns} row={node} {isVisible} />
-        <!-- Stops the click here: the row itself opens the detail drawer,
-             and a click aimed at the menu — or at one of its items — must
-             not also do that. -->
-        <td class="px-2" onclick={(event) => event.stopPropagation()}>
-          <div class="flex justify-end">
-            <RowMenu actions={actionsFor(node)} label={node.name} />
-          </div>
-        </td>
+        <RowMenuCell actions={actionsFor(node)} label={node.name} />
       </tr>
     {/each}
   {/snippet}

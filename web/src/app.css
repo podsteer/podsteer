@@ -195,6 +195,43 @@
   --group-purple: #8430ce;
 }
 
+/* ---- Table row grounds, which have to be OPAQUE -------------------------
+ *
+ * A list row's state used to be a translucent tint over whatever was behind
+ * it — `bg-primary/8` for the row whose detail drawer is open, `bg-primary/5`
+ * for a ticked one. That is fine until a cell in that row stays put while the
+ * table scrolls sideways (see $lib/fixedColumns): a sticky cell paints only
+ * what it was given, so a translucent one lets the columns passing underneath
+ * show straight through and the pinned tick box reads as garbage.
+ *
+ * So the states are pre-composited here, in the one place both halves can be
+ * kept in step, and the fixed cells simply inherit the row's own colour. Each
+ * is the identical result — `bg-primary/8` is 8% of primary over the section
+ * behind the table, which is `--surface`, and that is exactly what this mix
+ * says — so nothing about a still page changes.
+ *
+ * Declared once rather than per theme: the mixes resolve through `--primary`,
+ * `--secondary-container` and `--surface`, which the two blocks above already
+ * redefine, so both schemes follow for free.
+ *
+ * `--row-open-secondary` exists because two views mark the open row with the
+ * secondary container rather than primary, and matching each view's own tint
+ * matters more here than making them agree: a pinned cell that is a different
+ * colour from the rest of its row is worse than two views that differ.
+ */
+:root {
+  --row-ticked: color-mix(in srgb, var(--primary) 5%, var(--surface));
+  --row-open: color-mix(in srgb, var(--primary) 8%, var(--surface));
+  --row-open-secondary: color-mix(in srgb, var(--secondary-container) 40%, var(--surface));
+
+  /* The header's own ground, for a cell that is sticky in BOTH directions and
+     therefore cannot borrow the <thead>'s background: the header band scrolls
+     sideways underneath it. The mix reproduces `bg-surface-container/95` over
+     the same surface; the blur behind it contributes the remaining 5% and is
+     not worth reproducing. */
+  --table-header: color-mix(in srgb, var(--surface-container) 95%, var(--surface));
+}
+
 /*
  * The Tailwind colour tokens themselves. `inline` makes each utility resolve
  * to the custom property it references instead of a fixed value, which is the
@@ -252,6 +289,11 @@
   --color-inverse-surface: var(--inverse-surface);
   --color-inverse-on-surface: var(--inverse-on-surface);
   --color-inverse-primary: var(--inverse-primary);
+
+  --color-row-ticked: var(--row-ticked);
+  --color-row-open: var(--row-open);
+  --color-row-open-secondary: var(--row-open-secondary);
+  --color-table-header: var(--table-header);
 
   --color-group-red: var(--group-red);
   --color-group-orange: var(--group-orange);
