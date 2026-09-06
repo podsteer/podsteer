@@ -51,6 +51,13 @@ type Adapter struct {
 	// forwards: each is a privileged pod PodSteer created, and the record of
 	// it must never outlive or predecease the pod itself. See nodeshell.go.
 	nodeShells nodeShells
+	// clusterShells are the live in-cluster shells — ordinary, unprivileged
+	// pods PodSteer created in a namespace. A second registry rather than a
+	// field on nodeShells: the two have different lifecycles to explain and
+	// different sweeps to name in OnShutdown, and a shared map would make
+	// "stop all node shells" and "stop all in-cluster shells" the same
+	// button. See clustershell.go.
+	clusterShells clusterShells
 	// backends caches metrics-backend discovery, which answers a question
 	// whose value moves in days: a monitoring stack is installed once.
 	backends backendCache
@@ -94,18 +101,19 @@ type Adapter struct {
 
 // Compile-time proof that the adapter satisfies every outbound port it claims.
 var (
-	_ ports.KubeconfigPort  = (*Adapter)(nil)
-	_ ports.ClusterPort     = (*Adapter)(nil)
-	_ ports.WorkloadPort    = (*Adapter)(nil)
-	_ ports.EventPort       = (*Adapter)(nil)
-	_ ports.MetricsPort     = (*Adapter)(nil)
-	_ ports.ResourcePort    = (*Adapter)(nil)
-	_ ports.RBACPort        = (*Adapter)(nil)
-	_ ports.HelmPort        = (*Adapter)(nil)
-	_ ports.ManagementPort  = (*Adapter)(nil)
-	_ ports.PortForwardPort = (*Adapter)(nil)
-	_ ports.NodeShellPort   = (*Adapter)(nil)
-	_ ports.InspectPort     = (*Adapter)(nil)
+	_ ports.KubeconfigPort   = (*Adapter)(nil)
+	_ ports.ClusterPort      = (*Adapter)(nil)
+	_ ports.WorkloadPort     = (*Adapter)(nil)
+	_ ports.EventPort        = (*Adapter)(nil)
+	_ ports.MetricsPort      = (*Adapter)(nil)
+	_ ports.ResourcePort     = (*Adapter)(nil)
+	_ ports.RBACPort         = (*Adapter)(nil)
+	_ ports.HelmPort         = (*Adapter)(nil)
+	_ ports.ManagementPort   = (*Adapter)(nil)
+	_ ports.PortForwardPort  = (*Adapter)(nil)
+	_ ports.NodeShellPort    = (*Adapter)(nil)
+	_ ports.ClusterShellPort = (*Adapter)(nil)
+	_ ports.InspectPort      = (*Adapter)(nil)
 )
 
 // New returns a Kubernetes adapter configured by cfg.
@@ -128,6 +136,8 @@ func New(cfg Config, logger *slog.Logger) *Adapter {
 		watches:    newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery, recheckEvery),
 		forwards:   portForwards{byID: make(map[string]*forwarder)},
 		nodeShells: nodeShells{byID: make(map[string]domain.NodeShell)},
+
+		clusterShells: clusterShells{byID: make(map[string]domain.ClusterShell)},
 	}
 }
 

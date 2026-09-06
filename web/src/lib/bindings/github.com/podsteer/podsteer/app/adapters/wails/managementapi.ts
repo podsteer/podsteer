@@ -112,12 +112,33 @@ export function ExecInPod(clusterID: string, $namespace: string, podName: string
 }
 
 /**
+ * FindClusterShells reports the in-cluster shell pods PodSteer already has in
+ * one namespace, split into what may be reused and what may only be reported.
+ * 
+ * A READ. No read-only refusal and no audit line: listing pods by label
+ * changes nothing. The dialog calls it before offering to create one, so an
+ * operator is offered the pod that is already there rather than a second one
+ * beside it.
+ */
+export function FindClusterShells(clusterID: string, $namespace: string): $CancellablePromise<$models.ClusterShellReuse> {
+    return $Call.ByID(601805200, clusterID, $namespace);
+}
+
+/**
  * FreeLocalPort asks the operating system for a local TCP port nothing is
  * using, so the "Pick a free port" control can offer one instead of asking
  * the operator to guess.
  */
 export function FreeLocalPort(): $CancellablePromise<number> {
     return $Call.ByID(1404535818);
+}
+
+/**
+ * ListClusterShells reports the in-cluster shells running right now — the live
+ * registry, exactly like ListNodeShells.
+ */
+export function ListClusterShells(): $CancellablePromise<$models.ClusterShell[] | null> {
+    return $Call.ByID(3870591721);
 }
 
 /**
@@ -263,6 +284,15 @@ export function StartPortForward(clusterID: string, $namespace: string, pod: str
 }
 
 /**
+ * StopAllClusterShells deletes every in-cluster shell pod, across every
+ * cluster — the "Stop all" companion, and what the composition root calls on
+ * shutdown so no pod PodSteer created is left running in somebody's namespace.
+ */
+export function StopAllClusterShells(): $CancellablePromise<void> {
+    return $Call.ByID(3798158064);
+}
+
+/**
  * StopAllNodeShells deletes every node-shell pod, across every cluster — the
  * "Stop all" companion for node shells, and what the composition root calls on
  * shutdown so nothing privileged is left running on a node.
@@ -283,6 +313,15 @@ export function StopAllNodeShells(): $CancellablePromise<void> {
  */
 export function StopAllPortForwards(): $CancellablePromise<void> {
     return $Call.ByID(1363765426);
+}
+
+/**
+ * StopClusterShell deletes the pod behind one in-cluster shell — the stop
+ * control in the activity list. The attach session ending deletes the pod on
+ * its own, so this and that both reaching the same shell is not an error.
+ */
+export function StopClusterShell(shellID: string): $CancellablePromise<void> {
+    return $Call.ByID(3027581648, shellID);
 }
 
 /**

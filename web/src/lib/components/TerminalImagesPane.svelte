@@ -36,6 +36,7 @@
     DEFAULT_DEBUG_IMAGE,
     DEFAULT_NODE_SHELL_IMAGE,
     DEFAULT_NODE_SHELL_NAMESPACE,
+    DEFAULT_CLUSTER_SHELL_IMAGE,
   } from '$stores/preferences.svelte'
   import Button from './Button.svelte'
 
@@ -50,6 +51,7 @@
   let debugImage = $state(preferences.debugImage)
   let nodeShellImage = $state(preferences.nodeShellImage)
   let nodeShellNamespace = $state(preferences.nodeShellNamespace)
+  let clusterShellImage = $state(preferences.clusterShellImage)
 
   function commitDebugImage() {
     preferences.setDebugImage(debugImage)
@@ -66,27 +68,35 @@
     nodeShellNamespace = preferences.nodeShellNamespace
   }
 
-  /** True when all three are what PodSteer ships with, so Reset can say so. */
+  function commitClusterShellImage() {
+    preferences.setClusterShellImage(clusterShellImage)
+    clusterShellImage = preferences.clusterShellImage
+  }
+
+  /** True when all four are what PodSteer ships with, so Reset can say so. */
   const atDefaults = $derived(
     preferences.debugImage === DEFAULT_DEBUG_IMAGE &&
       preferences.nodeShellImage === DEFAULT_NODE_SHELL_IMAGE &&
-      preferences.nodeShellNamespace === DEFAULT_NODE_SHELL_NAMESPACE,
+      preferences.nodeShellNamespace === DEFAULT_NODE_SHELL_NAMESPACE &&
+      preferences.clusterShellImage === DEFAULT_CLUSTER_SHELL_IMAGE,
   )
 
   function resetAll() {
     preferences.setDebugImage('')
     preferences.setNodeShellImage('')
     preferences.setNodeShellNamespace('')
+    preferences.setClusterShellImage('')
     debugImage = preferences.debugImage
     nodeShellImage = preferences.nodeShellImage
     nodeShellNamespace = preferences.nodeShellNamespace
+    clusterShellImage = preferences.clusterShellImage
   }
 </script>
 
 <section>
   <h3 class="text-title-medium text-on-surface">Terminal images</h3>
   <p class="mt-0.5 text-body-small leading-relaxed text-on-surface-variant">
-    Two of PodSteer's terminals run a container <em class="text-on-surface not-italic"
+    Three of PodSteer's terminals run a container <em class="text-on-surface not-italic"
       >in your cluster</em
     >, so they need an image to run. PodSteer never pulls one itself — it names the image and your
     nodes pull it, with whatever registry credentials they already have. If your clusters cannot
@@ -161,6 +171,34 @@
     <code class="text-on-surface">restricted</code> will refuse one.
   </p>
 
+  <h4 class="mt-6 text-label-large uppercase tracking-wider text-on-surface-variant">
+    In-cluster shell
+  </h4>
+  <label class="mt-2 block">
+    <span class="sr-only">In-cluster shell image</span>
+    <input
+      type="text"
+      bind:value={clusterShellImage}
+      onchange={commitClusterShellImage}
+      onblur={commitClusterShellImage}
+      placeholder={DEFAULT_CLUSTER_SHELL_IMAGE}
+      spellcheck="false"
+      autocapitalize="off"
+      autocorrect="off"
+      class="field w-full px-3 py-2 font-mono text-body-small"
+    />
+  </label>
+  <p class="mt-1.5 text-body-small leading-relaxed text-on-surface-variant">
+    A throwaway pod in a namespace you choose, attached to — so
+    <code class="text-on-surface">kubectl</code>, <code class="text-on-surface">dig</code> and
+    <code class="text-on-surface">curl</code> see the cluster's network from inside it. It is an
+    ordinary pod in <em class="text-on-surface not-italic">someone's own namespace</em>, so this
+    default is the nonroot variant for the debug container's reason: under
+    <code class="text-on-surface">restricted</code> a root container is refused outright. There is
+    no namespace setting beside it — that one follows the tab, and when the tab is showing every
+    namespace the dialog asks.
+  </p>
+
   <div class="mt-5 flex items-center gap-3">
     <Button variant="outlined" disabled={atDefaults} onclick={resetAll}>Restore defaults</Button>
     <span class="text-body-small text-on-surface-variant/70">
@@ -172,7 +210,7 @@
     class="mt-5 rounded-sm border border-outline-variant/50 bg-surface-container px-3 py-2
            text-body-small leading-relaxed text-on-surface-variant"
   >
-    Both defaults are pinned to an exact tag rather than a moving one: what PodSteer creates in your
+    Every default is pinned to an exact tag rather than a moving one: what PodSteer creates in your
     cluster must not change because an upstream tag was republished. A new image arrives in a
     PodSteer release.
   </p>

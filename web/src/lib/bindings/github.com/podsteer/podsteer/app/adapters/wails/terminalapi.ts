@@ -19,6 +19,19 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * AttachClusterShellSession attaches to a shell pod PodSteer already created in
+ * this namespace — the reuse path, offered when one is found RUNNING.
+ * 
+ * Adopting the pod puts it on the same hook a created one is on: it is deleted
+ * when this session ends. That is the point of adopting rather than merely
+ * attaching — a pod nobody owns is a pod nobody deletes, and reuse would
+ * otherwise be how a namespace fills up.
+ */
+export function AttachClusterShellSession(clusterID: string, $namespace: string, podName: string, cols: number, rows: number): $CancellablePromise<string> {
+    return $Call.ByID(2268935434, clusterID, $namespace, podName, cols, rows);
+}
+
+/**
  * DetectAgents reports the coding agents present on the operator's PATH.
  * 
  * FOUND, NOT INSTALLED, and that distinction is the whole feature: PodSteer
@@ -86,6 +99,25 @@ export function StartAgentSession(clusterContext: string, agent: string, kind: s
  */
 export function StartAttachSession(clusterID: string, $namespace: string, podName: string, containerName: string, cols: number, rows: number): $CancellablePromise<string> {
     return $Call.ByID(531957880, clusterID, $namespace, podName, containerName, cols, rows);
+}
+
+/**
+ * StartClusterShellSession creates an ordinary, unprivileged pod in a
+ * namespace and attaches to the shell running in it — a vantage point INSIDE
+ * the cluster's network, for kubectl, dig and curl. It returns the session ID.
+ * 
+ * The pod is DELETED when this session ends, exactly as a node shell's is, and
+ * for the same reason: PodSteer created it, so PodSteer removes it. The
+ * activeDeadlineSeconds the pod carries is only a backstop for the one case
+ * this cannot cover — PodSteer crashing.
+ * 
+ * NOT the node shell (privileged, host namespaces, pinned to a node) and NOT
+ * the ephemeral debug container (injected into somebody else's pod, and never
+ * removed because Kubernetes will not remove one). See
+ * ports.ClusterShellPort.
+ */
+export function StartClusterShellSession(clusterID: string, $namespace: string, image: string, cols: number, rows: number): $CancellablePromise<string> {
+    return $Call.ByID(28636627, clusterID, $namespace, image, cols, rows);
 }
 
 /**

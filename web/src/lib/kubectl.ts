@@ -368,6 +368,33 @@ export function debugNode(ctx: string, node: string, image: string): string {
 }
 
 /**
+ * `kubectl --context c -n ns run podsteer-shell --rm -it --image=<image> --restart=Never`.
+ *
+ * What the IN-CLUSTER shell approximates, and the approximation is close: this
+ * really is an ordinary pod in a namespace with a shell attached. Two
+ * differences worth knowing rather than glossing. `--rm` deletes the pod when
+ * kubectl's own session ends and PodSteer deletes it from the Go side instead,
+ * so a crashed client cannot strand one — which is also why PodSteer's pod
+ * carries an `activeDeadlineSeconds` backstop this line has no equivalent for.
+ * And PodSteer's pod carries a security context built to satisfy Pod Security's
+ * `restricted` profile; a bare `kubectl run` does not, so this command is
+ * refused in exactly the namespaces the feature exists to work in. The
+ * `--overrides` needed to add one would make the line unreadable, so the
+ * command stays the recognisable one and this comment carries the difference.
+ */
+export function runShellPod(ctx: string, ns: string, image: string): string {
+  return [
+    ...base(ctx, ns),
+    'run',
+    'podsteer-shell',
+    '--rm',
+    '-it',
+    `--image=${shellQuote(image)}`,
+    '--restart=Never',
+  ].join(' ')
+}
+
+/**
  * `kubectl --context c -n ns cp <local> <pod>:<remote> [-c container]`.
  *
  * `remote` is again the full destination — `/app/config`, not `/app` —

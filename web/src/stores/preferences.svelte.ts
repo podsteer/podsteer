@@ -78,6 +78,28 @@ export const DEFAULT_NODE_SHELL_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.28'
 /** The namespace a node-shell pod is created in, matching kubectl node-shell. */
 export const DEFAULT_NODE_SHELL_NAMESPACE = 'kube-system'
 
+/**
+ * The image an IN-CLUSTER shell runs.
+ *
+ * NONROOT, and it is the debug image's default rather than the node shell's,
+ * for the debug image's reason: this pod is created in an ordinary namespace
+ * that somebody else's workloads live in, so Pod Security admission judges it,
+ * and under `restricted` a root container is rejected outright before anything
+ * starts. The pod carries a security context built to satisfy that profile —
+ * see `buildClusterShellPod` — and a root image would make every one of those
+ * fields pointless.
+ *
+ * There is deliberately NO default namespace beside it, unlike the node
+ * shell's. This one follows the tab, and when the tab is on "All namespaces"
+ * the dialog asks — see `clusterShellNamespaceFor`, which explains why falling
+ * back to a system namespace is the wrong answer here even though it is the
+ * right one there.
+ *
+ * Same registry and the same pinning rule as the other two, for the same
+ * reasons.
+ */
+export const DEFAULT_CLUSTER_SHELL_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.28-nonroot'
+
 /** The colour schemes PodSteer can render in. */
 export const THEMES = ['dark', 'light'] as const
 
@@ -478,6 +500,13 @@ interface PersistedShape {
   debugImage: string
   nodeShellImage: string
   nodeShellNamespace: string
+  /**
+   * The last-used image for an IN-CLUSTER shell. No namespace beside it: that
+   * one follows the tab, and remembering it would be the one thing here that
+   * is an object-shaped fact about a cluster rather than a workflow
+   * preference.
+   */
+  clusterShellImage: string
   /** clusterId -> snoozeKey() -> epoch milliseconds when the snooze lapses. */
   snoozes: Record<string, Record<string, number>>
   /** Per-surface threshold lines. */
@@ -588,6 +617,7 @@ const DEFAULTS: PersistedShape = {
   debugImage: DEFAULT_DEBUG_IMAGE,
   nodeShellImage: DEFAULT_NODE_SHELL_IMAGE,
   nodeShellNamespace: DEFAULT_NODE_SHELL_NAMESPACE,
+  clusterShellImage: DEFAULT_CLUSTER_SHELL_IMAGE,
   snoozes: {},
   // Both lines on, everywhere. An operator who only wants to hear about the
   // serious case can turn the first one off, but a default that says nothing
@@ -669,6 +699,10 @@ export interface ExportedPreferences {
   debugImage: string
   nodeShellImage: string
   nodeShellNamespace: string
+  /** An image reference like the two above, and never an object name. There
+   * is deliberately no namespace beside it: the in-cluster shell's follows the
+   * tab and is not persisted at all. */
+  clusterShellImage: string
   thresholds: Record<ThresholdScope, ThresholdSet>
   podMeasure: PodMeasure
   usageWindowMinutes: number
@@ -786,6 +820,15 @@ class Preferences {
   /** Remembers the node-shell namespace. Blank resets to the default. */
   setNodeShellNamespace = (namespace: string): void => {
     this.nodeShellNamespace = namespace.trim() || DEFAULT_NODE_SHELL_NAMESPACE
+    this.#save()
+  }
+
+  /** The image an in-cluster shell runs. Blank resets to the default. */
+  clusterShellImage = $state<string>(DEFAULT_CLUSTER_SHELL_IMAGE)
+
+  /** Remembers the in-cluster shell image. Blank resets to the default. */
+  setClusterShellImage = (image: string): void => {
+    this.clusterShellImage = image.trim() || DEFAULT_CLUSTER_SHELL_IMAGE
     this.#save()
   }
 
@@ -1438,6 +1481,7 @@ class Preferences {
     debugImage: this.debugImage,
     nodeShellImage: this.nodeShellImage,
     nodeShellNamespace: this.nodeShellNamespace,
+    clusterShellImage: this.clusterShellImage,
     thresholds: plainCopy(this.thresholds),
     podMeasure: this.podMeasure,
     usageWindowMinutes: this.usageWindowMinutes,
@@ -1480,6 +1524,7 @@ class Preferences {
     this.debugImage = next.debugImage
     this.nodeShellImage = next.nodeShellImage
     this.nodeShellNamespace = next.nodeShellNamespace
+    this.clusterShellImage = next.clusterShellImage
     this.thresholds = plainCopy(next.thresholds)
     this.podMeasure = next.podMeasure
     this.usageWindowMinutes = next.usageWindowMinutes
@@ -1598,6 +1643,9 @@ class Preferences {
       }
       if (typeof stored.nodeShellNamespace === 'string' && stored.nodeShellNamespace.trim() !== '') {
         this.nodeShellNamespace = stored.nodeShellNamespace
+      }
+      if (typeof stored.clusterShellImage === 'string' && stored.clusterShellImage.trim() !== '') {
+        this.clusterShellImage = stored.clusterShellImage
       }
       if (stored.snoozes && typeof stored.snoozes === 'object') {
         this.snoozes = stored.snoozes
@@ -1719,6 +1767,7 @@ class Preferences {
         debugImage: this.debugImage,
         nodeShellImage: this.nodeShellImage,
         nodeShellNamespace: this.nodeShellNamespace,
+        clusterShellImage: this.clusterShellImage,
         snoozes: this.#pruneSnoozes(),
         thresholds: this.thresholds,
         podMeasure: this.podMeasure,
@@ -1815,6 +1864,7 @@ export const EXPORTED_PREFERENCE_FIELDS = [
   'debugImage',
   'nodeShellImage',
   'nodeShellNamespace',
+  'clusterShellImage',
   'thresholds',
   'podMeasure',
   'usageWindowMinutes',
@@ -1965,6 +2015,7 @@ const PREFERENCE_READERS: {
   debugImage: asNonEmptyString,
   nodeShellImage: asNonEmptyString,
   nodeShellNamespace: asNonEmptyString,
+  clusterShellImage: asNonEmptyString,
   thresholds: asThresholds,
   podMeasure: asOneOf(['requests', 'limits'] as const),
   usageWindowMinutes: asOneOf(USAGE_WINDOWS),
@@ -2116,6 +2167,7 @@ const PREFERENCE_LABELS: Record<keyof ExportedPreferences, { label: string; unit
   debugImage: { label: 'Debug container image' },
   nodeShellImage: { label: 'Node shell image' },
   nodeShellNamespace: { label: 'Node shell namespace' },
+  clusterShellImage: { label: 'In-cluster shell image' },
   thresholds: { label: 'Threshold lines' },
   podMeasure: { label: 'Pod bars measure against' },
   usageWindowMinutes: { label: 'Retained usage (minutes)' },

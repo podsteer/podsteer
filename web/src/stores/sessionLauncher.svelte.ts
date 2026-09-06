@@ -71,7 +71,25 @@ export interface PendingLocal {
   subject: TerminalSubject
 }
 
-type Pending = PendingDebug | PendingNodeShell | PendingLocal
+/**
+ * An in-cluster shell awaiting its dialog.
+ *
+ * `namespace` is the TAB'S current namespace, or '' when the tab is on every
+ * one — in which case the dialog asks rather than guessing, and never falls
+ * back to a system namespace. See $lib/clusterShell.
+ *
+ * No readOnly field, and unlike PendingLocal's absence this one is not a
+ * design statement: the guard applies in full (creating a pod is a write) and
+ * it is enforced where every other write is, synchronously in the backend. The
+ * toolbar entry is what carries the disabled state.
+ */
+export interface PendingClusterShell {
+  kind: 'clustershell'
+  clusterId: string
+  namespace: string
+}
+
+type Pending = PendingDebug | PendingNodeShell | PendingLocal | PendingClusterShell
 
 /** A debug terminal that is open. */
 export interface RunningDebug {
@@ -106,7 +124,24 @@ export interface RunningLocal {
   title: string
 }
 
-type Running = RunningDebug | RunningNodeShell | RunningLocal
+/**
+ * An in-cluster shell terminal that is open.
+ *
+ * `pod` distinguishes the two ways this pane opens: empty means CREATE a pod
+ * from `image`, and a name means ATTACH to one PodSteer already has. Two
+ * fields rather than two Running kinds, because everything else about the pane
+ * — the title, the teardown, the namespace it names — is identical, and the
+ * backend has a method for each.
+ */
+export interface RunningClusterShell {
+  kind: 'clustershell'
+  clusterId: string
+  namespace: string
+  image: string
+  pod: string
+}
+
+type Running = RunningDebug | RunningNodeShell | RunningLocal | RunningClusterShell
 
 class SessionLauncher {
   /** The dialog being shown, or null. */
@@ -129,6 +164,11 @@ class SessionLauncher {
     this.pending = { kind: 'local', ...request }
   }
 
+  /** Opens the in-cluster shell dialog for the tab in front. */
+  requestClusterShell(request: Omit<PendingClusterShell, 'kind'>): void {
+    this.pending = { kind: 'clustershell', ...request }
+  }
+
   /** Dismisses the dialog without starting anything. */
   cancel(): void {
     this.pending = null
@@ -148,6 +188,34 @@ class SessionLauncher {
     const { clusterId, node } = this.pending
     this.pending = null
     this.running = { kind: 'nodeshell', clusterId, node, namespace, image }
+  }
+
+  /**
+   * Confirms the in-cluster shell dialog by CREATING a pod.
+   *
+   * The namespace comes from the dialog rather than from the pending request:
+   * the tab may have been on "All namespaces", in which case the operator
+   * typed one, and it is theirs rather than the tab's.
+   */
+  startClusterShell(image: string, namespace: string): void {
+    if (this.pending?.kind !== 'clustershell') return
+    const { clusterId } = this.pending
+    this.pending = null
+    this.running = { kind: 'clustershell', clusterId, namespace, image, pod: '' }
+  }
+
+  /**
+   * Confirms it by ATTACHING to a pod PodSteer already has.
+   *
+   * `image` is left empty: the pane never sends one on this path, because the
+   * pod already exists and its image is whatever it was created with. Sending
+   * the dialog's image would claim something about a pod nobody created here.
+   */
+  attachClusterShell(namespace: string, pod: string): void {
+    if (this.pending?.kind !== 'clustershell') return
+    const { clusterId } = this.pending
+    this.pending = null
+    this.running = { kind: 'clustershell', clusterId, namespace, image: '', pod }
   }
 
   /**
@@ -173,8 +241,8 @@ class SessionLauncher {
   }
 
   /** Closes the terminal. The Terminal component's own teardown stops the
-   * session — which, for a node shell, deletes its pod, and for a local shell
-   * ends the process on this machine. */
+   * session — which, for a node shell and an in-cluster shell, deletes its
+   * pod, and for a local shell ends the process on this machine. */
   close(): void {
     this.running = null
   }

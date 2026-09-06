@@ -41,6 +41,22 @@ remains in the pod's spec until the pod is deleted — and it can create a
 root shell on that node (the equivalent of `kubectl node-shell`); PodSteer
 deletes that pod when its terminal closes or when it exits, and the pod carries
 a one-hour `activeDeadlineSeconds` as a backstop for the case PodSteer cannot.
+It can create a third kind of pod, an **in-cluster shell**: an ordinary,
+unprivileged throwaway pod in a namespace you name, attached to, so that
+`kubectl`, `dig` and `curl` run from inside the cluster's network — the
+equivalent of `kubectl run --rm -it`. It is nothing like the node shell: no
+host namespaces, no privilege, no node pinned, and it asks to run as non-root
+with no privilege escalation, every capability dropped and the runtime's
+default seccomp profile, so it is admissible in a namespace enforcing Pod
+Security's `restricted` profile. It mounts that namespace's own default
+ServiceAccount token, which is what any pod there gets and is not a credential
+of yours PodSteer copied anywhere. It is deleted on exactly the terms the node
+shell is — when its terminal closes, when PodSteer exits, or from the activity
+list — with the same one-hour backstop, and it is labelled
+`app.kubernetes.io/managed-by=podsteer` so you can find what PodSteer created.
+Before creating one, PodSteer looks for a **running** pod of its own in that
+namespace and offers to attach to that instead; a pod of ours in any other
+state is reported and never offered, because attaching to it would fail.
 It can also **run one bounded connect attempt inside a container you name**, as
 a reachability probe: a single `sh -c` that resolves a name and tries a TCP
 connection, using whatever `nc`, `curl` or `wget` the image already has.
@@ -365,8 +381,8 @@ offered in place of the other is refused rather than misread.) It is the arrange
 made on this machine, in one JSON document you can keep in git or send to a
 colleague: projects and groups with their environment, colour and read-only
 marks, pinned kinds, saved column layouts and custom columns, thresholds,
-refresh and appearance, remembered port-forward ports, and the debug and
-node-shell image defaults. It goes through the same native save dialog and is
+refresh and appearance, remembered port-forward ports, and the debug,
+node-shell and in-cluster-shell image defaults. It goes through the same native save dialog and is
 written at mode 0600, like everything else here.
 
 What it carries is deliberately narrower than what PodSteer holds, because the

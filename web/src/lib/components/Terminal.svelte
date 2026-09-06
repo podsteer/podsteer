@@ -35,6 +35,8 @@
     StartAttachSession,
     StartDebugSession,
     StartNodeShellSession,
+    StartClusterShellSession,
+    AttachClusterShellSession,
     StartLocalSession,
     StartAgentSession,
     Write,
@@ -91,13 +93,16 @@
      * 'container' is the ordinary pod terminal (Shell / Attach). 'debug' adds
      * an ephemeral debug container to the pod and opens a shell into it;
      * 'nodeshell' creates a privileged pod on a node and attaches to a host
-     * shell. 'local' is the odd one out and reaches no cluster at all: it runs
-     * the operator's own login shell, or a coding agent they already have, on
-     * THIS machine. All three special variants reuse everything else about
-     * this component — the buffer, the toolbar, search, copy-on-select — and
-     * differ only in how the session is started.
+     * shell. 'clustershell' creates an ordinary, unprivileged pod in a
+     * namespace — or attaches to one PodSteer already has there — so the
+     * cluster's network can be reached from inside it. 'local' is the odd one
+     * out and reaches no cluster at all: it runs the operator's own login
+     * shell, or a coding agent they already have, on THIS machine. All four
+     * special variants reuse everything else about this component — the
+     * buffer, the toolbar, search, copy-on-select — and differ only in how the
+     * session is started.
      */
-    variant?: 'container' | 'debug' | 'nodeshell' | 'local'
+    variant?: 'container' | 'debug' | 'nodeshell' | 'local' | 'clustershell'
     /** debug: the container whose process namespace to share (--target). */
     debugTarget?: string
     /** debug: the image to run. */
@@ -110,6 +115,14 @@
     nodeShellNamespace?: string
     /** nodeshell: the image the pod runs. */
     nodeShellImage?: string
+    /**
+     * clustershell: the image a NEW pod runs. Empty when `podName` names a pod
+     * PodSteer already has — that pod's image is whatever it was created with,
+     * and sending one here would claim something about a pod this pane did not
+     * create. `namespace` and `podName` are the ordinary props: `podName`
+     * empty means create, and a name means attach.
+     */
+    clusterShellImage?: string
     /** local: the coding agent to run, or null for the operator's login shell. */
     agent?: string | null
     /** local: whether the agent was asked to keep to read-only kubectl. */
@@ -143,6 +156,7 @@
     nodeName = '',
     nodeShellNamespace = '',
     nodeShellImage = '',
+    clusterShellImage = '',
     agent = null,
     agentReadOnly = false,
     subject = { kind: '', namespace: '', name: '' },
@@ -165,6 +179,11 @@
   const NODE_SHELL_NOTE =
     'You are root on the node, in its host namespaces. This pod is deleted when you close ' +
     'this pane; it also self-destructs after one hour as a backstop.'
+
+  const CLUSTER_SHELL_NOTE =
+    'An ordinary, unprivileged pod in this namespace — you see the cluster network as a ' +
+    'workload does, with the namespace’s default service account. This pod is deleted when ' +
+    'you close this pane; it also self-destructs after one hour as a backstop.'
 
   /**
    * The local pane's own note, which has to say the read-only guard does not
@@ -543,6 +562,14 @@
         return StartDebugSession(clusterId, namespace, podName, debugTarget, debugImage, debugCommand, cols, rows)
       case 'nodeshell':
         return StartNodeShellSession(clusterId, nodeShellNamespace, nodeName, nodeShellImage, cols, rows)
+      case 'clustershell':
+        // Two calls rather than one with an optional pod, because they are two
+        // acts: one CREATES a pod and the other ADOPTS one PodSteer already
+        // has — which is signing up to delete it — and each is guarded and
+        // audited on its own in ManagementService.
+        return podName === ''
+          ? StartClusterShellSession(clusterId, namespace, clusterShellImage, cols, rows)
+          : AttachClusterShellSession(clusterId, namespace, podName, cols, rows)
       case 'local':
         // Two calls rather than one with a nullable argument: an agent session
         // carries a prompt and a read-only request a plain shell has no notion
@@ -570,6 +597,7 @@
   function sessionLabel(): string {
     if (variant === 'debug') return 'debug'
     if (variant === 'nodeshell') return 'node shell'
+    if (variant === 'clustershell') return 'in-cluster shell'
     if (variant === 'local') return agent === null ? 'local shell' : agent
     return mode === 'attach' ? 'attach' : 'terminal'
   }
@@ -647,6 +675,12 @@
     // ever re-attaching one to another.
     if (variant === 'debug') return sessionKey(clusterId, namespace, podName, '', 'debug')
     if (variant === 'nodeshell') return sessionKey(clusterId, nodeShellNamespace, nodeName, '', 'nodeshell')
+    // An in-cluster shell keys on its NAMESPACE and pod. The pod name is empty
+    // on a pane that created one, which is right: that pane is the only one
+    // for that namespace at a time, and two panes attached to the same named
+    // pod is the case reuse already refuses by excluding what this process
+    // owns.
+    if (variant === 'clustershell') return sessionKey(clusterId, namespace, podName, '', 'clustershell')
     if (variant === 'local') return localSessionKey(clusterId, agent)
     return sessionKey(clusterId, namespace, podName, activeContainer, mode)
   }
@@ -873,6 +907,16 @@
              text-body-small text-on-surface-variant"
     >
       {NODE_SHELL_NOTE}
+    </p>
+  {:else if variant === 'clustershell'}
+    <!-- The neutral banner, not the node shell's warning ground: nothing here
+         is privileged, and colouring it as though it were would make the two
+         read as the same act. -->
+    <p
+      class="shrink-0 border-b border-outline-variant/60 bg-surface-container-low px-3 py-1
+             text-body-small text-on-surface-variant"
+    >
+      {CLUSTER_SHELL_NOTE}
     </p>
   {:else if variant === 'local'}
     <!--

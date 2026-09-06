@@ -7,6 +7,7 @@ import {
   DEFAULT_DEBUG_IMAGE,
   DEFAULT_NODE_SHELL_IMAGE,
   DEFAULT_NODE_SHELL_NAMESPACE,
+  DEFAULT_CLUSTER_SHELL_IMAGE,
 } from '$stores/preferences.svelte'
 
 describe('Settings → Terminal images', () => {
@@ -14,6 +15,7 @@ describe('Settings → Terminal images', () => {
     preferences.setDebugImage('')
     preferences.setNodeShellImage('')
     preferences.setNodeShellNamespace('')
+    preferences.setClusterShellImage('')
   })
 
   afterEach(() => {
@@ -23,9 +25,10 @@ describe('Settings → Terminal images', () => {
     preferences.setDebugImage('')
     preferences.setNodeShellImage('')
     preferences.setNodeShellNamespace('')
+    preferences.setClusterShellImage('')
   })
 
-  it('shows all three preferences, which were previously reachable only from a dialog', () => {
+  it('shows every image PodSteer puts into a cluster, in one place', () => {
     // The whole reason the pane exists: an operator whose clusters cannot pull
     // from Docker Hub could only find these by opening the dialog that used
     // one, which is not where they are when they hit ImagePullBackOff.
@@ -40,6 +43,19 @@ describe('Settings → Terminal images', () => {
     expect((getByLabelText('Namespace for the node-shell pod') as HTMLInputElement).value).toBe(
       DEFAULT_NODE_SHELL_NAMESPACE,
     )
+    expect((getByLabelText('In-cluster shell image') as HTMLInputElement).value).toBe(
+      DEFAULT_CLUSTER_SHELL_IMAGE,
+    )
+  })
+
+  it('gives the in-cluster shell no namespace setting, because that one follows the tab', () => {
+    // Deliberately absent, unlike the node shell's. Persisting a namespace
+    // here would be a fact about a cluster's contents in a store that holds
+    // workflow preferences, and it would disagree with the tab the operator is
+    // looking at. See $lib/clusterShell.
+    const { queryByLabelText } = render(TerminalImagesPane)
+
+    expect(queryByLabelText('Namespace for the in-cluster shell pod')).toBeNull()
   })
 
   it('commits an edited image to the preference', async () => {
@@ -71,6 +87,7 @@ describe('Settings → Terminal images', () => {
   it('restores every default at once, and offers nothing to press when already there', async () => {
     preferences.setDebugImage('registry.internal/debug:1.0.0')
     preferences.setNodeShellImage('registry.internal/shell:1.0.0')
+    preferences.setClusterShellImage('registry.internal/incluster:1.0.0')
     const { getByRole } = render(TerminalImagesPane)
 
     const restore = getByRole('button', { name: 'Restore defaults' }) as HTMLButtonElement
@@ -81,6 +98,7 @@ describe('Settings → Terminal images', () => {
     expect(preferences.debugImage).toBe(DEFAULT_DEBUG_IMAGE)
     expect(preferences.nodeShellImage).toBe(DEFAULT_NODE_SHELL_IMAGE)
     expect(preferences.nodeShellNamespace).toBe(DEFAULT_NODE_SHELL_NAMESPACE)
+    expect(preferences.clusterShellImage).toBe(DEFAULT_CLUSTER_SHELL_IMAGE)
     expect(restore.disabled).toBe(true)
   })
 })
