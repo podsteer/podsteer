@@ -559,13 +559,17 @@
     {#if session.recentObjects.length > 0}
       {@const open = preferences.isSectionExpanded('Recent')}
       <div class="px-1.5 pb-1">
-        <!-- The toggle and Clear are siblings rather than one nested in the
-             other: a button inside a button is not valid, and the two do
+        <!-- The toggle, Clear and the count are siblings rather than nested:
+             a button inside a button is not valid, and the toggle and Clear do
              genuinely different things to the same section. Clear stays
              reachable while the section is folded, because wanting the list
-             gone is not a reason to have to open it first. Unlike Pinned and
-             the categories this header carries no count badge — Clear already
-             occupies that end of a 240px row, and Recent is capped at twelve. -->
+             gone is not a reason to have to open it first.
+
+             It is an ICON rather than an icon and the word, so this header
+             ends the way the other five do — with the count in the same badge
+             at the same edge. A labelled control there made Recent the one
+             section whose right-hand column said something else, and the label
+             is carried by the tooltip and the accessible name instead. -->
         <div class="flex items-center gap-1 px-0.5">
           <button
             type="button"
@@ -587,13 +591,20 @@
           <button
             type="button"
             onclick={() => session.clearRecents()}
-            class="state-layer flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-label-small
-                   text-on-surface-variant transition-colors duration-100
+            aria-label="Clear recently opened objects"
+            title="Clear recently opened"
+            class="state-layer grid size-5 shrink-0 place-items-center rounded-sm
+                   text-on-surface-variant/70 transition-colors duration-100
                    hover:bg-surface-container hover:text-on-surface"
           >
-            <X class="size-3" strokeWidth={2} />
-            Clear
+            <X class="size-3.5" strokeWidth={2} />
           </button>
+          <span
+            class="shrink-0 rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small
+                   tabular-nums text-on-surface-variant/70"
+          >
+            {session.recentObjects.length}
+          </span>
         </div>
         {#if open}
           <div class="mt-0.5 border-l border-outline-variant/30 pl-2">
