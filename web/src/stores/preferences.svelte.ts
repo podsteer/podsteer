@@ -389,6 +389,19 @@ interface PersistedShape {
   detailLabelFraction: number
   /** Category names the operator has expanded in the navigator tree. */
   expandedCategories: string[]
+  /**
+   * Navigator sections the operator has COLLAPSED.
+   *
+   * Inverted against `expandedCategories`, and deliberately so. A category is
+   * absent until somebody opens it, because a cluster running Elastic,
+   * cert-manager, Argo and KEDA would otherwise greet them with a wall of
+   * kinds. Pinned and Recent are the opposite case: Pinned holds exactly what
+   * an operator chose to keep one click away, and Recent is capped at twelve.
+   * Neither is a wall, and defaulting Pinned to closed would hide the thing
+   * its owner asked to see. So membership here means CLOSED, and absence —
+   * including for everybody upgrading, who has no such list — means open.
+   */
+  collapsedSections: string[]
   /** Whether the overview's verdict card shows its findings. */
   findingsExpanded: boolean
   /**
@@ -526,6 +539,7 @@ const DEFAULTS: PersistedShape = {
   detailWidthFraction: DEFAULT_DETAIL_FRACTION,
   detailLabelFraction: DEFAULT_DETAIL_LABEL_SHARE,
   expandedCategories: [],
+  collapsedSections: [],
   findingsExpanded: false,
   wrapLines: true,
   showManagedFields: false,
@@ -602,6 +616,7 @@ export interface ExportedPreferences {
   detailWidthFraction: number
   detailLabelFraction: number
   expandedCategories: string[]
+  collapsedSections: string[]
   findingsExpanded: boolean
   wrapLines: boolean
   showManagedFields: boolean
@@ -662,6 +677,7 @@ class Preferences {
    * (say, just Workloads) is exactly what greets them next time.
    */
   expandedCategories = $state<string[]>(DEFAULTS.expandedCategories)
+  collapsedSections = $state<string[]>(DEFAULTS.collapsedSections)
 
   /**
    * Collapsed by default: the verdict and the count are the alarm, and the
@@ -890,6 +906,21 @@ class Preferences {
 
   /** Whether a navigator category is currently expanded. */
   isCategoryExpanded = (category: string): boolean => this.expandedCategories.includes(category)
+
+  /**
+   * Whether one of the navigator's own sections — Pinned, Recent — is open.
+   *
+   * Open unless it is listed. See `collapsedSections` for why these two run
+   * the opposite way round from the kind categories.
+   */
+  isSectionExpanded = (section: string): boolean => !this.collapsedSections.includes(section)
+
+  toggleSection = (section: string): void => {
+    this.collapsedSections = this.collapsedSections.includes(section)
+      ? this.collapsedSections.filter((entry) => entry !== section)
+      : [...this.collapsedSections, section]
+    this.#save()
+  }
 
   /**
    * Whether the overview's verdict card shows its findings.
@@ -1334,6 +1365,7 @@ class Preferences {
     detailWidthFraction: this.detailWidthFraction,
     detailLabelFraction: this.detailLabelFraction,
     expandedCategories: [...this.expandedCategories],
+    collapsedSections: [...this.collapsedSections],
     findingsExpanded: this.findingsExpanded,
     wrapLines: this.wrapLines,
     showManagedFields: this.showManagedFields,
@@ -1374,6 +1406,7 @@ class Preferences {
     this.detailWidthFraction = next.detailWidthFraction
     this.detailLabelFraction = next.detailLabelFraction
     this.expandedCategories = [...next.expandedCategories]
+    this.collapsedSections = [...next.collapsedSections]
     this.findingsExpanded = next.findingsExpanded
     this.wrapLines = next.wrapLines
     this.showManagedFields = next.showManagedFields
@@ -1456,6 +1489,13 @@ class Preferences {
       }
       if (Array.isArray(stored.expandedCategories)) {
         this.expandedCategories = stored.expandedCategories.filter(
+          (entry): entry is string => typeof entry === 'string',
+        )
+      }
+      // Absent from every blob written before Pinned and Recent could fold,
+      // which is the right answer for those: no list means nothing collapsed.
+      if (Array.isArray(stored.collapsedSections)) {
+        this.collapsedSections = stored.collapsedSections.filter(
           (entry): entry is string => typeof entry === 'string',
         )
       }
@@ -1593,6 +1633,7 @@ class Preferences {
         navigatorCollapsed: this.navigatorCollapsed,
         navigatorWidth: this.navigatorWidth,
         expandedCategories: this.expandedCategories,
+        collapsedSections: this.collapsedSections,
         findingsExpanded: this.findingsExpanded,
         wrapLines: this.wrapLines,
         showManagedFields: this.showManagedFields,
@@ -1688,6 +1729,7 @@ export const EXPORTED_PREFERENCE_FIELDS = [
   'detailWidthFraction',
   'detailLabelFraction',
   'expandedCategories',
+  'collapsedSections',
   'findingsExpanded',
   'wrapLines',
   'showManagedFields',
@@ -1819,6 +1861,7 @@ const PREFERENCE_READERS: {
   detailWidthFraction: asNumberIn(0.05, 0.95),
   detailLabelFraction: asNumberIn(0.05, 0.9),
   expandedCategories: asStringArray,
+  collapsedSections: asStringArray,
   findingsExpanded: asBoolean,
   wrapLines: asBoolean,
   showManagedFields: asBoolean,
@@ -1908,6 +1951,27 @@ export function mergeExportedPreferences(
   const out: Record<string, unknown> = {}
 
   for (const field of EXPORTED_PREFERENCE_FIELDS) {
+    // The INVERSE of expandedCategories, so it merges the other way round.
+    // That array is a set of what is OPEN and unions, because combining two
+    // people's open sections is what merging them means. This one is a set of
+    // what is CLOSED, so a union would hide more than either person had
+    // hidden: importing a colleague's file would fold away a section you had
+    // open. Intersecting keeps a section closed only where both agree, which
+    // is the same principle applied to a set that runs backwards.
+    if (field === 'collapsedSections') {
+      const arriving = incoming.collapsedSections
+      if (!arriving) {
+        out[field] =
+          mode === 'replace' ? [...defaults.collapsedSections] : [...current.collapsedSections]
+      } else {
+        out[field] =
+          mode === 'replace'
+            ? [...arriving]
+            : current.collapsedSections.filter((entry) => arriving.includes(entry))
+      }
+      continue
+    }
+
     if (field === 'expandedCategories') {
       const arriving = incoming.expandedCategories
       if (!arriving) {
@@ -1946,6 +2010,7 @@ const PREFERENCE_LABELS: Record<keyof ExportedPreferences, { label: string; unit
   detailWidthFraction: { label: 'Detail panel width' },
   detailLabelFraction: { label: 'Detail label column' },
   expandedCategories: { label: 'Expanded navigator categories', unit: 'categories' },
+  collapsedSections: { label: 'Collapsed navigator sections', unit: 'sections' },
   findingsExpanded: { label: 'Findings expanded' },
   wrapLines: { label: 'Wrap long lines' },
   showManagedFields: { label: 'Show managed fields' },

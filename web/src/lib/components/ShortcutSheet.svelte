@@ -66,10 +66,28 @@
     onclick={onclose}
   ></button>
 
-  <!-- Centred the same way SettingsDialog is — see the note there on why
-       `inset-0 m-auto` rather than a transform. -->
+  <!-- Centred by a flex wrapper, and it has to be, because this sheet is as
+       tall as its content.
+
+       SettingsDialog centres with `inset-0 m-auto` and the note there is right
+       about why — a transform makes the element a containing block for every
+       `position: fixed` descendant, which put a dropdown inside it in the
+       corner of the dialog instead of the window. What that note does not say
+       is that it works there because that dialog PINS a height (`h-[36rem]`).
+       This one used the same classes with `h-fit`, and a content height does
+       not resolve against a box told to be both top:0 and bottom:0: the sheet
+       opened as a stub showing its header and the first group heading, with
+       the shortcut list scrolled away inside it.
+
+       A wrapper that centres by flex fixes it without giving the transform
+       back: the sheet is an ordinary flex item, so it takes its content's
+       height, `max-h-[85vh]` bounds it, and the list scrolls only when there
+       is genuinely more than fits. The wrapper sets no transform, so fixed
+       descendants still resolve against the window. It passes pointer events
+       through so the backdrop behind it still closes on a click. -->
+  <div class="pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4">
   <div
-    class="fixed inset-0 z-50 m-auto flex h-fit max-h-[85vh] w-[34rem] max-w-[92vw]
+    class="pointer-events-auto flex max-h-full w-[34rem] max-w-[92vw]
            flex-col overflow-hidden rounded-sm border border-outline-variant
            bg-surface-container-high shadow-level-3"
     role="dialog"
@@ -121,5 +139,6 @@
         {/if}
       {/each}
     </div>
+  </div>
   </div>
 {/if}

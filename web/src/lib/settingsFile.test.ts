@@ -164,11 +164,19 @@ describe('what a settings file must never carry', () => {
     // A LITERAL LIST, not derived from the type. Adding a field to the export
     // means editing this line, which is the point: two of the fields this
     // store already persists hold object names, and the next one might.
+    //
+    // `collapsedSections` was argued for on 2026-09-06 and admitted. It is the
+    // inverse of `expandedCategories`, which is already here, and its members
+    // are the navigator's own two section labels — the literal strings
+    // "Pinned" and "Recent". It cannot come to hold an object name the way
+    // `pinnedKinds` and `namespaceByCluster` can, because nothing writes into
+    // it but the two toggles in Navigator.svelte.
     expect(Object.keys(preferences.exportable()).sort()).toEqual(
       [
         'alertSounds',
         'alertSoundsEnabled',
         'autoRefresh',
+        'collapsedSections',
         'columns',
         'customColumns',
         'debugImage',
