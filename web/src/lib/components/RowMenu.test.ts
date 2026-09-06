@@ -21,11 +21,40 @@ describe('the row menu', () => {
 
     await fireEvent.click(view.getByRole('button', { name: 'More for web-1' }))
 
-    const menu = view.getByRole('menu')
+    const menu = document.body.querySelector('[role="menu"]')!
     // `absolute` anchors it inside the table's horizontal scrollport, which
     // clips — and the menu's own column is pinned to the edge it clips at.
     expect(menu.classList.contains('fixed')).toBe(true)
     expect(menu.classList.contains('absolute')).toBe(false)
+  })
+
+  it('moves the menu onto the body, out of the pinned cell that traps it', async () => {
+    const view = render(RowMenu, { props: { actions, label: 'web-1' } })
+    const trigger = view.getByRole('button', { name: 'More for web-1' })
+
+    await fireEvent.click(trigger)
+
+    const menu = document.body.querySelector('[role="menu"]')
+    expect(menu).not.toBeNull()
+    // THE POINT OF THE PORTAL. A pinned cell is `position: sticky` with a
+    // z-index, which makes it a stacking context — so a menu left inside one
+    // is painted over by every later row's pinned cell, whatever z-index it
+    // carries. Being a child of the body is what makes its z-index mean
+    // something. `fixed` alone fixed the clipping and not this.
+    expect(menu!.parentElement).toBe(document.body)
+    expect(trigger.contains(menu!)).toBe(false)
+  })
+
+  it('takes the menu away again when it closes, leaving nothing on the body', async () => {
+    const view = render(RowMenu, { props: { actions, label: 'web-1' } })
+    const trigger = view.getByRole('button', { name: 'More for web-1' })
+
+    await fireEvent.click(trigger)
+    expect(document.body.querySelector('[role="menu"]')).not.toBeNull()
+
+    await fireEvent.click(trigger)
+    // An element moved to the body is one nothing else will clean up.
+    expect(document.body.querySelector('[role="menu"]')).toBeNull()
   })
 
   it('hides the control until the row is hovered, in a detail pane', () => {

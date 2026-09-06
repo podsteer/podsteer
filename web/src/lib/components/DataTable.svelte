@@ -575,7 +575,10 @@
                   <!-- The page's tick box: all, some (indeterminate) or none
                        of the rows on screen. It describes THIS page and acts
                        on this page — see RowSelection.toggleAllVisible. -->
-                  <span class="flex items-center py-2 {index === 0 ? 'pl-5' : 'px-3'}">
+                  <!-- Centred to match the row boxes below it: the select
+                       column is a control column, and a header box padded to
+                       one side sits over rows that are not. -->
+                  <span class="flex items-center justify-center py-2">
                     <Checkbox
                       checked={selectAll?.checked ?? false}
                       indeterminate={selectAll?.indeterminate ?? false}
