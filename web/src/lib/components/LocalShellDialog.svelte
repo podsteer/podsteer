@@ -18,6 +18,7 @@
   import type { CodingAgent } from '$lib/localShell'
   import Button from './Button.svelte'
   import Radio from './Radio.svelte'
+  import Checkbox from './Checkbox.svelte'
   import { SquareTerminal, Bot } from '@lucide/svelte'
 
   interface Props {
@@ -152,10 +153,14 @@
 
     {#if chosenAgent}
       <div class="mt-3 rounded-sm border border-outline-variant bg-surface-container px-3 py-2">
-        <label class="flex items-center gap-2 text-body-medium text-on-surface">
-          <input type="checkbox" bind:checked={readOnly} />
+        <Checkbox
+          checked={readOnly}
+          onchange={(next) => (readOnly = next)}
+          dense
+          class="text-body-medium text-on-surface"
+        >
           Ask it to keep to read-only kubectl
-        </label>
+        </Checkbox>
         <p class="mt-1 text-body-small text-on-surface-variant">
           A request in its opening prompt, not a restriction — {chosenAgent.label} runs with your credentials
           and PodSteer cannot narrow them. It is told which cluster and which object you have open, and

@@ -76,6 +76,7 @@
     alertPlayer,
   } from '$stores/alerts.svelte'
   import Radio from './Radio.svelte'
+  import Checkbox from './Checkbox.svelte'
   import Select from './Select.svelte'
   import GaugeTrack from './GaugeTrack.svelte'
   import SettingsTransfer from './SettingsTransfer.svelte'
@@ -551,18 +552,18 @@
 
             <div class="border-t border-outline-variant pt-5">
               <h3 class="text-title-medium text-on-surface">Sidebar</h3>
-              <label class="mt-3 flex cursor-pointer items-center gap-3 text-body-medium text-on-surface">
-                <input
-                  type="checkbox"
-                  checked={!preferences.navigatorCollapsed}
-                  onchange={preferences.toggleNavigator}
-                  class="accent-primary"
-                />
-                Show the resource navigator
-                <span class="text-body-small text-on-surface-variant/70"
-                  >{shortcut('toggle-navigator').keys}</span
-                >
-              </label>
+              <Checkbox
+                checked={!preferences.navigatorCollapsed}
+                onchange={preferences.toggleNavigator}
+                class="mt-3 text-body-medium text-on-surface"
+              >
+                <span class="flex items-center gap-3">
+                  Show the resource navigator
+                  <span class="text-body-small text-on-surface-variant/70"
+                    >{shortcut('toggle-navigator').keys}</span
+                  >
+                </span>
+              </Checkbox>
             </div>
           </section>
         {:else if section === 'thresholds'}
@@ -651,7 +652,19 @@
                 PodSteer never installs anything itself.
               </p>
 
-              <label class="mt-3 flex items-center justify-between gap-4">
+              <!-- `flex-row-reverse` keeps the box on the right where this row
+                   has always had it, WITHOUT giving up the wrapping label: a
+                   second <label> nested inside one is invalid, and a bare box
+                   beside a <span> would shrink the click target from the whole
+                   row to sixteen pixels. Reversing the flex direction moves
+                   the drawing and leaves the labelling alone. -->
+              <Checkbox
+                checked={preferences.updateChecksEnabled}
+                disabled={!updates.permitted}
+                onchange={(next) => preferences.setUpdateChecksEnabled(next)}
+                full
+                class="mt-3 flex-row-reverse"
+              >
                 <span class="text-body-medium text-on-surface">
                   Check for updates
                   {#if !updates.permitted}
@@ -660,15 +673,7 @@
                     </span>
                   {/if}
                 </span>
-                <input
-                  type="checkbox"
-                  checked={preferences.updateChecksEnabled}
-                  disabled={!updates.permitted}
-                  onchange={(event) =>
-                    preferences.setUpdateChecksEnabled(event.currentTarget.checked)}
-                  class="size-4 accent-primary disabled:opacity-40"
-                />
-              </label>
+              </Checkbox>
 
               <div class="mt-3 flex items-center gap-3">
                 <button

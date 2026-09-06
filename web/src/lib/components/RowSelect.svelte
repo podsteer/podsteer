@@ -6,13 +6,23 @@
   the detail drawer, and a click aimed at the checkbox stops here.
 
   THE BROWSER'S OWN TOGGLE IS CANCELLED. The box is a pure view of the
-  selection — `checked` follows `selected`, nothing else — because a
-  shift-click on an already ticked row ADDS the range and leaves that row
-  ticked, and a browser that had already flipped it unticked would then be
-  showing the opposite of the truth with nothing to correct it: Svelte only
-  writes `checked` when the value changes, and it did not.
+  selection — it follows `selected`, nothing else — because a shift-click on
+  an already ticked row ADDS the range and leaves that row ticked, and a
+  browser that had already flipped it unticked would then be showing the
+  opposite of the truth.
+
+  That cancelling used to be enough to break the box permanently, because the
+  drawn tick WAS the input's own checked state and the browser puts that back
+  after every listener has run — leaving Svelte's cached copy saying ticked, a
+  DOM saying not, and every later write short-circuiting on the mismatch. The
+  cancelling is load-bearing and stays; what changed is that Checkbox draws
+  its tick from DOM structure the browser cannot revert. The reasoning is
+  written out at the top of Checkbox.svelte; do not undo either half without
+  reading it.
 -->
 <script lang="ts">
+  import Checkbox from './Checkbox.svelte'
+
   interface Props {
     selected: boolean
     /** Names the row, for the box's accessible label. */
@@ -33,12 +43,11 @@
   class="w-10 py-1.5 pr-1 pl-5"
   onclick={(event) => event.stopPropagation()}
 >
-  <input
-    type="checkbox"
-    data-row-select
+  <Checkbox
     checked={selected}
-    aria-label="Select {label}"
-    class="size-3.5 cursor-pointer align-middle accent-primary"
+    ariaLabel="Select {label}"
+    class="align-middle"
+    data-row-select=""
     onclick={(event) => {
       event.preventDefault()
       ontoggle(event.shiftKey)

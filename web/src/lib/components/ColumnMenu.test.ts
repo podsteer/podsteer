@@ -39,6 +39,21 @@ async function openMenu(columns: Column[] = COLUMNS): Promise<void> {
   await fireEvent.click(screen.getByLabelText('Choose columns'))
 }
 
+/**
+ * The Fixed group's rows, by the words they show.
+ *
+ * The whole row rather than the spans inside it: the tick box is a Checkbox
+ * now, which draws its own ring and mark as sibling spans, so a query for
+ * `li span` collects three empty decorations per row as well as the label.
+ * Reading the row's text asserts what an operator actually sees and does not
+ * care how the control beside it is built.
+ */
+function fixedRowLabels(): (string | null)[] {
+  return [...screen.getByLabelText('Fixed columns').querySelectorAll('li')].map((row) =>
+    row.textContent?.trim() ?? null,
+  )
+}
+
 /** The Fixed group's checkboxes, in the order they are offered. */
 function fixedBoxes(): HTMLInputElement[] {
   const group = screen.queryByLabelText('Fixed columns')
@@ -59,18 +74,14 @@ describe('the Fixed control', () => {
   it('offers one entry per control column, named as the column is', async () => {
     await openMenu()
 
-    const labels = [...(screen.getByLabelText('Fixed columns').querySelectorAll('li span'))].map(
-      (span) => span.textContent,
-    )
+    const labels = fixedRowLabels()
     expect(labels).toEqual(['Select', 'Row menu'])
   })
 
   it('offers only the menu on a list with no tick boxes', async () => {
     await openMenu(COLUMNS.filter((column) => !column.select))
 
-    const labels = [...(screen.getByLabelText('Fixed columns').querySelectorAll('li span'))].map(
-      (span) => span.textContent,
-    )
+    const labels = fixedRowLabels()
     expect(labels).toEqual(['Row menu'])
   })
 

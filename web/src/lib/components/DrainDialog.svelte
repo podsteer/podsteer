@@ -12,6 +12,7 @@
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
   import Button from './Button.svelte'
+  import Checkbox from './Checkbox.svelte'
   import { planDrain, drainNode, type DrainPlan, type DrainReport } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import { Loader, TriangleAlert } from '@lucide/svelte'
@@ -173,30 +174,36 @@
          drain (cordon + drain with the chosen flags) here. -->
 
     <div class="mt-4 flex flex-col gap-2">
-      <label class="flex cursor-pointer items-start gap-3 text-body-medium text-on-surface">
-        <input type="checkbox" bind:checked={force} class="accent-primary" disabled={running} />
-        <span>
-          Force pods with no controller
-          <span class="block text-body-small text-on-surface-variant/70">
-            A bare pod is not recreated once evicted — nothing owns it.
-          </span>
+      <!-- `checked` + `onchange` rather than `bind:checked`: Checkbox draws
+           purely from the prop and never decides its own state, which is what
+           lets a caller that cancels the browser's toggle (RowSelect) share
+           one component with these. Writing the value back here costs a line
+           and keeps that single rule. -->
+      <Checkbox
+        checked={force}
+        onchange={(next) => (force = next)}
+        disabled={running}
+        align="start"
+        class="text-body-medium text-on-surface"
+      >
+        Force pods with no controller
+        <span class="block text-body-small text-on-surface-variant/70">
+          A bare pod is not recreated once evicted — nothing owns it.
         </span>
-      </label>
+      </Checkbox>
 
-      <label class="flex cursor-pointer items-start gap-3 text-body-medium text-on-surface">
-        <input
-          type="checkbox"
-          bind:checked={deleteEmptyDirData}
-          class="accent-primary"
-          disabled={running}
-        />
-        <span>
-          Delete pods using local storage
-          <span class="block text-body-small text-on-surface-variant/70">
-            An emptyDir volume lives on this node and is discarded, not moved.
-          </span>
+      <Checkbox
+        checked={deleteEmptyDirData}
+        onchange={(next) => (deleteEmptyDirData = next)}
+        disabled={running}
+        align="start"
+        class="text-body-medium text-on-surface"
+      >
+        Delete pods using local storage
+        <span class="block text-body-small text-on-surface-variant/70">
+          An emptyDir volume lives on this node and is discarded, not moved.
         </span>
-      </label>
+      </Checkbox>
 
       <label class="mt-1 block">
         <span class="text-body-small text-on-surface-variant">Grace period (seconds)</span>

@@ -132,6 +132,7 @@
   import { activeTable, type CSVExport } from '$stores/activeTable.svelte'
   import { edgeBoundaries, fixedPlacements } from '$lib/fixedColumns'
   import { ChevronUp, ChevronDown, ChevronsUpDown } from '@lucide/svelte'
+  import Checkbox from './Checkbox.svelte'
 
   interface Props {
     /** Identifies the kind, for persisting column preferences. */
@@ -575,14 +576,12 @@
                        of the rows on screen. It describes THIS page and acts
                        on this page — see RowSelection.toggleAllVisible. -->
                   <span class="flex items-center py-2 {index === 0 ? 'pl-5' : 'px-3'}">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={selectAll?.checked ?? false}
                       indeterminate={selectAll?.indeterminate ?? false}
                       disabled={!selectAll}
-                      aria-label="Select all rows on this page"
+                      ariaLabel="Select all rows on this page"
                       title="Select all rows on this page"
-                      class="size-3.5 cursor-pointer accent-primary"
                       onchange={() => selectAll?.ontoggle()}
                     />
                   </span>

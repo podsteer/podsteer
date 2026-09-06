@@ -32,6 +32,7 @@
   } from '$lib/customColumns'
   import { controlKindOf, isControlColumn, type EdgeColumn } from '$lib/fixedColumns'
   import { Columns3, RotateCcw, Pin, Plus, X, ChevronUp, ChevronDown } from '@lucide/svelte'
+  import Checkbox from './Checkbox.svelte'
 
   interface Props {
     kindId: string
@@ -207,23 +208,23 @@
              Fixed below instead, where the only choice they offer is. -->
         {#each builtIn.filter((column) => !isControlColumn(column)) as column (column.id)}
           <li>
-            <label
-              class="flex cursor-pointer items-center gap-2.5 rounded-sm px-3 py-1.5 text-body-small
-                     text-on-surface transition-colors duration-75 hover:bg-surface-container-highest
-                     {column.pinned ? 'cursor-default opacity-50' : ''}"
+            <Checkbox
+              checked={!isHidden(column)}
+              disabled={column.pinned}
+              onchange={() => preferences.toggleColumn(kindId, column.id)}
+              full
+              dense
+              class="rounded-sm px-3 py-1.5 text-body-small text-on-surface
+                     transition-colors duration-75 hover:bg-surface-container-highest
+                     {column.pinned ? 'opacity-50' : ''}"
             >
-              <input
-                type="checkbox"
-                checked={!isHidden(column)}
-                disabled={column.pinned}
-                onchange={() => preferences.toggleColumn(kindId, column.id)}
-                class="size-3.5 accent-primary"
-              />
-              <span class="flex-1 truncate">{column.label}</span>
-              {#if column.pinned}
-                <Pin class="size-3 text-on-surface-variant/50" strokeWidth={2} />
-              {/if}
-            </label>
+              <span class="flex items-center gap-2">
+                <span class="min-w-0 flex-1 truncate">{column.label}</span>
+                {#if column.pinned}
+                  <Pin class="size-3 shrink-0 text-on-surface-variant/50" strokeWidth={2} />
+                {/if}
+              </span>
+            </Checkbox>
           </li>
         {/each}
       </ul>
@@ -242,18 +243,16 @@
         <ul class="py-0.5" aria-label="Fixed columns">
           {#each edges as edge (edge.kind)}
             <li>
-              <label
-                class="flex cursor-pointer items-center gap-2.5 rounded-sm px-3 py-1.5 text-body-small
-                       text-on-surface transition-colors duration-75 hover:bg-surface-container-highest"
+              <Checkbox
+                checked={preferences.isEdgeFixed(edge.kind)}
+                onchange={() => toggleFixed(edge.kind)}
+                full
+                dense
+                class="rounded-sm px-3 py-1.5 text-body-small text-on-surface
+                       transition-colors duration-75 hover:bg-surface-container-highest"
               >
-                <input
-                  type="checkbox"
-                  checked={preferences.isEdgeFixed(edge.kind)}
-                  onchange={() => toggleFixed(edge.kind)}
-                  class="size-3.5 accent-primary"
-                />
-                <span class="flex-1 truncate">{edge.label}</span>
-              </label>
+                <span class="block truncate">{edge.label}</span>
+              </Checkbox>
             </li>
           {/each}
         </ul>
@@ -280,12 +279,10 @@
               class="flex items-center gap-2 px-3 py-1 text-body-small text-on-surface
                      transition-colors duration-75 hover:bg-surface-container-highest"
             >
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={!isCustomHidden(spec)}
                 onchange={() => preferences.toggleColumn(kindId, customColumnId(spec))}
-                aria-label="Show {spec.key}"
-                class="size-3.5 accent-primary"
+                ariaLabel="Show {spec.key}"
               />
               <span class="min-w-0 flex-1 truncate" title={spec.key}>{spec.key}</span>
               <span
