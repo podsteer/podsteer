@@ -128,6 +128,10 @@ and Svelte. The check now fails the build.
 
 ### Amendment, 2026-09-05: build scope is membership, not cache presence
 
+*Accepted 2026-09-06 by Sebastian Gogoasa. It changes what the gate asserts,
+so it is recorded as a decision rather than left as a code change nobody
+signed.*
+
 **Build scope is now `go list -deps -test` membership across the release
 platforms, minus the shipped set.** A Go module is build-only when some build
 or test on `darwin/arm64`, `windows/amd64` or `linux/amd64` compiles it and no
