@@ -163,8 +163,11 @@
     position: relative;
     display: inline-grid;
     place-items: center;
-    inline-size: 20px;
-    block-size: 20px;
+    /* The ring's size, and it has to stay the ring's size: this box is what
+       the row centres, so a control larger than what it draws puts the
+       drawing off-centre by half the difference. */
+    inline-size: 16px;
+    block-size: 16px;
     flex: none;
 
     /* The state layer sits BEHIND the ring (`z-index: -1` below), and without
@@ -183,8 +186,13 @@
     appearance: none;
     margin: 0;
     grid-area: 1 / 1;
-    inline-size: 20px;
-    block-size: 20px;
+    /* The ring's size, and the reason to keep saying so: this is a grid item,
+       so anything here larger than the control sizes the track and pushes the
+       drawing off centre — which is exactly the fault the state layer caused
+       before it was taken out of flow. The input carries the focus ring, so
+       it has to be the control's size rather than merely inside it. */
+    inline-size: 16px;
+    block-size: 16px;
     border: 0;
     border-radius: 9999px;
     background: transparent;
@@ -201,9 +209,13 @@
    * still reads as a layer around the ring and stays inside its own row.
    */
   .state {
-    grid-area: 1 / 1;
-    inline-size: 28px;
-    block-size: 28px;
+    /* ABSOLUTE, so it cannot size the grid track it used to sit in. A halo
+       wider than the control is the point of it; a halo that makes the
+       control's own box smaller than its track is how the drawing ended up
+       four pixels below the row it belongs to. */
+    position: absolute;
+    inline-size: 24px;
+    block-size: 24px;
     border-radius: 9999px;
     background-color: var(--color-on-surface);
     opacity: 0;
@@ -214,9 +226,14 @@
 
   .ring {
     grid-area: 1 / 1;
-    inline-size: 20px;
-    block-size: 20px;
-    border: 2px solid var(--color-on-surface-variant);
+    /* SIXTEEN, matching the checkbox and the 16px icons the rest of the
+       interface is built from. Twenty is the size the design language names,
+       and it is the right size in a form of its own; sitting beside a
+       sixteen-pixel checkbox in the same pane it simply read as bigger. One
+       size for both is worth more here than either number is. */
+    inline-size: 16px;
+    block-size: 16px;
+    border: 1.5px solid var(--color-on-surface-variant);
     border-radius: 9999px;
     pointer-events: none;
     transition: border-color var(--duration-short) var(--ease-standard);
@@ -231,8 +248,11 @@
    */
   .dot {
     grid-area: 1 / 1;
-    inline-size: 10px;
-    block-size: 10px;
+    /* Half the ring, which is the proportion the design language uses and the
+       thing that has to hold when the ring changes size — not the 10px it
+       happened to be when the ring was twenty. */
+    inline-size: 8px;
+    block-size: 8px;
     border-radius: 9999px;
     background-color: var(--color-primary);
     transform: scale(0);

@@ -277,6 +277,14 @@
     block-size: 16px;
     flex: none;
 
+    /* MEASURED, NOT GUESSED: the state layer used to be a grid item, and
+       being larger than this box it sized the implicit track — 24px around a
+       16px control. `place-items: center` then centred the box in the TRACK
+       rather than in the control, putting it four pixels below everything
+       else on the row. It is taken out of flow below so the track is this
+       box, and centring means what it says. The radio had the same fault for
+       the same reason. */
+
     /* The state layer sits BEHIND the box (`z-index: -1` below), and without
        a new stacking context here that negative index escapes upwards and
        paints behind the row's own background instead of behind the box. */
@@ -312,7 +320,11 @@
    * radio hover identically.
    */
   .state {
-    grid-area: 1 / 1;
+    /* ABSOLUTE, so it cannot size the grid track it used to sit in. A halo
+       wider than the control is the point of it; a halo that makes the
+       control's own box smaller than its track is how the drawing ended up
+       four pixels below the row it belongs to. */
+    position: absolute;
     inline-size: 24px;
     block-size: 24px;
     border-radius: 9999px;
@@ -329,7 +341,10 @@
     place-items: center;
     inline-size: 16px;
     block-size: 16px;
-    border: 2px solid var(--color-on-surface-variant);
+    /* 1.5px, not 2. Every other edge in the application is a hairline, and a
+       two-pixel stroke on a sixteen-pixel box is an eighth of it — which is
+       what read as heavy beside the icons it sits next to. */
+    border: 1.5px solid var(--color-on-surface-variant);
     border-radius: var(--radius-xxs);
     color: var(--color-on-primary);
     pointer-events: none;
