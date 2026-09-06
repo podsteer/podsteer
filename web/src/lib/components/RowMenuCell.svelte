@@ -39,7 +39,11 @@
   stylesheet acts on it, and only while the operator has that edge fixed.
 -->
 <td data-edge="menu" class="px-2" onclick={(event) => event.stopPropagation()}>
-  <div class="flex justify-end">
-    <RowMenu {actions} {label} />
+  <!-- CENTRED, not pushed to the right edge. It is a column now rather than
+       something tucked into the row's slack, and a column's contents belong
+       under its heading — right-aligned it sat against the window edge and
+       read as an afterthought rather than as the column it is. -->
+  <div class="flex justify-center">
+    <RowMenu {actions} {label} persistent />
   </div>
 </td>
