@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { fluxHelmRelease, fluxKustomization, parseInventoryId } from './flux'
+import { effectiveReleaseName, fluxHelmRelease, fluxKustomization, parseInventoryId } from './flux'
 
 const applied = 'main@sha1:0123456789abcdef0123456789abcdef01234567'
 const attempted = 'main@sha1:fedcba9876543210fedcba9876543210fedcba98'
@@ -263,5 +263,67 @@ describe('reading a Flux HelmRelease', () => {
 
   it('answers null for no manifest', () => {
     expect(fluxHelmRelease(undefined)).toBeNull()
+  })
+
+  it('reads spec.storageNamespace, and leaves it empty when unset', () => {
+    // WHERE THE RELEASE SECRET IS. helm-controller writes its storage to this
+    // namespace when set; a page looking only in the object's own namespace
+    // reports "no release" for a healthy HelmRelease (ADR 6).
+    expect(fluxHelmRelease({ spec: { storageNamespace: 'flux-system' } })?.storageNamespace).toBe(
+      'flux-system',
+    )
+    // The fallback is the object's OWN namespace, which is not this file's to
+    // apply — so unset stays empty rather than being guessed at here.
+    expect(fluxHelmRelease(suspendedHelmRelease)?.storageNamespace).toBe('')
+  })
+
+  it('takes an explicit releaseName as the effective name, whatever else is set', () => {
+    const release = fluxHelmRelease({
+      metadata: { name: 'podinfo' },
+      spec: { releaseName: 'my-release', targetNamespace: 'shop' },
+    })
+
+    expect(release?.effectiveReleaseName).toBe('my-release')
+  })
+
+  it('composes targetNamespace-name when releaseName is unset', () => {
+    // Flux's own documented default for releaseName: "[TargetNamespace-]Name".
+    const release = fluxHelmRelease({
+      metadata: { name: 'podinfo' },
+      spec: { targetNamespace: 'shop' },
+    })
+
+    expect(release?.effectiveReleaseName).toBe('shop-podinfo')
+  })
+
+  it('falls back to the object name when neither releaseName nor targetNamespace is set', () => {
+    const release = fluxHelmRelease({ metadata: { name: 'podinfo' }, spec: {} })
+
+    expect(release?.effectiveReleaseName).toBe('podinfo')
+  })
+
+  it('never composes a name with a stray hyphen on either end', () => {
+    // A half-typed manifest in the editor reaches this, and a name with
+    // punctuation nobody wrote would be looked up and found missing —
+    // reading as "Flux installed nothing" rather than as a composition bug.
+    expect(fluxHelmRelease({ metadata: {}, spec: { targetNamespace: 'shop' } })?.effectiveReleaseName).toBe(
+      'shop',
+    )
+    expect(fluxHelmRelease({ metadata: { name: 'podinfo' } })?.effectiveReleaseName).toBe('podinfo')
+    expect(fluxHelmRelease({})?.effectiveReleaseName).toBe('')
+  })
+})
+
+describe('effectiveReleaseName', () => {
+  it('applies the three rules in order', () => {
+    expect(
+      effectiveReleaseName({ releaseName: 'chosen', targetNamespace: 'shop', name: 'podinfo' }),
+    ).toBe('chosen')
+    expect(effectiveReleaseName({ releaseName: '', targetNamespace: 'shop', name: 'podinfo' })).toBe(
+      'shop-podinfo',
+    )
+    expect(effectiveReleaseName({ releaseName: '', targetNamespace: '', name: 'podinfo' })).toBe(
+      'podinfo',
+    )
   })
 })

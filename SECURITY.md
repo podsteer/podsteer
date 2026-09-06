@@ -133,6 +133,24 @@ neither happens: the pane states what it did not look at rather than quietly
 looking. If that ever changes it will be off by default, per image, initiated by
 you, and described here before it ships.
 
+**The Helm page LISTS Secrets, and reads none of them.** Helm stores every
+release as a Secret and labels it with the release name, the revision, the
+status and two timestamps. PodSteer's Helm view is built from exactly those
+labels, read through Kubernetes' metadata API — which returns names, labels
+and ownership and **never an object's data** — so no release payload, no
+chart values and no rendered manifest are transferred, and nothing on that
+page is decoded. Two things about it are worth stating plainly. It is
+`list secrets` to your cluster's RBAC like any other request, because the
+metadata API narrows the response and not the permission: an account without
+that permission is refused, and the page says so in those words rather than
+showing you an empty list — "not permitted here" and "no Helm here" are
+different sentences and PodSteer will not collapse them. And it is **not
+polled**: the list is read when you open the page, when you press its own
+Refresh, and after a write PodSteer itself made — never on the refresh timer,
+because a repeated `list secrets` is exactly the pattern Kubernetes' own
+guidance tells cluster operators to alert on. PodSteer also does not perform a
+Helm rollback or uninstall: it shows you the `helm` command and you run it.
+
 The webview still has no network access at all: a content security
 policy in `web/index.html` forbids every remote origin, and all cluster traffic
 goes through the Go process rather than the page. Three things are written to

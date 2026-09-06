@@ -14,6 +14,9 @@ import {
   exec,
   get,
   getYaml,
+  helmHistory,
+  helmRollback,
+  helmUninstall,
   logs,
   portForward,
   resourceArg,
@@ -444,6 +447,61 @@ describe('cpToPod', () => {
   it('quotes a remote path with a space in it', () => {
     expect(cpToPod('prod', 'web-0', 'default', '/tmp/x', '/data/my dir/x')).toBe(
       "kubectl --context prod -n default cp /tmp/x 'web-0:/data/my dir/x'",
+    )
+  })
+})
+
+describe('helmRollback', () => {
+  it('names the release and the revision, with helm flag spelling', () => {
+    // `--kube-context`, not kubectl's `--context`: helm is its own binary with
+    // its own flag parser, and the wrong spelling is a command that does not
+    // run.
+    expect(helmRollback('prod', 'ingress-nginx', 'ingress', 4)).toBe(
+      'helm rollback ingress-nginx 4 -n ingress --kube-context prod',
+    )
+  })
+
+  it('quotes a context containing a space', () => {
+    expect(helmRollback('my cluster', 'ingress-nginx', 'ingress', 4)).toBe(
+      "helm rollback ingress-nginx 4 -n ingress --kube-context 'my cluster'",
+    )
+  })
+
+  it('renders the revision as a plain number rather than helm\'s 0 shorthand', () => {
+    // A specific revision is always what the strip is shown beside; 0 means
+    // "the previous release" to helm and would be a different act.
+    expect(helmRollback('prod', 'web', 'shop', 1)).toContain(' web 1 ')
+  })
+})
+
+describe('helmUninstall', () => {
+  it('names the release and its namespace', () => {
+    expect(helmUninstall('prod', 'ingress-nginx', 'ingress')).toBe(
+      'helm uninstall ingress-nginx -n ingress --kube-context prod',
+    )
+  })
+
+  it('quotes a context containing a space', () => {
+    expect(helmUninstall('my cluster', 'web', 'shop')).toBe(
+      "helm uninstall web -n shop --kube-context 'my cluster'",
+    )
+  })
+
+  it('adds no flag PodSteer chose on the operator\'s behalf', () => {
+    expect(helmUninstall('prod', 'web', 'shop')).not.toContain('--keep-history')
+  })
+})
+
+describe('helmHistory', () => {
+  it('names the release and its namespace', () => {
+    expect(helmHistory('prod', 'ingress-nginx', 'ingress')).toBe(
+      'helm history ingress-nginx -n ingress --kube-context prod',
+    )
+  })
+
+  it('quotes a context containing a space', () => {
+    expect(helmHistory('my cluster', 'web', 'shop')).toBe(
+      "helm history web -n shop --kube-context 'my cluster'",
     )
   })
 })

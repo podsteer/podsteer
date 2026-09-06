@@ -5,6 +5,7 @@ import * as BrowseAPI from "./browseapi.js";
 import * as ClusterAPI from "./clusterapi.js";
 import * as FileCopyAPI from "./filecopyapi.js";
 import * as FleetAPI from "./fleetapi.js";
+import * as HelmAPI from "./helmapi.js";
 import * as HistoryAPI from "./historyapi.js";
 import * as InspectAPI from "./inspectapi.js";
 import * as ManagementAPI from "./managementapi.js";
@@ -21,6 +22,7 @@ export {
     ClusterAPI,
     FileCopyAPI,
     FleetAPI,
+    HelmAPI,
     HistoryAPI,
     InspectAPI,
     ManagementAPI,
@@ -71,6 +73,9 @@ export type {
     Finding,
     GraphEdge,
     GraphNode,
+    HelmListing,
+    HelmRelease,
+    HelmRevision,
     HistorySettings,
     ImageReport,
     KubeStateMetrics,

@@ -376,6 +376,57 @@ type RBACPort interface {
 	ListBindings(ctx context.Context, id domain.ClusterID) ([]domain.RoleBindingRef, error)
 }
 
+// HelmPort reads what Helm has installed in a cluster, from the LABELS on its
+// release Secrets and never from their contents.
+//
+// A PORT OF ITS OWN RATHER THAN A WIDENING OF ResourcePort, and the reason is
+// worth honouring rather than tidying away. `podsteer mcp` narrows by
+// INTERFACE — it is handed reading interfaces that structurally cannot name a
+// write or a Secret reveal (see app/adapters/mcp/server.go) — so what an
+// agent can reach is decided by which method sits on which type. Listing
+// releases is a thing that might one day be offered to an agent; reading a
+// release PAYLOAD, which is Secret material under ADR 3's whole reveal
+// discipline, is not. Those two must therefore be separable at the type
+// level, and folding the list onto ResourcePort beside RevealSecretKey and
+// InspectTLSSecret would make that impossible without a second, narrower
+// interface declared later to undo it.
+//
+// FOR THIS INCREMENT IT CARRIES THE LIST AND NOTHING ELSE. The payload read
+// is a separate change with its own controls, and this interface is where it
+// will go — which is the other half of why the port exists now.
+//
+// A 403 IS NOT AN ERROR FROM THIS PORT. It is a forbidden listing, reported
+// on the returned domain.HelmListing and cached WITH its refusal, because
+// `list secrets` is exactly the permission this feature's likeliest readers
+// do not hold: a refusal must never render as "no Helm here", and an account
+// that may never list something must not have that retried into its audit log
+// on every page open.
+type HelmPort interface {
+	// ListHelmReleases returns the releases Helm has stored in one namespace,
+	// or cluster-wide when the namespace selects every namespace.
+	//
+	// NOT ON THE REFRESH TICK, EVER. Releases change on deploy cadence rather
+	// than on a ten-second one, so the adapter caches this for minutes and
+	// refreshes it on three events only: opening the page, an explicit
+	// refresh, and a write PodSteer itself made. A navigator entry on the
+	// ordinary poll would issue a metadata LIST of Secrets every ten seconds
+	// — the Secrets doctrine's own audit signature with the bytes removed and
+	// the pattern intact.
+	//
+	// It reads through the METADATA client, so no Secret's contents cross the
+	// wire: names, labels and managedFields only.
+	//
+	// refresh BYPASSES THE CACHE for this one call and replaces what it held.
+	// It is a parameter rather than a separate method because it changes
+	// nothing about what is read or how — only whether a held answer is
+	// reused — and because the alternative shape, a Forget followed by a
+	// List, is two calls with a window between them in which another caller
+	// repopulates the entry. It is set by exactly one thing: the operator
+	// pressing Refresh. Nothing on a timer may pass true, and nothing on a
+	// timer may call this method at all.
+	ListHelmReleases(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, refresh bool) (domain.HelmListing, error)
+}
+
 // PortForwardPort opens local ports onto container ports.
 //
 // Deliberately narrow. There is no "restart", no "reconnect" and no

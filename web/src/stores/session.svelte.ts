@@ -238,6 +238,28 @@ export function fleetTableId(tab: FleetTab): string {
  */
 export const TIMELINE_KIND_ID = 'podsteer/timeline'
 
+/**
+ * The Helm page, the SIXTH pinned pseudo-entry.
+ *
+ * NOT A KIND, for the reason none of the other five are: there is no object
+ * to GET called a Helm release. A release is a set of Secrets Helm labelled,
+ * and what this page shows is those labels grouped by the release they name —
+ * so a catalogue entry would offer it to every consumer that expects to be
+ * able to fetch what it names, and none of them could. The Secrets themselves
+ * ARE ordinary catalogue entries and stay exactly where they are; this entry
+ * is the reading of them, not the list.
+ *
+ * IT FETCHES NOTHING ON THE TICK, and here that is a stronger rule than it is
+ * for the RBAC explorer beside it. `#fetch` has a case for this view that
+ * returns immediately, because a metadata LIST of Secrets every ten seconds
+ * would put six `list secrets` lines a minute into the operator's audit log
+ * for as long as the page were left open — the Secrets doctrine's own
+ * signature with the bytes removed and the pattern intact. The page reads
+ * when it opens, when somebody presses Refresh, and after a write PodSteer
+ * made (which drops the Go cache); see decision 6 in podsteer/business-docs.
+ */
+export const HELM_KIND_ID = 'podsteer/helm'
+
 export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
 
 /** Kind ids PodSteer renders with purpose-built columns rather than generically. */
@@ -292,6 +314,7 @@ export type ViewMode =
   | 'fleet'
   | 'rbac'
   | 'timeline'
+  | 'helm'
   | 'pods'
   | 'nodes'
   | 'events'
@@ -659,6 +682,7 @@ export class ClusterSession {
     if (id === FLEET_KIND_ID) return 'fleet'
     if (id === RBAC_KIND_ID) return 'rbac'
     if (id === TIMELINE_KIND_ID) return 'timeline'
+    if (id === HELM_KIND_ID) return 'helm'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
     if (id === RICH_KIND_IDS.events) return 'events'
@@ -682,9 +706,16 @@ export class ClusterSession {
    * The RBAC explorer is the same case for the same reason — it is a set of
    * questions and their answers, not rows — and it additionally must not
    * offer the bulk action bar, which acts on a selection no pane here has.
+   * The Helm page is a third: its rows are releases rather than objects, it
+   * owns its own refresh (the toolbar's would poll `list secrets`), and there
+   * is nothing on it a bulk action could act on — no release is an object the
+   * management port can delete.
    */
   readonly isList = $derived(
-    this.viewMode !== 'overview' && this.viewMode !== 'rbac' && this.viewMode !== 'timeline',
+    this.viewMode !== 'overview' &&
+      this.viewMode !== 'rbac' &&
+      this.viewMode !== 'timeline' &&
+      this.viewMode !== 'helm',
   )
 
   /**
@@ -903,6 +934,7 @@ export class ClusterSession {
       case 'overview':
       case 'rbac':
       case 'timeline':
+      case 'helm':
         return 0
       case 'pods':
         return this.visiblePods.length
@@ -1694,6 +1726,19 @@ export class ClusterSession {
         // assessment above still runs, so the navigator badge stays current
         // while this view is open.
         return Promise.resolve(null)
+      case 'helm':
+        // NOTHING EITHER, and for a reason of its own rather than the RBAC
+        // one. A Helm listing is a metadata LIST OF SECRETS, and issuing one
+        // every ten seconds for as long as somebody leaves the page open is
+        // six `list secrets` lines a minute in their audit log — the exact
+        // pattern Kubernetes' own Secret good-practices page tells cluster
+        // operators to alert on, with the bytes removed and the shape intact.
+        // Releases change on deploy cadence, not on a ten-second one. The
+        // page reads when it opens and when somebody presses its own Refresh;
+        // a write PodSteer made drops the Go cache, so the next look is fresh
+        // without anything here asking. See decision 6 in
+        // podsteer/business-docs.
+        return Promise.resolve(null)
       // Every list carries the kind's annotation projection — the keys on
       // its custom columns — and nothing else of the annotation map. See
       // $lib/customColumns and the client's listNamespaceSummaries note.
@@ -1793,6 +1838,10 @@ export class ClusterSession {
       case 'rbac':
         // Nothing to hold either, and for a different reason: the panel owns
         // its own answers, because it is the thing that asked for them.
+        break
+      case 'helm':
+        // Nothing to hold, for the same reason as RBAC: the page owns the one
+        // listing it asked for, and this tick never asked for anything.
         break
       case 'pods':
         this.pods = rows as Pod[]

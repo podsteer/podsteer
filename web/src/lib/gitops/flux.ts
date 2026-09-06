@@ -86,6 +86,30 @@ export interface FluxHelmRelease {
   releaseName: string
   targetNamespace: string
   /**
+   * `spec.storageNamespace` — WHERE THE RELEASE SECRET ACTUALLY IS.
+   *
+   * helm-controller writes its Helm storage to this namespace when the field
+   * is set, and falls back to the HelmRelease's own namespace when it is not.
+   * A page that looks only in the object's namespace reports "no release" for
+   * a perfectly healthy HelmRelease, which is the mistake ADR 6 names.
+   * Empty here means the field was unset; the fallback needs the object's own
+   * namespace, which this file is not given, so it is deliberately not
+   * applied here.
+   */
+  storageNamespace: string
+  /**
+   * The release name Helm actually stored under.
+   *
+   * Flux's own documented default: `spec.releaseName` when set, otherwise
+   * `<targetNamespace>-<name>` when a target namespace is set, otherwise the
+   * HelmRelease's own name. That is the rule helm-controller applies, and
+   * getting it wrong means looking up a release under a name nothing wrote.
+   * Computed by `effectiveReleaseName` rather than read, because the field
+   * does not exist in the manifest at all — it is a default, and a default is
+   * a rule rather than a quotation.
+   */
+  effectiveReleaseName: string
+  /**
    * The chart version deployed. v2 records it in `status.history`, newest
    * first; the v2beta APIs wrote `status.lastAppliedRevision`, which is read
    * when present so an older controller's objects still say something.
@@ -145,11 +169,13 @@ interface KustomizationManifest {
 }
 
 interface HelmReleaseManifest {
+  metadata?: { name?: string }
   spec?: {
     interval?: string
     suspend?: boolean
     releaseName?: string
     targetNamespace?: string
+    storageNamespace?: string
     chart?: { spec?: { chart?: string; version?: string; sourceRef?: RawSourceRef } }
     chartRef?: RawSourceRef
   }
@@ -191,7 +217,7 @@ export function fluxKustomization(manifest: unknown): FluxKustomization | null {
 /** Reads a HelmRelease, or null when there is no manifest at all. */
 export function fluxHelmRelease(manifest: unknown): FluxHelmRelease | null {
   if (!manifest || typeof manifest !== 'object') return null
-  const { spec = {}, status = {} } = manifest as HelmReleaseManifest
+  const { metadata = {}, spec = {}, status = {} } = manifest as HelmReleaseManifest
 
   const chart = spec.chart?.spec
   const chartRef = sourceRef(spec.chartRef)
@@ -208,6 +234,12 @@ export function fluxHelmRelease(manifest: unknown): FluxHelmRelease | null {
     suspended: spec.suspend ?? false,
     releaseName: spec.releaseName ?? '',
     targetNamespace: spec.targetNamespace ?? '',
+    storageNamespace: spec.storageNamespace ?? '',
+    effectiveReleaseName: effectiveReleaseName({
+      releaseName: spec.releaseName ?? '',
+      targetNamespace: spec.targetNamespace ?? '',
+      name: metadata.name ?? '',
+    }),
     lastAppliedRevision: status.lastAppliedRevision || latest?.chartVersion || '',
     lastAttemptedRevision: status.lastAttemptedRevision ?? '',
     releaseStatus: latest?.status ?? '',
@@ -216,6 +248,39 @@ export function fluxHelmRelease(manifest: unknown): FluxHelmRelease | null {
     lastHandledReconcileAt: status.lastHandledReconcileAt ?? '',
     inventory: inventoryOf(status.inventory),
   }
+}
+
+/**
+ * The release name helm-controller stores under, following Flux's own
+ * documented default.
+ *
+ * THE RULE, from the HelmRelease API reference's `releaseName` field
+ * (https://fluxcd.io/flux/components/helm/helmreleases/): "Defaults to a
+ * composition of '[TargetNamespace-]Name'." So:
+ *
+ *  - `spec.releaseName` set → that, verbatim. It is an override and nothing
+ *    else applies.
+ *  - unset, with `spec.targetNamespace` set → `<targetNamespace>-<name>`.
+ *  - unset, with no target namespace → the HelmRelease's own name.
+ *
+ * The hyphen is only ever between the two parts, which is why the target
+ * namespace is joined rather than prefixed: a blank target namespace must not
+ * produce a leading `-`, and a blank name must not produce a trailing one.
+ * Both blanks are possible on a half-typed manifest in the editor, and a name
+ * with stray punctuation would be looked up and found missing, which reads as
+ * "Flux installed nothing" rather than as "PodSteer composed the wrong name".
+ *
+ * A pure function, exported so the rule can be argued with in a test rather
+ * than observed in a panel.
+ */
+export function effectiveReleaseName(spec: {
+  releaseName: string
+  targetNamespace: string
+  name: string
+}): string {
+  if (spec.releaseName) return spec.releaseName
+  if (spec.targetNamespace && spec.name) return `${spec.targetNamespace}-${spec.name}`
+  return spec.name || spec.targetNamespace
 }
 
 function readyCondition(conditions: Condition[] | undefined): FluxReady | null {

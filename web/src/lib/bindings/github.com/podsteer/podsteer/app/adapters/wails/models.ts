@@ -1191,6 +1191,142 @@ export interface GraphNode {
 }
 
 /**
+ * HelmListing is one answer to "what has Helm installed here".
+ */
+export interface HelmListing {
+    /**
+     * Releases are the releases found, by namespace then name. Never null.
+     */
+    "releases": HelmRelease[] | null;
+
+    /**
+     * Status is "listed", "forbidden" or "failed".
+     * 
+     * THERE IS NO "ABSENT". A cluster with no Helm releases is LISTED with
+     * zero rows, and that is what keeps "Helm installed nothing here"
+     * distinguishable from "your account may not look" — the one collapse
+     * this feature's decision record forbids by name.
+     */
+    "status": string;
+
+    /**
+     * Refusal is the sentence to show when Status is not "listed". It names
+     * the permission that would fix a refusal.
+     */
+    "refusal": string;
+
+    /**
+     * Truncated reports that the listing hit its own cap and more release
+     * Secrets exist than were read.
+     */
+    "truncated": boolean;
+
+    /**
+     * ListedAt is when the listing was made, as seconds since the Unix epoch.
+     * The page shows it as an "as of" time, because the answer is cached for
+     * minutes rather than polled and a cache that cannot say its age is one
+     * that lies.
+     */
+    "listedAt": number;
+
+    /**
+     * Driver is the Helm storage driver read — always "secret". Carried so
+     * the empty state can say which storage was looked in rather than
+     * implying every driver was.
+     */
+    "driver": string;
+}
+
+/**
+ * HelmRelease is one release: its current revision and every revision found.
+ * 
+ * NO CHART AND NO APP VERSION, deliberately. Both live only inside the
+ * release payload — a base64'd gzip'd megabyte — and Kubernetes offers no
+ * server-side projection that would fetch them without fetching everything
+ * around them. Reading forty of those to fill two columns on page open is the
+ * bulk Secret read the whole design refuses; the stated cost is that
+ * `helm list`'s CHART and APP VERSION columns are absent here.
+ */
+export interface HelmRelease {
+    /**
+     * Namespace is where Helm stored the release.
+     */
+    "namespace": string;
+
+    /**
+     * Name is the release name.
+     */
+    "name": string;
+
+    /**
+     * Current is the HIGHEST-numbered revision, which is Helm's own rule for
+     * which revision a release is — so a release whose newest revision failed
+     * shows as failed, which is a fact worth showing.
+     */
+    "current": HelmRevision;
+
+    /**
+     * RevisionCount is how many revisions the listing found. Every revision
+     * is its own Secret, so a release upgraded two hundred times has two
+     * hundred of them.
+     */
+    "revisionCount": number;
+
+    /**
+     * Revisions is every revision found, newest first, so a history drawer
+     * costs no further read.
+     */
+    "revisions": HelmRevision[] | null;
+}
+
+/**
+ * HelmRevision is one release revision, quoted from its Secret's labels.
+ */
+export interface HelmRevision {
+    /**
+     * Namespace is where Helm stored the release, which is not always where
+     * the chart's own objects landed.
+     */
+    "namespace": string;
+
+    /**
+     * Name is the RELEASE name, from Helm's `name` label — never parsed out
+     * of the Secret's own object name, which is a different string.
+     */
+    "name": string;
+
+    /**
+     * Revision is the revision number, from Helm's `version` label.
+     */
+    "revision": number;
+
+    /**
+     * Status is Helm's own status word, verbatim: deployed, superseded,
+     * failed, pending-upgrade and the rest. Not validated into a closed set,
+     * so a status this build has never seen renders as itself.
+     */
+    "status": string;
+
+    /**
+     * CreatedAt is when Helm wrote this revision, as seconds since the Unix
+     * epoch. Zero when the label was absent — never the current time.
+     */
+    "createdAt": number;
+
+    /**
+     * ModifiedAt is when Helm last updated it, as Unix seconds. Zero is the
+     * ORDINARY case: Helm writes the label only on an update.
+     */
+    "modifiedAt": number;
+
+    /**
+     * SecretName is the release Secret's own object name, so the detail can
+     * be opened in the Secrets catalogue. A handle, never a payload.
+     */
+    "secretName": string;
+}
+
+/**
  * HistorySettings is what PodSteer records, and how often.
  */
 export interface HistorySettings {
