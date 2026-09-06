@@ -151,3 +151,114 @@ func toHelmListing(listing domain.HelmListing) HelmListing {
 		Driver:    driver,
 	}
 }
+
+// --- The payload: one revision, read because somebody clicked ---------------
+//
+// EVERYTHING ABOVE THIS LINE IS BUILT FROM LABELS AND CROSSES NO SECRET
+// CONTENTS AT ALL. Everything below it IS the contents of a Secret, and the
+// difference is the whole design (decision 6, which is the Secrets doctrine
+// applied rather than excepted). These types are reached only by
+// HelmAPI.ReadRelease, which is called when somebody presses a button on one
+// revision and by nothing else — never on render, never on the refresh tick.
+//
+// THE FIELD SET IS AN ALLOWLIST AND IS ASSERTED AGAINST A LITERAL LIST in
+// dto_helm_test.go, the same guard notification_api_test.go puts on
+// NotificationRequest and settingsFile.test.ts puts on the settings export.
+// Adding a field here means editing that list, which is the point: this is
+// the one DTO in PodSteer that carries Secret material, and the next field
+// somebody puts on it should have to be argued for rather than merged.
+
+// HelmChartIdentity is what a release says about the chart it came from.
+//
+// THE LIST'S TWO MISSING COLUMNS LIVE HERE. Chart name, chart version and app
+// version are not labels — they exist only inside the payload — so the
+// release list ships without them and they appear here, after the explicit
+// click that reads one revision. Any field may be empty: a chart is not
+// obliged to declare an appVersion.
+type HelmChartIdentity struct {
+	// Name is the chart's own name, which is NOT the release name — one
+	// chart installs under as many release names as somebody likes.
+	Name string `json:"name"`
+	// Version is the chart version as the chart declared it.
+	Version string `json:"version"`
+	// AppVersion is the version of the application the chart packages, as
+	// its author set it — nothing verifies it against what is running.
+	AppVersion string `json:"appVersion"`
+	// Description is the chart's own one-line description, when it has one.
+	Description string `json:"description"`
+}
+
+// HelmReleaseDetail is one decoded revision.
+//
+// THREE OF ITS FIELDS ARE SECRET MATERIAL AND THEY ARE NOT ALIKE. `manifest`
+// arrives ALREADY MASKED — the adapter replaced every value in every Secret
+// document inside it with that value's decoded size, before the string
+// crossed this boundary — so it needs no reveal timer. `values` and `notes`
+// do: a chart puts a database password in its values and PodSteer cannot know
+// which key that is, and a NOTES template is rendered from those same values
+// and routinely prints one back. Both are governed in the webview by the same
+// re-hideable, thirty-second, hidden-on-blur discipline a revealed Secret key
+// already has — see web/src/stores/helmPayloads.svelte.ts.
+type HelmReleaseDetail struct {
+	// Namespace is where Helm stored the release.
+	Namespace string `json:"namespace"`
+	// Name is the release name, verified against the request before the
+	// payload was decoded at all.
+	Name string `json:"name"`
+	// Revision is the revision read.
+	Revision int `json:"revision"`
+	// Status is the release status from INSIDE the payload, verbatim.
+	Status string `json:"status"`
+	// Chart is the chart identity — the list's two missing columns.
+	Chart HelmChartIdentity `json:"chart"`
+	// Description is Helm's own account of this revision ("Upgrade
+	// complete", or the failure's own text).
+	Description string `json:"description"`
+	// Values are the values the release was installed WITH, as YAML —
+	// Helm's `config`, which is what `helm get values` prints, never the
+	// chart's defaults merged in. SECRET MATERIAL, under the reveal
+	// discipline in the webview.
+	Values string `json:"values"`
+	// Notes is the rendered NOTES.txt. ALSO SECRET MATERIAL, and the one
+	// people assume is not.
+	Notes string `json:"notes"`
+	// Manifest is the rendered manifest with every Secret document in it
+	// ALREADY MASKED in the adapter. Needs no reveal timer, because there is
+	// nothing left in it to time out.
+	Manifest string `json:"manifest"`
+	// MaskedDocuments is how many documents were masked. Shown beside the
+	// manifest, because a masked value that does not say it was masked reads
+	// as a Secret with an odd-looking value in it. Zero is the ordinary
+	// answer: most charts render no Secret at all.
+	MaskedDocuments int `json:"maskedDocuments"`
+	// SecretName is the release Secret that was read. A handle, never a
+	// payload.
+	SecretName string `json:"secretName"`
+}
+
+// toHelmReleaseDetail converts one decoded revision for the wire.
+//
+// A STRAIGHT TRANSCRIPTION AND NOTHING ELSE. Nothing is redacted here and
+// nothing may be: the manifest was masked in the ADAPTER, before this, and
+// masking at this layer would mean the material had already crossed every
+// boundary in between — which is the mistake GetManifest's own comment names.
+func toHelmReleaseDetail(detail domain.HelmReleaseDetail) HelmReleaseDetail {
+	return HelmReleaseDetail{
+		Namespace: detail.Namespace.String(),
+		Name:      detail.Name,
+		Revision:  detail.Revision,
+		Status:    string(detail.Status),
+		Chart: HelmChartIdentity{
+			Name:        detail.Chart.Name,
+			Version:     detail.Chart.Version,
+			AppVersion:  detail.Chart.AppVersion,
+			Description: detail.Chart.Description,
+		},
+		Description:     detail.Description,
+		Values:          detail.Values,
+		Notes:           detail.Notes,
+		Manifest:        detail.Manifest,
+		MaskedDocuments: detail.MaskedDocuments,
+		SecretName:      detail.SecretName,
+	}
+}

@@ -26,13 +26,20 @@
  *
  * IN MEMORY AND NOWHERE ELSE. Not persisted, not written to disk, and cleared
  * wholesale when the window is not being looked at.
+ *
+ * THE TIMING, THE BLUR AND THE RE-HIDE ARE NOT HERE ANY MORE. They live in
+ * `RevealHolder` ($stores/revealHolder), shared with the Helm release pane,
+ * which puts a chart's values and notes on screen under exactly the same
+ * rules. Two implementations of a thirty-second timer drift in the one way
+ * nobody can see — a pane that never expires looks identical to one that does
+ * until a value is still sitting there in a recording — so there is one, with
+ * one set of tests. What stays here is everything about WHICH read is made
+ * and what a refusal looks like, because those differ and the timing does not.
  */
 
 import { revealSecretKey, setSecretKey } from '$lib/api/client'
 import { toApiError } from '$lib/api/errors'
-
-/** How long a revealed value stays on screen. */
-const HIDE_AFTER_MS = 30_000
+import { hideOnWindowBlur, RevealHolder } from './revealHolder.svelte'
 
 /** One revealed value, or the refusal that came back instead. */
 export interface Revealed {
@@ -45,15 +52,14 @@ const EMPTY: Revealed = { value: null, error: '', loading: false }
 
 class SecretReveals {
   /**
-   * Reactive, because a row's value cell renders straight out of it — unlike
-   * usageHistory, which is copied out once when a drawer opens.
+   * The shared holder. It owns the timer, the re-hide and the blur; this
+   * class owns the read and what a refusal looks like.
    */
-  #shown = $state<Record<string, Revealed>>({})
-  #timers = new Map<string, ReturnType<typeof setTimeout>>()
+  #held = new RevealHolder<Revealed>()
 
   /** What is on screen for one key. Never undefined, so callers need no guard. */
   at(key: string): Revealed {
-    return this.#shown[key] ?? EMPTY
+    return this.#held.at(key) ?? EMPTY
   }
 
   /** Whether anything is revealed for one key. */
@@ -78,17 +84,34 @@ class SecretReveals {
     secret: string,
     secretKey: string,
   ): Promise<void> => {
-    this.#shown[key] = { value: null, error: '', loading: true }
+    // TAKEN BEFORE THE AWAIT, checked after it. Without this, revealing a
+    // key and then alt-tabbing lands the value on screen anyway: the blur
+    // handler empties the holder, and then this promise resolves and writes
+    // it straight back, revealed and under a fresh thirty seconds, in
+    // exactly the state the blur rule exists to prevent. It also drops an
+    // earlier read when a second reveal of the same key has overtaken it.
+    const issued = this.#held.claim(key)
+
+    // NOT EXPIRING: a spinner that removes itself after thirty seconds leaves
+    // a row looking as though nothing had ever been asked for.
+    this.#held.put(key, { value: null, error: '', loading: true })
 
     try {
       // Assigned only after the call resolves. Rendering optimistically is
       // how a client shows a secret to somebody who was not allowed to read
       // it, for the moment before the error lands.
       const value = await revealSecretKey(clusterId, namespace, secret, secretKey)
-      this.#shown[key] = { value, error: '', loading: false }
-      this.#timers.set(key, setTimeout(() => this.hide(key), HIDE_AFTER_MS))
+      if (!this.#held.isCurrent(key, issued)) return
+      // EXPIRING, because this one is the material.
+      this.#held.put(key, { value, error: '', loading: false }, true)
     } catch (cause) {
-      this.#shown[key] = { value: null, error: toApiError(cause).message, loading: false }
+      // The refusal is dropped along with the value it would have replaced:
+      // an error about a read somebody has already navigated away from is
+      // not something to put in front of them.
+      if (!this.#held.isCurrent(key, issued)) return
+      // ALSO NOT EXPIRING: a refusal the operator has not finished reading
+      // must not take itself off the screen.
+      this.#held.put(key, { value: null, error: toApiError(cause).message, loading: false })
     }
   }
 
@@ -119,33 +142,17 @@ class SecretReveals {
     await this.reveal(key, clusterId, namespace, secret, secretKey)
   }
 
-  /** Puts one value away. */
+  /** Puts one value away, and forgets it. */
   hide = (key: string): void => {
-    const timer = this.#timers.get(key)
-    if (timer) {
-      clearTimeout(timer)
-      this.#timers.delete(key)
-    }
-    delete this.#shown[key]
+    this.#held.hide(key)
   }
 
-  /**
-   * Puts everything away.
-   *
-   * Called when the window loses focus, which in practice is the moment
-   * somebody alt-tabs to start a screen share or accepts a call. It costs a
-   * click to get back and removes the failure mode where a credential sits
-   * revealed behind a window nobody remembers is open.
-   */
+  /** Puts everything away. See RevealHolder.hideAll for why on blur. */
   hideAll = (): void => {
-    for (const timer of this.#timers.values()) clearTimeout(timer)
-    this.#timers.clear()
-    this.#shown = {}
+    this.#held.hideAll()
   }
 }
 
 export const secretReveals = new SecretReveals()
 
-if (typeof window !== 'undefined') {
-  window.addEventListener('blur', () => secretReveals.hideAll())
-}
+hideOnWindowBlur(secretReveals)

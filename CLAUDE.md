@@ -973,7 +973,7 @@ is typed into the panel and shown, and it is never written to disk — the same
 no-object-names commitment SECURITY.md makes, which is why recent subjects, if
 they are ever offered, belong in memory beside the navigator's Recent section.
 
-## The Helm page is built from labels, and never from a release payload
+## The Helm page is built from labels, and reads a payload only when asked
 
 `podsteer/helm` is the sixth pinned pseudo-entry, beside the overview,
 Applications, All clusters, the RBAC explorer and the timeline, and it is one
@@ -1029,12 +1029,128 @@ a cache that cannot say its age is one that lies.
 **`HelmPort` is a new outbound port rather than a widening of `ResourcePort`,**
 and the reason is `podsteer mcp`: it narrows by INTERFACE, so a list tool might
 one day be offered while a payload read never is, and the two have to be
-separable at the type level.
+separable at the type level. It now carries both methods, which is what makes
+that separability something to keep rather than something to assume — see the
+payload section below.
 
-**The list ships without a CHART and an APP VERSION column**, which is the
+**The LIST ships without a CHART and an APP VERSION column**, which is the
 record's explicit and stated cost rather than an oversight: neither is a label,
-both live only inside the payload, and filling them would be the bulk read
-this exists to refuse. The page says so where the columns would have been.
+both live only inside the payload, and filling them on a page load would be the
+bulk read this exists to refuse. The page says so where the columns would have
+been, and points at the release pane, which is where they do appear.
+
+### Reading one revision is the second act, and it is `RevealSecretKey`'s
+
+`HelmPort.ReadHelmRelease` / `HelmAPI.ReadRelease` decodes ONE revision of ONE
+release, from a click handler and from nowhere else — never on render, never
+when the drawer opens, never on the tick. It reads a Secret's contents, so it
+inherits ADR 3's controls verbatim rather than a summary of them, and one
+audit line in `HelmService.ReadRelease` names cluster, namespace, release and
+revision and never a value. **All the Helm-format knowledge stays in the
+adapter** (`app/adapters/k8s/helm_payload.go`, beside `helm.go`): the derived
+object name, Helm's own base64 layer, the gzip sniff and the release document.
+
+Five things there are load-bearing:
+
+- **The Secret is SHAPE-CHECKED before it is decoded**, and the wording there
+  matters because it is easy to overclaim. Its type must be
+  `helm.sh/release.v1` and its `owner`, `name` and `version` labels must match
+  the request. This is **not a boundary against an attacker** — whoever can
+  create a Secret at the derived name can set its type and labels too — and
+  what makes a hostile document merely a document is the bounded
+  decompression, the narrow unmarshal target and the masked manifest. What the
+  check does buy is that an object merely SITTING at Helm's naming shape (a
+  backup, a hand-made copy, a restore under the wrong name) is refused rather
+  than rendered as a release it is not. `owner=helm` is checked because the
+  LISTING selects on it, and without it an object the list cannot see would
+  still be readable here — the two acts must agree about what a release is. A
+  failure is `ErrHelmPayloadUnreadable` and never `ErrNotFound`: the object is
+  there.
+- **The limit is 32 MiB and the reader is given limit+1**, so reaching it
+  exactly succeeds and exceeding it is observable. Exceeding it REFUSES
+  (`ErrHelmPayloadTooLarge`) rather than truncating — etcd bounds the
+  compressed release only, gzip expands by three orders of magnitude, and a
+  manifest rendered as whole when it is short is worse than no manifest. The
+  boundary is a table test on both sides.
+- **The unmarshal target is a NARROW struct.** A release payload carries the
+  whole chart — `chart.templates` and `chart.files` — and nothing displays
+  them, so no field names them and `encoding/json` walks past.
+- **A RENDERED MANIFEST IS SECRET MATERIAL, and the decision record missed
+  it.** A chart that renders `kind: Secret` puts base64 `data:` into the
+  manifest string, and base64 is an encoding rather than a cipher — the
+  doctrine's own words — so `maskSecretDocuments` splits the manifest on
+  document boundaries and masks each v1 Secret through the same
+  `maskSecretData` the YAML tab uses, in the adapter, before the string
+  crosses any boundary. **A v1 `List` or `SecretList` is walked and each
+  Secret in `items[]` masked and counted**, because a chart templating several
+  Secrets from one `range` emits exactly that and both kubectl and Helm's kube
+  client expand it — matching only a bare Secret let one straight through with
+  its base64 intact while the count said nothing was hidden. Nesting is
+  bounded at `helmListNestingLimit`, and hitting the bound **withholds the
+  document** rather than passing it through: "I did not finish looking" and
+  "there was nothing to hide" must not produce the same output. **A document
+  that fails to parse is passed through unchanged** (it is text, not a
+  Secret), and so is anything that is not one of those shapes — only a masked
+  document is re-serialised, so an untouched manifest is byte-identical,
+  comments included. Because it arrives masked it needs no reveal timer.
+- **`maskSecretData` masks a non-string scalar too**, which it did not before
+  this change — it used to `continue` past anything that was not a Go string.
+  That was a hole in the Secrets YAML tab as much as here, and the Helm pane
+  is what surfaced it: the API server rejects a Secret whose value is not a
+  string, but Helm writes its release Secret BEFORE applying what it rendered,
+  so a `failed` revision's manifest routinely carries the object the server
+  refused — and an unquoted `stringData: {pin: 483920}` parses as a number. A
+  map or a list is still left alone, deliberately: it is not a value shape at
+  all, and a byte-count placeholder over it would claim something nothing
+  measured.
+- **Values and notes DO need one**, and notes are not the milder half: a NOTES
+  template is rendered from the same `.Values` and printing an admin password
+  is one of the commonest things it does.
+
+**The reveal discipline has ONE implementation.**
+`web/src/stores/revealHolder.svelte.ts` owns the thirty-second timer, the
+re-hide and the window-blur clear, and both `secretReveals` and
+`helmPayloads` use it. Two copies would drift in the way nobody can see — a
+pane whose timer has become "never" looks identical to one that has not, until
+a value is still on screen in a recording. **Hiding forgets rather than stops
+rendering**, so showing a value again costs another audited read;
+`helmPayloads` splits the payload accordingly, holding the masked manifest and
+the chart identity for the drawer and only the values and notes under the
+timer, and dropping everything when the drawer closes.
+
+**Every reveal takes a GENERATION TOKEN before its await and checks it after**
+(`RevealHolder.claim`/`isCurrent`), and this is not defensive decoration — it
+closes a live hole in the blur rule. Reveal a value, alt-tab, and the blur
+handler empties the holder while the read is still in the air; the promise
+then resolves and writes the material straight back, revealed and under a
+fresh thirty seconds, in a window nobody is looking at. Emptying is not enough
+on its own. The token is per KEY as well as global, which is what stops the
+Helm pane resurrecting a revision it moved away from mid-read — two revisions
+held at once, the abandoned one's values under a timer no control could reach.
+`HelmView.load` already guarded the LISTING this way; the stores now do the
+same for the material.
+
+**Leaving the page drops the payload too, not only closing the drawer.**
+`HelmView` sits inside an `{#if}` on the view mode, so switching to Pods with
+the drawer open destroys the component without `close()` running — a teardown
+`$effect` calls `forgetAll` so the SECURITY.md sentence about dropping the
+payload when the drawer closes is true rather than nearly true.
+
+**The payload reaches nothing that persists.** Not the timeline recorder (which
+records writes, and this is a read), not a CSV export (which renders the
+listing, built from labels), not disk. `helmPayloads.test.ts` asserts the first
+two with a sentinel, and `dto_helm_test.go` asserts the payload DTO's field set
+against a LITERAL list — the guard `notification_api_test.go` and
+`settingsFile.test.ts` already use, here because this is the one DTO carrying
+Secret material.
+
+**The MCP guard names the payload read.** `tools_test.go` already asserted no
+reachable interface declares `RevealSecretKey` or `InspectTLSSecret`;
+`ReadHelmRelease` joins them, and the check is now made by walking every
+interface-typed field of `Deps` rather than a hand-listed set — so a future
+`HelmReader` offering the LIST (which reads no Secret contents at all) cannot
+quietly acquire the payload read by being handed `ports.HelmPort` whole. That
+separability is why `HelmPort` exists as its own type.
 
 **Rollback and uninstall are NOT performed** (I2). A Helm rollback re-renders a
 revision, diffs it, applies the difference, prunes and writes a fresh release

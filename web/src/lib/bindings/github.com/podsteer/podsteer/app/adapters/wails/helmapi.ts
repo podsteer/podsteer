@@ -45,3 +45,30 @@ import * as $models from "./models.js";
 export function ListReleases(clusterID: string, $namespace: string, refresh: boolean): $CancellablePromise<$models.HelmListing> {
     return $Call.ByID(3633651165, clusterID, $namespace, refresh);
 }
+
+/**
+ * ReadRelease reads ONE revision of ONE release, because somebody clicked.
+ * 
+ * THE SECOND METHOD ON THIS SURFACE, AND A DIFFERENT ACT FROM THE FIRST.
+ * ListReleases transfers no Secret contents whatsoever; this reads a release
+ * payload whole, which is the act the Secrets doctrine governs. So it is
+ * shaped exactly as RevealSecretKey is: it happens because somebody pressed
+ * something, on one named revision, and it is audited in the application
+ * layer by cluster, namespace, release and revision — never a value.
+ * 
+ * NOTHING MAY EVER CALL THIS ON RENDER OR ON A TICK. The page calls it from
+ * a button's handler and from nowhere else; a $effect that reached it would
+ * turn opening a drawer into a Secret read, which is the pattern Kubernetes'
+ * own guidance tells cluster operators to alert on and the exact thing this
+ * whole feature was permitted on the condition of not doing.
+ * 
+ * A FAILURE IS A REJECTION HERE, unlike ListReleases where a refusal is an
+ * ordinary answer carried beside the rows. There is nothing to render without
+ * the payload, and an empty detail would let an empty values tab read as a
+ * release installed with no values. The two new codes — helm_payload_too_large
+ * and helm_payload_unreadable — and the Helm-specific not_found sentence are
+ * in errors.go.
+ */
+export function ReadRelease(clusterID: string, $namespace: string, release: string, revision: number): $CancellablePromise<$models.HelmReleaseDetail> {
+    return $Call.ByID(2950025808, clusterID, $namespace, release, revision);
+}

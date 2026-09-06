@@ -59,6 +59,29 @@ describe('writing a Secret key', () => {
     expect(secretReveals.at('k').value).toBe('new-value')
   })
 
+  it('does not land a value on screen when the window blurred mid-read', async () => {
+    // THE SAME RACE THE HELM PANE HAS, in the store that had it first: press
+    // reveal, alt-tab, the blur handler empties everything — and then the
+    // promise resolves and writes the value back in, revealed and under a
+    // fresh thirty seconds. Emptying alone never fixed it, because the read
+    // was already in the air when the blur landed.
+    let resolveReveal: (value: string) => void = () => {}
+    mockReveal.mockReturnValueOnce(
+      new Promise<string>((resolve) => {
+        resolveReveal = resolve
+      }) as ReturnType<typeof revealSecretKey>,
+    )
+
+    const inFlight = secretReveals.reveal('k', 'dev', 'app', 'creds', 'password')
+
+    secretReveals.hideAll()
+    resolveReveal('hunter2')
+    await inFlight
+
+    expect(secretReveals.at('k').value).toBeNull()
+    expect(secretReveals.isShown('k')).toBe(false)
+  })
+
   it('leaves the shown value alone when the write itself fails', async () => {
     mockReveal.mockResolvedValueOnce('old-value')
     await secretReveals.reveal('k', 'dev', 'app', 'creds', 'password')
