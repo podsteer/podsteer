@@ -214,7 +214,11 @@ describe('DetailList', () => {
     menus[0].dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await tick()
 
-    const items = [...container.querySelectorAll('[role="menuitem"]')].map((item) =>
+    // DOCUMENT, NOT CONTAINER. RowMenu portals its menu onto the body so it
+    // can escape the stacking context a pinned table cell creates — see the
+    // portal action there — so a query scoped to this component's own
+    // container finds nothing.
+    const items = [...document.querySelectorAll('[role="menuitem"]')].map((item) =>
       item.textContent?.trim(),
     )
     // Copy is on every row, because every row has a value and copying it is
@@ -241,7 +245,7 @@ describe('DetailList', () => {
       ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await tick()
 
-    const items = [...container.querySelectorAll('[role="menuitem"]')]
+    const items = [...document.querySelectorAll('[role="menuitem"]')]
     expect(items.map((item) => item.textContent?.trim())).toEqual(['Copy value', 'Reveal value'])
 
     items[1].dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -261,11 +265,11 @@ describe('DetailList', () => {
       ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await tick()
 
-    const copy = container.querySelector('[role="menuitem"]')!
+    const copy = document.querySelector('[role="menuitem"]')!
     copy.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await tick()
 
-    expect(container.querySelector('[role="menuitem"]')?.textContent).toContain('Copied!')
+    expect(document.querySelector('[role="menuitem"]')?.textContent).toContain('Copied!')
   })
 
   it('keeps only one menu open at a time', async () => {
@@ -283,12 +287,12 @@ describe('DetailList', () => {
     const triggers = container.querySelectorAll('[data-row-menu] button')
     triggers[0].dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await tick()
-    expect(container.querySelectorAll('[role="menu"]')).toHaveLength(1)
+    expect(document.querySelectorAll('[role="menu"]')).toHaveLength(1)
 
     triggers[1].dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await tick()
 
-    const open = container.querySelectorAll('[role="menu"]')
+    const open = document.querySelectorAll('[role="menu"]')
     expect(open).toHaveLength(1)
     // And it is the second one: the first closed rather than both standing.
     expect(triggers[1].getAttribute('aria-expanded')).toBe('true')

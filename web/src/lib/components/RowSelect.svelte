@@ -40,17 +40,33 @@
      fixed — see $lib/fixedColumns. -->
 <td
   data-edge="select"
-  class="w-10 py-1.5 pr-1 pl-5"
+  class="w-10 py-1.5 align-middle"
   onclick={(event) => event.stopPropagation()}
 >
-  <Checkbox
-    checked={selected}
-    ariaLabel="Select {label}"
-    class="align-middle"
-    data-row-select=""
-    onclick={(event) => {
-      event.preventDefault()
-      ontoggle(event.shiftKey)
-    }}
-  />
+  <!--
+    A FLEX BOX RATHER THAN AN INLINE ONE, and centred, for two reasons.
+
+    Vertical: the control is a 16px inline-grid inside an inline-flex label,
+    so left in an inline formatting context its position is decided by the
+    line box's baseline and the cell font's x-height — which put it below the
+    icon and text on its own row. A block-level flex box has no strut and no
+    baseline to answer to, so the 16px box is simply centred in the cell, and
+    the cell is centred in the row.
+
+    Horizontal: this is a control COLUMN now, like the row menu at the other
+    edge, and that one centres. Padded to one side it sat off-centre under a
+    header box that was padded the same way — consistent with itself and with
+    nothing else.
+  -->
+  <div class="flex items-center justify-center">
+    <Checkbox
+      checked={selected}
+      ariaLabel="Select {label}"
+      data-row-select=""
+      onclick={(event) => {
+        event.preventDefault()
+        ontoggle(event.shiftKey)
+      }}
+    />
+  </div>
 </td>

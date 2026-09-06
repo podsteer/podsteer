@@ -174,6 +174,39 @@
   const MENU_GAP = 4
   const MENU_MARGIN = 8
 
+  /**
+   * Moves the menu out of the table and onto the body.
+   *
+   * POSITION: FIXED WAS NOT ENOUGH, and the reason is worth stating because
+   * the two failures look identical from a screenshot. Fixed positioning
+   * escaped the table's scrollport, which was the CLIPPING. It did nothing
+   * about the STACKING: a pinned column cell is `position: sticky` with a
+   * z-index, which makes it a stacking context, so the menu's own z-index is
+   * only ever weighed against its siblings inside that one cell. Every row
+   * below has a sticky cell at the same level and comes later in the
+   * document, so all of them paint over this menu whatever number it carries.
+   *
+   * Nothing about z-index can fix that from inside the cell — the menu has to
+   * leave it. On the body it has no ancestor that positions it and no
+   * stacking context above it, so its z-index means what it says.
+   */
+  function portal(node: HTMLElement): { destroy: () => void } {
+    document.body.appendChild(node)
+    return {
+      destroy: () => node.remove(),
+    }
+  }
+
+  /**
+   * The portalled menu, held because it is no longer a descendant of `node`.
+   *
+   * The outside-click check asks whether the pointer landed inside THIS menu,
+   * and moving the element to the body made every click on one of its own
+   * items land "outside" — closing the menu before the item could run. Both
+   * elements have to be asked now.
+   */
+  let menu = $state<HTMLElement | null>(null)
+
   let trigger = $state<HTMLButtonElement | null>(null)
   let menuHeight = $state(0)
   /** Bumped while open so a scroll or a resize re-measures. */
@@ -243,7 +276,11 @@
     // THIS menu's element, not any row menu. Asking whether the pointer
     // landed in a row menu was what let a click on another row's control
     // leave this one open.
-    if (!node?.contains(event.target as Node)) openMenu = null
+    const target = event.target as Node
+    // BOTH, because the menu is portalled onto the body and is therefore not
+    // inside `node` any more. Asking only the wrapper closed the menu on the
+    // pointerdown of a click aimed at one of its own items.
+    if (!node?.contains(target) && !menu?.contains(target)) openMenu = null
   }
 
   function onKeydown(event: KeyboardEvent): void {
@@ -348,6 +385,8 @@
            ground, same item metrics and the same muted leading icon. Two
            dropdowns in one application should not be two designs. -->
       <div
+        use:portal
+        bind:this={menu}
         bind:clientHeight={menuHeight}
         style={placement ? `top: ${placement.top}px; left: ${placement.left}px;` : 'visibility: hidden;'}
         class="fixed z-50 w-48 overflow-hidden rounded-sm
