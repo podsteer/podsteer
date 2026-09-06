@@ -79,6 +79,22 @@ const (
 	// limited, behind a proxy that refused it. Also not an error: a client
 	// that cannot reach GitHub is working perfectly well.
 	UpdateUnknown UpdateState = "unknown"
+	// UpdateNotComparable means the check SUCCEEDED and there is nothing to
+	// compare it against: this build carries no release version, which is
+	// what a development build looks like.
+	//
+	// ITS OWN STATE BECAUSE THE ALTERNATIVE TOLD A LIE. It used to answer
+	// UpdateUnknown, which the settings pane renders as "Could not reach
+	// GitHub" — so every development build reported a network failure that
+	// had not happened, on a machine where the request had in fact returned
+	// 200. The two need opposite sentences: one says look at your network,
+	// the other says there is nothing to look at.
+	//
+	// The same distinction MetricsStatus draws between an absent
+	// metrics-server and a forbidden one, and ClusterReadStatus between
+	// unreachable and refused, and HelmListStatus between "no Helm here" and
+	// "not permitted here". This is the case that was missed.
+	UpdateNotComparable UpdateState = "not-comparable"
 )
 
 // UpdateCheck is the result of asking whether a newer release exists.
@@ -104,12 +120,17 @@ func CompareVersions(installed, latest string) UpdateCheck {
 
 	current, ok := ParseAppVersion(installed)
 	if !ok {
-		// A development build. Saying nothing is the only honest answer.
-		return UpdateCheck{State: UpdateUnknown, Installed: installed}
+		// A development build. Saying nothing is still the only honest answer
+		// about the RELEASE — but it is not the same answer as "the check
+		// failed", and reporting it as one is how a build that reached GitHub
+		// perfectly well ended up claiming it could not.
+		return UpdateCheck{State: UpdateNotComparable, Installed: installed}
 	}
 
 	published, ok := ParseAppVersion(latest)
 	if !ok {
+		// GitHub answered with something this build cannot read. That IS a
+		// failed check rather than a missing version, so it stays Unknown.
 		return result
 	}
 

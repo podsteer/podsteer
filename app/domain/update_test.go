@@ -52,13 +52,43 @@ func TestNewerThanOrdersByEachComponent(t *testing.T) {
 func TestCompareVersionsSaysNothingAboutADevelopmentBuild(t *testing.T) {
 	result := domain.CompareVersions("dev", "v9.9.9")
 
-	if result.State != domain.UpdateUnknown {
-		t.Fatalf("state %q, want unknown", result.State)
+	// NOT Unknown, and the distinction is the whole point of this test. It
+	// used to be, and the settings pane renders Unknown as "Could not reach
+	// GitHub" — so every development build reported a network failure that
+	// had not happened, on a machine where the request returned 200. The
+	// check succeeded; there is simply nothing to compare it against.
+	if result.State != domain.UpdateNotComparable {
+		t.Fatalf("state %q, want not-comparable", result.State)
 	}
 	// And it must not leak the latest version into a build that cannot be
 	// compared — the UI would have something to show and no basis for it.
 	if result.Latest != "" {
 		t.Fatalf("latest %q, want empty", result.Latest)
+	}
+}
+
+// TestCompareVersionsKeepsAFailedCheckApartFromAnUncomparableBuild is the
+// regression this pair exists for: two outcomes that need opposite sentences.
+// One says look at your network, the other says there is nothing to look at.
+func TestCompareVersionsKeepsAFailedCheckApartFromAnUncomparableBuild(t *testing.T) {
+	cases := []struct {
+		name      string
+		installed string
+		latest    string
+		want      domain.UpdateState
+	}{
+		{"a development build, with a good answer from GitHub", "dev", "v1.2.3", domain.UpdateNotComparable},
+		{"a build with no version at all", "", "v1.2.3", domain.UpdateNotComparable},
+		{"a real build, with an answer that will not parse", "v1.0.0", "latest", domain.UpdateUnknown},
+		{"a real build, with no answer at all", "v1.0.0", "", domain.UpdateUnknown},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := domain.CompareVersions(tc.installed, tc.latest).State; got != tc.want {
+				t.Fatalf("state %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
