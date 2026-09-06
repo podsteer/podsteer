@@ -77,13 +77,29 @@ export function localShellTitle(request: LocalShellRequest, available: CodingAge
  * shell the operator opened on their own machine, with their own credentials,
  * is not something this application can or should police. Saying so is more
  * honest than a pane that quietly behaves differently from the one beside it.
+ *
+ * IT ALSO SAYS THE CONTEXT IS ALREADY SELECTED. It used to tell people to pass
+ * `--context`, which stopped being true when the shell started getting a
+ * PodSteer-owned kubeconfig — one holding nothing but `current-context` — at
+ * the front of its KUBECONFIG. See ContextNotice in
+ * `app/adapters/localshell/env.go`. Leaving the old instruction here would be
+ * worse than saying nothing: somebody who follows it learns the wrong model of
+ * what this pane does, and then wonders why `kubectl config use-context` in it
+ * does not stick.
+ *
+ * WHAT THIS LINE IS NOT is a report on the session. It describes the feature,
+ * and it is rendered from the pane before any shell exists. The shell prints
+ * its own notice into its own buffer, and THAT one knows whether the selection
+ * actually succeeded — a temp directory that will not take a file is the one
+ * way it does not.
  */
 export function localShellNotice(context: string): string {
   const cluster = context === '' ? 'no cluster tab' : `context "${context}"`
   return (
     `Your own shell, on this machine, with your own credentials. ` +
     `KUBECONFIG is set to the files PodSteer reads and ${cluster} is open — ` +
-    `current-context is untouched, so pass --context. ` +
+    `this shell is set to that context, while your own kubeconfig is untouched: ` +
+    `the selection is a PodSteer file that lives only as long as this terminal. ` +
     `PodSteer's read-only setting does not apply here: it governs PodSteer's own writes, ` +
     `not a shell you opened yourself.`
   )

@@ -2655,7 +2655,30 @@ opposite: it is NOT tracked and NOT deleted, because Kubernetes will not remove
 an ephemeral container — it stays in the pod's spec until the pod is deleted,
 which the dialog states plainly.
 
-## The local terminal runs the operator's own tools, and pins nothing
+**The two default images differ by one suffix, and the split is the point.**
+Both are `docker.io/cloudresty/dockydeb`, pinned
+(`DEFAULT_DEBUG_IMAGE`/`DEFAULT_NODE_SHELL_IMAGE` in
+`web/src/stores/preferences.svelte.ts`), and the debug one is the `-nonroot`
+variant while the node shell is not. A debug container is injected into
+somebody else's pod, in their namespace, so Pod Security admission judges it —
+and under `restricted` a root container is rejected outright, before anything
+starts, so a root default would fail on exactly the clusters most likely to
+have someone debugging in them. A node shell is a privileged pod entering the
+host namespaces with `nsenter`: root by definition, and a nonroot image could
+not do the one thing it exists for. Do not "tidy" these into one reference.
+They are pinned rather than floating for the same reason everything PodSteer
+creates in a cluster is: what this application puts into somebody's cluster
+must not change because an upstream tag was republished. And the registry is
+Docker Hub deliberately — the same repository on ghcr.io answers 403 to an
+anonymous pull, so a ghcr reference would be `ImagePullBackOff` on every
+cluster with no credential for it, which is all of them out of the box. All
+three (both images and the node-shell namespace) are editable in
+Settings → Terminal images (`TerminalImagesPane.svelte`), which is where an
+air-gapped operator points them at their own mirror; they were persisted
+preferences reachable only from the dialogs that used them until that pane
+existed, so the operator who most needed them met them as a stuck pod.
+
+## The local terminal runs the operator's own tools, and pins the context with a file that holds nothing else
 
 `app/adapters/localshell` opens a shell on the **operator's own machine** — the
 one terminal here that reaches no cluster at all — and can start a coding agent
@@ -2673,20 +2696,72 @@ agent row and deliberately no link to obtain one. Shipping a binary would mean
 shipping its updates, its licence and its CVEs, and would put PodSteer between
 an operator and a tool they are perfectly capable of installing themselves.
 
-**`current-context` is never touched, so the context is stated rather than
-pinned.** `KUBECONFIG` is set to exactly the files the Kubernetes adapter reads
+**`current-context` in the operator's kubeconfig is never touched, and the
+tab's context is still selected — through a file that names it and nothing
+else.** `KUBECONFIG` is set to exactly the files the Kubernetes adapter reads
 (`Adapter.KubeconfigFiles`, the one implementation of "which files", quoted in
-both places, `PODSTEER_KUBECONFIG_DIR` included), and a one-line notice above
-the prompt names the open tab's context and says to pass `--context`. There is
-no honest way to do better: kubectl selects a context from `current-context` or
-from an explicit flag and nothing else — no environment variable carries one —
-which leaves writing the operator's kubeconfig (refused outright by the
-kubeconfig section above; kubectl in the terminal beside this one must not
-change target), writing a per-session copy of their credentials to disk, or
-injecting a shell alias, which cannot be done without REPLACING their own
-startup files: bash's `--rcfile` and zsh's `ZDOTDIR` substitute rather than add,
-so they would lose their prompt, functions and aliases in exchange for one of
-ours. Stating the context costs one line and lies about nothing.
+both places, `PODSTEER_KUBECONFIG_DIR` included), with ONE PodSteer-owned file
+in front of them:
+
+```yaml
+apiVersion: v1
+kind: Config
+current-context: <the tab's context>
+```
+
+No clusters, no users, no credentials — see
+`app/adapters/localshell/kubecontext.go`. client-go keeps the FIRST definition
+of anything it merges, so that `current-context` wins while every cluster, user
+and context still comes from the operator's own files behind it: the context
+resolves in full, namespace included, and their kubeconfig is opened for
+reading only.
+
+**This paragraph used to say there was no honest way to do better, and the
+enumeration behind that claim was incomplete.** kubectl does select a context
+from `current-context` or an explicit flag and nothing else — no environment
+variable carries one — and all three options that were enumerated are still
+refused: writing the operator's kubeconfig (refused outright by the kubeconfig
+section above; kubectl in the terminal beside this one must not change target),
+writing a per-session copy of their credentials to disk, and injecting a shell
+alias, which cannot be done without REPLACING their own startup files, since
+bash's `--rcfile` and zsh's `ZDOTDIR` substitute rather than add and would cost
+them their prompt, functions and aliases in exchange for one of ours. What was
+missed is that the MERGE is a fourth way in, and it costs none of what those
+three cost: their file is untouched, nothing in the overlay is a secret so
+there is no credential at rest, and a list is added to rather than substituted
+for.
+
+**Two consequences that must be said rather than discovered.** First,
+`kubectl config use-context` inside that shell writes to the FIRST file in
+`KUBECONFIG`, which is the overlay — so it appears to work and dies with the
+session. That is the outcome we want, far better than it editing their real
+file, but it is surprising enough to read as a bug, so the notice says it.
+Second, the notice above the prompt no longer tells anybody to pass `--context`
+— that instruction stopped being true — and it says their own kubeconfig is
+untouched. `ContextNotice` in `env.go` writes it and
+`web/src/lib/localShell.ts` writes the pane's own line; both were changed
+together, because a stale half of a two-part statement is worse than either
+half alone.
+
+**No overlay when nothing resolved, and no overlay is not a failure.**
+`BuildEnv` deliberately leaves `KUBECONFIG` alone when the precedence list is
+empty, so a shell keeps seeing whatever clusters the operator's environment
+gave it; prepending an overlay there would set `KUBECONFIG` to one file naming
+a context nothing defines and the shell would see NO clusters instead of
+theirs. And if writing the overlay fails at all — a temp directory that will
+not take a file — the session opens anyway with exactly the behaviour it had
+before, and the notice falls back to saying `--context`. A terminal is worth
+more than a pin; a notice claiming a context that is not selected is not.
+
+**The overlay is created and destroyed with its session**, in a 0700 temp
+directory at mode 0600, removed in `pump` where the record is dropped — before
+`done` closes, so a caller that stopped a session knows the file is gone and
+not merely the process — and therefore on every path `StopLocalShell` and
+`StopAllLocalShells` reach. The refused-during-shutdown branch and the
+`startPTY` failure path remove it themselves, because neither registers a
+session that would ever come back for it. There is deliberately no second sweep
+over the temp directory: a second list of things to clean up is how the two
+lists come to disagree.
 
 **The read-only guard does not apply, and the pane says so.** Every other Start
 method on `TerminalAPI` refuses synchronously on a cluster the operator marked
@@ -2700,9 +2775,12 @@ unless the operator says otherwise. A request, never a restriction, because
 the agent holds the operator's credentials and nothing here can narrow them.
 
 Lifecycle follows the port-forward and node-shell registries exactly: the
-record and the process are created and destroyed together, a session ends when
-its pane closes, and `StopAllLocalShells` runs in the shutdown hook beside
-`StopAllNodeShells`. Ending one signals its whole process GROUP — a shell's
+record, the process AND the context overlay are created and destroyed together,
+a session ends when its pane closes, and `StopAllLocalShells` runs in the
+shutdown hook beside `StopAllNodeShells`. A file left in the temp directory
+after its shell has gone is the same class of leak as a goroutine nobody stops
+— nothing breaks today, and by the hundredth session there are a hundred of
+them. Ending one signals its whole process GROUP — a shell's
 children go with it — and waits, so "stopped" means gone rather than asked.
 
 **Windows has no local terminal**, and says so instead of half-working. The
@@ -2722,6 +2800,32 @@ between the operator and the tool they installed. There is no PodSteer service
 in that path, which is what keeps this consistent with the no-account,
 no-telemetry commitment — putting one there would be a different decision
 needing its own record.
+
+## The terminal's font stack leads with Nerd Fonts, and measures with Unicode 11
+
+`web/src/lib/terminalFont.ts` holds the stack, out of the component so its
+ORDER can be argued with in a test. A prompt built with Powerlevel10k, Starship
+or oh-my-posh draws its separators and icons from the Private Use Area, and no
+plain monospace family has a glyph there — so the stack this pane shipped with
+(`JetBrains Mono`, `Fira Code`, `Cascadia Code`, Monaco, Menlo, `Ubuntu Mono`)
+rendered such a prompt as a row of boxes. The Nerd Font names now come first,
+`MesloLGS NF` leading because that is what Powerlevel10k's own wizard installs;
+every plain family is kept behind them, unchanged, because this must not become
+a stack that only works for people who installed something. `Symbols Nerd Font
+Mono` is LAST rather than first on purpose: it has no letters or digits, so
+leading with it would hand xterm.js a first family it cannot measure a cell
+from, while per-glyph fallback still reaches it where it is. Nothing is
+bundled — PodSteer ships no font and downloads none, the same rule the local
+terminal follows for kubectl.
+
+A font alone only fixes half of it. xterm.js decides how many CELLS a character
+occupies from a built-in table that stops at Unicode 6, where most emoji, the
+CJK ranges added since and the Private Use Area are all one cell wide; a
+two-cell glyph drawn in a one-cell slot shifts the rest of the line and smears
+on every redraw. `@xterm/addon-unicode11` (MIT, in `notices.json`) replaces
+that table, and `terminal.unicode.activeVersion = '11'` is the switch — loading
+the addon only makes the version selectable. It needs `allowProposedApi`, which
+this terminal already sets.
 
 ## The MCP server is a subcommand, it is local, and it only reads
 

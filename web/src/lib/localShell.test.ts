@@ -66,12 +66,26 @@ describe('localShellNotice', () => {
     expect(notice).toContain('your own credentials')
   })
 
-  it('names the open context and says current-context is untouched', () => {
+  it('names the open context and says the shell is set to it', () => {
     const notice = localShellNotice('prod-eu')
 
     expect(notice).toContain('prod-eu')
-    expect(notice).toContain('--context')
-    expect(notice).toContain('current-context is untouched')
+    expect(notice).toContain('set to that context')
+  })
+
+  it('no longer tells anybody to pass --context', () => {
+    // The instruction was true until the shell started getting a kubeconfig
+    // holding only current-context at the front of its KUBECONFIG. Leaving it
+    // would teach the wrong model of what this pane does, so its absence is
+    // asserted rather than left to a reviewer to notice.
+    expect(localShellNotice('prod-eu')).not.toContain('--context')
+  })
+
+  it('says the operator\u2019s own kubeconfig is untouched and the selection is session-scoped', () => {
+    const notice = localShellNotice('prod-eu')
+
+    expect(notice).toContain('your own kubeconfig is untouched')
+    expect(notice).toContain('only as long as this terminal')
   })
 
   it('says so plainly when no cluster tab is open', () => {

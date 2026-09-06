@@ -323,3 +323,149 @@ func TestLocalShellNeverWritesTheKubeconfig(t *testing.T) {
 		t.Fatalf("files beside the kubeconfig = %v, want only the original", names)
 	}
 }
+
+// overlayDirOf reports the overlay directory the manager recorded for one
+// session, for the lifecycle assertions below. Reaching into the registry is
+// the point: the promise is that the record and the file are created and
+// destroyed together, so the test has to be able to see both.
+func overlayDirOf(t *testing.T, manager *Manager, id string) string {
+	t.Helper()
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	entry, ok := manager.byID[id]
+	if !ok {
+		t.Fatalf("session %s is not registered", id)
+	}
+	return entry.overlayDir
+}
+
+// TestLocalShellSelectsTheTabsContextThroughAnOverlay is the end-to-end half of
+// the pinning decision: the shell's own KUBECONFIG starts with a PodSteer file
+// that names the open tab's context, and the operator's file is still behind
+// it. Read out of the running shell rather than off the manager, because what
+// matters is what a command typed into that terminal would see.
+func TestLocalShellSelectsTheTabsContextThroughAnOverlay(t *testing.T) {
+	operator := writeOperatorKubeconfig(t)
+	manager := testManager(t, []string{operator})
+	out := &safeBuffer{}
+
+	shell, err := manager.StartLocalShell(
+		domain.LocalShellSpec{Context: "beta", Cols: 200, Rows: 24}, out, nil)
+	if err != nil {
+		t.Fatalf("StartLocalShell() error = %v", err)
+	}
+	t.Cleanup(func() { _ = manager.StopLocalShell(shell.ID) })
+
+	dir := overlayDirOf(t, manager, shell.ID)
+	if dir == "" {
+		t.Fatal("no overlay was written for a session opened on a context")
+	}
+	overlay := filepath.Join(dir, overlayFileName)
+	body, err := os.ReadFile(overlay)
+	if err != nil {
+		t.Fatalf("reading the overlay: %v", err)
+	}
+	if !strings.Contains(string(body), "current-context: beta") {
+		t.Errorf("overlay =\n%s\nwant it to select beta", body)
+	}
+
+	// PODSTEER-KC is a marker the shell itself prints, so this asserts the
+	// environment the process actually got rather than the slice built for it.
+	if err := manager.WriteLocalShell(shell.ID, []byte("printf 'PODSTEER-KC=%s\\n' \"$KUBECONFIG\"\n")); err != nil {
+		t.Fatalf("WriteLocalShell() error = %v", err)
+	}
+	waitFor(t, "the shell's KUBECONFIG", func() bool {
+		return strings.Contains(out.String(), "PODSTEER-KC="+overlay)
+	})
+
+	want := overlay + string(os.PathListSeparator) + operator
+	if !strings.Contains(out.String(), "PODSTEER-KC="+want) {
+		t.Errorf("KUBECONFIG did not read %q; output so far:\n%s", want, out.String())
+	}
+}
+
+// TestLocalShellRemovesItsOverlayWhenTheSessionEnds is the lifecycle rule this
+// package already holds every process to, applied to the file: the record and
+// the thing it names go together. A directory left behind after its shell is
+// gone is the same class of leak as a goroutine nobody stops.
+//
+// The check is made AFTER StopLocalShell returns, which is the strong form:
+// stop waits on the pump, and the pump removes the directory before it closes
+// done, so "stopped" has to mean the file is gone and not merely that the
+// process is.
+func TestLocalShellRemovesItsOverlayWhenTheSessionEnds(t *testing.T) {
+	operator := writeOperatorKubeconfig(t)
+	manager := testManager(t, []string{operator})
+
+	shell, err := manager.StartLocalShell(
+		domain.LocalShellSpec{Context: "beta", Cols: 80, Rows: 24}, &safeBuffer{}, nil)
+	if err != nil {
+		t.Fatalf("StartLocalShell() error = %v", err)
+	}
+	dir := overlayDirOf(t, manager, shell.ID)
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("the overlay directory should exist while the session does: %v", err)
+	}
+
+	if err := manager.StopLocalShell(shell.ID); err != nil {
+		t.Fatalf("StopLocalShell() error = %v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("the overlay directory survived its session: stat err = %v", err)
+	}
+}
+
+// TestStopAllLocalShellsRemovesEveryOverlay covers the shutdown path, where
+// leaks are least likely to be noticed: the application is going away, so
+// nothing is left to report a directory nobody removed.
+func TestStopAllLocalShellsRemovesEveryOverlay(t *testing.T) {
+	operator := writeOperatorKubeconfig(t)
+	manager := testManager(t, []string{operator})
+
+	dirs := make([]string, 0, 2)
+	for _, context := range []string{"alpha", "beta"} {
+		shell, err := manager.StartLocalShell(
+			domain.LocalShellSpec{Context: context, Cols: 80, Rows: 24}, &safeBuffer{}, nil)
+		if err != nil {
+			t.Fatalf("StartLocalShell(%s) error = %v", context, err)
+		}
+		dirs = append(dirs, overlayDirOf(t, manager, shell.ID))
+	}
+
+	manager.StopAllLocalShells()
+
+	for _, dir := range dirs {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("overlay directory %s survived shutdown: stat err = %v", dir, err)
+		}
+	}
+}
+
+// TestLocalShellPinsNothingWhenNoKubeconfigResolved guards the interaction
+// between the overlay and BuildEnv's deliberate silence.
+//
+// BuildEnv leaves KUBECONFIG alone when nothing resolved, so a shell keeps
+// seeing whatever clusters the operator's own environment gave it. Prepending
+// an overlay would turn that empty list into a one-element one — KUBECONFIG
+// set to a file naming a context nothing defines — and the shell would go from
+// seeing their clusters to seeing none. Worse than not pinning, which is why
+// not pinning is what happens.
+func TestLocalShellPinsNothingWhenNoKubeconfigResolved(t *testing.T) {
+	manager := testManager(t, nil)
+	out := &safeBuffer{}
+
+	shell, err := manager.StartLocalShell(
+		domain.LocalShellSpec{Context: "beta", Cols: 80, Rows: 24}, out, nil)
+	if err != nil {
+		t.Fatalf("StartLocalShell() error = %v", err)
+	}
+	t.Cleanup(func() { _ = manager.StopLocalShell(shell.ID) })
+
+	if dir := overlayDirOf(t, manager, shell.ID); dir != "" {
+		t.Errorf("overlay directory = %q, want none when no kubeconfig resolved", dir)
+	}
+	// And the notice must say --context, because nothing selected one.
+	if !strings.Contains(out.String(), "--context beta") {
+		t.Errorf("notice did not fall back to the flag; output so far:\n%s", out.String())
+	}
+}

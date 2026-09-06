@@ -112,7 +112,7 @@
         <input
           type="text"
           bind:value={image}
-          placeholder="docker.io/library/alpine:3.20"
+          placeholder="docker.io/cloudresty/dockydeb:v1.2.28"
           class="field mt-1 w-full px-3 py-2 font-mono text-body-small"
         />
       </label>

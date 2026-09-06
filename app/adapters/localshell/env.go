@@ -18,10 +18,11 @@ const (
 	// EnvContext names the cluster tab the shell was opened beside.
 	//
 	// INFORMATIONAL ONLY. No Kubernetes tool reads it — there is no such
-	// thing as a context environment variable, which is the whole reason for
-	// ContextNotice below. It exists so a prompt theme, a shell function or
-	// the operator's own alias can pick the context up if they want it, and
-	// so the agent prompt has one place to quote.
+	// thing as a context environment variable, which is why selecting the
+	// context takes a file (see kubecontext.go) and not a variable here. It
+	// exists so a prompt theme, a shell function or the operator's own alias
+	// can pick the context up if they want it, and so the agent prompt has
+	// one place to quote.
 	EnvContext = "PODSTEER_CONTEXT"
 	// EnvAgent names the coding agent this session launched, empty for a
 	// plain shell.
@@ -53,6 +54,11 @@ var terminalEnv = map[string]string{
 // launch does not have one. Everything in it is kept: this is the operator's
 // machine and their environment, and dropping a variable they rely on would
 // make a shell opened here behave differently to the one in their terminal.
+//
+// files is the precedence list to publish as KUBECONFIG, with the session's
+// context overlay already at the front when there is one — this function does
+// not decide that, StartLocalShell does, because the overlay has a lifetime
+// and this is a pure function of its arguments.
 //
 // Exactly four things are overridden, and each replaces rather than appends,
 // so a value already present cannot shadow the one this sets.
@@ -124,38 +130,68 @@ func sortedKeys(m map[string]string) []string {
 }
 
 // ContextNotice is the one line printed into the shell before its first
-// prompt, saying which context PodSteer opened it for.
+// prompt, saying which context PodSteer selected for it — or, when the overlay
+// could not be written, which one it would have.
 //
-// WHY A NOTICE RATHER THAN A PINNED CONTEXT. There is no honest way to pin
-// one. kubectl selects a context from `current-context` in the merged
-// kubeconfig or from an explicit --context flag, and nothing else: no
-// environment variable carries it, whatever the shape of KUBECONTEXT suggests.
-// That leaves three options and none of them are acceptable here:
+// HOW THE CONTEXT IS SELECTED, AND WHY THAT IS NOT A KUBECONFIG WRITE. kubectl
+// takes a context from `current-context` in the MERGED kubeconfig or from an
+// explicit --context flag, and from nothing else: no environment variable
+// carries one, whatever the shape of KUBECONTEXT suggests. That merge is the
+// way in. PodSteer writes a kubeconfig containing nothing but
+// `current-context` and puts it FIRST in the KUBECONFIG list — see
+// kubecontext.go — so the merged document's current-context is the open tab's
+// while every cluster, user and context in it still comes from the operator's
+// own files. Their kubeconfig is opened for reading and never for writing.
+//
+// The three options this decision originally enumerated are still refused, and
+// the overlay costs none of what they cost:
 //
 //   - Writing current-context in the operator's own kubeconfig. Refused
 //     outright — see the kubeconfig section of CLAUDE.md. A shell opened in
 //     this window must not change what kubectl targets in the terminal next
-//     to it.
-//   - Writing a per-session kubeconfig for the shell to point at. That puts
-//     a copy of somebody's credentials on disk for the life of a terminal
-//     tab, which is a worse trade than typing a flag.
+//     to it. The overlay changes nothing outside this session.
+//   - Writing a per-session kubeconfig for the shell to point at. That was
+//     refused as a copy of somebody's CREDENTIALS on disk, and it still is.
+//     The overlay is not one: it has no clusters and no users in it, so there
+//     is nothing in the file to leak.
 //   - Injecting a shell alias. Every shell reads its aliases out of a file,
 //     and the two ways in — bash's --rcfile and zsh's ZDOTDIR — REPLACE the
 //     operator's own startup files rather than adding to them, so the shell
 //     would lose their prompt, their functions and their aliases in exchange
-//     for one of ours.
+//     for one of ours. The overlay adds to a list; it substitutes for nothing.
 //
-// So the context is stated, not imposed, and current-context is left exactly
-// as it was. One line, because a wall of text above somebody's prompt is
-// something they will want gone by the second session.
-func ContextNotice(context string) string {
+// pinned says whether the overlay is actually in place. It is false only when
+// writing it failed — a temp directory that will not take a file — and the
+// session opens anyway with the behaviour it had before the overlay existed,
+// because a shell is worth more than a pin. The notice then says so rather
+// than claiming a context that is not selected, which is the whole reason this
+// takes a parameter instead of assuming.
+//
+// WHY use-context IS MENTIONED. `kubectl config use-context` writes to the
+// FIRST file in KUBECONFIG, which is now the overlay, so inside this shell it
+// appears to work and is gone with the terminal. That is the outcome we want —
+// far better than it editing their real kubeconfig — but it is surprising
+// enough that discovering it by accident would read as a bug.
+//
+// One line, because a wall of text above somebody's prompt is something they
+// will want gone by the second session.
+func ContextNotice(context string, pinned bool) string {
 	if context == "" {
 		return ""
 	}
+	if !pinned {
+		return fmt.Sprintf(
+			"PodSteer: KUBECONFIG is set for this shell and the open tab is context %q, "+
+				"but selecting it for this session failed — pass --context %s. "+
+				"Your own kubeconfig is untouched.",
+			context, context)
+	}
 	return fmt.Sprintf(
-		"PodSteer: KUBECONFIG is set for this shell; the open tab is context %q — "+
-			"pass --context %s, as current-context in your kubeconfig is untouched.",
-		context, context)
+		"PodSteer: this shell is already set to context %q, so kubectl needs no flag. "+
+			"Your own kubeconfig is untouched; the selection lives in a PodSteer file "+
+			"for this session only, so `kubectl config use-context` here lasts only as "+
+			"long as this terminal.",
+		context)
 }
 
 // UnsupportedNotice explains a platform that cannot open a local shell.

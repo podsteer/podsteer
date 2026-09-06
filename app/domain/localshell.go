@@ -21,8 +21,12 @@ type LocalShell struct {
 	// ID identifies the session for Write, Resize and Stop.
 	ID string
 	// Context is the kubeconfig context the environment was built for — the
-	// cluster whose tab was open. Never written to the kubeconfig; see
-	// ContextNotice.
+	// cluster whose tab was open, and the one the shell is set to.
+	//
+	// NEVER WRITTEN TO THE OPERATOR'S KUBECONFIG. It is selected by a
+	// PodSteer-owned file holding only current-context, placed first in the
+	// shell's KUBECONFIG and removed with the session; see ContextNotice and
+	// the localshell adapter's kubecontext.go.
 	Context string
 	// Agent is the coding agent this session launched, empty for a plain
 	// shell.

@@ -159,19 +159,44 @@ func TestBuildEnvDropsAnInheritedReadOnlyMarker(t *testing.T) {
 	}
 }
 
-// TestContextNoticeNamesTheContextAndStaysOneLine is the honest half of the
-// pinning decision: PodSteer cannot set a context without writing a file, so
-// it says which one it would have used and leaves the kubeconfig alone.
-func TestContextNoticeNamesTheContextAndStaysOneLine(t *testing.T) {
+// TestContextNoticeSaysTheContextIsSelectedAndStaysOneLine covers the notice a
+// shell with its overlay in place gets. It must not tell anybody to pass
+// --context any more — that instruction stopped being true the moment the
+// overlay started selecting the context — and it must warn about use-context,
+// which now writes to a file that dies with the terminal.
+func TestContextNoticeSaysTheContextIsSelectedAndStaysOneLine(t *testing.T) {
 	t.Parallel()
 
-	notice := ContextNotice("staging")
+	notice := ContextNotice("staging", true)
 
 	if !strings.Contains(notice, "staging") {
 		t.Errorf("notice = %q, want it to name the context", notice)
 	}
-	if !strings.Contains(notice, "--context") {
-		t.Errorf("notice = %q, want it to say how to target that context", notice)
+	if strings.Contains(notice, "--context") {
+		t.Errorf("notice = %q, want no --context instruction on a pinned session", notice)
+	}
+	if !strings.Contains(notice, "untouched") {
+		t.Errorf("notice = %q, want it to say their own kubeconfig is untouched", notice)
+	}
+	if !strings.Contains(notice, "use-context") {
+		t.Errorf("notice = %q, want it to warn that use-context is session-scoped", notice)
+	}
+	if strings.Contains(notice, "\n") {
+		t.Errorf("notice = %q, want a single line above somebody's prompt", notice)
+	}
+}
+
+// TestContextNoticeFallsBackToTheFlagWhenNothingWasPinned is the honest half.
+// A temp directory that will not take a file is the only way to get here, and
+// the shell still opens — so the notice has to describe the session that
+// actually exists rather than the one that was intended.
+func TestContextNoticeFallsBackToTheFlagWhenNothingWasPinned(t *testing.T) {
+	t.Parallel()
+
+	notice := ContextNotice("staging", false)
+
+	if !strings.Contains(notice, "--context staging") {
+		t.Errorf("notice = %q, want it to say how to target the context by hand", notice)
 	}
 	if strings.Contains(notice, "\n") {
 		t.Errorf("notice = %q, want a single line above somebody's prompt", notice)
@@ -179,11 +204,14 @@ func TestContextNoticeNamesTheContextAndStaysOneLine(t *testing.T) {
 }
 
 // TestContextNoticeIsEmptyWithoutAContext covers a shell opened with no
-// cluster tab in front. There is nothing true to say, so nothing is printed.
+// cluster tab in front. There is nothing true to say, so nothing is printed —
+// with or without an overlay, since there is no context to select.
 func TestContextNoticeIsEmptyWithoutAContext(t *testing.T) {
 	t.Parallel()
 
-	if notice := ContextNotice(""); notice != "" {
-		t.Fatalf("notice = %q, want empty when no context is open", notice)
+	for _, pinned := range []bool{true, false} {
+		if notice := ContextNotice("", pinned); notice != "" {
+			t.Fatalf("notice(pinned=%v) = %q, want empty when no context is open", pinned, notice)
+		}
 	}
 }

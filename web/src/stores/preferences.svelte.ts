@@ -40,18 +40,40 @@ export const PAGE_SIZES = [10, 25, 50, 100] as const
 export type PageSize = (typeof PAGE_SIZES)[number]
 
 /**
- * The image an ephemeral debug container proposes before the operator edits
- * it. Matches the Go default (domain.DefaultDebugImage) so the dialog and the
- * backend agree on what "default" is.
+ * The image an ephemeral debug container proposes before the operator edits it.
+ *
+ * NONROOT, AND THAT IS THE WHOLE REASON THE TWO DEFAULTS BELOW DIFFER. A debug
+ * container is injected into somebody else's pod, in their namespace, so it is
+ * judged by whatever Pod Security admission is enforcing there — and under the
+ * `restricted` level a container that runs as root is rejected outright, before
+ * anything starts. A default that only works on unlabelled namespaces would
+ * fail on exactly the clusters most likely to have someone debugging in them.
+ *
+ * PINNED, NOT FLOATING, like every other image PodSteer puts into a cluster:
+ * what this application injects must not change because an upstream tag moved.
+ * A new image ships in a PodSteer release or not at all.
+ *
+ * `docker.io` is spelled out and the registry is Docker Hub deliberately: the
+ * same repository on ghcr.io answers 403 to an anonymous pull, so a ghcr
+ * reference here would be ImagePullBackOff on every cluster that has no
+ * credential for it — which is all of them.
  */
-export const DEFAULT_DEBUG_IMAGE = 'busybox:1.37'
+export const DEFAULT_DEBUG_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.28-nonroot'
 
 /**
- * The image a node shell runs. alpine carries nsenter via busybox, which is
- * all the node shell needs to enter the host namespaces; it pulls in a second
- * and is tiny.
+ * The image a node shell runs.
+ *
+ * ROOT, deliberately, and the counterpart to the debug default above. A node
+ * shell is a privileged pod that enters the node's host namespaces with
+ * nsenter; that is root by definition, and a nonroot variant could not do the
+ * one thing it exists for. The pod is created in a namespace the operator
+ * chooses — kube-system by default, where admission is already permissive —
+ * rather than injected into somebody's own.
+ *
+ * Same registry and the same pinning rule as the debug image, for the same
+ * reasons.
  */
-export const DEFAULT_NODE_SHELL_IMAGE = 'docker.io/library/alpine:3.20'
+export const DEFAULT_NODE_SHELL_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.28'
 
 /** The namespace a node-shell pod is created in, matching kubectl node-shell. */
 export const DEFAULT_NODE_SHELL_NAMESPACE = 'kube-system'
