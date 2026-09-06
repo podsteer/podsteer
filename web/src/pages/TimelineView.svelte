@@ -47,5 +47,6 @@
   {entries}
   startedAt={timeline.startedAt(session.cluster.id)}
   showTarget
+  paged
   onopen={(target) => void open(target)}
 />

@@ -20,10 +20,14 @@
   import { formatAge, formatClockTime } from '$lib/format'
   import {
     groupTimeline,
+    matchesTimelineSearch,
     type TimelineEntry,
     type TimelineEntryKind,
     type TimelineTarget,
   } from '$lib/timeline'
+  import { preferences } from '$stores/preferences.svelte'
+  import Pagination from './Pagination.svelte'
+  import SearchField from './SearchField.svelte'
 
   interface Props {
     /** The entries to render, newest first. */
@@ -35,9 +39,20 @@
     showTarget?: boolean
     /** Opens the object a row is about. Absent means rows are not clickable. */
     onopen?: (target: TimelineTarget) => void
+    /**
+     * Whether to offer a search box and pagination.
+     *
+     * FALSE IN THE DRAWER, and not for tidiness: a drawer's timeline is one
+     * object's, bounded at MAX_ENTRIES_PER_OBJECT, and paginating a couple of
+     * dozen rows adds a control that always reads "1 / 1". The cluster page is
+     * the other case entirely — bounded at MAX_ENTRIES_PER_CLUSTER, so a
+     * session left open over a weekend is thousands of rows in one scroll with
+     * no way to reach the middle of it.
+     */
+    paged?: boolean
   }
 
-  let { entries, startedAt, showTarget = false, onopen }: Props = $props()
+  let { entries, startedAt, showTarget = false, onopen, paged = false }: Props = $props()
 
   const FILTERS: { id: TimelineEntryKind; label: string }[] = [
     { id: 'event', label: 'Events' },
@@ -56,11 +71,26 @@
 
   function toggle(id: TimelineEntryKind): void {
     active = active.includes(id) ? active.filter((held) => held !== id) : [...active, id]
+    page = 0
   }
 
-  const shown = $derived(
+  /** What is typed in the box. The matching itself is `matchesTimelineSearch`
+      in $lib/timeline, where it can be argued with in a test. */
+  let search = $state('')
+
+  function setSearch(next: string): void {
+    search = next
+    page = 0
+  }
+
+  const byKind = $derived(
     active.length === 0 ? entries : entries.filter((entry) => active.includes(entry.kind)),
   )
+
+  const shown = $derived.by(() => {
+    if (!paged || search.trim() === '') return byKind
+    return byKind.filter((entry) => matchesTimelineSearch(entry, search))
+  })
 
   /** How many entries each filter would show, counted before filtering so an
       unselected chip reports what selecting it would give rather than what is
@@ -72,6 +102,29 @@
   })
 
   const groups = $derived(groupTimeline(shown))
+
+  /**
+   * Pagination is over GROUPS, not entries, because a group is what a row is.
+   * Counting the collapsed entries would report a page of twenty rows as
+   * "1-140 of 2000" and page past rows nobody had seen.
+   *
+   * `page` is held rather than derived, and every control that changes what is
+   * being paged resets it to zero — a filter, and the search box. Left alone,
+   * narrowing a result set from nine pages to one leaves the view on page nine,
+   * which renders as empty and reads as "no results".
+   */
+  let page = $state(0)
+
+  const pageCount = $derived(
+    paged ? Math.max(1, Math.ceil(groups.length / preferences.pageSize)) : 1,
+  )
+  /** Clamped rather than assigned, so a page size raised from 100 to 25 while
+      on the last page cannot leave `page` pointing past the end. */
+  const currentPage = $derived(Math.min(page, pageCount - 1))
+  const pageStart = $derived(paged ? currentPage * preferences.pageSize : 0)
+  const visible = $derived(
+    paged ? groups.slice(pageStart, pageStart + preferences.pageSize) : groups,
+  )
 
   /** How long this timeline covers, in words. */
   const span = $derived(
@@ -122,20 +175,60 @@
         <span class="ml-1 tabular-nums opacity-70">{counts[filter.id]}</span>
       </button>
     {/each}
+
+    {#if paged}
+      <!-- Pushed to the far end of the same row the chips are on, so the
+           cluster page carries ONE control bar rather than two. The workspace
+           toolbar above is deliberately absent here — `session.isList` excludes
+           this view because its search box, refresh and bulk bar all act on
+           polled object rows, and none of those exist on a record this tab
+           kept. What a timeline does need from a toolbar is the two controls
+           below, so they live with it. -->
+      <div class="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
+        <SearchField
+          value={search}
+          placeholder="Search the timeline…"
+          onchange={setSearch}
+          class="min-w-40 max-w-72 flex-1"
+        />
+        <Pagination
+          totalCount={groups.length}
+          {pageStart}
+          currentPage={currentPage}
+          {pageCount}
+          onpage={(next) => (page = next)}
+        />
+      </div>
+    {/if}
   </div>
 
   {#if groups.length === 0}
+    <!-- "Nothing recorded" and "nothing matched" are different sentences and
+         must not share one, the same rule the Helm page follows for "no Helm
+         here" against "not permitted here". Telling somebody the timeline is
+         empty while their own search is what emptied it sends them looking for
+         a recording that stopped. -->
+    {@const filtered = entries.length > 0}
     <div class="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
       <Clock class="size-8 text-on-surface-variant/40" strokeWidth={1.2} />
-      <p class="text-body-medium text-on-surface-variant">Nothing recorded yet</p>
-      <p class="max-w-xs text-body-small text-on-surface-variant/70">
-        The timeline starts when the tab opens and fills as events arrive, findings appear and
-        clear, and PodSteer writes to the cluster.
-      </p>
+      {#if filtered}
+        <p class="text-body-medium text-on-surface-variant">Nothing matches</p>
+        <p class="max-w-xs text-body-small text-on-surface-variant/70">
+          {entries.length}
+          {entries.length === 1 ? 'entry is' : 'entries are'} recorded; none of them matches the
+          current filters.
+        </p>
+      {:else}
+        <p class="text-body-medium text-on-surface-variant">Nothing recorded yet</p>
+        <p class="max-w-xs text-body-small text-on-surface-variant/70">
+          The timeline starts when the tab opens and fills as events arrive, findings appear and
+          clear, and PodSteer writes to the cluster.
+        </p>
+      {/if}
     </div>
   {:else}
     <ul class="flex-1 divide-y divide-outline-variant/40 overflow-auto">
-      {#each groups as group (group.head.id)}
+      {#each visible as group (group.head.id)}
         {@const entry = group.head}
         {@const Icon = icon(entry)}
         {@const openable = Boolean(onopen) && entry.target.name !== ''}

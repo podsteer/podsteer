@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { diffFindings, groupTimeline, objectKey, type TimelineEntry } from './timeline'
+import {
+  diffFindings,
+  groupTimeline,
+  matchesTimelineSearch,
+  objectKey,
+  type TimelineEntry,
+} from './timeline'
 
 /** A finding as the diff sees it: an id and whatever hangs off it. */
 const finding = (id: string) => ({ id })
@@ -186,5 +192,56 @@ describe('objectKey', () => {
 
   it('keeps two kinds sharing a name apart', () => {
     expect(objectKey('Secret', 'shop', 'api')).not.toBe(objectKey('ConfigMap', 'shop', 'api'))
+  })
+})
+
+describe('matchesTimelineSearch', () => {
+  /**
+   * The contract is a correspondence, not a feature list: everything a row
+   * puts on screen is searchable and nothing else is. A test per visible field
+   * is what keeps that true when a field is added to the row and forgotten
+   * here — the search would then quietly not find something plainly visible.
+   */
+  const row = entry({ id: 'a' })
+
+  it('matches every field the row displays', () => {
+    expect(matchesTimelineSearch(row, 'BackOff')).toBe(true)
+    expect(matchesTimelineSearch(row, 'restarting')).toBe(true)
+    expect(matchesTimelineSearch(row, 'Pod')).toBe(true)
+    expect(matchesTimelineSearch(row, 'web-1')).toBe(true)
+    expect(matchesTimelineSearch(row, 'shop')).toBe(true)
+  })
+
+  it('ignores case and surrounding space, because both come from typing', () => {
+    expect(matchesTimelineSearch(row, '  WEB-1 ')).toBe(true)
+  })
+
+  it('does not match what is not on the row', () => {
+    expect(matchesTimelineSearch(row, 'database')).toBe(false)
+  })
+
+  it('treats an empty search as no filter at all', () => {
+    expect(matchesTimelineSearch(row, '')).toBe(true)
+    expect(matchesTimelineSearch(row, '   ')).toBe(true)
+  })
+
+  it('is a substring and NOT the object lists\' filter language', () => {
+    // `kind=Pod` selects nothing here: a timeline entry has no such field, and
+    // the honest answer to grammar this does not implement is no match rather
+    // than a coincidental one.
+    expect(matchesTimelineSearch(row, 'kind=Pod')).toBe(false)
+    expect(matchesTimelineSearch(row, '-BackOff')).toBe(false)
+  })
+
+  it('survives an entry with no detail and no namespace', () => {
+    const bare = entry({
+      id: 'b',
+      detail: undefined,
+      target: { kind: '', namespace: '', name: '' },
+      title: 'Cluster is over-committed',
+    })
+
+    expect(matchesTimelineSearch(bare, 'over-committed')).toBe(true)
+    expect(matchesTimelineSearch(bare, 'shop')).toBe(false)
   })
 })
