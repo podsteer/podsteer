@@ -511,17 +511,38 @@
          preferences.pinKind — and skipped, not removed, for a kind this
          cluster no longer serves (see the comment on `pinnedKinds` above). -->
     {#if pinnedKinds.length > 0}
+      {@const open = preferences.isSectionExpanded('Pinned')}
       <div class="px-1.5 pb-1">
-        <div class="flex items-center gap-2 px-2 pt-1 pb-1">
-          <span class="text-body-small font-semibold uppercase tracking-wider text-on-surface-variant/70">
+        <button
+          type="button"
+          onclick={() => preferences.toggleSection('Pinned')}
+          aria-expanded={open}
+          class="state-layer group flex w-full items-center gap-2 rounded-sm px-2 py-1.5
+                 text-on-surface-variant transition-colors duration-100 hover:bg-surface-container"
+        >
+          <ChevronDown
+            class="size-3.5 shrink-0 text-on-surface-variant/60 transition-transform duration-150 ease-standard
+                   {open ? '' : '-rotate-90'}"
+            strokeWidth={2.5}
+          />
+          <Star class="size-4 shrink-0 text-on-surface-variant/70" strokeWidth={1.8} />
+          <span class="flex-1 truncate text-left text-body-small font-semibold uppercase tracking-wider">
             Pinned
           </span>
-        </div>
-        <ul>
-          {#each pinnedKinds as kind (kind.id)}
-            {@render kindRow(kind)}
-          {/each}
-        </ul>
+          <span
+            class="rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small
+                   tabular-nums text-on-surface-variant/70"
+          >
+            {pinnedKinds.length}
+          </span>
+        </button>
+        {#if open}
+          <ul class="mt-0.5">
+            {#each pinnedKinds as kind (kind.id)}
+              {@render kindRow(kind)}
+            {/each}
+          </ul>
+        {/if}
       </div>
     {/if}
 
@@ -530,17 +551,37 @@
          in preferences — see ClusterSession.recentObjects for why object
          names are never written to disk. -->
     {#if session.recentObjects.length > 0}
+      {@const open = preferences.isSectionExpanded('Recent')}
       <div class="px-1.5 pb-1">
-        <div class="flex items-center justify-between gap-2 px-2 pt-1 pb-1">
-          <span class="flex items-center gap-1.5 text-body-small font-semibold uppercase tracking-wider
-                       text-on-surface-variant/70">
-            <History class="size-3.5" strokeWidth={1.8} />
-            Recent
-          </span>
+        <!-- The toggle and Clear are siblings rather than one nested in the
+             other: a button inside a button is not valid, and the two do
+             genuinely different things to the same section. Clear stays
+             reachable while the section is folded, because wanting the list
+             gone is not a reason to have to open it first. Unlike Pinned and
+             the categories this header carries no count badge — Clear already
+             occupies that end of a 240px row, and Recent is capped at twelve. -->
+        <div class="flex items-center gap-1 px-0.5">
+          <button
+            type="button"
+            onclick={() => preferences.toggleSection('Recent')}
+            aria-expanded={open}
+            class="state-layer group flex min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 py-1.5
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container"
+          >
+            <ChevronDown
+              class="size-3.5 shrink-0 text-on-surface-variant/60 transition-transform duration-150 ease-standard
+                     {open ? '' : '-rotate-90'}"
+              strokeWidth={2.5}
+            />
+            <History class="size-4 shrink-0 text-on-surface-variant/70" strokeWidth={1.8} />
+            <span class="flex-1 truncate text-left text-body-small font-semibold uppercase tracking-wider">
+              Recent
+            </span>
+          </button>
           <button
             type="button"
             onclick={() => session.clearRecents()}
-            class="state-layer flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-label-small
+            class="state-layer flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-label-small
                    text-on-surface-variant transition-colors duration-100
                    hover:bg-surface-container hover:text-on-surface"
           >
@@ -548,34 +589,36 @@
             Clear
           </button>
         </div>
-        <ul>
-          {#each session.recentObjects as recent (`${recent.kindId}|${recent.namespace}|${recent.name}`)}
-            {@const RecentIcon = iconForKind(kindFor(recent) ?? { kind: '' })}
-            <li>
-              <button
-                type="button"
-                onclick={() => void openRecent(recent)}
-                title={recent.namespace ? `${recent.name} — ${recent.namespace}` : recent.name}
-                class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
-                       text-on-surface-variant transition-all duration-100 ease-standard
-                       hover:bg-surface-container hover:text-on-surface"
-              >
-                <span class="w-1.5 shrink-0" aria-hidden="true"></span>
-                <RecentIcon
-                  class="size-4 shrink-0 text-on-surface-variant/60 transition-colors duration-100
-                         group-hover/item:text-on-surface-variant"
-                  strokeWidth={1.8}
-                />
-                <span class="min-w-0 flex-1 truncate text-body-medium">{recent.name}</span>
-                {#if recent.namespace}
-                  <span class="shrink-0 truncate text-label-small text-on-surface-variant/50">
-                    {recent.namespace}
-                  </span>
-                {/if}
-              </button>
-            </li>
-          {/each}
-        </ul>
+        {#if open}
+          <ul class="mt-0.5">
+            {#each session.recentObjects as recent (`${recent.kindId}|${recent.namespace}|${recent.name}`)}
+              {@const RecentIcon = iconForKind(kindFor(recent) ?? { kind: '' })}
+              <li>
+                <button
+                  type="button"
+                  onclick={() => void openRecent(recent)}
+                  title={recent.namespace ? `${recent.name} — ${recent.namespace}` : recent.name}
+                  class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
+                         text-on-surface-variant transition-all duration-100 ease-standard
+                         hover:bg-surface-container hover:text-on-surface"
+                >
+                  <span class="w-1.5 shrink-0" aria-hidden="true"></span>
+                  <RecentIcon
+                    class="size-4 shrink-0 text-on-surface-variant/60 transition-colors duration-100
+                           group-hover/item:text-on-surface-variant"
+                    strokeWidth={1.8}
+                  />
+                  <span class="min-w-0 flex-1 truncate text-body-medium">{recent.name}</span>
+                  {#if recent.namespace}
+                    <span class="shrink-0 truncate text-label-small text-on-surface-variant/50">
+                      {recent.namespace}
+                    </span>
+                  {/if}
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
       </div>
     {/if}
 

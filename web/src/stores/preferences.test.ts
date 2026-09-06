@@ -16,6 +16,8 @@ import {
   DEFAULT_DEBUG_IMAGE,
   DEFAULT_NODE_SHELL_IMAGE,
   DEFAULT_NODE_SHELL_NAMESPACE,
+  defaultExportedPreferences,
+  mergeExportedPreferences,
 } from './preferences.svelte'
 import { LAST_APPLIED_ANNOTATION, type CustomColumnSpec } from '$lib/customColumns'
 
@@ -467,5 +469,96 @@ describe('remembered local ports', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+describe('the navigator sections that fold the other way round', () => {
+  /**
+   * Pinned and Recent are stored as what is CLOSED, not as what is open, and
+   * every assertion here is about that inversion rather than about a toggle
+   * working. A kind category is absent until somebody opens it; these two are
+   * open until somebody closes them, because Pinned holds what an operator
+   * deliberately put one click away and folding it by default would hide the
+   * very thing its owner asked to see.
+   */
+  it('is open before anybody has touched it, and after an upgrade', () => {
+    preferences.collapsedSections = []
+
+    expect(preferences.isSectionExpanded('Pinned')).toBe(true)
+    expect(preferences.isSectionExpanded('Recent')).toBe(true)
+  })
+
+  it('closes and reopens the one section it was asked about', () => {
+    preferences.collapsedSections = []
+
+    preferences.toggleSection('Pinned')
+    expect(preferences.isSectionExpanded('Pinned')).toBe(false)
+    // The neighbour is untouched: one list, one entry per folded section.
+    expect(preferences.isSectionExpanded('Recent')).toBe(true)
+
+    preferences.toggleSection('Pinned')
+    expect(preferences.isSectionExpanded('Pinned')).toBe(true)
+    expect(preferences.collapsedSections).toEqual([])
+  })
+
+  it('carries the section labels and nothing that could name an object', () => {
+    preferences.collapsedSections = []
+    preferences.toggleSection('Pinned')
+    preferences.toggleSection('Recent')
+
+    // The guard behind admitting this field to the exported settings file: the
+    // only strings that can ever reach it are the two section labels.
+    expect(preferences.exportable().collapsedSections.sort()).toEqual(['Pinned', 'Recent'])
+  })
+})
+
+describe('merging a colleague\'s folded sections', () => {
+  /**
+   * `expandedCategories` unions on merge, because it is a set of what is OPEN
+   * and combining two people's open sections is what merging them means.
+   * `collapsedSections` is the same idea written backwards, so it has to merge
+   * backwards too: a union of two CLOSED sets hides more than either person
+   * had hidden, and importing a colleague's file would fold away a section you
+   * had open. Intersecting keeps one closed only where both agree.
+   */
+  function withCollapsed(sections: string[]) {
+    return { ...defaultExportedPreferences(), collapsedSections: sections }
+  }
+
+  it('keeps a section open when only the file had folded it', () => {
+    const merged = mergeExportedPreferences(
+      withCollapsed(['Pinned']),
+      { collapsedSections: ['Recent'] },
+      'merge',
+    )
+
+    // Neither survives: each was open for one of the two people.
+    expect(merged.collapsedSections).toEqual([])
+  })
+
+  it('keeps a section folded when both had folded it', () => {
+    const merged = mergeExportedPreferences(
+      withCollapsed(['Pinned', 'Recent']),
+      { collapsedSections: ['Pinned'] },
+      'merge',
+    )
+
+    expect(merged.collapsedSections).toEqual(['Pinned'])
+  })
+
+  it('takes the file exactly under replace', () => {
+    const merged = mergeExportedPreferences(
+      withCollapsed(['Pinned']),
+      { collapsedSections: ['Recent'] },
+      'replace',
+    )
+
+    expect(merged.collapsedSections).toEqual(['Recent'])
+  })
+
+  it('leaves what is here alone when the file does not mention them', () => {
+    const merged = mergeExportedPreferences(withCollapsed(['Pinned']), {}, 'merge')
+
+    expect(merged.collapsedSections).toEqual(['Pinned'])
   })
 })
