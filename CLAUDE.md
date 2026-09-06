@@ -1707,7 +1707,8 @@ cancels anything.** The framework's runtime context is never cancelled —
 `App.OnShutdown` only clears the pointer to it — so a goroutine parked on
 `ctx.Done()` at exit would park forever. Teardown is therefore explicit and
 enumerated in `OnShutdown`: `StopAllPortForwards`, `StopAllNodeShells`,
-`StopAllLocalShells`, `StopAllWatches`, `historyService.Close()`. There is no
+`StopAllClusterShells`, `StopAllLocalShells`, `StopAllWatches`,
+`historyService.Close()`. There is no
 ambient cancellation to fall back on; a new owner that needs stopping needs a
 line there.
 
@@ -1715,10 +1716,10 @@ line there.
 map and stopping what was in it leaves the window between the copy and a start
 that finishes after it — and a node shell is the sharp case, because starting
 one waits up to a minute for a privileged pod to schedule and pull, and
-nothing cancels that wait. So `nodeShells`, the local-shell `Manager` and
-`watchManager` each carry a `closed` flag their sweep sets: a start finding it
-set deletes its pod (or kills its process) and returns an error rather than
-registering into a map nobody will read again.
+nothing cancels that wait. So `nodeShells`, `clusterShells`, the local-shell
+`Manager` and `watchManager` each carry a `closed` flag their sweep sets: a
+start finding it set deletes its pod (or kills its process) and returns an
+error rather than registering into a map nobody will read again.
 
 **A port-forward goes with its connection, not just with the process.**
 `Adapter.Invalidate` stops that cluster's forwards and waits for them, FIRST,
@@ -1742,9 +1743,10 @@ here — the search runs once every three seconds, longer than `readTTL`.
 **Three things are deliberately NOT swept at shutdown, and die with the
 process**: terminal sessions (exec, attach, debug), log streams, and file
 transfers. They hold a stream to the API server and nothing in a cluster, so
-the process exiting is a complete teardown — with one exception that is
+the process exiting is a complete teardown — with two exceptions that are
 already handled elsewhere: a node-shell attach session deletes its pod on
-exit, and `StopAllNodeShells` covers the same pod from the other side. Do not
+exit and `StopAllNodeShells` covers the same pod from the other side, and an
+in-cluster shell's session does the same against `StopAllClusterShells`. Do not
 read `OnShutdown`'s list as "everything with a goroutine is stopped"; read it
 as "everything that would otherwise leave something behind is stopped".
 
@@ -2655,11 +2657,13 @@ opposite: it is NOT tracked and NOT deleted, because Kubernetes will not remove
 an ephemeral container — it stays in the pod's spec until the pod is deleted,
 which the dialog states plainly.
 
-**The two default images differ by one suffix, and the split is the point.**
-Both are `docker.io/cloudresty/dockydeb`, pinned
-(`DEFAULT_DEBUG_IMAGE`/`DEFAULT_NODE_SHELL_IMAGE` in
-`web/src/stores/preferences.svelte.ts`), and the debug one is the `-nonroot`
-variant while the node shell is not. A debug container is injected into
+**The default images differ by one suffix, and the split is the point.**
+All three are `docker.io/cloudresty/dockydeb`, pinned (`DEFAULT_DEBUG_IMAGE`,
+`DEFAULT_NODE_SHELL_IMAGE` and `DEFAULT_CLUSTER_SHELL_IMAGE` in
+`web/src/stores/preferences.svelte.ts`), and the debug and in-cluster ones are
+the `-nonroot` variant while the node shell is not — the in-cluster shell takes
+the debug default for the debug default's reason, since its pod lands in an
+ordinary namespace that Pod Security judges. A debug container is injected into
 somebody else's pod, in their namespace, so Pod Security admission judges it —
 and under `restricted` a root container is rejected outright, before anything
 starts, so a root default would fail on exactly the clusters most likely to
@@ -2672,11 +2676,114 @@ must not change because an upstream tag was republished. And the registry is
 Docker Hub deliberately — the same repository on ghcr.io answers 403 to an
 anonymous pull, so a ghcr reference would be `ImagePullBackOff` on every
 cluster with no credential for it, which is all of them out of the box. All
-three (both images and the node-shell namespace) are editable in
+four (the three images and the node-shell namespace) are editable in
 Settings → Terminal images (`TerminalImagesPane.svelte`), which is where an
 air-gapped operator points them at their own mirror; they were persisted
 preferences reachable only from the dialogs that used them until that pane
 existed, so the operator who most needed them met them as a stuck pod.
+
+## The in-cluster shell is an ORDINARY pod, and its admissibility is the feature
+
+`app/adapters/k8s/clustershell.go` creates a throwaway pod in a namespace and
+attaches to a shell in it — the equivalent of `kubectl run --rm -it` — so an
+operator can run `kubectl`, `dig` and `curl` FROM INSIDE the cluster's network.
+`nodeshell.go` is the template and the lifecycle is copied wholesale: a
+registry beside `nodeShells` on the adapter, the record and the pod created and
+destroyed together, the pod deleted when the attach session ends
+(`TerminalAPI.StartClusterShellSession`'s exit hook) and on shutdown
+(`StopAllClusterShells` in `OnShutdown`, beside `StopAllNodeShells`), a `closed`
+flag so a start racing the sweep deletes its own pod, an activeDeadlineSeconds
+of one hour as the crash backstop, and a stop control in the activity list
+(`ClusterShellsPanel`, beside `NodeShellsPanel`).
+
+**It is neither of the two things it will be mistaken for.** Not the ephemeral
+debug container, which is injected into somebody else's pod and which
+Kubernetes will not remove; not the node shell, which is privileged, pins
+itself to a node with a blanket toleration, and enters the host namespaces with
+`nsenter`. This is a vantage point, not a privilege — and every one of those
+node-shell fields is absent here, with a test naming each absence.
+
+**WHAT IS PRESENT IS ADMISSIBILITY, and that is the point of the whole
+feature.** A namespace enforcing Pod Security's `restricted` profile rejects a
+root container outright, before anything starts — so the pod runs as non-root
+(the image default is the `-nonroot` DockyDEB build, the DEBUG image's variant
+and for the debug image's reason), forbids privilege escalation, drops every
+capability and asks for the `RuntimeDefault` seccomp profile. Those four are
+`restricted`'s container requirements and a pod missing any one is refused in
+exactly the namespaces this exists to work in. **If admission refuses anyway,
+the API server's own words travel verbatim.** That needed a new sentinel:
+a Pod Security refusal is HTTP **403**, so `classify` would have reported it as
+`ErrForbidden` — "your account is not allowed to perform this operation", which
+is false (the account was allowed and the OBJECT was declined) and which throws
+away the one sentence naming the field to change. `classifyPodCreate` tells the
+two apart by the API server's own wording, which is the only evidence a 403
+carries, and wraps `ports.ErrPodRejectedByAdmission` /
+`CodePodRejected` — the direct sibling of `ErrManifestRejected`, verbatim for
+the identical reason. Anything matching neither wording keeps `classify`'s
+answer, so a change upstream costs the sharper message and never the diagnosis.
+
+**`automountServiceAccountToken` is the one field this sets the OPPOSITE way
+from the node shell**, which sets it false. A node shell reaches a node through
+nsenter and needs no API access at all; this shell exists so somebody can run
+kubectl from inside, and the token it gets is the namespace's own default
+ServiceAccount — what `kubectl run` hands any pod there, and not a credential
+of the operator's that PodSteer copied anywhere. Set explicitly rather than
+left to Kubernetes' default, so it is a decision on the record.
+
+**The namespace follows the TAB, and "all namespaces" is asked about rather
+than guessed.** `clusterShellNamespaceFor` (`web/src/lib/clusterShell.ts`)
+returns the tab's namespace, and the EMPTY STRING when the tab is on every
+one — at which point the dialog asks and the confirm button is disabled. It
+deliberately does not fall back to a system namespace: that is where the node
+shell's own setting points (kube-system, permissive by necessity), and it is
+the wrong answer here — an operator looking at their application's namespace
+would get a pod in kube-system without being told, in the one namespace they
+are least likely to be permitted to create one in. The refusal is made three
+times over, because `domain.NewNamespaceName("")` is `NamespaceAll` rather than
+an error and every list in this application reads it as "every namespace":
+`domain.ErrShellNamespaceRequired` exists for exactly that, and
+`TerminalAPI`, `ManagementService` and the adapter each check it.
+
+**Reuse is offered only for a RUNNING pod.** The pods are labelled
+(`app.kubernetes.io/managed-by=podsteer`, `podsteer.io/purpose=cluster-shell` —
+the purpose label is what keeps a node shell out of this list), and
+`FindClusterShells` lists ours in the namespace before another is created.
+`domain.PlanClusterShellReuse` splits them: Running is an offer, everything
+else is `Other` — reported, because a namespace accumulating exited shell pods
+is otherwise a question the operator has to ask the cluster, and never offered,
+because an attach to an exited pod fails for a reason the offer gave nobody a
+way to see. **Attaching ADOPTS the pod** (`AdoptClusterShell`), which puts it on
+the same delete hook a created one is on; a pod nobody owns is a pod nobody
+deletes, and reuse would otherwise be how a namespace fills up. Adoption reads
+the pod back from the cluster rather than trusting the offer — both facts can
+have changed in the moment since — and refuses one that is not ours, which is
+the check that keeps "attach to this pod" from becoming "delete any pod in this
+namespace when the pane closes".
+
+**The writes go through `ManagementService`, unlike the node shell's.** That is
+a deliberate divergence and `app/application/clustershell.go` says so at the
+top: the node shell holds `ports.NodeShellPort` on `TerminalAPI` and
+re-implements the guard (`ReadOnly()`) and the audit line there, so a method
+added beside it inherits neither. Creating a pod is a write like any other, so
+it goes where every other write goes — `refuseIfReadOnly` first, before
+anything else, and one audit line naming cluster, namespace and pod. That line
+is written AFTER the create rather than before, unlike every other write here,
+for one reason: the pod's name is generated, so there is no pod to name until
+the API server has accepted it; a refused create is on the record as the Error
+line, which names what could be known. `TerminalAPI` keeps a synchronous
+`ReadOnly()` pre-check as well, which is only what stops a doomed session being
+built. `StopClusterShell` and `StopAllClusterShells` are deliberately
+UNGUARDED, the same exception the node shell's stop makes: they remove
+something PodSteer put in the cluster, and refusing one because the cluster was
+marked read-only after the pod was created would strand that pod until its
+deadline.
+
+**The toolbar control is a MENU because it grew a second entry.**
+`TerminalMenu.svelte` replaces the local terminal's `ToolbarButton`, with a
+chevron so it reads as a menu rather than as a button, and it disables the
+in-cluster entry on a read-only cluster while leaving the local one alone —
+which is the guard's own doctrine rather than an inconsistency, and is the
+distinction `terminal_local_test.go` already exists to protect.
 
 ## The local terminal runs the operator's own tools, and pins the context with a file that holds nothing else
 

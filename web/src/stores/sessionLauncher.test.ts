@@ -117,3 +117,72 @@ describe('the local terminal launcher', () => {
     expect(sessionLauncher.running).toBeNull()
   })
 })
+
+describe('the in-cluster shell launcher', () => {
+  it("opens the dialog on the tab's namespace", () => {
+    sessionLauncher.requestClusterShell({ clusterId: 'prod-eu', namespace: 'shop' })
+
+    expect(sessionLauncher.pending).toEqual({
+      kind: 'clustershell',
+      clusterId: 'prod-eu',
+      namespace: 'shop',
+    })
+    expect(sessionLauncher.running).toBeNull()
+  })
+
+  it('opens it with NO namespace when the tab is on every one, so the dialog asks', () => {
+    // "All namespaces" reaches the launcher as '' rather than as a system
+    // namespace — see clusterShellNamespaceFor, which is where that decision
+    // is made and argued.
+    sessionLauncher.requestClusterShell({ clusterId: 'prod-eu', namespace: '' })
+
+    expect(sessionLauncher.pending).toEqual({
+      kind: 'clustershell',
+      clusterId: 'prod-eu',
+      namespace: '',
+    })
+  })
+
+  it('confirming CREATES a pod: the image travels and the pod name is empty', () => {
+    sessionLauncher.requestClusterShell({ clusterId: 'prod-eu', namespace: '' })
+
+    // The namespace comes from the DIALOG, not from the pending request: the
+    // tab was on every namespace and the operator typed one.
+    sessionLauncher.startClusterShell('registry.internal/shell:1.0.0', 'shop')
+
+    expect(sessionLauncher.pending).toBeNull()
+    expect(sessionLauncher.running).toEqual({
+      kind: 'clustershell',
+      clusterId: 'prod-eu',
+      namespace: 'shop',
+      image: 'registry.internal/shell:1.0.0',
+      pod: '',
+    })
+  })
+
+  it('attaching carries the pod and NO image, because that pod already has one', () => {
+    // Sending the dialog's image on the reuse path would claim something about
+    // a pod this pane did not create.
+    sessionLauncher.requestClusterShell({ clusterId: 'prod-eu', namespace: 'shop' })
+
+    sessionLauncher.attachClusterShell('shop', 'podsteer-shell-aaaaa')
+
+    expect(sessionLauncher.running).toEqual({
+      kind: 'clustershell',
+      clusterId: 'prod-eu',
+      namespace: 'shop',
+      image: '',
+      pod: 'podsteer-shell-aaaaa',
+    })
+  })
+
+  it('neither confirmation fires without its own dialog pending', () => {
+    sessionLauncher.requestLocal({ clusterId: 'prod-eu', agents: [CLAUDE], subject: SUBJECT })
+
+    sessionLauncher.startClusterShell('img:1', 'shop')
+    sessionLauncher.attachClusterShell('shop', 'podsteer-shell-aaaaa')
+
+    expect(sessionLauncher.running).toBeNull()
+    expect(sessionLauncher.pending?.kind).toBe('local')
+  })
+})

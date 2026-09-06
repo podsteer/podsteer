@@ -23,6 +23,7 @@
   import { OVERVIEW_KIND_ID } from '$stores/session.svelte'
   import { forwards } from '$stores/forwards.svelte'
   import { nodeShells } from '$stores/nodeShells.svelte'
+  import { clusterShells } from '$stores/clusterShells.svelte'
   import { shortcutSheet } from '$stores/shortcutSheet.svelte'
   import { palette } from '$stores/palette.svelte'
   import { isTypingTarget, shortcut } from '$lib/shortcuts'
@@ -55,6 +56,11 @@
     // a running backend must show what is still running so it can be stopped.
     void nodeShells.refresh()
     const unwatchNodeShells = nodeShells.watch()
+    // In-cluster shells beside them, for the same reason: a window reopened
+    // over a running backend must show every pod PodSteer still owns so it
+    // can be stopped, whether or not this window is the one that opened it.
+    void clusterShells.refresh()
+    const unwatchClusterShells = clusterShells.watch()
     // Audio output is only allowed to start from a user gesture, and a context
     // created before one exists stays suspended for the life of the process.
     // Arming here means the first click or keypress of the session wakes it,
@@ -98,6 +104,7 @@
     return () => {
       unwatchForwards()
       unwatchNodeShells()
+      unwatchClusterShells()
       unwatchNotifications()
       updates.stop()
       workspace.dispose()

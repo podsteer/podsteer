@@ -410,6 +410,11 @@ const debugPrepTimeout = 90 * time.Second
 // schedule and run, for the same reason.
 const nodeShellPrepTimeout = 90 * time.Second
 
+// clusterShellPrepTimeout bounds creating the in-cluster shell pod and waiting
+// for it to schedule and run. The node shell's number, because the wait is the
+// same wait: a scheduling decision and an image pull.
+const clusterShellPrepTimeout = 90 * time.Second
+
 // StartDebugSession adds an ephemeral debug container to a pod — the way
 // `kubectl debug -it POD --image=… --target=CONTAINER` does — waits for it to
 // run, and opens an interactive shell into it through the SAME exec path
@@ -546,6 +551,130 @@ func (t *TerminalAPI) StartNodeShellSession(clusterID, namespace, nodeName, imag
 		slog.String("node", nodeName),
 		slog.String("pod", shell.PodName),
 		slog.String("image", image))
+
+	return sessionID, nil
+}
+
+// StartClusterShellSession creates an ordinary, unprivileged pod in a
+// namespace and attaches to the shell running in it — a vantage point INSIDE
+// the cluster's network, for kubectl, dig and curl. It returns the session ID.
+//
+// The pod is DELETED when this session ends, exactly as a node shell's is, and
+// for the same reason: PodSteer created it, so PodSteer removes it. The
+// activeDeadlineSeconds the pod carries is only a backstop for the one case
+// this cannot cover — PodSteer crashing.
+//
+// NOT the node shell (privileged, host namespaces, pinned to a node) and NOT
+// the ephemeral debug container (injected into somebody else's pod, and never
+// removed because Kubernetes will not remove one). See
+// ports.ClusterShellPort.
+func (t *TerminalAPI) StartClusterShellSession(clusterID, namespace, image string, cols, rows int) (string, error) {
+	id, ns, err := t.clusterShellTarget("StartClusterShellSession", clusterID, namespace)
+	if err != nil {
+		return "", err
+	}
+
+	parent, ok := t.app.runtimeContext()
+	if !ok {
+		return "", errors.New("application is shutting down")
+	}
+
+	prepCtx, cancelPrep := context.WithTimeout(parent, clusterShellPrepTimeout)
+	defer cancelPrep()
+
+	shell, err := t.management.StartClusterShell(prepCtx, id, ns, image)
+	if err != nil {
+		return "", apiError(t.logger, "StartClusterShellSession", err)
+	}
+
+	return t.attachClusterShell(parent, shell, cols, rows)
+}
+
+// AttachClusterShellSession attaches to a shell pod PodSteer already created in
+// this namespace — the reuse path, offered when one is found RUNNING.
+//
+// Adopting the pod puts it on the same hook a created one is on: it is deleted
+// when this session ends. That is the point of adopting rather than merely
+// attaching — a pod nobody owns is a pod nobody deletes, and reuse would
+// otherwise be how a namespace fills up.
+func (t *TerminalAPI) AttachClusterShellSession(clusterID, namespace, podName string, cols, rows int) (string, error) {
+	id, ns, err := t.clusterShellTarget("AttachClusterShellSession", clusterID, namespace)
+	if err != nil {
+		return "", err
+	}
+
+	parent, ok := t.app.runtimeContext()
+	if !ok {
+		return "", errors.New("application is shutting down")
+	}
+
+	prepCtx, cancelPrep := context.WithTimeout(parent, clusterShellPrepTimeout)
+	defer cancelPrep()
+
+	shell, err := t.management.AdoptClusterShell(prepCtx, id, ns, podName)
+	if err != nil {
+		return "", apiError(t.logger, "AttachClusterShellSession", err)
+	}
+
+	return t.attachClusterShell(parent, shell, cols, rows)
+}
+
+// clusterShellTarget parses and guards the two arguments both in-cluster shell
+// starts share.
+//
+// The read-only refusal is the same fast path StartNodeShellSession makes, and
+// for the same reason: creating (or adopting, which is signing up to delete) a
+// pod is a write, and refusing here avoids allocating a session for a start
+// ManagementService is going to refuse anyway. ManagementService checks again —
+// that one is the guard; this is what keeps a doomed session from being built.
+func (t *TerminalAPI) clusterShellTarget(op, clusterID, namespace string) (domain.ClusterID, domain.NamespaceName, error) {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return "", "", apiError(t.logger, op, err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return "", "", apiError(t.logger, op, err)
+	}
+	// NewNamespaceName("") is NamespaceAll, not an error, so an empty argument
+	// would otherwise reach the create as "every namespace" and land the pod in
+	// the kubeconfig's default. Refused here as well as in ManagementService,
+	// so the frontend's mistake is named at the boundary it was made at.
+	if ns.IsAll() {
+		return "", "", apiError(t.logger, op, domain.ErrShellNamespaceRequired)
+	}
+
+	if t.management.ReadOnly(id) {
+		return "", "", apiError(t.logger, op,
+			fmt.Errorf("starting an in-cluster shell: %w", ports.ErrReadOnly))
+	}
+
+	return id, ns, nil
+}
+
+// attachClusterShell opens the attach session for a shell pod and arranges for
+// the pod to be deleted when it ends.
+func (t *TerminalAPI) attachClusterShell(parent context.Context, shell domain.ClusterShell, cols, rows int) (string, error) {
+	sessionID, err := t.openAttachSession(parent, shell.ClusterID, shell.Namespace, shell.PodName, shell.ContainerName, cols, rows, "in-cluster shell session", func() {
+		if err := t.management.StopClusterShell(shell.ID); err != nil {
+			t.logger.Error("failed to delete in-cluster shell pod",
+				slog.String("pod", shell.PodName),
+				slog.String("error", err.Error()))
+		}
+	})
+	if err != nil {
+		// The session never started, so nothing will delete the pod on exit.
+		// Remove it here rather than leave a pod nobody is attached to.
+		_ = t.management.StopClusterShell(shell.ID)
+		return "", err
+	}
+
+	t.logger.Info("in-cluster shell session started",
+		slog.String("session", sessionID),
+		slog.String("namespace", shell.Namespace.String()),
+		slog.String("pod", shell.PodName),
+		slog.Bool("adopted", shell.Adopted))
 
 	return sessionID, nil
 }

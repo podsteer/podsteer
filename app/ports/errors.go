@@ -157,6 +157,40 @@ var (
 	// PodSteer can usefully paraphrase.
 	ErrManifestRejected = errors.New("the cluster rejected the manifest")
 
+	// ErrPodRejectedByAdmission means an admission controller declined a pod
+	// PodSteer tried to create — Pod Security enforcing `restricted`, or a
+	// validating webhook.
+	//
+	// THE DIRECT SIBLING OF ErrManifestRejected, and it exists because this
+	// one arrives as HTTP 403 rather than 422. Left to classify's Forbidden
+	// case it would be reported as "your account is not allowed to perform
+	// this operation", which is false — the account was allowed, and the
+	// OBJECT was declined — and it would send an operator to ask an
+	// administrator for a permission they already hold. Worse, the canned
+	// sentence throws away the API server's own message, and that message
+	// (`violates PodSecurity "restricted:latest": allowPrivilegeEscalation
+	// != false …`) names the exact field to change: it is the only thing
+	// anybody can act on, so it travels verbatim exactly as a rejected
+	// manifest's does.
+	//
+	// RBAC denials on the same request keep ErrForbidden. The two are told
+	// apart by the API server's own wording, which is the only evidence
+	// there is — a 403 carries no machine-readable reason distinguishing an
+	// admission refusal from an authorisation one.
+	ErrPodRejectedByAdmission = errors.New("an admission controller rejected the pod")
+
+	// ErrClusterShellNotReusable means a pod offered for an in-cluster shell
+	// could not be taken over: it is not one PodSteer created, or it has left
+	// the Running phase since it was listed.
+	//
+	// One sentinel for both halves deliberately, on the reasoning
+	// ErrHelmPayloadUnreadable states: the next step is the same either way —
+	// create a fresh shell — and splitting them would mean one branch telling
+	// somebody about the state of a pod they did not choose. The MESSAGE says
+	// which of the two it was, because a pod that has exited explains itself
+	// and one that is not ours explains something different.
+	ErrClusterShellNotReusable = errors.New("that pod cannot be reused as an in-cluster shell")
+
 	// ErrTarMissing means a file copy could not run because the container
 	// has no `tar` binary. Copying is `kubectl cp`'s mechanism exactly — a
 	// tar stream over an exec session — so an image built FROM scratch, or a

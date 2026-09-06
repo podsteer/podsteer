@@ -92,6 +92,10 @@ import {
   ListNodeShells as bindListNodeShells,
   StopNodeShell as bindStopNodeShell,
   StopAllNodeShells as bindStopAllNodeShells,
+  FindClusterShells as bindFindClusterShells,
+  ListClusterShells as bindListClusterShells,
+  StopClusterShell as bindStopClusterShell,
+  StopAllClusterShells as bindStopAllClusterShells,
   PlanBulk as bindPlanBulk,
   BulkDelete as bindBulkDelete,
   BulkEvict as bindBulkEvict,
@@ -167,6 +171,23 @@ export type Container = wails.Container
 export type PortForward = wails.PortForward
 /** One live node shell, as the backend is actually holding it. */
 export type NodeShell = wails.NodeShell
+/** One live in-cluster shell, as the backend is actually holding it. */
+export type ClusterShell = wails.ClusterShell
+/** One pod PodSteer created for an in-cluster shell, found in a namespace. */
+export type ClusterShellCandidate = wails.ClusterShellCandidate
+/**
+ * What a namespace already holds: what may be reused, and what may only be
+ * reported. See domain.PlanClusterShellReuse — only a Running pod is an offer.
+ *
+ * NARROWED from the binding's own type, which declares both halves nullable
+ * because a nil Go slice marshals to null. `findClusterShells` normalises them
+ * at the seam, the way `callList` does for a top-level list, so no view has to
+ * remember — these are NESTED fields, which `callList` does not reach.
+ */
+export interface ClusterShellReuse {
+  reusable: ClusterShellCandidate[]
+  other: ClusterShellCandidate[]
+}
 /** A cluster node. */
 export type Node = wails.Node
 /** A pod-managing controller. */
@@ -1342,6 +1363,46 @@ export function stopNodeShell(shellId: string): Promise<void> {
 /** Deletes every node-shell pod, across every cluster. */
 export function stopAllNodeShells(): Promise<void> {
   return call(() => bindStopAllNodeShells())
+}
+
+/**
+ * Reports the in-cluster shell pods PodSteer already has in one namespace.
+ *
+ * A READ, so it does not go through `writing`: it lists pods by label and
+ * changes nothing. It is called before offering to create another, so an
+ * operator is offered the pod that is already there rather than a second one
+ * beside it.
+ */
+export function findClusterShells(
+  clusterId: string,
+  namespace: string,
+): Promise<ClusterShellReuse> {
+  return call(async () => {
+    const plan = await bindFindClusterShells(clusterId, namespace)
+    // Both halves are normalised at the seam, the way callList does for a
+    // top-level list: these are nested fields, so they do not pass through it,
+    // and a nil Go slice arrives as null.
+    return {
+      reusable: plan.reusable ?? [],
+      other: plan.other ?? [],
+    }
+  })
+}
+
+/** Reports the in-cluster shells running right now — the live registry. */
+export function listClusterShells(): Promise<ClusterShell[]> {
+  return callList(() => bindListClusterShells())
+}
+
+/** Deletes the pod behind one in-cluster shell. The attach session ending does
+ * this too, so both reaching the same shell is not an error. */
+export function stopClusterShell(shellId: string): Promise<void> {
+  return call(() => bindStopClusterShell(shellId))
+}
+
+/** Deletes every in-cluster shell pod, across every cluster. */
+export function stopAllClusterShells(): Promise<void> {
+  return call(() => bindStopAllClusterShells())
 }
 
 /**

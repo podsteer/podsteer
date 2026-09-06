@@ -35,6 +35,11 @@ export const API_ERROR_CODES = [
   // network, and neither is retryable — see app/adapters/wails/errors.go.
   'helm_payload_too_large',
   'helm_payload_unreadable',
+  // An admission controller — Pod Security enforcing `restricted`, or a
+  // validating webhook — declined a pod PodSteer tried to create. NOT
+  // `forbidden`: the account was allowed and the object was refused, and the
+  // message is the API server's own words, which name the field to change.
+  'pod_rejected',
   'internal',
 ] as const
 

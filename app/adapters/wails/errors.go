@@ -138,6 +138,15 @@ const (
 	// CodeSettingsUnavailable means the settings could not be written: no
 	// configuration directory, or a failed write.
 	CodeSettingsUnavailable ErrorCode = "settings_unavailable"
+	// CodePodRejected means an admission controller declined a pod PodSteer
+	// tried to create — Pod Security enforcing `restricted`, or a validating
+	// webhook. Its own code rather than forbidden, because the account WAS
+	// allowed and the object was declined: reported as forbidden it sends
+	// somebody to ask for a permission they already hold. The message is the
+	// API server's own, verbatim, exactly as CodeInvalidInput carries
+	// ErrManifestRejected's — that text names the field to change and is the
+	// only thing anybody can act on.
+	CodePodRejected ErrorCode = "pod_rejected"
 	// CodeInternal is the fallback for anything unclassified.
 	CodeInternal ErrorCode = "internal"
 )
@@ -310,6 +319,14 @@ func classifyError(err error) (ErrorCode, string) {
 	case errors.Is(err, ports.ErrUnauthenticated):
 		return CodeUnauthenticated, "Your credentials were rejected — they may have expired"
 
+	// BEFORE ErrForbidden, which it is also wrapped in — an admission refusal
+	// arrives as HTTP 403 and classify has no way to tell one from an RBAC
+	// denial. VERBATIM, on the line ErrManifestRejected and ErrCommandFailed
+	// sit on: the API server's message names the exact field the pod violated
+	// and paraphrasing it throws away the only actionable thing in it.
+	case errors.Is(err, ports.ErrPodRejectedByAdmission):
+		return CodePodRejected, err.Error()
+
 	case errors.Is(err, ports.ErrForbidden):
 		return CodeForbidden, "Your account is not allowed to perform this operation"
 
@@ -433,6 +450,14 @@ func classifyError(err error) (ErrorCode, string) {
 		// verbatim rather than paraphrased, because Validate exists
 		// specifically to hand an operator the server's diagnosis.
 		errors.Is(err, ports.ErrManifestRejected),
+		// "All namespaces" is not a namespace to create a pod in, and the
+		// sentence says so — see domain.ErrShellNamespaceRequired, which
+		// exists because the empty string is NamespaceAll everywhere else.
+		errors.Is(err, domain.ErrShellNamespaceRequired),
+		// A pod offered for reuse that has exited, or that is not one of
+		// PodSteer's. Verbatim, because the message says which of the two and
+		// that is the whole of what the operator needs.
+		errors.Is(err, ports.ErrClusterShellNotReusable),
 		errors.Is(err, domain.ErrNotTLSSecret),
 		errors.Is(err, domain.ErrInvalidCertificate),
 		errors.Is(err, domain.ErrContainerNotAttachable),

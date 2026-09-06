@@ -15,9 +15,11 @@
   import DebugDialog from './DebugDialog.svelte'
   import NodeShellDialog from './NodeShellDialog.svelte'
   import LocalShellDialog from './LocalShellDialog.svelte'
+  import ClusterShellDialog from './ClusterShellDialog.svelte'
   import PaneDialog from './PaneDialog.svelte'
   import Terminal from './Terminal.svelte'
-  import { Bug, SquareTerminal, Laptop } from '@lucide/svelte'
+  import { clusterShells } from '$stores/clusterShells.svelte'
+  import { Bug, SquareTerminal, Laptop, Container } from '@lucide/svelte'
 
   const pending = $derived(sessionLauncher.pending)
   const running = $derived(sessionLauncher.running)
@@ -50,6 +52,15 @@
     agents={pending.agents}
     onclose={() => sessionLauncher.cancel()}
     onconfirm={(agentId, readOnly) => sessionLauncher.startLocal(agentId, readOnly)}
+  />
+{:else if pending?.kind === 'clustershell'}
+  <ClusterShellDialog
+    open
+    clusterId={pending.clusterId}
+    namespace={pending.namespace}
+    onclose={() => sessionLauncher.cancel()}
+    onconfirm={(image, namespace) => sessionLauncher.startClusterShell(image, namespace)}
+    onattach={(namespace, pod) => sessionLauncher.attachClusterShell(namespace, pod)}
   />
 {/if}
 
@@ -92,6 +103,25 @@
       nodeShellNamespace={running.namespace}
       nodeShellImage={running.image}
       onstarted={() => void nodeShells.refresh()}
+    />
+  </PaneDialog>
+{:else if running?.kind === 'clustershell'}
+  <PaneDialog
+    open
+    icon={Container}
+    kind="In-cluster"
+    name={running.pod || running.namespace}
+    label="In-cluster shell"
+    onclose={() => sessionLauncher.close()}
+  >
+    <Terminal
+      variant="clustershell"
+      clusterId={running.clusterId}
+      namespace={running.namespace}
+      podName={running.pod}
+      containerName=""
+      clusterShellImage={running.image}
+      onstarted={() => void clusterShells.refresh()}
     />
   </PaneDialog>
 {:else if running?.kind === 'local'}

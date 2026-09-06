@@ -916,6 +916,136 @@ func (m *ManagementAPI) StopAllNodeShells() error {
 	return nil
 }
 
+// ClusterShell is one live in-cluster shell, as the activity list shows it.
+type ClusterShell struct {
+	ID        string `json:"id"`
+	ClusterID string `json:"clusterId"`
+	Namespace string `json:"namespace"`
+	Pod       string `json:"pod"`
+	Image     string `json:"image"`
+	// Adopted says this pod was reused rather than created by the session
+	// holding it. It changes nothing about the lifecycle and is shown because
+	// "PodSteer created this" and "PodSteer took this over" are different
+	// sentences about somebody's namespace.
+	Adopted bool `json:"adopted"`
+}
+
+func toClusterShell(shell domain.ClusterShell) ClusterShell {
+	return ClusterShell{
+		ID:        shell.ID,
+		ClusterID: shell.ClusterID.String(),
+		Namespace: shell.Namespace.String(),
+		Pod:       shell.PodName,
+		Image:     shell.Image,
+		Adopted:   shell.Adopted,
+	}
+}
+
+// ClusterShellCandidate is one pod PodSteer created for an in-cluster shell,
+// found in a namespace before another is created.
+type ClusterShellCandidate struct {
+	Pod   string `json:"pod"`
+	Image string `json:"image"`
+	// Phase is the pod's status.phase as the API server reported it — quoted,
+	// never a verdict. Which of these may be offered is decided in the domain;
+	// see ClusterShellReuse.
+	Phase string `json:"phase"`
+}
+
+// ClusterShellReuse is what a namespace already holds: the pods that may be
+// offered, and the ones that may only be reported.
+type ClusterShellReuse struct {
+	// Reusable are Running pods. Attaching to one of these lands the operator
+	// on a shell.
+	Reusable []ClusterShellCandidate `json:"reusable"`
+	// Other are PodSteer's shell pods in any other phase. NOT offers — an
+	// attach to one fails for a reason the offer gave nobody a way to see —
+	// but worth showing, because they explain a namespace that has been
+	// accumulating them.
+	Other []ClusterShellCandidate `json:"other"`
+}
+
+func toClusterShellCandidates(candidates []domain.ClusterShellCandidate) []ClusterShellCandidate {
+	out := make([]ClusterShellCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		out = append(out, ClusterShellCandidate{
+			Pod:   candidate.PodName,
+			Image: candidate.Image,
+			Phase: string(candidate.Phase),
+		})
+	}
+	return out
+}
+
+// FindClusterShells reports the in-cluster shell pods PodSteer already has in
+// one namespace, split into what may be reused and what may only be reported.
+//
+// A READ. No read-only refusal and no audit line: listing pods by label
+// changes nothing. The dialog calls it before offering to create one, so an
+// operator is offered the pod that is already there rather than a second one
+// beside it.
+func (m *ManagementAPI) FindClusterShells(clusterID, namespace string) (ClusterShellReuse, error) {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return ClusterShellReuse{}, apiError(m.logger, "FindClusterShells", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return ClusterShellReuse{}, apiError(m.logger, "FindClusterShells", err)
+	}
+	if ns.IsAll() {
+		return ClusterShellReuse{}, apiError(m.logger, "FindClusterShells", domain.ErrShellNamespaceRequired)
+	}
+
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	plan, err := m.management.FindClusterShells(ctx, id, ns)
+	if err != nil {
+		return ClusterShellReuse{}, apiError(m.logger, "FindClusterShells", err)
+	}
+
+	// Both slices are built rather than passed through, so an empty answer
+	// crosses the bridge as [] and never as null — the frontend dereferences
+	// them, and a nil Go slice marshals to null. See CLAUDE.md's note on
+	// Overview.unavailable, which is the bug this avoids repeating.
+	return ClusterShellReuse{
+		Reusable: toClusterShellCandidates(plan.Reusable),
+		Other:    toClusterShellCandidates(plan.Other),
+	}, nil
+}
+
+// ListClusterShells reports the in-cluster shells running right now — the live
+// registry, exactly like ListNodeShells.
+func (m *ManagementAPI) ListClusterShells() ([]ClusterShell, error) {
+	shells := m.management.ListClusterShells()
+
+	out := make([]ClusterShell, 0, len(shells))
+	for _, shell := range shells {
+		out = append(out, toClusterShell(shell))
+	}
+	return out, nil
+}
+
+// StopClusterShell deletes the pod behind one in-cluster shell — the stop
+// control in the activity list. The attach session ending deletes the pod on
+// its own, so this and that both reaching the same shell is not an error.
+func (m *ManagementAPI) StopClusterShell(shellID string) error {
+	if err := m.management.StopClusterShell(shellID); err != nil {
+		return apiError(m.logger, "StopClusterShell", err)
+	}
+	return nil
+}
+
+// StopAllClusterShells deletes every in-cluster shell pod, across every
+// cluster — the "Stop all" companion, and what the composition root calls on
+// shutdown so no pod PodSteer created is left running in somebody's namespace.
+func (m *ManagementAPI) StopAllClusterShells() error {
+	m.management.StopAllClusterShells()
+	return nil
+}
+
 // --- Bulk actions -----------------------------------------------------------
 
 // parseBulkAction narrows the frontend's action string to a domain.BulkAction,

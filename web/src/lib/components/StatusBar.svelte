@@ -14,6 +14,7 @@
   import { shortcutSheet } from '$stores/shortcutSheet.svelte'
   import { forwards } from '$stores/forwards.svelte'
   import { nodeShells } from '$stores/nodeShells.svelte'
+  import { clusterShells } from '$stores/clusterShells.svelte'
   import { formatClockTime } from '$lib/format'
   import { iconForKind } from '$lib/kindIcons'
   import { shortcut } from '$lib/shortcuts'
@@ -22,6 +23,7 @@
   import ShareMenu from './ShareMenu.svelte'
   import PortForwardsPanel from './PortForwardsPanel.svelte'
   import NodeShellsPanel from './NodeShellsPanel.svelte'
+  import ClusterShellsPanel from './ClusterShellsPanel.svelte'
   import GithubIcon from './icons/GithubIcon.svelte'
   import LinkedinIcon from './icons/LinkedinIcon.svelte'
   import BlueskyIcon from './icons/BlueskyIcon.svelte'
@@ -150,6 +152,15 @@
   {#if nodeShells.active.length > 0}
     {@render sep()}
     <NodeShellsPanel />
+  {/if}
+
+  <!-- In-cluster shells, beside the node shells. Nothing here is privileged,
+       and the reason to show it is the same one: it is a pod PodSteer created
+       in somebody's namespace, and it must be visible and stoppable from here
+       whichever tab opened it. -->
+  {#if clusterShells.active.length > 0}
+    {@render sep()}
+    <ClusterShellsPanel />
   {/if}
 
   <div class="ml-auto flex items-center gap-3">

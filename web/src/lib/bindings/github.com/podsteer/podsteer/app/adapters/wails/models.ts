@@ -778,6 +778,61 @@ export interface ClusterSettings {
 }
 
 /**
+ * ClusterShell is one live in-cluster shell, as the activity list shows it.
+ */
+export interface ClusterShell {
+    "id": string;
+    "clusterId": string;
+    "namespace": string;
+    "pod": string;
+    "image": string;
+
+    /**
+     * Adopted says this pod was reused rather than created by the session
+     * holding it. It changes nothing about the lifecycle and is shown because
+     * "PodSteer created this" and "PodSteer took this over" are different
+     * sentences about somebody's namespace.
+     */
+    "adopted": boolean;
+}
+
+/**
+ * ClusterShellCandidate is one pod PodSteer created for an in-cluster shell,
+ * found in a namespace before another is created.
+ */
+export interface ClusterShellCandidate {
+    "pod": string;
+    "image": string;
+
+    /**
+     * Phase is the pod's status.phase as the API server reported it — quoted,
+     * never a verdict. Which of these may be offered is decided in the domain;
+     * see ClusterShellReuse.
+     */
+    "phase": string;
+}
+
+/**
+ * ClusterShellReuse is what a namespace already holds: the pods that may be
+ * offered, and the ones that may only be reported.
+ */
+export interface ClusterShellReuse {
+    /**
+     * Reusable are Running pods. Attaching to one of these lands the operator
+     * on a shell.
+     */
+    "reusable": ClusterShellCandidate[] | null;
+
+    /**
+     * Other are PodSteer's shell pods in any other phase. NOT offers — an
+     * attach to one fails for a reason the offer gave nobody a way to see —
+     * but worth showing, because they explain a namespace that has been
+     * accumulating them.
+     */
+    "other": ClusterShellCandidate[] | null;
+}
+
+/**
  * ClusterWorkloads is one cluster's share of a cross-cluster workload list.
  */
 export interface ClusterWorkloads {

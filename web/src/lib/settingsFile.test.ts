@@ -190,6 +190,12 @@ describe('what a settings file must never carry', () => {
         'alertSounds',
         'alertSoundsEnabled',
         'autoRefresh',
+        // An image reference, exactly as debugImage and nodeShellImage are: a
+        // workflow preference about which container PodSteer runs, and never
+        // an object name. There is deliberately no clusterShellNamespace
+        // beside it — that one follows the tab and is not persisted at all,
+        // which is why it cannot reach this document either.
+        'clusterShellImage',
         'collapsedSections',
         'columns',
         'customColumns',

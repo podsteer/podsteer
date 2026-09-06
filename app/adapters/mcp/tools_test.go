@@ -84,9 +84,20 @@ func TestTheReadingInterfacesCarryNoWriteAndNoSecretReveal(t *testing.T) {
 		// to be handed over as "it is just the same reads in a loop" — it is
 		// not: every one of them changes a cluster, and none can be put
 		// behind a confirmation an agent reads.
+		// The in-cluster shell's three writes are named for the same reason
+		// the Bulk* methods are: they were added to ManagementService, so
+		// LogReader is where a widening of that narrowed view would first
+		// show up. Creating a pod, adopting one (which is signing up to
+		// delete it) and deleting one are each a change to somebody's
+		// cluster, and none can be put behind a confirmation an agent reads.
+		// FindClusterShells is deliberately NOT here — it is a labelled pod
+		// list and reads nothing — but it is not offered either: nothing
+		// wires a ClusterShellPort into the MCP composition at all.
 		"LogReader": {
 			"DeleteResource", "ExecInPod", "UpdateResource", "SetSecretKey",
 			"BulkDelete", "BulkEvict", "BulkRestart", "BulkScale", "BulkCordon",
+			"StartClusterShell", "AdoptClusterShell", "StopClusterShell",
+			"StopAllClusterShells",
 		},
 	}
 

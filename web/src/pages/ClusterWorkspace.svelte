@@ -54,6 +54,8 @@ import TimelineView from './TimelineView.svelte'
   import { PanelLeft, AlertTriangle, Download, Check, Plus, Laptop } from '@lucide/svelte'
   import { onMount } from 'svelte'
   import { sessionLauncher } from '$stores/sessionLauncher.svelte'
+  import TerminalMenu from '$lib/components/TerminalMenu.svelte'
+  import { clusterShellNamespaceFor } from '$lib/clusterShell'
   import type { CodingAgent } from '$lib/localShell'
   import {
     DetectAgents,
@@ -120,6 +122,21 @@ import TimelineView from './TimelineView.svelte'
       clusterId: session.cluster.id,
       agents: codingAgents,
       subject: agentSubject,
+    })
+  }
+
+  /**
+   * Opens the in-cluster shell dialog for the tab in front.
+   *
+   * The namespace is the tab's, so the two terminals and the rest of the
+   * interface agree about where somebody is working — and it is '' when the
+   * tab is on every namespace, which the dialog reads as "ask" rather than as
+   * a licence to guess. See $lib/clusterShell.
+   */
+  function onOpenClusterShell(): void {
+    sessionLauncher.requestClusterShell({
+      clusterId: session.cluster.id,
+      namespace: clusterShellNamespaceFor(session.namespace),
     })
   }
 
@@ -469,35 +486,28 @@ import TimelineView from './TimelineView.svelte'
         {/if}
       {/if}
 
-      <!-- A shell on THIS machine, not in the cluster.
-           OUTSIDE the list-only controls above, and last in the row: it is
-           scoped to the cluster TAB rather than to whatever kind is selected —
-           KUBECONFIG and the tab's context are the whole of what PodSteer
-           contributes to it — so it belongs on the overview and the
-           all-clusters view exactly as much as on a table.
+      <!-- The terminals: one on THIS machine and one INSIDE the cluster.
+           OUTSIDE the list-only controls above, and last in the row: both are
+           scoped to the cluster TAB rather than to whatever kind is selected,
+           so they belong on the overview and the all-clusters view exactly as
+           much as on a table.
 
-           Absent where the platform cannot open one, with the reason in the
-           title rather than a control that does nothing. -->
-      {#if localShellSupported}
-        <div class="ms-auto h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+           A MENU rather than a button, and it says so with a chevron: it was
+           one action and is now two, and a control that opens something must
+           not look like one that does something. Neither entry disappears when
+           it cannot be used — a disabled row carries its reason in the title,
+           where an absent control would teach nothing. -->
+      <div class="ms-auto h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
 
-        <ToolbarButton
-          icon={Laptop}
-          label="Local terminal"
-          title="Open a shell on this machine, with KUBECONFIG set for this cluster"
-          onclick={onOpenLocalTerminal}
-        />
-      {:else if localShellReason}
-        <div class="ms-auto h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
-
-        <ToolbarButton
-          icon={Laptop}
-          label="Local terminal"
-          title={localShellReason}
-          disabled
-          onclick={() => {}}
-        />
-      {/if}
+      <TerminalMenu
+        localSupported={localShellSupported}
+        localReason={localShellReason ||
+          'A local shell is not available on this platform.'}
+        readOnly={isReadOnly}
+        {readOnlyReason}
+        onlocal={onOpenLocalTerminal}
+        oncluster={onOpenClusterShell}
+      />
     </div>
 
     {#if session.error}

@@ -601,6 +601,56 @@ type NodeShellPort interface {
 	StopAllNodeShells()
 }
 
+// ClusterShellPort creates and tears down in-cluster shells — ordinary,
+// unprivileged pods in a namespace that a terminal session attaches to.
+//
+// DELIBERATELY THE SAME SHAPE AS NodeShellPort, because the leak to avoid is
+// identical: the pod is a resource PodSteer created, so the record of it and
+// the thing that deletes it must never part company. Start creates the pod and
+// returns once it is running; Stop deletes it; everything still running is
+// listed so the activity surface can show it with a stop control and StopAll
+// can remove it on shutdown.
+//
+// What it is NOT, in both directions: not the ephemeral debug container
+// (ManagementPort.AddEphemeralContainer), which is injected into somebody
+// else's pod and which Kubernetes will not remove; and not the node shell,
+// which is privileged and enters a node's host namespaces. This is a vantage
+// point inside the cluster's network, and it is admissible where those are
+// not.
+type ClusterShellPort interface {
+	// StartClusterShell creates an unprivileged pod running a shell in
+	// namespace, waits for it to be running, and returns the descriptor. It
+	// does NOT open the terminal — that is the caller's attach session, kept
+	// separate so the transport and the record cannot drift.
+	StartClusterShell(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, image string) (domain.ClusterShell, error)
+	// FindClusterShells reports the pods PodSteer created for in-cluster
+	// shells in namespace, whatever state they are in, EXCLUDING the ones
+	// this process is already tracking.
+	//
+	// Every candidate carries its phase verbatim rather than a verdict: the
+	// decision about which of them may be offered belongs to
+	// domain.PlanClusterShellReuse, and this reports what the cluster said.
+	// The exclusion is what keeps two panes from attaching to one pod and
+	// then racing to delete it — a shell this process already owns is already
+	// visible in the activity list.
+	FindClusterShells(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterShellCandidate, error)
+	// AdoptClusterShell takes responsibility for an EXISTING pod — the reuse
+	// path — and returns the descriptor, so it is deleted on session end
+	// exactly as a created one is. It refuses a pod that is not running, and
+	// one that is not PodSteer's: attaching to an arbitrary pod by name is a
+	// different act with a different guard.
+	AdoptClusterShell(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string) (domain.ClusterShell, error)
+	// StopClusterShell deletes the pod behind one shell and forgets it.
+	// Idempotent: stopping one already gone is not an error, since the
+	// terminal session ending and an explicit stop can both reach it.
+	StopClusterShell(id string) error
+	// ListClusterShells reports what is running right now — the live
+	// registry, so the activity list shows only pods that still exist.
+	ListClusterShells() []domain.ClusterShell
+	// StopAllClusterShells deletes every in-cluster shell pod, for shutdown.
+	StopAllClusterShells()
+}
+
 // LocalShellPort runs a shell on the OPERATOR'S OWN MACHINE, not in a cluster.
 //
 // Every other terminal port here reaches the API server. This one does not: it

@@ -402,6 +402,12 @@ func run() error {
 			MaxBytes:   cfg.FileCopy.MaxBytes,
 			MaxEntries: cfg.FileCopy.MaxEntries,
 		},
+		// The in-cluster shell's pods. Wired HERE rather than handed to
+		// TerminalAPI the way the node shell's port is, because creating a
+		// pod is a write and every write in this application goes through
+		// this service's read-only guard and audit line. Deliberately NOT
+		// wired in the MCP composition: the agent surface reads only.
+		ClusterShells: kubernetes,
 	})
 	if err != nil {
 		return fmt.Errorf("wiring management service: %w", err)
@@ -619,6 +625,14 @@ func run() error {
 			// until their one-hour deadline reaps them. The deadline is the
 			// backstop; this is the normal path.
 			kubernetes.StopAllNodeShells()
+			// In-cluster shells next, beside the node shells and for the
+			// same reason with the sharpness removed: nothing here is
+			// privileged, but each is still a pod PodSteer created in
+			// somebody's namespace, and a process that exits without
+			// deleting them leaves pods nobody can account for until their
+			// one-hour deadline reaps them. The deadline is the backstop;
+			// this is the normal path.
+			kubernetes.StopAllClusterShells()
 			// Local shells next. Nothing in a cluster leaks here — these are
 			// processes on this machine — but a shell whose window has gone is
 			// a shell nobody can see, type into, or end, and a login shell

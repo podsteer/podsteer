@@ -34,6 +34,11 @@ type ManagementService struct {
 	// service failing to construct.
 	archive ports.ArchivePort
 	limits  domain.TransferLimits
+	// clusterShells creates and deletes the unprivileged pods behind in-cluster
+	// shells — see clustershell.go for why those writes live here rather than
+	// beside the port the way the node shell's do. Optional, like archive: nil
+	// means the methods refuse rather than the service failing to construct.
+	clusterShells ports.ClusterShellPort
 }
 
 // ManagementServiceDeps are the dependencies required to build a ManagementService.
@@ -54,6 +59,11 @@ type ManagementServiceDeps struct {
 	// TransferLimits caps a copy in either direction; the zero value means
 	// the domain's defaults (1 GiB, 100k entries).
 	TransferLimits domain.TransferLimits
+	// ClusterShells creates and deletes the pods behind in-cluster shells.
+	// Optional, on the same terms as Archive: without it the ClusterShell
+	// methods refuse and every other method is unaffected, so a caller that
+	// never opens one need not wire it.
+	ClusterShells ports.ClusterShellPort
 }
 
 // NewManagementService returns a management service wired with its dependencies.
@@ -76,6 +86,8 @@ func NewManagementService(deps ManagementServiceDeps) (*ManagementService, error
 		logger:     logger.With(slog.String("service", "management")),
 		archive:    deps.Archive,
 		limits:     deps.TransferLimits.WithDefaults(),
+
+		clusterShells: deps.ClusterShells,
 	}, nil
 }
 
