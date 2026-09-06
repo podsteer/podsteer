@@ -1321,6 +1321,39 @@ export interface GraphNode {
 }
 
 /**
+ * HelmChartIdentity is what a release says about the chart it came from.
+ * 
+ * THE LIST'S TWO MISSING COLUMNS LIVE HERE. Chart name, chart version and app
+ * version are not labels — they exist only inside the payload — so the
+ * release list ships without them and they appear here, after the explicit
+ * click that reads one revision. Any field may be empty: a chart is not
+ * obliged to declare an appVersion.
+ */
+export interface HelmChartIdentity {
+    /**
+     * Name is the chart's own name, which is NOT the release name — one
+     * chart installs under as many release names as somebody likes.
+     */
+    "name": string;
+
+    /**
+     * Version is the chart version as the chart declared it.
+     */
+    "version": string;
+
+    /**
+     * AppVersion is the version of the application the chart packages, as
+     * its author set it — nothing verifies it against what is running.
+     */
+    "appVersion": string;
+
+    /**
+     * Description is the chart's own one-line description, when it has one.
+     */
+    "description": string;
+}
+
+/**
  * HelmListing is one answer to "what has Helm installed here".
  */
 export interface HelmListing {
@@ -1407,6 +1440,88 @@ export interface HelmRelease {
      * costs no further read.
      */
     "revisions": HelmRevision[] | null;
+}
+
+/**
+ * HelmReleaseDetail is one decoded revision.
+ * 
+ * THREE OF ITS FIELDS ARE SECRET MATERIAL AND THEY ARE NOT ALIKE. `manifest`
+ * arrives ALREADY MASKED — the adapter replaced every value in every Secret
+ * document inside it with that value's decoded size, before the string
+ * crossed this boundary — so it needs no reveal timer. `values` and `notes`
+ * do: a chart puts a database password in its values and PodSteer cannot know
+ * which key that is, and a NOTES template is rendered from those same values
+ * and routinely prints one back. Both are governed in the webview by the same
+ * re-hideable, thirty-second, hidden-on-blur discipline a revealed Secret key
+ * already has — see web/src/stores/helmPayloads.svelte.ts.
+ */
+export interface HelmReleaseDetail {
+    /**
+     * Namespace is where Helm stored the release.
+     */
+    "namespace": string;
+
+    /**
+     * Name is the release name, verified against the request before the
+     * payload was decoded at all.
+     */
+    "name": string;
+
+    /**
+     * Revision is the revision read.
+     */
+    "revision": number;
+
+    /**
+     * Status is the release status from INSIDE the payload, verbatim.
+     */
+    "status": string;
+
+    /**
+     * Chart is the chart identity — the list's two missing columns.
+     */
+    "chart": HelmChartIdentity;
+
+    /**
+     * Description is Helm's own account of this revision ("Upgrade
+     * complete", or the failure's own text).
+     */
+    "description": string;
+
+    /**
+     * Values are the values the release was installed WITH, as YAML —
+     * Helm's `config`, which is what `helm get values` prints, never the
+     * chart's defaults merged in. SECRET MATERIAL, under the reveal
+     * discipline in the webview.
+     */
+    "values": string;
+
+    /**
+     * Notes is the rendered NOTES.txt. ALSO SECRET MATERIAL, and the one
+     * people assume is not.
+     */
+    "notes": string;
+
+    /**
+     * Manifest is the rendered manifest with every Secret document in it
+     * ALREADY MASKED in the adapter. Needs no reveal timer, because there is
+     * nothing left in it to time out.
+     */
+    "manifest": string;
+
+    /**
+     * MaskedDocuments is how many documents were masked. Shown beside the
+     * manifest, because a masked value that does not say it was masked reads
+     * as a Secret with an odd-looking value in it. Zero is the ordinary
+     * answer: most charts render no Secret at all.
+     */
+    "maskedDocuments": number;
+
+    /**
+     * SecretName is the release Secret that was read. A handle, never a
+     * payload.
+     */
+    "secretName": string;
 }
 
 /**

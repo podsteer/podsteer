@@ -136,23 +136,75 @@ neither happens: the pane states what it did not look at rather than quietly
 looking. If that ever changes it will be off by default, per image, initiated by
 you, and described here before it ships.
 
-**The Helm page LISTS Secrets, and reads none of them.** Helm stores every
-release as a Secret and labels it with the release name, the revision, the
-status and two timestamps. PodSteer's Helm view is built from exactly those
-labels, read through Kubernetes' metadata API — which returns names, labels
-and ownership and **never an object's data** — so no release payload, no
-chart values and no rendered manifest are transferred, and nothing on that
-page is decoded. Two things about it are worth stating plainly. It is
-`list secrets` to your cluster's RBAC like any other request, because the
-metadata API narrows the response and not the permission: an account without
-that permission is refused, and the page says so in those words rather than
-showing you an empty list — "not permitted here" and "no Helm here" are
-different sentences and PodSteer will not collapse them. And it is **not
-polled**: the list is read when you open the page, when you press its own
-Refresh, and after a write PodSteer itself made — never on the refresh timer,
-because a repeated `list secrets` is exactly the pattern Kubernetes' own
-guidance tells cluster operators to alert on. PodSteer also does not perform a
-Helm rollback or uninstall: it shows you the `helm` command and you run it.
+**The Helm page LISTS Secrets without reading any of them, and reads exactly
+one when you press a button.** Those are two different acts and the difference
+is the whole design, so they are described separately.
+
+**The list reads no payload at all.** Helm stores every release as a Secret and
+labels it with the release name, the revision, the status and two timestamps.
+The Helm view's table and its revision history are built from exactly those
+labels, read through Kubernetes' metadata API — which returns names, labels and
+ownership and **never an object's data** — so opening the page transfers no
+release payload, no chart values and no rendered manifest, and decodes nothing.
+Two things about it are worth stating plainly. It is `list secrets` to your
+cluster's RBAC like any other request, because the metadata API narrows the
+response and not the permission: an account without that permission is refused,
+and the page says so in those words rather than showing you an empty list —
+"not permitted here" and "no Helm here" are different sentences and PodSteer
+will not collapse them. And it is **not polled**: the list is read when you open
+the page, when you press its own Refresh, and after a write PodSteer itself made
+— never on the refresh timer, because a repeated `list secrets` is exactly the
+pattern Kubernetes' own guidance tells cluster operators to alert on.
+
+**Reading one release's payload is a separate, deliberate act, and this is new.**
+A release's values, its notes, its rendered manifest and the chart it came from
+exist only inside that revision's Secret, so seeing them means reading a
+Secret's contents. PodSteer does that **only when you press the button on one
+revision** — never when the page opens, never when the release drawer opens,
+never on the refresh timer, and never for more than the one revision you named.
+It is the same act as revealing a Secret's key and carries the same treatment:
+
+- **One revision at a time.** PodSteer composes the release Secret's name and
+  then **checks what came back before decoding it**: the Secret's type must be
+  Helm's own, and its owner, release and revision labels must match what you
+  asked for and what the release list selects on. This is a check on the
+  object's SHAPE rather than a security boundary, and it is worth being plain
+  about which: the name is derivable, so anyone who could place an object there
+  could set its type and labels too. What the check prevents is an object that
+  merely sits at that name — a backup, a copy, a restore under the wrong name —
+  being decoded and shown to you as a release it is not. What makes an
+  unexpected document harmless is the rest of this list: the decompression is
+  bounded, only the fields shown are decoded, and every Secret in the manifest
+  is masked.
+- **The values and the notes hide themselves**, after thirty seconds and
+  whenever the window loses focus, and they can be hidden by hand at any time.
+  They are dropped rather than covered, so showing them again reads the Secret
+  again. Notes are treated exactly like values and not as something milder: a
+  chart's notes are rendered from those same values, and printing an admin
+  password is one of the commonest things they do. The pane says so above them.
+- **The rendered manifest is masked before it leaves the Go process.** A chart
+  that renders a `Secret` puts base64 values into that manifest, and base64 is
+  an encoding rather than a cipher — so each of those values is replaced with
+  its decoded size, in the same place and the same form the YAML tab uses,
+  before the manifest crosses into the interface. Secrets wrapped in a `List`
+  are masked too, entry by entry, since that is how a chart emits several of
+  them from one loop. A document that is not a Secret is passed through
+  exactly as Helm rendered it, and the pane says how many were masked. Because
+  it arrives masked, it is not put under the timer.
+- **One line goes into PodSteer's own log** naming the cluster, the namespace,
+  the release and the revision — and never a value, a key or any part of the
+  payload, exactly as writing a Secret's key is logged.
+- **Nothing is kept.** The payload is not cached, not written to disk, not
+  recorded in the session timeline and never part of a CSV export, and it is
+  dropped when the drawer closes. There are tests asserting the last two rather
+  than a note saying so.
+- **A release too large to decompress is refused, not truncated.** PodSteer
+  stops at 32 MiB of decompressed payload and says which release and revision it
+  stopped on, because a manifest shown as though it were whole when it is short
+  is worse than no manifest at all.
+
+PodSteer still does not perform a Helm rollback or uninstall: it shows you the
+`helm` command and you run it.
 
 The webview still has no network access at all: a content security
 policy in `web/index.html` forbids every remote origin, and all cluster traffic
@@ -471,8 +523,11 @@ conclude that a namespace is empty because it was not allowed to look.
 **A Secret's values never leave**, whichever tool is called. A manifest read
 through it has each value replaced by its decoded size before the object is
 serialised — the same masking the YAML tab uses, applied in the same place —
-and the two calls that can return key material (the per-key reveal and the TLS
-certificate inspection) are not reachable from it at all. Tests assert both.
+and the three calls that can return key material (the per-key reveal, the TLS
+certificate inspection, and the Helm release payload read) are not reachable
+from it at all. Tests assert all of them, including one that walks every
+interface the subprocess accepts, so a reader added later cannot acquire one of
+those calls by being handed a wider interface than it needed.
 
 **Nothing is written anywhere.** No file, no kubeconfig — `current-context`
 included — no history, and not PodSteer's own `settings.json` either: the
@@ -495,8 +550,13 @@ else it can reach with your credentials, is not something PodSteer mediates.
   in logs, in the recorded history, in an error surfaced to the frontend, or
   anywhere on disk.
 - A Secret value — including a TLS Secret's private key, when its certificate
-  is inspected — resolved anywhere other than the deliberate, per-key
-  reveal or per-Secret inspection the operator asked for.
+  is inspected, and including a Helm release's values, notes or rendered
+  manifest — resolved anywhere other than the deliberate, per-key reveal,
+  per-Secret inspection or per-revision release read the operator asked for.
+  For the Helm read specifically: a payload decoded from a Secret that does not
+  verify as the release and revision requested, a rendered `Secret` reaching
+  the interface unmasked, values or notes surviving the hide, or a payload
+  reaching disk, the timeline or an export.
 - A bypass of the webview CSP, or any path by which page content reaches the
   network directly.
 - Injection through cluster-controlled data — resource names, labels,

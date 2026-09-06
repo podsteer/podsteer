@@ -29,6 +29,12 @@ export const API_ERROR_CODES = [
   'tar_missing',
   'command_failed',
   'transfer_limit',
+  // A Helm release that decompressed past the ceiling and was REFUSED rather
+  // than truncated, and a Secret that would not verify as the release it was
+  // asked for. Neither is a fault in the cluster, the credentials or the
+  // network, and neither is retryable — see app/adapters/wails/errors.go.
+  'helm_payload_too_large',
+  'helm_payload_unreadable',
   'internal',
 ] as const
 

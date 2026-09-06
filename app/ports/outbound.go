@@ -496,6 +496,41 @@ type HelmPort interface {
 	// pressing Refresh. Nothing on a timer may pass true, and nothing on a
 	// timer may call this method at all.
 	ListHelmReleases(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, refresh bool) (domain.HelmListing, error)
+
+	// ReadHelmRelease reads and decodes ONE revision of ONE release.
+	//
+	// THIS IS THE ONE METHOD ON THIS PORT THAT READS SECRET CONTENTS, and it
+	// is the reason the port exists as its own type rather than as a
+	// widening of ResourcePort: `podsteer mcp` narrows by INTERFACE, so a
+	// list tool could one day be offered to an agent while this method never
+	// is, and the two have to be separable at the type level. Anything that
+	// hands this interface WHOLE to something narrow has undone that.
+	//
+	// IT IS RevealSecretKey'S ACT AND INHERITS ITS DISCIPLINE, not a
+	// summary of it: an explicit per-revision click, never on render and
+	// never on a tick, with one audit line naming cluster, namespace,
+	// release and revision — and never a value. A caller that reached this
+	// from a $effect, a poll or a page load has broken the rule the whole
+	// feature was permitted under.
+	//
+	// NOTHING HERE IS CACHED, deliberately and unlike ListHelmReleases. A
+	// held payload is Secret material sitting in a process for minutes after
+	// somebody stopped looking at it, and the read is one GET made because
+	// somebody pressed something — the case a cache exists for (a repeated
+	// unasked-for read) cannot arise.
+	//
+	// The RENDERED MANIFEST comes back with every Secret document in it
+	// already masked, in the adapter, before it crosses this boundary.
+	// Values and notes do not and cannot be: a chart puts a password in its
+	// values and PodSteer cannot know which key that is, so they arrive
+	// whole and it is the CALLER that owes them the reveal discipline.
+	//
+	// A missing revision is ports.ErrNotFound wrapped alongside
+	// domain.ErrHelmRevisionNotFound; a Secret that is not the release asked
+	// for, or will not decode, is ports.ErrHelmPayloadUnreadable; one that
+	// expands past the ceiling is ports.ErrHelmPayloadTooLarge and is
+	// REFUSED rather than truncated.
+	ReadHelmRelease(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, release string, revision int) (domain.HelmReleaseDetail, error)
 }
 
 // PortForwardPort opens local ports onto container ports.

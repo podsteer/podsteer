@@ -61,7 +61,10 @@ import {
   InspectRole as bindInspectRole,
   SubjectRules as bindSubjectRules,
 } from '$bindings/rbacapi'
-import { ListReleases as bindListHelmReleases } from '$bindings/helmapi'
+import {
+  ListReleases as bindListHelmReleases,
+  ReadRelease as bindReadHelmRelease,
+} from '$bindings/helmapi'
 import {
   ScaleWorkload as bindScaleWorkload,
   UpdateResource as bindUpdateResource,
@@ -210,6 +213,15 @@ export type HelmListing = wails.HelmListing
 export type HelmRelease = wails.HelmRelease
 /** One release revision, quoted from its Secret's labels. */
 export type HelmRevision = wails.HelmRevision
+/** ONE REVISION'S DECODED PAYLOAD, and the only Helm type here that is the
+    contents of a Secret. Read on an explicit click, never on render — see
+    readHelmRelease and $stores/helmPayloads. `manifest` arrives with its
+    Secret documents already masked; `values` and `notes` do not, and are
+    under the reveal discipline in the webview. */
+export type HelmReleaseDetail = wails.HelmReleaseDetail
+/** The chart a release came from — the two columns the release LIST cannot
+    afford, because they exist only inside the payload. */
+export type HelmChartIdentity = wails.HelmChartIdentity
 
 /** What the frontend read off an object it is offering to probe. Every field
     is a quotation of the manifest already on screen, so planning a probe
@@ -1043,6 +1055,45 @@ export function listHelmReleases(
   refresh = false,
 ): Promise<HelmListing> {
   return call(() => bindListHelmReleases(clusterId, namespace, refresh))
+}
+
+/**
+ * Reads ONE revision of ONE release: its values, its notes, its rendered
+ * manifest and the chart it came from.
+ *
+ * THIS ONE DOES CROSS THE BOUNDARY THE FUNCTION ABOVE DOES NOT. A release
+ * payload is the decoded contents of a Secret, so this call is
+ * `revealSecretKey`'s sibling rather than `listHelmReleases`': it is made
+ * because somebody pressed something, on one named revision, and the Go side
+ * writes one audit line naming cluster, namespace, release and revision —
+ * never a value.
+ *
+ * NOTHING MAY CALL IT ON RENDER OR ON A TICK. Not from an `$effect`, not when
+ * a drawer opens, not from the refresh timer. Reading Secrets when a pane
+ * opens is the pattern Kubernetes' own guidance tells operators to alert on,
+ * and refusing to do it is the condition this whole feature was built under.
+ * Everything a page load needs is on the listing already.
+ *
+ * WHAT COMES BACK IS NOT UNIFORMLY SENSITIVE. `manifest` arrives with every
+ * Secret document inside it ALREADY MASKED, in the Go adapter, before the
+ * string crossed this boundary — so it needs no reveal timer. `values` and
+ * `notes` do, and `$stores/helmPayloads` is what gives them one: a chart puts
+ * a database password in its values, and a NOTES template is rendered from
+ * those same values and routinely prints one back.
+ *
+ * A failure is a REJECTION here, unlike the listing where a refusal is an
+ * ordinary answer carried beside the rows: there is nothing to render without
+ * the payload, and an empty values tab would read as a release installed with
+ * no values. Three codes are worth knowing — `helm_payload_too_large`,
+ * `helm_payload_unreadable`, and `not_found` for a revision Helm has reaped.
+ */
+export function readHelmRelease(
+  clusterId: string,
+  namespace: string,
+  release: string,
+  revision: number,
+): Promise<HelmReleaseDetail> {
+  return call(() => bindReadHelmRelease(clusterId, namespace, release, revision))
 }
 
 // --- Events -----------------------------------------------------------------

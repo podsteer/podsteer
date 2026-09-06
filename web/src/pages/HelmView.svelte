@@ -26,6 +26,18 @@
   presses Refresh, which bypasses the Go cache; a write PodSteer made drops
   that cache, so the next look is fresh without anything asking.
 
+  ONE THING ON THIS PAGE DOES READ A PAYLOAD, AND IT IS THE ONLY ONE. The
+  release pane's Read control fetches ONE revision of ONE release, on an
+  explicit click — never on render, never when the drawer opens, never on the
+  tick. That is `RevealSecretKey`'s shape rather than a gentler version of it,
+  and it inherits the whole discipline: the values and the notes are
+  re-hideable, expire after thirty seconds, and go on window blur, through the
+  same holder a revealed Secret key uses ($stores/revealHolder). The rendered
+  manifest arrives already MASKED — every Secret document inside it had its
+  values replaced with their decoded size in the Go adapter, because a chart
+  that renders `kind: Secret` puts base64 into that string and base64 is an
+  encoding rather than a cipher — so it needs no timer of its own.
+
   ROLLBACK AND UNINSTALL ARE NOT PERFORMED, and that is a decision rather than
   a gap. A Helm rollback re-renders a previous revision, diffs it against what
   is live, applies the difference, deletes what the new manifest drops and
@@ -58,8 +70,9 @@
   } from '$lib/helm'
   import { helmHistory, helmRollback, helmUninstall } from '$lib/kubectl'
   import { modal } from '$lib/modal'
+  import { helmPayloadKey, helmPayloads } from '$stores/helmPayloads.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
-  import { Package, X } from '@lucide/svelte'
+  import { Eye, EyeOff, Package, X } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -159,10 +172,83 @@
     const history = release.revisions ?? []
     const previous = history.find((revision) => revision.revision < release.current.revision)
     target = previous?.revision ?? release.current.revision
+
+    // The pane offers the CURRENT revision to read, and reads nothing yet.
+    // Opening a drawer is not a request to decode a Secret.
+    inspecting = release.current.revision
+    tab = 'chart'
   }
 
   function close(): void {
+    // NOTHING IS HELD AFTER THE DRAWER CLOSES — decision 6 states that in as
+    // many words, and it covers the masked manifest too: masked or not, it is
+    // what a read of somebody's release produced, and keeping it for a pane
+    // nobody is looking at is holding a decoded Secret for no reason.
+    if (opened) helmPayloads.forget(payloadKeyFor(opened.namespace, opened.name, inspecting))
     opened = null
+  }
+
+  // --- The payload pane ------------------------------------------------------
+  //
+  // THE ONE PLACE ON THIS PAGE THAT READS A SECRET'S CONTENTS. It is reached
+  // from a button's click handler and from nowhere else: no $effect, no
+  // lifecycle hook, nothing on the tick. An `$effect` that read a payload when
+  // the drawer opened would turn opening a pane into a Secret read, which is
+  // the pattern Kubernetes' own guidance tells cluster operators to alert on
+  // and the exact thing this whole feature was permitted on the condition of
+  // not doing.
+
+  /**
+   * NOTHING SURVIVES THIS COMPONENT.
+   *
+   * `close()` drops the open revision's payload, but closing the drawer is
+   * not the only way to leave: this page sits inside an `{#if}` on the view
+   * mode, so switching to Pods with the drawer still open destroys the
+   * component and `close()` never runs. The values would expire on their own
+   * timer, but the masked manifest and the chart facts would sit in the
+   * singleton store until the next window blur — and SECURITY.md states, in
+   * this same change, that the payload is dropped when the drawer closes.
+   * This is what makes that sentence true rather than nearly true.
+   *
+   * An `$effect` with no reactive reads runs its teardown exactly once, on
+   * destroy, which is the shape wanted here.
+   */
+  $effect(() => {
+    return () => helmPayloads.forgetAll()
+  })
+
+  /** Which revision the pane is showing, which is not the rollback target —
+      one is what you are reading, the other is what a command would name. */
+  let inspecting = $state(0)
+
+  type PayloadTab = 'values' | 'notes' | 'manifest' | 'chart'
+  let tab = $state<PayloadTab>('chart')
+
+  function payloadKeyFor(namespace: string, release: string, revision: number): string {
+    return helmPayloadKey(session.cluster.id, namespace, release, revision)
+  }
+
+  const payloadKey = $derived(
+    opened ? payloadKeyFor(opened.namespace, opened.name, inspecting) : '',
+  )
+  const payload = $derived(helmPayloads.at(payloadKey))
+  const sensitive = $derived(helmPayloads.sensitiveAt(payloadKey))
+  const revealed = $derived(helmPayloads.isRevealed(payloadKey))
+
+  /** Reads one revision. Only ever from a click. */
+  function readPayload(): void {
+    if (!opened) return
+    void helmPayloads.read(session.cluster.id, opened.namespace, opened.name, inspecting)
+  }
+
+  /** Moves the pane to another revision, dropping whatever the previous one
+      decoded — one revision at a time is the rule, and holding the last one
+      beside the new one would quietly make it two. */
+  function inspect(revision: number): void {
+    if (!opened || revision === inspecting) return
+    helmPayloads.forget(payloadKeyFor(opened.namespace, opened.name, inspecting))
+    inspecting = revision
+    if (tab === 'values' || tab === 'notes') tab = 'chart'
   }
 
   /** Escape belongs to the innermost open layer. See $lib/escape. */
@@ -369,9 +455,10 @@
              would have been rather than left as an absence somebody has to
              notice. -->
         <p class="mt-3 text-body-small text-on-surface-variant/70">
-          There is no chart or app version here. Both live only inside a release's payload — about a
-          megabyte per release — and reading every release's payload to fill two columns is exactly
-          the bulk Secret read this page exists to avoid.
+          There is no chart or app version in this table. Both live only inside a release's payload
+          — about a megabyte per release — and reading every release's payload to fill two columns
+          is exactly the bulk Secret read this page exists to avoid. Open a release and read one
+          revision to see them.
         </p>
       {:else if !loading}
         <EmptyState title="Nothing read yet" description="Press Refresh to ask the cluster." />
@@ -424,7 +511,8 @@
       <h3 class="mb-1 text-label-large font-semibold text-on-surface-variant">History</h3>
       <p class="mb-2 text-body-small text-on-surface-variant/70">
         Every revision Helm has kept, newest first. These rows came with the list — opening this
-        cost no further read, and nothing here decodes a release.
+        cost no further read, and nothing on this table decodes a release. Inspect chooses which
+        revision the pane below is about; reading its payload is a separate, deliberate press.
       </p>
 
       <div class="overflow-x-auto">
@@ -436,6 +524,7 @@
               <th class="py-1.5 pr-3 font-medium">Created</th>
               <th class="py-1.5 pr-3 font-medium">Updated</th>
               <th class="py-1.5 font-medium">Secret</th>
+              <th class="py-1.5 pl-3 text-right font-medium">Payload</th>
             </tr>
           </thead>
           <tbody>
@@ -473,11 +562,195 @@
                 <td class="py-1.5 font-mono text-body-small break-all text-on-surface-variant/70">
                   {revision.secretName}
                 </td>
+                <td class="py-1.5 pl-3 text-right">
+                  <!-- Selects which revision the pane below is ABOUT. It
+                       reads nothing on its own: decoding still costs the
+                       explicit press below. -->
+                  <button
+                    type="button"
+                    class="state-layer cursor-pointer rounded-sm px-1.5 py-0.5 text-label-small
+                           {inspecting === revision.revision
+                             ? 'bg-secondary-container text-on-secondary-container'
+                             : 'text-primary hover:underline'}"
+                    onclick={() => inspect(revision.revision)}
+                  >
+                    Inspect
+                  </button>
+                </td>
               </tr>
             {/each}
           </tbody>
         </table>
       </div>
+
+      <!-- === The release payload ==========================================
+           EVERYTHING ABOVE THIS POINT COST NO SECRET CONTENTS AT ALL — the
+           rows came with the listing, built from the labels Helm writes.
+           Everything below reads ONE revision's Secret, on an explicit press,
+           and is governed by the doctrine that governs revealing a Secret's
+           key: one deliberate act, re-hideable, expiring, gone on blur. -->
+      <h3 class="mt-5 mb-1 text-label-large font-semibold text-on-surface-variant">
+        Revision {inspecting}
+      </h3>
+
+      {#if !payload.facts && !payload.loading && !payload.error}
+        <p class="mb-2 text-body-small text-on-surface-variant/70">
+          The chart, the values, the notes and the rendered manifest live inside this revision's
+          release Secret — about a megabyte, base64'd and gzip'd. Nothing has been read: reading it
+          is a deliberate act, one revision at a time, and it leaves a line in your cluster's audit
+          log exactly as revealing a Secret's key does.
+        </p>
+        <Button variant="filled" onclick={readPayload}>Read revision {inspecting}</Button>
+      {:else}
+        <div class="mb-2 flex flex-wrap items-center gap-2">
+          <Button variant="outlined" loading={payload.loading} onclick={readPayload}>
+            {payload.facts ? 'Read again' : `Read revision ${inspecting}`}
+          </Button>
+          {#if revealed}
+            <!-- THE RE-HIDE CONTROL, which is the one Freelens does not offer
+                 at all: once shown, its reveal cannot be undone. -->
+            <button
+              type="button"
+              class="state-layer flex cursor-pointer items-center gap-1.5 rounded-sm px-2 py-1
+                     text-label-small text-on-surface-variant hover:bg-surface-container"
+              onclick={() => helmPayloads.hide(payloadKey)}
+            >
+              <EyeOff class="size-3.5" strokeWidth={1.8} />
+              Hide values and notes
+            </button>
+          {/if}
+        </div>
+
+        {#if payload.error}
+          <p class="rounded-sm bg-error-container/40 px-3 py-2 text-body-small text-on-error-container">
+            {payload.error}
+          </p>
+        {/if}
+
+        {#if payload.facts}
+          {@const facts = payload.facts}
+          <div class="mb-2 flex flex-wrap gap-1 border-b border-outline-variant/60">
+            {#each [['chart', 'Chart'], ['values', 'Values'], ['notes', 'Notes'], ['manifest', 'Manifest']] as [id, label] (id)}
+              <button
+                type="button"
+                class="cursor-pointer border-b-2 px-2.5 py-1.5 text-label-medium transition-colors
+                       {tab === id
+                         ? 'border-primary text-primary'
+                         : 'border-transparent text-on-surface-variant hover:text-on-surface'}"
+                onclick={() => (tab = id as PayloadTab)}
+              >
+                {label}
+              </button>
+            {/each}
+          </div>
+
+          {#if tab === 'chart'}
+            <!-- WHERE THE LIST'S TWO MISSING COLUMNS FINALLY APPEAR. Chart
+                 name, chart version and app version are not labels — they
+                 exist only in the payload — which is why the list cannot show
+                 them without reading every release's Secret on page open. -->
+            <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-body-small">
+              <dt class="text-on-surface-variant/70">Chart</dt>
+              <dd class="font-mono text-on-surface">{facts.chart.name || '—'}</dd>
+              <dt class="text-on-surface-variant/70">Chart version</dt>
+              <dd class="font-mono text-on-surface">{facts.chart.version || '—'}</dd>
+              <dt class="text-on-surface-variant/70">App version</dt>
+              <dd class="font-mono text-on-surface">{facts.chart.appVersion || '—'}</dd>
+              {#if facts.chart.description}
+                <dt class="text-on-surface-variant/70">Description</dt>
+                <dd class="text-on-surface">{facts.chart.description}</dd>
+              {/if}
+              <dt class="text-on-surface-variant/70">Status</dt>
+              <dd class="font-mono text-on-surface">{facts.status || 'unknown'}</dd>
+              {#if facts.description}
+                <dt class="text-on-surface-variant/70">This revision</dt>
+                <dd class="text-on-surface">{facts.description}</dd>
+              {/if}
+              <dt class="text-on-surface-variant/70">Secret</dt>
+              <dd class="font-mono break-all text-on-surface-variant/70">{facts.secretName}</dd>
+            </dl>
+            <p class="mt-2 text-body-small text-on-surface-variant/70">
+              These three are the columns the release list cannot show. They exist only inside the
+              payload, so filling them on a list of forty releases would mean reading forty Secrets
+              when the page opened.
+            </p>
+          {:else if tab === 'values' || tab === 'notes'}
+            <!-- THE TWO THAT ARE SECRET MATERIAL. Values are where a chart
+                 puts a database password, and notes are rendered from the
+                 same values — the commonest thing a chart's NOTES.txt does is
+                 print how to fetch the admin password, and several print it
+                 inline. Both expire after thirty seconds and go on blur. -->
+            {#if sensitive}
+              <p
+                class="mb-2 flex items-start gap-2 rounded-sm bg-warning-container/40 px-3 py-2
+                       text-body-small text-on-surface"
+              >
+                <Eye class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
+                <span>
+                  This may contain credentials — a chart that generates a password puts it here, and
+                  a chart's notes are rendered from these same values. It hides itself after thirty
+                  seconds and whenever this window loses focus.
+                </span>
+              </p>
+              {#if tab === 'values'}
+                {#if sensitive.values}
+                  <pre class="max-h-96 overflow-auto rounded-sm bg-surface-container p-3 font-mono text-body-small whitespace-pre-wrap text-on-surface">{sensitive.values}</pre>
+                {:else}
+                  <!-- An empty `config` means installed with NO overrides,
+                       which is a real answer about the release rather than
+                       something that failed to load. -->
+                  <p class="text-body-small text-on-surface-variant/70">
+                    This revision was installed with no values of its own — everything came from the
+                    chart's own defaults, which are not read here.
+                  </p>
+                {/if}
+              {:else if sensitive.notes}
+                <pre class="max-h-96 overflow-auto rounded-sm bg-surface-container p-3 font-mono text-body-small whitespace-pre-wrap text-on-surface">{sensitive.notes}</pre>
+              {:else}
+                <p class="text-body-small text-on-surface-variant/70">This chart renders no notes.</p>
+              {/if}
+            {:else}
+              <!-- HIDDEN IS A REAL STATE AND SAYS SO. An empty tab where a
+                   value used to be would read as a release with no values,
+                   which is a different fact entirely. -->
+              <p class="text-body-small text-on-surface-variant/70">
+                Hidden. Values and notes are put away after thirty seconds and whenever this window
+                loses focus, and they are dropped rather than merely covered — showing them again
+                reads the release Secret once more.
+              </p>
+              <div class="mt-2">
+                <Button variant="outlined" loading={payload.loading} onclick={readPayload}>
+                  Show again
+                </Button>
+              </div>
+            {/if}
+          {:else}
+            <!-- THE MANIFEST, AND IT ARRIVED MASKED. A chart that renders
+                 `kind: Secret` puts base64 `data:` values into this string,
+                 and base64 is an encoding rather than a cipher — so the Go
+                 adapter replaced each one with its decoded size before the
+                 string crossed the bridge, exactly as the YAML tab does. That
+                 is why this tab needs no timer. -->
+            {#if facts.maskedDocuments > 0}
+              <p class="mb-2 rounded-sm bg-surface-container px-3 py-2 text-body-small text-on-surface-variant">
+                {facts.maskedDocuments === 1
+                  ? 'One Secret in this manifest has had its values replaced with their size.'
+                  : `${facts.maskedDocuments} Secrets in this manifest have had their values replaced with their size.`}
+                A rendered chart's Secret carries base64, which is an encoding and not a cipher, so
+                nothing here is ever shown encoded. Every other document is exactly as Helm rendered
+                it.
+              </p>
+            {/if}
+            {#if facts.manifest}
+              <pre class="max-h-96 overflow-auto rounded-sm bg-surface-container p-3 font-mono text-body-small whitespace-pre text-on-surface">{facts.manifest}</pre>
+            {:else}
+              <p class="text-body-small text-on-surface-variant/70">
+                This revision rendered no manifest.
+              </p>
+            {/if}
+          {/if}
+        {/if}
+      {/if}
 
       <h3 class="mt-5 mb-1 text-label-large font-semibold text-on-surface-variant">Commands</h3>
       <p class="mb-2 text-body-small text-on-surface-variant/70">
@@ -494,9 +767,7 @@
       </div>
 
       <p class="mt-3 text-body-small text-on-surface-variant/70">
-        The rollback command names revision {target}; pick another above to change it. Values, the
-        rendered manifest and the notes are inside the release payload, which this page does not
-        read.
+        The rollback command names revision {target}; pick another above to change it.
       </p>
     </div>
   </div>
