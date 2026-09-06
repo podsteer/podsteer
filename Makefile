@@ -91,15 +91,37 @@ ifeq ($(shell uname -s),Darwin)
 	APP_BUNDLE := $(BIN_DIR)/PodSteer.app
 	DEV_BUNDLE := $(BIN_DIR)/PodSteer.dev.app
 	DEV_BIN := $(DEV_BUNDLE)/Contents/MacOS/podsteer
-	# v3's Cocoa layer is compiled against a 12.0 deployment target. All three
-	# are needed and they are not redundant: MACOSX_DEPLOYMENT_TARGET is what
-	# the compiler reads, and the two CGO flags are what the LINKER reads —
-	# without them every build ends in a page of "object file was built for
-	# newer macOS version than being linked" and the binary claims a floor it
-	# cannot honour. Matches LSMinimumSystemVersion in build/darwin/Info.plist.
-	export MACOSX_DEPLOYMENT_TARGET := 12.0
-	export CGO_CFLAGS := -mmacosx-version-min=12.0
-	export CGO_LDFLAGS := -mmacosx-version-min=12.0
+	# THE FLOOR IS THE GO TOOLCHAIN'S, NOT A PREFERENCE OF OURS, and it has to
+	# be read out of the toolchain rather than chosen. cmd/link hardcodes the
+	# platform version it stamps into Go's own object file, with the comment
+	# "we keep macOS set to the oldest supported macOS version" — that constant
+	# is `macOS` in cmd/link/internal/ld/macho.go, and under Go 1.27 it is
+	# 13.0. Declaring anything BELOW it does not lower the floor, it just makes
+	# the link inconsistent: the linker reports "object file was built for
+	# newer macOS version (13.0) than being linked (12.0)" and the bundle
+	# advertises a minimum the Go runtime inside it does not support.
+	#
+	# So this tracks Go, and moves when Go moves. Check it against that
+	# constant when the toolchain is upgraded — `make macos-floor` prints both.
+	# All three assignments are needed and are not redundant:
+	# MACOSX_DEPLOYMENT_TARGET is what the compiler reads and the two CGO flags
+	# are what the LINKER reads. Matches LSMinimumSystemVersion in
+	# build/darwin/Info.plist and Info.dev.plist.
+	MACOS_MIN := 13.0
+	export MACOSX_DEPLOYMENT_TARGET := $(MACOS_MIN)
+	export CGO_CFLAGS := -mmacosx-version-min=$(MACOS_MIN)
+	# -no_warn_duplicate_libraries silences the OTHER warning every build
+	# printed, which is not ours to fix at source: the Go toolchain appends
+	# -lobjc once per package containing Objective-C sources, and the build
+	# reaches two of them (wails/v3/pkg/application and its notifications
+	# service), so Apple's linker sees the library twice and says so. Nothing
+	# in this repository or in Wails declares the flag — `go list -deps -f
+	# '{{.CgoLDFLAGS}}'` shows it in neither — so there is nowhere to remove it
+	# from. It is PROBED rather than assumed because it is an ld64 option from
+	# Xcode 15 and an unknown option is a hard error, not a warning: an older
+	# toolchain simply keeps the noise instead of failing to build.
+	MACOS_DUP_LIB_FLAG := $(shell printf 'int main(void){return 0;}' | 		cc -x c - -Wl,-no_warn_duplicate_libraries -o /dev/null 2>/dev/null 		&& echo -Wl,-no_warn_duplicate_libraries)
+	export CGO_LDFLAGS := -mmacosx-version-min=$(MACOS_MIN) $(MACOS_DUP_LIB_FLAG)
 else ifeq ($(OS),Windows_NT)
 	APP_BIN := $(BIN_DIR)/podsteer.exe
 	DEV_BIN := $(BIN_DIR)/podsteer.exe
@@ -116,7 +138,7 @@ BLUE   := \033[0;34m
 CYAN   := \033[0;36m
 NC     := \033[0m
 
-.PHONY: help dev dev-build dev-run build package run open bindings icons notices sbom brand test check web-build embed-stub deps clean \
+.PHONY: help dev dev-build dev-run build package run open bindings icons notices sbom brand test check web-build embed-stub deps clean macos-floor \
         tag tag-show-inner tag-patch-inner tag-minor-inner tag-major-inner \
         tag-rc-inner tag-main-inner bump-inner ensure-branch ensure-clean \
         ensure-notices fetch
@@ -157,6 +179,7 @@ help:
 	@echo "Quality:"
 	@echo "  make test                - go test -race ./..."
 	@echo "  make check               - gofmt, go vet, golangci-lint, svelte-check"
+	@echo "  make macos-floor         - Compare our macOS minimum against the Go toolchain's"
 	@echo ""
 	@echo "Compliance (see docs/LICENCE-POLICY.md):"
 	@echo "  make notices             - Regenerate the licence inventory, enforce the policy"
@@ -294,6 +317,22 @@ endif
 # bundle is: they are a function of a source that IS committed, and a stale
 # binary copy of one is worse than no copy. Under v2 the CLI did this silently
 # inside `wails build`; v3 exposes it, so it is a step with a name.
+# Prints the macOS minimum this build declares beside the one the Go toolchain
+# stamps into its own object file, so upgrading Go cannot silently leave the
+# bundle advertising a floor the runtime inside it does not support. Go's own
+# comment on that constant calls it "the oldest supported macOS version", so
+# when the two disagree it is ours that moves.
+macos-floor:
+ifeq ($(shell uname -s),Darwin)
+	@echo "declared here : $(MACOS_MIN)  (Makefile, build/darwin/Info.plist, Info.dev.plist)"
+	@printf 'go toolchain  : '
+	@awk '/^\tmacOS  = macVersionFlag\{/ { gsub(/[^0-9,]/, "", $$0); split($$0, v, ","); printf "%s.%s\n", v[1], v[2] }' \
+		"$$(go env GOROOT)/src/cmd/link/internal/ld/macho.go"
+	@echo "duplicate-lib flag: $(if $(MACOS_DUP_LIB_FLAG),supported,not supported by this linker)"
+else
+	@echo "macos-floor is a macOS target; nothing to compare on $(shell uname -s)."
+endif
+
 icons:
 	@mkdir -p build/darwin build/windows
 	@$(WAILS) generate icons -input build/appicon.png \

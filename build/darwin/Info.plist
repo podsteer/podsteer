@@ -46,7 +46,7 @@
              would produce a bundle macOS is willing to launch and that then
              fails on a symbol it cannot resolve. -->
         <key>LSMinimumSystemVersion</key>
-        <string>12.0.0</string>
+        <string>13.0.0</string>
         <key>NSHighResolutionCapable</key>
         <string>true</string>
         <key>NSHumanReadableCopyright</key>

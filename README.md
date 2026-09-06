@@ -97,7 +97,8 @@ downloads with a little more context.
 
 ## Requirements
 
-- Go 1.26+
+- Go 1.27+ (the version `go.mod` pins, and the toolchain whose own macOS
+  floor the darwin build tracks — see the note in the Makefile)
 - Node.js 20+
 - The [Wails v3 CLI](https://v3.wails.io), pinned to the beta this repository
   builds against:
