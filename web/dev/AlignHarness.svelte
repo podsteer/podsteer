@@ -20,6 +20,22 @@
       </td>
       <RowMenuCell actions={[{ label: 'Copy', kind: 'copy', onclick: () => {} }]} label="web-1" />
     </tr>
+
+    <!-- The GENERIC row, which draws its own icon rather than using
+         StatusIndicator — every kind without a purpose-built view. It was the
+         one left behind when the alignment rule went in. -->
+    <tr class="border-t border-outline-variant/25" data-probe="generic">
+      <RowSelect selected={false} label="hpa-1" ontoggle={() => {}} />
+      <td class="py-1.5 pr-3 pl-5">
+        <span class="flex" title="HorizontalPodAutoscaler">
+          <Box class="size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.75} />
+        </span>
+      </td>
+      <td class="truncate py-1.5 pr-3 pl-3 text-on-surface" data-probe="generic-name">
+        <span class="text-body-medium">api-autoscaler</span>
+      </td>
+      <RowMenuCell actions={[{ label: 'Copy', kind: 'copy', onclick: () => {} }]} label="hpa-1" />
+    </tr>
   </tbody>
 </table>
 

@@ -226,7 +226,17 @@
         {/if}
         {#if KindIcon && isVisible('kind')}
           <td class="py-1.5 pr-3 pl-5">
-            <span class="inline-flex" title={session.selectedKind?.singular}>
+            <!-- BLOCK-LEVEL FLEX, the same rule StatusIndicator follows and for
+                 the same reason: an inline box puts the icon on the row's
+                 baseline, and an SVG is a replaced element whose baseline is
+                 synthesised at its bottom edge, so it rides high against the
+                 text beside it. This view is the one that draws its own icon
+                 rather than using StatusIndicator, which is why it was the one
+                 left behind — and why every kind without a purpose-built view
+                 (Autoscalers, Disruption Budgets, and the whole of Config,
+                 Network, Storage, Access Control and Custom Resources) was
+                 misaligned while Pods, Workloads and Nodes were not. -->
+            <span class="flex" title={session.selectedKind?.singular}>
               <KindIcon class="size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.75} />
             </span>
           </td>
