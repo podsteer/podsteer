@@ -24,8 +24,12 @@
   import KubeStateNote from '$lib/components/KubeStateNote.svelte'
   import TrendChart from '$lib/components/TrendChart.svelte'
   import Select from '$lib/components/Select.svelte'
+  import { untrack } from 'svelte'
   import { formatAge } from '$lib/format'
   import { ClusterHistory, TREND_WINDOWS } from '$stores/history.svelte'
+  import { BackendTrend, type MetricsQueryMode } from '$stores/backendTrend.svelte'
+  import { clusterSettings } from '$stores/clusterSettings.svelte'
+  import BackendSeriesNote from '$lib/components/BackendSeriesNote.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import {
@@ -371,6 +375,54 @@
    */
   const history = $derived(new ClusterHistory(session.cluster.id))
 
+  /**
+   * What this cluster's monitoring backend answered, when it was asked.
+   *
+   * OFF UNTIL AN OPERATOR SWITCHES IT ON, per cluster, under Settings →
+   * Clusters — so on every cluster nobody has configured this is a store that
+   * makes no call and draws nothing, and the chart is exactly what it was.
+   *
+   * The mode is mirrored from the backend-owned settings rather than kept
+   * here: it decides what reaches the network, so the Go process owns it.
+   */
+  const backendMode = $derived(
+    (clusterSettings.for(session.cluster.id).metricsQueryMode ?? 'off') as MetricsQueryMode,
+  )
+  const backendTrend = $derived(new BackendTrend(session.cluster.id, backendMode))
+
+  // Read once when the section is first drawn, so a cluster's mode is known
+  // before anything decides whether to ask. It is a map lookup in the Go
+  // process, not a cluster read.
+  $effect(() => {
+    void clusterSettings.load([session.cluster.id])
+  })
+
+  /**
+   * THE QUERY IS DRIVEN BY THE CHART, NEVER BY THE TICK.
+   *
+   * Deliberately a SEPARATE effect from the one below, and the separation is
+   * the rule rather than tidiness: this one reads the cluster, the metric and
+   * the mode and does NOT read `session.lastRefreshedAt`, so a refresh cannot
+   * re-run it. Folding the two together would put PromQL onto somebody's
+   * production Prometheus every ten seconds, which is the one thing ADR 7
+   * refused outright. `backendTrend.test.ts` counts calls across driven
+   * refreshes to keep this honest.
+   *
+   * THE WINDOW IS READ WITHOUT SUBSCRIBING, and that is the second rule here.
+   * A range change has its own trigger on the control that makes it, so
+   * reading `history.windowMinutes` reactively would make this effect a
+   * SECOND trigger for the same gesture: the control assigns the window
+   * synchronously, this effect re-runs, and both queries reach the backend
+   * and the operator's audit log. One change, one trigger.
+   */
+  $effect(() => {
+    const trend = backendTrend
+    trend.metric = metric
+    trend.mode = backendMode
+    trend.windowMinutes = untrack(() => history.windowMinutes)
+    void trend.consider('open')
+  })
+
   $effect(() => {
     const current = history
 
@@ -702,7 +754,13 @@
               {#each TREND_WINDOWS as option (option.minutes)}
                 <button
                   type="button"
-                  onclick={() => void history.setWindow(option.minutes)}
+                  onclick={() => {
+                    void history.setWindow(option.minutes)
+                    // A RANGE CHANGE IS ITS OWN REASON. Under `auto` this
+                    // asks; under `manual` it does not, and the store is what
+                    // decides — see $stores/backendTrend.
+                    void backendTrend.setWindow(option.minutes)
+                  }}
                   aria-pressed={history.windowMinutes === option.minutes}
                   class="rounded px-2 py-1 text-label-medium tabular-nums transition-colors duration-100
                          {history.windowMinutes === option.minutes
@@ -726,12 +784,27 @@
             open, so a line appears once a second sample lands.
           </p>
         {:else}
-          <TrendChart samples={history.samples} {metric} />
+          <TrendChart samples={history.samples} {metric} backend={backendTrend.result} />
           <p class="text-body-small text-on-surface-variant/60">
             Covering the last {formatAge(history.spanSeconds)} that PodSteer has been open on this
             cluster — not the cluster's whole history.
           </p>
         {/if}
+
+        <!--
+          What the monitoring backend said, or why it said nothing. OUTSIDE
+          the three branches above for the reason the note below it is: a
+          backend's answer is worth the same whether PodSteer's own recording
+          is off, still collecting, or drawn — and a refusal has to be
+          readable on a cluster with no sampled line at all.
+        -->
+        <BackendSeriesNote
+          result={backendTrend.result}
+          mode={backendMode}
+          busy={backendTrend.status === 'loading'}
+          error={backendTrend.error}
+          onrefresh={() => void backendTrend.consider('manual')}
+        />
 
         <!--
           Outside the three branches above deliberately: whether history is

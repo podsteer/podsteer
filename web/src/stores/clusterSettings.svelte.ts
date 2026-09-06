@@ -37,12 +37,17 @@ export const METRICS_QUERY_MODES = [
   {
     value: 'manual',
     label: 'On request',
-    hint: 'A control on each chart. Nothing is sent until you press it.',
+    hint:
+      'A control on each chart. Nothing is sent until you press it. What is sent is a query ' +
+      "PodSteer composed, through the API server's proxy on your credential — your monitoring " +
+      'backend logs it and your audit log records a read on that Service.',
   },
   {
     value: 'auto',
     label: 'When a chart opens',
-    hint: 'Sent when a chart opens or you change its range — never on the refresh tick.',
+    hint:
+      'Sent when a chart opens or you change its range — never on the refresh tick. Same query, ' +
+      'same route, same two logs as On request; only the moment differs.',
   },
 ] as const
 
@@ -51,7 +56,10 @@ export const FLEET_POLICIES = [
   {
     value: 'filter',
     label: 'Narrow to this cluster',
-    hint: "Every expression is filtered to this cluster's own nodes.",
+    hint:
+      "Every expression is filtered to this cluster's own nodes, so a total is about this " +
+      'cluster by construction. Used when the backend turns out to hold other clusters too — ' +
+      'the ordinary shape of Thanos, Mimir, Cortex and a VictoriaMetrics cluster.',
   },
   {
     value: 'refuse',
@@ -144,8 +152,10 @@ class ClusterSettingsStore {
   /**
    * Records one cluster's metrics-query settings.
    *
-   * NOTHING IS SENT TO ANY MONITORING BACKEND BY THIS, in this build or by
-   * this call: it writes the switch a later reader will consult.
+   * NOTHING IS SENT TO ANY MONITORING BACKEND BY THIS CALL — it writes the
+   * switch, and `$stores/backendTrend` is what consults it. Turning a cluster
+   * on does mean a later chart may send one, which is why the mode's own hint
+   * says when that happens.
    */
   save = async (
     clusterId: string,

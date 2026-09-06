@@ -88,7 +88,10 @@ restriction that does not exist.
 
 **It talks to your clusters, and to GitHub only if you let it.** No account and
 no telemetry — those remain absolute, and there is no code here that could send
-either.
+either. That includes the monitoring-backend read described below: it reaches a
+Prometheus or VictoriaMetrics in your cluster **through your API server's own
+proxy**, so it is one more request to the API server your kubeconfig names
+rather than a new destination.
 
 The one exception is an **update check**, added in v0.1.2. It asks
 `api.github.com` once a day whether a newer release has been published.
@@ -242,9 +245,63 @@ and it is stated here rather than left to be discovered:
   Service name is written at all; turning the setting back off removes the
   whole entry. There is a test asserting that a file with no explicit choice
   contains neither field, so this is checked rather than intended.
-- **Nothing is sent to what it names.** This release records the setting and
-  discovers the candidates. Reading from a monitoring backend is a separate
-  change, and it will be described here before it ships.
+- **Something IS now sent to what it names, and only if you switch it on.**
+  Earlier releases recorded the setting and discovered the candidates and
+  nothing more; this one can read from a monitoring backend, on the terms set
+  out immediately below. That change is described here rather than left to be
+  discovered, which is what that last sentence promised.
+
+**PodSteer can send PromQL it composed to a monitoring backend already running
+in your cluster.** This is new, and it is different in kind from every other
+read in this file, so it is set out in full.
+
+- **It goes to no new host.** The query travels through your API server's own
+  service proxy — the same mechanism the reachability probe already uses — on
+  the credentials your kubeconfig already grants. No connection is opened from
+  this machine to your monitoring namespace, no second credential is stored,
+  no URL is typed anywhere, and the webview's content security policy is
+  untouched. "It talks to your clusters, and to GitHub only if you let it"
+  stays literally true.
+- **The socket is not the new part; the query is.** The monitoring backend
+  receives expressions this application wrote, attributed to your identity,
+  and **it logs them** — a Prometheus query log, a Thanos or Mimir access log,
+  whatever your stack keeps. And **your cluster's audit log records each call
+  as a `get` on `services/proxy`** naming that monitoring Service, exactly as
+  it records any other proxied read. Neither of those was predictable from the
+  older wording of this file, which is why this paragraph exists.
+- **It is off until you switch it on, per cluster.** Settings → Clusters, keyed
+  by your kubeconfig context name. A cluster you have not configured sends
+  nothing at all — not a request whose answer is discarded — and there are
+  tests in `app/application/metricsquery_test.go` and
+  `web/src/stores/backendTrend.test.ts` that assert that by COUNTING requests
+  rather than by checking a returned state.
+- **It happens when you ask, never on a tick.** A query is sent when you open a
+  chart, when you change its range, or when you press the control on the
+  chart — depending on which of the two "on" settings you chose. Nothing on
+  PodSteer's refresh timer ever sends one. The test named above counts calls
+  across a dozen driven refreshes to keep that true.
+- **The expressions are a fixed set.** There is no query box and no way to type
+  one: every expression PodSteer can send is a reviewed entry in a table in
+  `app/domain/promql.go`, selected by the metric and the level a chart is
+  drawing. Each is aggregated at cluster or node level and never fans out per
+  pod, the step scales with the range so a long request stays a few hundred
+  points, the answer is read through a limited reader and refused undecoded
+  past a cap, and the chart shows you the exact expression that was sent.
+- **A backend that holds more than this cluster is either narrowed or
+  refused.** Before any total is drawn, PodSteer asks the backend which nodes
+  it holds series for and compares them with your cluster's. A backend holding
+  only your cluster is used as it stands; one holding other clusters as well —
+  the ordinary shape of Thanos, Mimir, Cortex and a VictoriaMetrics cluster —
+  is either narrowed to your own node names or refused outright, as you chose;
+  and one that holds a different cluster, or answered with nothing to compare,
+  produces no total at all. Which of those happened is said on the chart.
+- **A backend series is never merged with PodSteer's own.** They are drawn as
+  two lines, labelled with which is which and which service answered. One is
+  somebody else's measurement, taken at somebody else's interval; the other is
+  ours.
+- **Nothing new is written to disk by any of this**, and no value from a
+  backend is recorded anywhere. The only thing this feature can put in
+  `settings.json` is the choice of Service already disclosed above.
 
 How it behaves is as much of the answer as what it holds. It is rewritten
 whole and atomically, into a temporary file in the same directory which is
@@ -538,6 +595,11 @@ else it can reach with your credentials, is not something PodSteer mediates.
   piece of code writes it. That exception being wider than described — a
   namespace or Service name written when you made no choice, or any other
   object's name arriving beside it — is itself in scope.
+- A query reaching a monitoring backend for a cluster you did not switch this
+  on for, or arriving on PodSteer's refresh tick rather than because you
+  opened a chart, changed its range or pressed the control. Also an expression
+  reaching one that is not in the fixed table — anything an operator, a
+  cluster's own data, or a URL could put there.
 - A desktop notification carrying the name of any object in any cluster, or
   any Secret or credential material. Your operating system retains what it
   has shown you, so anything that reaches a notification reaches whatever

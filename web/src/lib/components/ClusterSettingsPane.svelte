@@ -18,8 +18,14 @@
   open is not listed, because a row per context in a large kubeconfig is a
   list nobody can read.
 
-  NOTHING ON THIS PANE SENDS A QUERY, and nothing in this build does. It
-  records the choice; reading from a monitoring backend is a separate change.
+  NOTHING ON THIS PANE ITSELF SENDS A QUERY — but what it records now decides
+  whether a chart may. Turning a cluster on here means PodSteer may send PromQL
+  it composed to that cluster's monitoring backend, through the API server's
+  own proxy on your credential, when you open a chart or press its control and
+  never on the refresh tick. The backend logs those expressions and your
+  cluster's audit log records each as a `get` on that Service; SECURITY.md
+  says so in full, and the hints below say the short version where the choice
+  is made rather than only where it is documented.
 -->
 <script lang="ts">
   import {

@@ -57,6 +57,18 @@ type Adapter struct {
 	// kubeState caches kube-state-metrics discovery — the same question at
 	// the same cadence as backends, about a different thing. See kubestate.go.
 	kubeState kubeStateCache
+	// queryRefusals remembers which clusters refused the services/proxy
+	// subresource, so an account that may never proxy is not asked again for
+	// queryRefusalTTL. The one cache here that holds a REFUSAL and nothing
+	// else — see promquery.go, where the reason is that each retry is a
+	// denied request in somebody's audit log.
+	queryRefusals forbiddenBackends
+	// generations numbers each cluster's connection. Everything the
+	// monitoring-backend read caches is written under the generation captured
+	// before the request, so an answer computed against a connection that has
+	// since been invalidated cannot be cached against its replacement — see
+	// promquery.go, where ordering alone provably cannot close that window.
+	generations generations
 	// upgrades caches served API discovery and the writer scans found for
 	// deprecated versions of it — see upgrade.go.
 	upgrades upgradeCache
@@ -222,6 +234,20 @@ func (a *Adapter) Invalidate(id domain.ClusterID) {
 	// sweep: a ten-minute answer carried across a reconnect would put the
 	// previous connection's findings on the first pod list of the new one.
 	a.vulnerabilities.forget(id)
+	// The monitoring-backend refusal goes too: a cached "this account may not
+	// proxy" carried across a reconnect would keep refusing after the
+	// operator reconnected with credentials that can, with no request ever
+	// made to find out. Its HTTP client needs no line here — it lives on the
+	// client set the factory just dropped, which is what keeps it from
+	// outliving the config it was built from.
+	a.queryRefusals.forget(id)
+	// AND THE GENERATION IS BUMPED LAST, after every forget above. A query
+	// that read the old client set is still running and will try to cache
+	// what it finds; from here its captured generation no longer matches, so
+	// the write lands nowhere instead of teaching the new connection about
+	// the old cluster. Ordering alone cannot close that window — this is what
+	// does.
+	a.generations.bump(id)
 	// The Helm listing too, and for the reason above sharpened: a tab is
 	// routinely reconnected because its context now points somewhere else,
 	// and a five-minute answer carried across would name releases in the

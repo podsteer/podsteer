@@ -11,9 +11,11 @@ import (
 // happens when the one that answers turns out to serve more clusters than
 // this one. See ADR 7 in podsteer/business-docs.
 //
-// NOTHING HERE SENDS A QUERY. This is the value an operator sets; the reader
-// that acts on it is a separate change, which is what keeps that change's
-// security review about the request rather than about the switch.
+// NOTHING HERE SENDS A QUERY. This is the value an operator sets;
+// application.MetricsQueryService is what acts on it, and app/domain/promql.go
+// holds the expressions it may send. Off is the default, and a hand-edited
+// value that this build cannot read falls back to off rather than to anything
+// that talks to a third system — see normalise.
 
 // Sentinel errors raised when a metrics-query setting is not usable.
 //

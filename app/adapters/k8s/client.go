@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -165,6 +166,26 @@ type clients struct {
 	// config is retained for requests that bypass the typed clients, notably
 	// the server-side table printing used by the generic browser.
 	config *rest.Config
+	// queryHTTP is the HTTP client the monitoring-backend reads use, built
+	// from the same config as everything above.
+	//
+	// ON THE SET RATHER THAN IN A CACHE OF ITS OWN, and that is a correctness
+	// fix rather than tidiness. A client keyed by cluster id in a separate
+	// map can be written AFTER Invalidate has run — a query already holding
+	// the old set passes the invalidation and then caches a client built from
+	// the old config under the same id, after which every query for that tab
+	// goes to the old host on the old credential for the life of the process.
+	// Built here it cannot outlive the config it came from: the set is
+	// replaced wholesale, and this goes with it.
+	//
+	// It exists at all because client-go's own Stream reads a failed response
+	// whole and reports its message as "unknown" for any body that is not
+	// text/*, so a Prometheus error — which is JSON — would reach the
+	// operator as nothing. See promquery.go. NOTE that it therefore does NOT
+	// carry the RESTClient's rate limiter: PODSTEER_QPS and PODSTEER_BURST do
+	// not bound these requests, which is acceptable only because there is at
+	// most one per user action and never one on a tick.
+	queryHTTP *http.Client
 
 	// restMapperMu guards restMapper, which is built lazily on first use
 	// rather than alongside the clients above: most connections never apply
@@ -615,6 +636,13 @@ func (f *clientFactory) clientsFor(id domain.ClusterID) (*clients, error) {
 		return nil, fmt.Errorf("creating metadata client for %q: %w", id, err)
 	}
 
+	// Built from the same config as the clients above and stored beside them,
+	// so it is discarded with them. See clients.queryHTTP.
+	queryHTTP, err := rest.HTTPClientFor(dynamicConfig)
+	if err != nil {
+		return nil, fmt.Errorf("creating query client for %q: %w", id, err)
+	}
+
 	built := &clients{
 		typed:     typed,
 		dynamic:   dyn,
@@ -622,6 +650,7 @@ func (f *clientFactory) clientsFor(id domain.ClusterID) (*clients, error) {
 		metrics:   metrics,
 		meta:      meta,
 		config:    dynamicConfig,
+		queryHTTP: queryHTTP,
 	}
 
 	f.clients[id] = built

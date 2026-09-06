@@ -231,6 +231,40 @@ var (
 	// contents of an object nothing here decoded.
 	ErrHelmPayloadUnreadable = errors.New("that Secret could not be read as a Helm release")
 
+	// ErrMetricsQueryRejected means a monitoring backend answered and
+	// declined the expression PodSteer sent it.
+	//
+	// THE DIRECT SIBLING OF ErrManifestRejected, and for the identical
+	// reason: the request was made, something on the other side understood it
+	// and said no, and its own words are the diagnosis. A backend rejecting
+	// PromQL says which function or label it objected to, and PodSteer
+	// paraphrasing that would throw away the only thing anybody can act on —
+	// including, in the case that matters most, evidence that the expression
+	// table needs changing.
+	ErrMetricsQueryRejected = errors.New("the monitoring backend rejected the query")
+
+	// ErrMetricsBackendAuth means a monitoring backend has authentication of
+	// its own in front of it and refused the request on that ground.
+	//
+	// ITS OWN SENTINEL BECAUSE NOTHING THE OPERATOR CAN DO TO THE QUERY WILL
+	// HELP. A kube-rbac-proxy or an oauth proxy in front of Prometheus wants
+	// a credential of its own, and the API server's service proxy strips the
+	// Authorization header on the way through — so this can never succeed by
+	// this route, however the expression is changed and whatever the account
+	// is granted. Folded into a rejection it sends somebody to debug PromQL;
+	// folded into a refusal it sends them to ask for a Kubernetes permission
+	// they already have.
+	ErrMetricsBackendAuth = errors.New("the monitoring backend requires its own credential")
+
+	// ErrMetricsQueryTooLarge means a backend's answer exceeded what PodSteer
+	// will read.
+	//
+	// REFUSED UNDECODED. The body arrives from a system PodSteer does not
+	// control and did not size, so it is read through a limited reader and
+	// abandoned at the cap rather than decoded and then judged — decoding
+	// first is how a bounded read becomes an unbounded allocation.
+	ErrMetricsQueryTooLarge = errors.New("the monitoring backend's answer is too large to read")
+
 	// ErrSettingsReadOnly means this process opened the settings without the
 	// ability to write them.
 	//

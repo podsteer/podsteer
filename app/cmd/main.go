@@ -235,6 +235,42 @@ func run() error {
 		return fmt.Errorf("wiring overview service: %w", err)
 	}
 
+	// The backend settings, as a use case. It reads the composed kubeconfig
+	// loading list through the Kubernetes adapter, because only the thing
+	// that performs the merge can say which file contributed which context.
+	//
+	// WIRED BEFORE clusterService because the metrics-query service below
+	// reads the per-cluster switch through it, and that service has to be in
+	// the Invalidators list clusterService is built with — the list is
+	// composed once and never mutated, so everything in it must exist first.
+	settingsService, err := application.NewSettingsService(application.SettingsServiceDeps{
+		Settings:   settingsStore,
+		Kubeconfig: kubernetes,
+		Logger:     logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring settings service: %w", err)
+	}
+
+	// Reading a longer history out of a monitoring stack the cluster already
+	// runs — ADR 7, and the first thing here that sends an expression PodSteer
+	// composed to a system that is not the API server's own object store.
+	//
+	// It is OFF for every cluster until an operator switches it on under
+	// Settings -> Clusters, which is why the settings service is its first
+	// dependency: the gate is read before discovery runs, before the node
+	// list, and before anything reaches the network.
+	metricsQueryService, err := application.NewMetricsQueryService(application.MetricsQueryServiceDeps{
+		Settings:  settingsService,
+		Discovery: kubernetes,
+		Query:     kubernetes,
+		Nodes:     kubernetes,
+		Logger:    logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring metrics query service: %w", err)
+	}
+
 	clusterService, err := application.NewClusterService(application.ClusterServiceDeps{
 		Kubeconfig: kubernetes,
 		Cluster:    kubernetes,
@@ -252,7 +288,11 @@ func run() error {
 		// otherwise be served to a reconnect of the same context name inside
 		// the freshness window — and that context may now point at an
 		// entirely different cluster.
-		Invalidator: application.Invalidators{kubernetes, overviewService},
+		// entirely different cluster; and the metrics-query service releases
+		// the node-set verification it made about that context's monitoring
+		// backend, which would otherwise license an aggregate checked against
+		// nodes this connection has never seen.
+		Invalidator: application.Invalidators{kubernetes, overviewService, metricsQueryService},
 	})
 	if err != nil {
 		return fmt.Errorf("wiring cluster service: %w", err)
@@ -381,18 +421,6 @@ func run() error {
 		return fmt.Errorf("wiring inspect service: %w", err)
 	}
 
-	// The backend settings, as a use case. It reads the composed kubeconfig
-	// loading list through the Kubernetes adapter, because only the thing
-	// that performs the merge can say which file contributed which context.
-	settingsService, err := application.NewSettingsService(application.SettingsServiceDeps{
-		Settings:   settingsStore,
-		Kubeconfig: kubernetes,
-		Logger:     logger,
-	})
-	if err != nil {
-		return fmt.Errorf("wiring settings service: %w", err)
-	}
-
 	// --- Driving (inbound) adapters ---------------------------------------
 	//
 	// These depend on the inbound ports, not on the concrete services: the
@@ -468,6 +496,15 @@ func run() error {
 		return fmt.Errorf("wiring settings API: %w", err)
 	}
 
+	// The monitoring-backend read. Bound SEPARATELY from HistoryAPI beside
+	// it, deliberately: that one serves PodSteer's own samples and this one
+	// serves somebody else's measurement, and two calls is what keeps a
+	// component from treating one as a continuation of the other.
+	metricsQueryAPI, err := wailsadapter.NewMetricsQueryAPI(metricsQueryService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring metrics query API: %w", err)
+	}
+
 	// The update check. Its adapter is the ONLY thing in PodSteer that talks
 	// to anything but a cluster, and it acts only when the interface asks —
 	// there is no timer here and nothing on the startup path. It sends no
@@ -539,6 +576,7 @@ func run() error {
 			wailsapp.NewService(rbacAPI),
 			wailsapp.NewService(helmAPI),
 			wailsapp.NewService(historyAPI),
+			wailsapp.NewService(metricsQueryAPI),
 			wailsapp.NewService(settingsAPI),
 			wailsapp.NewService(managementAPI),
 			wailsapp.NewService(terminalAPI),

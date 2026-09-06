@@ -304,6 +304,89 @@ export interface ApplyOutcomeDTO {
 }
 
 /**
+ * BackendPoint is one instant of a backend series.
+ * 
+ * Unix milliseconds and a float, the same shape Sample uses, because it is
+ * chart data and every charting library wants numbers.
+ */
+export interface BackendPoint {
+    "at": number;
+    "value": number;
+}
+
+/**
+ * BackendSeries is one labelled series a backend answered with.
+ */
+export interface BackendSeries {
+    /**
+     * Label is the series' own name — the node for a node-scoped expression,
+     * empty for a cluster-scoped one, which returns exactly one series.
+     */
+    "label": string;
+    "points": BackendPoint[] | null;
+}
+
+/**
+ * BackendSeriesResult is everything the chart needs to draw a backend's
+ * answer, or to say why it is not drawing one.
+ */
+export interface BackendSeriesResult {
+    /**
+     * Status is one of: not-enabled, nothing-discovered, forbidden,
+     * unreachable, rejected, too-large, unverified, answered, answered-empty.
+     * 
+     * ANSWERED AND ANSWERED-EMPTY ARE SEPARATE, and that distinction is why
+     * this is a status rather than a boolean: a Prometheus that scrapes
+     * application endpoints and not kubelets returns HTTP 200 and nothing,
+     * and collapsed into "answered" that is a blank chart under a green
+     * label.
+     */
+    "status": string;
+
+    /**
+     * Message is the one line the panel shows. For "rejected" it is the
+     * backend's own words, carried across the way a rejected manifest carries
+     * the API server's.
+     */
+    "message": string;
+
+    /**
+     * Provenance says whose measurement this is and how far it was checked.
+     */
+    "provenance": SeriesProvenance;
+
+    /**
+     * Series are the answers. A cluster-scoped expression returns one.
+     */
+    "series": BackendSeries[] | null;
+
+    /**
+     * Expression is the PromQL that was sent, so an operator reading their
+     * own backend's query log can match it to what they pressed. There is no
+     * query box — this is shown, never typed.
+     */
+    "expression": string;
+
+    /**
+     * SpanSeconds is what the returned points actually cover, which is not
+     * what was asked for: a range over seven days against a Prometheus
+     * retaining one returns one day and no error.
+     */
+    "spanSeconds": number;
+
+    /**
+     * StepSeconds is the resolution the range was evaluated at.
+     */
+    "stepSeconds": number;
+
+    /**
+     * Unit is "cores", "bytes" or "pods", so the chart formats a backend's
+     * numbers the same way it formats PodSteer's own.
+     */
+    "unit": string;
+}
+
+/**
  * BulkItemDTO is one selected row, as the frontend hands it back for a bulk
  * action: the object's coordinates plus the facts domain.PlanBulk reads.
  * 
@@ -3261,6 +3344,42 @@ export interface Sample {
      * idle cluster.
      */
     "measured": boolean;
+}
+
+/**
+ * SeriesProvenance travels with every backend series and is what keeps it
+ * from ever being drawn as PodSteer's own.
+ * 
+ * THE TWO MUST NEVER MERGE INTO ONE LINE. One is somebody else's measurement
+ * and the other is ours, and splicing them — or using one to fill a gap in
+ * the other — is the recorded mistake ADR 1 refused for kubelet readings.
+ * This struct is what a component reads to label which is which.
+ */
+export interface SeriesProvenance {
+    /**
+     * Origin is "backend" here and "sampled" for PodSteer's own series, which
+     * the frontend supplies for its half.
+     */
+    "origin": string;
+
+    /**
+     * Source names the service that answered — "Prometheus in monitoring".
+     */
+    "source": string;
+
+    /**
+     * Verification is "verified", "fleet", "mismatch" or "unverifiable": how
+     * far PodSteer could check that this backend's series are about THIS
+     * cluster. Shown beside the source, because a number narrowed by a filter
+     * PodSteer composed is a different claim from one that needed no filter.
+     */
+    "verification": string;
+
+    /**
+     * Filtered reports that the expression was narrowed to this cluster's
+     * node names.
+     */
+    "filtered": boolean;
 }
 
 /**

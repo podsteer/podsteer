@@ -417,8 +417,8 @@ about before adding a fourth:
   the adapter reports every writer it finds, annotation included, so the
   exclusion is a rule `deprecations_test.go` can argue with rather than a
   silent drop nothing tests.
-- **A monitoring stack already in the cluster is discovered, and today it is
-  still only pointed at** — `app/adapters/k8s/prometheus.go` lists Services by
+- **A monitoring stack already in the cluster is discovered, and is queried
+  only when somebody asks** — `app/adapters/k8s/prometheus.go` lists Services by
   two label selectors and produces a RANKED CANDIDATE LIST rather than one
   guess, because a kube-prometheus-stack install returns several and only one
   answers PromQL. `DiscoverMetricsBackend` is the head of that list — which is
@@ -448,16 +448,167 @@ about before adding a fourth:
   cluster. `Describe` names the PRODUCT it found; telling somebody they run
   Prometheus when they run VictoriaMetrics sends them looking for something
   that is not there.
-  **PodSteer still does not query any of them**: a service listing establishes
-  that something named `prometheus-operated` exists, not that it scrapes this
-  cluster or retains anything, so the note claims only the former. What has
-  changed is that the SETTING now exists — `clusters.<context>.metricsQuery`
-  in `settings.json`, ADR 7's mode, preferred backend and fleet policy — while
-  the reader that acts on it is a later change, which is what keeps that
-  change's security review about the request rather than about the switch.
-  Per-object usage is not written to disk either — the recorded cluster history
+  **PodSteer NOW QUERIES one of them, and the rule that replaced "it does not"
+  is narrower rather than gone: PodSteer queries nothing it was not asked to
+  query, and draws no series it cannot attribute** (ADR 7). Six things make
+  that true and each has a test.
+
+  **The gate is `clusters.<context>.metricsQuery` in `settings.json`** — mode
+  (off, manual, auto), preferred backend, fleet policy — read by
+  `application.MetricsQueryService` BEFORE discovery runs, before the node
+  list, and before anything reaches the network. Off is the default and off
+  means no request is made, which `metricsquery_test.go` asserts by counting
+  calls rather than by reading the returned status, the discipline
+  `updates_test.go` established.
+
+  **`auto` sends a query when a chart opens or its range changes, and NEVER on
+  the refresh tick.** That exclusion is the whole of the difference between
+  this and querying on a poll, which the record refused. The rule lives in
+  `web/src/stores/backendTrend.svelte.ts`: every trigger — opening, a range
+  change, the chart's own control, and the session's tick — goes through one
+  `consider(reason)` so no call site can forget, and `backendTrend.test.ts`
+  drives a dozen refreshes and counts adapter calls. `OverviewView.svelte`
+  keeps that honest with a SEPARATE effect from the sampled chart's, which does
+  not read `session.lastRefreshedAt`.
+
+  **ONE GESTURE, ONE QUERY**, and two things enforce it. The in-flight key is
+  claimed BEFORE the await, not after the answer resolves — claimed after, a
+  range change raced its own effect and both queries reached the backend and
+  the audit log. And that effect reads the window through `untrack`, because
+  the control that changes the range is already a trigger: reading it
+  reactively makes the effect a second one for the same gesture.
+
+  **A result carries no metric of its own**, so `#load` clears the previous one
+  before asking. Left in place, a CPU answer is drawn on the memory chart —
+  scaled by a thousand, under a legend naming the service that answered — and
+  stays for ever if the new call throws. `TrendChart` refuses a backend result
+  whose `unit` does not match the metric it is drawing, as the second lock on
+  the same door.
+
+  **The transport is the service proxy `reachability.go` already uses, and it
+  is a GET.** `app/adapters/k8s/promquery.go` proxies through the API server on
+  the tab's own credential, so no outbound host is added. **A POST is refused
+  rather than merely unused**: posting to services/proxy is the RBAC verb
+  `create`, a different permission from the `get` every proxying account
+  already holds, so a form body would fail for exactly the tightly-permissioned
+  accounts this project is built for. That is why a node filter travels in the
+  URL, and why an expression past `domain.MaxQueryURLBytes` is refused with a
+  sentence rather than sent. The answer is read through an `io.LimitReader` and
+  refused UNDECODED past `maxQueryResponseBytes`. **The rate limiter does not
+  reach these requests** — it lives on client-go's `RESTClient`, not on the
+  transport, and the round trip is made on `clients.queryHTTP` because a
+  bounded read of a FAILED response needs the body client-go's helpers discard
+  — so `PODSTEER_QPS` and `PODSTEER_BURST` bound everything around this file
+  and nothing in it. What makes that acceptable is one request per user action
+  and none on a tick.
+
+  **A NODE NAME IS ESCAPED TWICE, AND ONCE IS A BROKEN FEATURE.**
+  `regexp.QuoteMeta` handles the regex grammar (a cloud node name carries dots
+  and an unescaped dot matches any character), and every backslash it produces
+  is then DOUBLED for the PromQL string literal it sits inside — whose escape
+  rules are Go's, where `\.` is not one and the lexer answers
+  `unknown escape sequence`. Stopping at the first escape makes every
+  `FleetFilter` query a 400 on precisely the clusters the narrowing exists for,
+  and the only reason a fleet sum was never wrong is that no query ever
+  succeeded. `domain.quoteForPromQL` is the one place both are applied. The
+  hand parser in `promql_test.go` is STRICT about escape sequences for this
+  reason — its first version skipped whatever followed a backslash, accepted
+  what Prometheus refuses, and the escaping test then pinned the broken output
+  as correct; its `promEscapes` table carries the date it was checked against
+  the real parser, which is deliberately not taken as a test dependency.
+
+  **A refusal to proxy is cached per cluster for `queryRefusalTTL` and dropped
+  on `Invalidate`** — an account that may not proxy is refused every time, and
+  each retry is a denied request in somebody's audit log. It has a TTL because
+  a permission is a thing somebody grants: without one, an administrator adding
+  a RoleBinding while the tab is open left a sentence that had become false.
+  **Only a 403**: a 401 is a credential fact, client-go re-runs an exec plugin
+  on one, and caching it is the one way to guarantee there is no next request.
+  A transport failure is not cached at all.
+
+  **Everything cached here is written under a GENERATION captured before the
+  request**, in `k8s.generations` and in `application.verificationCache`. A
+  query holding the old client set passes `Invalidate` and then writes; what it
+  writes is about the cluster this tab has left, and for a node set that would
+  license a narrowed sum over nodes the new connection has never seen. Ordering
+  provably cannot close that window — the generation makes the late write
+  inert. The HTTP client needed no such guard once it moved onto the client set
+  itself (`clients.queryHTTP`), where it cannot outlive its own config.
+
+  **The expressions are a fixed table in `app/domain/promql.go`, keyed by
+  metric and scope, and there is no query box.** Every one is pre-aggregated at
+  cluster or node level, and `promql_test.go` parses each rendered expression
+  and fails if its outermost operator is not an aggregation closing at the end
+  of the string — a prefix test would pass `sum(a) + rate(b[5m])`, whose result
+  set is the pod count. The step scales with the range to a few hundred points
+  and the rate window is `max(5m, 2*step)`.
+
+  **A backend may front several clusters, so a subset check decides whether an
+  aggregate may be drawn at all.** `domain.VerifyBackendNodes` compares the node
+  set the backend answers with against this cluster's and produces four
+  outcomes: **verified** (a subset), **fleet** (strangers in it — Thanos, Mimir,
+  Cortex, a VictoriaMetrics cluster), **mismatch** (disjoint) and
+  **unverifiable** (nothing to compare). OVERLAP WOULD BE THE WRONG TEST and
+  that is the point of the function: a fleet backend overlaps with every cluster
+  it fronts, and an unfiltered `sum` against one then draws five other clusters'
+  load under this cluster's name — worse than no chart, because nothing about it
+  looks wrong. The probe is `count by (node) (container_memory_working_set_bytes)`
+  as an instant query, chosen because it is the metric and the label the charts
+  themselves depend on, so the check cannot pass while the feature fails;
+  `/api/v1/label/node/values` is deliberately not used, since it reports the
+  label's values for ANY metric and can only widen the set. It is cached per
+  cluster AND per backend for half an hour and dropped on `Invalidate`, because
+  on a fleet backend that probe touches every container series the querier
+  fronts — and it is SINGLEFLIGHTED, so two charts opening together send one
+  probe rather than two. A probe that FAILED is remembered for
+  `probeFailureTTL` instead, so a backend slow enough to time out is not
+  re-asked and re-waited on every range change. On **fleet** the per-cluster
+  policy decides — narrow every expression to this cluster's node names, or
+  refuse the aggregate and say why; on **mismatch** and **unverifiable**
+  nothing is drawn.
+
+  **A cluster whose NODES could not be listed is unverifiable, not forbidden.**
+  That is the namespace-scoped account this project is built for: it may proxy
+  perfectly well and simply may not list nodes cluster-wide, and reporting that
+  as a refusal sends somebody to ask for a permission they already hold about a
+  Service nobody asked about. The backend is not probed either — with nothing
+  of ours to compare against, the answer is unverifiable whatever it says — and
+  the outcome is not cached, because a node list can fail transiently.
+
+  **`domain.BackendStatus` keeps `answered-empty` separate from `answered`**,
+  and that is not pedantry: a Prometheus that scrapes application endpoints and
+  not kubelets returns HTTP 200 with no series for every expression here, and
+  collapsed into "answered" that is a blank chart under a green label. A backend
+  can also fail INSIDE a 200 (`"status":"error"`), which `decodeQueryResponse`
+  catches. A rejected expression comes back with the backend's own message
+  verbatim, the way `ErrManifestRejected` carries the API server's — which is
+  also why the HTTP is done with an `http.Client` built from the same
+  `rest.Config` rather than through client-go's `Stream`, whose error message
+  reads "unknown" for any body that is not `text/*`.
+
+  **A failure is routed by the BODY and not by the code.** A body that decodes
+  as `kind: Status` came from the API server, so the proxy never reached the
+  backend — and no such body may reach the rejected branch whatever its code,
+  or a throttled API server's raw Status JSON is shown to the operator as their
+  Prometheus explaining itself about a query it never saw. A 401 or 403 whose
+  body is NOT a Status is the backend's own authentication — kube-rbac-proxy,
+  an oauth proxy — and gets `ports.ErrMetricsBackendAuth` and
+  `domain.BackendNeedsCredential`, because the service proxy strips
+  `Authorization` and so neither a Kubernetes permission nor a change to the
+  expression can ever make that route work.
+
+  **Every series carries its provenance and the two are never merged.**
+  `domain.SeriesProvenance` travels with each answer — origin, the service that
+  answered, the verification, whether it was narrowed — and `TrendChart.svelte`
+  draws the backend's line as its own series with its own colour and dash,
+  naming it in the legend and renaming PodSteer's own to "PodSteer samples" the
+  moment a second measurement is on the chart. Splicing them, or using one to
+  fill a gap in the other, is the recorded mistake ADR 1 refused for kubelet
+  readings.
+
+  Per-object usage is still not written to disk — the recorded cluster history
   deliberately carries no object names, and a file of per-pod series would
-  reverse that.
+  reverse that — and no value a backend returned is recorded anywhere.
 - **kube-state-metrics is discovered the same way, and is a SEPARATE
   question** — `app/adapters/k8s/kubestate.go`, beside `prometheus.go` and
   following it in every particular: two label selectors
@@ -465,12 +616,14 @@ about before adding a fourth:
   because a cluster genuinely holds two often enough to matter, a miss and a
   refusal are both ordinary answers rather than errors, a refusal is cached
   and a transport failure is not, and the answer is dropped when a cluster is
-  invalidated. **PodSteer does not query it either, and there is deliberately
+  invalidated. **PodSteer does not query it, and there is deliberately
   no `ProxyTarget` on `domain.KubeStateMetrics`** — `MetricsBackend` has one
-  because a proxied PromQL query is a thing somebody may one day ask for,
-  while kube-state-metrics is a scrape endpoint and reading it would be
+  because a proxied PromQL query is a thing this build now does, while
+  kube-state-metrics is a scrape endpoint and reading it would be
   PodSteer collecting metrics rather than pointing at the system that already
-  does. It is carried separately from `Backend` because they answer different
+  does. That distinction is what keeps the ADR 7 read narrow: it asks a system
+  that already keeps series for series it already has, and does not turn
+  PodSteer into a scraper. It is carried separately from `Backend` because they answer different
   questions — one keeps series, the other produces the object-state series a
   great many of them ARE — and what the note buys an operator is knowing why
   the replica counts and Job gauges in their Grafana exist while PodSteer's
@@ -1831,6 +1984,15 @@ decision recorded in `podsteer/business-docs` and an amendment here and in
 SECURITY.md — the same bar the update check cleared. What shipped instead is
 everything Kubernetes already reports, with the pane stating what it did not
 look at.
+
+**The monitoring-backend read adds no destination either** (ADR 7). A
+discovered Prometheus or VictoriaMetrics is reached through the API server's
+own service proxy on the tab's credential, so it is one more request to an API
+server this list already names — which is exactly why a typed URL is refused
+outright and why the operator picks from what discovery FOUND. What it does add
+is a third party that logs the expressions PodSteer composed, and an audit line
+per call; both are disclosed in SECURITY.md, and both are why it is off until
+switched on per cluster.
 
 **The reachability probes add no destination at all**, deliberately. The local
 vantage reaches a cluster only through the API server named in the kubeconfig —
