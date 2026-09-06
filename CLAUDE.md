@@ -268,8 +268,11 @@ Three things there are load-bearing and are not obvious from any one file:
   what supplies the colour. That only works because the state tints are now
   pre-composited tokens in `app.css` (`--row-open`, `--row-ticked`,
   `--row-open-secondary`) rather than the translucent `bg-primary/8` they used
-  to be — each is the identical colour, being that alpha over `--surface`,
-  which is the section behind every table. Changing one back to a translucent
+  to be — each is that alpha over `--surface`, which is the section behind
+  every table. **Ticked and open moved together, to 9% and 16%**, and the
+  ORDER is the load-bearing part rather than either number: a view draws the
+  open ground for a row that is open AND ticked, so a ticked tint louder than
+  the open one makes opening a ticked row look like unticking it. Changing one back to a translucent
   utility does not fail anywhere: it looks right on a still page and lets the
   scrolling columns show through the pinned ones the moment somebody drags the
   scrollbar. Header cells cannot inherit anything — a `<tr>` has no background
@@ -283,6 +286,17 @@ Three things there are load-bearing and are not obvious from any one file:
   last after the operator's own) rather than something falling into the slack
   by arithmetic, which is what it was until 2026-09-06 — and which is why the
   header used to hold one cell fewer than every row.
+- **The tick box's DRAWN state is DOM structure, never the input's
+  `checked`.** `Checkbox.svelte` — the one checkbox in the application, native
+  input underneath, mark inserted and removed by an `{#if}` — exists because
+  RowSelect cancels the browser's own toggle (a shift-click on a ticked row
+  ADDS a range and must leave it ticked) and the browser puts a cancelled
+  toggle back after every listener has run. Svelte's `set_checked` caches the
+  value IT last wrote, so the cache said ticked while the DOM said not and
+  every later write short-circuited: the box drew no tick again for the life
+  of the page. Structure cannot be reverted by a browser that did not create
+  it. Do not re-express the mark as an `input:checked ~ .box` rule — that is
+  the same bug in CSS.
 - **`Column.pinned` and "fixed" are different things.** `pinned` means the
   column cannot be hidden; fixed means it does not scroll. The row menu is
   both, the status column is neither, and the two are decided in different

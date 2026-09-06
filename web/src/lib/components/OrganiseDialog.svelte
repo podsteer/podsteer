@@ -28,6 +28,7 @@
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
   import Button from './Button.svelte'
+  import Checkbox from './Checkbox.svelte'
   import Select from './Select.svelte'
   import {
     DEFAULT_PROJECT_ID,
@@ -754,20 +755,16 @@
                   accessible name and in the tooltip, rather than only where
                   a mouse happens to hover.
                 -->
-                <label
-                  class="ml-auto flex cursor-pointer items-center gap-1.5 text-on-surface-variant"
+                <Checkbox
+                  checked={group.settings.readOnly}
+                  onchange={(next) => toggleReadOnly(project.id, group.id, next)}
+                  ariaLabel="Read-only for {group.name}: {READ_ONLY_EXPLANATION}"
                   title={READ_ONLY_EXPLANATION}
+                  dense
+                  class="ml-auto text-on-surface-variant"
                 >
-                  <input
-                    type="checkbox"
-                    checked={group.settings.readOnly}
-                    onchange={(event) =>
-                      toggleReadOnly(project.id, group.id, event.currentTarget.checked)}
-                    aria-label="Read-only for {group.name}: {READ_ONLY_EXPLANATION}"
-                    class="size-3.5 accent-primary"
-                  />
                   Read-only
-                </label>
+                </Checkbox>
               </li>
             {/each}
 

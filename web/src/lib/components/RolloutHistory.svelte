@@ -21,6 +21,7 @@
   import { currentRevision, orderByNumberDescending } from '$lib/revisions'
   import TemplateDiff from './TemplateDiff.svelte'
   import Button from './Button.svelte'
+  import Checkbox from './Checkbox.svelte'
   import { History, TriangleAlert, GitCompare } from '@lucide/svelte'
 
   interface Props {
@@ -130,15 +131,13 @@
         {#each revisions as revision (revision.number)}
           {@const isSelected = selected.includes(revision.number)}
           <li class="flex items-start gap-3 px-3 py-2.5 {isSelected ? 'bg-primary/8' : ''}">
-            <label class="mt-0.5 flex shrink-0 cursor-pointer items-center" title="Select to compare">
-              <input
-                type="checkbox"
-                checked={isSelected}
-                onchange={() => toggleSelect(revision)}
-                class="accent-primary"
-                aria-label="Compare revision {revision.number}"
-              />
-            </label>
+            <Checkbox
+              checked={isSelected}
+              onchange={() => toggleSelect(revision)}
+              ariaLabel="Compare revision {revision.number}"
+              title="Select to compare"
+              class="mt-0.5 shrink-0"
+            />
 
             <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
