@@ -570,7 +570,17 @@
              at the same edge. A labelled control there made Recent the one
              section whose right-hand column said something else, and the label
              is carried by the tooltip and the accessible name instead. -->
-        <div class="flex items-center gap-1 px-0.5">
+        <!-- pl-0.5 pr-2, and the asymmetry is arithmetic rather than taste.
+             Every other section's badge sits INSIDE its header button, so it
+             lands 14px from the section's right edge: 6px of wrapper padding
+             plus the button's own 8px. This badge is a SIBLING of the button —
+             it has to be, since Clear cannot nest inside it — so it collects
+             only the wrapper's 6px and this row's own padding. At px-0.5 that
+             came to 8px and put the badge six pixels right of the column the
+             other five form. pr-2 restores the 8px the button would have
+             contributed; pl-0.5 keeps the left edge where it already matched,
+             the toggle's own px-1.5 supplying the rest. -->
+        <div class="flex items-center gap-1 pl-0.5 pr-2">
           <button
             type="button"
             onclick={() => preferences.toggleSection('Recent')}
