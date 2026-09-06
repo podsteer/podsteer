@@ -17,6 +17,7 @@
   import { modal } from '$lib/modal'
   import type { CodingAgent } from '$lib/localShell'
   import Button from './Button.svelte'
+  import Radio from './Radio.svelte'
   import { SquareTerminal, Bot } from '@lucide/svelte'
 
   interface Props {
@@ -114,19 +115,26 @@
 
     <fieldset class="mt-4">
       <legend class="text-body-small text-on-surface-variant">Start with</legend>
+      <!-- These carry a `name` where the raw inputs before them did not, and
+           that is a fix rather than a formality: radios without a shared name
+           are not a group at all, so this list was one tab stop per option
+           with the arrow keys doing nothing. The fieldset's legend still names
+           the group, so no role is added here. -->
       <div class="mt-1 flex flex-col gap-1">
-        <label class="flex items-center gap-2 text-body-medium text-on-surface">
-          <input type="radio" bind:group={agentId} value="" />
+        <Radio name="local-shell-start" bind:group={agentId} value="" dense>
           Your login shell
-        </label>
+        </Radio>
 
         {#each agents as agent (agent.id)}
-          <label class="flex items-center gap-2 text-body-medium text-on-surface">
-            <input type="radio" bind:group={agentId} value={agent.id} />
-            <Bot class="size-4 text-on-surface-variant" strokeWidth={1.8} aria-hidden="true" />
-            {agent.label}
-            <span class="truncate font-mono text-body-small text-on-surface-variant">{agent.path}</span>
-          </label>
+          <Radio name="local-shell-start" bind:group={agentId} value={agent.id} dense>
+            <span class="flex items-center gap-2">
+              <Bot class="size-4 text-on-surface-variant" strokeWidth={1.8} aria-hidden="true" />
+              {agent.label}
+              <span class="truncate font-mono text-body-small text-on-surface-variant"
+                >{agent.path}</span
+              >
+            </span>
+          </Radio>
         {/each}
       </div>
 

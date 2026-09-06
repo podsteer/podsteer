@@ -432,6 +432,73 @@
 }
 
 /*
+ * The dropdown trigger's keyboard ring.
+ *
+ * The trigger wears `field` so it matches every text input in the
+ * application, and `field` deliberately suppresses the outline: a caret
+ * already says where focus is in a text box, and a blue ring around every
+ * search field was too much emphasis (see the note inside `field`).
+ *
+ * A dropdown trigger is a BUTTON. There is no caret, so the neutral border
+ * `field` leaves behind is the only focus signal, and against a hovered
+ * border it is nearly the same pixel. So the application's standard ring —
+ * the one `:focus-visible` gives every other control — is put back here.
+ *
+ * DELIBERATELY UNLAYERED. `@utility field` compiles into Tailwind's
+ * `utilities` layer, and an unlayered rule outranks every layer regardless of
+ * specificity; the same rule inside `@layer base` would lose to `field`'s
+ * `outline: none` and the ring would silently not appear. `--color-primary`
+ * is themed, so this reads against both the dark and the light surface.
+ */
+[data-select-trigger]:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/*
+ * The dropdown menu's entrance.
+ *
+ * An MD3 menu arrives rather than appears. It is an ANIMATION and not a
+ * transition on purpose: the reduced-motion block at the foot of this file
+ * neutralises `animation-duration` as well as `transition-duration`, so this
+ * costs nothing extra to honour and cannot drift from the rest of the app by
+ * growing its own media query.
+ *
+ * Started by a `data-placement` attribute that the component's placement code
+ * sets only AFTER it has measured and positioned the panel. That ordering is
+ * the whole trick: the panel is positioned `fixed` and corrects itself by
+ * comparing where it asked to be with `getBoundingClientRect()`, and a
+ * `transform` changes what that method reports — so a transform running
+ * during the measurement would push every menu opened inside a dialog to the
+ * wrong place. Nothing here may animate a property that moves the box before
+ * placement is finished.
+ *
+ * The direction follows the flip, so a menu that had to open upwards rises
+ * from below rather than descending through its own trigger.
+ */
+@keyframes select-menu-below {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes select-menu-above {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+[data-select-menu][data-placement='below'] {
+  animation: select-menu-below var(--duration-short) var(--ease-emphasized-decelerate);
+}
+
+[data-select-menu][data-placement='above'] {
+  animation: select-menu-above var(--duration-short) var(--ease-emphasized-decelerate);
+}
+
+/*
  * A resource name that opens the thing it names.
  *
  * The dashboard is full of them — a pod in Top consumers, a node in the load
@@ -513,15 +580,49 @@
   }
 
   &:hover:not(:disabled)::after {
-    opacity: 0.08;
+    opacity: var(--state-hover);
   }
 
   &:focus-visible:not(:disabled)::after {
-    opacity: 0.1;
+    opacity: var(--state-focus);
   }
 
   &:active:not(:disabled)::after {
-    opacity: 0.12;
+    opacity: var(--state-pressed);
+  }
+}
+
+/*
+ * A state layer the APPLICATION turns on, rather than the pointer.
+ *
+ * The dropdown's highlighted option moves under the arrow keys as well as
+ * under the pointer — `onmouseenter` sets the very same index the keyboard
+ * does — so the highlight has to be drawn from that one piece of state.
+ * `state-layer` above is driven by `:hover` and `:focus-visible`, neither of
+ * which a keyboard ever puts on an option (focus stays on the panel), so
+ * using it there would leave arrowing down the list drawing nothing at all.
+ * Two mechanisms, one CSS and one JavaScript, would also both be able to be
+ * on at once and paint 16%.
+ *
+ * The same 8% of the content colour as `state-layer`'s hover step, so a row
+ * the pointer is over and a row the keyboard is on look identical — which
+ * they are. `currentColor` is the load-bearing part: on the selected row the
+ * content colour is `on-secondary-container`, so the layer composites over
+ * that tint instead of replacing it, which swapping `background-color` could
+ * not do.
+ */
+@utility state-layer-active {
+  position: relative;
+  isolation: isolate;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background-color: currentColor;
+    opacity: var(--state-hover);
+    pointer-events: none;
   }
 }
 
@@ -547,6 +648,18 @@
        has no duration theme namespace — used as duration-[var(--…)]. */
     --duration-short: 150ms;
     --duration-medium: 300ms;
+
+    /* MD3 state-layer opacities.
+     *
+     * The three numbers the spec gives for compositing a content colour over
+     * an interactive container: hover, focus, pressed. They are tokens rather
+     * than literals because more than one thing draws a state layer — the
+     * `state-layer` utility below, the always-on `state-layer-active` beside
+     * it, and the radio control — and three copies of 0.08 is three chances
+     * for a hover to look heavier in one control than another. */
+    --state-hover: 0.08;
+    --state-focus: 0.1;
+    --state-pressed: 0.12;
   }
 
   html,
@@ -591,8 +704,13 @@
    *
    * An outline is wrong here: a row is a strip of cells with borders between
    * them, and a rectangle drawn around it lands on top of those. A leading bar
-   * and a tinted ground read as "you are here" without fighting the grid, and
-   * match the selected option in a dropdown, which is the same idea.
+   * and a tinted ground read as "you are here" without fighting the grid.
+   *
+   * The dropdown's chosen option used to be drawn the same way and no longer
+   * is — a menu row has no grid to fight, so it takes the container tone and
+   * a trailing check the design language gives a selected menu item. The two
+   * are deliberately no longer a matched pair; do not re-align one to the
+   * other without asking what each is sitting inside.
    *
    * `:focus` rather than `:focus-visible` because the focus is moved
    * programmatically — from the search field — and a browser is entitled to
