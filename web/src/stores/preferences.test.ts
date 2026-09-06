@@ -283,6 +283,45 @@ async function reimportPreferences(): Promise<typeof import('./preferences.svelt
   return import('./preferences.svelte')
 }
 
+describe('the images PodSteer puts into a cluster', () => {
+  it('defaults the debug container to a NONROOT image', () => {
+    // A debug container is injected into somebody else's pod, in their
+    // namespace, so Pod Security admission judges it — and `restricted`
+    // rejects a root container outright. A default that only works on
+    // unlabelled namespaces would fail on the clusters most likely to have
+    // somebody debugging in them.
+    expect(DEFAULT_DEBUG_IMAGE).toContain('-nonroot')
+  })
+
+  it('defaults the node shell to the ROOT image, deliberately', () => {
+    // A node shell is a privileged pod entering the host namespaces with
+    // nsenter. That is root by definition, and the nonroot variant could not
+    // do the one thing this pod exists for — so the two defaults differ on
+    // purpose and must not be "tidied" into one.
+    expect(DEFAULT_NODE_SHELL_IMAGE).not.toContain('-nonroot')
+  })
+
+  it('pins both to an exact tag rather than a floating one', () => {
+    // What PodSteer creates in a cluster must not change because an upstream
+    // tag was republished. A new image arrives in a PodSteer release.
+    for (const image of [DEFAULT_DEBUG_IMAGE, DEFAULT_NODE_SHELL_IMAGE]) {
+      const tag = image.slice(image.lastIndexOf(':') + 1)
+      expect(tag).not.toBe('latest')
+      expect(tag).toMatch(/^v?\d+\.\d+\.\d+/)
+    }
+  })
+
+  it('names a registry that answers an anonymous pull', () => {
+    // ghcr.io returns 403 to an anonymous pull of this repository, so a ghcr
+    // reference would be ImagePullBackOff on every cluster without a
+    // credential for it — which is all of them out of the box.
+    for (const image of [DEFAULT_DEBUG_IMAGE, DEFAULT_NODE_SHELL_IMAGE]) {
+      expect(image.startsWith('docker.io/')).toBe(true)
+      expect(image).not.toContain('ghcr.io')
+    }
+  })
+})
+
 describe('remembered debug and node-shell inputs', () => {
   it('remembers the debug image, and a blank one resets to the default', () => {
     preferences.setDebugImage('ubuntu:24.04')

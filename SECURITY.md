@@ -424,6 +424,18 @@ applies to one as to everything else in this list.
 - **Permission is asked for when you turn it on**, never at startup, and the
   pane says so if your system has not granted it.
 
+A seventh kind of write is the smallest and the shortest-lived: the **context
+overlay** each local terminal gets. It is three lines of YAML in a private
+temporary directory — `apiVersion`, `kind` and the `current-context` of the tab
+you opened the terminal beside — written so that kubectl in that shell targets
+the cluster you were looking at without your own kubeconfig being touched. It
+contains no clusters, no users and therefore no credential of any kind; it is
+mode 0600 in a directory created at 0700, and it is deleted when the terminal
+closes and when PodSteer exits. As with the history file names, the one
+cluster-shaped thing in it is a context name — a handle your own kubeconfig
+already gives you. The next section describes it in full, including the one
+surprising consequence.
+
 ## The local terminal, and the program it can start
 
 PodSteer can open a terminal running **a process on your own computer**, rather
@@ -447,7 +459,11 @@ additions and no removals:
 - `KUBECONFIG`, set to exactly the kubeconfig files PodSteer itself reads — the
   standard resolution, plus anything `PODSTEER_KUBECONFIG_DIR` names, plus the
   files and folders you listed under Settings → Kubeconfig — in the same order.
-  Your files, named, never copied.
+  Your files, named, never copied. In front of them sits one small file
+  PodSteer writes for this session, holding three lines and nothing else:
+  `apiVersion`, `kind`, and the `current-context` of the tab you opened the
+  terminal beside. No clusters, no users, no credentials. See "Your kubeconfig
+  is read, never written" below.
 - `PODSTEER_CONTEXT`, naming the cluster tab that was in front. Informational:
   no Kubernetes tool reads it.
 - `TERM` and `COLORTERM`, so the shell is not a dumb terminal.
@@ -459,13 +475,42 @@ PodSteer adopted from your login shell at startup. That means the process has
 the same credentials, cloud profiles and credential plugins your own terminal
 does — because it is your own shell.
 
-**Your kubeconfig is read, never written.** In particular `current-context` is
-left exactly as it was, so kubectl in another terminal does not change target
-because you opened a pane here. Since there is no environment variable kubectl
-reads for a context, and writing either your kubeconfig or a per-session copy
-of your credentials to disk is refused, the terminal prints a one-line notice
-naming the context and telling you to pass `--context`. No file is written
-anywhere.
+**Your kubeconfig is read, never written.** In particular `current-context` in
+it is left exactly as it was, so kubectl in another terminal does not change
+target because you opened a pane here.
+
+The context of the open tab IS selected for this shell, and the way it is done
+is worth knowing exactly. kubectl takes a context from `current-context` in the
+merged kubeconfig or from a `--context` flag, and from nothing else — no
+environment variable carries one. So PodSteer writes a kubeconfig of its own,
+containing nothing but `current-context`, and puts it first in this shell's
+`KUBECONFIG`:
+
+```yaml
+apiVersion: v1
+kind: Config
+current-context: the-tab-you-opened
+```
+
+That is the whole file. It has no clusters and no users in it, so it holds no
+server address, no token, no certificate and no credential of any kind — which
+is what makes it a different thing from the per-session COPY of your kubeconfig
+that this document has always refused, and still refuses. Every cluster, user
+and context still comes from your own files behind it; the merge simply prefers
+the first `current-context` it finds.
+
+**It is written to a private temporary directory and removed when the terminal
+closes.** Mode 0600 in a directory created at 0700, named
+`podsteer-kubecontext-…` so you can recognise one; deleted when the session
+ends and when PodSteer exits, on the same path that ends the process. If
+writing it fails, the shell opens anyway with no context selected and the
+notice tells you to pass `--context` — it never claims a context it did not
+set.
+
+**One surprise, stated rather than left to be found.** `kubectl config
+use-context` typed into this shell writes to the first file in `KUBECONFIG`,
+which is that overlay — so it takes effect for this terminal and is gone with
+it. Your own kubeconfig is not what it edits.
 
 **A coding agent has whatever access your kubeconfig grants.** Its opening
 prompt says so in those words. The read-only default adds a request — keep to
@@ -571,9 +616,12 @@ else it can reach with your credentials, is not something PodSteer mediates.
   registry included — or to anything other than a proxy you configured, on the
   way to one of those.
 - The local terminal starting anything other than the shell or agent you chose,
-  or the environment it is given carrying more than the variables listed above
-  — in particular a kubeconfig being written, copied to disk, or having its
-  `current-context` changed.
+  or the environment it is given carrying more than the variables listed above.
+  In particular: your own kubeconfig being written at all, or its
+  `current-context` changed; any kubeconfig of yours being copied to disk; the
+  context overlay PodSteer writes containing anything beyond `apiVersion`,
+  `kind` and `current-context`; or one of those overlays left behind after the
+  terminal it belonged to closed.
 - A file downloaded from a container landing anywhere outside the folder you
   chose, or keeping a setuid or setgid bit — however the archive the
   container sent was crafted.

@@ -22,9 +22,14 @@
 //     restriction that does not exist. The panel says so, and so does
 //     SECURITY.md.
 //   - THE OPERATOR'S KUBECONFIG IS READ, NEVER WRITTEN. KUBECONFIG names the
-//     same files PodSteer itself reads. current-context is left exactly as it
-//     was, and the context of the open tab is stated in a notice rather than
-//     imposed — see ContextNotice for why there is no honest way to pin one.
+//     same files PodSteer itself reads, with one PodSteer-owned file in front
+//     of them holding nothing but the open tab's `current-context` — no
+//     clusters, no users, no credentials. That selects the context for this
+//     shell through the ordinary kubeconfig merge, while their own files stay
+//     byte-for-byte as they were and current-context in them is untouched.
+//     See ContextNotice and kubecontext.go. The overlay is written per
+//     session and removed with it, like every other thing this package
+//     starts.
 //
 // The lifecycle is shaped like the port-forward and node-shell registries in
 // the Kubernetes adapter, for the same reason both of those are: PodSteer
@@ -125,6 +130,15 @@ var _ ports.LocalShellPort = (*Manager)(nil)
 type session struct {
 	shell domain.LocalShell
 	proc  *ptyProcess
+	// overlayDir holds the per-session kubeconfig that selects this shell's
+	// context, empty when there is none to remove.
+	//
+	// ON THE SESSION RATHER THAN IN A SWEEP, for the reason the port-forward's
+	// listener and the node shell's pod are: the record and the thing it names
+	// are created and destroyed together. A directory left in the temp folder
+	// after its shell has gone is the same class of leak as a goroutine nobody
+	// stops.
+	overlayDir string
 	// done closes once the process has exited and been reaped, so a caller
 	// stopping a session can wait for it the way the port-forward registry
 	// waits for a released socket.
@@ -178,14 +192,16 @@ func (m *Manager) StartLocalShell(spec domain.LocalShellSpec, out io.Writer, onE
 		return domain.LocalShell{}, err
 	}
 
-	cmd.Env = BuildEnv(os.Environ(), m.kubeconfigFiles(), spec)
+	files, overlayDir, pinned := m.contextFiles(spec.Context)
+
+	cmd.Env = BuildEnv(os.Environ(), files, spec)
 	if home, err := m.cfg.Home(); err == nil && home != "" {
 		cmd.Dir = home
 	}
 
 	// BEFORE the process starts, so the notice cannot land in the middle of a
 	// prompt the shell has already drawn.
-	if notice := ContextNotice(spec.Context); notice != "" && out != nil {
+	if notice := ContextNotice(spec.Context, pinned); notice != "" && out != nil {
 		// Dim, and on its own line: it is PodSteer talking, not the shell,
 		// and it should not be mistaken for the first line of a session.
 		// A writer that will not take the notice is the frontend having gone
@@ -195,6 +211,10 @@ func (m *Manager) StartLocalShell(spec domain.LocalShellSpec, out io.Writer, onE
 
 	proc, err := startPTY(cmd, spec.Cols, spec.Rows)
 	if err != nil {
+		// No session exists to carry the overlay, so nothing would ever come
+		// back for it. Every path out of this function from here on either
+		// registers the session or removes the directory itself.
+		m.dropOverlay(overlayDir)
 		return domain.LocalShell{}, fmt.Errorf("opening a local shell: %w", err)
 	}
 
@@ -212,6 +232,7 @@ func (m *Manager) StartLocalShell(spec domain.LocalShellSpec, out io.Writer, onE
 		proc.Kill()
 		_ = proc.Wait()
 		proc.Close()
+		m.dropOverlay(overlayDir)
 		return domain.LocalShell{}, errShellsClosed
 	}
 	m.nextID++
@@ -223,7 +244,7 @@ func (m *Manager) StartLocalShell(spec domain.LocalShellSpec, out io.Writer, onE
 		Command: cmd.Path,
 		Started: time.Now(),
 	}
-	entry := &session{shell: shell, proc: proc, done: make(chan struct{})}
+	entry := &session{shell: shell, proc: proc, done: make(chan struct{}), overlayDir: overlayDir}
 	m.byID[id] = entry
 	m.mu.Unlock()
 
@@ -285,6 +306,56 @@ func (m *Manager) kubeconfigFiles() []string {
 	return m.cfg.KubeconfigFiles()
 }
 
+// contextFiles returns the KUBECONFIG list for one session, the directory
+// holding its context overlay, and whether the context is actually selected.
+//
+// THE OVERLAY GOES FIRST because client-go keeps the first definition of
+// anything it merges, which is what makes a document holding only
+// `current-context` decide the context while every cluster and user still
+// comes from the operator's own files behind it.
+//
+// NO OVERLAY WHEN THE LIST IS EMPTY, and that is not tidiness. BuildEnv leaves
+// KUBECONFIG alone when nothing resolved, precisely so a shell keeps seeing
+// whatever clusters the operator's own environment gave it. Prepending an
+// overlay would turn that empty list into a one-element one, KUBECONFIG would
+// be set to a file naming a context nothing defines, and the shell would go
+// from seeing their clusters to seeing none.
+//
+// A FAILURE HERE IS NOT A FAILURE TO OPEN A SHELL. The one thing that can go
+// wrong is a temp directory that will not take a file, and a terminal is worth
+// more than a pin: the session opens with exactly the behaviour it had before
+// the overlay existed, and the notice says --context instead of claiming a
+// context that is not selected.
+func (m *Manager) contextFiles(kubeContext string) (files []string, overlayDir string, pinned bool) {
+	files = m.kubeconfigFiles()
+	if kubeContext == "" || len(files) == 0 {
+		return files, "", false
+	}
+
+	dir, path, err := writeContextOverlay(kubeContext)
+	if err != nil {
+		m.logger.Warn("the shell's context could not be selected",
+			slog.String("context", kubeContext),
+			slog.String("error", err.Error()))
+		return files, "", false
+	}
+	return append([]string{path}, files...), dir, true
+}
+
+// dropOverlay removes a session's overlay directory, best effort.
+//
+// Best effort AND LOGGED rather than returned: every caller is either retiring
+// a session or unwinding a start that failed, and neither has anywhere to put
+// an error. A line is left because a leak that says nothing is the one that
+// accumulates.
+func (m *Manager) dropOverlay(dir string) {
+	if err := removeContextOverlay(dir); err != nil {
+		m.logger.Warn("the shell's context overlay was left behind",
+			slog.String("path", dir),
+			slog.String("error", err.Error()))
+	}
+}
+
 // pump copies the pseudo-terminal to out until the process ends, then reaps it.
 //
 // THE ONLY PLACE A SESSION IS RETIRED. Whether the shell exited on its own, a
@@ -315,6 +386,13 @@ func (m *Manager) pump(entry *session, out io.Writer, onExit func(reason string)
 	m.mu.Lock()
 	delete(m.byID, entry.shell.ID)
 	m.mu.Unlock()
+
+	// The one place a session is retired is the one place its overlay is
+	// removed, and BEFORE done is closed: a caller that stopped this session —
+	// StopLocalShell, or StopAllLocalShells on the way out — is waiting on that
+	// channel, and "stopped" has to mean the file is gone too, not merely that
+	// the process is.
+	m.dropOverlay(entry.overlayDir)
 
 	reason := exitReason(waitErr)
 	m.logger.Info("local shell ended",
@@ -400,6 +478,11 @@ func (m *Manager) StopLocalShell(id string) error {
 // It also CLOSES the registry, permanently, so a start racing this sweep is
 // refused rather than registered behind it. See the closed field. Safe to
 // call twice.
+//
+// Each session's context overlay goes with it, because end waits on the pump,
+// and the pump removes the directory before it closes done. There is no
+// separate sweep for the files: a second list of things to clean up is how the
+// two lists come to disagree.
 func (m *Manager) StopAllLocalShells() {
 	m.mu.Lock()
 	m.closed = true

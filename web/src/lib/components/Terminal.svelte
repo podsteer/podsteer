@@ -27,6 +27,7 @@
   import { FitAddon } from '@xterm/addon-fit'
   import { SearchAddon } from '@xterm/addon-search'
   import { SerializeAddon } from '@xterm/addon-serialize'
+  import { Unicode11Addon } from '@xterm/addon-unicode11'
   import { WebLinksAddon } from '@xterm/addon-web-links'
   import { Copy, Check, Maximize2, RotateCw, ChevronUp, ChevronDown, Bug } from '@lucide/svelte'
   import {
@@ -42,6 +43,7 @@
   } from '$bindings/terminalapi'
   import { subscribe } from '$lib/api/client'
   import { terminalTheme, onThemeChange } from '$lib/terminalTheme'
+  import { TERMINAL_FONT_STACK } from '$lib/terminalFont'
   import { matchFractions } from '$lib/terminalSearch'
   import { terminalSessions, sessionKey, localSessionKey } from '$stores/terminalSessions.svelte'
   import { localShellNotice } from '$lib/localShell'
@@ -63,6 +65,7 @@
 
   /** A session's mode: a new process (Shell) or the container's own (Attach). */
   type SessionMode = 'shell' | 'attach'
+
 
   interface Props {
     clusterId: string
@@ -284,8 +287,7 @@
       cursorBlink: true,
       cursorStyle: 'block',
       fontSize: 13,
-      fontFamily:
-        '"JetBrains Mono", "Fira Code", "Cascadia Code", Monaco, Menlo, "Ubuntu Mono", monospace',
+      fontFamily: TERMINAL_FONT_STACK,
       fontWeight: '400',
       fontWeightBold: '700',
       lineHeight: 1.2,
@@ -301,6 +303,19 @@
     terminal.loadAddon(searchAddon)
     terminal.loadAddon(serializeAddon)
     terminal.loadAddon(new WebLinksAddon())
+
+    // WIDTH, NOT RENDERING. xterm.js decides how many cells a character
+    // occupies from a built-in table that stops at Unicode 6, where most
+    // emoji, the CJK ranges added since and the Nerd Font Private Use Area are
+    // all still one cell wide. A prompt that draws a two-cell glyph in a
+    // one-cell slot leaves the rest of the line shifted by one, and every
+    // redraw of it smears — the classic broken-prompt symptom, and the half a
+    // font alone does not fix. The addon replaces that table with Unicode 11's.
+    //
+    // activeVersion is the switch; loading the addon only makes '11' available
+    // to select. It needs allowProposedApi above, which is why that is set.
+    terminal.loadAddon(new Unicode11Addon())
+    terminal.unicode.activeVersion = '11'
 
     terminal.open(terminalContainer)
     fitAddon.fit()

@@ -82,6 +82,7 @@
   import SettingsTransfer from './SettingsTransfer.svelte'
   import KubeconfigSources from './KubeconfigSources.svelte'
   import ClusterSettingsPane from './ClusterSettingsPane.svelte'
+  import TerminalImagesPane from './TerminalImagesPane.svelte'
   import {
     RefreshCw,
     Palette,
@@ -93,6 +94,7 @@
     ArrowLeftRight,
     FolderCog,
     Server,
+    SquareTerminal,
     X,
   } from '@lucide/svelte'
 
@@ -147,6 +149,13 @@
     // GROUP flag guarding against this interface's own bugs, while these are
     // per-cluster facts the Go process acts on without a window.
     { id: 'clusters', label: 'Clusters', icon: Server },
+    // After Clusters because it is the other section about what PodSteer puts
+    // into a cluster rather than what it keeps on this machine — and it is a
+    // section at all because these three were persisted preferences reachable
+    // only from the dialog that used them, so the operator who most needs them
+    // (one whose clusters cannot pull from Docker Hub) met them as an
+    // ImagePullBackOff rather than as a setting.
+    { id: 'images', label: 'Terminal images', icon: SquareTerminal },
     // Next to Data, because both are about what leaves this machine, and
     // before Credits, which is the one section nobody browses for.
     { id: 'transfer', label: 'Export & import', icon: ArrowLeftRight },
@@ -917,6 +926,8 @@
           <KubeconfigSources />
         {:else if section === 'clusters'}
           <ClusterSettingsPane />
+        {:else if section === 'images'}
+          <TerminalImagesPane />
         {:else if section === 'transfer'}
           <SettingsTransfer />
         {:else}

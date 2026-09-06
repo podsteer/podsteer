@@ -108,7 +108,7 @@
         <input
           type="text"
           bind:value={image}
-          placeholder="busybox:1.37"
+          placeholder="docker.io/cloudresty/dockydeb:v1.2.28-nonroot"
           class="field mt-1 w-full px-3 py-2 font-mono text-body-small"
         />
       </label>
