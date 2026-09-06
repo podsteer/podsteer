@@ -469,3 +469,83 @@ export function revealSecretKey(ctx: string, name: string, ns: string, key: stri
     '-d',
   ].join(' ')
 }
+
+// --- helm --------------------------------------------------------------------
+//
+// THE THREE BUILDERS THAT ARE NOT KUBECTL, AND TWO OF THEM ARE NOT A
+// TRANSCRIPT EITHER.
+//
+// Every builder above shows the kubectl command equivalent to a request
+// PodSteer is about to make itself. `helm rollback` and `helm uninstall` are
+// different in kind, and the difference is the decision recorded in ADR 6
+// ("Helm releases are listed from labels and read one release at a time"):
+// PodSteer deliberately does NOT perform either. Re-implementing what Helm
+// does — re-render, diff, apply, prune, write a new release Secret — means
+// re-implementing Helm, and getting it subtly wrong deletes production
+// objects; shelling out to the operator's own `helm` was refused because
+// starting a program on somebody's machine as a side effect of opening a page
+// is a commitment this application makes only through the terminal pane they
+// opened themselves and can see.
+//
+// So the command is COPIED, never run, and the operator runs it in their own
+// shell. That keeps the read-only guard coherent rather than eroding it: the
+// guard governs PodSteer's own writes to a cluster, and a command somebody
+// types is theirs — which is precisely why `StartLocalSession` sits outside
+// the guard and says so.
+//
+// `helm history` is the exception among the three and is a genuine read. It is
+// offered beside the other two so the strip shows the whole sequence an
+// operator would actually type, rather than only the destructive half.
+//
+// The flag order follows helm's own documentation: the positional arguments
+// first, then `-n`, then `--kube-context`. helm is not a kubectl plugin — it
+// is its own binary with its own flag parser — so there is no `base()` to
+// share here, and kubectl's `--context` spelling would simply be rejected. As
+// everywhere above, `ctx` is a kubeconfig context name and is the one argument
+// an operator can put anything into, so it is the one that runs through
+// `shellQuote`; a release name and a namespace are DNS-1123 labels and need
+// nothing.
+
+/**
+ * `helm rollback <release> <revision> -n <ns> --kube-context <ctx>`.
+ *
+ * NOT EXECUTED BY PODSTEER — see the note above. `revision` is always a
+ * specific one here rather than helm's own `0` shorthand for "the previous
+ * release", because the strip is shown beside a revision somebody selected and
+ * a command that silently means something else is worse than no command.
+ */
+export function helmRollback(ctx: string, release: string, ns: string, revision: number): string {
+  return [
+    'helm',
+    'rollback',
+    release,
+    String(revision),
+    '-n',
+    ns,
+    '--kube-context',
+    shellQuote(ctx),
+  ].join(' ')
+}
+
+/**
+ * `helm uninstall <release> -n <ns> --kube-context <ctx>`.
+ *
+ * NOT EXECUTED BY PODSTEER — see the note above. No `--keep-history`: what the
+ * strip shows has to be the plain command, and a flag PodSteer chose on the
+ * operator's behalf would teach an invocation they never asked for.
+ */
+export function helmUninstall(ctx: string, release: string, ns: string): string {
+  return ['helm', 'uninstall', release, '-n', ns, '--kube-context', shellQuote(ctx)].join(' ')
+}
+
+/**
+ * `helm history <release> -n <ns> --kube-context <ctx>`.
+ *
+ * The read of the same thing PodSteer's own revision list already shows, from
+ * Helm's own storage — offered so the strip carries the harmless command
+ * beside the two destructive ones rather than only teaching the dangerous
+ * half.
+ */
+export function helmHistory(ctx: string, release: string, ns: string): string {
+  return ['helm', 'history', release, '-n', ns, '--kube-context', shellQuote(ctx)].join(' ')
+}

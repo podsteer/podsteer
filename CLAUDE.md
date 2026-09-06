@@ -943,6 +943,92 @@ is typed into the panel and shown, and it is never written to disk — the same
 no-object-names commitment SECURITY.md makes, which is why recent subjects, if
 they are ever offered, belong in memory beside the navigator's Recent section.
 
+## The Helm page is built from labels, and never from a release payload
+
+`podsteer/helm` is the sixth pinned pseudo-entry, beside the overview,
+Applications, All clusters, the RBAC explorer and the timeline, and it is one
+for the reason they are: a Helm release is not an object anything can GET by
+that name — it is a set of Secrets Helm labelled — so it is deliberately
+absent from `domain/catalog.go`. The Secrets themselves are ordinary
+catalogue entries and stay where they are. Decided in
+`podsteer/business-docs` decision 6, which is the Secrets doctrine (decision
+3) APPLIED rather than an exception to it.
+
+**A release list does not need a release payload.** A release lives in a
+Secret of type `helm.sh/release.v1` holding a base64'd gzip'd JSON blob of
+roughly a megabyte, and reading forty of those to render a list of forty names
+is the bulk Secret read operators alert on. Helm labels every Secret it writes
+(`newSecretsObject`, `pkg/storage/driver/secrets.go`) with `owner=helm`, the
+release `name`, the `version`, the `status` and `createdAt`, adding
+`modifiedAt` on an update — so `Adapter.ListHelmReleases`
+(`app/adapters/k8s/helm.go`) lists them through the **metadata client**,
+exactly as `Adapter.APIWriters` does, and **not one byte of a Secret's data
+crosses the wire**. The label selector `owner=helm` is primary; the
+`type=helm.sh/release.v1` field selector rides alongside and is worth
+understanding for what it buys: it cuts wire bytes and cuts the API server
+NOTHING, since the server reads and decrypts every Secret in scope before
+filtering.
+
+**The metadata client narrows the response, not the verb.** To RBAC this is
+`list secrets` like any other, so the page is unreadable for a real part of
+the audience this project is built for — that is a limitation of the design,
+not an edge case, and it carries a wording requirement: **the entry must never
+read as "no Helm here" when it means "not permitted here"**. Hence
+`domain.HelmListStatus` has `listed`, `forbidden` and `failed` and
+**deliberately no "absent"**: a cluster with no releases is LISTED with zero
+rows, which is what keeps the two distinguishable. `helmCache` is the one
+per-cluster cache here that stores a **refusal WITH its error** rather than as
+an empty answer — the collapse `backendCache` and `vulnerabilityCache` make
+deliberately is exactly what this must not — and `showsEmptyCopy`
+(`web/src/lib/helm.ts`) is the guard that keeps a call site from testing
+`releases.length === 0` and rendering the zero-row copy to somebody who was
+simply not allowed to look.
+
+**The list is off the refresh tick entirely.** `ClusterSession.#fetch` has a
+case for this view that fetches nothing: a metadata LIST of Secrets every ten
+seconds is six `list secrets` lines a minute in an operator's audit log for as
+long as the page is open — the doctrine's own signature with the bytes removed
+and the pattern intact. It is cached five minutes (`helmCacheTTL`, modelled on
+`upgradeCache` and NOT on `readcache.go`, whose two-second window exists for
+the tick), refreshed on exactly three events — opening the page, the page's own
+Refresh (which passes `refresh: true` and bypasses the cache), and a write
+PodSteer made, since `helmCache.forget` is wired into `forgetReads` as well as
+`Invalidate` — and the page shows an "as of" time beside that control, because
+a cache that cannot say its age is one that lies.
+
+**`HelmPort` is a new outbound port rather than a widening of `ResourcePort`,**
+and the reason is `podsteer mcp`: it narrows by INTERFACE, so a list tool might
+one day be offered while a payload read never is, and the two have to be
+separable at the type level.
+
+**The list ships without a CHART and an APP VERSION column**, which is the
+record's explicit and stated cost rather than an oversight: neither is a label,
+both live only inside the payload, and filling them would be the bulk read
+this exists to refuse. The page says so where the columns would have been.
+
+**Rollback and uninstall are NOT performed** (I2). A Helm rollback re-renders a
+revision, diffs it, applies the difference, prunes and writes a fresh release
+Secret; re-implementing that means re-implementing Helm. Shelling out was
+refused too — starting a program on somebody's machine as a side effect of
+opening a page is a commitment made only through the terminal pane they opened
+themselves. So `helmRollback`, `helmUninstall` and `helmHistory`
+(`web/src/lib/kubectl.ts`) compose the commands and `KubectlHint` shows them
+under a `label` prop, since heading a `helm` command "kubectl equivalent"
+would claim both the wrong binary and the wrong relationship.
+
+**Flux's releases are not always in the HelmRelease's own namespace.**
+helm-controller writes to `spec.storageNamespace` when set, and
+`effectiveReleaseName` (`web/src/lib/gitops/flux.ts`) composes Flux's own
+documented `[targetNamespace-]name` default, because looking a release up
+under a name nothing wrote reports no release for a healthy HelmRelease.
+
+**The Argo CD sentence comes from discovered KINDS, never from annotations.**
+`gitops.ts` reads `argocd.argoproj.io/tracking-id`, an annotation, off one
+object's manifest — and annotations do not ride list rows, so that signal is
+unavailable here. `servesArgoApplications` reads `argoproj.io/Application`
+out of the kinds the session already holds, costs nothing, and claims only what
+it can: Argo CD is installed here, not that any workload is managed by it.
+
 ## Two structural facts that look like mistakes
 
 **`main.go` sits at the repository root.** It is a three-line shim; the real

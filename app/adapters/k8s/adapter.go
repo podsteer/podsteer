@@ -64,6 +64,12 @@ type Adapter struct {
 	// wrote, per cluster and namespace. Its whole point is being OFF the
 	// refresh tick — see trivy.go.
 	vulnerabilities vulnerabilityCache
+	// helm caches Helm release listings per cluster and namespace, for five
+	// minutes. Off the refresh tick for a sharper reason than the others:
+	// re-listing Secrets on a timer is the Secrets doctrine's own audit
+	// signature. It is the ONE cache here that stores a REFUSAL as a refusal
+	// rather than as an empty answer — see helm.go.
+	helm helmCache
 	// watches mirror a cluster's pods locally, so a refresh reads memory
 	// rather than the network. An optimisation: see watch.go, where the
 	// governing sentence is that polling remains the truth.
@@ -83,6 +89,7 @@ var (
 	_ ports.MetricsPort     = (*Adapter)(nil)
 	_ ports.ResourcePort    = (*Adapter)(nil)
 	_ ports.RBACPort        = (*Adapter)(nil)
+	_ ports.HelmPort        = (*Adapter)(nil)
 	_ ports.ManagementPort  = (*Adapter)(nil)
 	_ ports.PortForwardPort = (*Adapter)(nil)
 	_ ports.NodeShellPort   = (*Adapter)(nil)
@@ -215,6 +222,11 @@ func (a *Adapter) Invalidate(id domain.ClusterID) {
 	// sweep: a ten-minute answer carried across a reconnect would put the
 	// previous connection's findings on the first pod list of the new one.
 	a.vulnerabilities.forget(id)
+	// The Helm listing too, and for the reason above sharpened: a tab is
+	// routinely reconnected because its context now points somewhere else,
+	// and a five-minute answer carried across would name releases in the
+	// cluster this tab used to be.
+	a.helm.forget(id)
 	a.reads.forget(id.String())
 }
 
@@ -232,6 +244,15 @@ func (a *Adapter) StopAllWatches() {
 // Called after every write. Two seconds is short, but it is long enough to
 // hand back the list a pod was just deleted from — which reads as the
 // application ignoring what it was told to do rather than as a stale cache.
+//
+// THE HELM LISTING GOES WITH THEM, and it is here rather than in a hook of
+// its own precisely so nothing has to remember to call one. A write PodSteer
+// made is one of the three events ADR 6 says the Helm list refreshes on
+// (opening the page, an explicit refresh, and a write PodSteer made), and
+// this method already runs after every one of those writes. Its own window is
+// five minutes rather than two seconds, so a stale listing would otherwise
+// outlive the write by a great deal more than a pod list would.
 func (a *Adapter) forgetReads(id domain.ClusterID) {
 	a.reads.forget(id.String())
+	a.helm.forget(id)
 }

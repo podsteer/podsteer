@@ -304,6 +304,20 @@ func run() error {
 		return fmt.Errorf("wiring rbac service: %w", err)
 	}
 
+	// The Helm page. One read, made when the page opens or somebody presses
+	// Refresh, and deliberately not wired into anything that runs on a timer:
+	// re-listing Secrets every ten seconds is the audit pattern the Secrets
+	// doctrine exists to avoid, with the bytes removed and the shape intact.
+	// The five-minute cache and its invalidation live in the adapter.
+	helmService, err := application.NewHelmService(application.HelmServiceDeps{
+		Helm:     kubernetes,
+		Registry: registry,
+		Logger:   logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring helm service: %w", err)
+	}
+
 	// Sampling records what each open cluster looks like over time, so the
 	// dashboard can show a trend rather than an instant. It writes to the
 	// operator's own config directory and nowhere else; a store that cannot
@@ -415,6 +429,11 @@ func run() error {
 		return fmt.Errorf("wiring rbac API: %w", err)
 	}
 
+	helmAPI, err := wailsadapter.NewHelmAPI(helmService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring helm API: %w", err)
+	}
+
 	// The Kubernetes adapter is the port-forward AND the node-shell transport:
 	// both track a resource PodSteer created (a bound socket, a privileged
 	// pod) and both must tear it down where the record lives, so they share
@@ -518,6 +537,7 @@ func run() error {
 			wailsapp.NewService(overviewAPI),
 			wailsapp.NewService(fleetAPI),
 			wailsapp.NewService(rbacAPI),
+			wailsapp.NewService(helmAPI),
 			wailsapp.NewService(historyAPI),
 			wailsapp.NewService(settingsAPI),
 			wailsapp.NewService(managementAPI),

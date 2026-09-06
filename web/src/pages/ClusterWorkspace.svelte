@@ -49,6 +49,7 @@ import TimelineView from './TimelineView.svelte'
   import WorkloadsView from './WorkloadsView.svelte'
   import FleetView from './FleetView.svelte'
   import RBACView from './RBACView.svelte'
+  import HelmView from './HelmView.svelte'
   import { fleet } from '$stores/fleet.svelte'
   import { PanelLeft, AlertTriangle, Download, Check, Plus, Laptop } from '@lucide/svelte'
   import { onMount } from 'svelte'
@@ -346,7 +347,9 @@ import TimelineView from './TimelineView.svelte'
               ? 'All clusters'
               : session.viewMode === 'timeline'
                 ? 'Timeline'
-                : session.isList
+                : session.viewMode === 'helm'
+                  ? 'Helm'
+                  : session.isList
                   ? (session.selectedKind?.title ?? 'Resources')
                   : session.cluster.id}
           </h2>
@@ -516,6 +519,8 @@ import TimelineView from './TimelineView.svelte'
       <RBACView {session} />
     {:else if session.viewMode === 'timeline'}
       <TimelineView {session} />
+    {:else if session.viewMode === 'helm'}
+      <HelmView {session} />
     {:else if session.viewMode === 'pods'}
       <PodsView {session} />
     {:else if session.viewMode === 'nodes'}

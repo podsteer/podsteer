@@ -259,6 +259,35 @@ type RBACService interface {
 	InspectRole(ctx context.Context, id domain.ClusterID, target domain.RoleTarget) (domain.RoleInspection, error)
 }
 
+// HelmService is the use-case surface for the Helm page.
+//
+// ONE READ, AND IT IS NOT ON THE REFRESH TICK. The list is made when the page
+// is opened, when somebody presses Refresh, and after a write PodSteer itself
+// made — never on a timer. That is a product rule as much as a performance
+// one: a `list secrets` every ten seconds for as long as a page is left open
+// is the audit signature ADR 6 exists to avoid, with the bytes removed and
+// the pattern intact.
+//
+// Being refused is an ordinary answer here rather than a fault, and more so
+// than anywhere else in the application: many engineers deliberately hold no
+// Secret access at all, and a metadata read does not help them because the
+// metadata client narrows the RESPONSE and not the verb. So a 403 becomes a
+// domain.HelmListStatus on the result rather than an error on the call, and
+// the pane says which of "you may not list Secrets here" and "Helm has
+// installed nothing here" happened — the two must never collapse.
+type HelmService interface {
+	// ListReleases returns what Helm has installed, in one namespace or
+	// cluster-wide when the namespace selects every namespace.
+	//
+	// The freshness of the answer is stated on it (domain.HelmListing.ListedAt)
+	// because the adapter caches it for minutes: a cached answer that does
+	// not say how old it is is a cache that lies. refresh is what the page's
+	// own Refresh control sets, and it is the ONLY thing that sets it — it
+	// bypasses that cache for one call, which is what makes the stated age
+	// beside it actionable rather than decorative.
+	ListReleases(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, refresh bool) (domain.HelmListing, error)
+}
+
 // InspectService is the use-case surface for the on-request inspections: a
 // reachability probe, and a container image report.
 //

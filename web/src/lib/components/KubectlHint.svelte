@@ -15,9 +15,21 @@
   interface Props {
     /** The command, already composed by $lib/kubectl. */
     command: string
+    /**
+     * The heading above the command.
+     *
+     * Defaults to "kubectl equivalent" because that is what every caller
+     * this strip was written for shows. It is a prop rather than a constant
+     * because the strip is now also used for a command PodSteer does NOT
+     * make on the operator's behalf — `helm rollback` and `helm uninstall`,
+     * which ADR 6 deliberately leaves for the operator's own shell — and
+     * heading that "kubectl equivalent" would claim both the wrong binary
+     * and the wrong relationship.
+     */
+    label?: string
   }
 
-  let { command }: Props = $props()
+  let { command, label = 'kubectl equivalent' }: Props = $props()
 
   /**
    * The same affordance RowMenu's "copy" action uses: an icon and a word that
@@ -51,7 +63,7 @@
   <div class="flex items-start justify-between gap-3">
     <div class="min-w-0">
       <p class="text-label-small font-semibold tracking-wider text-on-surface-variant/60 uppercase">
-        kubectl equivalent
+        {label}
       </p>
       <!-- break-all rather than break-words: a long context name or image
            reference is one "word" with nothing to wrap at, the same reason

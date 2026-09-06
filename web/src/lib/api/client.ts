@@ -61,6 +61,7 @@ import {
   InspectRole as bindInspectRole,
   SubjectRules as bindSubjectRules,
 } from '$bindings/rbacapi'
+import { ListReleases as bindListHelmReleases } from '$bindings/helmapi'
 import {
   ScaleWorkload as bindScaleWorkload,
   UpdateResource as bindUpdateResource,
@@ -197,6 +198,15 @@ export type RoleBindingRef = wails.RoleBindingRef
 export type RBACFinding = wails.RBACFinding
 /** One role, what references it, and what its rules permit. */
 export type RoleInspection = wails.RoleInspection
+
+/** What Helm has installed, read from its release Secrets' LABELS and never
+    from their contents — see app/domain/helm.go and decision 6. */
+export type HelmListing = wails.HelmListing
+/** One release: its current revision and every revision found. Deliberately
+    carries no chart or app version, both of which live only in the payload. */
+export type HelmRelease = wails.HelmRelease
+/** One release revision, quoted from its Secret's labels. */
+export type HelmRevision = wails.HelmRevision
 
 /** What the frontend read off an object it is offering to probe. Every field
     is a quotation of the manifest already on screen, so planning a probe
@@ -908,6 +918,45 @@ export function inspectRole(
   name: string,
 ): Promise<RoleInspection> {
   return call(() => bindInspectRole(clusterId, scope, namespace, name))
+}
+
+// --- Helm -------------------------------------------------------------------
+//
+// ONE READ, AND IT IS NOT ON THE REFRESH TICK. `ClusterSession`'s tick has a
+// case for the Helm view that fetches nothing at all: the list is made when
+// the page opens, when somebody presses Refresh, and after a write PodSteer
+// itself made (which drops the Go cache). Polling it would issue a metadata
+// LIST of Secrets every ten seconds for as long as the page were open — the
+// Secrets doctrine's own audit signature with the bytes removed and the
+// pattern intact.
+//
+// NO RELEASE PAYLOAD CROSSES THIS BOUNDARY. Everything here is built from the
+// labels Helm puts on each release Secret, read through the metadata client,
+// so no Secret contents are transferred at all.
+
+/**
+ * Lists what Helm has installed, in one namespace or cluster-wide.
+ *
+ * Being refused is an ORDINARY answer and arrives as `status: 'forbidden'`
+ * with a sentence naming the permission, never as a rejection — and a cluster
+ * with no Helm releases is `status: 'listed'` with zero rows, which is a
+ * different answer and must read as one.
+ *
+ * `refresh` bypasses the Go side's five-minute cache for one call, and the
+ * page's own Refresh control is the ONLY thing that passes true. Opening the
+ * page passes false, so switching between Pods and Helm every twenty seconds
+ * cannot become the poll tick in disguise — which is the exact `list secrets`
+ * audit signature this feature's decision record refuses.
+ *
+ * The releases list is nested on the result rather than being the result, so
+ * it does not pass through `callList`; the Go side builds it non-nil instead.
+ */
+export function listHelmReleases(
+  clusterId: string,
+  namespace: string,
+  refresh = false,
+): Promise<HelmListing> {
+  return call(() => bindListHelmReleases(clusterId, namespace, refresh))
 }
 
 // --- Events -----------------------------------------------------------------

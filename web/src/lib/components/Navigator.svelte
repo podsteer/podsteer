@@ -21,6 +21,7 @@
   import {
     APPLICATIONS_KIND_ID,
     FLEET_KIND_ID,
+    HELM_KIND_ID,
     OVERVIEW_KIND_ID,
     RBAC_KIND_ID,
     TIMELINE_KIND_ID,
@@ -39,6 +40,7 @@
     Layers,
     LayoutDashboard,
     AlertTriangle,
+    Package,
     Star,
     History,
     X,
@@ -86,6 +88,7 @@
   const onFleet = $derived(session.selectedKindId === FLEET_KIND_ID)
   const onRBAC = $derived(session.selectedKindId === RBAC_KIND_ID)
   const onTimeline = $derived(session.selectedKindId === TIMELINE_KIND_ID)
+  const onHelm = $derived(session.selectedKindId === HELM_KIND_ID)
   /** How many tabs the merged view would merge — the badge on its row. */
   const openClusters = $derived(workspace.sessions.length)
 
@@ -470,6 +473,35 @@
           strokeWidth={1.8}
         />
         <span class="flex-1 truncate text-body-medium font-medium">Timeline</span>
+      </button>
+    </div>
+
+    <!-- What Helm has installed here. The SIXTH pinned pseudo-entry, and one
+         for the reason the other five are: there is no object to GET called a
+         Helm release — it is a set of Secrets Helm labelled, read back by
+         those labels — so a catalogue entry would offer it to every consumer
+         that expects to be able to fetch what it names. See HELM_KIND_ID.
+
+         It also fetches NOTHING on the refresh tick, and the page owns its
+         own Refresh: a metadata LIST of Secrets on a ten-second timer is the
+         audit pattern the Secrets doctrine exists to prevent. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(HELM_KIND_ID)}
+        aria-current={onHelm ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onHelm
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <Package
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onHelm ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">Helm</span>
       </button>
     </div>
 
