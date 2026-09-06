@@ -57,3 +57,22 @@ export const Window = {
 export const Browser = {
   OpenURL: () => Promise.reject(unavailable('A browser open')),
 }
+
+/**
+ * The Go process's clipboard.
+ *
+ * REFUSES LIKE EVERY OTHER ENTRY POINT HERE, and that is deliberate rather
+ * than an oversight to be patched later: `$lib/clipboard` tries this first
+ * and falls back to `navigator.clipboard`, which happy-dom does provide, so a
+ * component test that copies something still takes a real success through the
+ * real fallback. A stub that resolved would make every such test agree with
+ * the code about a mechanism neither of them can reach, which is the failure
+ * this whole file was written to stop.
+ *
+ * A test that needs the OTHER answer — both mechanisms refusing — takes the
+ * DOM one away for the length of the test rather than teaching this to lie.
+ */
+export const Clipboard = {
+  SetText: () => Promise.reject(unavailable('A clipboard write')),
+  Text: () => Promise.reject(unavailable('A clipboard read')),
+}

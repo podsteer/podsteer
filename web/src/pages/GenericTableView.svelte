@@ -16,6 +16,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { type RowAction } from '$lib/components/RowMenu.svelte'
   import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { copyText } from '$lib/clipboard'
   import { rowActionsFor, toRowActions } from '$lib/rowActions'
   import { organisation } from '$stores/organisation.svelte'
   import CustomCells from '$lib/components/CustomCells.svelte'
@@ -63,16 +64,14 @@
     return toRowActions(
       rowActionsFor(session.selectedKind?.kind ?? ''),
       {
+        overview: () =>
+          void session.openDetailFor({ tab: 'overview' }, row.name, namespace ?? ''),
         delete: () =>
           void session.openDetailFor({ action: 'delete' }, row.name, namespace ?? ''),
-        kubectl: () => copyKubectl(kubectlGet(session.cluster.id, resource, row.name, namespace)),
+        kubectl: () => copyText(kubectlGet(session.cluster.id, resource, row.name, namespace)),
       },
       isReadOnly,
     )
-  }
-
-  function copyKubectl(command: string): void {
-    void navigator.clipboard?.writeText(command).catch(() => {})
   }
 
   const table = $derived(session.table)

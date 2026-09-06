@@ -17,6 +17,7 @@
   import { POD_STATUS_CHIPS } from '$lib/podStatusFilters'
   import { type RowAction } from '$lib/components/RowMenu.svelte'
   import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { copyText } from '$lib/clipboard'
   import { rowActionsFor, toRowActions } from '$lib/rowActions'
   import { organisation } from '$stores/organisation.svelte'
   import CustomCells from '$lib/components/CustomCells.svelte'
@@ -132,23 +133,15 @@
     return toRowActions(
       rowActionsFor('Pod'),
       {
+        overview: open({ tab: 'overview' }),
         logs: open({ tab: 'logs' }),
         terminal: open({ tab: 'terminal' }),
         evict: open({ action: 'evict' }),
         delete: open({ action: 'delete' }),
-        kubectl: () => copyKubectl(kubectlGet(session.cluster.id, 'pods', pod.name, pod.namespace)),
+        kubectl: () => copyText(kubectlGet(session.cluster.id, 'pods', pod.name, pod.namespace)),
       },
       isReadOnly,
     )
-  }
-
-  /**
-   * Silent about failure, like every other copy control in the application:
-   * the clipboard is a permissioned API that can simply refuse, and there is
-   * nothing useful to say about that here.
-   */
-  function copyKubectl(command: string): void {
-    void navigator.clipboard?.writeText(command).catch(() => {})
   }
 
   const byLimit = $derived(preferences.podMeasure === 'limits')

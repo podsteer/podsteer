@@ -20,6 +20,7 @@
     inside it, selection is the unambiguous gesture.
 -->
 <script lang="ts">
+  import { copyText } from '$lib/clipboard'
   import { flash } from '$lib/flash.svelte'
   import { onMount, onDestroy } from 'svelte'
   import { Terminal } from '@xterm/xterm'
@@ -323,6 +324,18 @@
   }
 
   /**
+   * Which selection the chip belongs to.
+   *
+   * The copy is asynchronous now (see $lib/clipboard), and a terminal
+   * selection changes as fast as somebody can drag — so without this a slow
+   * answer about an abandoned selection could raise a chip over the one that
+   * replaced it, saying a word was copied that was not. Bumped on entry to
+   * the handler below, checked after the await, and nothing is drawn for a
+   * token that is no longer the current one.
+   */
+  let selectionToken = 0
+
+  /**
    * Copies whatever was just selected, and marks where to show the chip.
    *
    * ONE HANDLER FOR EVERY GESTURE. Double-click gives a word, triple-click a
@@ -334,13 +347,13 @@
    * nothing.
    */
   function showSelection(): void {
+    const mine = ++selectionToken
+
     const text = terminal?.getSelection() ?? ''
     if (text.trim() === '' || searching) {
       selection = null
       return
     }
-
-    void navigator.clipboard.writeText(text).catch(() => {})
 
     // Positioned from the live DOM selection rather than from xterm's row and
     // column, which would need converting through the font metrics to get back
@@ -349,6 +362,8 @@
     // and copyAll() calls terminal.selectAll() programmatically, which fires
     // this handler with xterm holding a selection and the DOM holding none.
     // LogViewer guards the same API correctly; this one did not.
+    // MEASURED BEFORE THE COPY IS AWAITED: a rectangle read after an await is
+    // read against whatever the selection has become in the meantime.
     const live = window.getSelection()
     const box = live && live.rangeCount > 0 ? live.getRangeAt(0).getBoundingClientRect() : null
     const pane = terminalContainer.getBoundingClientRect()
@@ -357,14 +372,27 @@
       return
     }
 
-    selection = {
-      text,
+    const at = {
       x: Math.min(Math.max(box.right - pane.left, 8), pane.width - 8),
       y: Math.max(box.top - pane.top - 6, 4),
     }
 
-    if (clearChip !== null) window.clearTimeout(clearChip)
-    clearChip = window.setTimeout(() => (selection = null), 1800)
+    // THE CHIP IS THE CONFIRMATION, so it waits for one. It reads "Copied"
+    // beside text the operator is about to paste somewhere, and copy-on-select
+    // gives them no button to press again — so a chip raised on a copy that
+    // silently did nothing is the worst version of this control.
+    void copyText(text).then((ok) => {
+      if (mine !== selectionToken) return
+      if (!ok) {
+        selection = null
+        return
+      }
+
+      selection = { text, ...at }
+
+      if (clearChip !== null) window.clearTimeout(clearChip)
+      clearChip = window.setTimeout(() => (selection = null), 1800)
+    })
   }
 
   /** Copies the whole scrollback, for when the selection is the wrong tool. */
@@ -376,8 +404,10 @@
     const all = terminal.getSelection()
     terminal.clearSelection()
 
-    await navigator.clipboard.writeText(all).catch(() => {})
-    copiedAll.show()
+    // `.catch(() => {})` used to sit here, which made the chip appear whether
+    // or not anything was copied — the same falsehood the row menu told. See
+    // $lib/clipboard.
+    if (await copyText(all)) copiedAll.show()
 
     // Selection is a visible thing in a terminal; putting it back is politer
     // than leaving the whole buffer highlighted.

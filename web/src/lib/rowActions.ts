@@ -32,6 +32,7 @@ export const READ_ONLY_REASON =
   'This cluster is marked read-only in PodSteer. Change that under Organise.'
 
 export type RowActionId =
+  | 'overview'
   | 'logs'
   | 'terminal'
   | 'evict'
@@ -54,8 +55,20 @@ export interface RowActionCopy {
   /** The icon and behaviour, as RowMenu understands them. */
   kind: NonNullable<RowAction['kind']>
   /**
-   * Whether the item removes something or takes it out of service — what
-   * marks it in the error colour, so a Delete never looks like a Copy.
+   * Whether the item removes something or takes it out of service.
+   *
+   * NO LONGER A COLOUR. Delete, Evict and Drain used to be drawn in the error
+   * token; they are drawn like every other item now, and what separates them
+   * is what an operator and a screen reader both get: the word ("Delete",
+   * "Evict", "Drain…") and the icon that goes with it. Marking a row menu's
+   * most dangerous items in red made the menu read as a warning rather than
+   * as a list, and colour was never announced to anybody using assistive
+   * technology in the first place — so nothing was lost with it.
+   *
+   * The flag stays because it is a fact about the item rather than a styling
+   * hook: it rides through to the DOM as `data-destructive`, so a test can
+   * assert which items these are, and the bulk bar's own controls read the
+   * same distinction.
    *
    * A drain is destructive by this measure and a cordon is not: a cordon
    * stops new pods being scheduled and moves nothing, while a drain evicts
@@ -70,29 +83,81 @@ export interface RowActionCopy {
    * which is the point of marking one read-only rather than closing it.
    */
   write: boolean
+  /**
+   * Whether the item touches the cluster at all.
+   *
+   * WHAT THE SEPARATOR IS DRAWN FROM, and the reason there is no
+   * hand-placed divider anywhere. Every other item here reaches the cluster
+   * the moment it is chosen — Overview, Logs and Terminal open the object
+   * and read it; the writes act on it — while "Copy as kubectl" composes a
+   * string on this machine and stops. RowMenu draws a rule wherever two
+   * consecutive items disagree about this, so the line follows the meaning
+   * rather than a position somebody remembered to put it at, and a menu
+   * whose items change (a node's, a suspended CronJob's) cannot end up with
+   * the line in the wrong place or with two of them.
+   *
+   * Deliberately NOT the same question as `write`: Logs is not a write and
+   * still reaches the cluster, which is exactly why the read-only guard and
+   * the separator cannot share one flag.
+   */
+  local: boolean
 }
 
 export const ROW_ACTIONS: Record<RowActionId, RowActionCopy> = {
-  logs: { label: 'Logs', kind: 'logs', destructive: false, write: false },
+  // The tab the drawer already opens on, offered as an item so that "look at
+  // this" is in the menu beside "do this to it" rather than being the one
+  // thing an operator has to know to get by clicking the row instead. Every
+  // kind that has a drawer has this tab — `show: () => true` on the drawer's
+  // own tab list — so unlike Logs or Scale there is no kind it can be offered
+  // on and lead nowhere.
+  overview: {
+    label: 'Overview',
+    kind: 'overview',
+    destructive: false,
+    write: false,
+    local: false,
+  },
+  logs: { label: 'Logs', kind: 'logs', destructive: false, write: false, local: false },
   // NOT a write by this measure, deliberately. The item opens the drawer's
   // Terminal tab and nothing more; the pane itself never opens a session on a
   // read-only cluster and prints READ_ONLY_REASON where the shell would be
   // (Terminal.svelte), which is the same refusal in the same words, in the
   // place somebody is looking. Disabling the item too would hide the
   // explanation behind a tooltip.
-  terminal: { label: 'Terminal', kind: 'terminal', destructive: false, write: false },
-  evict: { label: 'Evict', kind: 'evict', destructive: true, write: true },
-  restart: { label: 'Restart', kind: 'restart', destructive: false, write: true },
-  scale: { label: 'Scale', kind: 'scale', destructive: false, write: true },
-  trigger: { label: 'Run now', kind: 'trigger', destructive: false, write: true },
-  suspend: { label: 'Suspend', kind: 'suspend', destructive: false, write: true },
-  resume: { label: 'Resume', kind: 'resume', destructive: false, write: true },
-  cordon: { label: 'Cordon', kind: 'cordon', destructive: false, write: true },
-  uncordon: { label: 'Uncordon', kind: 'cordon', destructive: false, write: true },
-  drain: { label: 'Drain…', kind: 'drain', destructive: true, write: true },
-  nodeShell: { label: 'Node shell', kind: 'shell', destructive: false, write: true },
-  delete: { label: 'Delete', kind: 'delete', destructive: true, write: true },
-  kubectl: { label: 'Copy as kubectl', kind: 'copy', destructive: false, write: false },
+  terminal: {
+    label: 'Terminal',
+    kind: 'terminal',
+    destructive: false,
+    write: false,
+    local: false,
+  },
+  evict: { label: 'Evict', kind: 'evict', destructive: true, write: true, local: false },
+  restart: { label: 'Restart', kind: 'restart', destructive: false, write: true, local: false },
+  scale: { label: 'Scale', kind: 'scale', destructive: false, write: true, local: false },
+  trigger: { label: 'Run now', kind: 'trigger', destructive: false, write: true, local: false },
+  suspend: { label: 'Suspend', kind: 'suspend', destructive: false, write: true, local: false },
+  resume: { label: 'Resume', kind: 'resume', destructive: false, write: true, local: false },
+  cordon: { label: 'Cordon', kind: 'cordon', destructive: false, write: true, local: false },
+  uncordon: { label: 'Uncordon', kind: 'cordon', destructive: false, write: true, local: false },
+  drain: { label: 'Drain…', kind: 'drain', destructive: true, write: true, local: false },
+  // A node shell is a write by the read-only guard's measure and still runs
+  // on the cluster, in a helper pod. It is not local by this one.
+  nodeShell: {
+    label: 'Node shell',
+    kind: 'shell',
+    destructive: false,
+    write: true,
+    local: false,
+  },
+  delete: { label: 'Delete', kind: 'delete', destructive: true, write: true, local: false },
+  // The only local item, and the only one below the separator.
+  kubectl: {
+    label: 'Copy as kubectl',
+    kind: 'copy',
+    destructive: false,
+    write: false,
+    local: true,
+  },
 }
 
 /**
@@ -117,7 +182,7 @@ export const ROW_ACTIONS: Record<RowActionId, RowActionCopy> = {
  */
 export function toRowActions(
   ids: RowActionId[],
-  handlers: Partial<Record<RowActionId, () => void>>,
+  handlers: Partial<Record<RowActionId, RowAction['onclick']>>,
   readOnly: boolean,
 ): RowAction[] {
   const actions: RowAction[] = []
@@ -130,6 +195,7 @@ export function toRowActions(
       label: copy.label,
       kind: copy.kind,
       destructive: copy.destructive,
+      local: copy.local,
       disabled: refused,
       hint: refused ? READ_ONLY_REASON : undefined,
       onclick,
@@ -156,10 +222,16 @@ export interface RowFacts {
 /**
  * What a row of `kind` offers, in menu order.
  *
- * Reading items first, then the writes, with the most destructive last and
- * "Copy as kubectl" at the foot — so the item somebody opens the menu for
- * most often is never the one directly under the pointer when it opens, and
- * Delete is as far from it as the menu allows.
+ * OVERVIEW IS ALWAYS FIRST, on every kind without exception. It opens the
+ * drawer on its Overview tab exactly as Logs opens it on Logs — the drawer's
+ * own tab list declares that tab `show: () => true`, so unlike Logs or Scale
+ * there is no kind where it would lead nowhere. Leading with it also gives
+ * the menu a harmless first item: what sits under the pointer the instant a
+ * menu opens should be the reading, not the writing.
+ *
+ * Then the rest of the reading items, then the writes, with the most
+ * destructive last and "Copy as kubectl" at the foot — so Delete is as far
+ * from the pointer as the menu allows.
  *
  * Kinds that are absent are as deliberate as those present:
  *
@@ -184,19 +256,25 @@ export interface RowFacts {
 export function rowActionsFor(kind: string, facts: RowFacts = {}): RowActionId[] {
   switch (kind) {
     case 'Pod':
-      return ['logs', 'terminal', 'evict', 'delete', 'kubectl']
+      return ['overview', 'logs', 'terminal', 'evict', 'delete', 'kubectl']
     case 'Deployment':
     case 'StatefulSet':
-      return ['restart', 'scale', 'delete', 'kubectl']
+      return ['overview', 'restart', 'scale', 'delete', 'kubectl']
     case 'DaemonSet':
-      return ['restart', 'delete', 'kubectl']
+      return ['overview', 'restart', 'delete', 'kubectl']
     case 'CronJob':
-      return ['trigger', facts.suspended ? 'resume' : 'suspend', 'delete', 'kubectl']
+      return ['overview', 'trigger', facts.suspended ? 'resume' : 'suspend', 'delete', 'kubectl']
     case 'Job':
-      return [facts.suspended ? 'resume' : 'suspend', 'delete', 'kubectl']
+      return ['overview', facts.suspended ? 'resume' : 'suspend', 'delete', 'kubectl']
     case 'Node':
-      return [facts.unschedulable ? 'uncordon' : 'cordon', 'drain', 'nodeShell', 'kubectl']
+      return [
+        'overview',
+        facts.unschedulable ? 'uncordon' : 'cordon',
+        'drain',
+        'nodeShell',
+        'kubectl',
+      ]
     default:
-      return ['delete', 'kubectl']
+      return ['overview', 'delete', 'kubectl']
   }
 }

@@ -33,6 +33,7 @@
   import ColumnDivider from './ColumnDivider.svelte'
   import Button from './Button.svelte'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
+  import { copyText } from '$lib/clipboard'
   import { flash } from '$lib/flash.svelte'
 
   export interface DetailRow {
@@ -253,15 +254,19 @@
   })
 
   /**
-   * Copies a value.
+   * Copies a value, and reports whether it got there.
    *
-   * Deliberately silent about failure. The webview's clipboard can refuse —
-   * it is a permissioned API — and a panel that raises an error banner
-   * because a copy did not take is worse than one that simply did not copy:
-   * the text is on screen and selectable either way.
+   * IT USED TO SWALLOW THE ANSWER, and the row menu above then said
+   * "Copied!" regardless — which was a lie in the shipped webview, where
+   * `navigator.clipboard` is undefined and the optional chain made the whole
+   * expression do nothing at all. See $lib/clipboard.
+   *
+   * Still no error banner: the menu item itself says "Copy failed" in place,
+   * which is where somebody pressing it is looking, and the value is on
+   * screen and selectable either way.
    */
-  function copy(value: string): void {
-    void navigator.clipboard?.writeText(value).catch(() => {})
+  function copy(value: string): Promise<boolean> {
+    return copyText(value)
   }
 
   let list = $state<HTMLElement | null>(null)

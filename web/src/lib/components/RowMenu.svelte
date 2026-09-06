@@ -45,6 +45,7 @@
     Copy,
     Eye,
     EyeOff,
+    Info,
     Link2,
     LogOut,
     MoreVertical,
@@ -56,6 +57,7 @@
     SquareTerminal,
     TerminalSquare,
     Trash2,
+    TriangleAlert,
   } from '@lucide/svelte'
 
   export interface RowAction {
@@ -73,6 +75,7 @@
      */
     kind?:
       | 'reference'
+      | 'overview'
       | 'copy'
       | 'reveal'
       | 'hide'
@@ -93,13 +96,32 @@
      * Whether this item removes something, or takes something out of
      * service.
      *
-     * MARKS IT, rather than merely being known to whoever wrote the list. A
-     * menu whose Delete looks exactly like its Copy is a menu where the two
-     * are one slip apart, and these menus now hold both. It is the same
-     * error colour the bulk bar gives its destructive buttons and the drawer
-     * gives its Delete, so the warning reads the same wherever it appears.
+     * NOT A COLOUR ANY MORE. Delete, Evict and Drain were drawn in the error
+     * token; they are drawn like every other item now. Red on the two or
+     * three most dangerous rows of a menu made the whole menu read as a
+     * warning instead of as a list of what a row offers, and it separated
+     * nothing for anybody who cannot see it — a colour is not in the
+     * accessibility tree, carries no ARIA and is announced by nothing. What
+     * DOES separate them is the item's own name and icon, and those are read
+     * out: "Delete" with a bin, "Evict" with a door, "Drain…" with the same
+     * door and an ellipsis promising a dialog. That is unchanged.
+     *
+     * The flag itself stays, as a fact rather than a hook: it is published as
+     * `data-destructive` on the item so a test can name these three without
+     * matching on their labels.
      */
     destructive?: boolean
+    /**
+     * Whether this item does NOT act on the cluster.
+     *
+     * WHERE THE SEPARATOR GOES, decided once here rather than by each view
+     * placing a divider. See the rule at the render below: a rule is drawn
+     * wherever two consecutive items disagree about this, so nothing has to
+     * remember that "Copy as kubectl" is last and nothing can put a second
+     * line in by hand. A caller that sets it on no item (the detail pane's
+     * menus) gets no separator, which is right — those menus are all reads.
+     */
+    local?: boolean
     /**
      * Whether the item is refused, and why — the read-only cluster case.
      *
@@ -112,11 +134,32 @@
     disabled?: boolean
     /** The item's tooltip — the refusal's reason when disabled. */
     hint?: string
-    onclick: () => void
+    /**
+     * What pressing it does.
+     *
+     * A COPY MUST REPORT WHETHER IT WORKED, which is why this may return a
+     * promise of a boolean rather than nothing. The menu used to flash
+     * "Copied!" the instant the handler returned, so the confirmation stood
+     * for the handler having been CALLED and not for any text reaching the
+     * clipboard — and in the shipped webview `navigator.clipboard` is
+     * undefined (no secure context), so the copy silently did nothing while
+     * the menu said it had. An operator who believed it pasted whatever was
+     * on their clipboard before. Every `kind: 'copy'` handler therefore
+     * returns `$lib/clipboard`'s answer, and the menu says "Copied!" only for
+     * `true` and "Copy failed" for `false`.
+     *
+     * Everything else returns nothing: those items open the drawer, whose own
+     * appearance is the confirmation.
+     */
+    onclick: () => void | Promise<boolean>
   }
 
   const ICONS: Record<string, Component<{ class?: string; strokeWidth?: number }>> = {
     reference: Link2,
+    // The drawer's own Overview tab icon, so the item and the tab it opens
+    // are visibly the same thing rather than two features that happen to
+    // agree — the same rule every other verb here follows.
+    overview: Info,
     copy: Copy,
     reveal: Eye,
     hide: EyeOff,
@@ -254,21 +297,58 @@
 
   let node = $state<HTMLElement | null>(null)
   const copied = flash(900)
+  /**
+   * Held longer than the confirmation, because it has to be READ.
+   *
+   * "Copied!" only confirms what somebody already expected, so it can go by
+   * in under a second; "Copy failed" is news, and news that arrives and
+   * leaves before it is read is the same as a menu that lied. It is also the
+   * one outcome where doing nothing is not the right next step — the operator
+   * has to select the text by hand instead — so the menu stays put long
+   * enough to say so.
+   */
+  const copyFailed = flash(2400)
 
-  function choose(action: RowAction): void {
+  /**
+   * Runs an item, and closes the menu when its result is known.
+   *
+   * A COPY IS AWAITED AND EVERYTHING ELSE IS NOT, and that asymmetry is the
+   * whole fix. `copied.show()` used to run unconditionally after the handler
+   * returned, so the confirmation was evidence that a function had been
+   * called and nothing more. A copy goes through the Go process or the DOM
+   * (see $lib/clipboard) and both are asynchronous, so the only honest place
+   * to decide what to say is after the answer: `true` confirms, `false` says
+   * it failed, and neither is guessed.
+   *
+   * The other items are not awaited because there is nothing to wait for:
+   * each sets a request on the session and opens the drawer, whose appearing
+   * IS the feedback. Awaiting them would hold the menu open over the panel
+   * that just opened underneath it.
+   */
+  async function choose(action: RowAction): Promise<void> {
     if (action.disabled) return
-    action.onclick()
+    const result = action.onclick()
 
-    // Copying gives nothing back on its own — the clipboard is silent and the
-    // row looks identical — so it says so before closing. Everything else has
-    // a visible result: a panel changes, or a value appears.
-    if (action.kind === 'copy') {
-      copied.show(() => {
-        if (openMenu === id) openMenu = null
-      })
+    if (action.kind !== 'copy') {
+      openMenu = null
       return
     }
-    openMenu = null
+
+    // A handler that returned nothing has not been converted to report its
+    // outcome, and the menu must not invent one on its behalf: silence is
+    // read as failure, which is the safe direction. `=== true` rather than a
+    // truthiness test says that in one character.
+    const copiedOk = (await result) === true
+
+    // Closing is deferred to the flash's own expiry so the message is on
+    // screen for its full span — the menu closing early would take the
+    // sentence with it, which is what a bare setTimeout used to do here when
+    // a second click restarted the clock. See $lib/flash.
+    const close = (): void => {
+      if (openMenu === id) openMenu = null
+    }
+    if (copiedOk) copied.show(close)
+    else copyFailed.show(close)
   }
 
   function onWindowPointerDown(event: PointerEvent): void {
@@ -332,7 +412,10 @@
   })
 
   // Nothing left running behind a component that has gone away.
-  $effect(() => () => copied.cancel())
+  $effect(() => () => {
+    copied.cancel()
+    copyFailed.cancel()
+  })
 </script>
 
 
@@ -395,40 +478,69 @@
         aria-label="More for {label}"
         use:menuKeys={{ onclose: () => (openMenu = null) }}
       >
-        {#each actions as action (action.label)}
+        {#each actions as action, index (action.label)}
           {@const Icon = ICONS[action.kind ?? 'reference']}
+          <!--
+            ONE RULE FOR THE LINE: it goes wherever the menu crosses from
+            items that act on the cluster to items that do not, which is
+            `RowAction.local` changing between two neighbours. Nothing here
+            knows which item that is or that it comes last, and no view
+            places a divider of its own — so a menu whose items vary (a
+            node's, a suspended CronJob's, a read-only cluster's) cannot end
+            up with the line in the wrong place, and a second local item
+            added later joins the same group rather than growing a second
+            rule.
+
+            `!!` on both sides because `local` is optional: the detail pane's
+            menus set it on nothing, and without the coercion an unset item
+            beside an explicit `false` would differ and draw a line through a
+            menu that has no such division.
+          -->
+          {#if index > 0 && !!action.local !== !!actions[index - 1].local}
+            <div class="my-1.5 border-t border-outline-variant/50" role="separator"></div>
+          {/if}
           <!-- The title sits on a wrapper, not the button: a disabled
                control shows no tooltip of its own, and the refusal's reason
                is the one thing somebody looking at a greyed-out Delete
                needs. The same wrapper the bulk bar uses for its own. -->
           <span title={action.hint} class="block">
+            <!--
+              `data-destructive` rather than a colour. Delete, Evict and Drain
+              are no longer drawn in the error token (see RowAction above for
+              why), and this is what keeps the fact addressable: a test names
+              those three without matching on their labels, and nothing about
+              it reaches the screen.
+            -->
             <button
               type="button"
               role="menuitem"
+              data-destructive={action.destructive ? '' : undefined}
               disabled={action.disabled}
-              onclick={() => choose(action)}
+              onclick={() => void choose(action)}
               class="state-layer flex w-full items-center gap-2.5 px-3 py-1.5
                      text-left text-body-medium transition-colors duration-75
                      cursor-pointer hover:bg-surface-container-highest
                      disabled:pointer-events-none disabled:opacity-38
-                     {copied.on && action.kind === 'copy'
-                ? 'text-success'
-                : action.destructive
-                  ? 'text-error'
-                  : 'text-on-surface'}"
+                     {action.kind !== 'copy'
+                ? 'text-on-surface'
+                : copied.on
+                  ? 'text-success'
+                  : copyFailed.on
+                    ? 'text-error'
+                    : 'text-on-surface'}"
             >
-              {#if copied.on && action.kind === 'copy'}
+              {#if action.kind === 'copy' && copied.on}
                 <Check class="size-3.5 shrink-0" strokeWidth={2.5} />
                 Copied!
+              {:else if action.kind === 'copy' && copyFailed.on}
+                <!-- Says what happened in the item's own place rather than
+                     raising a banner somewhere else: the operator is looking
+                     here, and the next thing they have to do — select the
+                     command by hand — is here too. -->
+                <TriangleAlert class="size-3.5 shrink-0" strokeWidth={2.5} />
+                Copy failed
               {:else}
-                <!-- A destructive item's icon takes the item's own colour
-                     rather than the muted one, so the row reads as a warning
-                     at a glance instead of on being read. -->
-                <Icon
-                  class="size-3.5 shrink-0 {action.destructive
-                    ? 'text-error'
-                    : 'text-on-surface-variant/70'}"
-                />
+                <Icon class="size-3.5 shrink-0 text-on-surface-variant/70" />
                 {action.label}
               {/if}
             </button>

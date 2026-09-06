@@ -24,6 +24,7 @@
   } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import { certificateExpiryLabel } from '$lib/certificateExpiry'
+  import { copyText } from '$lib/clipboard'
   import { flash } from '$lib/flash.svelte'
   import DetailSection from './DetailSection.svelte'
   import DetailList, { type DetailRow } from './DetailList.svelte'
@@ -111,10 +112,12 @@
   let copiedIndex = $state<number | null>(null)
   const copied = flash(1200)
 
-  function copySAN(value: string, index: number): void {
-    void navigator.clipboard?.writeText(value).catch(() => {})
+  async function copySAN(value: string, index: number): Promise<void> {
+    // The row is marked BEFORE the tick can show, so the confirmation cannot
+    // land on a row the operator has since moved off; the tick itself waits
+    // for the clipboard to accept the value. See $lib/clipboard.
     copiedIndex = index
-    copied.show()
+    if (await copyText(value)) copied.show()
   }
 </script>
 

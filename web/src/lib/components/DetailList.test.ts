@@ -252,10 +252,17 @@ describe('DetailList', () => {
     expect(reveal).toHaveBeenCalledOnce()
   })
 
-  it('confirms a copy in place, because the clipboard says nothing', async () => {
+  it('confirms a copy in place, once the clipboard has actually taken it', async () => {
     // Every other item has a visible result — a panel changes, a value
     // appears. Copying leaves the row identical, so the menu says so before
     // it closes, the way the status bar's share menu does.
+    //
+    // AWAITED RATHER THAN ASSERTED ON THE NEXT TICK, and that is the change
+    // rather than a flake being papered over: the confirmation used to appear
+    // the instant the handler returned, which meant it stood for a function
+    // having been called. It now waits on $lib/clipboard's answer — here the
+    // DOM fallback, which happy-dom provides and which resolves — so the tick
+    // this used to assert on is a tick too early.
     const { container } = render(DetailList, {
       rows: [{ label: 'Pod IP', value: '10.0.0.1' }],
     })
@@ -267,9 +274,10 @@ describe('DetailList', () => {
 
     const copy = document.querySelector('[role="menuitem"]')!
     copy.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    await tick()
 
-    expect(document.querySelector('[role="menuitem"]')?.textContent).toContain('Copied!')
+    await vi.waitFor(() => {
+      expect(document.querySelector('[role="menuitem"]')?.textContent).toContain('Copied!')
+    })
   })
 
   it('keeps only one menu open at a time', async () => {

@@ -303,14 +303,34 @@ Three things there are load-bearing and are not obvious from any one file:
   places — `pinned` per column by the view, fixed per EDGE and
   application-wide in `preferences.fixedEdges`, because keeping the tick box
   in view is a reading habit like `wrapLines` rather than a fact about pods.
+- **EVERY CELL OF A LIST ROW CENTRES ITS CONTENT, AND NOTHING IN A ROW IS
+  ALIGNED ON A BASELINE.** One rule, stated once in `DataTable.svelte`'s own
+  `<style>` and selected through the unconditional `data-list-table` marker on
+  the `<table>`: `vertical-align: middle` on every `th` and `td`, and whatever
+  a cell holds laid out as a BLOCK-LEVEL flex row with `items-center` rather
+  than as an inline box. The tick box, the status icon and the name used to be
+  positioned by three different mechanisms and drifted against each other
+  accordingly — a `<td>` resolves to `vertical-align: baseline` by default, and
+  a baseline is only a shared reference for boxes that HAVE one: text has a
+  real one a font-descent above its line box's bottom, an SVG has a synthesised
+  one at its bottom margin edge, and `RowSelect` carried an explicit
+  `align-middle` of its own. Four cells, four quantities — a font's descent, a
+  cell's padding, a box's height, an override — which can only agree by
+  coincidence. Centring depends on ONE quantity for all of them, the row's
+  height. The markup half cannot be done from the stylesheet, which is why
+  `StatusIndicator` is `flex` and not `inline-flex` (a block-level flex box has
+  no strut and no baseline to answer to) and why `RowSelect` and `RowMenuCell`
+  wrap their controls in one. Do not put a per-cell `align-middle` back: a rule
+  half the cells state for themselves is a rule the other half can be written
+  without, which is how this drifted in the first place.
 
 ## A row menu asks the drawer; it never confirms or writes anything itself
 
 Every list row's menu (`RowMenu.svelte`, filled by `web/src/lib/rowActions.ts`)
-offers what that kind can be put through — a pod gets Logs, Terminal, Evict,
-Delete and the kubectl copy; a controller gets Restart, Scale, Delete; a node
-gets Cordon or Uncordon, Drain and a node shell. **Not one of those items
-performs a write or shows a confirmation.** Each sets a `DetailIntent` on the
+offers what that kind can be put through — every kind opens with Overview; a
+pod then gets Logs, Terminal, Evict, Delete and the kubectl copy; a controller
+gets Restart, Scale, Delete; a node gets Cordon or Uncordon, Drain and a node
+shell. **Not one of those items performs a write or shows a confirmation.** Each sets a `DetailIntent` on the
 session and opens the object, and `DetailDrawer` engages its OWN control for
 it — so there is still exactly one Delete dialog, one Scale dialog and one
 drain preview in the application, each with the guards it already had: the
@@ -320,7 +340,8 @@ A row menu that opened its own confirmation would be a second implementation
 free to drift; one that called the API directly would be a write with no
 confirmation at all.
 
-Five rules there, each with a test in `web/src/lib/rowActions.test.ts`:
+Eight rules there, each with a test in `web/src/lib/rowActions.test.ts` or
+`web/src/lib/components/RowMenu.test.ts`:
 
 - **The intent is consumed exactly once.** `takeDetailIntent` clears it as it
   hands it over, or the next object opened by an ordinary click inherits the
@@ -341,11 +362,101 @@ Five rules there, each with a test in `web/src/lib/rowActions.test.ts`:
   the row's own flag, since only one of them could change anything. Resume and
   Uncordon run without a dialog, which is the drawer's rule for them rather
   than a shortcut taken here.
-- **A destructive item is marked and the read-only guard disables rather than
-  hides.** `RowAction.destructive` colours Delete, Evict and Drain with the
-  error token, so a Delete never looks like a Copy; `toRowActions` disables
+- **A destructive item is marked, and the mark is NOT a colour.** Delete,
+  Evict and Drain were drawn in the error token; they are not any more. Red on
+  the two or three most dangerous rows made the whole menu read as a warning
+  rather than as a list of what a row offers, and it separated nothing for
+  anybody who cannot see it — a colour is not in the accessibility tree,
+  carries no ARIA and is announced by nothing. What separates them is the
+  item's own word and icon ("Delete" with a bin, "Evict" with a door, "Drain…"
+  with an ellipsis promising a dialog), and that is what a screen reader was
+  getting all along. `RowAction.destructive` survives as a FACT rather than a
+  styling hook, published as `data-destructive` so a test can name those three
+  without matching on their labels.
+- **The read-only guard disables rather than hides.** `toRowActions` disables
   every item marked `write` on a read-only cluster and carries the backend's
-  own sentence as the tooltip, while Logs and the kubectl copy stay usable.
+  own sentence as the tooltip, while Overview, Logs and the kubectl copy stay
+  usable.
+- **OVERVIEW IS FIRST, ON EVERY KIND.** It opens the drawer on its Overview tab
+  exactly as Logs opens it on Logs, and unlike Logs or Scale there is no kind
+  where it leads nowhere — the drawer declares that tab `show: () => true`. It
+  also gives the menu a harmless first item, so what sits under the pointer the
+  instant a menu opens is the reading rather than a write. `DetailIntent.tab`
+  accepts `'overview'` even though the drawer's reset effect already lands
+  there: the reset clears the PREVIOUS object's tab, which is a different
+  question from where this request wants to go, and a drawer that one day
+  remembered the last tab per kind would silently break every Overview item
+  that had said nothing.
+- **THE SEPARATOR IS DERIVED, NEVER PLACED.** `RowActionCopy.local` says the
+  item does not touch the cluster — true of "Copy as kubectl" alone, which
+  composes a string on this machine and stops, and false of Overview, Logs and
+  Terminal, which open the object and read it. `RowMenu` draws a rule wherever
+  two consecutive items disagree about it. So no view holds a divider, a menu
+  whose items vary (a node's, a suspended CronJob's) cannot grow the line in
+  the wrong place or grow two, and a menu that sets the flag on nothing — the
+  detail pane's, which is all reads — gets none. It is deliberately NOT the
+  same question as `write`: Logs is not a write and still reaches the cluster,
+  so sharing one flag would either disable Logs or put the line above it.
+- **A CONFIRMATION IS EVIDENCE, NOT DECORATION.** See the next section.
+
+## Every copy goes through one helper, and it reports whether it worked
+
+`web/src/lib/clipboard.ts` is the only thing in the frontend that puts text on
+the clipboard, and it returns a BOOLEAN. Sixteen call sites used to do it
+themselves — `DetailList`, `LogViewer`, `Terminal` (twice), `ForwardAddress`,
+`CertificateInspector`, `ShareMenu`, `DiffView`, `KubectlHint`, the manifest
+copy in `DetailDrawer`, and a `copyKubectl` of its own in each of the six list
+views — and most of them were written as
+`navigator.clipboard?.writeText(text).catch(() => {})`, deliberately silent on
+the argument that a permissioned API may refuse and the text is on screen
+anyway.
+
+**That argument is right about a refusal and wrong about this case.**
+`navigator.clipboard` is only defined in a SECURE CONTEXT, and the webview
+serves the page over the framework's own scheme rather than https or
+localhost — so in the shipped application the property is ABSENT, the optional
+chain makes the whole expression `undefined`, and there is no promise, no
+rejection and nothing for `.catch` to see. The copy never happened. `RowMenu`
+then flashed "Copied!" beside it because `copied.show()` ran unconditionally
+after the handler returned, so an operator who trusted it pressed paste and
+got whatever had been on their clipboard before — on a shared machine, someone
+else's text.
+
+Four rules, each with a test in `web/src/lib/clipboard.test.ts` or
+`web/src/lib/components/RowMenu.test.ts`:
+
+- **The Go process is tried FIRST**, through the runtime's own clipboard, and
+  `navigator.clipboard` is the fallback. Its availability matches the
+  application's own: if PodSteer is running, that path exists. The DOM one does
+  not, and even where it is present it additionally wants the document focused
+  and, on some engines, a live user activation — so a copy fired as a menu
+  closes can be refused for reasons unrelated to what was asked. Ordering it
+  the other way puts the conditionally-present mechanism ahead of the
+  always-present one and makes every copy in the shipped build pay a failure
+  first. The test asserts the DOM path was NOT reached, because a test that
+  only checked the boolean would pass with the two swapped.
+- **The DOM path is kept anyway.** `vite dev` serves over http://localhost,
+  which IS a secure context and where no Go process is attached — so it is what
+  makes a copy work in a plain browser tab, and it is the path the unit tests
+  take for real rather than through a mock.
+- **No caller may claim a copy it did not make.** Every confirmation in the
+  application is now downstream of that boolean: `RowMenu` says "Copied!" only
+  for `true` and "Copy failed" for `false`, and a handler that returns nothing
+  is read as a failure — silence is the safe direction, and it stops an
+  unconverted handler acquiring a confirmation by saying nothing. Being quiet
+  about a failure is still allowed; claiming a success is not.
+- **The test stub refuses, and is not taught to lie.**
+  `web/src/test/wailsRuntimeStub.ts` rejects `Clipboard.SetText` like every
+  other entry point there, which is exactly the shape of a browser tab with no
+  Go process behind it — so a component test that copies something still takes
+  a real success through the real fallback, which happy-dom provides. A test
+  wanting the both-refused case removes `navigator.clipboard` for its own
+  duration instead.
+
+One consequence worth knowing: `Terminal`'s copy-on-select chip now waits on
+that boolean and carries a generation token, because a selection changes as
+fast as somebody can drag and a slow answer about an abandoned one would
+otherwise raise a chip over the selection that replaced it.
 
 ## Counting is `limit=1`, never `len(list)`
 

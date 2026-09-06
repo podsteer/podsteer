@@ -13,6 +13,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { type RowAction } from '$lib/components/RowMenu.svelte'
   import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { copyText } from '$lib/clipboard'
   import { rowActionsFor, toRowActions } from '$lib/rowActions'
   import { isControlColumn } from '$lib/fixedColumns'
   import CustomCells from '$lib/components/CustomCells.svelte'
@@ -69,6 +70,7 @@
     return toRowActions(
       rowActionsFor('Node', { unschedulable: node.unschedulable }),
       {
+        overview: open({ tab: 'overview' }),
         cordon: open({ action: 'cordon' }),
         uncordon: open({ action: 'uncordon' }),
         drain: open({ action: 'drain' }),
@@ -79,14 +81,10 @@
             readOnly: groupSettings.readOnly,
             productionGroup,
           }),
-        kubectl: () => copyKubectl(kubectlGet(session.cluster.id, 'nodes', node.name)),
+        kubectl: () => copyText(kubectlGet(session.cluster.id, 'nodes', node.name)),
       },
       groupSettings.readOnly,
     )
-  }
-
-  function copyKubectl(command: string): void {
-    void navigator.clipboard?.writeText(command).catch(() => {})
   }
 
   const COLUMNS: Column[] = [

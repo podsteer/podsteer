@@ -9,6 +9,7 @@
   Action buttons in the header allow delete, scale, restart, and edit.
 -->
 <script lang="ts">
+  import { copyText } from '$lib/clipboard'
   import { flash } from '$lib/flash.svelte'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { untrack } from 'svelte'
@@ -758,8 +759,11 @@
    */
   async function copyManifest(): Promise<void> {
     if (!shownManifest) return
-    await navigator.clipboard.writeText(shownManifest)
-    copied.show()
+    // Confirms only a copy that took. A manifest is the longest thing anybody
+    // copies out of this application and the least likely to be checked after
+    // pasting, so a tick that stands for nothing is at its most expensive
+    // here. See $lib/clipboard.
+    if (await copyText(shownManifest)) copied.show()
   }
 
   async function handleDelete(): Promise<void> {

@@ -533,8 +533,17 @@
         the TABLE rather than on the cells, because the cells are rendered by
         each view and this component is the only thing that knows the answer.
       -->
+      <!--
+        `data-list-table` is what the cell-alignment rule in this component's
+        stylesheet selects on. It is unconditional, unlike the two switches
+        above it, because it marks WHAT this table is rather than a state it
+        is in — and it has to be a marker rather than a bare `table` selector,
+        since these rules are `:global` and the detail panes draw tables of
+        their own that this one knows nothing about.
+      -->
       <table
         bind:this={grid}
+        data-list-table
         class="w-full table-fixed border-collapse text-body-medium"
         style="--fixed-select-offset: {fixedSelect?.offset ?? 0}px;
                --fixed-menu-offset: {fixedMenu?.offset ?? 0}px"
@@ -681,6 +690,52 @@
 </div>
 
 <style>
+  /*
+    ONE RULE FOR HOW A LIST CELL POSITIONS ITS CONTENT, and it is written here
+    because the cells belong to each view: six of them draw their own <tr>,
+    and a rule applied cell by cell is a rule five of them can be written
+    without.
+
+    THE RULE: every cell in a list table centres its content, and nothing in a
+    row is aligned on a baseline. A cell is `vertical-align: middle` (below),
+    and whatever it holds lays out as a BLOCK-LEVEL flex row with
+    `items-center` — never an inline box.
+
+    Why, from the box model rather than from a screenshot. A `<td>` resolves
+    to `vertical-align: baseline` by default (the UA sheet gives it
+    `vertical-align: inherit`, and the table above it holds the initial value),
+    and under baseline alignment a cell's content is shifted so the baseline of
+    its FIRST LINE BOX sits on the row's shared baseline. That is only a shared
+    reference for things that HAVE a baseline. These columns do not:
+
+      - the name cell holds text, whose baseline sits one font-descent above
+        the bottom of its line box;
+      - the status cell holds a 16px SVG, a replaced element with no baseline
+        of its own, so one is SYNTHESISED at its bottom margin edge — meaning
+        the icon's bottom lands on the text's baseline and it rides a
+        descender's worth too high;
+      - the tick box and the row menu are boxes too, and each was positioned
+        by a third and fourth mechanism: an explicit `align-middle` on one
+        cell, and nothing at all on the other, which then also differed in
+        vertical padding.
+
+    Four cells, four quantities — a font's descent, a cell's padding, a box's
+    height, an explicit override — and they can only agree by coincidence.
+    Centring depends on ONE quantity for all of them, the row's height, which
+    is why it holds when a column is added, a font changes, or a row grows a
+    chip.
+
+    The second half is in the markup and cannot be done from here: a
+    block-level flex container has no strut and no baseline to answer to, so
+    an icon inside one is centred against the row rather than hung off a text
+    baseline the cell's own font invented. `StatusIndicator` is `flex` for that
+    reason, `RowSelect` and `RowMenuCell` wrap their controls in one, and a
+    cell holding a bare inline element would put its baseline back.
+  */
+  :global(table[data-list-table] :is(th, td)) {
+    vertical-align: middle;
+  }
+
   /*
     The columns that stay put, in CSS because the cells are not this
     component's markup: every view draws its own <tr>, so these rules reach
