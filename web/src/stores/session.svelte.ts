@@ -1700,10 +1700,25 @@ export class ClusterSession {
 
     switch (this.viewMode) {
       case 'timeline':
-        // NOTHING IS FETCHED. The timeline is a record of what other reads
-        // already carried, so a poll landing on this view costs exactly the
-        // assessment above — which runs whatever is on screen anyway.
-        return null
+        // EVENTS, at this tab's cadence, and only while this view is on
+        // screen — the same call and the same namespace the Events page
+        // makes, so the two coalesce through readcache.go when they land
+        // together.
+        //
+        // This view used to fetch nothing, on the reasoning that a timeline
+        // is a record of reads something else already made. That reasoning
+        // held for two of its three sources and not for the third, and the
+        // gap was visible: findings ride the assessment, which runs whatever
+        // is on screen, and writes are recorded as they are made — but events
+        // were recorded ONLY while the Events page was open. So opening the
+        // Timeline first showed nothing, opening Events and coming back
+        // filled it, and the record a cluster produced depended on which
+        // pages somebody happened to visit rather than on what happened.
+        //
+        // The cost is one `list events` per tick while this page is open,
+        // which is what the Events page already costs while IT is open. It
+        // stops the moment either is left.
+        return listEvents(id, namespace, this.annotationKeys)
       case 'overview':
         // The explicit target only applies to the view an operator is
         // actually looking at. #refreshAssessment (below) always asks for
@@ -1828,8 +1843,10 @@ export class ClusterSession {
         this.#adopt(rows as Overview)
         break
       case 'timeline':
-        // Nothing to hold: the entries live in $stores/timeline, written by
-        // whatever produced them rather than by this refresh.
+        // Held for the same reason the Events page holds them — so
+        // #recordTimeline can file them — and NOT for rendering: this view
+        // draws $stores/timeline, never these rows.
+        this.events = rows as K8sEvent[]
         break
       case 'fleet':
         // Nothing to hold: the merged rows are the workspace's, in
@@ -1889,7 +1906,11 @@ export class ClusterSession {
    */
   #recordTimeline(): void {
     timeline.recordPodFindings(this.cluster.id, this.viewMode === 'pods' ? this.pods : null)
-    if (this.viewMode === 'events') timeline.recordEvents(this.cluster.id, this.events)
+    // Both pages that fetch events file them. Recording from the Events page
+    // alone made the timeline's coverage a function of somebody's browsing.
+    if (this.viewMode === 'events' || this.viewMode === 'timeline') {
+      timeline.recordEvents(this.cluster.id, this.events)
+    }
   }
 
   /**

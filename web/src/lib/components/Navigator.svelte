@@ -29,7 +29,9 @@
     type RecentObject,
   } from '$stores/session.svelte'
   import { clampNavigatorWidth, preferences } from '$stores/preferences.svelte'
+  import { timeline } from '$stores/timeline.svelte'
   import { workspace } from '$stores/workspace.svelte'
+  import { formatBadgeCount } from '$lib/format'
   import { categoryMeta, iconForKind } from '$lib/kindIcons'
   import Select from './Select.svelte'
   import {
@@ -88,6 +90,9 @@
   const onFleet = $derived(session.selectedKindId === FLEET_KIND_ID)
   const onRBAC = $derived(session.selectedKindId === RBAC_KIND_ID)
   const onTimeline = $derived(session.selectedKindId === TIMELINE_KIND_ID)
+
+  /** How much this tab has recorded, for the badge beside Timeline. */
+  const timelineCount = $derived(timeline.forCluster(session.cluster.id).length)
   const onHelm = $derived(session.selectedKindId === HELM_KIND_ID)
   /** How many tabs the merged view would merge — the badge on its row. */
   const openClusters = $derived(workspace.sessions.length)
@@ -473,6 +478,21 @@
           strokeWidth={1.8}
         />
         <span class="flex-1 truncate text-body-medium font-medium">Timeline</span>
+        {#if timelineCount > 0}
+          <!-- Capped by formatBadgeCount. This is the one badge in the
+               navigator that can reach four digits — every other counts kinds
+               or open clusters — because it counts entries bounded by
+               MAX_ENTRIES_PER_CLUSTER rather than by anything in the cluster,
+               and a sidebar that widens because a cluster got busy is worse
+               than a number that stops being exact. -->
+          <span
+            class="shrink-0 rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small
+                   tabular-nums text-on-surface-variant/70"
+            title="{timelineCount} recorded this session"
+          >
+            {formatBadgeCount(timelineCount)}
+          </span>
+        {/if}
       </button>
     </div>
 

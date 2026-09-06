@@ -50,6 +50,36 @@ export function formatAge(seconds: number): string {
 }
 
 /** Formats a Date as a local wall-clock time, or an em dash when absent. */
+/**
+ * The largest count a navigator badge will print before it gives up counting.
+ *
+ * Four digits is what the badge can hold without widening the sidebar, and a
+ * sidebar that changes width because a cluster got busy is worse than a number
+ * that stops being exact.
+ */
+export const BADGE_COUNT_LIMIT = 9999
+
+/**
+ * A count for a navigator badge, capped so the sidebar keeps its shape.
+ *
+ * "9999+" IS A DIFFERENT CLAIM FROM "9999", which is the point of the plus
+ * rather than a decoration: the badge is saying it stopped counting, not that
+ * it counted this many. Most badges here — kinds in a category, open clusters
+ * — cannot get near the cap; the timeline's can, because it is bounded by
+ * MAX_ENTRIES_PER_CLUSTER rather than by anything in the cluster.
+ *
+ * Negative and fractional inputs are floored at zero and truncated rather than
+ * rendered, because a badge is a count and neither is one.
+ */
+export function formatBadgeCount(count: number): string {
+  // NaN is "no number", which is nought; infinity is "more than any of them",
+  // which is the cap. Folding both to nought would make the badge state a
+  // count of zero for the one input that means the opposite.
+  if (Number.isNaN(count) || count <= 0) return '0'
+  if (count > BADGE_COUNT_LIMIT) return `${BADGE_COUNT_LIMIT}+`
+  return String(Math.floor(count))
+}
+
 export function formatClockTime(value: Date | null): string {
   if (!value) return '—'
   return value.toLocaleTimeString(undefined, {
