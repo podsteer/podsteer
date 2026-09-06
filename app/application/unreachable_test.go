@@ -125,6 +125,10 @@ func (g *goneCluster) DiscoverMetricsBackend(context.Context, domain.ClusterID) 
 	return domain.MetricsBackend{}, g.err(false)
 }
 
+func (g *goneCluster) ListMetricsBackends(context.Context, domain.ClusterID) ([]domain.MetricsBackend, error) {
+	return nil, g.err(false)
+}
+
 func (g *goneCluster) DiscoverKubeStateMetrics(context.Context, domain.ClusterID) (domain.KubeStateMetrics, error) {
 	return domain.KubeStateMetrics{}, g.err(false)
 }

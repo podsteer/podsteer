@@ -10,6 +10,7 @@ package domain_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -361,4 +362,303 @@ func settingsWithSources(sources ...domain.KubeconfigSource) domain.Settings {
 	settings := domain.DefaultSettings()
 	settings.Kubeconfig.Sources = sources
 	return settings
+}
+
+// --- per-cluster switches ---------------------------------------------------
+//
+// One section shared by two features (node history, ADR 8; querying a
+// discovered monitoring backend, ADR 7), so the properties worth pinning are
+// about the SECTION as much as about either: that absence and the defaults are
+// the same thing, that a stanza saying nothing does not survive to the file,
+// and that the one object name this settings file may hold is refused when it
+// could not name anything.
+
+func TestClusterReportsTheDefaultsForAClusterWithNoEntry(t *testing.T) {
+	t.Parallel()
+
+	// TOTAL BY CONSTRUCTION. A consumer indexing the map itself would get a
+	// value with empty enums in it and would have to decide what "" means —
+	// and for a setting that governs whether PromQL reaches somebody's
+	// production Prometheus, "off" and "undefined" must not be the same
+	// guess made twice.
+	settings := domain.DefaultSettings()
+
+	got := settings.Cluster("never-opened")
+
+	if got != domain.DefaultClusterSettings() {
+		t.Fatalf("Cluster() = %+v, want the defaults", got)
+	}
+	if got.MetricsQuery.Mode != domain.MetricsQueryOff {
+		t.Errorf("mode = %q, want %q", got.MetricsQuery.Mode, domain.MetricsQueryOff)
+	}
+	if got.MetricsQuery.Fleet != domain.FleetFilter {
+		t.Errorf("fleet = %q, want %q", got.MetricsQuery.Fleet, domain.FleetFilter)
+	}
+	if !got.MetricsQuery.Preferred.IsZero() {
+		t.Errorf("preferred = %+v, want none", got.MetricsQuery.Preferred)
+	}
+}
+
+func TestClusterFillsTheBlanksAnOlderFileLeft(t *testing.T) {
+	t.Parallel()
+
+	// A file written before these fields existed carries an entry with empty
+	// enums. Reading it must not hand a consumer "" — and must not report the
+	// mode as anything but off, which is the direction a value nobody wrote
+	// has to resolve in.
+	settings := domain.DefaultSettings()
+	settings.Clusters["prod"] = domain.ClusterSettings{NodeHistory: true}
+
+	got := settings.Cluster("prod")
+
+	if !got.NodeHistory {
+		t.Error("NodeHistory was lost")
+	}
+	if got.MetricsQuery.Mode != domain.MetricsQueryOff {
+		t.Errorf("mode = %q, want %q", got.MetricsQuery.Mode, domain.MetricsQueryOff)
+	}
+	if got.MetricsQuery.Fleet != domain.FleetFilter {
+		t.Errorf("fleet = %q, want %q", got.MetricsQuery.Fleet, domain.FleetFilter)
+	}
+}
+
+func TestNormaliseResetsAnUnusableModeOrFleetPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		in        domain.ClusterSettings
+		wantReset int
+		wantMode  domain.MetricsQueryMode
+		wantFleet domain.FleetPolicy
+	}{
+		"a mode this build has never heard of": {
+			in: domain.ClusterSettings{
+				NodeHistory:  true,
+				MetricsQuery: domain.MetricsQuerySettings{Mode: "always", Fleet: domain.FleetFilter},
+			},
+			wantReset: 1,
+			// OFF, never something that sends a query: a value nobody here
+			// wrote must not be resolved in the direction of talking to a
+			// third system.
+			wantMode:  domain.MetricsQueryOff,
+			wantFleet: domain.FleetFilter,
+		},
+		"a fleet policy this build has never heard of": {
+			in: domain.ClusterSettings{
+				NodeHistory:  true,
+				MetricsQuery: domain.MetricsQuerySettings{Mode: domain.MetricsQueryAuto, Fleet: "merge"},
+			},
+			wantReset: 1,
+			wantMode:  domain.MetricsQueryAuto,
+			wantFleet: domain.FleetFilter,
+		},
+		"both at once": {
+			in: domain.ClusterSettings{
+				NodeHistory:  true,
+				MetricsQuery: domain.MetricsQuerySettings{Mode: "yes", Fleet: "no"},
+			},
+			wantReset: 2,
+			wantMode:  domain.MetricsQueryOff,
+			wantFleet: domain.FleetFilter,
+		},
+		"blanks are not resets": {
+			// A file written before the field existed. Filling it is not a
+			// repair, and counting it would put a warning in the pane on
+			// every launch after an upgrade.
+			in:        domain.ClusterSettings{NodeHistory: true},
+			wantReset: 0,
+			wantMode:  domain.MetricsQueryOff,
+			wantFleet: domain.FleetFilter,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			settings := domain.DefaultSettings()
+			settings.Clusters["prod"] = test.in
+
+			if got := settings.Normalise(); got != test.wantReset {
+				t.Errorf("Normalise() = %d resets, want %d", got, test.wantReset)
+			}
+
+			cluster := settings.Cluster("prod")
+			if cluster.MetricsQuery.Mode != test.wantMode {
+				t.Errorf("mode = %q, want %q", cluster.MetricsQuery.Mode, test.wantMode)
+			}
+			if cluster.MetricsQuery.Fleet != test.wantFleet {
+				t.Errorf("fleet = %q, want %q", cluster.MetricsQuery.Fleet, test.wantFleet)
+			}
+		})
+	}
+}
+
+func TestNormaliseDropsAPreferredBackendThatCouldNameNothing(t *testing.T) {
+	t.Parallel()
+
+	// DROPPED RATHER THAN DEFAULTED, for the reason a bad kubeconfig source
+	// is dropped: a pick has no default other than having no pick, and having
+	// no pick is exactly what falling back to the ranked candidate means.
+	settings := domain.DefaultSettings()
+	settings.Clusters["prod"] = domain.ClusterSettings{
+		MetricsQuery: domain.MetricsQuerySettings{
+			Mode:      domain.MetricsQueryManual,
+			Preferred: domain.PreferredBackend{Namespace: "Monitoring", Service: "prometheus"},
+			Fleet:     domain.FleetFilter,
+		},
+	}
+
+	if got := settings.Normalise(); got != 1 {
+		t.Fatalf("Normalise() = %d resets, want 1", got)
+	}
+
+	cluster := settings.Cluster("prod")
+	if !cluster.MetricsQuery.Preferred.IsZero() {
+		t.Errorf("preferred = %+v, want it dropped", cluster.MetricsQuery.Preferred)
+	}
+	// The rest of the entry survives: one unusable field must not cost the
+	// operator the decision they made beside it.
+	if cluster.MetricsQuery.Mode != domain.MetricsQueryManual {
+		t.Errorf("mode = %q, want it kept", cluster.MetricsQuery.Mode)
+	}
+}
+
+func TestNormaliseDropsAClusterEntryThatSaysNothing(t *testing.T) {
+	t.Parallel()
+
+	// So the file does not grow a stanza per cluster ever connected, each of
+	// them naming a context for no reason. NOT counted as a reset: that count
+	// becomes "some settings held values PodSteer could not use", and an
+	// empty stanza held no such value.
+	settings := domain.DefaultSettings()
+	settings.Clusters["opened-once"] = domain.ClusterSettings{}
+	settings.Clusters["turned-back-off"] = domain.DefaultClusterSettings()
+	settings.Clusters["still-says-something"] = domain.ClusterSettings{
+		MetricsQuery: domain.MetricsQuerySettings{Mode: domain.MetricsQueryManual},
+	}
+
+	if got := settings.Normalise(); got != 0 {
+		t.Fatalf("Normalise() = %d resets, want 0 — an empty stanza is not a repair", got)
+	}
+
+	if _, kept := settings.Clusters["opened-once"]; kept {
+		t.Error("an entry that says nothing survived")
+	}
+	if _, kept := settings.Clusters["turned-back-off"]; kept {
+		t.Error("an entry equal to the defaults survived")
+	}
+	if _, kept := settings.Clusters["still-says-something"]; !kept {
+		t.Error("an entry carrying a decision was dropped")
+	}
+}
+
+func TestValidateRefusesAMetricsQueryValueTheInterfaceMustNotPersist(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		query domain.MetricsQuerySettings
+		want  error
+	}{
+		"an unknown mode": {
+			query: domain.MetricsQuerySettings{Mode: "always", Fleet: domain.FleetFilter},
+			want:  domain.ErrSettingsMetricsQueryMode,
+		},
+		"an unknown fleet policy": {
+			query: domain.MetricsQuerySettings{Mode: domain.MetricsQueryOff, Fleet: "merge"},
+			want:  domain.ErrSettingsFleetPolicy,
+		},
+		"a namespace that is not a DNS-1123 label": {
+			query: domain.MetricsQuerySettings{
+				Mode:      domain.MetricsQueryManual,
+				Preferred: domain.PreferredBackend{Namespace: "Monitoring", Service: "prometheus"},
+				Fleet:     domain.FleetFilter,
+			},
+			want: domain.ErrSettingsPreferredBackend,
+		},
+		"a service that is not a DNS-1123 label": {
+			query: domain.MetricsQuerySettings{
+				Mode:      domain.MetricsQueryManual,
+				Preferred: domain.PreferredBackend{Namespace: "monitoring", Service: "prom_operated"},
+				Fleet:     domain.FleetFilter,
+			},
+			want: domain.ErrSettingsPreferredBackend,
+		},
+		"half a pick, which could never resolve": {
+			query: domain.MetricsQuerySettings{
+				Mode:      domain.MetricsQueryManual,
+				Preferred: domain.PreferredBackend{Namespace: "monitoring"},
+				Fleet:     domain.FleetFilter,
+			},
+			want: domain.ErrSettingsPreferredBackend,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			settings := domain.DefaultSettings()
+			settings.Clusters["prod"] = domain.ClusterSettings{MetricsQuery: test.query}
+
+			err := settings.Validate()
+			if !errors.Is(err, test.want) {
+				t.Fatalf("Validate() error = %v, want %v", err, test.want)
+			}
+			// The refusal names the cluster, because an operator with twelve
+			// tabs open cannot act on one that does not.
+			if !strings.Contains(err.Error(), "prod") {
+				t.Errorf("Validate() error = %v, want it to name the cluster", err)
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsAPickThatNamesRealLabels(t *testing.T) {
+	t.Parallel()
+
+	// The one object name this file may hold, and it is only usable when it
+	// could actually name a Service the API server would serve.
+	settings := domain.DefaultSettings()
+	settings.Clusters["prod"] = domain.ClusterSettings{
+		NodeHistory: true,
+		MetricsQuery: domain.MetricsQuerySettings{
+			Mode:      domain.MetricsQueryAuto,
+			Preferred: domain.PreferredBackend{Namespace: "monitoring", Service: "prometheus-operated"},
+			Fleet:     domain.FleetRefuse,
+		},
+	}
+
+	if err := settings.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want it accepted", err)
+	}
+}
+
+func TestValidateAcceptsAnEntryWithNoPickAtAll(t *testing.T) {
+	t.Parallel()
+
+	// The ordinary case, and the one in which no object name is persisted:
+	// the empty pick means "whatever discovery ranks first".
+	settings := domain.DefaultSettings()
+	settings.Clusters["prod"] = domain.ClusterSettings{
+		MetricsQuery: domain.MetricsQuerySettings{Mode: domain.MetricsQueryManual, Fleet: domain.FleetFilter},
+	}
+
+	if err := settings.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want it accepted", err)
+	}
+}
+
+func TestValidateAcceptsAnEntryWrittenBeforeTheseFieldsExisted(t *testing.T) {
+	t.Parallel()
+
+	// An entry with empty enums is "not set", not invalid. Refusing it would
+	// make a file this build itself can read unwritable, which is the one
+	// outcome the read and write paths must never disagree about.
+	settings := domain.DefaultSettings()
+	settings.Clusters["prod"] = domain.ClusterSettings{NodeHistory: true}
+
+	if err := settings.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want it accepted", err)
+	}
 }

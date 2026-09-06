@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"path/filepath"
 	"slices"
@@ -27,17 +28,39 @@ import (
 // before the first render. A column width answers no to both.
 //
 // The rule cuts the other way just as firmly, and the reasons already recorded
-// for the existing split hold. OBJECT NAMES STAY OUT. The snoozed findings
-// (keyed by a namespace and an object name) and the per-cluster namespace
-// filter keep their current home in the webview, because moving them into a
-// file this process writes would break the exhaustive claim SECURITY.md makes
-// about it: that it carries the name of no object in any cluster. That claim
-// is worth more than the tidiness of having one settings file.
+// for the existing split hold. OBJECT NAMES STAY OUT, WITH ONE NAMED
+// EXCEPTION. The snoozed findings (keyed by a namespace and an object name)
+// and the per-cluster namespace filter keep their current home in the webview,
+// because moving them into a file this process writes would break the claim
+// SECURITY.md makes about it. That claim is worth more than the tidiness of
+// having one settings file.
 //
 // What this value may hold, therefore: a recording policy, paths on this
 // machine, a proxy, and kubeconfig CONTEXT names — which are handles the
 // operator's own kubeconfig already gives them, and which the history file
 // names already carry for the same reason.
+//
+// # The exception, named so that it cannot spread
+//
+// MetricsQuerySettings.Preferred holds a NAMESPACE and a SERVICE NAME: which
+// discovered monitoring backend answers for a cluster (ADR 7). That is an
+// object name in a file that used to carry none, and it ships as a disclosed
+// exception rather than as a quietly broken promise — SECURITY.md, the
+// readme header the store writes into the file, and PreferredBackend's own
+// comment each name it.
+//
+// Three things bound it, and they are the reason it is acceptable rather than
+// the beginning of a slope:
+//
+//   - What it reveals is that a monitoring stack is installed, and where. It
+//     says nothing about any workload or anything a cluster holds; a
+//     monitoring Service is infrastructure the operator installed, not a name
+//     the cluster's contents produced.
+//   - It is written ONLY when the operator picks something other than the
+//     ranked default. The ordinary file never contains it, and a test in the
+//     settings store asserts that.
+//   - It is ONE field. Anything else wanting to hold an object name is a new
+//     argument to be had in the open, not a precedent already set.
 
 // Sentinel errors raised when a settings value is not usable.
 //
@@ -171,17 +194,71 @@ type HistorySettings struct {
 // ClusterSettings holds the per-cluster switches, keyed by kubeconfig context
 // name in Settings.Clusters.
 //
-// EMPTY ON PURPOSE, AND RESERVED. The per-cluster opt-ins that belong here —
-// node history and Prometheus queries — are not part of this change; the
-// section exists so that adding one is a field rather than a new top-level
-// key, which is the difference between a change an older build round-trips
-// and one it cannot.
+// TWO FEATURES, ONE SECTION, BUILT ONCE. Node history (ADR 8) and querying a
+// discovered monitoring backend (ADR 7) both need "this cluster, on these
+// terms" and both were originally proposed as a flag on an organisation
+// GROUP. They live here instead because a group flag is resolved through a
+// placement in the webview's own storage, which the Go process cannot read —
+// and both settings decide what reaches disk or the network, which is the
+// ownership rule at the top of this file.
 //
-// The honest limit of that: an unknown top-level SECTION round-trips
+// The honest limit of the section: an unknown top-level SECTION round-trips
 // verbatim, but an unknown FIELD inside a section this build knows does not.
 // That is why a file written by a newer version is read and never saved over
 // — see the store.
-type ClusterSettings struct{}
+//
+// THE ZERO VALUE IS THE DEFAULT, which is what makes Settings.Cluster total:
+// an absent key and a key holding nothing mean the same thing, so nothing
+// downstream has to tell them apart. Reach it through Cluster rather than
+// indexing Clusters, or an absent entry hands you an empty enum.
+type ClusterSettings struct {
+	// NodeHistory opts this cluster into recording per-node samples (ADR 8).
+	//
+	// NOT SETTABLE THROUGH SettingsService, deliberately. Turning it off has
+	// a side effect — the node history already recorded is erased — so it
+	// belongs beside SetRetention on the history service, where a settings
+	// write and a prune are already one act. A setter here would be a way to
+	// change the policy without the erasure it implies.
+	NodeHistory bool
+
+	// MetricsQuery says whether a discovered monitoring backend is queried
+	// for this cluster, which one answers, and on what terms.
+	MetricsQuery MetricsQuerySettings
+}
+
+// DefaultClusterSettings returns what a cluster nobody has configured has:
+// no node history, and nothing sent to any monitoring backend.
+func DefaultClusterSettings() ClusterSettings {
+	return ClusterSettings{MetricsQuery: DefaultMetricsQuerySettings()}
+}
+
+// withDefaults fills the blanks a hand-edited or partially built entry
+// leaves, so no consumer ever meets an empty enum.
+func (c ClusterSettings) withDefaults() ClusterSettings {
+	c.MetricsQuery = c.MetricsQuery.withDefaults()
+	return c
+}
+
+// IsDefault reports that this entry says nothing a fresh cluster does not
+// already say, so the file has no reason to carry it.
+func (c ClusterSettings) IsDefault() bool {
+	return c.withDefaults() == DefaultClusterSettings()
+}
+
+// Cluster returns one cluster's settings, defaults included.
+//
+// TOTAL BY CONSTRUCTION. An absent key yields the defaults rather than a
+// value with empty enums in it, so no consumer indexes the map itself and
+// none can read "this cluster has no entry" as anything but "this cluster is
+// on the defaults" — which is exactly what it means, since an entry that says
+// only the defaults is dropped on the way to disk.
+func (s Settings) Cluster(id ClusterID) ClusterSettings {
+	entry, ok := s.Clusters[string(id)]
+	if !ok {
+		return DefaultClusterSettings()
+	}
+	return entry.withDefaults()
+}
 
 // WindowSettings holds window geometry.
 //
@@ -289,6 +366,25 @@ func (s *Settings) Normalise() int {
 	if s.Clusters == nil {
 		s.Clusters = map[string]ClusterSettings{}
 	}
+	for id, cluster := range s.Clusters {
+		reset += cluster.MetricsQuery.normalise()
+
+		// DROPPED WHEN IT SAYS NOTHING. An entry equal to the defaults is a
+		// stanza carrying no decision — left behind by a cluster somebody
+		// opened once, or by a setting turned back off — and keeping it would
+		// grow the file a section per cluster ever connected, each of them
+		// naming a context for no reason.
+		//
+		// NOT COUNTED AS A RESET, unlike a dropped kubeconfig source. That
+		// count becomes "some settings held values PodSteer could not use",
+		// and an empty stanza held no such value; counting it would put a
+		// warning in the pane about a file that was perfectly fine.
+		if cluster.IsDefault() {
+			delete(s.Clusters, id)
+			continue
+		}
+		s.Clusters[id] = cluster
+	}
 
 	return reset
 }
@@ -340,7 +436,22 @@ func (s Settings) Validate() error {
 			return fmt.Errorf("kubeconfig source %q: %w", source.Path, err)
 		}
 	}
-	return s.Proxy.validate()
+	if err := s.Proxy.validate(); err != nil {
+		return err
+	}
+	// Sorted so a document with two bad entries refuses by the same one every
+	// time. Map order is not, and a refusal that names a different cluster on
+	// each attempt is a refusal nobody can act on.
+	for _, id := range slices.Sorted(maps.Keys(s.Clusters)) {
+		// withDefaults first: a blank enum on an entry built in code or read
+		// from a file written before the field existed is "not set", and
+		// refusing it would make a settings file this build wrote unwritable
+		// by the next one.
+		if err := s.Clusters[id].withDefaults().MetricsQuery.validate(); err != nil {
+			return fmt.Errorf("cluster %q: %w", id, err)
+		}
+	}
+	return nil
 }
 
 // validate reports whether the proxy settings describe something reachable.

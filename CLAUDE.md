@@ -417,17 +417,47 @@ about before adding a fourth:
   the adapter reports every writer it finds, annotation included, so the
   exclusion is a rule `deprecations_test.go` can argue with rather than a
   silent drop nothing tests.
-- **A monitoring stack already in the cluster is discovered, and only pointed
-  at** — `app/adapters/k8s/prometheus.go` lists Services by two label selectors
-  and ranks the matches by name, because a kube-prometheus-stack install
-  returns several and only one answers PromQL. Finding nothing is the ordinary
-  answer and never reaches `Unavailable`: a cluster with no Prometheus is not a
-  degraded cluster. **PodSteer does not query it, and advice is the whole
-  feature**: a service listing establishes that something named
-  `prometheus-operated` exists, not that it scrapes this cluster or retains
-  anything, so the note claims only the former. Per-object usage is not written
-  to disk either — the recorded cluster history deliberately carries no object
-  names, and a file of per-pod series would reverse that.
+- **A monitoring stack already in the cluster is discovered, and today it is
+  still only pointed at** — `app/adapters/k8s/prometheus.go` lists Services by
+  two label selectors and produces a RANKED CANDIDATE LIST rather than one
+  guess, because a kube-prometheus-stack install returns several and only one
+  answers PromQL. `DiscoverMetricsBackend` is the head of that list — which is
+  what every caller wanted — and `ListMetricsBackends` hands over the whole of
+  it from the same cached answer, so offering an operator the candidates
+  PodSteer did not pick costs no extra request. Finding nothing is the ordinary
+  answer and never reaches `Unavailable`: a cluster with no monitoring stack is
+  not a degraded cluster.
+  **Prometheus AND VictoriaMetrics**, ranked in that order — Prometheus first
+  because it is what this build always pointed at, so a cluster running both
+  keeps the answer it had. VictoriaMetrics is matched on
+  `app.kubernetes.io/name` and never on the Service NAME, which is the part it
+  does not hold still: its operator's `useLegacyNaming` strips the prefix
+  entirely and both Helm charts prepend a release name, while the labels are
+  identical either way. **The write path is never a candidate** — vmagent,
+  vminsert and vmstorage ingest and none of them serves a query API — and the
+  `victoria-metrics-cluster` chart makes that a live hazard rather than a
+  theoretical one: it puts the same `app.kubernetes.io/name` on vmselect,
+  vminsert AND vmstorage, and vmstorage publishes a port literally named
+  `vmselect`. The component label is what tells them apart, and
+  `writeOnlyNameLabels` refuses the operator's three by name as well.
+  `MetricsBackend.Prefix` carries where the query API is mounted: empty for
+  Prometheus and for a single-node VictoriaMetrics, `/select/0/prometheus` for
+  a VictoriaMetrics cluster's select component, which serves it per tenant.
+  **Tenant zero only** — nothing in a Service records which account ids hold
+  data, and a wrong tenant answers 200 with no series, which reads as an idle
+  cluster. `Describe` names the PRODUCT it found; telling somebody they run
+  Prometheus when they run VictoriaMetrics sends them looking for something
+  that is not there.
+  **PodSteer still does not query any of them**: a service listing establishes
+  that something named `prometheus-operated` exists, not that it scrapes this
+  cluster or retains anything, so the note claims only the former. What has
+  changed is that the SETTING now exists — `clusters.<context>.metricsQuery`
+  in `settings.json`, ADR 7's mode, preferred backend and fleet policy — while
+  the reader that acts on it is a later change, which is what keeps that
+  change's security review about the request rather than about the switch.
+  Per-object usage is not written to disk either — the recorded cluster history
+  deliberately carries no object names, and a file of per-pod series would
+  reverse that.
 - **kube-state-metrics is discovered the same way, and is a SEPARATE
   question** — `app/adapters/k8s/kubestate.go`, beside `prometheus.go` and
   following it in every particular: two label selectors
@@ -1027,12 +1057,18 @@ exists so the UI can say "the last 40 minutes" instead of implying more.
   process had no webview — `podsteer mcp`, a sampler tick before any pane has
   loaded, the cluster picker on launch — would the setting still have to
   exist?* Retention answers yes twice over, which is why it is here. A column
-  width answers no to both, which is why it is not. **Object names stay out
-  whatever the rule says**: the snoozed findings and the per-cluster namespace
-  filter keep their home in localStorage, because moving them into a file this
-  process writes would break the exhaustive claim SECURITY.md makes about that
-  file. Zero retention means record nothing *and* erase what exists — an
-  operator choosing it means both.
+  width answers no to both, which is why it is not. **Object names stay out,
+  with exactly one named exception**: the snoozed findings and the per-cluster
+  namespace filter keep their home in localStorage, because moving them into a
+  file this process writes would break the claim SECURITY.md makes about that
+  file. The exception is `domain.PreferredBackend` — the namespace and Service
+  name of the monitoring backend an operator explicitly picked (ADR 7), which
+  is disclosed in SECURITY.md, in the readme the store writes into the file and
+  in the domain comment, written only when the pick differs from the ranked
+  default, and asserted absent otherwise by a test in the settings store. It is
+  ONE field; anything else wanting to hold an object name is a new argument to
+  be had in the open. Zero retention means record nothing *and* erase what
+  exists — an operator choosing it means both.
 - **A sample is derived from the overview**, not from a second read of the
   cluster, so the chart and the numbers above it can never disagree.
 - Samples hold capacity figures only: no object names, no logs, no manifests.

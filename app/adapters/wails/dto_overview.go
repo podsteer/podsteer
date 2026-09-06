@@ -610,13 +610,23 @@ type Overview struct {
 
 // MetricsBackend is a monitoring system found running in the cluster.
 type MetricsBackend struct {
-	// Kind is "prometheus", or empty when nothing was found.
+	// Kind is "prometheus" or "victoriametrics", or empty when nothing was
+	// found.
 	Kind string `json:"kind"`
-	// Label is what to show a person, e.g. "Prometheus in monitoring".
+	// Label is what to show a person, e.g. "VictoriaMetrics in monitoring".
+	// It NAMES THE PRODUCT that was found, because telling somebody they run
+	// Prometheus when they run VictoriaMetrics sends them looking for
+	// something that is not there.
 	Label     string `json:"label"`
 	Namespace string `json:"namespace"`
 	Service   string `json:"service"`
 	Port      string `json:"port"`
+	// Prefix is the path the query API is mounted under, empty for
+	// Prometheus and a single-node VictoriaMetrics. Carried across so a
+	// consumer never has to re-derive it from the kind — and it is not the
+	// kind that decides it, since VictoriaMetrics has one value for each of
+	// its two deployment shapes.
+	Prefix string `json:"prefix"`
 }
 
 // KubeStateMetrics is a kube-state-metrics installation found in the cluster.
@@ -655,6 +665,7 @@ func toMetricsBackend(backend domain.MetricsBackend) MetricsBackend {
 		Namespace: string(backend.Namespace),
 		Service:   backend.Service,
 		Port:      backend.Port,
+		Prefix:    backend.Prefix,
 	}
 }
 

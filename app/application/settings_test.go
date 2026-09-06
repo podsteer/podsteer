@@ -304,3 +304,129 @@ func pathsOf(sources []domain.KubeconfigSource) []string {
 	}
 	return out
 }
+
+// --- per-cluster switches ---------------------------------------------------
+
+func TestClusterReportsTheDefaultsRatherThanAnAbsence(t *testing.T) {
+	t.Parallel()
+
+	// The judgement worth asserting here is that "no entry" is answered as a
+	// VALUE. A caller handed an absence would have to decide what it means,
+	// and for a setting governing whether PromQL reaches somebody's
+	// production Prometheus that decision must be made once, in the domain.
+	service, _ := newSettingsService(t)
+
+	got, err := service.Cluster(context.Background(), "never-opened")
+	if err != nil {
+		t.Fatalf("Cluster() error = %v", err)
+	}
+	if got != domain.DefaultClusterSettings() {
+		t.Fatalf("Cluster() = %+v, want the defaults", got)
+	}
+}
+
+func TestSetMetricsQueryStoresTheWholeValue(t *testing.T) {
+	t.Parallel()
+
+	service, store := newSettingsService(t)
+
+	want := domain.MetricsQuerySettings{
+		Mode:      domain.MetricsQueryManual,
+		Preferred: domain.PreferredBackend{Namespace: "monitoring", Service: "prometheus-operated"},
+		Fleet:     domain.FleetRefuse,
+	}
+	if err := service.SetMetricsQuery(context.Background(), "prod", want); err != nil {
+		t.Fatalf("SetMetricsQuery() error = %v", err)
+	}
+
+	settings, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := settings.Cluster("prod").MetricsQuery; got != want {
+		t.Fatalf("stored %+v, want %+v", got, want)
+	}
+}
+
+func TestSetMetricsQueryLeavesTheNodeHistoryOptInAlone(t *testing.T) {
+	t.Parallel()
+
+	// TWO FEATURES SHARE THIS SECTION, and each must write only its own half.
+	// Writing the whole entry from the metrics-query value would silently
+	// turn node recording off for a cluster whose operator changed something
+	// else entirely — and node history is the one whose off has a side effect
+	// (the recorded history is erased), which is why its setter lives on the
+	// history service and not here.
+	service, store := newSettingsService(t)
+
+	if _, err := store.Update(context.Background(), func(settings *domain.Settings) error {
+		settings.Clusters["prod"] = domain.ClusterSettings{NodeHistory: true}
+		return nil
+	}); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+
+	err := service.SetMetricsQuery(context.Background(), "prod", domain.MetricsQuerySettings{
+		Mode:  domain.MetricsQueryAuto,
+		Fleet: domain.FleetFilter,
+	})
+	if err != nil {
+		t.Fatalf("SetMetricsQuery() error = %v", err)
+	}
+
+	settings, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cluster := settings.Cluster("prod")
+	if !cluster.NodeHistory {
+		t.Error("the node history opt-in was cleared by a metrics query write")
+	}
+	if cluster.MetricsQuery.Mode != domain.MetricsQueryAuto {
+		t.Errorf("mode = %q, want auto", cluster.MetricsQuery.Mode)
+	}
+}
+
+func TestTurningTheQueryBackOffRemovesTheEntryAndItsBackendName(t *testing.T) {
+	t.Parallel()
+
+	// The disclosed exception is narrow in TIME as well as in scope: an
+	// operator who chose a backend and then turned querying off leaves no
+	// entry behind, so the monitoring Service's name is gone from the file
+	// rather than lingering under a mode that never reads it.
+	service, store := newSettingsService(t)
+
+	if err := service.SetMetricsQuery(context.Background(), "prod", domain.MetricsQuerySettings{
+		Mode:      domain.MetricsQueryAuto,
+		Preferred: domain.PreferredBackend{Namespace: "monitoring", Service: "prometheus-operated"},
+		Fleet:     domain.FleetFilter,
+	}); err != nil {
+		t.Fatalf("SetMetricsQuery() error = %v", err)
+	}
+
+	if err := service.SetMetricsQuery(context.Background(), "prod",
+		domain.DefaultMetricsQuerySettings()); err != nil {
+		t.Fatalf("SetMetricsQuery() error = %v", err)
+	}
+
+	settings, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if _, kept := settings.Clusters["prod"]; kept {
+		t.Fatalf("the entry survived being turned back off: %+v", settings.Clusters["prod"])
+	}
+}
+
+func TestSetMetricsQueryNeedsACluster(t *testing.T) {
+	t.Parallel()
+
+	// A blank context name would key an entry nothing could ever read back,
+	// and it would put an empty string into the file's cluster map.
+	service, _ := newSettingsService(t)
+
+	err := service.SetMetricsQuery(context.Background(), "", domain.DefaultMetricsQuerySettings())
+	if err == nil {
+		t.Fatal("SetMetricsQuery() error = nil, want a refusal")
+	}
+}

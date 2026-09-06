@@ -54,6 +54,7 @@ export type {
     Cluster,
     ClusterEvents,
     ClusterPods,
+    ClusterSettings,
     ClusterWorkloads,
     CodingAgentDTO,
     ConditionCount,

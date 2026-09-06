@@ -21,12 +21,21 @@
 //
 // # What it will not hold
 //
-// No credential of any kind, and the name of no object in any cluster. The
-// paths of kubeconfig files, and kubeconfig CONTEXT names, are the whole of
-// what is cluster-shaped here — a context name is a handle the operator's own
-// kubeconfig already gives them, on exactly the terms the history file names
-// already carry one. SECURITY.md states this exhaustively and treats a breach
-// of it as in scope.
+// No credential of any kind. The paths of kubeconfig files and kubeconfig
+// CONTEXT names are most of what is cluster-shaped here — a context name is a
+// handle the operator's own kubeconfig already gives them, on exactly the
+// terms the history file names already carry one.
+//
+// THE OBJECT-NAME RULE HAS EXACTLY ONE EXCEPTION, and it is named rather than
+// implied: a preferred monitoring backend (ADR 7) records a NAMESPACE and a
+// SERVICE NAME under clusters.<context>.metricsQuery. It is written only when
+// the operator picks a backend other than the one discovery ranks first, it
+// reveals that a monitoring stack is installed and where, and it says nothing
+// about any workload. SECURITY.md, the readme header this package writes into
+// the file, and domain.PreferredBackend each carry the same disclosure, and
+// store_test.go asserts that an ordinary file contains no such name.
+//
+// SECURITY.md treats any OTHER object name reaching this file as in scope.
 package settings
 
 import (
@@ -91,7 +100,11 @@ var readme = []string{
 	"This file is written by PodSteer. It holds the settings the application itself acts on.",
 	"It is re-read when PodSteer starts, so an edit made by hand applies on the next launch.",
 	"It carries kubeconfig file and folder PATHS and kubeconfig context names — never the",
-	"contents of a kubeconfig, never a credential, and never the name of anything in a cluster.",
+	"contents of a kubeconfig and never a credential.",
+	"ONE EXCEPTION names something in a cluster: if you choose which monitoring backend a",
+	"cluster's charts read from, clusters.<context>.metricsQuery records that Service's",
+	"namespace and name. It reveals that a monitoring stack is installed and where, and",
+	"nothing about any workload. Leave the choice on the default and it is not written here.",
 	"Deleting it restores the defaults. PodSteer rewrites it whole whenever a setting changes.",
 }
 
@@ -335,10 +348,43 @@ type proxySection struct {
 	NoProxy string `json:"noProxy,omitzero"`
 }
 
-// clusterSection and windowSection are the reserved per-cluster and window
-// sections. See domain.ClusterSettings.
-type clusterSection struct{}
+// clusterSection is one cluster's switches, keyed by kubeconfig context name.
+// See domain.ClusterSettings.
+//
+// NO VERSION BUMP FOR THESE FIELDS. They are new members of a section this
+// document already had, so a file written by v0.3 reads here with them absent
+// and normalises to the defaults, and a file written here reads in v0.3 with
+// them ignored. A version bump is for a field that MOVED, which is the case
+// the round-trip of unknown sections cannot rescue.
+type clusterSection struct {
+	NodeHistory  bool                `json:"nodeHistory,omitzero"`
+	MetricsQuery metricsQuerySection `json:"metricsQuery,omitzero"`
+}
 
+// metricsQuerySection is ADR 7's per-cluster value: whether a discovered
+// monitoring backend is queried, which one, and on what terms.
+type metricsQuerySection struct {
+	// Mode is "off", "manual" or "auto".
+	Mode string `json:"mode,omitzero"`
+
+	// PreferredNamespace and PreferredService are THE ONE OBJECT NAME THIS
+	// FILE CARRIES, and they are a named, disclosed exception to the readme
+	// above and to SECURITY.md rather than an oversight.
+	//
+	// They appear ONLY when the operator picked a backend other than the one
+	// discovery ranks first; omitzero is what makes that literally true of
+	// the bytes, and store_test.go asserts it. What they reveal is that a
+	// monitoring stack is installed and where — nothing about any workload.
+	// See domain.PreferredBackend.
+	PreferredNamespace string `json:"preferredNamespace,omitzero"`
+	PreferredService   string `json:"preferredService,omitzero"`
+
+	// Fleet is "filter" or "refuse".
+	Fleet string `json:"fleetPolicy,omitzero"`
+}
+
+// windowSection is the reserved window-geometry section. See
+// domain.WindowSettings.
 type windowSection struct{}
 
 // load reads the file into the store, falling back to defaults on anything it
@@ -430,8 +476,18 @@ func (d document) toDomain() domain.Settings {
 	}
 
 	value.Clusters = make(map[string]domain.ClusterSettings, len(d.Clusters))
-	for id := range d.Clusters {
-		value.Clusters[id] = domain.ClusterSettings{}
+	for id, cluster := range d.Clusters {
+		value.Clusters[id] = domain.ClusterSettings{
+			NodeHistory: cluster.NodeHistory,
+			MetricsQuery: domain.MetricsQuerySettings{
+				Mode: domain.MetricsQueryMode(cluster.MetricsQuery.Mode),
+				Preferred: domain.PreferredBackend{
+					Namespace: domain.NamespaceName(cluster.MetricsQuery.PreferredNamespace),
+					Service:   cluster.MetricsQuery.PreferredService,
+				},
+				Fleet: domain.FleetPolicy(cluster.MetricsQuery.Fleet),
+			},
+		}
 	}
 
 	return value
@@ -445,8 +501,20 @@ func toDocument(value domain.Settings, unknown map[string]jsontext.Value) docume
 	}
 
 	clusters := make(map[string]clusterSection, len(value.Clusters))
-	for id := range value.Clusters {
-		clusters[id] = clusterSection{}
+	for id, cluster := range value.Clusters {
+		clusters[id] = clusterSection{
+			NodeHistory: cluster.NodeHistory,
+			MetricsQuery: metricsQuerySection{
+				Mode: string(cluster.MetricsQuery.Mode),
+				// Written only when a choice was made: an empty
+				// PreferredBackend leaves both of these empty, omitzero drops
+				// them, and no object name reaches the file. That is the
+				// whole of what keeps the exception narrow.
+				PreferredNamespace: string(cluster.MetricsQuery.Preferred.Namespace),
+				PreferredService:   cluster.MetricsQuery.Preferred.Service,
+				Fleet:              string(cluster.MetricsQuery.Fleet),
+			},
+		}
 	}
 
 	return document{

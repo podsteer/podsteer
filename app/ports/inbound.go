@@ -366,4 +366,23 @@ type SettingsService interface {
 	// clamped to its ends. Order is precedence, so this is the control that
 	// decides which of two sources defining the same context name wins.
 	MoveKubeconfigSource(ctx context.Context, path string, delta int) error
+
+	// Cluster reports one cluster's per-cluster switches, defaults included.
+	//
+	// TOTAL: a cluster with no stored entry reports the defaults rather than
+	// an error or an empty value, because that is what having no entry means.
+	// A caller can therefore act on the answer without deciding what absence
+	// implies — which for a setting that governs whether anything is sent to
+	// a monitoring stack is the difference between off and undefined.
+	Cluster(ctx context.Context, id domain.ClusterID) (domain.ClusterSettings, error)
+
+	// SetMetricsQuery records whether a discovered monitoring backend may be
+	// queried for one cluster, which one answers, and on what terms.
+	//
+	// THERE IS DELIBERATELY NO SetNodeHistory BESIDE IT. Turning node history
+	// off erases the node history already recorded, so the setting and the
+	// prune are one act and belong on HistoryService, where SetRetention
+	// already pairs the two. A setter here would be a way to change the
+	// policy without the erasure it implies.
+	SetMetricsQuery(ctx context.Context, id domain.ClusterID, query domain.MetricsQuerySettings) error
 }

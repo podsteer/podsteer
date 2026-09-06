@@ -152,7 +152,29 @@ you configure one; per-cluster switches, keyed by your kubeconfig context name;
 and window positions. Everything else — theme, columns, groups, snoozed
 findings, the namespace each cluster was last left on — stays in the webview's
 own storage, and the two settings that hold OBJECT NAMES are deliberately among
-them, so that the claim above about this file stays exhaustive.
+them.
+
+**One object name can reach this file, and only if you put it there.** PodSteer
+notices a monitoring stack already installed in a cluster and, under Settings →
+Clusters, lets you say whether its charts may read from it — and, where a
+cluster runs more than one, **which** one answers. If you pick something other
+than the one PodSteer would have chosen, that choice is remembered as the
+namespace and name of that **Service**, under
+`clusters.<context>.metricsQuery`. This is the one exception to the rule above,
+and it is stated here rather than left to be discovered:
+
+- **What it reveals is that a monitoring stack is installed, and where.** It is
+  a Service you or your platform team installed — Prometheus, VictoriaMetrics —
+  not a name anything running in the cluster produced. No pod, node, namespace
+  of yours, workload, or any other object appears.
+- **It is written only when you choose.** Leave the choice on PodSteer's own
+  pick, or leave the setting off entirely, and neither the namespace nor the
+  Service name is written at all; turning the setting back off removes the
+  whole entry. There is a test asserting that a file with no explicit choice
+  contains neither field, so this is checked rather than intended.
+- **Nothing is sent to what it names.** This release records the setting and
+  discovers the candidates. Reading from a monitoring backend is a separate
+  change, and it will be described here before it ships.
 
 How it behaves is as much of the answer as what it holds. It is rewritten
 whole and atomically, into a temporary file in the same directory which is
@@ -430,10 +452,14 @@ else it can reach with your credentials, is not something PodSteer mediates.
   cluster. The file is made to be shared, so anything that leaks into it
   leaks to whoever it was shared with.
 - A credential of any kind reaching PodSteer's own `settings.json`, or that
-  file carrying the name of any object in any cluster. It is not made to be
-  shared, but it is exactly the file that ends up in a support bundle, a
-  screenshot or a dotfile repository — so the same rule applies to it, and it
-  is stated separately because a different piece of code writes it.
+  file carrying the name of any object in any cluster **other than the one
+  disclosed exception above** — the monitoring Service you chose under
+  Settings → Clusters. It is not made to be shared, but it is exactly the file
+  that ends up in a support bundle, a screenshot or a dotfile repository — so
+  the same rule applies to it, and it is stated separately because a different
+  piece of code writes it. That exception being wider than described — a
+  namespace or Service name written when you made no choice, or any other
+  object's name arriving beside it — is itself in scope.
 - A desktop notification carrying the name of any object in any cluster, or
   any Secret or credential material. Your operating system retains what it
   has shown you, so anything that reaches a notification reaches whatever
