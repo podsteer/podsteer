@@ -79,6 +79,7 @@
   import GaugeTrack from './GaugeTrack.svelte'
   import SettingsTransfer from './SettingsTransfer.svelte'
   import KubeconfigSources from './KubeconfigSources.svelte'
+  import ClusterSettingsPane from './ClusterSettingsPane.svelte'
   import {
     RefreshCw,
     Palette,
@@ -89,6 +90,7 @@
     Play,
     ArrowLeftRight,
     FolderCog,
+    Server,
     X,
   } from '@lucide/svelte'
 
@@ -138,6 +140,11 @@
     // Beside Data because both are about this machine's own disk: one is what
     // PodSteer writes there, the other what it reads from there.
     { id: 'kubeconfig', label: 'Kubeconfig', icon: FolderCog },
+    // After Kubeconfig, which is where the contexts these are keyed by come
+    // from — and not in Organise, where the read-only mark lives: that is a
+    // GROUP flag guarding against this interface's own bugs, while these are
+    // per-cluster facts the Go process acts on without a window.
+    { id: 'clusters', label: 'Clusters', icon: Server },
     // Next to Data, because both are about what leaves this machine, and
     // before Credits, which is the one section nobody browses for.
     { id: 'transfer', label: 'Export & import', icon: ArrowLeftRight },
@@ -898,6 +905,8 @@
           </section>
         {:else if section === 'kubeconfig'}
           <KubeconfigSources />
+        {:else if section === 'clusters'}
+          <ClusterSettingsPane />
         {:else if section === 'transfer'}
           <SettingsTransfer />
         {:else}

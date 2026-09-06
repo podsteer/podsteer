@@ -756,3 +756,196 @@ func validDocument(version int) string {
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError + 1}))
 }
+
+// --- the one object name this file may hold ---------------------------------
+
+func TestNoMonitoringServiceNameReachesTheFileWhenNoChoiceWasMade(t *testing.T) {
+	t.Parallel()
+
+	// THE GUARD ON THE DISCLOSED EXCEPTION. This file promises — in
+	// SECURITY.md, in the readme it writes into itself, and in
+	// domain.PreferredBackend — that it names nothing in a cluster except a
+	// monitoring backend the operator DELIBERATELY CHOSE. The narrowness of
+	// that "except" is the whole of what makes it acceptable, so it is
+	// asserted rather than intended: an operator who turns querying on and
+	// leaves the pick on the ranked default must find no Service name on
+	// their disk.
+	dir := t.TempDir()
+	store := openIn(t, dir)
+
+	if _, err := store.Update(context.Background(), func(settings *domain.Settings) error {
+		settings.Clusters["prod"] = domain.ClusterSettings{
+			NodeHistory: true,
+			MetricsQuery: domain.MetricsQuerySettings{
+				Mode:  domain.MetricsQueryAuto,
+				Fleet: domain.FleetRefuse,
+			},
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, FileName))
+	if err != nil {
+		t.Fatalf("reading the settings: %v", err)
+	}
+	text := string(raw)
+
+	// The keys themselves must be absent, not merely empty: omitzero is what
+	// makes the claim true of the BYTES, and a `"preferredService": ""` in a
+	// support bundle is a field somebody has to be told the meaning of.
+	for _, forbidden := range []string{"preferredNamespace", "preferredService"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("the document carries %q with no choice made:\n%s", forbidden, text)
+		}
+	}
+	// The decisions the operator DID make are still there, or the assertion
+	// above would pass on a document that saved nothing at all.
+	for _, wanted := range []string{`"mode": "auto"`, `"fleetPolicy": "refuse"`, `"nodeHistory": true`} {
+		if !strings.Contains(text, wanted) {
+			t.Errorf("the document is missing %s:\n%s", wanted, text)
+		}
+	}
+}
+
+func TestAChosenBackendIsWrittenAndSurvivesAReopen(t *testing.T) {
+	t.Parallel()
+
+	// The other half of the exception: when the operator DOES pick one, it is
+	// persisted — the point of the setting is that the choice outlives the
+	// session, which is exactly what makes it a disclosure rather than a
+	// session-only value.
+	dir := t.TempDir()
+	store := openIn(t, dir)
+
+	if _, err := store.Update(context.Background(), func(settings *domain.Settings) error {
+		settings.Clusters["prod"] = domain.ClusterSettings{
+			MetricsQuery: domain.MetricsQuerySettings{
+				Mode:      domain.MetricsQueryManual,
+				Preferred: domain.PreferredBackend{Namespace: "monitoring", Service: "prometheus-operated"},
+				Fleet:     domain.FleetFilter,
+			},
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	again := openIn(t, dir)
+	settings, err := again.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	cluster := settings.Cluster("prod")
+	if cluster.MetricsQuery.Mode != domain.MetricsQueryManual {
+		t.Errorf("mode = %q, want manual", cluster.MetricsQuery.Mode)
+	}
+	if cluster.MetricsQuery.Preferred.Namespace != "monitoring" {
+		t.Errorf("namespace = %q, want monitoring", cluster.MetricsQuery.Preferred.Namespace)
+	}
+	if cluster.MetricsQuery.Preferred.Service != "prometheus-operated" {
+		t.Errorf("service = %q, want prometheus-operated", cluster.MetricsQuery.Preferred.Service)
+	}
+}
+
+func TestTheReadmeDisclosesTheOneObjectNameTheFileCanHold(t *testing.T) {
+	t.Parallel()
+
+	// The readme is the disclosure an operator meets FIRST — before
+	// SECURITY.md, because it is at the top of the file they opened. It used
+	// to say the file never names anything in a cluster, and that sentence
+	// must not survive the field that made it false.
+	dir := t.TempDir()
+	store := openIn(t, dir)
+
+	if _, err := store.Update(context.Background(), func(settings *domain.Settings) error {
+		settings.History.Retention = domain.NewRetention(3)
+		return nil
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, FileName))
+	if err != nil {
+		t.Fatalf("reading the settings: %v", err)
+	}
+	text := string(raw)
+
+	if strings.Contains(text, "never the name of anything in a cluster") {
+		t.Errorf("the readme still makes the claim the preferred backend broke:\n%s", text)
+	}
+	if !strings.Contains(text, "ONE EXCEPTION") {
+		t.Errorf("the readme does not disclose the exception:\n%s", text)
+	}
+	if !strings.Contains(text, "monitoring backend") {
+		t.Errorf("the readme does not say what the exception is:\n%s", text)
+	}
+}
+
+func TestAClusterEntryThatSaysNothingIsNotWritten(t *testing.T) {
+	t.Parallel()
+
+	// A stanza per cluster ever connected would grow the file with context
+	// names carrying no decision — and a context name is the one
+	// cluster-shaped thing this file already carries, so writing more of them
+	// for nothing is worth refusing on its own terms.
+	dir := t.TempDir()
+	store := openIn(t, dir)
+
+	if _, err := store.Update(context.Background(), func(settings *domain.Settings) error {
+		settings.Clusters["opened-once"] = domain.ClusterSettings{}
+		settings.Clusters["prod"] = domain.ClusterSettings{
+			MetricsQuery: domain.MetricsQuerySettings{Mode: domain.MetricsQueryManual},
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, FileName))
+	if err != nil {
+		t.Fatalf("reading the settings: %v", err)
+	}
+	text := string(raw)
+
+	if strings.Contains(text, "opened-once") {
+		t.Errorf("an entry saying nothing was written:\n%s", text)
+	}
+	if !strings.Contains(text, "prod") {
+		t.Errorf("the entry carrying a decision was not written:\n%s", text)
+	}
+}
+
+func TestAFileWrittenBeforeThePerClusterFieldsExistedStillReads(t *testing.T) {
+	t.Parallel()
+
+	// v0.3 wrote `"clusters": {"prod": {}}`. These fields are new MEMBERS of
+	// a section that already existed, so no version bump — and the proof is
+	// that the older document reads here on the defaults rather than being
+	// set aside.
+	dir := t.TempDir()
+	seed(t, dir, `{
+  "kind": "PodSteerBackendSettings",
+  "version": 1,
+  "history": {"retentionDays": 2, "samplingIntervalSeconds": 30},
+  "clusters": {"prod": {}}
+}`)
+
+	store := openIn(t, dir)
+	if state := store.State(); state.Unreadable || state.Repaired != 0 {
+		t.Fatalf("State() = %+v, want a clean read", state)
+	}
+
+	settings, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := settings.Cluster("prod"); got != domain.DefaultClusterSettings() {
+		t.Errorf("Cluster() = %+v, want the defaults", got)
+	}
+	if got := settings.History.Retention.Days; got != 2 {
+		t.Errorf("retention = %d, want the file's 2", got)
+	}
+}

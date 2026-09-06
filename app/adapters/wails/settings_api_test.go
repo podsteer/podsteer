@@ -11,6 +11,7 @@ package wails
 // things.
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -165,5 +166,90 @@ func TestTheFromFutureNoticeWinsOverTheOthers(t *testing.T) {
 	}
 	if strings.Contains(notice, "fell back") {
 		t.Errorf("notice = %q, want only one sentence", notice)
+	}
+}
+
+func TestClusterSettingsCarriesOnlyTheFieldsItWasArguedFor(t *testing.T) {
+	t.Parallel()
+
+	// THE GUARD, and it is the same shape notification_api_test.go uses for
+	// NotificationRequest and settingsFile.test.ts uses for the export: a
+	// LITERAL field list, so nothing can join this DTO without somebody
+	// editing this list and arguing for it.
+	//
+	// It matters more here than on most DTOs, because two of these fields ARE
+	// object names. preferredNamespace and preferredService name a monitoring
+	// Service, and they are a NAMED, DISCLOSED EXCEPTION to the claim
+	// SECURITY.md makes about PodSteer's settings file — see
+	// domain.PreferredBackend. An exception stays an exception only while it
+	// is a fixed, short list, which is what this asserts.
+	//
+	// clusterId is a kubeconfig CONTEXT NAME, travelling on exactly the terms
+	// the settings file and a desktop notification already let one travel: a
+	// handle the operator's own machine gives them, identifying nothing
+	// inside any cluster.
+	want := []string{
+		"clusterId",
+		"nodeHistory",
+		"metricsQueryMode",
+		"preferredNamespace",
+		"preferredService",
+		"fleetPolicy",
+	}
+
+	shape := reflect.TypeOf(ClusterSettings{})
+	got := make([]string, 0, shape.NumField())
+	for i := range shape.NumField() {
+		tag, _, _ := strings.Cut(shape.Field(i).Tag.Get("json"), ",")
+		got = append(got, tag)
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ClusterSettings fields = %v, want exactly %v", got, want)
+	}
+}
+
+func TestClusterSettingsIsEveryFieldStringsAndOneBool(t *testing.T) {
+	t.Parallel()
+
+	// The DTO is deliberately flat and stringly typed: every enum crosses as
+	// its own wire value and is validated in the domain, so the bridge cannot
+	// be the place a new mode is silently accepted. A field of any other kind
+	// arriving here would be a nested shape — which is how a map of object
+	// names gets in without anybody noticing.
+	shape := reflect.TypeOf(ClusterSettings{})
+	for i := range shape.NumField() {
+		field := shape.Field(i)
+		switch field.Type.Kind() {
+		case reflect.String, reflect.Bool:
+		default:
+			t.Errorf("field %s is a %s; only strings and bools belong here", field.Name, field.Type)
+		}
+	}
+}
+
+func TestToClusterSettingsRendersTheDefaultsAsWordsRatherThanBlanks(t *testing.T) {
+	t.Parallel()
+
+	// An unconfigured cluster crosses the bridge as "off" and "filter", never
+	// as two empty strings the interface would have to know the defaults for.
+	// The same reason domain.Settings.Cluster is total: absence must not
+	// become a second place the default is decided.
+	got := toClusterSettings("prod", domain.DefaultClusterSettings())
+
+	if got.ClusterId != "prod" {
+		t.Errorf("clusterId = %q, want prod", got.ClusterId)
+	}
+	if got.MetricsQueryMode != string(domain.MetricsQueryOff) {
+		t.Errorf("mode = %q, want off", got.MetricsQueryMode)
+	}
+	if got.FleetPolicy != string(domain.FleetFilter) {
+		t.Errorf("fleetPolicy = %q, want filter", got.FleetPolicy)
+	}
+	if got.PreferredNamespace != "" || got.PreferredService != "" {
+		t.Errorf("preferred = %q/%q, want both empty", got.PreferredNamespace, got.PreferredService)
+	}
+	if got.NodeHistory {
+		t.Error("nodeHistory = true, want false by default")
 	}
 }

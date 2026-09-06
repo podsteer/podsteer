@@ -155,3 +155,69 @@ func (s *SettingsService) MoveKubeconfigSource(ctx context.Context, path string,
 		slog.String("path", path), slog.Int("by", delta))
 	return nil
 }
+
+// Cluster reports one cluster's per-cluster switches, defaults included.
+//
+// A READ THAT CANNOT FAIL TO ANSWER. domain.Settings.Cluster is total, so a
+// cluster nobody has configured reports the defaults rather than an absence
+// the caller would have to interpret. The error return is the store's, not
+// this decision's.
+func (s *SettingsService) Cluster(
+	ctx context.Context,
+	id domain.ClusterID,
+) (domain.ClusterSettings, error) {
+	settings, err := s.settings.Load(ctx)
+	if err != nil {
+		return domain.ClusterSettings{}, err
+	}
+	return settings.Cluster(id), nil
+}
+
+// SetMetricsQuery records ADR 7's per-cluster value: whether a discovered
+// monitoring backend may be queried, which one answers, and on what terms.
+//
+// NOTHING HERE SENDS A QUERY, and nothing in this build does. This writes the
+// switch; the reader that acts on it is a separate change, which is what
+// keeps that change's review about the request rather than about the setting.
+//
+// A value equal to the defaults leaves no stanza behind: the store's Normalise
+// drops an entry that says nothing, so turning this back off removes the
+// cluster's entry — and with it any monitoring Service name it held — rather
+// than leaving a section behind that names a context for no reason.
+func (s *SettingsService) SetMetricsQuery(
+	ctx context.Context,
+	id domain.ClusterID,
+	query domain.MetricsQuerySettings,
+) error {
+	if id == "" {
+		return errors.New("application: SetMetricsQuery needs a cluster")
+	}
+
+	_, err := s.settings.Update(ctx, func(settings *domain.Settings) error {
+		if settings.Clusters == nil {
+			settings.Clusters = map[string]domain.ClusterSettings{}
+		}
+		// READ-MODIFY-WRITE OF THE WHOLE ENTRY, so that setting the metrics
+		// query cannot clear a node-history opt-in the history service wrote
+		// into the same entry. Both features share this section by design;
+		// each must write only its own half.
+		entry := settings.Cluster(id)
+		entry.MetricsQuery = query
+		settings.Clusters[string(id)] = entry
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// THE MODE AND THE POLICY, NEVER THE PICK. The preferred backend is the
+	// one object name this feature holds, and a log line is a second place it
+	// would land — in a terminal, in a support bundle — for no diagnostic
+	// value the mode does not already carry.
+	s.logger.Info("metrics query settings changed",
+		slog.String("cluster", string(id)),
+		slog.String("mode", string(query.Mode)),
+		slog.String("fleetPolicy", string(query.Fleet)),
+		slog.Bool("backendChosen", !query.Preferred.IsZero()))
+	return nil
+}

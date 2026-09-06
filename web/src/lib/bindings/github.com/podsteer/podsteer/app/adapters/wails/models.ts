@@ -648,6 +648,53 @@ export interface ClusterPods {
 }
 
 /**
+ * ClusterSettings is one cluster's own switches, as the Clusters section of
+ * Settings shows them.
+ * 
+ * STRINGS AND A BOOL, and the field set is asserted against a literal list in
+ * settings_api_test.go — the same guard NotificationRequest carries, and for a
+ * sharper reason here: two of these fields are the ONE object name PodSteer's
+ * settings file holds, shipped as a named exception (see
+ * domain.PreferredBackend), and nothing else may join them without somebody
+ * editing that list and arguing for it.
+ * 
+ * There is no nodeHistory SETTER on this API. The field is reported because
+ * the section shows what a cluster is set to; changing it erases recorded
+ * history and therefore belongs on the history service beside SetRetention.
+ */
+export interface ClusterSettings {
+    /**
+     * ClusterId is the kubeconfig context name, which is what the settings
+     * file keys these by and the one cluster-shaped handle that travels here
+     * on the terms SECURITY.md already sets out.
+     */
+    "clusterId": string;
+
+    /**
+     * NodeHistory reports whether per-node samples are recorded (ADR 8).
+     */
+    "nodeHistory": boolean;
+
+    /**
+     * MetricsQueryMode is "off", "manual" or "auto".
+     */
+    "metricsQueryMode": string;
+
+    /**
+     * PreferredNamespace and PreferredService name the discovered backend the
+     * operator chose. BOTH EMPTY means the ranked pick answers, which is the
+     * state in which no object name is persisted at all.
+     */
+    "preferredNamespace": string;
+    "preferredService": string;
+
+    /**
+     * FleetPolicy is "filter" or "refuse".
+     */
+    "fleetPolicy": string;
+}
+
+/**
  * ClusterWorkloads is one cluster's share of a cross-cluster workload list.
  */
 export interface ClusterWorkloads {
@@ -1558,17 +1605,30 @@ export interface LocalShellSupportDTO {
  */
 export interface MetricsBackend {
     /**
-     * Kind is "prometheus", or empty when nothing was found.
+     * Kind is "prometheus" or "victoriametrics", or empty when nothing was
+     * found.
      */
     "kind": string;
 
     /**
-     * Label is what to show a person, e.g. "Prometheus in monitoring".
+     * Label is what to show a person, e.g. "VictoriaMetrics in monitoring".
+     * It NAMES THE PRODUCT that was found, because telling somebody they run
+     * Prometheus when they run VictoriaMetrics sends them looking for
+     * something that is not there.
      */
     "label": string;
     "namespace": string;
     "service": string;
     "port": string;
+
+    /**
+     * Prefix is the path the query API is mounted under, empty for
+     * Prometheus and a single-node VictoriaMetrics. Carried across so a
+     * consumer never has to re-derive it from the kind — and it is not the
+     * kind that decides it, since VictoriaMetrics has one value for each of
+     * its two deployment shapes.
+     */
+    "prefix": string;
 }
 
 /**

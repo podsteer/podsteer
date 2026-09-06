@@ -8,10 +8,16 @@
   the whole picture, and far more honest than persisting samples to disk to
   fake a history that would be full of gaps whenever the app was closed.
 
-  It is ADVICE, not a feature toggle: PodSteer does not query the backend, and
-  this note claims nothing about what it contains. Discovery found a service
-  whose name and labels say Prometheus; whether it scrapes this cluster's
-  kubelets is not something a service listing can establish.
+  It is ADVICE: this note claims nothing about what the backend contains.
+  Discovery found a service whose name and labels say Prometheus or
+  VictoriaMetrics; whether it scrapes this cluster's kubelets is not something
+  a service listing can establish. Reading from one is off until an operator
+  turns it on per cluster under Settings → Clusters, and no build has a reader
+  yet — so today this remains a sentence and nothing more.
+
+  `backend.label` NAMES THE PRODUCT rather than always saying Prometheus.
+  Telling somebody they run Prometheus when they run VictoriaMetrics sends
+  them looking for something that is not there.
 -->
 <script lang="ts">
   import { LineChart } from '@lucide/svelte'

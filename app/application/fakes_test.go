@@ -265,6 +265,15 @@ func (f *fakeKubernetes) DiscoverMetricsBackend(_ context.Context, _ domain.Clus
 	return f.metricsBackend, nil
 }
 
+// ListMetricsBackends answers with the one backend the fake holds, so the
+// list and the pick can never describe different clusters.
+func (f *fakeKubernetes) ListMetricsBackends(_ context.Context, _ domain.ClusterID) ([]domain.MetricsBackend, error) {
+	if !f.metricsBackend.Found() {
+		return nil, nil
+	}
+	return []domain.MetricsBackend{f.metricsBackend}, nil
+}
+
 func (f *fakeKubernetes) DiscoverKubeStateMetrics(_ context.Context, _ domain.ClusterID) (domain.KubeStateMetrics, error) {
 	return f.kubeState, nil
 }

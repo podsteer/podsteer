@@ -242,3 +242,110 @@ func (s *SettingsAPI) MoveKubeconfigSource(path string, delta int) error {
 	}
 	return nil
 }
+
+// --- per-cluster switches ---------------------------------------------------
+
+// ClusterSettings is one cluster's own switches, as the Clusters section of
+// Settings shows them.
+//
+// STRINGS AND A BOOL, and the field set is asserted against a literal list in
+// settings_api_test.go — the same guard NotificationRequest carries, and for a
+// sharper reason here: two of these fields are the ONE object name PodSteer's
+// settings file holds, shipped as a named exception (see
+// domain.PreferredBackend), and nothing else may join them without somebody
+// editing that list and arguing for it.
+//
+// There is no nodeHistory SETTER on this API. The field is reported because
+// the section shows what a cluster is set to; changing it erases recorded
+// history and therefore belongs on the history service beside SetRetention.
+type ClusterSettings struct {
+	// ClusterId is the kubeconfig context name, which is what the settings
+	// file keys these by and the one cluster-shaped handle that travels here
+	// on the terms SECURITY.md already sets out.
+	ClusterId string `json:"clusterId"`
+	// NodeHistory reports whether per-node samples are recorded (ADR 8).
+	NodeHistory bool `json:"nodeHistory"`
+	// MetricsQueryMode is "off", "manual" or "auto".
+	MetricsQueryMode string `json:"metricsQueryMode"`
+	// PreferredNamespace and PreferredService name the discovered backend the
+	// operator chose. BOTH EMPTY means the ranked pick answers, which is the
+	// state in which no object name is persisted at all.
+	PreferredNamespace string `json:"preferredNamespace"`
+	PreferredService   string `json:"preferredService"`
+	// FleetPolicy is "filter" or "refuse".
+	FleetPolicy string `json:"fleetPolicy"`
+}
+
+// GetClusterSettings reports the switches for each named cluster.
+//
+// A LIST IN ONE CALL rather than a call per row. The section lists every open
+// tab's context plus any context that has a stored entry, and asking for them
+// one at a time would be a bridge round trip per context in somebody's
+// kubeconfig every time the section is opened — for an answer that is a map
+// lookup in this process.
+//
+// A cluster with no stored entry is reported with the DEFAULTS rather than
+// omitted, because absence and "off, ranked pick, filter" are the same thing
+// (see domain.Settings.Cluster) and a caller that had to tell them apart
+// would be re-deriving that here.
+func (s *SettingsAPI) GetClusterSettings(clusterIds []string) ([]ClusterSettings, error) {
+	ctx, cancel := s.app.requestContext()
+	defer cancel()
+
+	out := make([]ClusterSettings, 0, len(clusterIds))
+	for _, id := range clusterIds {
+		cluster, err := s.settings.Cluster(ctx, domain.ClusterID(id))
+		if err != nil {
+			return nil, apiError(s.logger, "GetClusterSettings", err)
+		}
+		out = append(out, toClusterSettings(id, cluster))
+	}
+	return out, nil
+}
+
+func toClusterSettings(id string, cluster domain.ClusterSettings) ClusterSettings {
+	return ClusterSettings{
+		ClusterId:          id,
+		NodeHistory:        cluster.NodeHistory,
+		MetricsQueryMode:   string(cluster.MetricsQuery.Mode),
+		PreferredNamespace: string(cluster.MetricsQuery.Preferred.Namespace),
+		PreferredService:   cluster.MetricsQuery.Preferred.Service,
+		FleetPolicy:        string(cluster.MetricsQuery.Fleet),
+	}
+}
+
+// SetMetricsQuery records whether a discovered monitoring backend may be
+// queried for one cluster, which one answers, and on what terms.
+//
+// NOTHING HERE SENDS A QUERY. This build has no reader; it writes the switch
+// the reader will consult, which is what keeps that change's review about the
+// request rather than about the setting.
+//
+// LOOSE STRINGS, VALIDATED IN THE DOMAIN. An unknown mode, an unknown policy
+// or a preferred backend that is not a pair of DNS-1123 labels is refused by
+// domain.Settings.Validate before anything is written — a bad value arriving
+// from the interface is a bug in the interface, and this file is the one that
+// ends up in a support bundle.
+//
+// Passing both preferred names empty is how the operator returns to the ranked
+// pick, and it is the state in which no object name is written at all.
+func (s *SettingsAPI) SetMetricsQuery(
+	clusterId, mode, preferredNamespace, preferredService, fleetPolicy string,
+) error {
+	ctx, cancel := s.app.requestContext()
+	defer cancel()
+
+	query := domain.MetricsQuerySettings{
+		Mode: domain.MetricsQueryMode(mode),
+		Preferred: domain.PreferredBackend{
+			Namespace: domain.NamespaceName(preferredNamespace),
+			Service:   preferredService,
+		},
+		Fleet: domain.FleetPolicy(fleetPolicy),
+	}
+
+	if err := s.settings.SetMetricsQuery(ctx, domain.ClusterID(clusterId), query); err != nil {
+		return apiError(s.logger, "SetMetricsQuery", err)
+	}
+	return nil
+}

@@ -203,6 +203,25 @@ type MetricsPort interface {
 	// the same figures should be pointed at rather than competed with.
 	DiscoverMetricsBackend(ctx context.Context, id domain.ClusterID) (domain.MetricsBackend, error)
 
+	// ListMetricsBackends returns every monitoring service that could answer
+	// PromQL in the cluster, best first.
+	//
+	// THE SAME DISCOVERY, WITHOUT THE VERDICT. DiscoverMetricsBackend is the
+	// head of this list, and both are served from one cached answer — so
+	// offering an operator the candidates PodSteer did not pick costs nothing
+	// beyond the discovery that had already been made.
+	//
+	// It exists because ranking picks a default and a default is not a
+	// choice: a cluster running two monitoring stacks, or a Thanos querier
+	// beside the Prometheus it fronts, has a right answer nothing here can
+	// know. What the operator picks from is what was FOUND — never a URL they
+	// typed, which would be a new outbound destination and a second
+	// credential at rest. See ADR 7 and domain.PreferredBackend.
+	//
+	// Finding nothing, and being refused the look, are both ordinary and both
+	// return an empty list rather than an error.
+	ListMetricsBackends(ctx context.Context, id domain.ClusterID) ([]domain.MetricsBackend, error)
+
 	// DiscoverKubeStateMetrics looks for kube-state-metrics in the cluster.
 	//
 	// The same contract as DiscoverMetricsBackend, and separate from it

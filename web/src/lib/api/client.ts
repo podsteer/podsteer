@@ -110,10 +110,12 @@ import {
 import {
   AddKubeconfigFile as bindAddKubeconfigFile,
   AddKubeconfigFolder as bindAddKubeconfigFolder,
+  GetClusterSettings as bindGetClusterSettings,
   GetKubeconfigSources as bindGetKubeconfigSources,
   GetState as bindGetSettingsState,
   MoveKubeconfigSource as bindMoveKubeconfigSource,
   RemoveKubeconfigSource as bindRemoveKubeconfigSource,
+  SetMetricsQuery as bindSetMetricsQuery,
 } from '$bindings/settingsapi'
 import {
   ChooseDirectory as bindChooseDirectory,
@@ -244,6 +246,9 @@ export type HistorySettings = wails.HistorySettings
 export type SettingsState = wails.SettingsState
 /** One entry of the composed kubeconfig loading list. */
 export type KubeconfigSource = wails.KubeconfigSource
+
+/** One cluster's own switches, as the Clusters section of Settings shows them. */
+export type ClusterSettings = wails.ClusterSettings
 /** An assessed cluster: what is wrong, what is left, what is running. */
 export type Overview = wails.Overview
 /** One X.509 certificate, as shown by a TLS Secret's certificate inspection. */
@@ -679,6 +684,40 @@ export function removeKubeconfigSource(path: string): Promise<void> {
  */
 export function moveKubeconfigSource(path: string, delta: number): Promise<void> {
   return call(() => bindMoveKubeconfigSource(path, delta))
+}
+
+/**
+ * Reports the per-cluster switches for each named context.
+ *
+ * ONE CALL FOR THE WHOLE SECTION rather than one per row: the answer is a map
+ * lookup in the Go process, and a round trip per context in somebody's
+ * kubeconfig every time Settings opens would be paying a bridge crossing for
+ * it. A context with no stored entry comes back with the DEFAULTS, because
+ * that is what having no entry means.
+ */
+export function getClusterSettings(clusterIds: string[]): Promise<ClusterSettings[]> {
+  return callList(() => bindGetClusterSettings(clusterIds))
+}
+
+/**
+ * Records whether a discovered monitoring backend may be queried for one
+ * cluster, which one answers, and on what terms.
+ *
+ * NOTHING IS SENT ANYWHERE BY THIS. It writes the switch; reading from a
+ * monitoring backend is a separate change. Passing both preferred names empty
+ * returns the cluster to PodSteer's own ranked pick, which is the state in
+ * which no Service name is written to disk at all.
+ */
+export function setMetricsQuery(
+  clusterId: string,
+  mode: string,
+  preferredNamespace: string,
+  preferredService: string,
+  fleetPolicy: string,
+): Promise<void> {
+  return call(() =>
+    bindSetMetricsQuery(clusterId, mode, preferredNamespace, preferredService, fleetPolicy),
+  )
 }
 
 /** Changes how long samples are kept. Zero stops recording and erases what exists. */

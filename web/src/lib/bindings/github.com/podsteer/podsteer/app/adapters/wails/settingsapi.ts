@@ -33,6 +33,24 @@ export function AddKubeconfigFolder(path: string): $CancellablePromise<void> {
 }
 
 /**
+ * GetClusterSettings reports the switches for each named cluster.
+ * 
+ * A LIST IN ONE CALL rather than a call per row. The section lists every open
+ * tab's context plus any context that has a stored entry, and asking for them
+ * one at a time would be a bridge round trip per context in somebody's
+ * kubeconfig every time the section is opened — for an answer that is a map
+ * lookup in this process.
+ * 
+ * A cluster with no stored entry is reported with the DEFAULTS rather than
+ * omitted, because absence and "off, ranked pick, filter" are the same thing
+ * (see domain.Settings.Cluster) and a caller that had to tell them apart
+ * would be re-deriving that here.
+ */
+export function GetClusterSettings(clusterIds: string[] | null): $CancellablePromise<$models.ClusterSettings[] | null> {
+    return $Call.ByID(3325956685, clusterIds);
+}
+
+/**
  * GetKubeconfigSources reports the composed loading list, in precedence order.
  */
 export function GetKubeconfigSources(): $CancellablePromise<$models.KubeconfigSource[] | null> {
@@ -64,4 +82,25 @@ export function MoveKubeconfigSource(path: string, delta: number): $CancellableP
  */
 export function RemoveKubeconfigSource(path: string): $CancellablePromise<void> {
     return $Call.ByID(3157403548, path);
+}
+
+/**
+ * SetMetricsQuery records whether a discovered monitoring backend may be
+ * queried for one cluster, which one answers, and on what terms.
+ * 
+ * NOTHING HERE SENDS A QUERY. This build has no reader; it writes the switch
+ * the reader will consult, which is what keeps that change's review about the
+ * request rather than about the setting.
+ * 
+ * LOOSE STRINGS, VALIDATED IN THE DOMAIN. An unknown mode, an unknown policy
+ * or a preferred backend that is not a pair of DNS-1123 labels is refused by
+ * domain.Settings.Validate before anything is written — a bad value arriving
+ * from the interface is a bug in the interface, and this file is the one that
+ * ends up in a support bundle.
+ * 
+ * Passing both preferred names empty is how the operator returns to the ranked
+ * pick, and it is the state in which no object name is written at all.
+ */
+export function SetMetricsQuery(clusterId: string, mode: string, preferredNamespace: string, preferredService: string, fleetPolicy: string): $CancellablePromise<void> {
+    return $Call.ByID(4004385389, clusterId, mode, preferredNamespace, preferredService, fleetPolicy);
 }
