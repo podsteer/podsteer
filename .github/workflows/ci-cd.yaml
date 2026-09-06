@@ -332,6 +332,65 @@ jobs:
           VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
           PLATFORM: ${{ matrix.platform }}
 
+      # THE BUNDLE STATES ITS MINIMUM TWICE AND NOTHING CHECKED THEY AGREE.
+      #
+      # LSMinimumSystemVersion is what LaunchServices reads before it will open
+      # the app. The binary's own floor is what dyld enforces once it does, and
+      # it is per SLICE: a universal build carries one per architecture, in
+      # LC_BUILD_VERSION on anything modern and in the older
+      # LC_VERSION_MIN_MACOSX on older Intel objects. Slices legitimately
+      # DIFFER — v0.2.0 shipped x86_64 at 10.13 and arm64 at 11.0, which is
+      # correct, because Apple Silicon did not exist before macOS 11.
+      #
+      # So the invariant is not "all equal". It is that the plist matches the
+      # LOWEST slice: state anything higher and machines that could run the
+      # application are refused by LaunchServices; state anything lower and it
+      # is offered to machines whose slice dyld will not load.
+      #
+      # Nothing enforced that, and MACOS_MIN now lives in four places — the
+      # Makefile and two plists in this repository, and the Homebrew cask in
+      # podsteer/homebrew-tap. This is what keeps them related as it moves, and
+      # what lets the tap workflow read the floor out of the plist rather than
+      # parsing Mach-O on a Linux runner.
+      - name: Verify The macOS Minimum Is Stated Once
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          app=build/bin/PodSteer.app
+          binary="$app/Contents/MacOS/podsteer"
+
+          declared=$(plutil -extract LSMinimumSystemVersion raw -o - "$app/Contents/Info.plist")
+          # Compared on major.minor: the plist writes 13.0.0, the load commands
+          # write 13.0, and a deployment target carries no patch component.
+          declared_short=$(printf '%s' "$declared" | cut -d. -f1,2)
+
+          floors=""
+          for arch in $(lipo -archs "$binary"); do
+            # Either load command, whichever this slice carries.
+            floor=$(otool -arch "$arch" -l "$binary" | awk '
+              /^ *cmd LC_BUILD_VERSION/      { build = 1; next }
+              build && /^ *minos/            { print $2; exit }
+              /^ *cmd LC_VERSION_MIN_MACOSX/ { min = 1; next }
+              min && /^ *version/            { print $2; exit }')
+
+            if [ -z "$floor" ]; then
+              echo "::error::The $arch slice declares no macOS minimum at all."
+              exit 1
+            fi
+            echo "$arch targets $floor"
+            floors="$floors$floor\n"
+          done
+
+          lowest=$(printf "$floors" | sort -V | head -1)
+          echo "Info.plist declares $declared; the lowest slice targets $lowest"
+
+          if [ "$lowest" != "$declared_short" ]; then
+            echo "::error::LSMinimumSystemVersion is $declared but the lowest slice targets $lowest."
+            echo "::error::These come from MACOS_MIN in the Makefile and build/darwin/Info*.plist;"
+            echo "::error::run 'make macos-floor' and put the same number in both."
+            exit 1
+          fi
+
       # --- macOS signing and notarisation -----------------------------------
       #
       # SKIPPED ENTIRELY UNTIL THE SECRETS EXIST, so this can be merged before
