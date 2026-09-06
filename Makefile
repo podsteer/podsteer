@@ -401,7 +401,23 @@ bindings: embed-stub
 	@# CI drift check fails on a change that has no content behind it at all.
 	@find web/src/lib/bindings -type f -exec chmod 644 {} +
 
-web-build:
+# INSTALLS FIRST WHEN THE LOCKFILE HAS MOVED, and the reason is the failure it
+# replaces. A merge that adds a frontend dependency leaves every other checkout
+# with a package.json naming something node_modules does not have, and the
+# bundler's answer is "Rolldown failed to resolve import" with a stack trace
+# into vite — which names neither npm nor the lockfile, so the reader has no
+# way to know the fix is one command. It cost a real person a confused
+# evening; `npm ci` is twenty seconds and only runs when it is genuinely
+# stale.
+#
+# npm writes node_modules/.package-lock.json on every install, so make's own
+# rule — a target older than its prerequisite is out of date — answers the
+# question exactly, with no stamp of ours to keep in step.
+web/node_modules/.package-lock.json: web/package-lock.json web/package.json
+	@echo -e "${BLUE}Frontend dependencies are out of date; installing${NC}"
+	$(NPM) --prefix web ci
+
+web-build: web/node_modules/.package-lock.json
 	$(NPM) --prefix web run build
 
 # Regenerates the third-party licence inventory AND enforces the licence
@@ -451,7 +467,9 @@ clean:
 test:
 	go test -race -count=1 ./...
 
-check:
+# Depends on the same install guard web-build does: svelte-check and vitest
+# both read node_modules, and a stale one fails them in the same unhelpful way.
+check: web/node_modules/.package-lock.json
 	@echo -e "${BLUE}gofmt${NC}"
 	@test -z "$$(gofmt -l app main.go)" || (gofmt -l app main.go; echo -e "${RED}Files need formatting.${NC}"; exit 1)
 	@echo -e "${BLUE}go vet${NC}"
