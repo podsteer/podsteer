@@ -6,11 +6,13 @@
   buries the one BackOff that explains everything.
 -->
 <script lang="ts">
-  import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import DataTable, { ROW_MENU_COLUMN, type Column } from '$lib/components/DataTable.svelte'
   import type { CSVExport } from '$stores/activeTable.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
-  import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
+  import { type RowAction } from '$lib/components/RowMenu.svelte'
+  import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { isControlColumn } from '$lib/fixedColumns'
   import CustomCells from '$lib/components/CustomCells.svelte'
   import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
   import { formatAge } from '$lib/format'
@@ -53,8 +55,14 @@
     { id: 'age', label: 'Last seen', width: 116, numeric: true },
   ]
 
-  /** The built-in columns, then the operator's own — see $lib/customColumns. */
-  const columns = $derived<Column[]>([...COLUMNS, ...toColumns(session.customColumns)])
+  /** The built-in columns, then the operator's own — see $lib/customColumns —
+      and the row menu last, because it is the end of the row. This list has
+      no tick boxes, so the menu is the only fixed column on it. */
+  const columns = $derived<Column[]>([
+    ...COLUMNS,
+    ...toColumns(session.customColumns),
+    ROW_MENU_COLUMN,
+  ])
 
   /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
       repeated here rather than asked of either. */
@@ -65,7 +73,9 @@
 
   /** The event list's CSV export, mirroring exactly what each cell shows. */
   function exportCSV(): CSVExport {
-    const visible = columns.filter(isColumnVisible)
+    // The row menu is a control, not a column with text in it: exported, it
+    // would be a heading over a column of empty cells.
+    const visible = columns.filter((column) => !isControlColumn(column) && isColumnVisible(column))
 
     function cell(event: K8sEvent, id: string): string {
       const custom = parseCustomColumnId(id)
@@ -123,9 +133,13 @@
       <!-- Clickable like every other list. An event was the one row in the
            application that led nowhere, which left its message readable only
            as much of it as the column happened to fit. -->
+      <!-- The open row's ground is an OPAQUE token rather than the
+           translucent tint it used to be: the pinned menu column inherits
+           this row's own colour, and a translucent one lets the cells
+           scrolling underneath show through it. See app.css. -->
       <tr
         class="group/row cursor-pointer border-t border-outline-variant/40 transition-colors duration-100
-               {selected ? 'bg-secondary-container/40' : 'hover:bg-surface-container-low'}"
+               {selected ? 'bg-row-open-secondary' : 'bg-surface hover:bg-surface-container-low'}"
         onclick={() => session.openDetail(event.name, event.namespace)}
       >
         {#if isVisible('type')}
@@ -180,15 +194,7 @@
           </td>
         {/if}
         <CustomCells specs={session.customColumns} row={event} {isVisible} />
-        <!-- Stops the click here: the row itself opens the detail drawer,
-             and a click aimed at the menu — or at one of its items — must
-             not also do that. Named domEvent, not event: `event` in this
-             scope is already the row's own K8sEvent. -->
-        <td class="px-2" onclick={(domEvent) => domEvent.stopPropagation()}>
-          <div class="flex justify-end">
-            <RowMenu actions={actionsFor(event)} label={event.reason} />
-          </div>
-        </td>
+        <RowMenuCell actions={actionsFor(event)} label={event.reason} />
       </tr>
     {/each}
   {/snippet}

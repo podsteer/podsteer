@@ -103,6 +103,9 @@ function populateEverything(): void {
   preferences.setColumnWidth('v1/pods', 'name', 320)
   preferences.toggleColumn('v1/pods', 'age')
   preferences.addCustomColumn('apps/v1/deployments', { source: 'label', key: 'team' })
+  // Away from its default, so the round trip has something to restore rather
+  // than passing on a field nobody moved.
+  preferences.toggleEdgeFixed('menu')
 
   const projectError = organisation.createProject('Checkout')
   expect(projectError).toBeNull()
@@ -171,6 +174,17 @@ describe('what a settings file must never carry', () => {
     // "Pinned" and "Recent". It cannot come to hold an object name the way
     // `pinnedKinds` and `namespaceByCluster` can, because nothing writes into
     // it but the two toggles in Navigator.svelte.
+    //
+    // `fixedEdges` was argued for on 2026-09-06 and admitted. It is two
+    // booleans under two FIXED keys — `select` and `menu`, the two control
+    // columns named in $lib/fixedColumns — saying whether each stays put
+    // while a table scrolls sideways. It is a display preference of exactly
+    // the kind `wrapLines` already is, and there is no key an object name
+    // could arrive under: the reader (asFixedEdges) keeps only those two
+    // names and drops the rest, and the only writer is the Fixed control in
+    // ColumnMenu.svelte. It travels for the reason `columns` already does —
+    // it is how somebody arranged a table to read, which is what this
+    // document is for.
     expect(Object.keys(preferences.exportable()).sort()).toEqual(
       [
         'alertSounds',
@@ -185,6 +199,7 @@ describe('what a settings file must never carry', () => {
         'detailWidthFraction',
         'expandedCategories',
         'findingsExpanded',
+        'fixedEdges',
         'localPortByPortName',
         'localPortByRemotePort',
         'mapOrientation',

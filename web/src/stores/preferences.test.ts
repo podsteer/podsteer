@@ -562,3 +562,66 @@ describe('merging a colleague\'s folded sections', () => {
     expect(merged.collapsedSections).toEqual(['Pinned'])
   })
 })
+
+describe('the columns that stay put while a table scrolls sideways', () => {
+  beforeEach(() => {
+    // A describe above this one unstubs every global when it is done, and
+    // happy-dom has no localStorage of its own — so this restores one rather
+    // than reading `undefined.getItem`. A fresh one per test, since these
+    // read back exactly what the store wrote.
+    vi.stubGlobal('localStorage', memoryStorage())
+    preferences.fixedEdges = { select: true, menu: true }
+  })
+
+  it('fixes both edges until somebody says otherwise', () => {
+    expect(preferences.isEdgeFixed('select')).toBe(true)
+    expect(preferences.isEdgeFixed('menu')).toBe(true)
+  })
+
+  it('turns one edge off without touching the other', () => {
+    preferences.toggleEdgeFixed('menu')
+    expect(preferences.isEdgeFixed('menu')).toBe(false)
+    expect(preferences.isEdgeFixed('select')).toBe(true)
+  })
+
+  it('is application-wide, so resetting one kind of column layout leaves it alone', () => {
+    preferences.setColumnWidth('v1/pods', 'name', 400)
+    preferences.toggleEdgeFixed('select')
+
+    preferences.resetColumns('v1/pods')
+
+    expect(preferences.columnWidth('v1/pods', 'name')).toBeUndefined()
+    expect(preferences.isEdgeFixed('select')).toBe(false)
+  })
+
+  it('survives a restart, and an older blob loads with both edges fixed', async () => {
+    preferences.toggleEdgeFixed('select')
+
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    expect(stored.fixedEdges).toEqual({ select: false, menu: true })
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.isEdgeFixed('select')).toBe(false)
+    expect(reloaded.isEdgeFixed('menu')).toBe(true)
+
+    // BACKWARD COMPATIBILITY, as for pinnedKinds and customColumns: a blob
+    // written before this setting existed loads at the default rather than
+    // with an undefined that reads as "not fixed".
+    delete stored.fixedEdges
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+
+    const { preferences: fresh } = await reimportPreferences()
+    expect(fresh.isEdgeFixed('select')).toBe(true)
+    expect(fresh.isEdgeFixed('menu')).toBe(true)
+  })
+
+  it('repairs a stored value key by key rather than adopting it whole', async () => {
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    // A key this build does not know, and one whose value is not a boolean.
+    stored.fixedEdges = { select: 'yes', menu: false, sidebar: true }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.fixedEdges).toEqual({ select: true, menu: false })
+  })
+})

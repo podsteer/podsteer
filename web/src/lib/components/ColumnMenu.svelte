@@ -30,6 +30,7 @@
     type CustomColumnSpec,
     type MetadataKeys,
   } from '$lib/customColumns'
+  import { controlKindOf, isControlColumn, type EdgeColumn } from '$lib/fixedColumns'
   import { Columns3, RotateCcw, Pin, Plus, X, ChevronUp, ChevronDown } from '@lucide/svelte'
 
   interface Props {
@@ -61,6 +62,26 @@
    * merged column list catches up a tick later, through the same store.
    */
   const custom = $derived(preferences.customColumnsFor(kindId))
+
+  /**
+   * The control columns this table actually has, in row order.
+   *
+   * Read off `columns` rather than listed here, so a view with no tick boxes
+   * — the event and namespace lists — is not offered a switch for a column it
+   * does not draw. The Fixed choice itself is application-wide (see
+   * preferences.fixedEdges): turning it off here turns it off on every list,
+   * which is the point. A reading habit is not a fact about pods.
+   */
+  const edges = $derived(
+    columns.flatMap((column) => {
+      const kind = controlKindOf(column)
+      return kind === null ? [] : [{ kind, label: column.label }]
+    }),
+  )
+
+  function toggleFixed(edge: EdgeColumn): void {
+    preferences.toggleEdgeFixed(edge)
+  }
 
   function isHidden(column: Column): boolean {
     if (column.pinned) return false
@@ -181,9 +202,10 @@
       </p>
 
       <ul class="max-h-80 overflow-auto py-0.5">
-        <!-- A selection column is not a column to choose: nothing to hide,
-             nothing to name. See DataTable's Column.select. -->
-        {#each builtIn.filter((column) => !column.select) as column (column.id)}
+        <!-- A control column is not a column to choose: nothing to hide,
+             nothing to name, nothing to sort by. Both of them appear under
+             Fixed below instead, where the only choice they offer is. -->
+        {#each builtIn.filter((column) => !isControlColumn(column)) as column (column.id)}
           <li>
             <label
               class="flex cursor-pointer items-center gap-2.5 rounded-sm px-3 py-1.5 text-body-small
@@ -205,6 +227,40 @@
           </li>
         {/each}
       </ul>
+
+      {#if edges.length > 0}
+        <!-- The two control columns, and the one choice they offer: whether
+             each stays put while the table scrolls sideways. They are not in
+             the list above because there is nothing there to decide — neither
+             can be hidden, sorted by or resized. -->
+        <p
+          class="mt-1 border-t border-outline-variant/30 px-3 pt-2 pb-1 text-[10px] font-semibold
+                 uppercase tracking-wider text-on-surface-variant/60"
+        >
+          Fixed
+        </p>
+        <ul class="py-0.5" aria-label="Fixed columns">
+          {#each edges as edge (edge.kind)}
+            <li>
+              <label
+                class="flex cursor-pointer items-center gap-2.5 rounded-sm px-3 py-1.5 text-body-small
+                       text-on-surface transition-colors duration-75 hover:bg-surface-container-highest"
+              >
+                <input
+                  type="checkbox"
+                  checked={preferences.isEdgeFixed(edge.kind)}
+                  onchange={() => toggleFixed(edge.kind)}
+                  class="size-3.5 accent-primary"
+                />
+                <span class="flex-1 truncate">{edge.label}</span>
+              </label>
+            </li>
+          {/each}
+        </ul>
+        <p class="px-3 pb-1 text-[11px] text-on-surface-variant/60">
+          Stays in view while the table scrolls sideways. Applies to every list.
+        </p>
+      {/if}
 
       <!-- The operator's own columns. Each is one key, shown as its heading,
            with where it reads from beside it: a label `team` and an

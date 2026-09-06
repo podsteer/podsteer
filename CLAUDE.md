@@ -251,6 +251,45 @@ same projection and compare them. The generic table reads both labels and the
 projected annotations from the `PartialObjectMetadata` the server already
 attaches to each row (`includeObject=Metadata`) — never a GET per row.
 
+## The two edge columns stay put, and that makes the row backgrounds opaque
+
+Every list pins its selection tick box to the left edge and its row menu to
+the right, so both stay reachable when a wide table — a cluster with custom
+columns, a narrow window — is scrolled sideways. `web/src/lib/fixedColumns.ts`
+holds the arithmetic (which columns, which edge, what offset, and when to draw
+the boundary hairline), `DataTable.svelte` publishes the switches and offsets
+onto the `<table>`, and its own `<style>` block acts on them through `:global`
+— the cells belong to each view, not to DataTable.
+
+Three things there are load-bearing and are not obvious from any one file:
+
+- **A ROW'S BACKGROUND MUST BE OPAQUE.** A sticky cell paints only what it was
+  given, so the pinned cells take `background-color: inherit` and the row is
+  what supplies the colour. That only works because the state tints are now
+  pre-composited tokens in `app.css` (`--row-open`, `--row-ticked`,
+  `--row-open-secondary`) rather than the translucent `bg-primary/8` they used
+  to be — each is the identical colour, being that alpha over `--surface`,
+  which is the section behind every table. Changing one back to a translucent
+  utility does not fail anywhere: it looks right on a still page and lets the
+  scrolling columns show through the pinned ones the moment somebody drags the
+  scrollbar. Header cells cannot inherit anything — a `<tr>` has no background
+  and the band belongs to the `<thead>`, which scrolls out from under a cell
+  that does not — so they name `--table-header` instead.
+- **The elastic column sits BETWEEN the last real column and the menu.** The
+  fixed layout needs one width-less column to absorb the surplus, and the menu
+  has to be at the right-hand end whether or not there is any. So
+  `RowMenuCell.svelte` draws both cells, in that order, and no view writes
+  either by hand. The row menu is a real column (`ROW_MENU_COLUMN`, appended
+  last after the operator's own) rather than something falling into the slack
+  by arithmetic, which is what it was until 2026-09-06 — and which is why the
+  header used to hold one cell fewer than every row.
+- **`Column.pinned` and "fixed" are different things.** `pinned` means the
+  column cannot be hidden; fixed means it does not scroll. The row menu is
+  both, the status column is neither, and the two are decided in different
+  places — `pinned` per column by the view, fixed per EDGE and
+  application-wide in `preferences.fixedEdges`, because keeping the tick box
+  in view is a reading habit like `wrapLines` rather than a fact about pods.
+
 ## Counting is `limit=1`, never `len(list)`
 
 Kubernetes has no endpoint that reports how many objects a namespace holds, and

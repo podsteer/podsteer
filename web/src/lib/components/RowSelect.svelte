@@ -25,7 +25,14 @@
 </script>
 
 <!-- Stops the click here: the row itself opens the detail drawer. -->
-<td class="w-10 py-1.5 pr-1 pl-5" onclick={(event) => event.stopPropagation()}>
+<!-- `data-edge` marks this as the left-hand control column. DataTable's own
+     stylesheet is what acts on it, and only when the operator has that edge
+     fixed — see $lib/fixedColumns. -->
+<td
+  data-edge="select"
+  class="w-10 py-1.5 pr-1 pl-5"
+  onclick={(event) => event.stopPropagation()}
+>
   <input
     type="checkbox"
     data-row-select

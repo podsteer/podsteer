@@ -11,10 +11,11 @@
   and the column menu still offers them.
 -->
 <script lang="ts">
-  import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import DataTable, { ROW_MENU_COLUMN, type Column } from '$lib/components/DataTable.svelte'
   import type { CSVExport } from '$stores/activeTable.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
-  import RowMenu, { type RowAction } from '$lib/components/RowMenu.svelte'
+  import { type RowAction } from '$lib/components/RowMenu.svelte'
+  import RowMenuCell from '$lib/components/RowMenuCell.svelte'
   import CustomCells from '$lib/components/CustomCells.svelte'
   import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
   import RowSelect from '$lib/components/RowSelect.svelte'
@@ -119,6 +120,8 @@
     ...(KindIcon ? [{ id: 'kind', label: 'Kind', width: 44, icon: CircleDot, pinned: true }] : []),
     ...printed,
     ...custom,
+    // The row menu last, because it is the end of the row.
+    ROW_MENU_COLUMN,
   ])
 
   /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
@@ -178,10 +181,18 @@
         session.selectedName === row.name && session.selectedNamespace === row.namespace}
       {@const key = keyOf(row)}
       {@const ticked = !!row.name && session.selection.has(key)}
+      <!-- The state grounds are OPAQUE tokens rather than the translucent
+           tints they used to be: the pinned columns inherit this row's own
+           colour, and a translucent one lets the cells scrolling underneath
+           show through them. See the row grounds in app.css. -->
       <tr
         class="group/row border-t border-outline-variant/40 transition-colors duration-100
                {row.name ? 'cursor-pointer' : ''}
-               {selected ? 'bg-secondary-container/40' : ticked ? 'bg-primary/5' : 'hover:bg-surface-container-low'}"
+               {selected
+          ? 'bg-row-open-secondary'
+          : ticked
+            ? 'bg-row-ticked'
+            : 'bg-surface hover:bg-surface-container-low'}"
         aria-selected={ticked}
         onclick={() => row.name && session.openDetail(row.name, row.namespace)}
       >
@@ -192,7 +203,12 @@
             ontoggle={(range) => session.selection.toggle(key, range)}
           />
         {:else}
-          <td></td>
+          <!-- A row the server printed with no name has nothing to tick, but
+               it still needs a cell in the selection COLUMN — and that cell
+               has to be pinned like every other one, or the columns scrolling
+               past show through this row alone while the rows above and below
+               it stay covered. -->
+          <td data-edge="select"></td>
         {/if}
         {#if KindIcon && isVisible('kind')}
           <td class="py-1.5 pr-3 pl-5">
@@ -214,16 +230,10 @@
           {/if}
         {/each}
         <CustomCells specs={session.customColumns} {row} {isVisible} />
-        <!-- Stops the click here: the row itself opens the detail drawer,
-             and a click aimed at the menu — or at one of its items — must
-             not also do that. -->
-        <td class="px-2" onclick={(event) => event.stopPropagation()}>
-          {#if row.name}
-            <div class="flex justify-end">
-              <RowMenu actions={actionsFor(row)} label={row.name} />
-            </div>
-          {/if}
-        </td>
+        <!-- A nameless row offers no actions, so the cell is drawn and the
+             control is not — see RowMenu, which renders nothing for an empty
+             list. The CELL still has to be there: it is a column now. -->
+        <RowMenuCell actions={row.name ? actionsFor(row) : []} label={row.name} />
       </tr>
     {/each}
   {/snippet}
