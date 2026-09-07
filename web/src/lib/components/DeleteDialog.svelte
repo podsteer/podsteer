@@ -12,8 +12,8 @@
   import { modal } from '$lib/modal'
   import { del } from '$lib/kubectl'
   import Button from './Button.svelte'
-  import KubectlHint from './KubectlHint.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import DialogFooter from './DialogFooter.svelte'
   import { nameConfirmed } from '$lib/confirm'
   import { TriangleAlert } from '@lucide/svelte'
 
@@ -108,11 +108,6 @@
       This action cannot be undone.
     </p>
 
-    {#if resourceName}
-      <div class="mt-4">
-        <KubectlHint command={del(ctx, resource, resourceName, namespace || undefined)} />
-      </div>
-    {/if}
     {#if requiresTypedName}
       <label class="mt-4 block">
         <span class="text-body-medium text-on-surface-variant">
@@ -134,7 +129,7 @@
       </p>
     {/if}
 
-    <div class="mt-6 flex justify-end gap-3">
+    <DialogFooter command={resourceName ? del(ctx, resource, resourceName, namespace || undefined) : ''}>
       <Button variant="outlined" onclick={onclose}>Cancel</Button>
       <Button
         variant="filled"
@@ -144,6 +139,6 @@
       >
         Delete
       </Button>
-    </div>
+    </DialogFooter>
   </div>
 {/if}

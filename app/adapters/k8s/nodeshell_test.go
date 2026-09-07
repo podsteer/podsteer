@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	clientgotesting "k8s.io/client-go/testing"
 
 	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // TestBuildNodeShellPodSpec asserts every field the node shell relies on. Each
@@ -270,6 +272,12 @@ func TestStartNodeShellDeletesThePodWhenItNeverRuns(t *testing.T) {
 }
 
 // TestWaitPodRunningTimesOut drives the timeout path directly.
+//
+// A pod that is merely Pending, with no container saying why, is the case the
+// wait must sit through — so this is the one failure that still costs the full
+// timeout. What it must not cost is the reason: the error carries the phase
+// the pod was actually in, because "it did not start" and "it was still
+// Pending" send somebody to different places.
 func TestWaitPodRunningTimesOut(t *testing.T) {
 	client := fake.NewSimpleClientset(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "stuck", Namespace: "kube-system"},
@@ -280,7 +288,10 @@ func TestWaitPodRunningTimesOut(t *testing.T) {
 	if err == nil {
 		t.Fatal("waitPodRunning() error = nil, want a timeout for a pod stuck Pending")
 	}
-	if !strings.Contains(err.Error(), "did not start") {
-		t.Fatalf("waitPodRunning() error = %v, want it to say the pod did not start", err)
+	if !errors.Is(err, ports.ErrPodDidNotStart) {
+		t.Fatalf("waitPodRunning() error = %v, want it classified as a pod that did not start", err)
+	}
+	if !strings.Contains(err.Error(), "Pending") {
+		t.Fatalf("waitPodRunning() error = %v, want the phase it was still in", err)
 	}
 }

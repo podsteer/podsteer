@@ -15,8 +15,8 @@
   import { rollbackWorkload } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import Button from './Button.svelte'
-  import KubectlHint from './KubectlHint.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import DialogFooter from './DialogFooter.svelte'
   import { TriangleAlert, Check, Loader } from '@lucide/svelte'
 
   interface Props {
@@ -166,8 +166,6 @@
     {/if}
 
     <div class="mt-4 flex flex-col gap-2">
-      <KubectlHint command={rolloutUndo(ctx, kind, name, namespace, toRevision)} />
-
       <div class="min-h-[2.5rem] rounded-sm border border-outline-variant/60 bg-surface p-3 text-body-medium">
         {#if previewing}
           <p class="flex items-center gap-2 text-on-surface-variant">
@@ -200,7 +198,7 @@
       </p>
     {/if}
 
-    <div class="mt-6 flex justify-end gap-3">
+    <DialogFooter command={rolloutUndo(ctx, kind, name, namespace, toRevision)}>
       <Button variant="outlined" onclick={onclose}>Cancel</Button>
       <Button variant="outlined" loading={previewing} disabled={confirming} onclick={handlePreview}>
         Preview
@@ -214,6 +212,6 @@
       >
         Roll back
       </Button>
-    </div>
+    </DialogFooter>
   </div>
 {/if}

@@ -26,8 +26,8 @@
   import { changedImages, type ImageChange } from '$lib/setImage'
   import type { PodTemplate } from '$lib/podTemplate'
   import Button from './Button.svelte'
-  import KubectlHint from './KubectlHint.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import DialogFooter from './DialogFooter.svelte'
   import { TriangleAlert, Check } from '@lucide/svelte'
 
   interface Props {
@@ -93,6 +93,21 @@
 
   const changes = $derived(changedImages(template, edits))
   const hasChanges = $derived(changes.length > 0)
+
+  /**
+   * Every command this dialog is about to run, in template order — which is
+   * also the order somebody pasting them into a shell needs them in.
+   *
+   * One panel rather than one per container: the list used to print a
+   * separate bordered strip for each changed image, so setting three images
+   * pushed the buttons off the bottom of the dialog to show three lines
+   * nobody had asked for yet.
+   */
+  const applyCommands = $derived(
+    changes
+      .map((change) => kubectlSetImage(ctx, kind, name, namespace, change.container, change.image))
+      .join('\n'),
+  )
 
   let applying = $state(false)
   /** Container names successfully written so far, in the order they were applied. */
@@ -226,17 +241,6 @@
       </div>
     {/if}
 
-    <!-- Live: one hint per row currently changed, so the preview always
-         matches what Apply is about to send — the same convention
-         ScaleDialog's single hint follows. -->
-    {#if changes.length > 0}
-      <div class="mt-4 flex flex-col gap-2">
-        {#each changes as change (change.container)}
-          <KubectlHint command={kubectlSetImage(ctx, kind, name, namespace, change.container, change.image)} />
-        {/each}
-      </div>
-    {/if}
-
     {#if failure}
       <p class="mt-4 text-body-medium text-on-surface-variant">
         {succeeded.length > 0
@@ -245,11 +249,11 @@
       </p>
     {/if}
 
-    <div class="mt-6 flex justify-end gap-3">
+    <DialogFooter command={applyCommands}>
       <Button variant="outlined" onclick={onclose}>{failure ? 'Close' : 'Cancel'}</Button>
       <Button variant="filled" disabled={!hasChanges} loading={applying} onclick={handleApply}>
         {applying ? 'Applying…' : 'Apply'}
       </Button>
-    </div>
+    </DialogFooter>
   </div>
 {/if}

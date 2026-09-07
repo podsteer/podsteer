@@ -2157,6 +2157,7 @@
     kind={session.selectedKind?.singular}
     name={session.selectedName ?? ''}
     label="Manifest"
+    onrestore={() => (maximized = null)}
     onclose={() => (maximized = null)}
   >
     {@render yamlSurface()}
@@ -2188,6 +2189,7 @@
     kind={session.selectedKind?.singular}
     name={session.selectedName ?? ''}
     label="Logs"
+    onrestore={() => (maximized = null)}
     onclose={() => (maximized = null)}
   >
     {@render logsSurface()}
@@ -2199,6 +2201,7 @@
     kind={session.selectedKind?.singular}
     name={session.selectedName ?? ''}
     label="Terminal"
+    onrestore={() => (maximized = null)}
     onclose={() => (maximized = null)}
   >
     {@render terminalSurface()}
@@ -2210,6 +2213,7 @@
     kind={session.selectedKind?.singular}
     name={session.selectedName ?? ''}
     label="Map"
+    onrestore={() => (maximized = null)}
     onclose={() => (maximized = null)}
   >
     {@render mapSurface()}

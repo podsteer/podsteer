@@ -6,8 +6,8 @@
   import { modal } from '$lib/modal'
   import { rolloutRestart } from '$lib/kubectl'
   import Button from './Button.svelte'
-  import KubectlHint from './KubectlHint.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import DialogFooter from './DialogFooter.svelte'
   import { TriangleAlert } from '@lucide/svelte'
 
   interface Props {
@@ -102,15 +102,9 @@
       This will trigger a rolling update of all pods.
     </p>
 
-    {#if workloadName}
-      <div class="mt-4">
-        <KubectlHint command={rolloutRestart(ctx, workloadKind, workloadName, namespace)} />
-      </div>
-    {/if}
-
-    <div class="mt-6 flex justify-end gap-3">
+    <DialogFooter command={workloadName ? rolloutRestart(ctx, workloadKind, workloadName, namespace) : ''}>
       <Button variant="outlined" onclick={onclose}>Cancel</Button>
       <Button variant="filled" onclick={onconfirm}>Restart</Button>
-    </div>
+    </DialogFooter>
   </div>
 {/if}

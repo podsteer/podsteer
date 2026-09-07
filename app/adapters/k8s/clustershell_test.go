@@ -497,3 +497,129 @@ func TestAnRbacDenialOnTheSameCreateStaysForbidden(t *testing.T) {
 		t.Error("an RBAC denial was classified as an admission refusal")
 	}
 }
+
+// blockedReactor marks every pod it creates Pending with the container status
+// a kubelet writes when the image runs as root and the pod asked for
+// non-root — the exact failure a `-nonroot` image exists to avoid, and the
+// one an operator hits by pasting the ordinary tag into the image field.
+func blockedReactor(action clientgotesting.Action) (bool, runtime.Object, error) {
+	create, ok := action.(clientgotesting.CreateAction)
+	if !ok {
+		return false, nil, nil
+	}
+	pod, ok := create.GetObject().(*corev1.Pod)
+	if !ok {
+		return false, nil, nil
+	}
+	pod.Status.Phase = corev1.PodPending
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name: clusterShellContainerName,
+		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+			Reason:  "CreateContainerConfigError",
+			Message: `container has runAsNonRoot and image will run as root (pod: "podsteer-shell-abcde_shop(1)", container: shell)`,
+		}},
+	}}
+	return false, nil, nil
+}
+
+// TestAPodThatWillNotStartFailsAtOnceInTheKubeletsOwnWords is the bug this
+// pair of changes exists for.
+//
+// The pod was ACCEPTED — admission had no objection — and then never ran,
+// because the image somebody typed runs as root while this pod asks not to.
+// The kubelet says so precisely. PodSteer waited out its whole sixty seconds
+// and then reported "an unexpected error occurred", which is three sentences
+// short of the answer sitting in the pod's own status the entire time.
+func TestAPodThatWillNotStartFailsAtOnceInTheKubeletsOwnWords(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("create", "pods", blockedReactor)
+	adapter := newClusterShellAdapter("dev", client)
+
+	started := time.Now()
+	_, err := adapter.StartClusterShell(context.Background(), "dev", "shop", testShellImage)
+	if err == nil {
+		t.Fatal("StartClusterShell() error = nil, want the kubelet's refusal")
+	}
+
+	// FAST, not eventually. The whole point is that a decision the kubelet has
+	// already taken is not something to wait out; a minute of nothing reads as
+	// a hung application rather than as a wrong image.
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Errorf("took %s to report a pod that was never going to start", elapsed)
+	}
+	if !errors.Is(err, ports.ErrPodDidNotStart) {
+		t.Errorf("error = %v, want it classified as a pod that did not start", err)
+	}
+	if !strings.Contains(err.Error(), "CreateContainerConfigError") {
+		t.Errorf("error = %q, want the kubelet's reason in it", err)
+	}
+	if !strings.Contains(err.Error(), "image will run as root") {
+		t.Errorf("error = %q, want the kubelet's own words — they name the fix", err)
+	}
+	// And PodSteer's own sentence, which the kubelet cannot write: the message
+	// is about a pod, but the decision was made in a dialog two seconds ago.
+	if !strings.Contains(err.Error(), "non-root") {
+		t.Errorf("error = %q, want it to say which of the two to change", err)
+	}
+}
+
+// TestAPodThatWillNotStartIsDeleted covers the other half: a pod nobody can
+// attach to is a pod left running in somebody's namespace until its deadline.
+func TestAPodThatWillNotStartIsDeleted(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("create", "pods", blockedReactor)
+	adapter := newClusterShellAdapter("dev", client)
+
+	if _, err := adapter.StartClusterShell(context.Background(), "dev", "shop", testShellImage); err == nil {
+		t.Fatal("StartClusterShell() error = nil, want a failure")
+	}
+
+	pods, err := client.CoreV1().Pods("shop").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(pods.Items) != 0 {
+		t.Errorf("%d pods left behind, want none", len(pods.Items))
+	}
+}
+
+// TestASlowPodIsStillWaitedFor is the limit of the change above, and the
+// reason the list of blocking reasons is a list rather than "not Running".
+//
+// ContainerCreating is a pod on its way up: a large image on a cold node
+// takes a while, and failing on it would break the ordinary case in order to
+// catch the broken one.
+func TestASlowPodIsStillWaitedFor(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("create", "pods", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		create, ok := action.(clientgotesting.CreateAction)
+		if !ok {
+			return false, nil, nil
+		}
+		pod, ok := create.GetObject().(*corev1.Pod)
+		if !ok {
+			return false, nil, nil
+		}
+		pod.Status.Phase = corev1.PodPending
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+			Name:  clusterShellContainerName,
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}},
+		}}
+		return false, nil, nil
+	})
+	adapter := newClusterShellAdapter("dev", client)
+
+	// Cancelled rather than left to the sixty-second timeout: what is asserted
+	// is that the wait was STILL WAITING, and a cancellation proves that
+	// without the test taking a minute to say so.
+	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
+	defer cancel()
+
+	_, err := adapter.StartClusterShell(ctx, "dev", "shop", testShellImage)
+	if err == nil {
+		t.Fatal("StartClusterShell() error = nil, want the cancellation")
+	}
+	if errors.Is(err, ports.ErrPodDidNotStart) && !strings.Contains(err.Error(), "still Pending") {
+		t.Errorf("error = %v, want ContainerCreating to have been waited through rather than refused", err)
+	}
+}

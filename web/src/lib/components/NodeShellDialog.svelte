@@ -16,8 +16,8 @@
   import { nameConfirmed } from '$lib/confirm'
   import { debugNode as kubectlDebugNode } from '$lib/kubectl'
   import Button from './Button.svelte'
-  import KubectlHint from './KubectlHint.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import DialogFooter from './DialogFooter.svelte'
   import { TriangleAlert } from '@lucide/svelte'
 
   interface Props {
@@ -154,13 +154,9 @@
       </div>
     {/if}
 
-    <div class="mt-4">
-      <KubectlHint command={kubectlCommand} />
-    </div>
-
-    <div class="mt-6 flex justify-end gap-3">
+    <DialogFooter command={kubectlCommand}>
       <Button variant="outlined" onclick={onclose}>Cancel</Button>
       <Button variant="filled" onclick={confirm} disabled={!canConfirm}>Open node shell</Button>
-    </div>
+    </DialogFooter>
   </div>
 {/if}

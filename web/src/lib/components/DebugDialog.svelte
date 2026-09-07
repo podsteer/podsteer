@@ -14,8 +14,8 @@
   import { debugRequest } from '$lib/debugShell'
   import { debug as kubectlDebug } from '$lib/kubectl'
   import Button from './Button.svelte'
-  import KubectlHint from './KubectlHint.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import DialogFooter from './DialogFooter.svelte'
 
   interface Props {
     open: boolean
@@ -136,25 +136,9 @@
       </label>
     </div>
 
-    <!-- The irremovable fact, stated where it cannot be missed. -->
-    <p class="mt-4 rounded-sm border border-gauge-warn/40 bg-gauge-warn/10 px-3 py-2 text-body-medium text-on-surface-variant">
-      An ephemeral container cannot be removed once added. It stays in the pod's spec until the pod
-      is deleted — this is Kubernetes' behaviour, not something PodSteer can undo.
-    </p>
-
-    {#if productionGroup}
-      <p class="mt-3 rounded-sm border border-error/40 bg-error/10 px-3 py-2 text-body-medium text-on-surface-variant">
-        This cluster is in {productionGroup}, marked production.
-      </p>
-    {/if}
-
-    <div class="mt-4">
-      <KubectlHint command={kubectlCommand} />
-    </div>
-
-    <div class="mt-6 flex justify-end gap-3">
+    <DialogFooter command={kubectlCommand}>
       <Button variant="outlined" onclick={onclose}>Cancel</Button>
       <Button variant="filled" onclick={confirm}>Start debug</Button>
-    </div>
+    </DialogFooter>
   </div>
 {/if}

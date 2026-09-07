@@ -147,6 +147,14 @@ const (
 	// ErrManifestRejected's — that text names the field to change and is the
 	// only thing anybody can act on.
 	CodePodRejected ErrorCode = "pod_rejected"
+	// CodePodDidNotStart means a pod PodSteer created was accepted and then
+	// never ran: the kubelet could not create its container or could not
+	// fetch its image. Its own code rather than internal, because the cluster
+	// SAID what was wrong and an operator can act on it — the whole reason
+	// this code exists is that the answer used to be "an unexpected error
+	// occurred" while the pod's status held "container has runAsNonRoot and
+	// image will run as root".
+	CodePodDidNotStart ErrorCode = "pod_did_not_start"
 	// CodeInternal is the fallback for anything unclassified.
 	CodeInternal ErrorCode = "internal"
 )
@@ -326,6 +334,13 @@ func classifyError(err error) (ErrorCode, string) {
 	// and paraphrasing it throws away the only actionable thing in it.
 	case errors.Is(err, ports.ErrPodRejectedByAdmission):
 		return CodePodRejected, err.Error()
+
+	// VERBATIM, for the same reason and with more force: this message is the
+	// KUBELET's, and it names the mismatch between the image somebody chose
+	// and the security context the pod asks for. Nothing PodSteer could
+	// summarise in its place would tell them which of the two to change.
+	case errors.Is(err, ports.ErrPodDidNotStart):
+		return CodePodDidNotStart, err.Error()
 
 	case errors.Is(err, ports.ErrForbidden):
 		return CodeForbidden, "Your account is not allowed to perform this operation"

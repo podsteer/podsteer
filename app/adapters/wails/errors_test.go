@@ -145,3 +145,41 @@ func TestClassifyErrorEphemeralUnsupportedIsNotNotFound(t *testing.T) {
 		t.Fatalf("message does not mention ephemeral debug containers: %q", message)
 	}
 }
+
+// TestClassifyErrorKeepsTheKubeletsWordsForAPodThatNeverRan is the frontend
+// half of the same fix.
+//
+// The pod was accepted and then never started, and everything anybody can act
+// on is in the kubelet's sentence: which image, and which requirement it did
+// not meet. Classified as internal — which is where it landed before this
+// code existed — the operator is told "an unexpected error occurred" about a
+// failure the cluster had explained in full.
+func TestClassifyErrorKeepsTheKubeletsWordsForAPodThatNeverRan(t *testing.T) {
+	err := fmt.Errorf("waiting for pod %q to run: %w: CreateContainerConfigError: %s",
+		"podsteer-shell-abcde", ports.ErrPodDidNotStart,
+		"container has runAsNonRoot and image will run as root")
+
+	code, message := classifyError(err)
+
+	if code != CodePodDidNotStart {
+		t.Fatalf("code %q, want %q", code, CodePodDidNotStart)
+	}
+	if !strings.Contains(message, "image will run as root") {
+		t.Errorf("message = %q, want the kubelet's own words — they name the fix", message)
+	}
+}
+
+// TestAPodThatNeverRanIsNotReportedAsAnAdmissionRefusal keeps the two apart.
+//
+// They are both "the pod you asked for is not there", they arrive from
+// different components at different moments, and they send somebody to
+// different people: one to whoever owns the namespace's policy, the other to
+// the image field in the dialog they just used.
+func TestAPodThatNeverRanIsNotReportedAsAnAdmissionRefusal(t *testing.T) {
+	if code, _ := classifyError(fmt.Errorf("x: %w", ports.ErrPodDidNotStart)); code == CodePodRejected {
+		t.Fatal("a pod that never started was reported as an admission refusal")
+	}
+	if code, _ := classifyError(fmt.Errorf("x: %w", ports.ErrPodRejectedByAdmission)); code == CodePodDidNotStart {
+		t.Fatal("an admission refusal was reported as a pod that never started")
+	}
+}
