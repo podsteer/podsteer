@@ -186,17 +186,28 @@ func (s *ClusterService) Connect(ctx context.Context, id domain.ClusterID) (doma
 
 	version, err := s.cluster.ServerVersion(ctx, id)
 	if err != nil {
-		// The operator needs to know the attempt failed even though the caller
-		// also gets the error, because a failed connect leaves the UI showing
-		// whatever it was showing before.
-		s.events.Publish(ctx, domain.ClusterUnreachable{
-			ClusterID: id,
-			Reason:    err.Error(),
-			At:        s.now(),
-		})
-		s.logger.WarnContext(ctx, "cluster unreachable",
-			slog.String("cluster", id.String()),
-			slog.String("error", err.Error()))
+		// A CANCELLED ATTEMPT IS NOT AN UNREACHABLE CLUSTER, and saying so
+		// would be worse than saying nothing: the operator stopped this
+		// themselves, and an alert telling them the cluster cannot be reached
+		// is a claim nobody made and nobody checked. A DEADLINE is different —
+		// the request ran its full length and the cluster never answered,
+		// which is exactly what unreachable means — so only cancellation is
+		// excluded here.
+		cancelled := errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+
+		if !cancelled {
+			// The operator needs to know the attempt failed even though the
+			// caller also gets the error, because a failed connect leaves the
+			// UI showing whatever it was showing before.
+			s.events.Publish(ctx, domain.ClusterUnreachable{
+				ClusterID: id,
+				Reason:    err.Error(),
+				At:        s.now(),
+			})
+			s.logger.WarnContext(ctx, "cluster unreachable",
+				slog.String("cluster", id.String()),
+				slog.String("error", err.Error()))
+		}
 
 		return domain.Cluster{}, fmt.Errorf("connecting to %q: %w", id, err)
 	}

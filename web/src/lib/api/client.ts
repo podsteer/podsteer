@@ -14,6 +14,7 @@
 
 import {
   AddKubeconfig as bindAddKubeconfig,
+  CancelConnect as bindCancelConnect,
   Connect as bindConnect,
   Connections as bindConnections,
   Disconnect as bindDisconnect,
@@ -538,6 +539,19 @@ export function readKubeconfigFile(): Promise<string> {
  */
 export function connect(clusterId: string): Promise<Cluster> {
   return call(() => bindConnect(clusterId))
+}
+
+/**
+ * Stops a connect attempt that has not answered yet.
+ *
+ * A cluster behind a link that drops packets rather than refusing them takes
+ * the whole request timeout to fail. This is how the operator takes that time
+ * back. Resolving means the attempt was stopped OR had already finished —
+ * there is nothing to distinguish, and nothing an operator would do
+ * differently if there were.
+ */
+export function cancelConnect(clusterId: string): Promise<void> {
+  return call(() => bindCancelConnect(clusterId))
 }
 
 /** Closes a cluster, for when its tab is closed. */

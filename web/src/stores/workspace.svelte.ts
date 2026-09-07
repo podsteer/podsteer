@@ -10,6 +10,7 @@
  */
 
 import {
+  cancelConnect,
   connect,
   connections,
   disconnect,
@@ -57,8 +58,31 @@ class Workspace {
   /** The cluster id of the tab in front, or null when the picker is showing. */
   activeClusterId = $state<string | null>(null)
 
-  /** The id a connection attempt is in flight for. */
-  connectingTo = $state<string | null>(null)
+  /**
+   * The clusters with a connect attempt in the air, in the order they were
+   * started.
+   *
+   * A LIST RATHER THAN THE SINGLE ID THIS WAS. `connectingTo` held one id and
+   * `open` began by returning early if it was set, so connecting to one
+   * cluster disabled the control on every other — and a cluster behind a link
+   * that drops packets rather than refusing them holds that lock for the whole
+   * request timeout. An operator with five clusters and two of them down
+   * waited for both to fail before they could open the three that were fine.
+   *
+   * Nothing about connecting was ever serial: the Go side runs each call on
+   * its own goroutine against its own client. The queue was here.
+   */
+  connecting = $state<string[]>([])
+
+  /**
+   * Attempts the operator stopped, so their rejection is not reported as a
+   * failure. A cancellation is an answer, not a fault, and the banner is for
+   * faults.
+   */
+  #cancelled = new Set<string>()
+
+  /** Whether this cluster has a connect attempt in the air. */
+  isConnecting = (clusterId: string): boolean => this.connecting.includes(clusterId)
 
   /** A failure not owned by any one tab — connecting, or reading kubeconfig. */
   error = $state<ApiError | null>(null)
@@ -145,7 +169,10 @@ class Workspace {
    * again".
    */
   open = async (clusterId: string, focus = true): Promise<void> => {
-    if (this.connectingTo) return
+    // Only THIS cluster's own attempt is a reason not to start another. A
+    // second click on the same card is a duplicate; a click on a different one
+    // is a second cluster, and the whole point is that it does not queue.
+    if (this.isConnecting(clusterId)) return
 
     const existing = this.sessions.find((session) => session.cluster.id === clusterId)
     if (existing) {
@@ -153,7 +180,8 @@ class Workspace {
       return
     }
 
-    this.connectingTo = clusterId
+    this.connecting = [...this.connecting, clusterId]
+    this.#cancelled.delete(clusterId)
     try {
       const cluster = await connect(clusterId)
       this.error = null
@@ -180,9 +208,30 @@ class Workspace {
 
       await session.initialise()
     } catch (cause) {
-      this.error = toApiError(cause)
+      // Silent for an attempt the operator stopped: they know, they asked, and
+      // a banner reporting it back to them is the application arguing with a
+      // decision it was told about.
+      if (!this.#cancelled.has(clusterId)) this.error = toApiError(cause)
     } finally {
-      this.connectingTo = null
+      this.connecting = this.connecting.filter((id) => id !== clusterId)
+      this.#cancelled.delete(clusterId)
+    }
+  }
+
+  /**
+   * Stops a connect attempt that has not answered yet.
+   *
+   * The rejection lands in `open`'s catch a moment later; the flag set here is
+   * what tells that catch this was asked for rather than suffered.
+   */
+  stopConnecting = async (clusterId: string): Promise<void> => {
+    if (!this.isConnecting(clusterId)) return
+    this.#cancelled.add(clusterId)
+    try {
+      await cancelConnect(clusterId)
+    } catch {
+      // Nothing useful to say: the attempt either stopped or had already
+      // finished, and both leave the operator where they wanted to be.
     }
   }
 
