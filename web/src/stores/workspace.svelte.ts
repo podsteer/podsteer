@@ -81,6 +81,20 @@ class Workspace {
    *
    * The re-adoption matters during development, where the Go process outlives
    * the page across a hot reload and is still connected to everything.
+   *
+   * NOTHING HERE WAITS ON A CLUSTER, and that is the point rather than an
+   * optimisation. This function is what the splash screen waits for, and it
+   * used to end by awaiting the restored tab's own initialise — which lists
+   * kinds, lists namespaces and reads a view, all of them round trips to an
+   * API server. An operator whose VPN was not up yet, or whose cluster was
+   * simply slow that morning, got a splash screen for as long as the network
+   * took to answer, with no cluster list, no settings and no way to reach any
+   * of the other clusters that were perfectly reachable. Measured at 42
+   * seconds on a warm tunnel, and unbounded on a black-holed one.
+   *
+   * The tab still loads; it loads BESIDE the application instead of in front
+   * of it, and reports its own failure in its own surface, which is where the
+   * operator can act on it.
    */
   initialise = async (): Promise<void> => {
     this.#subscribe()
@@ -100,7 +114,11 @@ class Workspace {
       if (!this.activeClusterId && this.sessions.length > 0) {
         this.activeClusterId = this.sessions[0].cluster.id
       }
-      await this.active?.initialise()
+      // NOT AWAITED — see this function's own note. The session reports its
+      // own failure through its own status, and a rejection here would have
+      // nowhere to go anyway: this catch belongs to reading the connection
+      // list, not to whatever one cluster is doing.
+      void this.active?.initialise()
     } catch (cause) {
       this.error = toApiError(cause)
     }
