@@ -23,5 +23,10 @@
     "types": ["svelte", "vite/client"]
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.svelte"],
+  // `*.node.test.ts` reads the source tree with node's own fs — a test ABOUT
+  // the components rather than one of them. It belongs to the node project
+  // below, which has those types; the application project must keep them out,
+  // or application code could reach for fs and still type-check.
+  "exclude": ["src/**/*.node.test.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

@@ -27,6 +27,7 @@
   import type { PodTemplate } from '$lib/podTemplate'
   import Button from './Button.svelte'
   import KubectlHint from './KubectlHint.svelte'
+  import DialogHeader from './DialogHeader.svelte'
   import { TriangleAlert, Check } from '@lucide/svelte'
 
   interface Props {
@@ -162,14 +163,15 @@
   ></button>
 
   <div
-    class="fixed top-1/2 left-1/2 z-[70] w-[32rem] max-w-[90vw] -translate-x-1/2 -translate-y-1/2
+    class="fixed inset-0 z-[70] m-auto h-fit max-h-[90vh] overflow-y-auto
+           w-[32rem] max-w-[90vw]
            rounded-sm border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
     aria-modal="true"
     use:modal
     aria-label="Set image"
   >
-    <h2 class="text-headline-small text-on-surface">Set image</h2>
+    <DialogHeader title="Set image" help="set-image" {onclose} />
 
     {#if productionGroup}
       <p
@@ -211,7 +213,7 @@
               disabled={applying}
               autocomplete="off"
               spellcheck="false"
-              class="field mt-1 w-full px-3 py-2 font-mono text-body-small {failed ? 'border-error' : ''}"
+              class="field mt-1 w-full px-3 py-2 text-body-small {failed ? 'border-error' : ''}"
             />
             {#if failed && failure}
               <p class="mt-1 flex items-start gap-1.5 text-body-small text-error">

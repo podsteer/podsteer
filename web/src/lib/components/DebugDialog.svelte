@@ -15,6 +15,7 @@
   import { debug as kubectlDebug } from '$lib/kubectl'
   import Button from './Button.svelte'
   import KubectlHint from './KubectlHint.svelte'
+  import DialogHeader from './DialogHeader.svelte'
 
   interface Props {
     open: boolean
@@ -87,14 +88,15 @@
   ></button>
 
   <div
-    class="fixed top-1/2 left-1/2 z-[70] w-[30rem] max-w-[90vw] -translate-x-1/2 -translate-y-1/2
+    class="fixed inset-0 z-[70] m-auto h-fit max-h-[90vh] overflow-y-auto
+           w-[30rem] max-w-[90vw]
            rounded-sm border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
     aria-modal="true"
     use:modal
     aria-label="Debug pod"
   >
-    <h2 class="text-headline-small text-on-surface">Debug {pod}</h2>
+    <DialogHeader title="Debug {pod}" help="debug" {onclose} />
 
     <p class="mt-4 text-body-medium text-on-surface-variant">
       Adds a temporary container with its own tools to this pod and opens a shell into it — the
@@ -109,7 +111,7 @@
           type="text"
           bind:value={image}
           placeholder="docker.io/cloudresty/dockydeb:v1.2.28-nonroot"
-          class="field mt-1 w-full px-3 py-2 font-mono text-body-small"
+          class="field mt-1 w-full px-3 py-2 text-body-small"
         />
       </label>
 
@@ -129,7 +131,7 @@
           type="text"
           bind:value={command}
           placeholder="sh"
-          class="field mt-1 w-full px-3 py-2 font-mono text-body-small"
+          class="field mt-1 w-full px-3 py-2 text-body-small"
         />
       </label>
     </div>

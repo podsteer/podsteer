@@ -13,6 +13,7 @@
   import { modal } from '$lib/modal'
   import Button from './Button.svelte'
   import Checkbox from './Checkbox.svelte'
+  import DialogHeader from './DialogHeader.svelte'
   import { planDrain, drainNode, type DrainPlan, type DrainReport } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import { Loader, TriangleAlert } from '@lucide/svelte'
@@ -156,14 +157,15 @@
   ></button>
 
   <div
-    class="fixed top-1/2 left-1/2 z-[70] w-[30rem] max-w-[90vw] -translate-x-1/2 -translate-y-1/2
+    class="fixed inset-0 z-[70] m-auto h-fit max-h-[90vh] overflow-y-auto
+           w-[30rem] max-w-[90vw]
            rounded-sm border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
     aria-modal="true"
     use:modal
     aria-label="Drain node"
   >
-    <h2 class="text-headline-small text-on-surface">Drain {nodeName}</h2>
+    <DialogHeader title="Drain {nodeName}" help="drain" {onclose} />
 
     <p class="mt-4 text-body-medium text-on-surface-variant">
       New pods will not be scheduled here, and every evictable pod running here now is asked to

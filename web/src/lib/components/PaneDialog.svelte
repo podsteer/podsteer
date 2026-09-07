@@ -22,6 +22,8 @@
   import type { Snippet } from 'svelte'
   import type { Component } from 'svelte'
   import { Minimize2, X } from '@lucide/svelte'
+  import HelpButton from './HelpButton.svelte'
+  import type { HelpTopicId } from '$lib/help'
 
   interface Props {
     open: boolean
@@ -33,13 +35,19 @@
     name?: string
     /** Names the dialog for assistive technology. */
     label: string
+    /**
+     * Which help topic the (?) opens, for a pane that has one — a terminal
+     * kind, say. Omitted for a pane holding something the drawer already
+     * explains.
+     */
+    help?: HelpTopicId | null
     onclose: () => void
     children: Snippet
     /** Actions along the bottom, for a pane that has any. */
     footer?: Snippet
   }
 
-  let { open, icon: Icon, kind, name, label, onclose, children, footer }: Props = $props()
+  let { open, icon: Icon, kind, name, label, help: topic = null, onclose, children, footer }: Props = $props()
 
   function onKeydown(event: KeyboardEvent): void {
     // Only when nothing nearer has claimed it — a search box with something in
@@ -99,6 +107,9 @@
       </div>
 
       <div class="ml-auto flex items-center gap-0.5">
+        {#if topic}
+          <HelpButton {topic} about={kind || label} />
+        {/if}
         <button
           type="button"
           onclick={onclose}

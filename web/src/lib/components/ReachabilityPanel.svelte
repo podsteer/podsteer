@@ -234,7 +234,7 @@
                       autocomplete="off"
                       spellcheck="false"
                       placeholder="pod name"
-                      class="field mt-1 w-full px-3 py-1.5 font-mono text-body-small"
+                      class="field mt-1 w-full px-3 py-1.5 text-body-small"
                     />
                   </label>
                   <label class="min-w-0 flex-1">
@@ -246,7 +246,7 @@
                       autocomplete="off"
                       spellcheck="false"
                       placeholder="container name"
-                      class="field mt-1 w-full px-3 py-1.5 font-mono text-body-small"
+                      class="field mt-1 w-full px-3 py-1.5 text-body-small"
                     />
                   </label>
                 </div>

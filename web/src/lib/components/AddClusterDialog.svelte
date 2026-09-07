@@ -24,6 +24,7 @@
   } from '$lib/api/client'
   import { toApiError, type ApiError } from '$lib/api/errors'
   import { workspace } from '$stores/workspace.svelte'
+  import DialogHeader from './DialogHeader.svelte'
   import { AlertTriangle, CheckCircle2, FileUp } from '@lucide/svelte'
 
   interface Props {
@@ -198,7 +199,7 @@
           <Button onclick={close}>Done</Button>
         </div>
       {:else}
-        <h2 class="text-headline-small text-on-surface">Add cluster</h2>
+        <DialogHeader title="Add cluster" help="add-cluster" onclose={close} />
         <p class="mt-1 text-body-small text-on-surface-variant">
           Paste a kubeconfig — the one your provider gave you, or a single cluster's worth — and
           PodSteer will merge it into yours. Existing contexts are never replaced.

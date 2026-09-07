@@ -42,7 +42,7 @@
   <div
     role="toolbar"
     aria-label="Bulk actions"
-    class="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-sm border
+    class="fixed inset-x-0 bottom-6 z-40 mx-auto flex w-fit items-center gap-2 rounded-sm border
            border-outline-variant bg-surface-container-high py-2 pr-2 pl-4 shadow-level-3"
   >
     <span class="whitespace-nowrap text-label-large text-on-surface">

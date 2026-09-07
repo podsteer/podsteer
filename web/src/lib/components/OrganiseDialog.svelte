@@ -39,6 +39,7 @@
   } from '$stores/organisation.svelte'
   import { groupBgClass, GROUP_COLOUR_LABELS } from '$lib/groupColour'
   import { workspace } from '$stores/workspace.svelte'
+  import DialogHeader from './DialogHeader.svelte'
   import {
     ChevronUp,
     ChevronDown,
@@ -389,7 +390,7 @@
       use:modal
       aria-label="Projects and groups"
     >
-    <h2 class="text-headline-small text-on-surface">Projects and groups</h2>
+    <DialogHeader title="Projects and groups" help="organise" {onclose} />
     <p class="mt-1 text-body-small text-on-surface-variant">
       A project is a system; a group inside it is usually an environment. Drag a row to reorder it,
       or drop a group on a project to move it there. Every context starts in
