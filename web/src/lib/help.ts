@@ -189,6 +189,13 @@ export const HELP_TOPICS = {
           "A PodDisruptionBudget on this pod's workload refuses the eviction if letting the pod go would leave too few replicas running. The refusal is the budget working, not a failure — it is telling you the workload cannot spare this pod right now.",
         ],
       },
+      {
+        heading: 'Why there is no kubectl line for it',
+        body: [
+          'Every other dialog here shows the kubectl command it is the graphical form of. This one does not, because kubectl has no eviction verb: eviction is an API call, and the only kubectl command that makes one is drain, which evicts everything on a node.',
+          'kubectl delete pod is not the same act and is not offered as a substitute — a delete does not ask the PodDisruptionBudget, so a command that looks equivalent would take away the protection the eviction exists to respect.',
+        ],
+      },
     ],
   },
 

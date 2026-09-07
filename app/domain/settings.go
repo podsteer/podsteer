@@ -214,11 +214,20 @@ type HistorySettings struct {
 type ClusterSettings struct {
 	// NodeHistory opts this cluster into recording per-node samples (ADR 8).
 	//
-	// NOT SETTABLE THROUGH SettingsService, deliberately. Turning it off has
-	// a side effect — the node history already recorded is erased — so it
-	// belongs beside SetRetention on the history service, where a settings
-	// write and a prune are already one act. A setter here would be a way to
-	// change the policy without the erasure it implies.
+	// NOTHING SETS IT AND NOTHING READS IT AS OF 2026-09-07. ADR 8 was
+	// accepted and deliberately left unbuilt — sequenced behind ADR 7 and
+	// behind demand that survives it — so this field is the shape of a
+	// decision rather than a live setting: HistoryPort is keyed by ClusterID
+	// alone, domain.Sample carries no node name, and no sampler writes one.
+	// It is kept because the record is accepted, and named here so the next
+	// reader does not mistake a reserved field for a feature. The settings
+	// pane deliberately says nothing about it.
+	//
+	// NOT SETTABLE THROUGH SettingsService when it is built, either. Turning
+	// it off has a side effect — the node history already recorded is erased
+	// — so it belongs beside SetRetention on the history service, where a
+	// settings write and a prune are already one act. A setter here would be
+	// a way to change the policy without the erasure it implies.
 	NodeHistory bool
 
 	// MetricsQuery says whether a discovered monitoring backend is queried

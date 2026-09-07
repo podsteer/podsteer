@@ -28,6 +28,12 @@
   import { StreamLogs, StopLogStream } from '$bindings/managementapi'
   import { onMount, onDestroy, untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
+  import {
+    MAX_LOG_STREAMS,
+    planLogStreams,
+    streamLabel,
+    type PlannedStream,
+  } from '$lib/logStreams'
   import { preferences } from '$stores/preferences.svelte'
   import { saveTextFile } from '$lib/api/client'
   import PaneToolbar from './PaneToolbar.svelte'
@@ -182,7 +188,15 @@
   let structuredParsing = $state(true)
 
   /**
-   * podName -> the backend's id for its stream.
+   * The backend's stream id -> what that stream is a stream OF.
+   *
+   * KEYED BY STREAM ID, AND THAT IS THE FIX. It used to be keyed by pod name,
+   * which was fine while a pod meant one stream and silently wrong the moment
+   * it meant two: the second container's entry overwrote the first, so the
+   * first was never stopped, never resolved when its lines arrived, and kept
+   * running in the backend after the pane was done with it. A stream id is
+   * unique by construction, and the thing it identifies is exactly what the
+   * lines need to be labelled with.
    *
    * A SvelteMap, not a plain one in $state. Svelte 5 proxies objects and
    * arrays but NOT Map or Set, so `.set()` on a plain map mutates without
@@ -190,7 +204,19 @@
    * pods" while lines were arriving: the template was still seeing the empty
    * map assigned before the loop that filled it.
    */
-  let streamIds = new SvelteMap<string, string>()
+  let streams = new SvelteMap<string, PlannedStream>()
+  /**
+   * Streams that ended with a reason, by `pod/container`.
+   *
+   * ONE SLOT PER STREAM, because there is more than one stream. A single
+   * error field meant one sidecar with no previous run, or one container the
+   * account may not read, painted the whole pane as failed while every other
+   * container was streaming fine — and the last failure to arrive won.
+   */
+  let streamFailures = new SvelteMap<string, string>()
+  /** What the current plan could not do: pods lacking the chosen container,
+   *  and streams the cap left unopened. */
+  let planNotes = $state<{ missing: string[]; truncated: number }>({ missing: [], truncated: 0 })
   /**
    * The collected lines, each with an identity that outlives trimming.
    *
@@ -200,7 +226,7 @@
    * silently point at a different line after the first trim. A counter that
    * only ever goes up cannot.
    */
-  let logs = $state<Array<{ seq: number; podName: string; line: string }>>([])
+  let logs = $state<Array<{ seq: number; podName: string; containerName: string; line: string }>>([])
   let nextSeq = 0
   let isStreaming = $state(false)
   let autoScroll = $state(true)
@@ -210,7 +236,6 @@
   let unsubscribe: Array<() => void> = []
   const copied = flash(1500)
   /** Why the stream ended, when it ended badly. */
-  let streamError = $state('')
 
   /**
    * Whether the query hides the lines it does not match.
@@ -286,7 +311,12 @@
    * screen in a way nobody notices until they paste it.
    */
   async function copyLogs(): Promise<void> {
-    const text = filteredLogs.map((log) => (isMultiPod && log.podName ? `${log.podName}: ${log.line}` : log.line)).join('\n')
+    const text = filteredLogs
+      .map((log) => {
+        const prefix = linePrefix(log)
+        return prefix ? `${prefix}: ${log.line}` : log.line
+      })
+      .join('\n')
     if (!text) return
     // Confirms only what actually happened — see $lib/clipboard for why a
     // control that assumes success is a control that lies in this webview.
@@ -307,12 +337,17 @@
   async function downloadLogs(scope: 'filtered' | 'full'): Promise<void> {
     const source = scope === 'filtered' ? filteredLogs : logs
     const text = source
-      .map((log) => (isMultiPod && log.podName ? `${log.podName}: ${log.line}` : log.line))
+      .map((log) => {
+        const prefix = linePrefix(log)
+        return prefix ? `${prefix}: ${log.line}` : log.line
+      })
       .join('\n')
     if (!text) return
 
     const pod = isMultiPod ? `${activePods.length}-pods` : (activePods[0]?.name ?? 'pod')
-    const container = selectedContainer || activePods[0]?.containers[0] || 'container'
+    // "All" is not a container name. Naming the first one here produced a
+    // file called after one container holding the lines of several.
+    const container = selectedContainer || (isMultiContainer ? 'all-containers' : (activePods[0]?.containers[0] ?? 'container'))
 
     try {
       await saveTextFile(buildLogFilename(pod, container), text)
@@ -769,6 +804,51 @@
   })
 
   /**
+   * Whether a line has to say which container it came from.
+   *
+   * True whenever more than one container is being read — which "All" now
+   * genuinely means. A prefix on a single-container stream would be noise;
+   * its absence on a multi-container one is the pane hiding which process
+   * said what, and interleaved sidecar output with no attribution is worse
+   * than useless for reading a stack trace.
+   */
+  const isMultiContainer = $derived(selectedContainer === '' && allContainers.length > 1)
+
+  /** Distinct pods behind the open streams. */
+  const streamingPods = $derived(new Set([...streams.values()].map((s) => s.pod)).size)
+  /**
+   * What failed, as one line, without claiming everything failed.
+   *
+   * A pane reading six containers where one is forbidden is not a broken
+   * pane; it is a pane with five working streams and one refusal, and the
+   * status bar has to be able to say that. The full reasons go in the title.
+   */
+  const failureSummary = $derived.by(() => {
+    const failures = [...streamFailures.entries()]
+    if (failures.length === 0) return ''
+    if (failures.length === 1) {
+      const [label, reason] = failures[0]
+      // Labelled whenever anything else is being read, because "forbidden"
+      // with no name attached, beside five streams that are working, is a
+      // sentence about nothing in particular.
+      return streams.size > 0 || isMultiContainer || isMultiPod ? `${label}: ${reason}` : reason
+    }
+    return `${failures.length} streams ended with an error`
+  })
+  const failureDetail = $derived(
+    [...streamFailures.entries()].map(([label, reason]) => `${label}: ${reason}`).join('\n'),
+  )
+
+  /** How a line is attributed, in one place, so the pane, the clipboard and
+   *  the downloaded file cannot disagree about it. */
+  function linePrefix(log: { podName: string; containerName: string }): string {
+    const parts: string[] = []
+    if (isMultiPod && log.podName) parts.push(log.podName)
+    if (isMultiContainer && log.containerName) parts.push(log.containerName)
+    return parts.join('/')
+  }
+
+  /**
    * Which start is the current one.
    *
    * Starting is asynchronous — one awaited call per pod — so two starts can
@@ -780,26 +860,43 @@
    */
   let streamGeneration = 0
 
-  // Start streaming logs from all active pods
+  /**
+   * Opens the streams the current selection asks for.
+   *
+   * ONE PER CONTAINER, NOT ONE PER POD. Kubernetes has no server-side "all
+   * containers": PodLogOptions names exactly one, and `kubectl logs
+   * --all-containers` opens a request per container. The plan is made in
+   * $lib/logStreams, where it is tested, because this is the decision the
+   * pane used to get wrong in silence.
+   */
   async function startStream() {
     const generation = ++streamGeneration
     if (activePods.length === 0) return
 
-    // Stop any existing streams
-    for (const streamId of streamIds.values()) {
-      await StopLogStream(streamId)
-    }
-    streamIds.clear()
+    // SNAPSHOT, THEN CLEAR, THEN STOP — in that order, and none of it across
+    // an await. Iterating the live map while awaiting each stop let a
+    // restart's own registrations be walked into and cancelled, or worse be
+    // cleared after they were registered, leaving backend streams nobody held
+    // an id for. A JavaScript Map iterator visits entries appended during
+    // iteration, so the loop and the map cannot be the same object here.
+    const previous = [...streams.keys()]
+    streams.clear()
+    streamFailures.clear()
     logs = []
     timestampCache.clear()
     structuredCache.clear()
-    streamError = ''
     isStreaming = true
 
-    // Start a stream for each pod
-    for (const pod of activePods) {
-      const container = selectedContainer || pod.containers[0] || ''
-      if (!container) continue
+    for (const streamId of previous) {
+      await StopLogStream(streamId)
+    }
+
+    const plan = planLogStreams(activePods, selectedContainer)
+    planNotes = { missing: plan.missing, truncated: plan.truncated }
+
+    for (const wanted of plan.streams) {
+      const pod = wanted.pod
+      const container = wanted.container
 
       try {
         // timestamps (arg9) is always true — the backend keeps sending them
@@ -811,7 +908,7 @@
         const streamId = await StreamLogs(
           clusterId,
           namespace,
-          pod.name,
+          pod,
           container,
           follow,
           tailLines,
@@ -826,10 +923,25 @@
           await StopLogStream(streamId)
           return
         }
-        streamIds.set(pod.name, streamId)
+        streams.set(streamId, wanted)
       } catch (error) {
-        console.error(`Failed to start log stream for pod ${pod.name}:`, error)
+        // One container refusing is not the pane failing: record it against
+        // the container it belongs to and carry on opening the rest — unless
+        // this whole start has been superseded, in which case the failure
+        // belongs to a selection nobody is looking at any more.
+        if (generation !== streamGeneration) return
+        streamFailures.set(streamLabel(pod, container), String(error))
       }
+    }
+
+    // --- 3. NOTHING OPENED IS A STATE, NOT A PAUSE ------------------------
+    // isStreaming is set optimistically before the loop so the pane can say
+    // "Connecting…" while the first ids come back. If the plan was empty —
+    // every pod missing the chosen container, or containers not known yet —
+    // or every start failed, nothing would ever clear it, and the pane
+    // pulsed "Connecting…" for ever over a plan that had already finished.
+    if (generation === streamGeneration && streams.size === 0) {
+      isStreaming = false
     }
   }
 
@@ -838,11 +950,12 @@
     // Invalidates any start still in flight, so it cannot register a stream
     // into a viewer that has just been told to stop.
     streamGeneration++
-    for (const streamId of streamIds.values()) {
+    const open = [...streams.keys()]
+    streams.clear()
+    isStreaming = false
+    for (const streamId of open) {
       await StopLogStream(streamId)
     }
-    streamIds.clear()
-    isStreaming = false
   }
 
   /** The most lines held before the oldest are dropped. */
@@ -862,16 +975,24 @@
    * second ten-thousand-element array every time the cap was reached.
    */
   function handleLogLines(event: LogLinesEvent) {
-    let podName = ''
-    for (const [name, id] of streamIds.entries()) {
-      if (id === event.streamId) {
-        podName = name
-        break
-      }
-    }
+    // One lookup, because the map is keyed by the id the event carries. It
+    // used to be a scan for a matching value, which is what a pod-keyed map
+    // forced and what made two containers of one pod indistinguishable.
+    //
+    // AN ID WE DO NOT HOLD IS NOT OURS, and dropping it is the whole point of
+    // the guard. Every mounted pane receives every log:lines event, and a
+    // stream keeps flushing for the moment between being superseded and being
+    // cancelled — a batch every 50ms. Both the old scan and the first version
+    // of this lookup fell through to an empty pod name and appended anyway,
+    // so lines from the pod somebody had just navigated away from landed
+    // unlabelled in the pane for the pod they had navigated to.
+    const source = streams.get(event.streamId)
+    if (!source) return
+    const podName = source.pod
+    const containerName = source.container
 
     for (const line of event.lines) {
-      logs.push({ seq: nextSeq++, podName, line })
+      logs.push({ seq: nextSeq++, podName, containerName, line })
     }
 
     if (logs.length > MAX_LINES) {
@@ -912,24 +1033,23 @@
    * "Stopped" over a stream the backend was still happily writing to.
    */
   function handleLogEnd(event: LogEndEvent) {
-    let wasOurs = false
-    for (const [name, id] of streamIds.entries()) {
-      if (id === event.streamId) {
-        streamIds.delete(name)
-        wasOurs = true
-        break
-      }
-    }
+    const source = streams.get(event.streamId)
+    if (source) streams.delete(event.streamId)
 
     // Why it ended, when it did not end cleanly. Without this every failure
     // was indistinguishable from a quiet pod: no permission to read logs, a
     // container that does not exist and a line over the size cap all looked
     // like the log simply stopping.
-    if (wasOurs && event.reason) {
-      streamError = event.reason
+    //
+    // RECORDED AGAINST ITS OWN CONTAINER. One error slot for every stream
+    // meant a sidecar with no previous run painted the pane as failed while
+    // the container somebody was actually reading streamed fine, and the last
+    // failure to arrive overwrote whichever came before it.
+    if (source && event.reason) {
+      streamFailures.set(streamLabel(source.pod, source.container), event.reason)
     }
 
-    if (wasOurs && streamIds.size === 0) {
+    if (source && streams.size === 0) {
       isStreaming = false
     }
   }
@@ -1260,6 +1380,7 @@
           {@const structured = structuredParsing ? structuredOf(log) : null}
           {@const memberCount = foldCounts.get(log.seq)}
           {@const isHidden = hiddenSeqs.has(log.seq)}
+          {@const prefix = linePrefix(log)}
           <div
             data-log-seq={log.seq}
             class="hover:bg-surface-container-low
@@ -1269,8 +1390,8 @@
               ? 'bg-gauge-warn/12'
               : ''}"
           >
-            {#if isMultiPod && log.podName}
-              <span class="text-primary">{log.podName}:</span>
+            {#if prefix}
+              <span class="text-primary">{prefix}:</span>
             {/if}
 
             {#if timestampMode !== 'off'}
@@ -1382,25 +1503,54 @@
              asserting a fourth meaning, and "this is working" is already what
              blue says on every gauge and every status mark. -->
         <span class="inline-block size-2 shrink-0 animate-pulse rounded-full bg-gauge-normal"></span>
-        {#if streamIds.size > 0}
-          Streaming from {streamIds.size}
-          {streamIds.size === 1 ? 'pod' : 'pods'}
+        {#if streams.size > 0}
+          <!-- Counts pods and containers separately, because a stream is no
+               longer a pod: "Streaming from 6 pods" for three pods with a
+               sidecar each was the pod-keyed map's arithmetic showing
+               through. -->
+          Streaming from {streamingPods}
+          {streamingPods === 1 ? 'pod' : 'pods'}{streams.size > streamingPods
+            ? `, ${streams.size} containers`
+            : ''}
         {:else}
           <!-- Streams open before the backend has answered with their ids.
                "Streaming from 0 pods" contradicted itself for that moment,
                and read as a fault rather than as a step. -->
           Connecting…
         {/if}
-      {:else if streamError}
-        <!-- Red, because this is the one state that is a fault rather than a
-             choice. The reason is the API server's own words: "pods
-             \"x\" is forbidden", "container y is not valid for pod z" — which
-             say far more than any wording invented here would. -->
-        <span class="inline-block size-2 shrink-0 rounded-full bg-gauge-critical"></span>
-        <span class="min-w-0 truncate text-gauge-critical" title={streamError}>{streamError}</span>
       {:else}
         <span class="inline-block size-2 shrink-0 rounded-full bg-on-surface-variant/50"></span>
         {logs.length > 0 ? 'Stopped' : 'Not streaming'}
+      {/if}
+
+      <!--
+        WHAT IS INCOMPLETE IS SAID IN EVERY STATE, not only in the failed one.
+
+        These three notes used to live inside the branches above, which meant
+        each of them disappeared exactly when it mattered most: a failure was
+        invisible while any other stream was still running, and the truncation
+        note vanished the moment the streams finished — leaving a pane that
+        said "Stopped" over a third of a workload it had never read.
+      -->
+      {#if failureSummary}
+        <!-- The reason is the API server's own words: "pods \"x\" is
+             forbidden", "container y is not valid for pod z" — which say far
+             more than any wording invented here would. -->
+        <span class="inline-block size-2 shrink-0 rounded-full bg-gauge-critical"></span>
+        <span class="min-w-0 truncate text-gauge-critical" title={failureDetail}
+          >{failureSummary}</span
+        >
+      {/if}
+      {#if planNotes.truncated > 0}
+        <span class="shrink-0 text-gauge-warn"
+          >· {planNotes.truncated} more not opened (limit {MAX_LOG_STREAMS})</span
+        >
+      {/if}
+      {#if planNotes.missing.length > 0}
+        <span class="shrink-0 text-on-surface-variant/70" title={planNotes.missing.join(', ')}
+          >· not in {planNotes.missing.length}
+          {planNotes.missing.length === 1 ? 'pod' : 'pods'}</span
+        >
       {/if}
     </span>
     <span class="shrink-0 pl-3 tabular-nums">
