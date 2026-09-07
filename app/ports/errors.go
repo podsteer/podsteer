@@ -179,6 +179,24 @@ var (
 	// admission refusal from an authorisation one.
 	ErrPodRejectedByAdmission = errors.New("an admission controller rejected the pod")
 
+	// ErrPodDidNotStart means a pod PodSteer created was ACCEPTED by the API
+	// server and then never ran — the kubelet could not create its container,
+	// or could not fetch its image.
+	//
+	// A DIFFERENT FAILURE FROM ErrPodRejectedByAdmission, arriving at a
+	// different moment and from a different component. Admission refuses at
+	// create time and the refusal comes back on that call; this one happens
+	// afterwards, on a node, and is readable only in the pod's own status.
+	// Both are "the pod you asked for is not there", and collapsing them
+	// would send somebody to argue with a policy about an image that does not
+	// exist.
+	//
+	// The message carries the kubelet's reason and its own words, verbatim,
+	// for ErrPodRejectedByAdmission's reason: "container has runAsNonRoot and
+	// image will run as root" names the fix, and nothing PodSteer could write
+	// in its place would.
+	ErrPodDidNotStart = errors.New("the pod never started")
+
 	// ErrClusterShellNotReusable means a pod offered for an in-cluster shell
 	// could not be taken over: it is not one PodSteer created, or it has left
 	// the Running phase since it was listed.

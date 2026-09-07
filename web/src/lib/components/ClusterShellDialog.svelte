@@ -41,8 +41,8 @@
   import { toApiError } from '$lib/api/errors'
   import { runShellPod as kubectlRunShellPod } from '$lib/kubectl'
   import Button from './Button.svelte'
-  import KubectlHint from './KubectlHint.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import DialogFooter from './DialogFooter.svelte'
   import { Container, Loader } from '@lucide/svelte'
 
   interface Props {
@@ -214,54 +214,11 @@
       </label>
     </div>
 
-    <!-- What this namespace already holds. Only a RUNNING pod is an offer. -->
-    {#if looking}
-      <p class="mt-4 flex items-center gap-2 text-body-medium text-on-surface-variant">
-        <Loader class="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
-        Looking for a shell PodSteer already has here…
-      </p>
-    {:else if reusable.length > 0}
-      <div class="mt-4 rounded-sm border border-primary/40 bg-primary/10 px-3 py-2">
-        <p class="text-body-medium text-on-surface-variant">
-          PodSteer already has {reusable.length === 1 ? 'a shell' : 'shells'} running in this namespace.
-          Attaching costs no new pod.
-        </p>
-        <ul class="mt-2 flex flex-col gap-1">
-          {#each reusable as candidate (candidate.pod)}
-            <li class="flex items-center justify-between gap-2">
-              <span class="min-w-0 truncate font-mono text-body-medium text-on-surface">
-                {candidate.pod}
-              </span>
-              <Button variant="outlined" onclick={() => attach(candidate.pod)}>Attach</Button>
-            </li>
-          {/each}
-        </ul>
-      </div>
-    {/if}
-
-    {#if exited.length > 0}
-      <p class="mt-3 rounded-sm border border-outline-variant/60 bg-surface-container px-3 py-2 text-body-medium text-on-surface-variant">
-        {exitedShellsNote(exited.length)}
-      </p>
-    {/if}
-
-    {#if lookupError}
-      <p class="mt-3 text-body-medium text-on-surface-variant">
-        PodSteer could not check what is already here: {lookupError}
-      </p>
-    {/if}
-
-    {#if kubectlCommand}
-      <div class="mt-4">
-        <KubectlHint command={kubectlCommand} />
-      </div>
-    {/if}
-
-    <div class="mt-6 flex justify-end gap-3">
+    <DialogFooter command={kubectlCommand}>
       <Button variant="outlined" onclick={onclose}>Cancel</Button>
       <Button variant="filled" onclick={confirm} disabled={!canConfirm}>
         {reusable.length > 0 ? 'Create another' : 'Open shell'}
       </Button>
-    </div>
+    </DialogFooter>
   </div>
 {/if}

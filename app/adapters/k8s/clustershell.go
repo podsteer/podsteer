@@ -188,6 +188,31 @@ func buildClusterShellPod(name, namespace, image string) *corev1.Pod {
 	}
 }
 
+// rootImageEvidence is the kubelet's phrase for the one failure this shell
+// causes by design, and the only string worth matching on: the message has no
+// machine-readable form, and the alternative — inspecting the image ourselves
+// — would mean pulling it.
+const rootImageEvidence = "runAsNonRoot"
+
+// withRootImageHint adds the sentence the kubelet cannot say, and only for the
+// failure it applies to.
+//
+// buildClusterShellPod asks for a non-root container ON PURPOSE, so that the
+// pod is admissible where Pod Security enforces `restricted`. An image whose
+// USER is root then cannot start, and the kubelet says exactly that — but it
+// says it about a pod, not about a CHOICE somebody made in a dialog two
+// seconds earlier, and the operator is left holding a true sentence with no
+// action in it. This names the action: change the image, not the cluster.
+//
+// The kubelet's own words come first and are never replaced. A paraphrase of
+// an error is a second-hand account of something the reader can be shown.
+func withRootImageHint(err error) error {
+	if err == nil || !strings.Contains(err.Error(), rootImageEvidence) {
+		return err
+	}
+	return fmt.Errorf("%w — an in-cluster shell asks to run as non-root so it is admitted where Pod Security enforces `restricted`, so it needs an image that does not run as root", err)
+}
+
 // StartClusterShell creates the pod, waits for it to run, and records it. See
 // ports.ClusterShellPort.StartClusterShell.
 func (a *Adapter) StartClusterShell(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, image string) (domain.ClusterShell, error) {
@@ -220,7 +245,7 @@ func (a *Adapter) StartClusterShell(ctx context.Context, id domain.ClusterID, na
 		deleteCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = client.CoreV1().Pods(ns).Delete(deleteCtx, created.Name, metav1.DeleteOptions{})
-		return domain.ClusterShell{}, err
+		return domain.ClusterShell{}, withRootImageHint(err)
 	}
 
 	shell, err := a.registerClusterShell(domain.ClusterShell{

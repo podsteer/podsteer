@@ -41,13 +41,19 @@
      * explains.
      */
     help?: HelpTopicId | null
+    /**
+     * Put the pane back where it came from, for a pane that came from
+     * somewhere. Omitted by a pane that was opened at this size — a terminal
+     * from the toolbar — which then shows only the close control.
+     */
+    onrestore?: (() => void) | null
     onclose: () => void
     children: Snippet
     /** Actions along the bottom, for a pane that has any. */
     footer?: Snippet
   }
 
-  let { open, icon: Icon, kind, name, label, help: topic = null, onclose, children, footer }: Props = $props()
+  let { open, icon: Icon, kind, name, label, help: topic = null, onrestore = null, onclose, children, footer }: Props = $props()
 
   function onKeydown(event: KeyboardEvent): void {
     // Only when nothing nearer has claimed it — a search box with something in
@@ -110,17 +116,26 @@
         {#if topic}
           <HelpButton {topic} about={kind || label} />
         {/if}
-        <button
-          type="button"
-          onclick={onclose}
-          aria-label="Restore"
-          title="Restore to the side panel"
-          class="state-layer grid size-8 shrink-0 place-items-center rounded-full
-                 text-on-surface-variant transition-colors duration-100
-                 hover:bg-surface-container hover:text-on-surface"
-        >
-          <Minimize2 class="size-4" strokeWidth={1.8} />
-        </button>
+        <!-- ONLY WHERE THERE IS SOMEWHERE TO RESTORE TO. This pane is the
+             maximised form of the drawer's editor and log surfaces, and for
+             those "restore" is the true name of closing it: the pane goes
+             back to the side panel with its draft intact. A terminal opened
+             from the toolbar was never in the side panel and has no smaller
+             form to return to, so the control offered one and did the same
+             thing as the X beside it. -->
+        {#if onrestore}
+          <button
+            type="button"
+            onclick={onrestore}
+            aria-label="Restore"
+            title="Restore to the side panel"
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100
+                   hover:bg-surface-container hover:text-on-surface"
+          >
+            <Minimize2 class="size-4" strokeWidth={1.8} />
+          </button>
+        {/if}
         <button
           type="button"
           onclick={onclose}

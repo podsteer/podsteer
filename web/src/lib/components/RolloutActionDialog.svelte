@@ -20,8 +20,8 @@
   import { argoRollouts } from '$lib/kubectl'
   import { nameConfirmed } from '$lib/confirm'
   import Button from './Button.svelte'
-  import KubectlHint from './KubectlHint.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import DialogFooter from './DialogFooter.svelte'
   import { TriangleAlert } from '@lucide/svelte'
 
   interface Props {
@@ -120,10 +120,6 @@
       {/if}
     </p>
 
-    <div class="mt-4">
-      <KubectlHint command={argoRollouts(action, ctx, name, namespace)} />
-    </div>
-
     {#if requiresTypedName}
       <label class="mt-4 block">
         <span class="text-body-medium text-on-surface-variant">
@@ -143,7 +139,7 @@
       </p>
     {/if}
 
-    <div class="mt-6 flex justify-end gap-3">
+    <DialogFooter command={argoRollouts(action, ctx, name, namespace)}>
       <Button variant="outlined" onclick={onclose}>Cancel</Button>
       <Button
         variant="filled"
@@ -153,6 +149,6 @@
       >
         {isAbort ? 'Abort' : 'Promote'}
       </Button>
-    </div>
+    </DialogFooter>
   </div>
 {/if}

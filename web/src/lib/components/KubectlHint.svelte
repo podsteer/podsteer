@@ -84,12 +84,14 @@
              text-label-medium transition-colors duration-75
              {copied.on ? 'text-success' : 'text-on-surface-variant hover:text-on-surface'}"
     >
+      <!-- THE ICON ALONE. The word beside it said what the icon says, in a
+           strip whose whole purpose is to leave room for the command, and the
+           tick that replaces it is the confirmation the word was there for.
+           The accessible name and the tooltip still carry both states. -->
       {#if copied.on}
-        <Check class="size-3.5 shrink-0" strokeWidth={2.5} />
-        Copied!
+        <Check class="size-4 shrink-0" strokeWidth={2.5} />
       {:else}
-        <Copy class="size-3.5 shrink-0" strokeWidth={1.8} />
-        Copy
+        <Copy class="size-4 shrink-0" strokeWidth={1.8} />
       {/if}
     </button>
   </div>

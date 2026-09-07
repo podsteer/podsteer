@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 const (
@@ -311,15 +312,84 @@ func waitPodRunning(ctx context.Context, client kubernetes.Interface, ns, podNam
 			return true, nil
 		case corev1.PodFailed, corev1.PodSucceeded:
 			return false, fmt.Errorf("%s: it reached %s before running", op, pod.Status.Phase)
-		default:
-			return false, nil
 		}
+		// Pending covers two situations that need opposite responses: a pod
+		// on its way up, and a pod that will never come up. Waiting out the
+		// timeout on the second is what turned "container has runAsNonRoot
+		// and image will run as root" into a minute of nothing followed by
+		// "an unexpected error occurred".
+		if stuck := blockedContainer(pod); stuck != "" {
+			return false, fmt.Errorf("%s: %w: %s", op, ports.ErrPodDidNotStart, stuck)
+		}
+		return false, nil
 	})
 	if err != nil {
 		if k8swait.Interrupted(err) {
-			return fmt.Errorf("%s: it did not start within %s", op, timeout)
+			return fmt.Errorf("%s: %w: it was still %s after %s", op, ports.ErrPodDidNotStart, phaseOf(ctx, client, ns, podName), timeout)
 		}
 		return err
 	}
 	return nil
+}
+
+// blockedWaitingReasons are the kubelet's words for "I tried, and I will not
+// get further without somebody changing something".
+//
+// EVERY ONE OF THESE IS A DECISION ALREADY TAKEN, not work in progress:
+// ContainerCreating and PodInitializing are absent for exactly that reason, as
+// is Pulling — a large image on a cold node is slow, not stuck, and failing on
+// it would break the ordinary case to catch the broken one. ImagePullBackOff
+// IS here, and it is the fine distinction worth stating: the backoff exists
+// because a pull has ALREADY failed, so the wait is no longer waiting for a
+// pull, it is waiting for the same failure again.
+var blockedWaitingReasons = map[string]bool{
+	"CreateContainerConfigError": true,
+	"CreateContainerError":       true,
+	"InvalidImageName":           true,
+	"ImageInspectError":          true,
+	"ErrImagePull":               true,
+	"ImagePullBackOff":           true,
+	"ErrImageNeverPull":          true,
+	"RunContainerError":          true,
+	"CrashLoopBackOff":           true,
+}
+
+// blockedContainer reports the first container that will not start, in the
+// kubelet's own words, or "" while everything is still merely slow.
+//
+// Init containers first, because a pod held up by one never reaches its
+// ordinary containers and their statuses say nothing about why.
+func blockedContainer(pod *corev1.Pod) string {
+	for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
+		for _, status := range statuses {
+			waiting := status.State.Waiting
+			if waiting == nil || !blockedWaitingReasons[waiting.Reason] {
+				continue
+			}
+			if waiting.Message == "" {
+				return waiting.Reason
+			}
+			return fmt.Sprintf("%s: %s", waiting.Reason, waiting.Message)
+		}
+	}
+	return ""
+}
+
+// phaseOf reads the pod's phase for a timeout message, or "pending" when it
+// cannot be read.
+//
+// A SEPARATE, BOUNDED READ, because the context that reached the timeout is
+// the one that just expired: reusing it would produce "it was still  after
+// 60s" — a sentence missing the only word it was written to carry.
+func phaseOf(ctx context.Context, client kubernetes.Interface, ns, podName string) corev1.PodPhase {
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+	}
+	pod, err := client.CoreV1().Pods(ns).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return corev1.PodPending
+	}
+	return pod.Status.Phase
 }
