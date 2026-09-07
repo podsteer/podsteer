@@ -486,6 +486,33 @@ export const HELP_TOPICS = {
     ],
   },
 
+  'object-data': {
+    title: 'Secret and ConfigMap keys',
+    lede: 'The keys an object holds, edited one at a time rather than through its YAML.',
+    sections: [
+      {
+        heading: 'A Secret is masked until you ask',
+        body: [
+          'Values never arrive in the clear: the adapter replaces each one with its byte count before it leaves the backend, so what the panel holds is <hidden, 40 bytes> and not the key. Revealing one value is a separate request for that one key, and it is recorded in the log with the cluster, namespace, object and key — never the value.',
+          'Editing appears only after a value is on screen. Writing over something nobody has looked at is the mistake that ordering exists to prevent.',
+        ],
+      },
+      {
+        heading: 'A ConfigMap is not a Secret',
+        body: [
+          'Its values are already in the manifest in the clear, so there is nothing to reveal and the editor is offered straight away. That difference is deliberate: treating a ConfigMap as secret would teach people that masking means something when it does not.',
+        ],
+      },
+      {
+        heading: 'What is written',
+        body: [
+          'One key. The rest of the object is untouched, which is what makes this different from editing the YAML: no resourceVersion race with whoever else is holding the object, and no chance of pasting a whole document over a field you did not mean to change.',
+          'Binary data is listed by size and has no editor. A text box over base64 is how a keystore acquires a stray newline.',
+        ],
+      },
+    ],
+  },
+
   settings: {
     title: 'Settings',
     lede: 'How PodSteer behaves on this machine. None of it is stored on a cluster.',
