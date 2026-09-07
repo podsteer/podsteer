@@ -17,6 +17,14 @@
     — an attach to an exited pod fails for a reason the offer gave nobody a way
     to see — and saying so is what explains a namespace that has been
     accumulating them.
+
+  WHAT IS PRINTED IS WHAT VARIES; WHAT EXPLAINS IT IS BEHIND AN (i). The
+  paragraphs describing what this pod is, and why its security context is
+  shaped the way it is, are read once and were being printed every time. They
+  are hints now, in the same panel the toolbar's search field uses. What stays
+  on the surface is the state of THIS namespace at THIS moment — the shells
+  already running here, the ones that have exited, a namespace nobody has named
+  yet — because none of that is knowable in advance.
 -->
 <script lang="ts">
   import { untrack } from 'svelte'
@@ -34,6 +42,7 @@
   import { runShellPod as kubectlRunShellPod } from '$lib/kubectl'
   import Button from './Button.svelte'
   import KubectlHint from './KubectlHint.svelte'
+  import InfoHint from './InfoHint.svelte'
   import { Container, Loader } from '@lucide/svelte'
 
   interface Props {
@@ -49,6 +58,20 @@
   }
 
   let { open, clusterId, namespace, onclose, onconfirm, onattach }: Props = $props()
+
+  /** What the dialog used to print in full, as hint text. */
+  const ABOUT =
+    'Runs a throwaway pod in this cluster and attaches to a shell in it, so kubectl, dig and ' +
+    "curl see the cluster's network from the inside — as a workload does. It is an ordinary, " +
+    "unprivileged pod: not a debug container on somebody's pod, and not a root shell on a node. " +
+    'It is deleted when you close its terminal and self-destructs after an hour as a backstop, ' +
+    'and while it runs it appears in the activity list, where it can also be stopped.'
+
+  const IMAGE_HINT =
+    'The default is the nonroot build. The pod asks to run as non-root, with no privilege ' +
+    "escalation, every capability dropped and the runtime's default seccomp profile, so it is " +
+    "admitted in a namespace enforcing Pod Security's restricted profile. If admission still " +
+    "refuses, the message you get here is the API server's own."
 
   let image = $state(preferences.clusterShellImage)
   // Seeded from the prop through `untrack`, and re-seeded by the effect below
@@ -169,15 +192,8 @@
     <h2 class="flex items-center gap-2 text-headline-small text-on-surface">
       <Container class="size-5 text-primary" strokeWidth={2} aria-hidden="true" />
       In-cluster shell
+      <InfoHint text={ABOUT} label="What an in-cluster shell is" />
     </h2>
-
-    <p class="mt-4 text-body-medium text-on-surface-variant">
-      Runs a throwaway pod in this cluster and attaches to a shell in it, so
-      <code class="font-mono">kubectl</code>, <code class="font-mono">dig</code> and
-      <code class="font-mono">curl</code> see the cluster's network from the inside — as a workload
-      does. It is an <strong class="text-on-surface">ordinary, unprivileged pod</strong>: not a
-      debug container on somebody's pod, and not a root shell on a node.
-    </p>
 
     <div class="mt-4 flex flex-col gap-3">
       <label class="block">
@@ -198,21 +214,21 @@
         </p>
       {/if}
 
-      <label class="block">
-        <span class="text-body-small text-on-surface-variant">Image</span>
+      <div>
+        <span class="flex items-center gap-1">
+          <label for="cluster-shell-image" class="text-body-small text-on-surface-variant">
+            Image
+          </label>
+          <InfoHint text={IMAGE_HINT} label="What this image has to satisfy" />
+        </span>
         <input
+          id="cluster-shell-image"
           type="text"
           bind:value={image}
           placeholder="docker.io/cloudresty/dockydeb:v1.2.28-nonroot"
           class="field mt-1 w-full px-3 py-2 font-mono text-body-small"
         />
-      </label>
-      <p class="text-body-small text-on-surface-variant/70">
-        The default is the nonroot build. The pod asks to run as non-root, with no privilege
-        escalation, every capability dropped and the runtime's default seccomp profile, so it is
-        admitted in a namespace enforcing Pod Security's <code class="font-mono">restricted</code>
-        profile. If admission still refuses, the message here is the API server's own.
-      </p>
+      </div>
     </div>
 
     <!-- What this namespace already holds. Only a RUNNING pod is an offer. -->
@@ -251,11 +267,6 @@
         PodSteer could not check what is already here: {lookupError}
       </p>
     {/if}
-
-    <p class="mt-4 rounded-sm border border-outline-variant/60 bg-surface-container px-3 py-2 text-body-small text-on-surface-variant">
-      The pod is deleted when you close its terminal, and self-destructs after one hour as a
-      backstop. While it runs it appears in the activity list, where it can also be stopped.
-    </p>
 
     {#if kubectlCommand}
       <div class="mt-4">
