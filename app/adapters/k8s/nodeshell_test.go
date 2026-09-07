@@ -91,6 +91,48 @@ func TestBuildNodeShellPodSpec(t *testing.T) {
 	if !strings.Contains(joined, "bash -l") || !strings.Contains(joined, "exec sh") {
 		t.Errorf("command = %q, want a bash -l login shell falling back to sh", joined)
 	}
+	if !strings.Contains(joined, loginShellCommand) {
+		t.Errorf("command = %q, want it to run loginShellCommand rather than a copy of it", joined)
+	}
+}
+
+// TestTheLoginShellCommandKeepsItsPromptAndReachesItsFallback pins the two
+// defects that shipped in one line of shell, because neither is visible in the
+// pod spec and both looked like a working shell.
+//
+// It asserts on the STRING rather than through a cluster, because that is
+// where both bugs lived: what was wrong was never which fields the pod set.
+func TestTheLoginShellCommandKeepsItsPromptAndReachesItsFallback(t *testing.T) {
+	t.Parallel()
+
+	// THE PROMPT. bash writes PS1 to stderr, and `exec` carries a redirection
+	// into the process that replaces the shell — so `2>/dev/null`, meant to
+	// quieten one failing command, silenced the prompt for the whole session.
+	// The pane attached to a shell that ran everything typed into it and could
+	// never say a word, which is indistinguishable from a shell that is not
+	// there.
+	if strings.Contains(loginShellCommand, "2>/dev/null; ") || strings.HasSuffix(loginShellCommand, "2>/dev/null") {
+		t.Errorf("loginShellCommand = %q, want nothing redirecting the shell's own stderr", loginShellCommand)
+	}
+	if strings.Contains(loginShellCommand, "exec bash -l 2>") {
+		t.Errorf("loginShellCommand = %q, want the login shell to keep the stderr it prints its prompt on", loginShellCommand)
+	}
+
+	// THE FALLBACK. A failed `exec` ENDS a POSIX shell rather than returning
+	// to it — /bin/sh is dash on the images this runs on — so `exec bash ||
+	// exec sh` never reached the sh. An image without bash produced a
+	// container that exited at once, with the message saying so redirected
+	// into the same /dev/null. The fallback has to be a test taken BEFORE the
+	// exec, not a branch after it.
+	if strings.Contains(loginShellCommand, "|| exec") {
+		t.Errorf("loginShellCommand = %q, want the fallback tested before the exec — a failed exec ends the shell and never reaches it", loginShellCommand)
+	}
+	if !strings.Contains(loginShellCommand, "command -v bash") {
+		t.Errorf("loginShellCommand = %q, want it to test for bash before exec'ing it", loginShellCommand)
+	}
+	if !strings.Contains(loginShellCommand, "exec sh") {
+		t.Errorf("loginShellCommand = %q, want an image without bash to still get a shell", loginShellCommand)
+	}
 }
 
 // runningReactor marks every pod it creates Running, so waitPodRunning returns

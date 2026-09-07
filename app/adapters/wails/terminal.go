@@ -531,7 +531,7 @@ func (t *TerminalAPI) StartNodeShellSession(clusterID, namespace, nodeName, imag
 	}
 
 	// The pod is deleted when the attach session ends — see the onExit hook.
-	sessionID, err := t.openAttachSession(parent, id, ns, shell.PodName, shell.ContainerName, cols, rows, "node shell session", func() {
+	sessionID, err := t.openAttachSession(parent, id, ns, shell.PodName, shell.ContainerName, cols, rows, "node shell session", true, func() {
 		if err := t.nodeShells.StopNodeShell(shell.ID); err != nil {
 			t.logger.Error("failed to delete node shell pod",
 				slog.String("pod", shell.PodName),
@@ -656,7 +656,7 @@ func (t *TerminalAPI) clusterShellTarget(op, clusterID, namespace string) (domai
 // attachClusterShell opens the attach session for a shell pod and arranges for
 // the pod to be deleted when it ends.
 func (t *TerminalAPI) attachClusterShell(parent context.Context, shell domain.ClusterShell, cols, rows int) (string, error) {
-	sessionID, err := t.openAttachSession(parent, shell.ClusterID, shell.Namespace, shell.PodName, shell.ContainerName, cols, rows, "in-cluster shell session", func() {
+	sessionID, err := t.openAttachSession(parent, shell.ClusterID, shell.Namespace, shell.PodName, shell.ContainerName, cols, rows, "in-cluster shell session", !shell.Adopted, func() {
 		if err := t.management.StopClusterShell(shell.ID); err != nil {
 			t.logger.Error("failed to delete in-cluster shell pod",
 				slog.String("pod", shell.PodName),
@@ -739,7 +739,10 @@ func (t *TerminalAPI) openExecSession(parent context.Context, id domain.ClusterI
 // what makes a node shell a node shell: the pod's process is the login shell
 // in the host's namespaces, and attaching lands the operator on it. onExit, if
 // set, runs after the session ends — a node shell uses it to delete its pod.
-func (t *TerminalAPI) openAttachSession(parent context.Context, id domain.ClusterID, ns domain.NamespaceName, podName, containerName string, cols, rows int, label string, onExit func()) (string, error) {
+//
+// newShell says PodSteer created this pod for this session, which decides
+// whether the pane presses enter for the operator — see the write below.
+func (t *TerminalAPI) openAttachSession(parent context.Context, id domain.ClusterID, ns domain.NamespaceName, podName, containerName string, cols, rows int, label string, newShell bool, onExit func()) (string, error) {
 	ctx, cancel := context.WithCancel(parent)
 
 	sessionID := generateTerminalID()
@@ -787,6 +790,32 @@ func (t *TerminalAPI) openAttachSession(parent context.Context, id domain.Cluste
 
 		t.app.emit("terminal:exit", TerminalExitEvent{SessionID: sessionID, Reason: reason})
 	}()
+
+	if newShell {
+		// PRESS ENTER ONCE, so the pane opens on a prompt rather than on
+		// nothing.
+		//
+		// A shell prints its prompt when it starts reading, which is when the
+		// container starts — seconds before this stream exists — and attach
+		// replays nothing it missed. So the first prompt is always gone by the
+		// time anybody could have seen it, and the operator faces a black pane
+		// that echoes what they type and answers nothing. It is why kubectl
+		// says "If you don't see a command prompt, try pressing enter"; this
+		// presses it for them.
+		//
+		// ON THE PIPE RATHER THAN ON A TIMER. An io.Pipe write blocks until
+		// the attach's copy loop reads it, so this cannot land before the
+		// stream is established, and if the session never starts at all the
+		// deferred Close above releases it as ErrClosedPipe rather than
+		// leaving a goroutine parked forever.
+		//
+		// ONLY FOR A SHELL PODSTEER JUST CREATED, which is what newShell
+		// states. Adopting a pod that outlived its pane means attaching to a
+		// shell somebody was using, and its readline buffer may hold a
+		// half-typed line — a carriage return would RUN it. An empty pane is
+		// worth less than a command nobody meant to issue.
+		go func() { _, _ = stdinWriter.Write([]byte("\r")) }()
+	}
 
 	return sessionID, nil
 }

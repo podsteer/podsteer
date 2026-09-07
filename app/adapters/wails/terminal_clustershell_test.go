@@ -227,3 +227,126 @@ func TestClusterShellSessionRefusesAllNamespacesRatherThanGuessing(t *testing.T)
 		t.Fatalf("error = %q, want it to say why \"all namespaces\" is not an answer", err)
 	}
 }
+
+// stdinWatchingManagementPort answers AttachToPod and reports the first thing
+// the session writes to the attached shell's stdin, so a test can see what
+// PodSteer typed into a shell nobody had typed into yet.
+//
+// The attach itself blocks until release is closed, which is what an open
+// session looks like: returning immediately would end the session before the
+// write it is meant to observe could reach the pipe.
+type stdinWatchingManagementPort struct {
+	stubManagementPort
+
+	first   chan []byte
+	release chan struct{}
+}
+
+func newStdinWatchingPort() *stdinWatchingManagementPort {
+	return &stdinWatchingManagementPort{
+		first:   make(chan []byte, 1),
+		release: make(chan struct{}),
+	}
+}
+
+func (p *stdinWatchingManagementPort) AttachToPod(_ context.Context, _ domain.ClusterID, _ domain.NamespaceName, _, _ string, stdin io.Reader, _, _ io.Writer, _ ports.TerminalSizeQueue) error {
+	go func() {
+		buf := make([]byte, 16)
+		n, err := stdin.Read(buf)
+		if err != nil {
+			// The session ended without anything being written, which is the
+			// answer the adopt test wants and not a failure.
+			return
+		}
+		select {
+		case p.first <- append([]byte(nil), buf[:n]...):
+		default:
+		}
+	}()
+	<-p.release
+	return nil
+}
+
+// newWatchingTerminal wires a TerminalAPI over the port above.
+func newWatchingTerminal(t *testing.T, port *stdinWatchingManagementPort) *TerminalAPI {
+	t.Helper()
+
+	management, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management:    port,
+		Registry:      application.NewRegistry(),
+		ClusterShells: &recordingClusterShellPort{},
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, &stubLocalShellPort{}, NewApp(nil, 0), nil)
+	if err != nil {
+		t.Fatalf("NewTerminalAPI() error = %v", err)
+	}
+	return terminal
+}
+
+// TestANewShellIsSentOneCarriageReturnSoThePaneOpensOnAPrompt is the shipped
+// bug's other half.
+//
+// A shell prints its prompt when it starts reading — when the container
+// starts, seconds before the attach stream exists — and attach replays nothing
+// it missed. So the operator got a black pane that echoed what they typed and
+// answered nothing, which is why kubectl tells people to press enter
+// themselves. PodSteer presses it for them, exactly once, for a shell it just
+// created.
+func TestANewShellIsSentOneCarriageReturnSoThePaneOpensOnAPrompt(t *testing.T) {
+	t.Parallel()
+
+	port := newStdinWatchingPort()
+	terminal := newWatchingTerminal(t, port)
+	defer close(port.release)
+
+	shell := domain.ClusterShell{
+		ID: "1", ClusterID: "dev", Namespace: "shop",
+		PodName: "podsteer-shell-aaaaa", ContainerName: "shell",
+	}
+	if _, err := terminal.attachClusterShell(context.Background(), shell, 80, 24); err != nil {
+		t.Fatalf("attachClusterShell() error = %v", err)
+	}
+
+	select {
+	case got := <-port.first:
+		if string(got) != "\r" {
+			t.Fatalf("first byte written to the shell = %q, want a carriage return", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("nothing was written to a newly created shell — the pane opens on an empty screen")
+	}
+}
+
+// TestAnAdoptedShellIsNotTypedIntoAtAll is the same behaviour's limit, and the
+// reason the flag exists rather than the write being unconditional.
+//
+// Adopting a pod that outlived its pane means attaching to a shell somebody
+// was using, whose readline buffer may hold a half-typed line. A carriage
+// return would RUN it. An empty pane — which the frontend explains — is worth
+// less than a command nobody meant to issue.
+func TestAnAdoptedShellIsNotTypedIntoAtAll(t *testing.T) {
+	t.Parallel()
+
+	port := newStdinWatchingPort()
+	terminal := newWatchingTerminal(t, port)
+	defer close(port.release)
+
+	shell := domain.ClusterShell{
+		ID: "2", ClusterID: "dev", Namespace: "shop",
+		PodName: "podsteer-shell-bbbbb", ContainerName: "shell",
+		Adopted: true,
+	}
+	if _, err := terminal.attachClusterShell(context.Background(), shell, 80, 24); err != nil {
+		t.Fatalf("attachClusterShell() error = %v", err)
+	}
+
+	select {
+	case got := <-port.first:
+		t.Fatalf("%q was written into a shell somebody else had been using, want nothing", got)
+	case <-time.After(500 * time.Millisecond):
+	}
+}

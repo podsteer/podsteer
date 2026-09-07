@@ -51,6 +51,27 @@ const (
 // optional pointers (privileged, hostPID, activeDeadlineSeconds).
 func ptrTo[T any](v T) *T { return &v }
 
+// loginShellCommand is what both shell pods hand `sh -c`: the image's bash
+// where there is one, its sh otherwise. Shared by the node shell and the
+// in-cluster shell, which differ in where the shell runs and in nothing about
+// which shell it is.
+//
+// NOTHING IS REDIRECTED HERE, AND THAT IS THE FIX. This was
+// `exec bash -l 2>/dev/null || exec sh`, and the redirect discarded THE
+// SHELL'S PROMPT — bash writes PS1 to stderr, and `exec` carries a redirection
+// into the process that replaces the shell, so it applied for the whole
+// session rather than to the one command it was meant to quieten. A pane
+// attached to a working shell that could never say anything: it echoed what
+// was typed and it ran it, and it looked dead.
+//
+// THE FALLBACK IS A TEST RATHER THAN `||`, for a second reason found with the
+// first. A failed `exec` ENDS a POSIX shell instead of returning to it —
+// Debian's /bin/sh is dash, where `exec nosuchthing || echo reached` exits 127
+// and never reaches the echo. So the fallback the old line appeared to have
+// was unreachable: an image without bash produced a container that exited
+// immediately, with the message saying so redirected to /dev/null.
+const loginShellCommand = `if command -v bash >/dev/null 2>&1; then exec bash -l; fi; exec sh`
+
 // nodeShells holds the live node shells for one adapter.
 //
 // The same shape as portForwards, and for the same reason: the record of a
@@ -133,7 +154,7 @@ func buildNodeShellPod(name, namespace, nodeName, image string) *corev1.Pod {
 					"--target", "1",
 					"--mount", "--uts", "--ipc", "--net", "--pid",
 					"--",
-					"sh", "-c", "exec bash -l 2>/dev/null || exec sh",
+					"sh", "-c", loginShellCommand,
 				},
 			}},
 		},

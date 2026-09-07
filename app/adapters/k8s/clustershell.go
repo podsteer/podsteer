@@ -182,7 +182,7 @@ func buildClusterShellPod(name, namespace, image string) *corev1.Pod {
 				// own, in the pod's own namespaces. bash -l where the image has
 				// it, its sh otherwise — the same fallback the node shell uses,
 				// because an image without bash is a shell either way.
-				Command: []string{"sh", "-c", "exec bash -l 2>/dev/null || exec sh"},
+				Command: []string{"sh", "-c", loginShellCommand},
 			}},
 		},
 	}
