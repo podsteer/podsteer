@@ -10,11 +10,17 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import { suspend } from '$lib/kubectl'
   import Button from './Button.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import DialogFooter from './DialogFooter.svelte'
 
   interface Props {
     open: boolean
+    /** The kubeconfig context this cluster connects through. See $lib/kubectl. */
+    ctx: string
+    /** The object's namespace, for the command. */
+    namespace: string
     workloadName: string | null
     /** 'CronJob' or 'Job'. Anything else falls back to the CronJob copy. */
     workloadKind: string
@@ -22,7 +28,7 @@
     onconfirm: () => void
   }
 
-  let { open, workloadName, workloadKind, onclose, onconfirm }: Props = $props()
+  let { open, ctx, namespace, workloadName, workloadKind, onclose, onconfirm }: Props = $props()
 
   const isJob = $derived(workloadKind === 'Job')
 
@@ -88,9 +94,13 @@
       {/if}
     </p>
 
-    <div class="mt-6 flex justify-end gap-3">
+    <!-- A patch, because there is no `kubectl suspend`: suspending is a
+         field, and this is the command that sets it. -->
+    <DialogFooter
+      command={workloadName ? suspend(ctx, workloadKind, workloadName, namespace, true) : ''}
+    >
       <Button variant="outlined" onclick={onclose}>Cancel</Button>
       <Button variant="filled" onclick={onconfirm}>Suspend</Button>
-    </div>
+    </DialogFooter>
   </div>
 {/if}

@@ -207,17 +207,19 @@
                   </div>
                 {/if}
 
-                {#if entry.nodeHistory}
-                  <!--
-                    Reported, not settable here. Turning node history off
-                    erases what has already been recorded, so the control
-                    belongs beside retention under Data, where a settings write
-                    and a prune are already one act.
-                  -->
-                  <p class="text-body-medium text-on-surface-variant/80">
-                    Per-node history is being recorded for this cluster. Change that under Data.
-                  </p>
-                {/if}
+                <!--
+                  NOTHING IS SAID ABOUT NODE HISTORY HERE, and its absence is
+                  the honest state rather than an omission. ADR 8 was accepted
+                  and deliberately not built: `ClusterSettings.NodeHistory`
+                  exists, nothing sets it, and no code appends a per-node
+                  sample — HistoryPort is keyed by cluster alone. This pane
+                  used to render "Per-node history is being recorded for this
+                  cluster" behind that flag, which could only ever have been
+                  false, and pointed at a control under Data that does not
+                  exist. A line that cannot be true is worse than no line: it
+                  would have told somebody their nodes were being recorded.
+                  Put it back with the feature, not before it.
+                -->
               </div>
             </div>
           </div>

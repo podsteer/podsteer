@@ -8,17 +8,21 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import { cordon } from '$lib/kubectl'
   import Button from './Button.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import DialogFooter from './DialogFooter.svelte'
 
   interface Props {
     open: boolean
+    /** The kubeconfig context this cluster connects through. See $lib/kubectl. */
+    ctx: string
     nodeName: string | null
     onclose: () => void
     onconfirm: () => void
   }
 
-  let { open, nodeName, onclose, onconfirm }: Props = $props()
+  let { open, ctx, nodeName, onclose, onconfirm }: Props = $props()
 
   /**
    * Escape closes; Enter confirms, but only where Enter meant nothing else.
@@ -75,12 +79,9 @@
       New pods will not be scheduled here; running pods stay.
     </p>
 
-    <!-- TODO(kubectl-transparency): show the kubectl equivalent
-         (`kubectl cordon`/`kubectl uncordon`) here. -->
-
-    <div class="mt-6 flex justify-end gap-3">
+    <DialogFooter command={nodeName ? cordon(ctx, [nodeName], true) : ''}>
       <Button variant="outlined" onclick={onclose}>Cancel</Button>
       <Button variant="filled" onclick={onconfirm}>Cordon</Button>
-    </div>
+    </DialogFooter>
   </div>
 {/if}

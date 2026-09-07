@@ -241,6 +241,62 @@ export function cordon(ctx: string, names: string[], on: boolean): string {
   return [...base(ctx), on ? 'cordon' : 'uncordon', ...names].join(' ')
 }
 
+/** What a drain was asked to do, as the flags kubectl would need. */
+export interface DrainOptions {
+  /** Evict pods no controller owns, which are not recreated. */
+  force?: boolean
+  /** Evict pods with emptyDir volumes, losing what is in them. */
+  deleteEmptyDirData?: boolean
+  /** Blank means the pod's own terminationGracePeriodSeconds. */
+  gracePeriodSeconds?: number | null
+}
+
+/**
+ * `kubectl --context c drain <node> --ignore-daemonsets [--force] …`
+ *
+ * `--ignore-daemonsets` is unconditional because PodSteer's drain never
+ * evicts a DaemonSet pod — their controller would put them straight back —
+ * so a command without it would describe a different act from the one the
+ * button performs.
+ *
+ * The two optional flags are the dialog's own two ticks, and the grace period
+ * is emitted only when the operator set one: kubectl's default of -1 means
+ * "each pod's own", which is what a blank field already means here.
+ */
+export function drain(ctx: string, node: string, options: DrainOptions = {}): string {
+  const parts = [...base(ctx), 'drain', node, '--ignore-daemonsets']
+  if (options.force) parts.push('--force')
+  if (options.deleteEmptyDirData) parts.push('--delete-emptydir-data')
+  if (typeof options.gracePeriodSeconds === 'number' && options.gracePeriodSeconds >= 0) {
+    parts.push(`--grace-period=${options.gracePeriodSeconds}`)
+  }
+  return parts.join(' ')
+}
+
+/**
+ * `kubectl --context c -n ns create job <name> --from=cronjob/<cronjob>`
+ *
+ * THE NAME IS THE ONE PODSTEER WILL USE, not a placeholder: the dialog knows
+ * what it is about to create, and a transcript that says `<name>` teaches
+ * somebody to invent one rather than showing them what happened.
+ */
+export function createJobFromCronJob(ctx: string, cronJob: string, ns: string, jobName: string): string {
+  return [...base(ctx, ns), 'create', 'job', jobName, `--from=cronjob/${cronJob}`].join(' ')
+}
+
+/**
+ * `kubectl --context c -n ns patch <kind> <name> -p '{"spec":{"suspend":true}}'`
+ *
+ * A patch rather than `kubectl suspend`, because there is no such verb —
+ * suspending is a field, and this is the command that sets it. The same shape
+ * resumes, with false, which is why `suspend` is a parameter and not two
+ * functions.
+ */
+export function suspend(ctx: string, kind: string, name: string, ns: string, on: boolean): string {
+  const patch = `{"spec":{"suspend":${on}}}`
+  return [...base(ctx, ns), 'patch', kind.toLowerCase(), name, '-p', shellQuote(patch)].join(' ')
+}
+
 /** Options `logs` accepts, each contributing one flag only when it is set. */
 export interface LogsOptions {
   container?: string

@@ -11,9 +11,11 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import { drain } from '$lib/kubectl'
   import Button from './Button.svelte'
   import Checkbox from './Checkbox.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import DialogFooter from './DialogFooter.svelte'
   import { planDrain, drainNode, type DrainPlan, type DrainReport } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import { Loader, TriangleAlert } from '@lucide/svelte'
@@ -21,6 +23,8 @@
   interface Props {
     open: boolean
     clusterId: string
+    /** The kubeconfig context this cluster connects through. See $lib/kubectl. */
+    ctx: string
     nodeName: string | null
     onclose: () => void
     /** Called once a drain finishes (successfully or with failures) so the
@@ -32,12 +36,24 @@
     onerror: (message: string) => void
   }
 
-  let { open, clusterId, nodeName, onclose, ondrained, onerror }: Props = $props()
+  let { open, clusterId, ctx, nodeName, onclose, ondrained, onerror }: Props = $props()
 
   let force = $state(false)
   let deleteEmptyDirData = $state(false)
   /** Blank means "pod default" — DrainOptions.GracePeriodSeconds < 0. */
   let gracePeriodInput = $state('')
+
+  /**
+   * The drain about to be run, as kubectl flags.
+   *
+   * Reads the same three controls the plan does, so the command and the
+   * preview can never describe different drains.
+   */
+  const drainFlags = $derived({
+    force,
+    deleteEmptyDirData,
+    gracePeriodSeconds: gracePeriodInput.trim() === '' ? null : Number(gracePeriodInput),
+  })
 
   // The PREVIEW's own failure (could not even list the candidates) is shown
   // inline in the preview box rather than through actionError: it explains
@@ -172,9 +188,6 @@
       leave — a PodDisruptionBudget may refuse an eviction, which is why this can take a while.
     </p>
 
-    <!-- TODO(kubectl-transparency): show the kubectl equivalent for this
-         drain (cordon + drain with the chosen flags) here. -->
-
     <div class="mt-4 flex flex-col gap-2">
       <!-- `checked` + `onchange` rather than `bind:checked`: Checkbox draws
            purely from the prop and never decides its own state, which is what
@@ -275,11 +288,13 @@
       </div>
     {/if}
 
-    <div class="mt-6 flex justify-end gap-3">
+    <!-- The flags follow the two ticks and the grace-period field above, so
+         the transcript is of THIS drain rather than of drains in general. -->
+    <DialogFooter command={nodeName ? drain(ctx, nodeName, drainFlags) : ''}>
       <Button variant="outlined" onclick={onclose}>{report ? 'Close' : 'Cancel'}</Button>
       {#if !report}
         <Button variant="filled" onclick={handleDrain} disabled={!canConfirm} loading={running}>Drain</Button>
       {/if}
-    </div>
+    </DialogFooter>
   </div>
 {/if}

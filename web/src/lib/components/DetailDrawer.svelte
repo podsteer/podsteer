@@ -2236,6 +2236,8 @@
 
     <TriggerDialog
       open={triggerDialogOpen}
+      ctx={session.cluster.id}
+      namespace={selectedWorkload.namespace}
       workloadName={selectedWorkload.name}
       onclose={() => (triggerDialogOpen = false)}
       onconfirm={handleTrigger}
@@ -2243,6 +2245,8 @@
 
     <SuspendDialog
       open={suspendDialogOpen}
+      ctx={session.cluster.id}
+      namespace={selectedWorkload.namespace}
       workloadName={selectedWorkload.name}
       workloadKind={session.selectedKind?.kind ?? 'CronJob'}
       onclose={() => (suspendDialogOpen = false)}
@@ -2253,6 +2257,7 @@
   {#if isNode}
     <CordonDialog
       open={cordonDialogOpen}
+      ctx={session.cluster.id}
       nodeName={session.selectedName}
       onclose={() => (cordonDialogOpen = false)}
       onconfirm={() => handleCordon(true)}
@@ -2261,6 +2266,7 @@
     <DrainDialog
       open={drainDialogOpen}
       clusterId={session.cluster.id}
+      ctx={session.cluster.id}
       nodeName={session.selectedName}
       onclose={() => (drainDialogOpen = false)}
       ondrained={() => void session.refresh()}
