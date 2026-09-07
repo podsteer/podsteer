@@ -143,7 +143,7 @@
     {#if productionGroup}
       <p
         class="mt-4 flex items-start gap-2 rounded-sm border border-error/30 bg-error-container/40
-               px-3 py-2 text-body-small text-on-error-container"
+               px-3 py-2 text-body-medium text-on-error-container"
       >
         <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
         This cluster is in {productionGroup}, marked production.
@@ -158,7 +158,7 @@
     {#if isReadOnly}
       <p
         id="rollback-readonly-hint"
-        class="mt-4 flex items-start gap-2 rounded-sm border border-outline-variant/60 bg-surface px-3 py-2 text-body-small text-on-surface-variant"
+        class="mt-4 flex items-start gap-2 rounded-sm border border-outline-variant/60 bg-surface px-3 py-2 text-body-medium text-on-surface-variant"
       >
         <TriangleAlert class="mt-0.5 size-3.5 shrink-0" strokeWidth={2} />
         {readOnlyReason}
@@ -168,7 +168,7 @@
     <div class="mt-4 flex flex-col gap-2">
       <KubectlHint command={rolloutUndo(ctx, kind, name, namespace, toRevision)} />
 
-      <div class="min-h-[2.5rem] rounded-sm border border-outline-variant/60 bg-surface p-3 text-body-small">
+      <div class="min-h-[2.5rem] rounded-sm border border-outline-variant/60 bg-surface p-3 text-body-medium">
         {#if previewing}
           <p class="flex items-center gap-2 text-on-surface-variant">
             <Loader class="size-3.5 animate-spin" strokeWidth={2} />
@@ -185,7 +185,7 @@
             {preview.message}
           </p>
         {:else}
-          <p class="text-on-surface-variant/60">
+          <p class="text-on-surface-variant">
             Preview sends this rollback to the cluster as a dry run — nothing is changed until you
             confirm.
           </p>
@@ -194,7 +194,7 @@
     </div>
 
     {#if confirmError}
-      <p class="mt-4 flex items-start gap-2 text-body-small text-error">
+      <p class="mt-4 flex items-start gap-2 text-body-medium text-error">
         <TriangleAlert class="mt-0.5 size-3.5 shrink-0" strokeWidth={2} />
         {confirmError}
       </p>

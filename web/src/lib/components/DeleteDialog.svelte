@@ -96,7 +96,7 @@
     {#if productionGroup}
       <p
         class="mt-4 flex items-start gap-2 rounded-sm border border-error/30 bg-error-container/40
-               px-3 py-2 text-body-small text-on-error-container"
+               px-3 py-2 text-body-medium text-on-error-container"
       >
         <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
         This cluster is in {productionGroup}, marked production.
@@ -115,7 +115,7 @@
     {/if}
     {#if requiresTypedName}
       <label class="mt-4 block">
-        <span class="text-body-small text-on-surface-variant">
+        <span class="text-body-medium text-on-surface-variant">
           Type <strong class="text-on-surface" data-selectable>{resourceName}</strong> to confirm
         </span>
         <input
@@ -127,7 +127,7 @@
           class="field mt-1 w-full px-3 py-2 text-body-medium"
         />
       </label>
-      <p id="delete-confirm-hint" class="mt-1.5 text-body-small text-on-surface-variant/70">
+      <p id="delete-confirm-hint" class="mt-1.5 text-body-medium text-on-surface-variant">
         {confirmed
           ? 'Name confirmed.'
           : `Delete stays disabled until the name above matches exactly.`}

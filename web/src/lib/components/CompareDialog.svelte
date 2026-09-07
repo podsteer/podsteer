@@ -295,7 +295,7 @@
       {/if}
       <div class="min-w-0">
         <h2 class="truncate text-title-medium font-semibold text-on-surface">Compare {kind.singular}</h2>
-        <p class="truncate text-body-small text-on-surface-variant/70">
+        <p class="truncate text-body-medium text-on-surface-variant">
           {namespace ? `${namespace}/${name}` : name} on {clusterId}
         </p>
       </div>
@@ -324,7 +324,7 @@
             type="button"
             onclick={() => (mode = 'object')}
             aria-pressed={mode === 'object'}
-            class="flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-body-small font-medium transition-colors duration-100
+            class="flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-body-medium font-medium transition-colors duration-100
                    {mode === 'object' ? 'bg-primary/14 text-primary' : 'text-on-surface-variant hover:bg-surface-container'}"
           >
             <FileSearch class="size-3.5" strokeWidth={1.8} />
@@ -334,7 +334,7 @@
             type="button"
             onclick={() => (mode = 'paste')}
             aria-pressed={mode === 'paste'}
-            class="flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-body-small font-medium transition-colors duration-100
+            class="flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-body-medium font-medium transition-colors duration-100
                    {mode === 'paste' ? 'bg-primary/14 text-primary' : 'text-on-surface-variant hover:bg-surface-container'}"
           >
             <ClipboardPaste class="size-3.5" strokeWidth={1.8} />
@@ -344,7 +344,7 @@
 
         {#if mode === 'object'}
           <label class="flex flex-col gap-1">
-            <span class="text-body-small text-on-surface-variant/70">Cluster</span>
+            <span class="text-body-medium text-on-surface-variant">Cluster</span>
             <Select
               label="Cluster"
               value={targetClusterId}
@@ -356,7 +356,7 @@
 
           {#if kind.namespaced}
             <label class="flex flex-col gap-1">
-              <span class="text-body-small text-on-surface-variant/70">Namespace</span>
+              <span class="text-body-medium text-on-surface-variant">Namespace</span>
               <Select
                 label="Namespace"
                 value={targetNamespace}
@@ -369,7 +369,7 @@
           {/if}
 
           <label class="flex flex-col gap-1">
-            <span class="text-body-small text-on-surface-variant/70">{kind.singular} name</span>
+            <span class="text-body-medium text-on-surface-variant">{kind.singular} name</span>
             <input
               type="text"
               bind:value={targetName}
@@ -384,7 +384,7 @@
             </datalist>
           </label>
         {:else}
-          <p class="text-body-small text-on-surface-variant/70">
+          <p class="text-body-medium text-on-surface-variant">
             Paste a manifest below — its own `kind` and `apiVersion` are shown as they are, unresolved
             against any cluster.
           </p>
@@ -423,7 +423,7 @@
       {/if}
 
       {#if isSecret}
-        <p class="flex items-start gap-2 text-body-small text-on-surface-variant/70">
+        <p class="flex items-start gap-2 text-body-medium text-on-surface-variant">
           <TriangleAlert class="mt-0.5 size-3.5 shrink-0" strokeWidth={1.8} />
           Secret values are compared by their decoded SIZE, the same way the YAML tab shows them —
           never by their contents.
@@ -431,7 +431,7 @@
       {/if}
 
       {#if error}
-        <p class="text-body-small text-error" role="alert">{error}</p>
+        <p class="text-body-medium text-error" role="alert">{error}</p>
       {/if}
     </div>
 
@@ -440,7 +440,7 @@
       {#if leftManifest !== null && rightManifest !== null}
         <DiffView left={leftManifest} right={rightManifest} leftLabel="{namespace ? `${namespace}/` : ''}{name}" {rightLabel} />
       {:else}
-        <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
+        <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant">
           <GitCompare class="size-8" strokeWidth={1.2} />
           <p class="text-body-medium">Pick what to compare against, then press Compare.</p>
         </div>

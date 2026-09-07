@@ -95,7 +95,7 @@
 
 <section>
   <h3 class="text-title-medium text-on-surface">Terminal images</h3>
-  <p class="mt-0.5 text-body-small leading-relaxed text-on-surface-variant">
+  <p class="mt-0.5 text-body-medium leading-relaxed text-on-surface-variant">
     Three of PodSteer's terminals run a container <em class="text-on-surface not-italic"
       >in your cluster</em
     >, so they need an image to run. PodSteer never pulls one itself — it names the image and your
@@ -117,10 +117,10 @@
       spellcheck="false"
       autocapitalize="off"
       autocorrect="off"
-      class="field w-full px-3 py-2 text-body-small"
+      class="field w-full px-3 py-2 text-body-medium"
     />
   </label>
-  <p class="mt-1.5 text-body-small leading-relaxed text-on-surface-variant">
+  <p class="mt-1.5 text-body-medium leading-relaxed text-on-surface-variant">
     Added to a pod you are looking at, as an ephemeral container sharing its namespaces — the
     equivalent of <code class="text-on-surface">kubectl debug</code>. It lands in
     <em class="text-on-surface not-italic">someone else's namespace</em>, so Pod Security admission
@@ -140,10 +140,10 @@
       spellcheck="false"
       autocapitalize="off"
       autocorrect="off"
-      class="field w-full px-3 py-2 text-body-small"
+      class="field w-full px-3 py-2 text-body-medium"
     />
   </label>
-  <p class="mt-1.5 text-body-small leading-relaxed text-on-surface-variant">
+  <p class="mt-1.5 text-body-medium leading-relaxed text-on-surface-variant">
     A privileged pod pinned to one node, entering its host namespaces with
     <code class="text-on-surface">nsenter</code>. That is root by definition, so this one is
     <em class="text-on-surface not-italic">not</em> the nonroot variant — a nonroot image could not
@@ -151,7 +151,7 @@
   </p>
 
   <label class="mt-4 block">
-    <span class="text-body-small text-on-surface-variant">Namespace for the node-shell pod</span>
+    <span class="text-body-medium text-on-surface-variant">Namespace for the node-shell pod</span>
     <input
       type="text"
       bind:value={nodeShellNamespace}
@@ -161,10 +161,10 @@
       spellcheck="false"
       autocapitalize="off"
       autocorrect="off"
-      class="field mt-1 w-full px-3 py-2 text-body-small"
+      class="field mt-1 w-full px-3 py-2 text-body-medium"
     />
   </label>
-  <p class="mt-1.5 text-body-small leading-relaxed text-on-surface-variant">
+  <p class="mt-1.5 text-body-medium leading-relaxed text-on-surface-variant">
     Where that pod is created. <code class="text-on-surface">kube-system</code> matches
     <code class="text-on-surface">kubectl node-shell</code> and is already permissive enough to
     admit a privileged pod; a namespace enforcing
@@ -185,10 +185,10 @@
       spellcheck="false"
       autocapitalize="off"
       autocorrect="off"
-      class="field w-full px-3 py-2 text-body-small"
+      class="field w-full px-3 py-2 text-body-medium"
     />
   </label>
-  <p class="mt-1.5 text-body-small leading-relaxed text-on-surface-variant">
+  <p class="mt-1.5 text-body-medium leading-relaxed text-on-surface-variant">
     A throwaway pod in a namespace you choose, attached to — so
     <code class="text-on-surface">kubectl</code>, <code class="text-on-surface">dig</code> and
     <code class="text-on-surface">curl</code> see the cluster's network from inside it. It is an
@@ -201,14 +201,14 @@
 
   <div class="mt-5 flex items-center gap-3">
     <Button variant="outlined" disabled={atDefaults} onclick={resetAll}>Restore defaults</Button>
-    <span class="text-body-small text-on-surface-variant/70">
+    <span class="text-body-medium text-on-surface-variant">
       {atDefaults ? 'These are the images PodSteer ships with.' : 'Clearing a field also restores its default.'}
     </span>
   </div>
 
   <p
     class="mt-5 rounded-sm border border-outline-variant/50 bg-surface-container px-3 py-2
-           text-body-small leading-relaxed text-on-surface-variant"
+           text-body-medium leading-relaxed text-on-surface-variant"
   >
     Every default is pinned to an exact tag rather than a moving one: what PodSteer creates in your
     cluster must not change because an upstream tag was republished. A new image arrives in a

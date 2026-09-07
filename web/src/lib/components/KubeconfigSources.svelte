@@ -64,7 +64,7 @@
 
 <section>
   <h3 class="text-title-medium text-on-surface">Kubeconfig files</h3>
-  <p class="mt-0.5 text-body-small leading-relaxed text-on-surface-variant">
+  <p class="mt-0.5 text-body-medium leading-relaxed text-on-surface-variant">
     PodSteer reads your kubeconfig, and any extra files or folders you add here. The order is
     the order they are merged in: where two of them define the same context name, the one
     higher up wins — exactly as it does for <code class="text-on-surface">$KUBECONFIG</code>.
@@ -73,7 +73,7 @@
   {#if store.settingsState?.notice}
     <p
       class="mt-3 flex items-start gap-2 rounded-sm border border-outline-variant/50
-             bg-surface-container px-3 py-2 text-body-small leading-relaxed text-on-surface-variant"
+             bg-surface-container px-3 py-2 text-body-medium leading-relaxed text-on-surface-variant"
     >
       <TriangleAlert class="mt-0.5 size-4 shrink-0 text-tertiary" aria-hidden="true" />
       <span>{store.settingsState.notice}</span>
@@ -81,7 +81,7 @@
   {/if}
 
   {#if store.error}
-    <p class="mt-3 text-body-small text-error" role="alert">{store.error}</p>
+    <p class="mt-3 text-body-medium text-error" role="alert">{store.error}</p>
   {/if}
 
   <ul class="mt-4 flex flex-col gap-2">
@@ -103,7 +103,7 @@
             <p class="truncate text-body-medium text-on-surface" title={source.path}>
               {source.path}
             </p>
-            <p class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-body-small text-on-surface-variant/80">
+            <p class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-body-medium text-on-surface-variant/80">
               <span>{ORIGIN_LABELS[source.origin] ?? source.origin}</span>
               {#if !source.editable}
                 <!-- Read-only, and it says why rather than simply having no
@@ -122,12 +122,12 @@
             </p>
 
             {#if kept.length > 0}
-              <p class="mt-1 text-body-small text-on-surface-variant">
+              <p class="mt-1 text-body-medium text-on-surface-variant">
                 Provides {kept.join(', ')}
               </p>
             {/if}
             {#each lost as [name, winner] (name)}
-              <p class="mt-1 text-body-small text-tertiary">
+              <p class="mt-1 text-body-medium text-tertiary">
                 {name} is ignored here — <span class="text-on-surface-variant">{winner}</span> defines
                 it first
               </p>
@@ -182,7 +182,7 @@
 
   <p
     class="mt-5 rounded-sm border border-outline-variant/50 bg-surface-container px-3 py-2
-           text-body-small leading-relaxed text-on-surface-variant"
+           text-body-medium leading-relaxed text-on-surface-variant"
   >
     PodSteer stores the <span class="text-on-surface">paths</span> only — never the contents of a
     kubeconfig, and never a credential. Removing an entry removes it from this list; the file

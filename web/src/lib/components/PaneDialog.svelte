@@ -102,7 +102,7 @@
           <h2 class="truncate text-title-medium font-semibold text-on-surface">{name}</h2>
         {/if}
         {#if kind}
-          <p class="text-body-small text-on-surface-variant/70">{kind}</p>
+          <p class="text-body-medium text-on-surface-variant">{kind}</p>
         {/if}
       </div>
 

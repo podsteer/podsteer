@@ -90,7 +90,7 @@
     {#if productionGroup}
       <p
         class="mt-4 flex items-start gap-2 rounded-sm border border-error/30 bg-error-container/40
-               px-3 py-2 text-body-small text-on-error-container"
+               px-3 py-2 text-body-medium text-on-error-container"
       >
         <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
         This cluster is in {productionGroup}, marked production.

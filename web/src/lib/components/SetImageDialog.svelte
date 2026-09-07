@@ -176,7 +176,7 @@
     {#if productionGroup}
       <p
         class="mt-4 flex items-start gap-2 rounded-sm border border-error/30 bg-error-container/40
-               px-3 py-2 text-body-small text-on-error-container"
+               px-3 py-2 text-body-medium text-on-error-container"
       >
         <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
         This cluster is in {productionGroup}, marked production.
@@ -188,17 +188,17 @@
     </p>
 
     {#if rows.length === 0}
-      <p class="mt-4 text-body-small text-on-surface-variant">No containers found in the pod template.</p>
+      <p class="mt-4 text-body-medium text-on-surface-variant">No containers found in the pod template.</p>
     {:else}
       <div class="mt-4 flex max-h-[18rem] flex-col gap-3 overflow-y-auto">
         {#each rows as row (row.initContainer ? `init:${row.name}` : row.name)}
           {@const applied = succeeded.includes(row.name)}
           {@const failed = failure?.container === row.name}
           <label class="block">
-            <span class="flex items-center gap-1.5 text-body-small text-on-surface-variant">
+            <span class="flex items-center gap-1.5 text-body-medium text-on-surface-variant">
               {row.name}
               {#if row.initContainer}
-                <span class="rounded-sm bg-surface-container px-1 py-px text-label-small text-on-surface-variant/70">
+                <span class="rounded-sm bg-surface-container px-1 py-px text-label-small text-on-surface-variant">
                   init
                 </span>
               {/if}
@@ -213,10 +213,10 @@
               disabled={applying}
               autocomplete="off"
               spellcheck="false"
-              class="field mt-1 w-full px-3 py-2 text-body-small {failed ? 'border-error' : ''}"
+              class="field mt-1 w-full px-3 py-2 text-body-medium {failed ? 'border-error' : ''}"
             />
             {#if failed && failure}
-              <p class="mt-1 flex items-start gap-1.5 text-body-small text-error">
+              <p class="mt-1 flex items-start gap-1.5 text-body-medium text-error">
                 <TriangleAlert class="mt-0.5 size-3.5 shrink-0" strokeWidth={2} />
                 {failure.message}
               </p>
@@ -238,7 +238,7 @@
     {/if}
 
     {#if failure}
-      <p class="mt-4 text-body-small text-on-surface-variant">
+      <p class="mt-4 text-body-medium text-on-surface-variant">
         {succeeded.length > 0
           ? `Updated ${succeeded.length} of ${changes.length} before this failed. Fix the image above and try again.`
           : 'Nothing was changed on the cluster.'}

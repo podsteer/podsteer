@@ -114,7 +114,7 @@
     <DialogHeader title="Local terminal" icon={SquareTerminal} help="local-shell" {onclose} />
 
     <fieldset class="mt-4">
-      <legend class="text-body-small text-on-surface-variant">Start with</legend>
+      <legend class="text-body-medium text-on-surface-variant">Start with</legend>
       <!-- These carry a `name` where the raw inputs before them did not, and
            that is a fix rather than a formality: radios without a shared name
            are not a group at all, so this list was one tab stop per option
@@ -130,7 +130,7 @@
             <span class="flex items-center gap-2">
               <Bot class="size-4 text-on-surface-variant" strokeWidth={1.8} aria-hidden="true" />
               {agent.label}
-              <span class="truncate font-mono text-body-small text-on-surface-variant"
+              <span class="truncate font-mono text-body-medium text-on-surface-variant"
                 >{agent.path}</span
               >
             </span>
@@ -144,7 +144,7 @@
           coding agent somebody installs is their decision, and offering to
           fetch one would be PodSteer reaching outside this machine.
         -->
-        <p class="mt-2 text-body-small text-on-surface-variant">
+        <p class="mt-2 text-body-medium text-on-surface-variant">
           No coding agent was found on your PATH. PodSteer only opens one you already have.
         </p>
       {/if}
@@ -167,7 +167,7 @@
          context the shell is told is the thing that differs between one
          opening and the next, and it is one line; why your kubeconfig is
          nevertheless untouched is read once. -->
-    <p class="mt-4 flex items-center gap-1.5 text-body-small text-on-surface-variant">
+    <p class="mt-4 flex items-center gap-1.5 text-body-medium text-on-surface-variant">
       {#if clusterId}
         <span>Context</span>
         <span class="text-on-surface" data-selectable>{clusterId}</span>

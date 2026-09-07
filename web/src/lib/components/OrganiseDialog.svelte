@@ -391,7 +391,7 @@
       aria-label="Projects and groups"
     >
     <DialogHeader title="Projects and groups" help="organise" {onclose} />
-    <p class="mt-1 text-body-small text-on-surface-variant">
+    <p class="mt-1 text-body-medium text-on-surface-variant">
       A project is a system; a group inside it is usually an environment. Drag a row to reorder it,
       or drop a group on a project to move it there. Every context starts in
       {organisation.defaultProjectName} › {organisation.defaultGroupNameFor(DEFAULT_PROJECT_ID)}.
@@ -403,7 +403,7 @@
          up 48px high beside a 32px button — every control in the application
          is h-8, and this one was half again as tall as the thing next to it. -->
     <div class="mt-5">
-      <label for="new-project-name" class="text-body-small text-on-surface-variant">
+      <label for="new-project-name" class="text-body-medium text-on-surface-variant">
         Project name
       </label>
       <div class="mt-1.5 flex items-center gap-2">
@@ -419,7 +419,7 @@
       </div>
     </div>
     {#if newProjectError}
-      <p class="mt-1.5 text-body-small text-error">{newProjectError}</p>
+      <p class="mt-1.5 text-body-medium text-error">{newProjectError}</p>
     {/if}
 
     <!-- The tree -->
@@ -475,12 +475,12 @@
                      something missing, not as something fixed. It can be
                      renamed — it cannot be moved or deleted, because it is
                      where everything falls back to. -->
-                <span class="shrink-0 text-body-small text-on-surface-variant/50">
+                <span class="shrink-0 text-body-medium text-on-surface-variant/50">
                   fallback · always first
                 </span>
               {/if}
 
-              <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant">
+              <span class="shrink-0 text-body-medium tabular-nums text-on-surface-variant">
                 {project.count}
                 {project.count === 1 ? 'cluster' : 'clusters'}
               </span>
@@ -590,12 +590,12 @@
                   </span>
 
                   {#if group.isDefault}
-                    <span class="shrink-0 text-body-small text-on-surface-variant/50">
+                    <span class="shrink-0 text-body-medium text-on-surface-variant/50">
                       fallback · always first
                     </span>
                   {/if}
 
-                  <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant/70">
+                  <span class="shrink-0 text-body-medium tabular-nums text-on-surface-variant">
                     {group.count}
                   </span>
 
@@ -628,7 +628,7 @@
                     >
                       {#if movingGroup === group.id && !group.isDefault}
                         <p class="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider
-                                  text-on-surface-variant/60">
+                                  text-on-surface-variant">
                           Move to project
                         </p>
                         {#each tree as target (target.id)}
@@ -644,7 +644,7 @@
                                    disabled:pointer-events-none disabled:opacity-35">
                             <span class="truncate">{target.name}</span>
                             {#if target.id === project.id}
-                              <span class="ml-auto shrink-0 text-body-small text-on-surface-variant/50">
+                              <span class="ml-auto shrink-0 text-body-medium text-on-surface-variant/50">
                                 current
                               </span>
                             {/if}
@@ -701,9 +701,9 @@
                 do to real clusters, and that belongs where it is seen every
                 time this dialog is open, not one click deeper.
               -->
-              <li class="mb-1 flex flex-wrap items-center gap-x-4 gap-y-1.5 py-1 pr-2 pl-9 text-body-small">
+              <li class="mb-1 flex flex-wrap items-center gap-x-4 gap-y-1.5 py-1 pr-2 pl-9 text-body-medium">
                 <div class="flex items-center gap-1.5">
-                  <span class="text-on-surface-variant/60">Environment</span>
+                  <span class="text-on-surface-variant">Environment</span>
                   <Select
                     label="Environment for {group.name}"
                     accessibleName="Environment for {group.name}"
@@ -788,7 +788,7 @@
                   <Button variant="filled" onclick={() => addGroup(project.id)}>Add</Button>
                 </div>
                 {#if newGroupError}
-                  <p class="mt-1 text-body-small text-error">{newGroupError}</p>
+                  <p class="mt-1 text-body-medium text-error">{newGroupError}</p>
                 {/if}
               {:else}
                 <button
@@ -812,7 +812,7 @@
     </div>
 
     {#if renameError}
-      <p class="mt-1.5 text-body-small text-error">{renameError}</p>
+      <p class="mt-1.5 text-body-medium text-error">{renameError}</p>
     {/if}
 
     <div class="mt-5 flex shrink-0 justify-end">

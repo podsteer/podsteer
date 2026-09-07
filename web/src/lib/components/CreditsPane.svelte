@@ -118,14 +118,14 @@
 <div class="flex h-full min-h-0 flex-col gap-3">
   <div>
     <h3 class="text-title-medium text-on-surface">Open source components</h3>
-    <p class="mt-0.5 text-body-small text-on-surface-variant">
+    <p class="mt-0.5 text-body-medium text-on-surface-variant">
       PodSteer is built on the work below and distributes it under the licences shown. Every one
       is permissive; none restricts what you may use PodSteer for.
     </p>
   </div>
 
   {#if status === 'loading'}
-    <div class="flex flex-1 items-center justify-center gap-2 text-on-surface-variant/60">
+    <div class="flex flex-1 items-center justify-center gap-2 text-on-surface-variant">
       <Loader2 class="size-5 animate-spin" strokeWidth={1.8} />
       <span class="text-body-medium">Loading…</span>
     </div>
@@ -134,7 +134,7 @@
   {:else}
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
       {#each summary as [licence, count] (licence)}
-        <span class="text-body-small text-on-surface-variant">
+        <span class="text-body-medium text-on-surface-variant">
           <span class="tabular-nums text-on-surface">{count}</span>
           {licence}
         </span>
@@ -175,14 +175,14 @@
                          duration-150 ease-standard {expanded ? 'rotate-90' : ''}"
                   strokeWidth={2.5}
                 />
-                <span class="min-w-0 flex-1 truncate text-body-small text-on-surface" title={credit.name}>
+                <span class="min-w-0 flex-1 truncate text-body-medium text-on-surface" title={credit.name}>
                   {credit.name}
                 </span>
-                <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant/60">
+                <span class="shrink-0 text-body-medium tabular-nums text-on-surface-variant">
                   {credit.version}
                 </span>
                 <span
-                  class="w-24 shrink-0 text-right text-body-small text-on-surface-variant"
+                  class="w-24 shrink-0 text-right text-body-medium text-on-surface-variant"
                   title={credit.expression ? `Offered as ${credit.expression}` : undefined}
                 >
                   {credit.licence}{credit.expression ? '*' : ''}
@@ -192,17 +192,17 @@
               {#if expanded}
                 <div class="bg-surface-container/60 px-3 pb-3 pl-8">
                   {#if credit.copyright}
-                    <p class="pb-2 text-body-small text-on-surface-variant">{credit.copyright}</p>
+                    <p class="pb-2 text-body-medium text-on-surface-variant">{credit.copyright}</p>
                   {/if}
 
                   {#if !credit.textId}
                     <!-- A few projects declare a licence but publish no licence
                          file. Saying so is more honest than inventing one. -->
-                    <p class="text-body-small text-on-surface-variant/70">
+                    <p class="text-body-medium text-on-surface-variant">
                       Declared {credit.licence}; the project publishes no licence file.
                     </p>
                   {:else if openText === null}
-                    <p class="text-body-small text-on-surface-variant/60">Loading licence…</p>
+                    <p class="text-body-medium text-on-surface-variant">Loading licence…</p>
                   {:else}
                     <pre
                       class="max-h-64 overflow-auto rounded border border-outline-variant/40
@@ -229,7 +229,7 @@
       {/each}
 
       {#if matching.length === 0}
-        <p class="px-3 py-6 text-center text-body-small text-on-surface-variant/60">
+        <p class="px-3 py-6 text-center text-body-medium text-on-surface-variant">
           Nothing matches "{filter}".
         </p>
       {/if}

@@ -189,7 +189,7 @@
         class="text-body-medium text-on-surface"
       >
         Force pods with no controller
-        <span class="block text-body-small text-on-surface-variant/70">
+        <span class="block text-body-medium text-on-surface-variant">
           A bare pod is not recreated once evicted — nothing owns it.
         </span>
       </Checkbox>
@@ -202,13 +202,13 @@
         class="text-body-medium text-on-surface"
       >
         Delete pods using local storage
-        <span class="block text-body-small text-on-surface-variant/70">
+        <span class="block text-body-medium text-on-surface-variant">
           An emptyDir volume lives on this node and is discarded, not moved.
         </span>
       </Checkbox>
 
       <label class="mt-1 block">
-        <span class="text-body-small text-on-surface-variant">Grace period (seconds)</span>
+        <span class="text-body-medium text-on-surface-variant">Grace period (seconds)</span>
         <input
           type="number"
           min="0"
@@ -221,7 +221,7 @@
     </div>
 
     <!-- Preview, rebuilt from the same plan the drain itself will run. -->
-    <div class="mt-4 min-h-[3rem] rounded-sm border border-outline-variant/60 bg-surface p-3 text-body-small">
+    <div class="mt-4 min-h-[3rem] rounded-sm border border-outline-variant/60 bg-surface p-3 text-body-medium">
       {#if planLoading && !plan}
         <p class="flex items-center gap-2 text-on-surface-variant">
           <Loader class="size-3.5 animate-spin" strokeWidth={2} />
@@ -266,7 +266,7 @@
           {/if}
         </p>
         {#if failed.length > 0}
-          <ul class="mt-2 flex flex-col gap-1 text-body-small text-on-surface-variant">
+          <ul class="mt-2 flex flex-col gap-1 text-body-medium text-on-surface-variant">
             {#each failed as failure (failure.pod)}
               <li><strong class="text-on-surface" data-selectable>{failure.pod}</strong>: {failure.reason}</li>
             {/each}

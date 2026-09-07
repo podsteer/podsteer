@@ -286,7 +286,7 @@
     {#if productionGroup}
       <p
         class="mt-4 flex items-start gap-2 rounded-sm border border-error/30 bg-error-container/40
-               px-3 py-2 text-body-small text-on-error-container"
+               px-3 py-2 text-body-medium text-on-error-container"
       >
         <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
         This cluster is in {productionGroup}, marked production.
@@ -302,7 +302,7 @@
       action exists to respect.
     -->
     {#if action === 'evict' && !results}
-      <p class="mt-4 text-body-small text-on-surface-variant">
+      <p class="mt-4 text-body-medium text-on-surface-variant">
         Asks each pod to leave through the eviction API — the respectful removal a drain uses, not
         a delete. A PodDisruptionBudget may refuse any of them; each refusal is reported against
         its own pod below and never stops the rest.
@@ -311,7 +311,7 @@
 
     {#if action === 'scale' && !results}
       <label class="mt-4 block">
-        <span class="text-body-small text-on-surface-variant">Replicas</span>
+        <span class="text-body-medium text-on-surface-variant">Replicas</span>
         <input
           type="number"
           bind:value={replicas}
@@ -336,13 +336,13 @@
             · <span class="tabular-nums">{skippedCount}</span> skipped
           {/if}
         </p>
-        <ul class="mt-2 flex flex-col gap-1 text-body-small">
+        <ul class="mt-2 flex flex-col gap-1 text-body-medium">
           {#each results as result (label(result))}
             <li class="flex items-start gap-2">
               {#if result.done}
                 <CircleCheck class="mt-0.5 size-3.5 shrink-0 text-success" strokeWidth={2} />
               {:else if result.skipped}
-                <CircleMinus class="mt-0.5 size-3.5 shrink-0 text-on-surface-variant/60" strokeWidth={2} />
+                <CircleMinus class="mt-0.5 size-3.5 shrink-0 text-on-surface-variant" strokeWidth={2} />
               {:else}
                 <CircleX class="mt-0.5 size-3.5 shrink-0 text-error" strokeWidth={2} />
               {/if}
@@ -362,12 +362,12 @@
           {/each}
         </ul>
       {:else if planLoading && !plan}
-        <p class="flex items-center gap-2 text-body-small text-on-surface-variant">
+        <p class="flex items-center gap-2 text-body-medium text-on-surface-variant">
           <Loader class="size-3.5 animate-spin" strokeWidth={2} />
           Checking what this would do…
         </p>
       {:else if planError}
-        <p class="flex items-center gap-2 text-body-small text-error">
+        <p class="flex items-center gap-2 text-body-medium text-error">
           <TriangleAlert class="size-3.5 shrink-0" strokeWidth={2} />
           {planError}
         </p>
@@ -382,14 +382,14 @@
             · skipping <span class="tabular-nums">{plan.skipped}</span>
           {/if}
         </p>
-        <ul class="mt-2 flex flex-col gap-1 text-body-small">
+        <ul class="mt-2 flex flex-col gap-1 text-body-medium">
           {#each plan.lines ?? [] as line (label(line))}
             {@const check = autoscalers[rowKey(line.namespace, line.name)]}
             <li class="flex items-start gap-2">
               {#if line.act}
                 <CircleCheck class="mt-0.5 size-3.5 shrink-0 text-primary" strokeWidth={2} />
               {:else}
-                <CircleMinus class="mt-0.5 size-3.5 shrink-0 text-on-surface-variant/60" strokeWidth={2} />
+                <CircleMinus class="mt-0.5 size-3.5 shrink-0 text-on-surface-variant" strokeWidth={2} />
               {/if}
               <div class="min-w-0 flex-1">
                 <p class="truncate text-on-surface" data-selectable>{label(line)}</p>
@@ -415,7 +415,7 @@
                     </span>
                   </p>
                 {:else if line.act && check?.status === 'unknown'}
-                  <p class="mt-0.5 text-on-surface-variant/70">
+                  <p class="mt-0.5 text-on-surface-variant">
                     Could not check for an autoscaler: {check.reason}
                   </p>
                 {/if}
@@ -424,7 +424,7 @@
           {/each}
         </ul>
       {:else}
-        <p class="text-body-small text-on-surface-variant">Nothing is selected.</p>
+        <p class="text-body-medium text-on-surface-variant">Nothing is selected.</p>
       {/if}
     </div>
 
@@ -436,7 +436,7 @@
 
     {#if requiresTypedName && !results}
       <label class="mt-4 block">
-        <span class="text-body-small text-on-surface-variant">
+        <span class="text-body-medium text-on-surface-variant">
           Type the cluster's name,
           <strong class="text-on-surface" data-selectable>{session.cluster.id}</strong>, to confirm
         </span>
@@ -450,7 +450,7 @@
           class="field mt-1 w-full px-3 py-2 text-body-medium"
         />
       </label>
-      <p id="bulk-confirm-hint" class="mt-1.5 text-body-small text-on-surface-variant/70">
+      <p id="bulk-confirm-hint" class="mt-1.5 text-body-medium text-on-surface-variant">
         {confirmed
           ? 'Name confirmed.'
           : `${copy.label} stays disabled until the name above matches exactly.`}
@@ -458,7 +458,7 @@
     {/if}
 
     {#if runError}
-      <p class="mt-4 flex items-start gap-2 text-body-small text-error">
+      <p class="mt-4 flex items-start gap-2 text-body-medium text-error">
         <TriangleAlert class="mt-0.5 size-3.5 shrink-0" strokeWidth={2} />
         {runError}
       </p>

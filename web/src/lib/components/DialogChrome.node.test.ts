@@ -92,6 +92,29 @@ describe('the controls a dialog offers', () => {
   })
 })
 
+describe('how big the words are', () => {
+  it('never sets a dialog\'s own text at the caption size', () => {
+    // `body-small` is 12px: the size for a caption under a figure, not for
+    // the labels, values and paragraphs somebody is reading in order to
+    // decide something. The overview sets its figures at `body-medium` and
+    // its card headings at `title-medium`, and a dialog that disagrees with
+    // the page behind it reads as a different application.
+    //
+    // Code is the exception and keeps its own size: a `kubectl` line set two
+    // points larger wraps twice as often in a 32rem dialog, and where it
+    // breaks is information.
+    const offenders: string[] = []
+    for (const { name, text } of sources(HERE)) {
+      if (!/Dialog\.svelte$|^HelpPanel|^ShortcutSheet/.test(name)) continue
+      for (const attribute of classAttributes(text)) {
+        if (attribute.includes('font-mono')) continue
+        if (attribute.includes('text-body-small')) offenders.push(name)
+      }
+    }
+    expect([...new Set(offenders)]).toEqual([])
+  })
+})
+
 describe('what a text field looks like', () => {
   it('is not monospaced, unless the field holds a document', () => {
     // A namespace, an image reference and a pod name are TEXT. Setting them
