@@ -15,6 +15,13 @@
     is first because it is the one that was already here.
   - In-cluster shell — a throwaway pod in the cluster, attached to. New.
 
+  EACH ENTRY IS ITS NAME AND NOTHING ELSE. Both carried a sentence of
+  description underneath, which put four lines of prose in front of somebody
+  who had already decided to open a terminal — and repeated, worse, what the
+  dialog behind each entry says properly. The sentence still exists as the
+  entry's title, where it answers a hesitation instead of interrupting a
+  decision.
+
   A disabled entry keeps its reason in its title rather than disappearing: a
   control that is absent teaches nothing, and both of these are absent for
   reasons an operator can act on (no pseudo-terminal on this platform; the
@@ -102,7 +109,7 @@
     <div
       role="menu"
       aria-label="Terminal"
-      class="absolute top-full right-0 z-50 mt-1.5 w-72 rounded-sm border border-outline-variant/60
+      class="absolute top-full right-0 z-50 mt-1.5 w-56 rounded-sm border border-outline-variant/60
              bg-surface-container-high py-1 shadow-level-2"
     >
       <button
@@ -113,17 +120,12 @@
           ? 'Open a shell on this machine, with KUBECONFIG set for this cluster'
           : localReason}
         onclick={() => choose(onlocal)}
-        class="state-layer flex w-full items-start gap-2 px-3 py-2 text-left
+        class="state-layer flex w-full items-center gap-2 px-3 py-2 text-left
                text-body-medium text-on-surface hover:bg-surface-container-highest
                disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <Laptop class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-        <span class="min-w-0">
-          Local shell
-          <span class="block text-body-small text-on-surface-variant">
-            On this machine, with KUBECONFIG set for this cluster.
-          </span>
-        </span>
+        <Laptop class="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+        Local shell
       </button>
 
       <button
@@ -134,17 +136,12 @@
           ? readOnlyReason
           : "Run a throwaway pod in the cluster and attach to it — kubectl, dig and curl from inside the cluster's network"}
         onclick={() => choose(oncluster)}
-        class="state-layer flex w-full items-start gap-2 px-3 py-2 text-left
+        class="state-layer flex w-full items-center gap-2 px-3 py-2 text-left
                text-body-medium text-on-surface hover:bg-surface-container-highest
                disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <Container class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-        <span class="min-w-0">
-          In-cluster shell
-          <span class="block text-body-small text-on-surface-variant">
-            A throwaway pod in the cluster, so kubectl, dig and curl see the network from inside.
-          </span>
-        </span>
+        <Container class="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+        In-cluster shell
       </button>
     </div>
   {/if}

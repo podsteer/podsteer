@@ -2,11 +2,18 @@
   Opens a shell on the OPERATOR'S OWN MACHINE, and optionally starts a coding
   agent they already have in it.
 
-  It is the one terminal here that reaches no cluster, so the dialog spends its
-  words on the two things that surprise people about it: the read-only setting
-  does not apply, and the context is stated rather than pinned. Both are true
-  of the pane too, and both are said there as well — this is the moment before
-  it opens, when somebody can still change their mind.
+  It is the one terminal here that reaches no cluster, and the two things that
+  surprise people about it are that the read-only setting does not apply and
+  that the context is stated rather than pinned. Both are true of the pane too,
+  and both are said there as well — this is the moment before it opens, when
+  somebody can still change their mind.
+
+  THOSE EXPLANATIONS ARE BEHIND (i) ICONS, NOT PRINTED DOWN THE DIALOG. Three
+  paragraphs of prose stood between the operator and a button they press to get
+  a shell, and they are paragraphs somebody reads once, if ever. What is left
+  on the surface is what CHANGES between one opening and the next — which
+  context the tab is on, which agents this machine has — and the reasoning sits
+  under the icon beside it, in the same hint the toolbar's search field uses.
 
   NOTHING IS INSTALLED. The agent list is what the Go side FOUND on the adopted
   PATH; a machine with none simply has no agent row, and there is deliberately
@@ -19,6 +26,7 @@
   import Button from './Button.svelte'
   import Radio from './Radio.svelte'
   import Checkbox from './Checkbox.svelte'
+  import InfoHint from './InfoHint.svelte'
   import { SquareTerminal, Bot } from '@lucide/svelte'
 
   interface Props {
@@ -33,6 +41,31 @@
   }
 
   let { open, clusterId, agents, onclose, onconfirm }: Props = $props()
+
+  /**
+   * What the dialog used to print in full, as hint text.
+   *
+   * Plain sentences rather than markup, because a hint panel is text: the
+   * emphasis these paragraphs carried was doing the work of a heading in a
+   * wall of prose, and there is no wall any more.
+   */
+  const ABOUT =
+    'Your own login shell, on this machine, in your home directory. KUBECONFIG is set to the ' +
+    'same files PodSteer reads, so kubectl and helm see the same clusters — whichever versions ' +
+    "you already have. PodSteer installs nothing. PodSteer's read-only setting does not apply " +
+    'in here either: it guards this application\'s own writes to a cluster, and a shell you ' +
+    'opened yourself, with your own credentials, is not something it can or should police.'
+
+  const CONTEXT_HINT =
+    'The shell is told this context, but current-context in your kubeconfig is left exactly as ' +
+    'it is, so pass --context. PodSteer never rewrites that file, and kubectl in your other ' +
+    'terminals must not change target because you opened a pane here.'
+
+  const AGENT_HINT = (label: string): string =>
+    `A request in its opening prompt, not a restriction — ${label} runs with your credentials ` +
+    'and PodSteer cannot narrow them. It is told which cluster and which object you have open, ' +
+    'and that its access is whatever your kubeconfig grants. Nothing is sent anywhere by ' +
+    'PodSteer; this starts a process on this machine.'
 
   /**
    * '' means the operator's own login shell; anything else is an agent id.
@@ -105,14 +138,8 @@
     <h2 class="flex items-center gap-2 text-headline-small text-on-surface">
       <SquareTerminal class="size-5 text-on-surface-variant" strokeWidth={2} aria-hidden="true" />
       Local terminal
+      <InfoHint text={ABOUT} label="What a local terminal is" />
     </h2>
-
-    <p class="mt-4 text-body-medium text-on-surface-variant">
-      Your own login shell, on this machine, in your home directory.
-      <strong class="text-on-surface">KUBECONFIG</strong> is set to the same files PodSteer reads,
-      so <code class="font-mono">kubectl</code> and <code class="font-mono">helm</code> see the same
-      clusters — whichever versions you already have. PodSteer installs nothing.
-    </p>
 
     <fieldset class="mt-4">
       <legend class="text-body-small text-on-surface-variant">Start with</legend>
@@ -153,44 +180,35 @@
 
     {#if chosenAgent}
       <div class="mt-3 rounded-sm border border-outline-variant bg-surface-container px-3 py-2">
-        <Checkbox
-          checked={readOnly}
-          onchange={(next) => (readOnly = next)}
-          dense
-          class="text-body-medium text-on-surface"
-        >
-          Ask it to keep to read-only kubectl
-        </Checkbox>
-        <p class="mt-1 text-body-small text-on-surface-variant">
-          A request in its opening prompt, not a restriction — {chosenAgent.label} runs with your credentials
-          and PodSteer cannot narrow them. It is told which cluster and which object you have open, and
-          that its access is whatever your kubeconfig grants. Nothing is sent anywhere by PodSteer; this
-          starts a process on this machine.
-        </p>
+        <div class="flex items-center gap-1">
+          <Checkbox
+            checked={readOnly}
+            onchange={(next) => (readOnly = next)}
+            dense
+            class="text-body-medium text-on-surface"
+          >
+            Ask it to keep to read-only kubectl
+          </Checkbox>
+          <InfoHint
+            text={AGENT_HINT(chosenAgent.label)}
+            label="What read-only asks of the agent"
+          />
+        </div>
       </div>
     {/if}
 
-    <p
-      class="mt-3 rounded-sm border border-outline-variant bg-surface-container px-3 py-2
-             text-body-small text-on-surface-variant"
-    >
+    <!-- THE FACT STAYS ON THE SURFACE, the caveat goes under the icon. Which
+         context the shell is told is the thing that differs between one
+         opening and the next, and it is one line; why your kubeconfig is
+         nevertheless untouched is read once. -->
+    <p class="mt-4 flex items-center gap-1.5 text-body-small text-on-surface-variant">
       {#if clusterId}
-        The open tab's context is <code class="font-mono text-on-surface">{clusterId}</code>, and the
-        shell is told so — but <code class="font-mono">current-context</code> in your kubeconfig is left
-        exactly as it is, so pass <code class="font-mono">--context</code>. PodSteer never rewrites that
-        file, and kubectl in your other terminals must not change target because you opened a pane here.
+        <span>Context</span>
+        <code class="font-mono text-on-surface">{clusterId}</code>
+        <InfoHint text={CONTEXT_HINT} label="How the context is set" />
       {:else}
-        No cluster tab is open, so the shell gets your kubeconfig unchanged and nothing is pinned.
+        <span>No cluster tab is open, so your kubeconfig is passed through unchanged.</span>
       {/if}
-    </p>
-
-    <p
-      class="mt-3 rounded-sm border border-outline-variant bg-surface-container px-3 py-2
-             text-body-small text-on-surface-variant"
-    >
-      PodSteer's <strong class="text-on-surface">read-only</strong> setting does not apply in here. It
-      guards PodSteer's own writes to a cluster; a shell you opened yourself, with your own credentials,
-      is not something this application can or should police.
     </p>
 
     <div class="mt-6 flex justify-end gap-3">
