@@ -4,11 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+
+	"golang.org/x/net/http/httpproxy"
 )
 
 // This file models the settings the GO PROCESS owns, as against the ones the
@@ -169,10 +172,9 @@ func (m ProxyMode) IsValid() bool {
 
 // ProxySettings is the proxy PodSteer's own outbound calls go through.
 //
-// THE VALUE ONLY. Nothing in this build applies it yet — the transport work is
-// a separate change — but the shape is settled here so the file it lives in
-// does not have to change version to gain it, and so the credential refusal
-// above exists before anything can write one.
+// APPLIED AS OF 2026-09-07. The value was settled here first and left inert
+// for a build, which is why the shape came before the transport rather than
+// with it; ProxyDialer below is the half that was missing.
 type ProxySettings struct {
 	// Mode selects between the environment, no proxy, and URL.
 	Mode ProxyMode
@@ -181,6 +183,69 @@ type ProxySettings struct {
 	// NoProxy is a comma-separated exception list, in the same syntax the
 	// NO_PROXY environment variable uses.
 	NoProxy string
+}
+
+// ProxyDialer is a proxy decision as net/http wants it: given a request, the
+// proxy to use, or nil for a direct connection.
+//
+// A TYPE ALIAS OF THE SIGNATURE rest.Config AND http.Transport BOTH TAKE, so
+// the domain can decide and neither adapter has to translate. It is the one
+// place a Kubernetes concern and an HTTP concern have the same shape, and
+// pretending otherwise would mean two implementations of NO_PROXY.
+type ProxyDialer func(*http.Request) (*url.URL, error)
+
+// Dialer turns the setting into the function a transport takes.
+//
+// NIL MEANS "DO WHAT GO ALREADY DOES", which is not the same as "no proxy" and
+// is the reason this returns nil rather than a no-op for the default mode.
+// net/http and client-go both read HTTPS_PROXY, HTTP_PROXY and NO_PROXY from
+// the environment when no dialer is set, and an operator on a corporate laptop
+// depends on that without having configured anything here. A no-op would
+// silently take it away from them the first time this setting was written for
+// an unrelated reason.
+//
+// The three modes are three different claims:
+//
+//   - environment: what Go does. Unchanged, and nil says so precisely.
+//   - none: a direct connection, EVEN IF the environment names a proxy. The
+//     one reason to set it: an operator whose HTTPS_PROXY reaches the internet
+//     but not their private API server.
+//   - manual: this URL, with NO_PROXY semantics from the exception list.
+//
+// The exception list is handled by x/net's own httpproxy, which is the
+// implementation net/http uses for the environment variables, so a NoProxy
+// written here behaves exactly as the same string in NO_PROXY would. Rolling
+// our own would be a second dialect of a syntax operators already know.
+func (p ProxySettings) Dialer() (ProxyDialer, error) {
+	if err := p.validate(); err != nil {
+		return nil, err
+	}
+
+	switch p.Mode {
+	case ProxyNone:
+		return func(*http.Request) (*url.URL, error) { return nil, nil }, nil
+
+	case ProxyManual:
+		address := strings.TrimSpace(p.URL)
+		config := &httpproxy.Config{
+			HTTPProxy:  address,
+			HTTPSProxy: address,
+			NoProxy:    strings.TrimSpace(p.NoProxy),
+			// CGI is a server-side variable that has no meaning in a desktop
+			// application; leaving it unset keeps httpproxy from consulting a
+			// REQUEST_METHOD nobody set.
+		}
+		proxy := config.ProxyFunc()
+		return func(request *http.Request) (*url.URL, error) {
+			if request == nil || request.URL == nil {
+				return nil, nil
+			}
+			return proxy(request.URL)
+		}, nil
+
+	default:
+		return nil, nil
+	}
 }
 
 // HistorySettings is the recording policy the sampler acts on.

@@ -182,6 +182,7 @@ func run() error {
 		KubeconfigPath: cfg.Kubernetes.KubeconfigPath,
 		KubeconfigDir:  cfg.Kubernetes.KubeconfigDir,
 		Sources:        kubeconfigSources(settingsStore),
+		Proxy:          proxySetting(settingsStore),
 		QPS:            cfg.Kubernetes.QPS,
 		Burst:          cfg.Kubernetes.Burst,
 		UserAgent:      fmt.Sprintf("%s/%s", cfg.App.Name, cfg.App.Version),
@@ -243,10 +244,31 @@ func run() error {
 	// reads the per-cluster switch through it, and that service has to be in
 	// the Invalidators list clusterService is built with — the list is
 	// composed once and never mutated, so everything in it must exist first.
+	// Assigned once every holder of a per-cluster client exists — see the
+	// Reconnect field below.
+	var reconnectClusters func()
+
 	settingsService, err := application.NewSettingsService(application.SettingsServiceDeps{
 		Settings:   settingsStore,
 		Kubeconfig: kubernetes,
-		Logger:     logger,
+		// A PROXY CHANGE HAS TO REACH THE CLUSTERS ALREADY OPEN. A client-go
+		// client captures its transport when it is built, so writing the
+		// setting alone would apply it to connections made afterwards and to
+		// nothing on screen — some tabs on the new route, some on the old,
+		// and nothing saying which.
+		//
+		// INDIRECTED THROUGH A VARIABLE ASSIGNED BELOW, because the holders
+		// it has to release are built after this service is: the metrics
+		// query service takes settings, and the settings service takes the
+		// invalidation. The cycle is real and the composition root is where
+		// it is broken — the function cannot be called before the window
+		// exists, and by then every holder is assigned.
+		Reconnect: func() {
+			if reconnectClusters != nil {
+				reconnectClusters()
+			}
+		},
+		Logger: logger,
 	})
 	if err != nil {
 		return fmt.Errorf("wiring settings service: %w", err)
@@ -294,6 +316,17 @@ func run() error {
 		// nodes this connection has never seen.
 		Invalidator: application.Invalidators{kubernetes, overviewService, metricsQueryService},
 	})
+
+	// Every open cluster's client, released. This is the same set of holders
+	// the disconnect path releases, for the same reason: a client outlives
+	// the settings it was built from, so a transport change means rebuilding
+	// rather than notifying.
+	reconnectClusters = func() {
+		invalidators := application.Invalidators{kubernetes, overviewService, metricsQueryService}
+		for _, cluster := range registry.All() {
+			invalidators.Invalidate(cluster.ID())
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("wiring cluster service: %w", err)
 	}
@@ -515,7 +548,7 @@ func run() error {
 	// to anything but a cluster, and it acts only when the interface asks —
 	// there is no timer here and nothing on the startup path. It sends no
 	// identifier and is off entirely under PODSTEER_UPDATE_CHECK=false.
-	updateService := application.NewUpdateService(updates.NewClient(), cfg.App.Version, logger)
+	updateService := application.NewUpdateService(updates.NewClient(proxySetting(settingsStore)), cfg.App.Version, logger)
 
 	updateAPI, err := wailsadapter.NewUpdateAPI(updateService, logger)
 	if err != nil {

@@ -116,6 +116,7 @@ export type {
     ProbeResult,
     ProbeStep,
     ProbeSubjectInput,
+    ProxySettings,
     RBACFinding,
     RBACSubject,
     ReleaseSupport,

@@ -82,6 +82,20 @@ type Config struct {
 	// defaultUserAgent.
 	UserAgent string
 
+	// Proxy reports the proxy PodSteer's own calls go through.
+	//
+	// A FUNCTION, for Sources' reason exactly: the setting changes while
+	// PodSteer runs, and a value captured at composition would mean a proxy
+	// that only takes effect on the next launch. Nil, or a nil result, means
+	// the default — which is NOT "no proxy" but "whatever HTTPS_PROXY and
+	// NO_PROXY already say", because that is what client-go does with a nil
+	// rest.Config.Proxy and what every operator behind a corporate proxy is
+	// relying on without having configured anything here.
+	//
+	// Reading it costs nothing per request: it is consulted once per client
+	// build, and a change invalidates the clients so the next build sees it.
+	Proxy func() domain.ProxySettings
+
 	// Sources reports the operator's OWN kubeconfig source list — the files
 	// and folders added in Settings — in precedence order.
 	//
@@ -564,6 +578,31 @@ func (f *clientFactory) restConfig(id domain.ClusterID) (*rest.Config, error) {
 	// through this config, including the long-lived watches PodSteer will open
 	// for live resource updates. Per-request deadlines belong on the context,
 	// which the inbound adapter attaches.
+
+	// The proxy, when the operator has chosen one. A nil dialer is left nil
+	// rather than replaced with a pass-through: client-go reads the
+	// environment for a nil Proxy, and installing a function that returns nil
+	// would silently mean "never proxy" for everybody who had never opened
+	// this setting. See domain.ProxySettings.Dialer.
+	//
+	// A REFUSED SETTING DOES NOT FAIL THE CONNECTION. The interface validates
+	// before it writes, so a bad value here came from a hand-edited file, and
+	// the same reasoning normalise uses applies: carry on with the
+	// environment's answer rather than refuse to open a cluster over a
+	// setting somebody typed into a file by hand. It is logged once per
+	// client build, which is where somebody would look.
+	if f.cfg.Proxy != nil {
+		settings := f.cfg.Proxy()
+		dialer, err := settings.Dialer()
+		switch {
+		case err != nil:
+			f.logger.Warn("ignoring an unusable proxy setting; using the environment",
+				slog.String("mode", string(settings.Mode)),
+				slog.String("error", err.Error()))
+		case dialer != nil:
+			cfg.Proxy = dialer
+		}
+	}
 
 	return cfg, nil
 }

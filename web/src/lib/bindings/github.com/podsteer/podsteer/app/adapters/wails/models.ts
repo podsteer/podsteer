@@ -2915,6 +2915,36 @@ export interface ProbeSubjectInput {
 }
 
 /**
+ * ProxySettings is the proxy PodSteer's own outbound calls go through, as the
+ * interface reads and writes it.
+ * 
+ * THREE MODES, NOT A BOOLEAN, because "off" is genuinely two different
+ * intentions: leave the environment alone (which is what an operator behind a
+ * corporate proxy needs and has never had to configure) and refuse a proxy
+ * even though the environment names one (which is what somebody whose
+ * HTTPS_PROXY reaches the internet but not their API server needs). A tick
+ * box could only offer one of them.
+ */
+export interface ProxySettings {
+    /**
+     * Mode is "environment", "none" or "manual".
+     */
+    "mode": string;
+
+    /**
+     * Url is the proxy address; used only in manual mode. Never carries
+     * credentials — the write path refuses userinfo rather than putting a
+     * password in a settings file.
+     */
+    "url": string;
+
+    /**
+     * NoProxy is the exception list, in NO_PROXY's own syntax.
+     */
+    "noProxy": string;
+}
+
+/**
  * RBACFinding is one blast-radius flag.
  */
 export interface RBACFinding {

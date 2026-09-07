@@ -238,7 +238,17 @@ it: how long capacity history is kept and how often it is sampled; the
 kubeconfig files and folders you have added, **as paths** — never the contents
 of a kubeconfig, never a credential, and never a cluster address; a proxy, if
 you configure one; per-cluster switches, keyed by your kubeconfig context name;
-and window positions. Everything else — theme, columns, groups, snoozed
+and window positions.
+
+**The proxy is applied as of 2026-09-07**, having been a recorded value with no
+effect before that. It governs every outbound call PodSteer makes — the API
+servers your kubeconfig names, and the once-a-day update check — and it offers
+three states rather than two, because "leave the environment alone" and "never
+use a proxy" are different instructions and only the second of them is safe to
+assume. The default is the first, and it is byte-for-byte what PodSteer did
+before the setting existed. **A proxy URL carrying a username and password is
+refused rather than written**: PodSteer puts no credential of any kind in this
+file, and a proxy password would be the first. Everything else — theme, columns, groups, snoozed
 findings, the namespace each cluster was last left on — stays in the webview's
 own storage, and the two settings that hold OBJECT NAMES are deliberately among
 them.

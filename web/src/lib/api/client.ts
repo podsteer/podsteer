@@ -122,10 +122,12 @@ import {
   AddKubeconfigFolder as bindAddKubeconfigFolder,
   GetClusterSettings as bindGetClusterSettings,
   GetKubeconfigSources as bindGetKubeconfigSources,
+  GetProxy as bindGetProxy,
   GetState as bindGetSettingsState,
   MoveKubeconfigSource as bindMoveKubeconfigSource,
   RemoveKubeconfigSource as bindRemoveKubeconfigSource,
   SetMetricsQuery as bindSetMetricsQuery,
+  SetProxy as bindSetProxy,
 } from '$bindings/settingsapi'
 import {
   ChooseDirectory as bindChooseDirectory,
@@ -298,6 +300,7 @@ export type SeriesProvenance = wails.SeriesProvenance
 export type SettingsState = wails.SettingsState
 /** One entry of the composed kubeconfig loading list. */
 export type KubeconfigSource = wails.KubeconfigSource
+export type ProxySettings = wails.ProxySettings
 
 /** One cluster's own switches, as the Clusters section of Settings shows them. */
 export type ClusterSettings = wails.ClusterSettings
@@ -749,6 +752,26 @@ export function getSettingsState(): Promise<SettingsState> {
 /** Reports the composed kubeconfig loading list, in precedence order. */
 export function getKubeconfigSources(): Promise<KubeconfigSource[]> {
   return callList(() => bindGetKubeconfigSources())
+}
+
+/**
+ * The proxy PodSteer's own outbound calls go through.
+ *
+ * Three modes rather than a switch: "environment" leaves Go's own reading of
+ * HTTPS_PROXY and NO_PROXY alone, "none" refuses a proxy even where the
+ * environment names one, and "manual" uses the URL. The first two are not the
+ * same claim, which is why a tick box could not carry them.
+ */
+export function getProxy(): Promise<ProxySettings> {
+  return call(() => bindGetProxy())
+}
+
+/**
+ * Records it, and rebuilds every open cluster's client so it takes effect on
+ * the tabs already open rather than on the next connection.
+ */
+export function setProxy(mode: string, url: string, noProxy: string): Promise<void> {
+  return call(() => bindSetProxy(mode, url, noProxy))
 }
 
 /** Adds one kubeconfig file to the operator's own sources. */

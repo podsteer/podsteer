@@ -84,6 +84,8 @@
   import ClusterSettingsPane from './ClusterSettingsPane.svelte'
   import TerminalImagesPane from './TerminalImagesPane.svelte'
   import HelpButton from './HelpButton.svelte'
+  import ProxyPane from './ProxyPane.svelte'
+  import { kubeconfigSources } from '$stores/kubeconfigSources.svelte'
   import {
     RefreshCw,
     Palette,
@@ -91,6 +93,7 @@
     Scale,
     Bell,
     Gauge,
+    Globe,
     Play,
     ArrowLeftRight,
     FolderCog,
@@ -150,6 +153,11 @@
     // GROUP flag guarding against this interface's own bugs, while these are
     // per-cluster facts the Go process acts on without a window.
     { id: 'clusters', label: 'Clusters', icon: Server },
+    // Beside the two sections about WHICH clusters, because this is the one
+    // about HOW they are reached — and it is a section rather than a line in
+    // Kubeconfig because a proxy governs every outbound call PodSteer makes,
+    // not only the ones a kubeconfig names.
+    { id: 'network', label: 'Network', icon: Globe },
     // After Clusters because it is the other section about what PodSteer puts
     // into a cluster rather than what it keeps on this machine — and it is a
     // section at all because these three were persisted preferences reachable
@@ -928,6 +936,11 @@
           <KubeconfigSources />
         {:else if section === 'clusters'}
           <ClusterSettingsPane />
+        {:else if section === 'network'}
+          <ProxyPane
+            canWrite={kubeconfigSources.settingsState?.writable ?? true}
+            readOnlyReason={kubeconfigSources.settingsState?.notice ?? ''}
+          />
         {:else if section === 'images'}
           <TerminalImagesPane />
         {:else if section === 'transfer'}

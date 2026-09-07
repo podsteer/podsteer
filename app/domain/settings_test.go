@@ -10,6 +10,8 @@ package domain_test
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -660,5 +662,131 @@ func TestValidateAcceptsAnEntryWrittenBeforeTheseFieldsExisted(t *testing.T) {
 
 	if err := settings.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v, want it accepted", err)
+	}
+}
+
+// TestProxyDialerLeavesTheEnvironmentAloneByDefault is the mode that must not
+// change behaviour, and the reason Dialer returns nil rather than a no-op.
+//
+// net/http and client-go both read HTTPS_PROXY, HTTP_PROXY and NO_PROXY when
+// no dialer is set. An operator on a corporate laptop depends on that without
+// having configured anything here, and a no-op function would silently take it
+// away the first time this setting was written for an unrelated reason.
+func TestProxyDialerLeavesTheEnvironmentAloneByDefault(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []domain.ProxyMode{domain.ProxyFromEnvironment, ""} {
+		dialer, err := domain.ProxySettings{Mode: mode}.Dialer()
+		if err != nil && mode == domain.ProxyFromEnvironment {
+			t.Fatalf("Dialer() error = %v", err)
+		}
+		if mode == domain.ProxyFromEnvironment && dialer != nil {
+			t.Fatal("the environment mode installed a dialer, which replaces Go's own reading of HTTPS_PROXY")
+		}
+	}
+}
+
+// TestProxyDialerNoneRefusesEvenAnEnvironmentProxy is the whole reason "none"
+// exists as a mode separate from the default: an operator whose HTTPS_PROXY
+// reaches the internet but not their private API server.
+func TestProxyDialerNoneRefusesEvenAnEnvironmentProxy(t *testing.T) {
+	t.Parallel()
+
+	dialer, err := domain.ProxySettings{Mode: domain.ProxyNone}.Dialer()
+	if err != nil {
+		t.Fatalf("Dialer() error = %v", err)
+	}
+	if dialer == nil {
+		t.Fatal("Dialer() = nil for none, which would fall back to the environment")
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "https://10.22.0.5:6443/api", nil)
+	proxy, err := dialer(request)
+	if err != nil {
+		t.Fatalf("dialer error = %v", err)
+	}
+	if proxy != nil {
+		t.Fatalf("proxy = %v, want a direct connection", proxy)
+	}
+}
+
+// TestProxyDialerManualSendsThroughTheConfiguredProxy covers the ordinary case.
+func TestProxyDialerManualSendsThroughTheConfiguredProxy(t *testing.T) {
+	t.Parallel()
+
+	dialer, err := domain.ProxySettings{
+		Mode: domain.ProxyManual,
+		URL:  "http://proxy.corp:3128",
+	}.Dialer()
+	if err != nil {
+		t.Fatalf("Dialer() error = %v", err)
+	}
+
+	for _, target := range []string{"https://api.example:6443/api", "http://api.example/api"} {
+		proxy, err := dialer(httptest.NewRequest(http.MethodGet, target, nil))
+		if err != nil {
+			t.Fatalf("dialer(%q) error = %v", target, err)
+		}
+		if proxy == nil || proxy.Host != "proxy.corp:3128" {
+			t.Fatalf("dialer(%q) = %v, want the configured proxy", target, proxy)
+		}
+	}
+}
+
+// TestProxyDialerHonoursNoProxyLikeTheEnvironmentVariableDoes is why the
+// exception list is not parsed here.
+//
+// The syntax is the one operators already know from NO_PROXY — suffixes,
+// CIDRs, a bare port — and it is handled by the same implementation net/http
+// uses for the environment variable. A second dialect of a familiar syntax is
+// a trap: it works for the cases somebody tests and fails for the one they
+// relied on.
+func TestProxyDialerHonoursNoProxyLikeTheEnvironmentVariableDoes(t *testing.T) {
+	t.Parallel()
+
+	dialer, err := domain.ProxySettings{
+		Mode:    domain.ProxyManual,
+		URL:     "http://proxy.corp:3128",
+		NoProxy: "10.22.0.0/16,.internal",
+	}.Dialer()
+	if err != nil {
+		t.Fatalf("Dialer() error = %v", err)
+	}
+
+	direct := []string{"https://10.22.0.5:6443/api", "https://api.cluster.internal/api"}
+	for _, target := range direct {
+		proxy, err := dialer(httptest.NewRequest(http.MethodGet, target, nil))
+		if err != nil {
+			t.Fatalf("dialer(%q) error = %v", target, err)
+		}
+		if proxy != nil {
+			t.Errorf("dialer(%q) = %v, want a direct connection — it is in NoProxy", target, proxy)
+		}
+	}
+
+	proxied, err := dialer(httptest.NewRequest(http.MethodGet, "https://api.example:6443/api", nil))
+	if err != nil {
+		t.Fatalf("dialer error = %v", err)
+	}
+	if proxied == nil {
+		t.Fatal("a host outside NoProxy went direct")
+	}
+}
+
+// TestProxyDialerRefusesWhatValidateRefuses keeps the two answers together: a
+// setting that cannot be written must not be able to build a transport either.
+func TestProxyDialerRefusesWhatValidateRefuses(t *testing.T) {
+	t.Parallel()
+
+	for _, settings := range []domain.ProxySettings{
+		{Mode: domain.ProxyManual, URL: ""},
+		{Mode: domain.ProxyManual, URL: "proxy.corp:3128"},
+		{Mode: domain.ProxyManual, URL: "ftp://proxy.corp"},
+		{Mode: domain.ProxyManual, URL: "http://user:pass@proxy.corp:3128"},
+		{Mode: "sideways"},
+	} {
+		if _, err := settings.Dialer(); err == nil {
+			t.Errorf("Dialer() accepted %+v", settings)
+		}
 	}
 }
