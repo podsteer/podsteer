@@ -30,11 +30,13 @@
   import { parseQuantity } from '$lib/sort'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
   import { podTemplateOf } from '$lib/podTemplate'
-  import { classifyConditions, type ConditionRef } from '$lib/api/client'
+  import { classifyConditions, setConfigMapKey, type ConditionRef } from '$lib/api/client'
   import { ingressAddresses, ingressCertificates, ingressRoutes, isOpenable } from '$lib/ingress'
   import { isCordoned, nodeTaints } from '$lib/taints'
   import { Browser } from '@wailsio/runtime'
   import type { UsageSample } from '$stores/session.svelte'
+  import { secretReveals } from '$stores/secretReveals.svelte'
+  import { dataEntries } from '$lib/objectData'
 
   interface Props {
     manifest: string | null
@@ -408,6 +410,95 @@
     kind === 'Secret' &&
       (parsedManifest?.type === 'kubernetes.io/tls' || 'tls.crt' in (parsedManifest?.data ?? {})),
   )
+
+  /**
+   * A Secret's or ConfigMap's own keys, on the object's own panel.
+   *
+   * THE WRITE PATH FOR THIS HAS EXISTED SINCE #37 AND WAS REACHABLE FROM ONE
+   * PLACE: an environment variable's row inside a pod. So an operator who
+   * opened the Secret itself — the obvious place to change a key — found the
+   * YAML tab, where `data` is base64 and every value is masked, and was left
+   * hand-encoding a string to change a password. k9s's most-requested open
+   * issue is exactly this (#1017, 42 reactions) and every competitor has it.
+   *
+   * The doctrine does not move an inch to get it. A Secret's values are still
+   * masked on render — the manifest already carries `<hidden, N bytes>`,
+   * which is what these rows quote — reading one key is still a deliberate,
+   * audited act through RevealSecretKey, and editing is still offered only
+   * after the value is on screen, because writing over something nobody has
+   * looked at is the mistake the ordering exists to prevent.
+   *
+   * A ConfigMap is not a Secret and is not treated as one: its values are
+   * already in the manifest in the clear, so there is nothing to reveal and
+   * the editor is offered straight away.
+   */
+  const dataKind = $derived(kind === 'Secret' ? 'secret' : kind === 'ConfigMap' ? 'configmap' : '')
+
+  /** The key this cluster, namespace and object hold a revealed value under. */
+  function secretRevealKey(name: string, key: string): string {
+    return `${clusterId ?? ''}/${metadata.namespace ?? ''}/${name}/${key}`
+  }
+
+  const dataRows = $derived.by<DetailRow[]>(() => {
+    if (!dataKind) return []
+    const name = String(metadata.name ?? '')
+    const namespace = String(metadata.namespace ?? '')
+    if (!clusterId || !name || !namespace) return []
+
+    return dataEntries(kind ?? '', parsedManifest).map((entry) => {
+      if (entry.kind === 'binary') {
+        return {
+          label: entry.key,
+          value: entry.display,
+          info: 'Binary data is listed by size and has no editor here: a text box over base64 is how a keystore acquires a stray newline.',
+        }
+      }
+
+      if (entry.kind === 'text') {
+        return {
+          label: entry.key,
+          value: entry.display,
+          edit: isReadOnly
+            ? undefined
+            : {
+                onSave: async (value: string) => {
+                  await setConfigMapKey(clusterId, namespace, name, entry.key, value)
+                  onchanged?.()
+                },
+              },
+        }
+      }
+
+      const held = secretRevealKey(name, entry.key)
+      const shown = secretReveals.at(held)
+      return {
+        label: entry.key,
+        // The masked placeholder is the API server's own byte count, which
+        // says something true about a value nobody has asked to see.
+        value: shown.error || shown.value || entry.display,
+        tone: shown.error ? ('critical' as const) : undefined,
+        action: shown.value
+          ? { label: 'Hide value', kind: 'hide' as const, onclick: () => secretReveals.hide(held) }
+          : {
+              label: 'Reveal value',
+              kind: 'reveal' as const,
+              onclick: () => void secretReveals.reveal(held, clusterId, namespace, name, entry.key),
+            },
+        // ONLY ONCE REVEALED, and absent rather than present-and-disabled,
+        // for the reason ContainerDetail gives: an explanation nobody reads
+        // is not a guard. secretReveals.write enforces it again below.
+        edit:
+          shown.value && !isReadOnly
+            ? {
+                onSave: async (value: string) => {
+                  await secretReveals.write(held, clusterId, namespace, name, entry.key, value)
+                  onchanged?.()
+                },
+              }
+            : undefined,
+      }
+    })
+  })
 
   /** Whether the panel is showing a pod. */
   const isPodPanel = $derived(kind === 'Pod' || !!selectedPod)
@@ -1175,6 +1266,28 @@
           {/each}
           <MetricsBackendNote {backend} />
         </div>
+      </DetailSection>
+    {/if}
+
+    <!--
+      A Secret's or ConfigMap's own keys.
+
+      Placed above the pod sections because for these two kinds it IS the
+      object: everything else the panel shows about a Secret is metadata about
+      a thing whose contents were the reason somebody opened it.
+    -->
+    {#if dataRows.length > 0}
+      <DetailSection
+        level="h3"
+        id="data"
+        title="Data"
+        hint={String(dataRows.length)}
+        help="object-data"
+      >
+        <DetailList rows={dataRows} />
+        {#if isReadOnly}
+          <p class="mt-2 text-body-small text-on-surface-variant">{readOnlyReason}</p>
+        {/if}
       </DetailSection>
     {/if}
 
