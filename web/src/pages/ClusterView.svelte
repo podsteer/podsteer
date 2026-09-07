@@ -51,6 +51,7 @@
     FolderTree,
     Layers,
     ChevronDown,
+    CircleStop,
     FileCog,
     Globe,
     GripVertical,
@@ -729,6 +730,15 @@
                                     <Unplug class="size-4.5" strokeWidth={1.8} />
                                   </button>
                                 {:else}
+                                  <!-- WHILE THIS ONE IS CONNECTING IT BECOMES
+                                       THE WAY OUT. A cluster that answers
+                                       neither yes nor no holds the attempt for
+                                       the whole request timeout, and a control
+                                       that only starts things leaves the
+                                       operator watching it. Nothing about any
+                                       OTHER card changes: connecting one
+                                       cluster used to disable the control on
+                                       all of them. -->
                                   <button
                                     type="button"
                                     onclick={(event) => {
@@ -739,21 +749,27 @@
                                       // there", this is "connect this one",
                                       // and it mirrors Disconnect rather than
                                       // duplicating the card.
-                                      void workspace.open(cluster.id, false)
+                                      if (workspace.isConnecting(cluster.id)) {
+                                        void workspace.stopConnecting(cluster.id)
+                                      } else {
+                                        void workspace.open(cluster.id, false)
+                                      }
                                     }}
-                                    disabled={workspace.connectingTo !== null}
-                                    aria-label="Connect to {cluster.id}"
-                                    title={workspace.connectingTo === cluster.id ? 'Connecting…' : 'Connect'}
+                                    aria-label={workspace.isConnecting(cluster.id)
+                                      ? `Stop connecting to ${cluster.id}`
+                                      : `Connect to ${cluster.id}`}
+                                    title={workspace.isConnecting(cluster.id)
+                                      ? 'Connecting… — stop'
+                                      : 'Connect'}
                                     class="state-layer grid size-8 shrink-0 place-items-center rounded-full
                                            text-on-surface-variant transition-colors duration-150
                                            hover:text-primary disabled:pointer-events-none disabled:opacity-40"
                                   >
-                                    <Plug
-                                      class="size-4.5 {workspace.connectingTo === cluster.id
-                                        ? 'animate-pulse text-primary'
-                                        : ''}"
-                                      strokeWidth={1.8}
-                                    />
+                                    {#if workspace.isConnecting(cluster.id)}
+                                      <CircleStop class="size-4.5 animate-pulse text-primary" strokeWidth={1.8} />
+                                    {:else}
+                                      <Plug class="size-4.5" strokeWidth={1.8} />
+                                    {/if}
                                   </button>
                                 {/if}
                               </div>

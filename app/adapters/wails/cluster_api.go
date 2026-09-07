@@ -1,9 +1,11 @@
 package wails
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -24,6 +26,23 @@ type ClusterAPI struct {
 	clusters ports.ClusterService
 	app      *App
 	logger   *slog.Logger
+
+	// mu guards connecting.
+	mu sync.Mutex
+	// connecting holds one entry per connect ATTEMPT that is still in the
+	// air, so CancelConnect can stop it. See Connect.
+	connecting map[domain.ClusterID]*connectAttempt
+}
+
+// connectAttempt is one in-flight Connect, and the handle that stops it.
+//
+// A POINTER, AND COMPARED BY IDENTITY when it is removed, because two attempts
+// for the same cluster can overlap: an operator who clicks Connect, cancels,
+// and clicks again before the first call has unwound would otherwise have the
+// FIRST attempt's cleanup delete the SECOND attempt's entry, leaving a
+// connection nothing can cancel.
+type connectAttempt struct {
+	cancel context.CancelFunc
 }
 
 // NewClusterAPI returns the bound cluster API.
@@ -40,9 +59,10 @@ func NewClusterAPI(clusters ports.ClusterService, app *App, logger *slog.Logger)
 	}
 
 	return &ClusterAPI{
-		clusters: clusters,
-		app:      app,
-		logger:   logger.With(slog.String("api", "cluster")),
+		clusters:   clusters,
+		app:        app,
+		logger:     logger.With(slog.String("api", "cluster")),
+		connecting: make(map[domain.ClusterID]*connectAttempt),
 	}, nil
 }
 
@@ -67,6 +87,14 @@ func (c *ClusterAPI) ListClusters() ([]Cluster, error) {
 //
 // Connecting an already open cluster refreshes it rather than failing, so the
 // frontend can call this to reconnect a tab whose credentials expired.
+//
+// EVERY ATTEMPT IS CANCELLABLE AND NONE OF THEM WAIT FOR EACH OTHER. Wails
+// runs each call on its own goroutine, so several clusters were always able to
+// connect at once; what was missing was a way to STOP one. A cluster behind a
+// link that drops packets rather than refusing them takes the full request
+// timeout to fail, and until it did, the operator had a control they could not
+// take back. The attempt is registered here and CancelConnect below is what
+// takes it back.
 func (c *ClusterAPI) Connect(clusterID string) (Cluster, error) {
 	ctx, cancel := c.app.requestContext()
 	defer cancel()
@@ -76,12 +104,59 @@ func (c *ClusterAPI) Connect(clusterID string) (Cluster, error) {
 		return Cluster{}, apiError(c.logger, "Connect", err)
 	}
 
+	attempt := &connectAttempt{cancel: cancel}
+	c.beginConnect(id, attempt)
+	defer c.endConnect(id, attempt)
+
 	cluster, err := c.clusters.Connect(ctx, id)
 	if err != nil {
 		return Cluster{}, apiError(c.logger, "Connect", err)
 	}
 
 	return toCluster(cluster), nil
+}
+
+// CancelConnect stops a connect attempt that is still in the air.
+//
+// NOTHING IN FLIGHT IS NOT AN ERROR. The attempt may have finished between the
+// operator pressing the control and this call arriving — a race the UI should
+// not have to handle, and one where the honest answer is that there is nothing
+// left to stop. Reported the same way Disconnect reports a cluster that is
+// already gone.
+func (c *ClusterAPI) CancelConnect(clusterID string) error {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(c.logger, "CancelConnect", err)
+	}
+
+	c.mu.Lock()
+	attempt := c.connecting[id]
+	c.mu.Unlock()
+
+	if attempt == nil {
+		return nil
+	}
+
+	c.logger.Info("connect cancelled by the operator", slog.String("cluster", id.String()))
+	attempt.cancel()
+	return nil
+}
+
+// beginConnect records an attempt so it can be cancelled.
+func (c *ClusterAPI) beginConnect(id domain.ClusterID, attempt *connectAttempt) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.connecting[id] = attempt
+}
+
+// endConnect forgets an attempt, and ONLY if it is still the current one —
+// see connectAttempt for the overlap this protects against.
+func (c *ClusterAPI) endConnect(id domain.ClusterID, attempt *connectAttempt) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.connecting[id] == attempt {
+		delete(c.connecting, id)
+	}
 }
 
 // Disconnect closes a cluster, for when the operator closes its tab.

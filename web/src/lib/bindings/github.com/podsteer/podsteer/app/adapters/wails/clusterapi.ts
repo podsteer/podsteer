@@ -29,10 +29,31 @@ export function AddKubeconfig(raw: string): $CancellablePromise<$models.Kubeconf
 }
 
 /**
+ * CancelConnect stops a connect attempt that is still in the air.
+ * 
+ * NOTHING IN FLIGHT IS NOT AN ERROR. The attempt may have finished between the
+ * operator pressing the control and this call arriving — a race the UI should
+ * not have to handle, and one where the honest answer is that there is nothing
+ * left to stop. Reported the same way Disconnect reports a cluster that is
+ * already gone.
+ */
+export function CancelConnect(clusterID: string): $CancellablePromise<void> {
+    return $Call.ByID(481441393, clusterID);
+}
+
+/**
  * Connect opens a cluster and returns it enriched with its server version.
  * 
  * Connecting an already open cluster refreshes it rather than failing, so the
  * frontend can call this to reconnect a tab whose credentials expired.
+ * 
+ * EVERY ATTEMPT IS CANCELLABLE AND NONE OF THEM WAIT FOR EACH OTHER. Wails
+ * runs each call on its own goroutine, so several clusters were always able to
+ * connect at once; what was missing was a way to STOP one. A cluster behind a
+ * link that drops packets rather than refusing them takes the full request
+ * timeout to fail, and until it did, the operator had a control they could not
+ * take back. The attempt is registered here and CancelConnect below is what
+ * takes it back.
  */
 export function Connect(clusterID: string): $CancellablePromise<$models.Cluster> {
     return $Call.ByID(2487656719, clusterID);
