@@ -542,6 +542,19 @@
       // cluster; let whoever is listing them know so it appears at once rather
       // than on the next poll.
       onstarted?.()
+
+      // ADOPTING A SHELL SOMEBODY LEFT RUNNING OPENS ON AN EMPTY PANE, and
+      // this says why rather than leaving it looking broken. attach replays
+      // nothing the shell printed before now, and the Go side deliberately
+      // does NOT press enter for an adopted shell the way it does for one it
+      // just created: that shell may hold a half-typed line, and a carriage
+      // return would run it. So the operator presses it, knowing what for.
+      if (variant === 'clustershell' && podName !== '') {
+        terminal.writeln(
+          '\x1b[2mAttached to a shell that was already running. ' +
+            'Press Enter for a prompt — what it printed before now is not replayed.\x1b[0m',
+        )
+      }
     } catch (err) {
       connectionState = 'error'
       terminal.writeln(`\x1b[31mFailed to start ${sessionLabel()} session: ${err}\x1b[0m`)
@@ -805,6 +818,8 @@
           Debug container
         {:else if variant === 'local'}
           {agent === null ? 'Your shell' : agent} · {clusterId || 'no cluster'}
+        {:else if variant === 'clustershell'}
+          In-cluster shell · {podName || namespace}
         {:else}
           Node shell · {nodeName}
         {/if}

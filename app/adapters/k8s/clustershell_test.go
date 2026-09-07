@@ -123,6 +123,11 @@ func TestClusterShellPodIsNothingLikeANodeShell(t *testing.T) {
 	if slices.Contains(c.Command, "nsenter") {
 		t.Errorf("command = %v, want no nsenter — there is no host to enter", c.Command)
 	}
+	// The same shell command the node shell runs, prompt and fallback
+	// included — see TestTheLoginShellCommandKeepsItsPromptAndReachesItsFallback.
+	if !slices.Contains(c.Command, loginShellCommand) {
+		t.Errorf("command = %v, want it to run loginShellCommand", c.Command)
+	}
 }
 
 // TestStartClusterShellCreatesRunsAndRecords covers the success path.
