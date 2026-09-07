@@ -13,6 +13,7 @@
   import { del } from '$lib/kubectl'
   import Button from './Button.svelte'
   import KubectlHint from './KubectlHint.svelte'
+  import DialogHeader from './DialogHeader.svelte'
   import { nameConfirmed } from '$lib/confirm'
   import { TriangleAlert } from '@lucide/svelte'
 
@@ -82,14 +83,15 @@
   ></button>
 
   <div
-    class="fixed top-1/2 left-1/2 z-[70] w-[28rem] max-w-[90vw] -translate-x-1/2 -translate-y-1/2
+    class="fixed inset-0 z-[70] m-auto h-fit max-h-[90vh] overflow-y-auto
+           w-[28rem] max-w-[90vw]
            rounded-sm border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
     aria-modal="true"
     use:modal
     aria-label="Delete resource"
   >
-    <h2 class="text-headline-small text-on-surface">Delete {resourceKind}</h2>
+    <DialogHeader title="Delete {resourceKind}" help="delete" {onclose} />
 
     {#if productionGroup}
       <p

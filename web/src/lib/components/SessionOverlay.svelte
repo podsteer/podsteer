@@ -69,6 +69,7 @@
     open
     icon={Bug}
     kind="Debug"
+    help="debug"
     name={running.pod}
     label="Debug container"
     onclose={() => sessionLauncher.close()}
@@ -89,6 +90,7 @@
     open
     icon={SquareTerminal}
     kind="Node shell"
+    help="node-shell"
     name={running.node}
     label="Node shell"
     onclose={() => sessionLauncher.close()}
@@ -110,6 +112,7 @@
     open
     icon={Container}
     kind="In-cluster"
+    help="cluster-shell"
     name={running.pod || running.namespace}
     label="In-cluster shell"
     onclose={() => sessionLauncher.close()}
@@ -129,6 +132,7 @@
     open
     icon={Laptop}
     kind="Local"
+    help="local-shell"
     name={running.clusterId || 'this machine'}
     label={running.title}
     onclose={() => sessionLauncher.close()}

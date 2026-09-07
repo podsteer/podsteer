@@ -35,6 +35,7 @@
   import { toApiError } from '$lib/api/errors'
   import { workspace } from '$stores/workspace.svelte'
   import { RICH_KIND_IDS, WORKLOAD_KIND_BY_ID } from '$stores/session.svelte'
+  import HelpButton from './HelpButton.svelte'
   import { Activity, ClipboardPaste, FileSearch, GitCompare, TriangleAlert, X } from '@lucide/svelte'
 
   interface Props {
@@ -299,17 +300,20 @@
         </p>
       </div>
 
-      <button
-        type="button"
-        onclick={onclose}
-        aria-label="Close"
-        title="Close"
-        class="state-layer ml-auto grid size-8 shrink-0 place-items-center rounded-full
-               text-on-surface-variant transition-colors duration-100
-               hover:bg-surface-container hover:text-on-surface"
-      >
-        <X class="size-4" strokeWidth={1.8} />
-      </button>
+      <div class="ml-auto flex shrink-0 items-center gap-0.5">
+        <HelpButton topic="compare" about="Compare {kind.singular}" />
+        <button
+          type="button"
+          onclick={onclose}
+          aria-label="Close"
+          title="Close"
+          class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                 text-on-surface-variant transition-colors duration-100
+                 hover:bg-surface-container hover:text-on-surface"
+        >
+          <X class="size-4" strokeWidth={1.8} />
+        </button>
+      </div>
     </header>
 
     <!-- The picker: what the right-hand side of the diff should be. -->

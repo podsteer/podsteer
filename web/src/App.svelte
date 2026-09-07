@@ -9,6 +9,7 @@
   import ClusterTabs from '$lib/components/ClusterTabs.svelte'
   import CommandPalette from '$lib/components/CommandPalette.svelte'
   import ShortcutSheet from '$lib/components/ShortcutSheet.svelte'
+  import HelpPanel from '$lib/components/HelpPanel.svelte'
   import Splash from '$lib/components/Splash.svelte'
   import StatusBar from '$lib/components/StatusBar.svelte'
   import ClusterView from '$pages/ClusterView.svelte'
@@ -206,3 +207,8 @@
 
 <ShortcutSheet open={shortcutSheet.open} onclose={shortcutSheet.hide} />
 <CommandPalette open={palette.open} onclose={palette.hide} />
+
+<!-- Mounted once, driven by $stores/help: every (?) in the application opens
+     THIS panel with a different topic in it. Last, so it is the outermost
+     layer — it opens over a dialog, never under one. -->
+<HelpPanel />

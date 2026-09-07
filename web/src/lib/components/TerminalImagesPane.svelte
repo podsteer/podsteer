@@ -117,7 +117,7 @@
       spellcheck="false"
       autocapitalize="off"
       autocorrect="off"
-      class="field w-full px-3 py-2 font-mono text-body-small"
+      class="field w-full px-3 py-2 text-body-small"
     />
   </label>
   <p class="mt-1.5 text-body-small leading-relaxed text-on-surface-variant">
@@ -140,7 +140,7 @@
       spellcheck="false"
       autocapitalize="off"
       autocorrect="off"
-      class="field w-full px-3 py-2 font-mono text-body-small"
+      class="field w-full px-3 py-2 text-body-small"
     />
   </label>
   <p class="mt-1.5 text-body-small leading-relaxed text-on-surface-variant">
@@ -161,7 +161,7 @@
       spellcheck="false"
       autocapitalize="off"
       autocorrect="off"
-      class="field mt-1 w-full px-3 py-2 font-mono text-body-small"
+      class="field mt-1 w-full px-3 py-2 text-body-small"
     />
   </label>
   <p class="mt-1.5 text-body-small leading-relaxed text-on-surface-variant">
@@ -185,7 +185,7 @@
       spellcheck="false"
       autocapitalize="off"
       autocorrect="off"
-      class="field w-full px-3 py-2 font-mono text-body-small"
+      class="field w-full px-3 py-2 text-body-small"
     />
   </label>
   <p class="mt-1.5 text-body-small leading-relaxed text-on-surface-variant">

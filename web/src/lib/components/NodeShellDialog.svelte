@@ -17,6 +17,7 @@
   import { debugNode as kubectlDebugNode } from '$lib/kubectl'
   import Button from './Button.svelte'
   import KubectlHint from './KubectlHint.svelte'
+  import DialogHeader from './DialogHeader.svelte'
   import { TriangleAlert } from '@lucide/svelte'
 
   interface Props {
@@ -88,17 +89,21 @@
   ></button>
 
   <div
-    class="fixed top-1/2 left-1/2 z-[70] w-[30rem] max-w-[90vw] -translate-x-1/2 -translate-y-1/2
+    class="fixed inset-0 z-[70] m-auto h-fit max-h-[90vh] overflow-y-auto
+           w-[30rem] max-w-[90vw]
            rounded-sm border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
     aria-modal="true"
     use:modal
     aria-label="Open a node shell"
   >
-    <h2 class="flex items-center gap-2 text-headline-small text-on-surface">
-      <TriangleAlert class="size-5 text-gauge-warn" strokeWidth={2} aria-hidden="true" />
-      Node shell on {node}
-    </h2>
+    <DialogHeader
+      title="Node shell on {node}"
+      icon={TriangleAlert}
+      iconClass="text-gauge-warn"
+      help="node-shell"
+      {onclose}
+    />
 
     <p class="mt-4 text-body-medium text-on-surface-variant">
       Opens a <strong class="text-on-surface">root shell on the node</strong>, in its host process,
@@ -113,7 +118,7 @@
           type="text"
           bind:value={image}
           placeholder="docker.io/cloudresty/dockydeb:v1.2.28"
-          class="field mt-1 w-full px-3 py-2 font-mono text-body-small"
+          class="field mt-1 w-full px-3 py-2 text-body-small"
         />
       </label>
 
@@ -123,7 +128,7 @@
           type="text"
           bind:value={namespace}
           placeholder="kube-system"
-          class="field mt-1 w-full px-3 py-2 font-mono text-body-small"
+          class="field mt-1 w-full px-3 py-2 text-body-small"
         />
       </label>
     </div>
@@ -144,7 +149,7 @@
           placeholder={node}
           autocomplete="off"
           spellcheck="false"
-          class="field mt-2 w-full px-3 py-2 font-mono text-body-small"
+          class="field mt-2 w-full px-3 py-2 text-body-small"
         />
       </div>
     {/if}

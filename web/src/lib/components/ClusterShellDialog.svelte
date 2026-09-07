@@ -18,13 +18,13 @@
     to see — and saying so is what explains a namespace that has been
     accumulating them.
 
-  WHAT IS PRINTED IS WHAT VARIES; WHAT EXPLAINS IT IS BEHIND AN (i). The
+  WHAT IS PRINTED IS WHAT VARIES; WHAT EXPLAINS IT IS IN THE HELP PANEL. The
   paragraphs describing what this pod is, and why its security context is
   shaped the way it is, are read once and were being printed every time. They
-  are hints now, in the same panel the toolbar's search field uses. What stays
-  on the surface is the state of THIS namespace at THIS moment — the shells
-  already running here, the ones that have exited, a namespace nobody has named
-  yet — because none of that is knowable in advance.
+  are the `cluster-shell` topic in $lib/help now, under the (?) in the header.
+  What stays on the surface is the state of THIS namespace at THIS moment — the
+  shells already running here, the ones that have exited, a namespace nobody
+  has named yet — because none of that is knowable in advance.
 -->
 <script lang="ts">
   import { untrack } from 'svelte'
@@ -42,7 +42,7 @@
   import { runShellPod as kubectlRunShellPod } from '$lib/kubectl'
   import Button from './Button.svelte'
   import KubectlHint from './KubectlHint.svelte'
-  import InfoHint from './InfoHint.svelte'
+  import DialogHeader from './DialogHeader.svelte'
   import { Container, Loader } from '@lucide/svelte'
 
   interface Props {
@@ -58,20 +58,6 @@
   }
 
   let { open, clusterId, namespace, onclose, onconfirm, onattach }: Props = $props()
-
-  /** What the dialog used to print in full, as hint text. */
-  const ABOUT =
-    'Runs a throwaway pod in this cluster and attaches to a shell in it, so kubectl, dig and ' +
-    "curl see the cluster's network from the inside — as a workload does. It is an ordinary, " +
-    "unprivileged pod: not a debug container on somebody's pod, and not a root shell on a node. " +
-    'It is deleted when you close its terminal and self-destructs after an hour as a backstop, ' +
-    'and while it runs it appears in the activity list, where it can also be stopped.'
-
-  const IMAGE_HINT =
-    'The default is the nonroot build. The pod asks to run as non-root, with no privilege ' +
-    "escalation, every capability dropped and the runtime's default seccomp profile, so it is " +
-    "admitted in a namespace enforcing Pod Security's restricted profile. If admission still " +
-    "refuses, the message you get here is the API server's own."
 
   let image = $state(preferences.clusterShellImage)
   // Seeded from the prop through `untrack`, and re-seeded by the effect below
@@ -182,18 +168,21 @@
   ></button>
 
   <div
-    class="fixed top-1/2 left-1/2 z-[70] w-[32rem] max-w-[90vw] -translate-x-1/2 -translate-y-1/2
+    class="fixed inset-0 z-[70] m-auto h-fit max-h-[90vh] overflow-y-auto
+           w-[32rem] max-w-[90vw]
            rounded-sm border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
     aria-modal="true"
     use:modal
     aria-label="Open an in-cluster shell"
   >
-    <h2 class="flex items-center gap-2 text-headline-small text-on-surface">
-      <Container class="size-5 text-primary" strokeWidth={2} aria-hidden="true" />
-      In-cluster shell
-      <InfoHint text={ABOUT} label="What an in-cluster shell is" />
-    </h2>
+    <DialogHeader
+      title="In-cluster shell"
+      icon={Container}
+      iconClass="text-primary"
+      help="cluster-shell"
+      {onclose}
+    />
 
     <div class="mt-4 flex flex-col gap-3">
       <label class="block">
@@ -204,7 +193,7 @@
           placeholder="name the namespace"
           autocomplete="off"
           spellcheck="false"
-          class="field mt-1 w-full px-3 py-2 font-mono text-body-small"
+          class="field mt-1 w-full px-3 py-2 text-body-small"
         />
       </label>
 
@@ -214,21 +203,15 @@
         </p>
       {/if}
 
-      <div>
-        <span class="flex items-center gap-1">
-          <label for="cluster-shell-image" class="text-body-small text-on-surface-variant">
-            Image
-          </label>
-          <InfoHint text={IMAGE_HINT} label="What this image has to satisfy" />
-        </span>
+      <label class="block">
+        <span class="text-body-small text-on-surface-variant">Image</span>
         <input
-          id="cluster-shell-image"
           type="text"
           bind:value={image}
           placeholder="docker.io/cloudresty/dockydeb:v1.2.28-nonroot"
-          class="field mt-1 w-full px-3 py-2 font-mono text-body-small"
+          class="field mt-1 w-full px-3 py-2 text-body-small"
         />
-      </div>
+      </label>
     </div>
 
     <!-- What this namespace already holds. Only a RUNNING pod is an offer. -->

@@ -83,6 +83,7 @@
   import KubeconfigSources from './KubeconfigSources.svelte'
   import ClusterSettingsPane from './ClusterSettingsPane.svelte'
   import TerminalImagesPane from './TerminalImagesPane.svelte'
+  import HelpButton from './HelpButton.svelte'
   import {
     RefreshCw,
     Palette,
@@ -404,7 +405,8 @@
 
     <!-- Section content -->
     <div class="flex min-w-0 flex-1 flex-col">
-      <div class="flex items-start justify-end px-4 pt-3">
+      <div class="flex items-start justify-end gap-0.5 px-4 pt-3">
+        <HelpButton topic="settings" about="Settings" />
         <button
           type="button"
           onclick={onclose}

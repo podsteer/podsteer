@@ -19,6 +19,7 @@
   import KubectlHint from './KubectlHint.svelte'
   import YamlPane from './YamlPane.svelte'
   import type { EditorApi } from './YamlEditor.svelte'
+  import HelpButton from './HelpButton.svelte'
   import { apply as kubectlApply } from '$lib/kubectl'
   import { updateResource } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
@@ -189,17 +190,20 @@
         {verb} {kindLabel}
       </h2>
 
-      <button
-        type="button"
-        onclick={onclose}
-        aria-label="Close"
-        title="Close"
-        class="state-layer ml-auto grid size-8 shrink-0 place-items-center rounded-full
-               text-on-surface-variant transition-colors duration-100
-               hover:bg-surface-container hover:text-on-surface"
-      >
-        <X class="size-4" strokeWidth={1.8} />
-      </button>
+      <div class="ml-auto flex shrink-0 items-center gap-0.5">
+        <HelpButton topic="create-resource" about="{verb} {kindLabel}" />
+        <button
+          type="button"
+          onclick={onclose}
+          aria-label="Close"
+          title="Close"
+          class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                 text-on-surface-variant transition-colors duration-100
+                 hover:bg-surface-container hover:text-on-surface"
+        >
+          <X class="size-4" strokeWidth={1.8} />
+        </button>
+      </div>
     </header>
 
     <div class="min-h-0 flex-1 bg-surface-container-lowest">

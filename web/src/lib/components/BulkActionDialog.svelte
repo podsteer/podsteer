@@ -39,6 +39,7 @@
   } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import type { ClusterSession } from '$stores/session.svelte'
+  import DialogHeader from './DialogHeader.svelte'
   import { CircleCheck, CircleMinus, CircleX, Loader, TriangleAlert } from '@lucide/svelte'
 
   interface Props {
@@ -272,16 +273,15 @@
   ></button>
 
   <div
-    class="fixed top-1/2 left-1/2 z-[70] flex max-h-[85vh] w-[34rem] max-w-[92vw] -translate-x-1/2 -translate-y-1/2
+    class="fixed inset-0 z-[70] m-auto flex h-fit max-h-[85vh]
+           w-[34rem] max-w-[92vw]
            flex-col rounded-sm border border-outline-variant bg-surface-container-high p-6 shadow-level-3"
     role="dialog"
     aria-modal="true"
     use:modal
     aria-label="{copy.label} {noun}"
   >
-    <h2 class="text-headline-small text-on-surface">
-      {copy.label} <span class="tabular-nums">{shown}</span> {noun}
-    </h2>
+    <DialogHeader title="{copy.label} {shown} {noun}" help="bulk-action" {onclose} />
 
     {#if productionGroup}
       <p
