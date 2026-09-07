@@ -68,7 +68,7 @@
       add: { label: 'Added', icon: CirclePlus, tone: 'text-success' },
       change: { label: 'Changed', icon: CircleCheck, tone: 'text-primary' },
       remove: { label: 'Removed', icon: CircleMinus, tone: 'text-error' },
-      same: { label: 'Left alone', icon: Minus, tone: 'text-on-surface-variant/60' },
+      same: { label: 'Left alone', icon: Minus, tone: 'text-on-surface-variant' },
     }
 
   async function exportSettings(): Promise<void> {
@@ -168,7 +168,7 @@
 <section class="flex flex-col gap-6">
   <div>
     <h3 class="text-title-medium text-on-surface">Export &amp; import</h3>
-    <p class="mt-0.5 text-body-small leading-relaxed text-on-surface-variant">
+    <p class="mt-0.5 text-body-medium leading-relaxed text-on-surface-variant">
       Everything you have arranged on this machine as one readable file: your projects, groups and
       their guardrails, pinned kinds, column layouts and custom columns, thresholds, refresh and
       appearance, the remembered port-forward ports, and the debug and node-shell defaults. Keep it
@@ -182,7 +182,7 @@
     -->
     <p
       class="mt-3 rounded-sm border border-outline-variant/50 bg-surface-container px-3 py-2
-             text-body-small leading-relaxed text-on-surface-variant"
+             text-body-medium leading-relaxed text-on-surface-variant"
     >
       It carries <span class="text-on-surface">no credentials</span>, no kubeconfig, no cluster
       addresses and <span class="text-on-surface">no object names</span> — no pod, node, namespace
@@ -203,7 +203,7 @@
 
     {#if notice}
       <span
-        class="text-body-small {notice.tone === 'bad' ? 'text-error' : 'text-on-surface-variant'}"
+        class="text-body-medium {notice.tone === 'bad' ? 'text-error' : 'text-on-surface-variant'}"
         role={notice.tone === 'bad' ? 'alert' : 'status'}
       >
         {notice.text}
@@ -215,7 +215,7 @@
     <div class="rounded-sm border border-outline-variant">
       <div class="border-b border-outline-variant/60 px-4 py-3">
         <h4 class="text-title-small text-on-surface">Review before importing</h4>
-        <p class="mt-0.5 text-body-small text-on-surface-variant">
+        <p class="mt-0.5 text-body-medium text-on-surface-variant">
           Written {exportedWhen(preview.exportedAt)} · settings version {preview.version}
         </p>
 
@@ -225,7 +225,7 @@
           — which is the honest answer to "did all of it arrive".
         -->
         {#if preview.fromTheFuture}
-          <p class="mt-2 text-body-small text-warning">
+          <p class="mt-2 text-body-medium text-warning">
             This file was written by a newer PodSteer (settings version {preview.version}); this
             build understands version 1. Everything it recognises is listed below; anything else is
             ignored.
@@ -233,14 +233,14 @@
         {/if}
 
         {#if preview.unknownFields > 0}
-          <p class="mt-2 text-body-small text-on-surface-variant">
+          <p class="mt-2 text-body-medium text-on-surface-variant">
             {preview.unknownFields}
             {preview.unknownFields === 1 ? 'setting' : 'settings'} in the file
             {preview.unknownFields === 1 ? 'is' : 'are'} not known to this build and will be ignored.
           </p>
         {/if}
         {#if preview.invalidFields > 0}
-          <p class="mt-2 text-body-small text-warning">
+          <p class="mt-2 text-body-medium text-warning">
             {preview.invalidFields}
             {preview.invalidFields === 1 ? 'setting' : 'settings'} in the file
             {preview.invalidFields === 1 ? 'holds a value' : 'hold values'} PodSteer will not accept, and
@@ -268,7 +268,7 @@
             </button>
           {/each}
         </div>
-        <p class="mt-1.5 text-body-small text-on-surface-variant/80">
+        <p class="mt-1.5 text-body-medium text-on-surface-variant/80">
           {#if mode === 'merge'}
             Keeps everything this file does not mention, including projects and groups only this
             machine has.
@@ -278,7 +278,7 @@
           {/if}
         </p>
 
-        <p class="mt-3 text-body-small text-on-surface">
+        <p class="mt-3 text-body-medium text-on-surface">
           {counts.change} changed · {counts.add} added · {counts.remove} removed · {counts.same}
           left alone
         </p>
@@ -295,7 +295,7 @@
                 {entry.label}
                 <span class="ml-1 text-label-small text-on-surface-variant">{entry.section}</span>
               </p>
-              <p class="text-body-small break-words text-on-surface-variant">
+              <p class="text-body-medium break-words text-on-surface-variant">
                 {#if entry.outcome === 'add'}
                   {entry.to}
                 {:else if entry.outcome === 'remove'}
@@ -310,7 +310,7 @@
         {/each}
 
         {#if changing.length === 0}
-          <li class="px-4 py-3 text-body-small text-on-surface-variant">
+          <li class="px-4 py-3 text-body-medium text-on-surface-variant">
             Nothing would change — this file matches what is already set.
           </li>
         {/if}
@@ -322,7 +322,7 @@
             type="button"
             onclick={() => (showUnchanged = !showUnchanged)}
             aria-expanded={showUnchanged}
-            class="state-layer w-full px-4 py-2 text-left text-body-small text-on-surface-variant
+            class="state-layer w-full px-4 py-2 text-left text-body-medium text-on-surface-variant
                    transition-colors duration-100 hover:text-on-surface"
           >
             {showUnchanged ? 'Hide' : 'Show'} the {unchanged.length} settings left alone
@@ -332,10 +332,10 @@
             <ul class="max-h-48 overflow-y-auto border-t border-outline-variant/40">
               {#each unchanged as entry, index (`${entry.section}-${entry.label}-${index}`)}
                 <li class="flex items-start gap-3 px-4 py-1.5">
-                  <span class="min-w-0 flex-1 text-body-small text-on-surface-variant">
+                  <span class="min-w-0 flex-1 text-body-medium text-on-surface-variant">
                     {entry.label}
                   </span>
-                  <span class="shrink-0 text-body-small text-on-surface-variant/60">{entry.to}</span>
+                  <span class="shrink-0 text-body-medium text-on-surface-variant">{entry.to}</span>
                 </li>
               {/each}
             </ul>
@@ -353,7 +353,7 @@
   {/if}
 
   {#if applied}
-    <p class="text-body-small text-on-surface-variant">
+    <p class="text-body-medium text-on-surface-variant">
       Everything is applied: the theme, the navigator and the column layouts changed as you
       watched, and every open cluster's read-only guard has been re-sent to the backend to match
       its new group.

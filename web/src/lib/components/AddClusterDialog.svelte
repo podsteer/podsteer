@@ -186,7 +186,7 @@
             <p class="mt-1 text-body-medium text-on-surface-variant">
               {(added.added ?? []).join(', ')} — now in your picker, under the default project.
             </p>
-            <p class="mt-3 text-body-small text-on-surface-variant/70">
+            <p class="mt-3 text-body-medium text-on-surface-variant">
               Written to <span class="font-mono" data-selectable>{added.path}</span>. The previous
               version is beside it as
               <span class="font-mono">{added.path}.podsteer.bak</span>.
@@ -200,7 +200,7 @@
         </div>
       {:else}
         <DialogHeader title="Add cluster" help="add-cluster" onclose={close} />
-        <p class="mt-1 text-body-small text-on-surface-variant">
+        <p class="mt-1 text-body-medium text-on-surface-variant">
           Paste a kubeconfig — the one your provider gave you, or a single cluster's worth — and
           PodSteer will merge it into yours. Existing contexts are never replaced.
         </p>
@@ -214,7 +214,7 @@
         ></textarea>
 
         <!-- One row, so the panel does not jump as the message changes. -->
-        <div class="mt-3 min-h-10 text-body-small">
+        <div class="mt-3 min-h-10 text-body-medium">
           {#if preview && (preview.conflicts?.length ?? 0) > 0}
             <p class="flex items-start gap-2 text-warning">
               <AlertTriangle class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
@@ -233,12 +233,12 @@
           {:else if previewError}
             <p class="text-error">{previewError}</p>
           {:else if raw.trim() !== ''}
-            <p class="text-on-surface-variant/60">Checking…</p>
+            <p class="text-on-surface-variant">Checking…</p>
           {/if}
         </div>
 
         {#if error}
-          <p class="mt-1 text-body-small text-error">{error.message}</p>
+          <p class="mt-1 text-body-medium text-error">{error.message}</p>
         {/if}
 
         <div class="mt-4 flex shrink-0 items-center justify-between gap-2">

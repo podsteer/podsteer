@@ -113,34 +113,34 @@
 
     <div class="mt-4 flex flex-col gap-3">
       <label class="block">
-        <span class="text-body-small text-on-surface-variant">Image</span>
+        <span class="text-body-medium text-on-surface-variant">Image</span>
         <input
           type="text"
           bind:value={image}
           placeholder="docker.io/cloudresty/dockydeb:v1.2.28"
-          class="field mt-1 w-full px-3 py-2 text-body-small"
+          class="field mt-1 w-full px-3 py-2 text-body-medium"
         />
       </label>
 
       <label class="block">
-        <span class="text-body-small text-on-surface-variant">Namespace</span>
+        <span class="text-body-medium text-on-surface-variant">Namespace</span>
         <input
           type="text"
           bind:value={namespace}
           placeholder="kube-system"
-          class="field mt-1 w-full px-3 py-2 text-body-small"
+          class="field mt-1 w-full px-3 py-2 text-body-medium"
         />
       </label>
     </div>
 
-    <p class="mt-4 rounded-sm border border-gauge-warn/40 bg-gauge-warn/10 px-3 py-2 text-body-small text-on-surface-variant">
+    <p class="mt-4 rounded-sm border border-gauge-warn/40 bg-gauge-warn/10 px-3 py-2 text-body-medium text-on-surface-variant">
       The pod is deleted when you close its terminal, and self-destructs after one hour as a
       backstop. While it runs it appears in the activity list, where it can also be stopped.
     </p>
 
     {#if productionGroup}
       <div class="mt-3 rounded-sm border border-error/40 bg-error/10 px-3 py-2">
-        <p class="text-body-small text-on-surface-variant">
+        <p class="text-body-medium text-on-surface-variant">
           This cluster is in {productionGroup}, marked production. Type the node's name to confirm.
         </p>
         <input
@@ -149,7 +149,7 @@
           placeholder={node}
           autocomplete="off"
           spellcheck="false"
-          class="field mt-2 w-full px-3 py-2 text-body-small"
+          class="field mt-2 w-full px-3 py-2 text-body-medium"
         />
       </div>
     {/if}

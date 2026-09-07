@@ -104,7 +104,7 @@
 
 <section>
   <h3 class="text-title-medium text-on-surface">Clusters</h3>
-  <p class="mt-0.5 text-body-small leading-relaxed text-on-surface-variant">
+  <p class="mt-0.5 text-body-medium leading-relaxed text-on-surface-variant">
     PodSteer charts a few minutes of its own samples, taken while the application is open. Where a
     cluster already runs a monitoring stack, its charts can read a longer history from that instead
     — but only for the clusters you say so for, and only on the terms you set here.
@@ -113,7 +113,7 @@
   {#if store.settingsState?.notice}
     <p
       class="mt-3 flex items-start gap-2 rounded-sm border border-outline-variant/50
-             bg-surface-container px-3 py-2 text-body-small leading-relaxed text-on-surface-variant"
+             bg-surface-container px-3 py-2 text-body-medium leading-relaxed text-on-surface-variant"
     >
       <TriangleAlert class="mt-0.5 size-4 shrink-0 text-tertiary" aria-hidden="true" />
       <span>{store.settingsState.notice}</span>
@@ -121,11 +121,11 @@
   {/if}
 
   {#if store.error}
-    <p class="mt-3 text-body-small text-error" role="alert">{store.error}</p>
+    <p class="mt-3 text-body-medium text-error" role="alert">{store.error}</p>
   {/if}
 
   {#if rows.length === 0}
-    <p class="mt-4 text-body-small text-on-surface-variant">
+    <p class="mt-4 text-body-medium text-on-surface-variant">
       Nothing to set yet — open a cluster and it will appear here.
     </p>
   {:else}
@@ -152,7 +152,7 @@
                     onchange={(value) =>
                       void store.save(entry.clusterId, { metricsQueryMode: value })}
                   />
-                  <span class="text-body-small text-on-surface-variant/80">
+                  <span class="text-body-medium text-on-surface-variant/80">
                     {hintFor(MODE_OPTIONS, entry.metricsQueryMode)}
                   </span>
                 </div>
@@ -163,7 +163,7 @@
                       Which backend answers
                     </span>
                     {#if chosen}
-                      <p class="text-body-small text-on-surface">{chosen}</p>
+                      <p class="text-body-medium text-on-surface">{chosen}</p>
                       <!--
                         The one control that clears a name out of
                         settings.json. Offered beside the choice rather than
@@ -172,7 +172,7 @@
                       -->
                       <button
                         type="button"
-                        class="self-start text-body-small text-primary underline disabled:opacity-50"
+                        class="self-start text-body-medium text-primary underline disabled:opacity-50"
                         disabled={store.busy || !store.writable}
                         onclick={() =>
                           void store.save(entry.clusterId, {
@@ -183,7 +183,7 @@
                         Use whichever PodSteer finds
                       </button>
                     {:else}
-                      <p class="text-body-small text-on-surface-variant/80">
+                      <p class="text-body-medium text-on-surface-variant/80">
                         Whichever PodSteer finds. Where a cluster runs more than one, the chart
                         names the service that answered and lets you pin a different one — and only
                         then is that service’s name written to your settings file.
@@ -201,7 +201,7 @@
                       class="w-full"
                       onchange={(value) => void store.save(entry.clusterId, { fleetPolicy: value })}
                     />
-                    <span class="text-body-small text-on-surface-variant/80">
+                    <span class="text-body-medium text-on-surface-variant/80">
                       {hintFor(FLEET_OPTIONS, entry.fleetPolicy)}
                     </span>
                   </div>
@@ -214,7 +214,7 @@
                     belongs beside retention under Data, where a settings write
                     and a prune are already one act.
                   -->
-                  <p class="text-body-small text-on-surface-variant/80">
+                  <p class="text-body-medium text-on-surface-variant/80">
                     Per-node history is being recorded for this cluster. Change that under Data.
                   </p>
                 {/if}
@@ -228,7 +228,7 @@
 
   <p
     class="mt-5 rounded-sm border border-outline-variant/50 bg-surface-container px-3 py-2
-           text-body-small leading-relaxed text-on-surface-variant"
+           text-body-medium leading-relaxed text-on-surface-variant"
   >
     A monitoring backend is reached through the API server your kubeconfig already names, with the
     same credentials — no new address, and nothing typed in. Choosing a specific one records that

@@ -178,7 +178,7 @@
     {#if productionGroup}
       <p
         class="mt-4 flex items-start gap-2 rounded-sm border border-error/30 bg-error-container/40
-               px-3 py-2 text-body-small text-on-error-container"
+               px-3 py-2 text-body-medium text-on-error-container"
       >
         <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
         This cluster is in {productionGroup}, marked production.
@@ -202,7 +202,7 @@
           {@const opener = follow(ref.kind, ref.name, namespace)}
           <div class="flex items-start gap-2 rounded-sm border border-gauge-warn/40 bg-gauge-warn/10 p-3">
             <TriangleAlert class="mt-0.5 size-4 shrink-0 text-gauge-warn" strokeWidth={2} />
-            <p class="text-body-small text-on-surface">
+            <p class="text-body-medium text-on-surface">
               An autoscaler manages this replica count —
               {#if opener}
                 <button
@@ -226,13 +226,13 @@
         {/each}
       </div>
     {:else if autoscalers?.status === 'unknown'}
-      <p class="mt-4 text-body-small text-on-surface-variant">
+      <p class="mt-4 text-body-medium text-on-surface-variant">
         Could not check for an autoscaler: {autoscalers.reason}
       </p>
     {/if}
 
     <label class="mt-4 block">
-      <span class="text-body-small text-on-surface-variant">Replicas</span>
+      <span class="text-body-medium text-on-surface-variant">Replicas</span>
       <input
         type="number"
         bind:value={replicas}
@@ -249,7 +249,7 @@
     </div>
     {#if requiresTypedName}
       <label class="mt-4 block">
-        <span class="text-body-small text-on-surface-variant">
+        <span class="text-body-medium text-on-surface-variant">
           Scaling to zero takes this workload off the air. Type
           <strong class="text-on-surface" data-selectable>{name}</strong> to confirm
         </span>
@@ -262,7 +262,7 @@
           class="field mt-1 w-full px-3 py-2 text-body-medium"
         />
       </label>
-      <p id="scale-confirm-hint" class="mt-1.5 text-body-small text-on-surface-variant/70">
+      <p id="scale-confirm-hint" class="mt-1.5 text-body-medium text-on-surface-variant">
         {confirmed
           ? 'Name confirmed.'
           : `Scale stays disabled until the name above matches exactly.`}

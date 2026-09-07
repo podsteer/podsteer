@@ -15,6 +15,12 @@
 
   ON THE RIGHT, AND NOT CENTRED. It sits beside the dialog rather than on top
   of it, so what somebody is reading about stays visible while they read.
+
+  ITS TYPE IS THE OVERVIEW'S TYPE. A title at `title-large`, headings at
+  `title-medium` and prose at `body-medium` — the same three sizes the
+  overview's cards use for the same three jobs. This panel opened at
+  `body-small` throughout, which is the size for a caption under a figure, not
+  for the paragraphs somebody came here to read.
 -->
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
@@ -57,7 +63,7 @@
   ></button>
 
   <div
-    class="fixed top-0 right-0 bottom-0 z-[95] flex w-[24rem] max-w-[92vw] flex-col
+    class="fixed top-0 right-0 bottom-0 z-[95] flex w-[28rem] max-w-[92vw] flex-col
            border-l border-outline-variant bg-surface-container-high shadow-level-3"
     role="dialog"
     aria-modal="true"
@@ -69,11 +75,15 @@
              px-5 pt-4 pb-3"
     >
       <div class="min-w-0">
-        <h2 class="flex items-center gap-2 text-title-medium text-on-surface">
-          <CircleHelp class="size-4 shrink-0 text-on-surface-variant" strokeWidth={2} aria-hidden="true" />
+        <h2 class="flex items-center gap-2 text-title-large text-on-surface">
+          <CircleHelp
+            class="size-5 shrink-0 text-on-surface-variant"
+            strokeWidth={2}
+            aria-hidden="true"
+          />
           {topic.title}
         </h2>
-        <p class="mt-1 text-body-small text-on-surface-variant">{topic.lede}</p>
+        <p class="mt-1.5 text-body-medium leading-relaxed text-on-surface-variant">{topic.lede}</p>
       </div>
       <button
         type="button"
@@ -89,10 +99,10 @@
 
     <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
       {#each topic.sections as section (section.heading)}
-        <section class="mt-5 first:mt-0">
-          <h3 class="text-title-small text-on-surface">{section.heading}</h3>
+        <section class="mt-6 first:mt-0">
+          <h3 class="text-title-medium font-semibold text-on-surface">{section.heading}</h3>
           {#each section.body as paragraph, index (index)}
-            <p class="mt-1.5 text-body-small leading-relaxed text-on-surface-variant">
+            <p class="mt-2 text-body-medium leading-relaxed text-on-surface-variant">
               {paragraph}
             </p>
           {/each}

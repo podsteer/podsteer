@@ -245,7 +245,7 @@
 
   <div>
     <h4 class="text-title-small text-on-surface">{meta.name}</h4>
-    <p class="mt-0.5 text-body-small text-on-surface-variant">{meta.detail}</p>
+    <p class="mt-0.5 text-body-medium text-on-surface-variant">{meta.detail}</p>
 
     <!--
       Only the pod list has two honest denominators to choose between, so only
@@ -255,7 +255,7 @@
     {#if scope === 'pods'}
       <div class="mt-4 rounded-xs border border-outline-variant/60 p-3">
         <p class="text-body-medium text-on-surface">What the bars measure</p>
-        <p class="mt-0.5 text-body-small text-on-surface-variant">
+        <p class="mt-0.5 text-body-medium text-on-surface-variant">
           Requests answer "did I reserve about the right amount", where a full bar is a success.
           Limits answer "how much headroom is left", where a full bar is the problem — and only
           that mode can mark the two lines on the track, because only then do the bar and the
@@ -426,7 +426,7 @@
         {#if section === 'refresh'}
           <section>
             <h3 class="text-title-medium text-on-surface">Refresh</h3>
-            <p class="mt-0.5 text-body-small text-on-surface-variant">
+            <p class="mt-0.5 text-body-medium text-on-surface-variant">
               How often the open view re-reads the cluster.
             </p>
 
@@ -449,7 +449,7 @@
 
             <div class="mt-5 flex items-center gap-3">
               <Button variant="tonal" onclick={onrefresh}>Refresh now</Button>
-              <span class="text-body-small text-on-surface-variant/70">
+              <span class="text-body-medium text-on-surface-variant">
                 or press {shortcut('refresh').keys} at any time
               </span>
             </div>
@@ -458,7 +458,7 @@
           <section class="flex flex-col gap-6">
             <div>
               <h3 class="text-title-medium text-on-surface">Theme</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 System follows your desktop's own light and dark setting, and changes with it.
               </p>
 
@@ -480,7 +480,7 @@
               </div>
 
               {#if preferences.themePreference === 'system'}
-                <p class="mt-2 text-body-small text-on-surface-variant/70">
+                <p class="mt-2 text-body-medium text-on-surface-variant">
                   Currently {preferences.resolvedTheme}.
                 </p>
               {/if}
@@ -488,7 +488,7 @@
 
             <div class="border-t border-outline-variant pt-5">
               <h3 class="text-title-medium text-on-surface">Rows per page</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 Applies to every resource table.
               </p>
 
@@ -511,13 +511,13 @@
 
             <div class="border-t border-outline-variant pt-5">
               <h3 class="text-title-medium text-on-surface">Detail panel width</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 How much of the window the panel covers when an object is opened. Narrower
                 leaves more of the list readable behind it. A share rather than a size, so
                 it means the same on any screen — and the panel's own left edge can be
                 dragged to anything between, which is what these three set.
               </p>
-              <p class="mt-1 text-body-small text-on-surface-variant/70">
+              <p class="mt-1 text-body-medium text-on-surface-variant">
                 The divider between a section's two columns drags too, and moves every
                 section at once. Double-click either edge to put it back.
               </p>
@@ -544,7 +544,7 @@
                    then reads as pressed. Saying what it currently is beats
                    three unlit buttons, which look like the setting is unset. -->
               {#if !DETAIL_WIDTHS.some((choice) => matchesPreset(choice.fraction))}
-                <p class="mt-2 text-body-small text-on-surface-variant">
+                <p class="mt-2 text-body-medium text-on-surface-variant">
                   Currently {Math.round(preferences.detailWidthFraction * 100)}% of the
                   window, set by dragging the panel's edge.
                 </p>
@@ -553,7 +553,7 @@
               <!-- The clamp said out loud, because it is why a small window
                    may not visibly change when this does: a quarter of a narrow
                    laptop is already below the floor. -->
-              <p class="mt-2 text-body-small text-on-surface-variant/70">
+              <p class="mt-2 text-body-medium text-on-surface-variant">
                 Clamped either way — never under {DETAIL_MIN_REM * 16}px, which is the
                 narrowest that still fits a label and its value, and never over
                 {DETAIL_MAX_REM * 16}px or {DETAIL_MAX_SHARE * 100}% of the window,
@@ -570,7 +570,7 @@
               >
                 <span class="flex items-center gap-3">
                   Show the resource navigator
-                  <span class="text-body-small text-on-surface-variant/70"
+                  <span class="text-body-medium text-on-surface-variant"
                     >{shortcut('toggle-navigator').keys}</span
                   >
                 </span>
@@ -581,12 +581,12 @@
           <section class="flex flex-col gap-8">
             <div>
               <h3 class="text-title-medium text-on-surface">When a bar changes colour</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 Every bar that measures how full something is uses two lines: blue below the
                 first, amber between them, red past the second. Both are marked on the track, so
                 the colour is never the only way to read it.
               </p>
-              <p class="mt-2 text-body-small text-on-surface-variant">
+              <p class="mt-2 text-body-medium text-on-surface-variant">
                 Each screen keeps its own pair. A number that is a useful early warning on a
                 dashboard you glance at can be a distraction on a list you work in all day, and
                 nothing here decides which of those you are doing. Set them all the same if that
@@ -606,7 +606,7 @@
             -->
             <div>
               <h4 class="text-title-small text-on-surface">Charts</h4>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 A drawer's chart starts with whatever usage the lists have already seen.
                 metrics-server cannot be asked for history — it keeps only the latest reading —
                 but every refresh of a list carries usage for every row in it, and this is how
@@ -632,14 +632,14 @@
                 {/each}
               </div>
 
-              <p class="mt-1.5 text-body-small text-on-surface-variant/70">
+              <p class="mt-1.5 text-body-medium text-on-surface-variant">
                 Held in memory only, never written to disk — the recorded cluster history
                 deliberately carries no object names, and a file of per-pod series would undo
                 that. Off means every chart starts empty and fills as you watch.
               </p>
             </div>
 
-            <p class="text-body-small text-on-surface-variant/70">
+            <p class="text-body-medium text-on-surface-variant">
               The two lines cannot cross: moving one past the other pushes it along rather than
               leaving a range that could never be coloured. With both off, every bar on that
               screen stays blue however full it gets.
@@ -656,7 +656,7 @@
             -->
             <div>
               <h3 class="text-title-medium text-on-surface">Tell me about new versions</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 Asks GitHub once a day whether a newer PodSteer has been released, and shows a
                 small badge beside Refresh when one has. It sends nothing about you — no version,
                 no platform, no identifier — and the comparison happens here, on the answer.
@@ -698,7 +698,7 @@
                   {updates.checking ? 'Checking…' : 'Check now'}
                 </button>
 
-                <span class="text-body-small text-on-surface-variant/80">
+                <span class="text-body-medium text-on-surface-variant/80">
                   {#if !preferences.updateChecksEnabled}
                     Nothing is sent while this is off.
                   {:else if updates.status?.state === 'available'}
@@ -720,7 +720,7 @@
 
             <div>
               <h3 class="text-title-medium text-on-surface">Sound on a new finding</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 Plays once when a warning or critical finding appears that was not there before.
                 A problem that persists is announced once, not on every refresh, and anything
                 snoozed stays silent.
@@ -744,7 +744,7 @@
               </div>
 
               {#if !alertPlayer.available}
-                <p class="mt-2 text-body-small text-warning">
+                <p class="mt-2 text-body-medium text-warning">
                   This machine has no audio output PodSteer can reach, so nothing will be heard.
                 </p>
               {/if}
@@ -759,14 +759,14 @@
             -->
             <div class="border-t border-outline-variant pt-5">
               <h3 class="text-title-medium text-on-surface">Desktop notification on a critical</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 Posts one notification when a CRITICAL finding appears that was not there
                 before — never for a warning, which the sound above covers, and never for
                 anything snoozed. A batch arriving together is one notification naming the
                 count, and one cluster posts at most one a minute. Clicking it brings PodSteer
                 forward on that cluster.
               </p>
-              <p class="mt-1 text-body-small text-on-surface-variant/70">
+              <p class="mt-1 text-body-medium text-on-surface-variant">
                 It names the cluster and the rule that fired, never a pod, node or namespace:
                 your operating system keeps the notifications it has shown you, so the same
                 rule applies as to anything else PodSteer writes. Do Not Disturb still decides
@@ -791,11 +791,11 @@
               </div>
 
               {#if notifications.capability && !notifications.capability.supported}
-                <p class="mt-2 text-body-small text-warning">
+                <p class="mt-2 text-body-medium text-warning">
                   This build cannot show desktop notifications, so nothing will appear.
                 </p>
               {:else if preferences.desktopNotificationsEnabled && notifications.capability && !notifications.capability.authorised}
-                <p class="mt-2 text-body-small text-warning">
+                <p class="mt-2 text-body-medium text-warning">
                   Your operating system has not granted PodSteer permission to show
                   notifications, so nothing will appear until you allow it in your system
                   settings.
@@ -805,7 +805,7 @@
 
             <div class="border-t border-outline-variant pt-5">
               <h3 class="text-title-medium text-on-surface">Sound per severity</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 Choosing one plays it, and what you hear here is exactly what you will hear when
                 it fires. A batch arriving at once sounds once, at the worst severity in it.
               </p>
@@ -850,7 +850,7 @@
             <!-- Said plainly rather than discovered: an alarm somebody
                  believes is watching everything, that is watching one tab, is
                  worse than no alarm at all. -->
-            <p class="border-t border-outline-variant pt-5 text-body-small text-on-surface-variant/70">
+            <p class="border-t border-outline-variant pt-5 text-body-medium text-on-surface-variant">
               Findings are watched on the cluster whose tab is open, whichever view you are
               reading. Clusters open in other tabs are assessed when you return to them.
             </p>
@@ -859,7 +859,7 @@
         {:else if section === 'data'}
           <section>
             <h3 class="text-title-medium text-on-surface">Local history</h3>
-            <p class="mt-0.5 text-body-small leading-relaxed text-on-surface-variant">
+            <p class="mt-0.5 text-body-medium leading-relaxed text-on-surface-variant">
               Kubernetes reports only the present, so PodSteer samples each connected cluster
               while it is open and keeps the result on this machine. That is what the dashboard
               charts plot — it covers the time the application has been running, not the whole
@@ -880,7 +880,7 @@
                 >
                   <span class="flex flex-col">
                     <span class="text-body-medium text-on-surface">{option.label}</span>
-                    <span class="text-body-small text-on-surface-variant/70">{option.hint}</span>
+                    <span class="text-body-medium text-on-surface-variant">{option.hint}</span>
                   </span>
                 </Radio>
               {/each}
@@ -911,14 +911,14 @@
                 >
                   <span class="flex flex-col">
                     <span class="text-body-medium text-on-surface">{option.label}</span>
-                    <span class="text-body-small text-on-surface-variant/70">{option.hint}</span>
+                    <span class="text-body-medium text-on-surface-variant">{option.hint}</span>
                   </span>
                 </Radio>
               {/each}
             </div>
 
             <p class="mt-5 rounded-sm border border-outline-variant/50 bg-surface-container px-3 py-2
-                      text-body-small leading-relaxed text-on-surface-variant">
+                      text-body-medium leading-relaxed text-on-surface-variant">
               Samples are capacity figures only — no object names, no logs, no manifests. They are
               written to your own configuration directory and are never sent anywhere. Choosing
               <span class="text-on-surface">Don't record</span> erases what has already been kept.

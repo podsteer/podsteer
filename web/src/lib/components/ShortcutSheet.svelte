@@ -115,7 +115,7 @@
         {#if entries.length > 0}
           <section class="mt-3 first:mt-0">
             <h3 class="text-title-small text-on-surface">{group.label}</h3>
-            <p class="mt-0.5 text-body-small text-on-surface-variant">{group.detail}</p>
+            <p class="mt-0.5 text-body-medium text-on-surface-variant">{group.detail}</p>
 
             <!-- Two columns: the keys, then what they do. Keys are a fixed
                  column rather than inline text so every description in the
