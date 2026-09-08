@@ -36,6 +36,7 @@
   import type { OperatorPanel } from '$lib/operators/panel'
   import { certManagerCertificate, remainingLabel } from '$lib/operators/certmanager'
   import { kedaScaledObject } from '$lib/operators/keda'
+  import { karpenterNodeClaim, karpenterNodePool } from '$lib/operators/karpenter'
   import { externalSecret } from '$lib/operators/externalsecrets'
   import { argoRollout, rolloutTone } from '$lib/operators/rollouts'
   import { advisoryLink, severityTone, trivyVulnerabilityReport } from '$lib/operators/trivy'
@@ -107,6 +108,8 @@
   const secret = $derived(panel === 'external-secret' ? externalSecret(manifest) : null)
   const rollout = $derived(panel === 'argo-rollout' ? argoRollout(manifest) : null)
   const report = $derived(panel === 'trivy-vulnerabilityreport' ? trivyVulnerabilityReport(manifest) : null)
+  const nodePool = $derived(panel === 'karpenter-nodepool' ? karpenterNodePool(manifest) : null)
+  const nodeClaim = $derived(panel === 'karpenter-nodeclaim' ? karpenterNodeClaim(manifest) : null)
 
   /** The grid holding a list of members, so its divider has something to measure. */
   let pane = $state<HTMLElement | null>(null)
@@ -299,6 +302,156 @@
     for (const dnsName of cert.dnsNames) rows.push({ label: 'DNS name', value: dnsName })
     for (const ip of cert.ipAddresses) rows.push({ label: 'IP address', value: ip })
     for (const uri of cert.uris) rows.push({ label: 'URI', value: uri })
+    return rows
+  })
+
+  // --- Karpenter -------------------------------------------------------------
+
+  /** A requirement, as one line: `key In [a, b]`, which is how it reads. */
+  function requirementRow(requirement: {
+    key: string
+    operator: string
+    values: string[]
+    minValues: number | null
+  }): DetailRow {
+    const operator = requirement.operator || 'In'
+    const values = requirement.values.length > 0 ? requirement.values.join(', ') : ''
+    return {
+      label: requirement.key,
+      value: values ? `${operator} ${values}` : operator,
+      info:
+        requirement.minValues !== null
+          ? `At least ${requirement.minValues} distinct values must be available.`
+          : undefined,
+    }
+  }
+
+  const nodePoolRows = $derived.by<DetailRow[]>(() => {
+    const pool = nodePool
+    if (!pool) return []
+
+    const rows = conditionRows('Ready', pool.ready, readyTone)
+    rows.push(...conditionRows('Node class', pool.nodeClassReady, undefined))
+    if (pool.validated && pool.validated.status !== 'True') {
+      rows.push(...conditionRows('Validation', pool.validated, 'critical'))
+    }
+
+    if (pool.consolidationPolicy) {
+      // FIRST AMONG THE SPEC ROWS, because it is the field that answers the
+      // question this object is opened with. WhenEmptyOrUnderutilized means
+      // Karpenter will move a running workload; WhenEmpty means it will not.
+      rows.push({
+        label: 'Consolidation',
+        value: pool.consolidationPolicy,
+        info:
+          pool.consolidationPolicy === 'WhenEmptyOrUnderutilized'
+            ? 'Karpenter may replace a node that is underused, moving the pods on it.'
+            : 'Karpenter removes a node only once nothing is running on it.',
+      })
+    }
+    if (pool.consolidateAfter) {
+      rows.push({ label: 'Consolidate after', value: pool.consolidateAfter })
+    }
+    if (pool.expireAfter) {
+      rows.push({
+        label: 'Expire after',
+        value: pool.expireAfter,
+        info: 'A node older than this is replaced whether or not anything is wrong with it.',
+      })
+    }
+    if (pool.terminationGracePeriod) {
+      rows.push({ label: 'Termination grace period', value: pool.terminationGracePeriod })
+    }
+    if (pool.weight !== null) {
+      rows.push({
+        label: 'Weight',
+        value: String(pool.weight),
+        info: 'Higher wins when several pools could satisfy a pod.',
+      })
+    }
+    if (pool.nodeClassRef) {
+      rows.push({
+        label: pool.nodeClassRef.kind || 'Node class',
+        value: pool.nodeClassRef.name,
+        info: pool.nodeClassRef.group
+          ? `Provider configuration in ${pool.nodeClassRef.group}.`
+          : undefined,
+        onclick: follow(pool.nodeClassRef.kind, pool.nodeClassRef.name, ''),
+      })
+    }
+    return rows
+  })
+
+  const nodePoolCapacityRows = $derived.by<DetailRow[]>(() => {
+    const pool = nodePool
+    if (!pool) return []
+
+    const rows: DetailRow[] = []
+    for (const limit of pool.limits) {
+      rows.push({ label: `Limit · ${limit.resource}`, value: limit.quantity })
+    }
+    for (const allocated of pool.allocated) {
+      rows.push({ label: `In use · ${allocated.resource}`, value: allocated.quantity })
+    }
+    return rows
+  })
+
+  const nodeClaimRows = $derived.by<DetailRow[]>(() => {
+    const claim = nodeClaim
+    if (!claim) return []
+
+    const rows = conditionRows('Ready', claim.ready, readyTone)
+
+    // DRIFTED AND EXPIRED FIRST AMONG THE REST, and only when present. They
+    // are the two conditions that say a node is on its way out, and a claim
+    // that is Ready AND Drifted looks entirely healthy in a table.
+    if (claim.drifted && claim.drifted.status === 'True') {
+      rows.push(...conditionRows('Drifted', claim.drifted, 'warn'))
+    }
+    if (claim.expired && claim.expired.status === 'True') {
+      rows.push(...conditionRows('Expired', claim.expired, 'warn'))
+    }
+
+    // The three steps of coming up, shown only while one of them is still
+    // outstanding: on a settled claim they are three rows of True.
+    if (!claim.ready || claim.ready.status !== 'True') {
+      rows.push(...conditionRows('Launched', claim.launched, undefined))
+      rows.push(...conditionRows('Registered', claim.registered, undefined))
+      rows.push(...conditionRows('Initialized', claim.initialized, undefined))
+    }
+
+    if (claim.nodeName) {
+      rows.push({
+        label: 'Node',
+        value: claim.nodeName,
+        onclick: follow('Node', claim.nodeName, ''),
+      })
+    }
+    if (claim.providerID) rows.push({ label: 'Instance', value: claim.providerID })
+    if (claim.imageID) rows.push({ label: 'Image', value: claim.imageID })
+    if (claim.expireAfter) rows.push({ label: 'Expire after', value: claim.expireAfter })
+    if (claim.lastPodEvent) rows.push(when('Last pod event', claim.lastPodEvent))
+    if (claim.nodeClassRef) {
+      rows.push({
+        label: claim.nodeClassRef.kind || 'Node class',
+        value: claim.nodeClassRef.name,
+        onclick: follow(claim.nodeClassRef.kind, claim.nodeClassRef.name, ''),
+      })
+    }
+    return rows
+  })
+
+  const nodeClaimCapacityRows = $derived.by<DetailRow[]>(() => {
+    const claim = nodeClaim
+    if (!claim) return []
+
+    const rows: DetailRow[] = []
+    for (const entry of claim.capacity) {
+      rows.push({ label: `Capacity · ${entry.resource}`, value: entry.quantity })
+    }
+    for (const entry of claim.allocatable) {
+      rows.push({ label: `Allocatable · ${entry.resource}`, value: entry.quantity })
+    }
     return rows
   })
 
@@ -662,6 +815,117 @@
         What the Certificate ASKS for. What the issued certificate actually carries is in the Secret above,
         and is read only on request.
       </p>
+    </DetailSection>
+  {/if}
+{:else if nodePool}
+  <DetailSection
+    level="h3"
+    id="operator-karpenter-pool"
+    title="Karpenter node pool"
+    hint={nodePool.consolidationPolicy}
+  >
+    <DetailList rows={nodePoolRows} />
+  </DetailSection>
+
+  {#if nodePoolCapacityRows.length > 0}
+    <DetailSection level="h3" id="operator-karpenter-limits" title="Limits and use">
+      <DetailList rows={nodePoolCapacityRows} />
+      <p class="mt-3 text-body-small text-on-surface-variant">
+        In use is what Karpenter's own nodes for this pool currently add up to, as it
+        recorded them — not a live sum of the cluster.
+      </p>
+    </DetailSection>
+  {/if}
+
+  {#if nodePool.requirements.length > 0}
+    <DetailSection
+      level="h3"
+      id="operator-karpenter-requirements"
+      title="Requirements"
+      hint={String(nodePool.requirements.length)}
+    >
+      <DetailList rows={nodePool.requirements.map(requirementRow)} />
+      <p class="mt-3 text-body-small text-on-surface-variant">
+        What a node this pool creates is allowed to be. A pod that cannot satisfy every
+        one of these is not scheduled onto a node from this pool.
+      </p>
+    </DetailSection>
+  {/if}
+
+  {#if nodePool.budgets.length > 0}
+    <DetailSection
+      level="h3"
+      id="operator-karpenter-budgets"
+      title="Disruption budgets"
+      hint={String(nodePool.budgets.length)}
+    >
+      <div class="flex flex-col gap-3">
+        {#each nodePool.budgets as budget, index (index)}
+          <div class="rounded-sm border border-outline-variant/60 bg-surface-container-lowest p-3">
+            <p class="text-body-medium font-medium text-on-surface">
+              {budget.nodes || '—'} nodes
+              {#if budget.reasons.length > 0}
+                <span class="text-on-surface-variant">· {budget.reasons.join(', ')}</span>
+              {/if}
+            </p>
+            {#if budget.schedule}
+              <p class="mt-1 text-body-medium text-on-surface-variant">
+                {budget.schedule}{budget.duration ? ` for ${budget.duration}` : ''}
+              </p>
+            {:else}
+              <p class="mt-1 text-body-medium text-on-surface-variant">At all times</p>
+            {/if}
+          </div>
+        {/each}
+      </div>
+      <p class="mt-3 text-body-small text-on-surface-variant">
+        A budget of zero on a schedule is a window in which Karpenter disrupts nothing.
+      </p>
+    </DetailSection>
+  {/if}
+
+  {#if nodePool.taints.length > 0 || nodePool.startupTaints.length > 0}
+    <DetailSection level="h3" id="operator-karpenter-taints" title="Taints" defaultOpen={false}>
+      <DetailList
+        rows={[
+          ...nodePool.taints.map((taint) => ({
+            label: taint.key,
+            value: `${taint.value ? `${taint.value} ` : ''}${taint.effect}`,
+          })),
+          ...nodePool.startupTaints.map((taint) => ({
+            label: `${taint.key} (startup)`,
+            value: `${taint.value ? `${taint.value} ` : ''}${taint.effect}`,
+            info: 'Removed once the node has finished starting; a pod must tolerate it to land during that window.',
+          })),
+        ]}
+      />
+    </DetailSection>
+  {/if}
+{:else if nodeClaim}
+  <DetailSection
+    level="h3"
+    id="operator-karpenter-claim"
+    title="Karpenter node claim"
+    hint={nodeClaim.drifted?.status === 'True' ? 'drifted' : (nodeClaim.ready?.status ?? '')}
+  >
+    <DetailList rows={nodeClaimRows} />
+  </DetailSection>
+
+  {#if nodeClaimCapacityRows.length > 0}
+    <DetailSection level="h3" id="operator-karpenter-claim-capacity" title="Capacity">
+      <DetailList rows={nodeClaimCapacityRows} />
+    </DetailSection>
+  {/if}
+
+  {#if nodeClaim.requirements.length > 0}
+    <DetailSection
+      level="h3"
+      id="operator-karpenter-claim-requirements"
+      title="Requirements"
+      hint={String(nodeClaim.requirements.length)}
+      defaultOpen={false}
+    >
+      <DetailList rows={nodeClaim.requirements.map(requirementRow)} />
     </DetailSection>
   {/if}
 {:else if scaledObject}
