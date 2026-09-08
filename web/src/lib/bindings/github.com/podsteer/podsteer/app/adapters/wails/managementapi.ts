@@ -284,6 +284,26 @@ export function StartPortForward(clusterID: string, $namespace: string, pod: str
 }
 
 /**
+ * StartServicePortForward opens a local port onto a Service.
+ * 
+ * KUBERNETES DOES NOT FORWARD TO A SERVICE. The API server forwards to a pod;
+ * `kubectl port-forward service/x` reads the Service, picks a pod behind it
+ * and translates the port. This does the same, and then does one thing kubectl
+ * does not: the forward keeps the SERVICE'S SELECTOR, so when the pod it
+ * landed on goes away the supervisor finds another one behind the same Service
+ * and rebinds the same local port. kubectl drops, and the operator's database
+ * client with it.
+ * 
+ * The port may be named or numbered, and may be omitted only when the Service
+ * has exactly one — a multi-port Service with no choice made is a question,
+ * because forwarding to the wrong one produces a connection that establishes
+ * and then behaves like a broken application.
+ */
+export function StartServicePortForward(clusterID: string, $namespace: string, service: string, servicePort: string, localPort: number): $CancellablePromise<$models.PortForward> {
+    return $Call.ByID(2604587505, clusterID, $namespace, service, servicePort, localPort);
+}
+
+/**
  * StopAllClusterShells deletes every in-cluster shell pod, across every
  * cluster — the "Stop all" companion, and what the composition root calls on
  * shutdown so no pod PodSteer created is left running in somebody's namespace.

@@ -493,6 +493,39 @@ export const HELP_TOPICS = {
     ],
   },
 
+  'service-ports': {
+    title: 'Service ports',
+    lede: 'What a Service listens on, what it forwards to, and how PodSteer forwards a port onto one.',
+    sections: [
+      {
+        heading: 'Kubernetes does not forward to a Service',
+        body: [
+          'The API server forwards to a pod, and only to a pod. Forwarding to a Service is done on this side: PodSteer reads the Service, finds a ready pod behind it, translates the service port to that pod\u2019s container port, and forwards to the pod. kubectl does the same thing when you type service/name.',
+          'One thing here is not kubectl\u2019s behaviour. The forward keeps the Service\u2019s selector, so when the pod it landed on goes away PodSteer finds another pod behind the same Service and rebinds the same local port. kubectl drops the forward, and whatever was pointed at it with it.',
+        ],
+      },
+      {
+        heading: 'Port, target port, node port',
+        body: [
+          'The port is what the Service listens on. The target port is what it forwards to on the pod \u2014 a number, or a name that only means something against a particular pod\u2019s containers, which is why a named one is left as a name here and resolved when the forward is made. A target port that is not set at all defaults to the service port.',
+          'A node port, where there is one, is the port that Service is published on across every node in the cluster.',
+        ],
+      },
+      {
+        heading: 'When there is no Forward button',
+        body: [
+          'Three cases, and each one says which it is on the row. An ExternalName Service is a DNS alias with no pod behind it. A Service with no selector has endpoints somebody manages by hand, so there is no pod PodSteer can find. And port-forward carries TCP only \u2014 a UDP forward would appear to establish and then drop every packet, which is worse than being told no.',
+        ],
+      },
+      {
+        heading: 'The local port',
+        body: [
+          'Left empty, the operating system chooses one and the address you get says which. Whatever ends up bound is remembered against that port\u2019s name, so the next time you forward it the field is already filled in.',
+        ],
+      },
+    ],
+  },
+
   'object-data': {
     title: 'Secret and ConfigMap keys',
     lede: 'The keys an object holds, edited one at a time rather than through its YAML.',

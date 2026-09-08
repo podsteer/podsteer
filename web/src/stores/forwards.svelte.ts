@@ -15,11 +15,13 @@
 import {
   listPortForwards,
   startPortForward,
+  startServicePortForward,
   stopPortForward,
   stopAllPortForwards,
   type PortForward,
 } from '$lib/api/client'
 import { toApiError } from '$lib/api/errors'
+import { serviceForwardKey } from '$lib/servicePorts'
 import { preferences } from './preferences.svelte'
 
 /**
@@ -104,9 +106,56 @@ class Forwards {
     )
   }
 
+  /**
+   * Which live forward was started for which Service port.
+   *
+   * THE ONE THING THE BACKEND'S LIST CANNOT ANSWER, and the reason it cannot
+   * is the feature: a Service forward lands on a pod and then MOVES to
+   * another pod behind the same Service when the first goes away, so the pod
+   * name on the forward is not what the operator asked for and is not stable
+   * enough to look one up by. What they asked for was a Service and a port,
+   * and only the side that asked knows that.
+   *
+   * Still not an invented entry, which is the rule this store is built on:
+   * this holds ids, never forwards. Every id is checked against the backend's
+   * list on the way out and dropped on the way in when the list no longer has
+   * it, so a Service row can say "forwarded" only while the backend agrees
+   * something is.
+   */
+  #byService = $state.raw<Record<string, string>>({})
+
+  /**
+   * The forward running for this Service port, if one is.
+   *
+   * Returns undefined rather than a stale entry when the id has gone: the
+   * lookup goes through `active`, so what is drawn is always something the
+   * backend is holding.
+   */
+  forService(
+    cluster: string,
+    namespace: string,
+    service: string,
+    servicePort: number,
+  ): PortForward | undefined {
+    const id = this.#byService[serviceForwardKey(cluster, namespace, service, servicePort)]
+    if (!id) return undefined
+    return this.active.find((forward) => forward.id === id)
+  }
+
+  /** Whether a start or stop for this Service port is in flight. */
+  isServiceBusy(
+    cluster: string,
+    namespace: string,
+    service: string,
+    servicePort: number,
+  ): boolean {
+    return this.busy.has(forwardKey(cluster, namespace, `service/${service}`, servicePort))
+  }
+
   async refresh(): Promise<void> {
     try {
       this.active = await listPortForwards()
+      this.#pruneServices()
     } catch {
       // A failure to LIST forwards is not worth a banner: the list is a
       // convenience over state the backend owns, and the next change refreshes
@@ -163,6 +212,58 @@ class Forwards {
     }
   }
 
+  /**
+   * Starts a forward onto a Service rather than a pod.
+   *
+   * The KEY is the Service's, not the resolved pod's: the operator asked for
+   * a Service and the button they pressed has to stop spinning, whichever pod
+   * the backend happened to land on — and the pod can change under the
+   * forward while it runs, which is the whole point of forwarding to a
+   * Service here.
+   */
+  async startService(
+    clusterId: string,
+    namespace: string,
+    service: string,
+    servicePort: string,
+    port: number,
+    localPort = 0,
+  ): Promise<void> {
+    const key = forwardKey(clusterId, namespace, `service/${service}`, port)
+    this.#setBusy(key, true)
+    this.error = ''
+
+    try {
+      const forward = await startServicePortForward(
+        clusterId,
+        namespace,
+        service,
+        servicePort,
+        localPort,
+      )
+      // Remembered against the SERVICE port the operator asked for, not the
+      // container port it resolved to: the service port is what they will
+      // type next time, and the container port is an implementation detail
+      // of whichever pod answered today.
+      //
+      // Under its NAME only when it has one. `servicePort` falls back to the
+      // number for an unnamed port, and filing "80" as a name would propose
+      // this local port for every unrelated port that happens to be 80. The
+      // by-number record already covers that case.
+      const named = /^\d+$/.test(servicePort) ? '' : servicePort
+      preferences.rememberLocalPort(port, named, forward.localPort)
+      this.#byService = {
+        ...this.#byService,
+        [serviceForwardKey(clusterId, namespace, service, port)]: forward.id,
+      }
+      await this.refresh()
+    } catch (cause) {
+      this.error = toApiError(cause).message
+    } finally {
+      this.#setBusy(key, false)
+    }
+  }
+
   async stop(forward: PortForward): Promise<void> {
     const key = forwardKey(forward.clusterId, forward.namespace, forward.pod, forward.remotePort)
     this.#setBusy(key, true)
@@ -201,6 +302,21 @@ class Forwards {
 
   isBusy(cluster: string, namespace: string, pod: string, remotePort: number): boolean {
     return this.busy.has(forwardKey(cluster, namespace, pod, remotePort))
+  }
+
+  /**
+   * Forgets Service associations whose forward the backend no longer lists.
+   *
+   * Run after every refresh, including the ones nobody here asked for — a
+   * forward stopped from the forwards panel, or given up on by the
+   * supervisor, has to stop being drawn as open on the Service's panel too.
+   */
+  #pruneServices(): void {
+    const live = new Set(this.active.map((forward) => forward.id))
+    const kept = Object.entries(this.#byService).filter(([, id]) => live.has(id))
+    if (kept.length !== Object.keys(this.#byService).length) {
+      this.#byService = Object.fromEntries(kept)
+    }
   }
 
   #setBusy(key: string, busy: boolean): void {

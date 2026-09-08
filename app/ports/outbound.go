@@ -549,6 +549,18 @@ type PortForwardPort interface {
 	// selector is the pod's own labels, kept so a replacement can be found
 	// when the pod goes away. Empty disables reconnection.
 	StartPortForward(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, pod, podUID string, localPort, remotePort int, portName, protocol string, selector map[string]string) (domain.Forward, error)
+
+	// ServiceForwardTarget resolves a Service into the pod and port a forward
+	// can be made to, since the API server forwards to pods and only to pods.
+	//
+	// SEPARATE FROM StartPortForward, NOT FOLDED INTO IT. Resolution reads two
+	// objects and can fail in four ways an operator can act on — no selector,
+	// no such port, an ambiguous choice, a named targetPort no pod declares —
+	// and each of those deserves its own sentence before anything is bound.
+	// The forward that follows is the ordinary pod forward, which is what
+	// makes the Service's selector carry through to the supervisor and the
+	// forward outlive the pod it landed on.
+	ServiceForwardTarget(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, service, wantedPort string) (domain.ServiceForwardTarget, error)
 	// StopPortForward closes a forward and WAITS for its port to be released,
 	// so a caller may immediately rebind it.
 	StopPortForward(id string) error

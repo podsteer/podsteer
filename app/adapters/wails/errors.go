@@ -342,6 +342,19 @@ func classifyError(err error) (ErrorCode, string) {
 	case errors.Is(err, ports.ErrPodDidNotStart):
 		return CodePodDidNotStart, err.Error()
 
+	// The four ways resolving a Service to a forwardable pod can fail, each
+	// with its own sentence and each actionable: name a port, pick a Service
+	// that selects pods, fix a targetPort no container declares — or wait,
+	// for the one that is the cluster's state rather than the request's.
+	case errors.Is(err, domain.ErrNoReadyEndpoint):
+		return CodeNotFound, err.Error()
+
+	case errors.Is(err, domain.ErrServiceHasNoSelector),
+		errors.Is(err, domain.ErrServicePortNotFound),
+		errors.Is(err, domain.ErrServicePortAmbiguous),
+		errors.Is(err, domain.ErrTargetPortUnresolved):
+		return CodeInvalidInput, err.Error()
+
 	case errors.Is(err, ports.ErrForbidden):
 		return CodeForbidden, "Your account is not allowed to perform this operation"
 

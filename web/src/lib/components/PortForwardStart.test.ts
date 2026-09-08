@@ -3,45 +3,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const probeLocalPort = vi.fn()
 const freeLocalPort = vi.fn()
-const startPortForward = vi.fn()
-const listPortForwards = vi.fn()
-const stopPortForward = vi.fn()
-const stopAllPortForwards = vi.fn()
 
 vi.mock('$lib/api/client', () => ({
   probeLocalPort: (...args: unknown[]) => probeLocalPort(...args),
   freeLocalPort: (...args: unknown[]) => freeLocalPort(...args),
-  startPortForward: (...args: unknown[]) => startPortForward(...args),
-  listPortForwards: (...args: unknown[]) => listPortForwards(...args),
-  stopPortForward: (...args: unknown[]) => stopPortForward(...args),
-  stopAllPortForwards: (...args: unknown[]) => stopAllPortForwards(...args),
 }))
 
 import PortForwardStart from './PortForwardStart.svelte'
-import { forwards } from '$stores/forwards.svelte'
 import { preferences } from '$stores/preferences.svelte'
 
+const onstart = vi.fn()
+
 const props = {
-  clusterId: 'dev',
-  namespace: 'web',
-  podName: 'postgres-0',
-  podUID: 'uid-1',
   remotePort: 5432,
   portName: 'postgres',
-  protocol: 'TCP',
-  labels: {},
   busy: false,
+  onstart,
 }
 
-describe('starting a forward with a chosen local port', () => {
+describe('choosing a local port for a forward', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     probeLocalPort.mockReset()
     freeLocalPort.mockReset()
-    startPortForward.mockReset()
-    listPortForwards.mockReset().mockResolvedValue([])
-    forwards.active = []
-    forwards.error = ''
+    onstart.mockReset()
     // Each test starts with no memory of its own — the pre-fill test writes
     // one deliberately, and leaving it would leak into every test after it.
     preferences.localPortByRemotePort = {}
@@ -121,19 +106,11 @@ describe('starting a forward with a chosen local port', () => {
     expect((getByLabelText('Local port for port 5432') as HTMLInputElement).value).toBe('34567')
   })
 
-  it('starts the forward with the typed local port', async () => {
+  it('hands the typed local port to whoever owns the start', async () => {
+    // THE WHOLE POINT OF THE CALLBACK. This component no longer knows what is
+    // being forwarded — a pod or a Service — so what it must get right is the
+    // NUMBER it reports, and that it reports one at all.
     probeLocalPort.mockResolvedValue(true)
-    startPortForward.mockResolvedValue({
-      id: '1',
-      clusterId: 'dev',
-      namespace: 'web',
-      pod: 'postgres-0',
-      localPort: 8080,
-      remotePort: 5432,
-      address: 'http://localhost:8080',
-      scheme: 'http',
-      reconnecting: false,
-    })
 
     const { getByLabelText, getByRole } = render(PortForwardStart, { ...props, portName: '' })
 
@@ -142,18 +119,18 @@ describe('starting a forward with a chosen local port', () => {
     await vi.advanceTimersByTimeAsync(350)
 
     await fireEvent.click(getByRole('button', { name: 'Forward' }))
-    await vi.advanceTimersByTimeAsync(0)
 
-    expect(startPortForward).toHaveBeenCalledWith(
-      'dev',
-      'web',
-      'postgres-0',
-      'uid-1',
-      8080,
-      5432,
-      '',
-      'TCP',
-      {},
-    )
+    expect(onstart).toHaveBeenCalledWith(8080)
+  })
+
+  it('reports 0 for an empty field, which means the operating system chooses', async () => {
+    // Not the same as refusing to start: a blank box has always meant "any
+    // free port", and 0 is how that reaches the backend. A callback that
+    // simply did not fire here would silently remove the feature.
+    const { getByRole } = render(PortForwardStart, { ...props, portName: '' })
+
+    await fireEvent.click(getByRole('button', { name: 'Forward' }))
+
+    expect(onstart).toHaveBeenCalledWith(0)
   })
 })
