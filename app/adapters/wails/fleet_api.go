@@ -2,7 +2,9 @@ package wails
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/podsteer/podsteer/app/domain"
@@ -97,6 +99,33 @@ func (f *FleetAPI) ListEvents(clusterIDs []string, namespace string) ([]ClusterE
 	}
 
 	return toClusterEvents(reads, time.Now()), nil
+}
+
+// ListTable lists one arbitrary kind in the given namespace of each named
+// cluster.
+//
+// THE KIND IS A GROUP AND A RESOURCE, not a kind id: an id carries a version
+// and a version is per-cluster. `group` is empty for the core group, exactly
+// as it is in a kind id. See FleetService.ListTable and
+// domain.Catalog.LookupByResource.
+func (f *FleetAPI) ListTable(clusterIDs []string, group, resource, namespace string) ([]ClusterTable, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	ids, ns, err := fleetArgs(clusterIDs, namespace)
+	if err != nil {
+		return nil, apiError(f.logger, "ListTable", err)
+	}
+	if strings.TrimSpace(resource) == "" {
+		return nil, apiError(f.logger, "ListTable", fmt.Errorf("%w: no resource named", domain.ErrInvalidResourceKind))
+	}
+
+	reads, err := f.fleet.ListTable(ctx, ids, group, resource, ns)
+	if err != nil {
+		return nil, apiError(f.logger, "ListTable", err)
+	}
+
+	return toClusterTables(reads), nil
 }
 
 // fleetArgs validates the arguments the three reads share.

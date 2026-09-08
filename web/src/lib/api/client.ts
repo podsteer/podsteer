@@ -54,6 +54,7 @@ import {
 } from '$bindings/workloadapi'
 import {
   ListEvents as bindListFleetEvents,
+  ListTable as bindListFleetTable,
   ListPods as bindListFleetPods,
   ListWorkloads as bindListFleetWorkloads,
 } from '$bindings/fleetapi'
@@ -208,6 +209,8 @@ export type K8sEvent = wails.Event
 export type ClusterPods = wails.ClusterPods
 export type ClusterWorkloads = wails.ClusterWorkloads
 export type ClusterEvents = wails.ClusterEvents
+/** One cluster's share of a cross-cluster read of an arbitrary kind. */
+export type ClusterTable = wails.ClusterTable
 /** A browsable kind, as shown in the navigator. */
 export type ResourceKind = wails.ResourceKind
 /** A generically browsed kind, with server-printed columns. */
@@ -1043,6 +1046,23 @@ export function listFleetWorkloads(
 /** Lists events across the named open clusters. */
 export function listFleetEvents(clusterIds: string[], namespace: string): Promise<ClusterEvents[]> {
   return callList(() => bindListFleetEvents(clusterIds, namespace))
+}
+
+/**
+ * Lists one arbitrary kind across the named open clusters.
+ *
+ * The kind is a GROUP and a RESOURCE, never a kind id: an id carries a
+ * version, and one cluster serving a CRD at v1alpha1 while another serves v1
+ * is the ordinary case rather than the exception. `group` is empty for the
+ * core group, exactly as it is inside a kind id.
+ */
+export function listFleetTable(
+  clusterIds: string[],
+  group: string,
+  resource: string,
+  namespace: string,
+): Promise<ClusterTable[]> {
+  return callList(() => bindListFleetTable(clusterIds, group, resource, namespace))
 }
 
 // --- RBAC explorer ----------------------------------------------------------

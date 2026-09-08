@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { K8sEvent, Pod, Workload } from './api/client'
+import type { K8sEvent, Pod, TableColumn, TableRow, Workload } from './api/client'
 import {
   fleetRowTarget,
   flattenFleet,
   hasClusterTerm,
   matchesChips,
   mergeFleet,
+  mergeFleetTable,
   stripModel,
   toggleClusterTerm,
   WORKLOAD_CHIPS,
@@ -240,5 +241,98 @@ describe('the cluster: term a strip chip toggles', () => {
   it('quotes a name with a space, and parses back as one term', () => {
     expect(toggleClusterTerm('', 'my cluster')).toBe('cluster:"my cluster"')
     expect(hasClusterTerm('cluster:"my cluster"', 'my cluster')).toBe(true)
+  })
+})
+
+describe('mergeFleetTable', () => {
+  const column = (name: string, type = 'string'): TableColumn =>
+    ({ name, type, priority: 0, description: '', wide: false }) as TableColumn
+
+  const row = (name: string, cells: string[]): TableRow =>
+    ({ name, namespace: 'shop', cells, labels: {}, annotations: {} }) as TableRow
+
+  const answer = (cluster: string, rows: TableRow[]): ClusterAnswer<TableRow> => ({
+    cluster,
+    status: 'ok',
+    reason: '',
+    missing: [],
+    rows,
+    rowsAt: 1,
+    stale: false,
+  })
+
+  it('keeps every cluster in the first answerer\'s column order', () => {
+    const merged = mergeFleetTable(
+      [answer('a', [row('one', ['one', 'Ready'])]), answer('b', [row('two', ['two', 'Ready'])])],
+      { a: [column('Name'), column('Status')], b: [column('Name'), column('Status')] },
+    )
+
+    expect(merged.columns.map((c) => c.name)).toEqual(['Name', 'Status'])
+    expect(merged.rows.map((r) => r.cluster)).toEqual(['a', 'b'])
+  })
+
+  it('unions a column the second cluster prints and the first does not', () => {
+    // A CRD at two versions prints two different sets, which is the case this
+    // tab exists for.
+    const merged = mergeFleetTable(
+      [answer('old', [row('one', ['one', 'Ready'])]), answer('new', [row('two', ['two', 'Ready', '5m'])])],
+      {
+        old: [column('Name'), column('Status')],
+        new: [column('Name'), column('Status'), column('Age')],
+      },
+    )
+
+    expect(merged.columns.map((c) => c.name)).toEqual(['Name', 'Status', 'Age'])
+    // The older cluster's row has nothing to put there, and says nothing.
+    expect(merged.rows[0].cells).toEqual(['one', 'Ready', ''])
+    expect(merged.rows[1].cells).toEqual(['two', 'Ready', '5m'])
+  })
+
+  it('RE-INDEXES cells rather than trusting their position', () => {
+    // THE TRAP THIS EXISTS FOR. `cells[1]` is Status on one cluster and Age on
+    // the other; a merge that concatenated rows would print an age under
+    // "Status" for half the table and look entirely plausible.
+    const merged = mergeFleetTable(
+      [answer('a', [row('one', ['one', 'Ready', '5m'])]), answer('b', [row('two', ['two', '9m', 'Ready'])])],
+      {
+        a: [column('Name'), column('Status'), column('Age')],
+        b: [column('Name'), column('Age'), column('Status')],
+      },
+    )
+
+    expect(merged.columns.map((c) => c.name)).toEqual(['Name', 'Status', 'Age'])
+    expect(merged.rows[0].cells).toEqual(['one', 'Ready', '5m'])
+    expect(merged.rows[1].cells).toEqual(['two', 'Ready', '9m'])
+  })
+
+  it('drops a cell whose column the cluster did not declare', () => {
+    // A printer that returned more cells than columns is malformed; the extra
+    // has no heading to sit under and is not invented one.
+    const merged = mergeFleetTable([answer('a', [row('one', ['one', 'Ready', 'extra'])])], {
+      a: [column('Name'), column('Status')],
+    })
+
+    expect(merged.rows[0].cells).toEqual(['one', 'Ready'])
+  })
+
+  it('answers empty for clusters that contributed nothing', () => {
+    const merged = mergeFleetTable([answer('a', [])], { a: [] })
+    expect(merged).toEqual({ columns: [], rows: [] })
+  })
+
+  it('keeps a cluster whose rows are stale, with its own columns', () => {
+    // A slow cluster shows what it last had; its columns are what it last
+    // printed, which is what those cells are positioned against.
+    const stale: ClusterAnswer<TableRow> = {
+      ...answer('slow', [row('kept', ['kept', 'Ready'])]),
+      status: 'slow',
+      stale: true,
+    }
+    const merged = mergeFleetTable([answer('a', [row('one', ['one', 'Ready'])]), stale], {
+      a: [column('Name'), column('Status')],
+      slow: [column('Name'), column('Status')],
+    })
+
+    expect(merged.rows.map((r) => r.name)).toEqual(['one', 'kept'])
   })
 })

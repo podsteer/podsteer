@@ -24,12 +24,15 @@ import (
 type fakeFleetSource struct {
 	ports.WorkloadService
 	ports.EventService
+	ports.ResourceService
 
 	mu sync.Mutex
 
 	pods      map[domain.ClusterID][]domain.Pod
 	workloads map[domain.ClusterID][]domain.Workload
 	events    map[domain.ClusterID][]domain.Event
+	tables    map[domain.ClusterID]domain.ResourceTable
+	kindIDs   []string
 	// errs fails every read of a cluster; kindErrs fails one workload kind
 	// on every cluster, for the partial case.
 	errs     map[domain.ClusterID]error
@@ -95,6 +98,20 @@ func (f *fakeFleetSource) ListPods(_ context.Context, id domain.ClusterID, _ dom
 	return append([]domain.Pod(nil), f.pods[id]...), nil
 }
 
+func (f *fakeFleetSource) ListTable(_ context.Context, id domain.ClusterID, kindID string, _ domain.NamespaceName, _ domain.Projection) (domain.ResourceTable, error) {
+	f.enter(id)
+	defer f.leave()
+
+	f.mu.Lock()
+	f.kindIDs = append(f.kindIDs, kindID)
+	f.mu.Unlock()
+
+	if err := f.errs[id]; err != nil {
+		return domain.ResourceTable{}, err
+	}
+	return f.tables[id], nil
+}
+
 func (f *fakeFleetSource) ListWorkloads(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, _ domain.NamespaceName, _ domain.Projection) ([]domain.Workload, error) {
 	f.enter(id)
 	defer f.leave()
@@ -140,8 +157,42 @@ func newFleetService(t *testing.T, source *fakeFleetSource, budget time.Duration
 	service, err := application.NewFleetService(application.FleetServiceDeps{
 		Workloads:  source,
 		Events:     source,
+		Resources:  source,
+		Catalog:    domain.NewCatalog(),
 		Registry:   registry,
 		ReadBudget: budget,
+	})
+	if err != nil {
+		t.Fatalf("NewFleetService() error = %v", err)
+	}
+	return service
+}
+
+// newFleetServiceWithCatalog is newFleetService with a catalog that knows
+// which clusters serve which custom kinds — the one thing a cross-cluster
+// table read depends on that the other three do not.
+func newFleetServiceWithCatalog(
+	t *testing.T,
+	source *fakeFleetSource,
+	custom map[string][]domain.ResourceKind,
+	open ...string,
+) *application.FleetService {
+	t.Helper()
+
+	registry := application.NewRegistry()
+	catalog := domain.NewCatalog()
+	for _, id := range open {
+		registry.Open(mustCluster(t, id, false))
+		catalog.SetCustom(domain.ClusterID(id), custom[id])
+	}
+
+	service, err := application.NewFleetService(application.FleetServiceDeps{
+		Workloads:  source,
+		Events:     source,
+		Resources:  source,
+		Catalog:    catalog,
+		Registry:   registry,
+		ReadBudget: time.Second,
 	})
 	if err != nil {
 		t.Fatalf("NewFleetService() error = %v", err)
@@ -710,5 +761,139 @@ func waitFor(t *testing.T, condition func() bool) {
 			t.Fatal("condition not met in time")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// widgets is the CRD the cross-cluster table tests read, at two different
+// versions — which is the case a kind ID cannot express.
+func widgets(version string) domain.ResourceKind {
+	return domain.ResourceKind{
+		Group:      "acme.io",
+		Version:    version,
+		Resource:   "widgets",
+		Kind:       "Widget",
+		Title:      "Widgets",
+		Singular:   "widget",
+		Namespaced: true,
+	}
+}
+
+func widgetTable(t *testing.T, kind domain.ResourceKind, names ...string) domain.ResourceTable {
+	t.Helper()
+
+	rows := make([]domain.TableRow, 0, len(names))
+	for _, name := range names {
+		rows = append(rows, domain.TableRow{Name: name, Namespace: "shop", Cells: []string{name, "Ready"}})
+	}
+	return domain.NewResourceTable(kind,
+		[]domain.TableColumn{{Name: "Name", Type: "string"}, {Name: "Status", Type: "string"}},
+		rows)
+}
+
+// TestFleetTableReadsWhateverVersionEachClusterServes is the reason the read
+// takes a group and a resource rather than a kind id: an id carries a version,
+// and a CRD installed at v1alpha1 on one cluster and v1 on another is the same
+// kind. Matching the whole id would report the second cluster as not having it.
+func TestFleetTableReadsWhateverVersionEachClusterServes(t *testing.T) {
+	t.Parallel()
+
+	source := &fakeFleetSource{
+		tables: map[domain.ClusterID]domain.ResourceTable{
+			"old": widgetTable(t, widgets("v1alpha1"), "left"),
+			"new": widgetTable(t, widgets("v1"), "right"),
+		},
+	}
+	service := newFleetServiceWithCatalog(t, source, map[string][]domain.ResourceKind{
+		"old": {widgets("v1alpha1")},
+		"new": {widgets("v1")},
+	}, "old", "new")
+
+	reads, err := service.ListTable(context.Background(), ids("old", "new"), "acme.io", "widgets", "shop")
+	if err != nil {
+		t.Fatalf("ListTable() error = %v", err)
+	}
+	if len(reads) != 2 {
+		t.Fatalf("reads = %d, want one per cluster", len(reads))
+	}
+
+	for _, read := range reads {
+		if read.Status != domain.ClusterReadOK {
+			t.Errorf("%s: status = %q, want ok", read.Cluster, read.Status)
+		}
+		if len(read.Items) != 1 {
+			t.Fatalf("%s: items = %d, want the one table", read.Cluster, len(read.Items))
+		}
+		if read.Items[0].Len() != 1 {
+			t.Errorf("%s: rows = %d, want 1", read.Cluster, read.Items[0].Len())
+		}
+	}
+
+	// Each cluster was asked at ITS OWN version.
+	if !slices.Contains(source.kindIDs, "acme.io/v1alpha1/widgets") ||
+		!slices.Contains(source.kindIDs, "acme.io/v1/widgets") {
+		t.Errorf("kind ids asked for = %v, want each cluster's own version", source.kindIDs)
+	}
+}
+
+// TestFleetTableCallsAMissingKindUnservedRatherThanFailed covers the ordinary
+// case: a CRD is installed on the clusters that need it. Reported as failed it
+// reads as an outage; reported as ok with no rows it says "none here", which
+// is a different claim.
+func TestFleetTableCallsAMissingKindUnservedRatherThanFailed(t *testing.T) {
+	t.Parallel()
+
+	source := &fakeFleetSource{
+		tables: map[domain.ClusterID]domain.ResourceTable{
+			"has": widgetTable(t, widgets("v1"), "one"),
+		},
+	}
+	service := newFleetServiceWithCatalog(t, source, map[string][]domain.ResourceKind{
+		"has": {widgets("v1")},
+		"not": nil,
+	}, "has", "not")
+
+	reads, err := service.ListTable(context.Background(), ids("has", "not"), "acme.io", "widgets", "shop")
+	if err != nil {
+		t.Fatalf("ListTable() error = %v", err)
+	}
+
+	if reads[0].Status != domain.ClusterReadOK {
+		t.Errorf("has: status = %q, want ok", reads[0].Status)
+	}
+	if reads[1].Status != domain.ClusterReadUnserved {
+		t.Errorf("not: status = %q, want unserved", reads[1].Status)
+	}
+	if len(reads[1].Items) != 0 {
+		t.Errorf("not: items = %d, want none", len(reads[1].Items))
+	}
+
+	// AND THE CLUSTER WAS NEVER ASKED. Listing a kind it does not serve would
+	// be a round trip whose only possible answer is a 404.
+	for _, id := range source.calls {
+		if id == "not" {
+			t.Error("the cluster without the kind was read anyway")
+		}
+	}
+}
+
+// TestFleetTableReportsARefusalAsForbidden keeps the existing split: RBAC and
+// an outage need opposite advice, and neither is "this cluster has no widgets".
+func TestFleetTableReportsARefusalAsForbidden(t *testing.T) {
+	t.Parallel()
+
+	source := &fakeFleetSource{
+		tables: map[domain.ClusterID]domain.ResourceTable{},
+		errs:   map[domain.ClusterID]error{"prod": fmt.Errorf("listing: %w", ports.ErrForbidden)},
+	}
+	service := newFleetServiceWithCatalog(t, source, map[string][]domain.ResourceKind{
+		"prod": {widgets("v1")},
+	}, "prod")
+
+	reads, err := service.ListTable(context.Background(), ids("prod"), "acme.io", "widgets", "shop")
+	if err != nil {
+		t.Fatalf("ListTable() error = %v", err)
+	}
+	if reads[0].Status != domain.ClusterReadForbidden {
+		t.Errorf("status = %q, want forbidden", reads[0].Status)
 	}
 }

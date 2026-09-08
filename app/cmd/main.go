@@ -372,6 +372,8 @@ func run() error {
 	fleetService, err := application.NewFleetService(application.FleetServiceDeps{
 		Workloads: workloadService,
 		Events:    browseService,
+		Resources: browseService,
+		Catalog:   catalog,
 		Registry:  registry,
 		Logger:    logger,
 	})

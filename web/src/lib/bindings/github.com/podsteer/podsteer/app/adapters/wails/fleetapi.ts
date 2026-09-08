@@ -37,6 +37,19 @@ export function ListPods(clusterIDs: string[] | null, $namespace: string): $Canc
 }
 
 /**
+ * ListTable lists one arbitrary kind in the given namespace of each named
+ * cluster.
+ * 
+ * THE KIND IS A GROUP AND A RESOURCE, not a kind id: an id carries a version
+ * and a version is per-cluster. `group` is empty for the core group, exactly
+ * as it is in a kind id. See FleetService.ListTable and
+ * domain.Catalog.LookupByResource.
+ */
+export function ListTable(clusterIDs: string[] | null, group: string, resource: string, $namespace: string): $CancellablePromise<$models.ClusterTable[] | null> {
+    return $Call.ByID(1511250207, clusterIDs, group, resource, $namespace);
+}
+
+/**
  * ListWorkloads lists every fleet workload kind in the given namespace of
  * each named cluster.
  */

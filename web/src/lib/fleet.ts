@@ -13,22 +13,47 @@
  * so the merged table groups clusters the way the tab bar does.
  */
 
-import type { K8sEvent, Pod, Workload } from './api/client'
+import type { K8sEvent, Pod, TableColumn, TableRow, Workload } from './api/client'
 import type { Tone } from './format'
 import { tokenize } from './query'
 
-/** The three merged tables. */
-export type FleetTab = 'pods' | 'workloads' | 'events'
+/**
+ * The merged tables.
+ *
+ * Three of them are typed reads with a fixed shape. The fourth is ANY KIND —
+ * whatever the operator picks, read through the same generic table path a
+ * single cluster's list uses, which is what lets a CRD nobody wrote code for
+ * be read across six clusters at once.
+ */
+export type FleetTab = 'pods' | 'workloads' | 'events' | 'kinds'
+
+/**
+ * The tabs that offer quick-filter chips: the typed three.
+ *
+ * The generic table has none and cannot: a chip is a claim about health, and
+ * the columns of an arbitrary kind are whatever that CRD's author chose to
+ * print. Naming the exclusion in the type is what stops a Record keyed by tab
+ * quietly gaining an empty entry nothing can fill.
+ */
+export type FleetChipTab = Exclude<FleetTab, 'kinds'>
 
 export const FLEET_TABS: ReadonlyArray<{ id: FleetTab; label: string }> = [
   { id: 'pods', label: 'Pods' },
   { id: 'workloads', label: 'Workloads' },
   { id: 'events', label: 'Events' },
+  { id: 'kinds', label: 'Any kind' },
 ]
 
 /** Mirrors `domain.ClusterReadStatus` — see app/domain/fleet.go for what
     each one means and why they are told apart. */
-export type ClusterReadStatus = 'ok' | 'partial' | 'slow' | 'forbidden' | 'unreachable' | 'failed'
+export type ClusterReadStatus =
+  | 'ok'
+  | 'partial'
+  | 'slow'
+  | 'forbidden'
+  | 'unreachable'
+  | 'failed'
+  | 'unserved'
 
 /** One cluster's share of a fleet read, as the wire carries it, with the
     per-kind row field already lifted into `items`. */
@@ -119,6 +144,64 @@ export function flattenFleet<T>(answers: readonly ClusterAnswer<T>[]): FleetRow<
   return rows
 }
 
+/**
+ * A merged generic table: one column set, and rows from every cluster.
+ *
+ * TWO CLUSTERS DO NOT NECESSARILY PRINT THE SAME COLUMNS. The columns come
+ * from each API server's own table printer, and a CRD installed at v1alpha1
+ * on one cluster and v1 on another routinely prints a different set — which
+ * is exactly the case this whole tab exists for. So the columns are UNIONED
+ * BY NAME rather than taken from whichever cluster answered first, and a row
+ * from a cluster that has no such column shows an empty cell rather than the
+ * value of whatever column happened to sit at that index.
+ *
+ * Positional cells are the trap here: `cells[2]` means "Status" on one
+ * cluster and "Age" on another, so re-indexing every row into the merged
+ * order is not a nicety, it is the difference between a table and a lie.
+ */
+export interface MergedTable {
+  columns: TableColumn[]
+  rows: FleetRow<TableRow>[]
+}
+
+export function mergeFleetTable(
+  answers: readonly ClusterAnswer<TableRow>[],
+  columnsByCluster: Readonly<Record<string, TableColumn[]>>,
+): MergedTable {
+  const columns: TableColumn[] = []
+  const indexOf = new Map<string, number>()
+
+  // First seen wins the position, so the first answering cluster's order is
+  // the table's order and later clusters only ever append.
+  for (const answer of answers) {
+    for (const column of columnsByCluster[answer.cluster] ?? []) {
+      if (indexOf.has(column.name)) continue
+      indexOf.set(column.name, columns.length)
+      columns.push(column)
+    }
+  }
+
+  const rows: FleetRow<TableRow>[] = []
+  for (const answer of answers) {
+    const own = columnsByCluster[answer.cluster] ?? []
+
+    // The mapping from this cluster's cell positions to the merged ones,
+    // computed once per cluster rather than once per row.
+    const positions = own.map((column) => indexOf.get(column.name) ?? -1)
+
+    for (const row of answer.rows) {
+      const cells = new Array<string>(columns.length).fill('')
+      for (const [index, cell] of (row.cells ?? []).entries()) {
+        const at = positions[index]
+        if (at !== undefined && at >= 0) cells[at] = cell
+      }
+      rows.push({ ...row, cells, cluster: answer.cluster })
+    }
+  }
+
+  return { columns, rows }
+}
+
 /** One cluster's chip in the status strip above a merged table. */
 export interface FleetStripEntry {
   cluster: string
@@ -145,6 +228,11 @@ const STRIP_TONES: Record<ClusterReadStatus, { tone: Tone; label: string }> = {
   forbidden: { tone: 'warning', label: 'Forbidden' },
   unreachable: { tone: 'error', label: 'Unreachable' },
   failed: { tone: 'error', label: 'Failed' },
+  // NEUTRAL, NOT A WARNING. A cluster without the CRD is a correct answer to
+  // "list Widgets everywhere", and colouring it amber would make the ordinary
+  // shape of a fleet — an operator installed on two clusters of six — look
+  // like four things going wrong.
+  unserved: { tone: 'neutral', label: 'Not installed' },
 }
 
 /** The status strip: one entry per cluster, in tab order. */
@@ -184,6 +272,8 @@ function stripTitle<T>(answer: ClusterAnswer<T>, ageSeconds: number | null): str
       return `${answer.cluster} — still reading${shown}`
     case 'unreachable':
       return `${answer.cluster} — ${answer.reason}${shown}`
+    case 'unserved':
+      return `${answer.cluster} — this kind is not installed here`
     default:
       return `${answer.cluster} — ${answer.reason}`
   }
