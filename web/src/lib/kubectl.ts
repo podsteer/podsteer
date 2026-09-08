@@ -622,6 +622,86 @@ export function helmUninstall(ctx: string, release: string, ns: string): string 
 }
 
 /**
+ * `helm get values <release> -n <ns> --kube-context <ctx> > values.yaml`.
+ *
+ * THE READ THAT MAKES THE UPGRADE BESIDE IT SAFE, and the reason both are
+ * offered rather than the upgrade alone. `helm upgrade` in Helm 3 does NOT
+ * carry the previous release's values forward: an upgrade run without them
+ * reverts every value the operator ever set, quietly, in one command that
+ * looks like it only changed a version. Capturing them to a file first is the
+ * sequence Helm's own documentation teaches, and it is the sequence PodSteer
+ * shows.
+ *
+ * The redirect is part of the command rather than an instruction beside it,
+ * because the file it writes is what the next command reads by name — two
+ * halves that have to agree, and the operator should not have to make them
+ * agree by hand. It writes into whatever directory their shell is in, which
+ * is theirs; PodSteer runs none of this.
+ *
+ * `helm get values` returns only what was SUPPLIED, not the chart's defaults
+ * merged in — which is exactly what belongs in a `-f` file. `--all` would
+ * pin every default the chart happens to ship today, so it is deliberately
+ * not here.
+ */
+export function helmGetValues(ctx: string, release: string, ns: string): string {
+  return [
+    'helm',
+    'get',
+    'values',
+    release,
+    '-n',
+    ns,
+    '--kube-context',
+    shellQuote(ctx),
+    '>',
+    'values.yaml',
+  ].join(' ')
+}
+
+/**
+ * `helm upgrade <release> REPO/<chart> --version VERSION -n <ns> --kube-context <ctx> -f values.yaml`.
+ *
+ * NOT EXECUTED BY PODSTEER, for the reason the note above gives — an upgrade
+ * is the same re-render, diff, apply and prune a rollback is, and doing it
+ * approximately deletes production objects.
+ *
+ * TWO PLACEHOLDERS, IN CAPITALS AND WITHOUT ANGLE BRACKETS. PodSteer cannot
+ * know either value and will not invent one:
+ *
+ *   - REPO is the operator's own repository alias. A release Secret records
+ *     the chart's NAME, never where it was fetched from, and PodSteer reads
+ *     no chart repositories at all.
+ *   - VERSION is the version to move to. Reading an index to offer one is a
+ *     network call to a third party this application deliberately does not
+ *     make.
+ *
+ * They are capitals rather than `<repo>` because a copied command is pasted:
+ * `<repo>` is a shell redirection and fails with a syntax error about a file,
+ * where `REPO/ingress-nginx` reaches helm and fails saying the repository is
+ * not found — which names the thing to fill in.
+ *
+ * The chart name is filled in when a revision has been read and empty
+ * otherwise, in which case it too becomes a placeholder: the release list
+ * carries no chart name, because it is not a label. See HelmChartIdentity.
+ */
+export function helmUpgrade(ctx: string, release: string, ns: string, chart: string): string {
+  return [
+    'helm',
+    'upgrade',
+    release,
+    `REPO/${chart || 'CHART'}`,
+    '--version',
+    'VERSION',
+    '-n',
+    ns,
+    '--kube-context',
+    shellQuote(ctx),
+    '-f',
+    'values.yaml',
+  ].join(' ')
+}
+
+/**
  * `helm history <release> -n <ns> --kube-context <ctx>`.
  *
  * The read of the same thing PodSteer's own revision list already shows, from

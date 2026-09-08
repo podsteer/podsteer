@@ -14,9 +14,11 @@ import {
   exec,
   get,
   getYaml,
+  helmGetValues,
   helmHistory,
   helmRollback,
   helmUninstall,
+  helmUpgrade,
   logs,
   portForward,
   resourceArg,
@@ -489,6 +491,69 @@ describe('helmUninstall', () => {
 
   it('adds no flag PodSteer chose on the operator\'s behalf', () => {
     expect(helmUninstall('prod', 'web', 'shop')).not.toContain('--keep-history')
+  })
+})
+
+describe('helmGetValues', () => {
+  it('writes the supplied values to the file the upgrade reads', () => {
+    // The two halves have to agree on the filename, so the redirect is part
+    // of the command rather than an instruction beside it.
+    expect(helmGetValues('prod', 'ingress-nginx', 'ingress')).toBe(
+      'helm get values ingress-nginx -n ingress --kube-context prod > values.yaml',
+    )
+  })
+
+  it('asks for the SUPPLIED values, never --all', () => {
+    // `--all` merges in every default the chart happens to ship today, which
+    // would pin them into the operator's own values file forever.
+    expect(helmGetValues('prod', 'web', 'shop')).not.toContain('--all')
+  })
+
+  it('quotes a context containing a space', () => {
+    expect(helmGetValues('my cluster', 'web', 'shop')).toContain("--kube-context 'my cluster'")
+  })
+})
+
+describe('helmUpgrade', () => {
+  it('names the release, the chart, and the values file that keeps the upgrade honest', () => {
+    // THE `-f` IS THE POINT. Helm 3 does not carry the previous release's
+    // values forward: an upgrade run without them reverts every value the
+    // operator ever set, in a command that looks like it only changed a
+    // version.
+    expect(helmUpgrade('prod', 'ingress-nginx', 'ingress', 'ingress-nginx')).toBe(
+      'helm upgrade ingress-nginx REPO/ingress-nginx --version VERSION -n ingress ' +
+        '--kube-context prod -f values.yaml',
+    )
+  })
+
+  it('uses capitals for what PodSteer cannot know, not angle brackets', () => {
+    // A copied command is pasted. `<repo>` is a shell redirection and fails
+    // with a syntax error about a file; REPO reaches helm, which says the
+    // repository is not found — naming the thing to fill in.
+    const command = helmUpgrade('prod', 'web', 'shop', 'my-chart')
+    expect(command).not.toContain('<')
+    expect(command).not.toContain('>')
+    expect(command).toContain('REPO/my-chart')
+    expect(command).toContain('--version VERSION')
+  })
+
+  it('makes the chart a placeholder too when no revision has been read', () => {
+    // The release list carries no chart name — it is not a label, and lives
+    // only inside a payload somebody explicitly read. See HelmChartIdentity.
+    expect(helmUpgrade('prod', 'web', 'shop', '')).toContain('REPO/CHART')
+  })
+
+  it('adds no --reuse-values on the operator\'s behalf', () => {
+    // It is not equivalent to the values file: --reuse-values keeps the old
+    // values AND the old computed defaults, which is a different upgrade and
+    // one Helm's own documentation warns about when the chart changed.
+    expect(helmUpgrade('prod', 'web', 'shop', 'chart')).not.toContain('--reuse-values')
+  })
+
+  it('quotes a context containing a space', () => {
+    expect(helmUpgrade('my cluster', 'web', 'shop', 'chart')).toContain(
+      "--kube-context 'my cluster'",
+    )
   })
 })
 
