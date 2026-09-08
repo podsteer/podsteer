@@ -194,10 +194,16 @@ func ContextNotice(context string, pinned bool) string {
 		context)
 }
 
-// UnsupportedNotice explains a platform that cannot open a local shell.
+// UnsupportedNotice explains a machine that cannot open a local shell.
 //
 // Said in the terminal rather than hidden behind a disabled control, because
 // "this control does nothing" is a worse answer than a sentence saying why.
-const UnsupportedNotice = "PodSteer: a local shell needs a pseudo-terminal, " +
-	"which this build does not provide on Windows. Open your own terminal instead; " +
-	"nothing here is required to make kubectl work there."
+//
+// IT NAMES A WINDOWS VERSION NOW, not Windows. A local shell needs a
+// pseudo-terminal, and Windows has had one — ConPTY — since Windows 10 1809;
+// PodSteer uses it. Only an older Windows reaches this sentence, which is why
+// it says which and what to do about it rather than describing a limitation
+// of the build.
+const UnsupportedNotice = "PodSteer: a local shell needs a pseudo-console, which Windows " +
+	"has had since Windows 10 version 1809 — this machine is older than that. Open your own " +
+	"terminal instead; nothing here is required to make kubectl work there."
