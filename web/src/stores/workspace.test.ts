@@ -8,6 +8,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  * yet looks like from here — not a rejection, which the code already handles,
  * but silence.
  */
+/** Handlers the workspace registered for the kubeconfig-changed event. */
+const kubeconfigHandlers: Array<() => void> = []
+/** Named, so a test can assert the list was re-read rather than guessing. */
+const listClustersMock = vi.fn().mockResolvedValue([])
+
 const listKinds = vi.fn((_clusterId: string) => new Promise(() => {}))
 const listNamespaces = vi.fn((_clusterId: string) => new Promise(() => {}))
 
@@ -34,12 +39,16 @@ vi.mock('$lib/api/client', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('$lib/api/client')
   return {
     ...actual,
-    listClusters: vi.fn().mockResolvedValue([]),
+    listClusters: () => listClustersMock(),
     connections: vi.fn().mockResolvedValue([
       { id: 'dev', name: 'dev', defaultNamespace: 'default' },
     ]),
     setReadOnly: vi.fn().mockResolvedValue(undefined),
     onClusterUnreachable: vi.fn(() => () => {}),
+    onKubeconfigChanged: (handler: () => void) => {
+      kubeconfigHandlers.push(handler)
+      return () => {}
+    },
     listKinds: (clusterId: string) => listKinds(clusterId),
     listNamespaces: (clusterId: string) => listNamespaces(clusterId),
     connect: (clusterId: string) => connect(clusterId),
@@ -142,5 +151,29 @@ describe('connecting to several clusters', () => {
 
     pending.get('broken')?.reject(new Error('[unreachable] Could not reach the cluster'))
     await vi.waitFor(() => expect(workspace.error).not.toBeNull())
+  })
+})
+
+
+describe('the kubeconfig changing on disk', () => {
+  beforeEach(() => {
+    listClustersMock.mockClear()
+  })
+
+  it('re-reads the cluster list and leaves every open tab alone', async () => {
+    // A kubeconfig changing is somebody running `kubectl config use-context`
+    // in another window, or a colleague's file landing in a synced folder.
+    // What it must not do is touch a connection this operator made: not
+    // reconnect it, not close it, and not follow a current-context that
+    // moved, which is a decision about somebody else's terminal.
+    await workspace.initialise()
+    const openBefore = workspace.sessions.map((session) => session.cluster.id)
+    listClustersMock.mockClear()
+
+    expect(kubeconfigHandlers.length).toBeGreaterThan(0)
+    for (const handler of kubeconfigHandlers) handler()
+    await vi.waitFor(() => expect(listClustersMock).toHaveBeenCalled())
+
+    expect(workspace.sessions.map((session) => session.cluster.id)).toEqual(openBefore)
   })
 })

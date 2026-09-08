@@ -244,6 +244,20 @@ func run() error {
 	// reads the per-cluster switch through it, and that service has to be in
 	// the Invalidators list clusterService is built with — the list is
 	// composed once and never mutated, so everything in it must exist first.
+	// A kubeconfig changed in another window — `kubectl config use-context`,
+	// a colleague's file dropped into a synced folder — is a thing the
+	// operator did, not a thing PodSteer did, so nothing else in the process
+	// would ever notice it. See application.KubeconfigWatcher for why this
+	// stats rather than watches.
+	kubeconfigWatcher, err := application.NewKubeconfigWatcher(application.KubeconfigWatcherDeps{
+		Files:  kubernetes.KubeconfigFiles,
+		Events: desktop,
+		Logger: logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring kubeconfig watcher: %w", err)
+	}
+
 	// Assigned once every holder of a per-cluster client exists — see the
 	// Reconnect field below.
 	var reconnectClusters func()
@@ -651,6 +665,10 @@ func run() error {
 			// operating system reaps them. That is the orphaned-port
 			// complaint every competing client has an issue open about, and
 			// the fix is to close them rather than to hope.
+			// The kubeconfig watch first, because it is the cheapest thing
+			// to stop and the only one that would otherwise keep stat'ing
+			// files while everything below it is being torn down.
+			kubeconfigWatcher.Stop()
 			kubernetes.StopAllPortForwards()
 			// Node shells next, and for a sharper reason than a leaked socket:
 			// each is a PRIVILEGED pod on a node, and a process that exits
@@ -725,6 +743,9 @@ func run() error {
 		// the application does and stops when it closes, which is exactly
 		// the window the recorded history claims to cover.
 		historyService.Start(desktopApp.Context())
+		// Bounded by the window's lifetime for the same reason: a stat loop
+		// with no window to tell is a timer nobody reads.
+		kubeconfigWatcher.Start(desktopApp.Context())
 		// It asks for no permission here — see App.StartNotifications — and
 		// failing is not fatal.
 		desktop.StartNotifications()

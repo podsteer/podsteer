@@ -373,6 +373,12 @@ func toEventPayload(event domain.DomainEvent) (any, bool) {
 			At:        formatTime(e.OccurredAt()),
 		}, true
 
+	case domain.KubeconfigChanged:
+		return KubeconfigChangedEvent{
+			Files: e.Files,
+			At:    formatTime(e.OccurredAt()),
+		}, true
+
 	default:
 		return nil, false
 	}

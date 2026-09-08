@@ -381,6 +381,17 @@ export interface ClusterUnreachableEvent {
   at: string
 }
 
+/**
+ * Payload of the `kubeconfig:changed` event.
+ *
+ * A count and a time, deliberately — no path, no context name. See
+ * domain.KubeconfigChanged.
+ */
+export interface KubeconfigChangedEvent {
+  files: number
+  at: string
+}
+
 /** Payload of the `filecopy:progress` event: bytes moved so far. */
 export interface FileCopyProgressEvent {
   transferId: string
@@ -2155,6 +2166,20 @@ export function onClusterUnreachable(
   handler: (event: ClusterUnreachableEvent) => void,
 ): Unsubscribe {
   return subscribe<ClusterUnreachableEvent>('cluster:unreachable', handler)
+}
+
+/**
+ * Subscribes to the kubeconfig changing on disk.
+ *
+ * Raised when the files PodSteer reads are not what it last saw — an edit, a
+ * file appearing in a watched folder, one disappearing. It carries a count and
+ * a time and no path: which file changed is not something the interface acts
+ * on, since the answer to any of them is to re-read the list.
+ */
+export function onKubeconfigChanged(
+  handler: (event: KubeconfigChangedEvent) => void,
+): Unsubscribe {
+  return subscribe<KubeconfigChangedEvent>('kubeconfig:changed', handler)
 }
 
 /** Subscribes to a file copy's byte count, throttled by the backend. */
