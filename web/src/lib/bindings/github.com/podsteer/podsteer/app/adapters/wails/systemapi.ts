@@ -97,12 +97,12 @@ export function OpenURL(raw: string): $CancellablePromise<void> {
  * reused — ChooseFile returns a PATH, which is only ever useful to a Go method
  * that will act on it, and nothing in the webview can turn one into content.
  * 
- * An empty returned string means the operator cancelled, which is not an
- * error — the same convention as ChooseDirectory and ReadKubeconfigFile. An
- * empty FILE is refused instead of being returned as a cancellation, because
- * the two would otherwise be indistinguishable to the caller.
+ * An empty Content means the operator cancelled, which is not an error — the
+ * same convention as ChooseDirectory and ReadKubeconfigFile. An empty FILE is
+ * refused instead of being returned as a cancellation, because the two would
+ * otherwise be indistinguishable to the caller.
  */
-export function ReadTextFile(title: string): $CancellablePromise<string> {
+export function ReadTextFile(title: string): $CancellablePromise<$models.TextFile> {
     return $Call.ByID(3290181867, title);
 }
 

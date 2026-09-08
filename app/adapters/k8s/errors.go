@@ -48,6 +48,15 @@ func classify(op string, err error) error {
 			op, ports.ErrCredentialPluginMissing, binary, err)
 	}
 
+	// BESIDE IT, AND FOR THE SAME REASON. client-go raises this while building
+	// the request too — the kubeconfig names an `auth-provider` this binary
+	// never registered — so it also never reaches the API server, and left to
+	// the default branch it reads as a bug in PodSteer rather than as a
+	// kubeconfig that needs converting. See ports.ErrLegacyAuthProvider.
+	if provider := legacyAuthProvider(err); provider != "" {
+		return fmt.Errorf("%s: %w: %q: %w", op, ports.ErrLegacyAuthProvider, provider, err)
+	}
+
 	switch {
 	case apierrors.IsUnauthorized(err):
 		return fmt.Errorf("%s: %w: %w", op, ports.ErrUnauthenticated, err)
@@ -131,6 +140,37 @@ func missingCredentialPlugin(err error) string {
 		return "the credential plugin"
 	}
 	return rest[:end]
+}
+
+// legacyAuthProvider names the `auth-provider` a kubeconfig asked for and this
+// binary does not register, or "" when that is not what failed.
+//
+// MATCHED ON THE MESSAGE, because client-go offers nothing else: the failure
+// is `fmt.Errorf("no Auth Provider found for name %q", name)` in
+// client-go/tools/clientcmd, with no typed error and no sentinel to compare
+// against. The prefix is stable across every release since the mechanism was
+// deprecated in 1.22 and is what the provider name follows.
+func legacyAuthProvider(err error) string {
+	const marker = `no Auth Provider found for name `
+
+	message := err.Error()
+	start := strings.Index(message, marker)
+	if start < 0 {
+		return ""
+	}
+
+	rest := message[start+len(marker):]
+	if len(rest) == 0 || rest[0] != '"' {
+		// The shape changed. Still this failure, still worth naming as one —
+		// the provider is simply unknown.
+		return "that auth-provider"
+	}
+
+	end := strings.Index(rest[1:], `"`)
+	if end <= 0 {
+		return "that auth-provider"
+	}
+	return rest[1 : end+1]
 }
 
 // transportFailure names the network-level failure behind err, or nil when it

@@ -274,8 +274,10 @@ func (s *SystemAPI) showOpenDialog(title string) (string, error) {
 }
 
 // showTextOpenDialog is chooseTextPath's real implementation: the native file
-// picker, filtered to JSON but offering everything, because an operator who
-// renamed their settings file should not be told it does not exist.
+// picker, filtered to the two document kinds PodSteer reads back — a settings
+// file is JSON, a manifest to diff against is YAML — and still offering
+// everything, because an operator who renamed either should not be told it
+// does not exist.
 func (s *SystemAPI) showTextOpenDialog(title string) (string, error) {
 	wailsApp, ok := s.app.wailsApp()
 	if !ok {
@@ -286,7 +288,7 @@ func (s *SystemAPI) showTextOpenDialog(title string) (string, error) {
 		Title:          title,
 		CanChooseFiles: true,
 		Filters: []application.FileFilter{
-			{DisplayName: "JSON (*.json)", Pattern: "*.json"},
+			{DisplayName: "Documents (*.json, *.yaml, *.yml)", Pattern: "*.json;*.yaml;*.yml"},
 			{DisplayName: "All files", Pattern: "*"},
 		},
 	}).PromptForSingleSelection()
@@ -301,6 +303,22 @@ func (s *SystemAPI) showTextOpenDialog(title string) (string, error) {
 // which is how "I chose the wrong file" becomes "the window froze".
 const maxTextFileBytes = 1 << 20
 
+// TextFile is a file the operator chose, as the webview receives it.
+//
+// THE BASE NAME TRAVELS AND THE PATH DOES NOT. A name is what the person who
+// picked it recognises — "deployment.yaml" beside a diff, the settings file
+// they just imported — and it is already on their screen in the picker they
+// used. The directories above it are not: they carry user names, project
+// names and client names, and SECURITY.md's rule about local paths is that
+// PodSteer names what moved and never where it lives.
+type TextFile struct {
+	// Name is the file's base name, for showing back to the operator. Empty
+	// when the dialog was cancelled.
+	Name string `json:"name"`
+	// Content is the whole file. Empty when the dialog was cancelled.
+	Content string `json:"content"`
+}
+
 // ReadTextFile opens a native file picker and returns what the chosen file
 // contains.
 //
@@ -310,39 +328,39 @@ const maxTextFileBytes = 1 << 20
 // reused — ChooseFile returns a PATH, which is only ever useful to a Go method
 // that will act on it, and nothing in the webview can turn one into content.
 //
-// An empty returned string means the operator cancelled, which is not an
-// error — the same convention as ChooseDirectory and ReadKubeconfigFile. An
-// empty FILE is refused instead of being returned as a cancellation, because
-// the two would otherwise be indistinguishable to the caller.
-func (s *SystemAPI) ReadTextFile(title string) (string, error) {
+// An empty Content means the operator cancelled, which is not an error — the
+// same convention as ChooseDirectory and ReadKubeconfigFile. An empty FILE is
+// refused instead of being returned as a cancellation, because the two would
+// otherwise be indistinguishable to the caller.
+func (s *SystemAPI) ReadTextFile(title string) (TextFile, error) {
 	if strings.TrimSpace(title) == "" {
 		title = "Choose a file"
 	}
 
 	path, err := s.chooseTextPath(title)
 	if err != nil {
-		return "", apiError(s.logger, "ReadTextFile", err)
+		return TextFile{}, apiError(s.logger, "ReadTextFile", err)
 	}
 	if path == "" {
-		return "", nil
+		return TextFile{}, nil
 	}
 
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", apiError(s.logger, "ReadTextFile", err)
+		return TextFile{}, apiError(s.logger, "ReadTextFile", err)
 	}
 	if info.Size() > maxTextFileBytes {
-		return "", apiError(s.logger, "ReadTextFile", fmt.Errorf(
+		return TextFile{}, apiError(s.logger, "ReadTextFile", fmt.Errorf(
 			"%w: that file is %d bytes; PodSteer reads at most %d",
 			errUnreadableTextFile, info.Size(), maxTextFileBytes))
 	}
 
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return "", apiError(s.logger, "ReadTextFile", err)
+		return TextFile{}, apiError(s.logger, "ReadTextFile", err)
 	}
 	if len(content) == 0 {
-		return "", apiError(s.logger, "ReadTextFile", fmt.Errorf("%w: that file is empty",
+		return TextFile{}, apiError(s.logger, "ReadTextFile", fmt.Errorf("%w: that file is empty",
 			errUnreadableTextFile))
 	}
 
@@ -352,7 +370,7 @@ func (s *SystemAPI) ReadTextFile(title string) (string, error) {
 	// never a local path — is the same rule.
 	s.logger.Debug("read a text file", slog.Int("bytes", len(content)))
 
-	return string(content), nil
+	return TextFile{Name: filepath.Base(path), Content: string(content)}, nil
 }
 
 // ChooseDirectory opens the native folder picker and returns the operator's

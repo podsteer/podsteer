@@ -482,6 +482,31 @@ export function portForward(
 }
 
 /**
+ * `kubectl --context c -n ns port-forward service/<svc> <local>:<port>`.
+ *
+ * THE SERVICE, NOT THE POD IT LANDED ON, when PodSteer opened this forward
+ * for a Service. Printing `pod/<pod>` there would be a command that does
+ * something narrower than what is running: PodSteer keeps the Service's
+ * selector and moves to another pod behind it when this one goes away, and
+ * kubectl's own `service/x` form is the closest thing it has to that. The
+ * difference is worth knowing and is stated where the command is shown.
+ */
+export function portForwardService(
+  ctx: string,
+  service: string,
+  ns: string,
+  localPort: number,
+  servicePort: number,
+): string {
+  return [
+    ...base(ctx, ns),
+    'port-forward',
+    `service/${service}`,
+    `${localPort}:${servicePort}`,
+  ].join(' ')
+}
+
+/**
  * `kubectl --context c [-n ns] apply -f -`.
  *
  * The manifest itself comes from the editor and is never part of the

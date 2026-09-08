@@ -373,12 +373,12 @@
    * PER-OBJECT ONLY. PodSteer has no multi-select anywhere yet — DataTable's
    * own header comment says pagination and the toolbar live above it and
    * selection is not among what either owns — so there is no list of
-   * objects to hand this a batch of. A list-level "Compare selected" belongs
-   * in the table toolbar once multi-select exists, comparing each selected
-   * row against its counterpart by name; it does not belong here, which is
-   * why it is not wired up as a loop over this same dialog.
+   * objects to hand this a batch of. The list-level comparison lives where
+   * the selection does, on the bulk bar in ClusterWorkspace: tick two rows
+   * and it opens this same dialog with both halves already filled in. It is
+   * deliberately not a loop over this dialog, and deliberately not offered
+   * at any count but two — a diff has two sides.
    */
-  // TODO(bulk-actions): a table-toolbar "Compare selected" once multi-select ships.
   let compareDialogOpen = $state(false)
 
   /**

@@ -21,6 +21,7 @@ import {
   helmUpgrade,
   logs,
   portForward,
+  portForwardService,
   resourceArg,
   resourceArgForKind,
   revealSecretKey,
@@ -491,6 +492,23 @@ describe('helmUninstall', () => {
 
   it('adds no flag PodSteer chose on the operator\'s behalf', () => {
     expect(helmUninstall('prod', 'web', 'shop')).not.toContain('--keep-history')
+  })
+})
+
+describe('portForwardService', () => {
+  it('names the SERVICE, not the pod the forward happens to be on', () => {
+    // PodSteer keeps the Service's selector and moves to another pod behind
+    // it when this one goes away, so `pod/<today's pod>` would be a narrower
+    // command than what is actually running.
+    expect(portForwardService('prod', 'postgres', 'data', 15432, 5432)).toBe(
+      'kubectl --context prod -n data port-forward service/postgres 15432:5432',
+    )
+  })
+
+  it('quotes a context containing a space, like every other builder here', () => {
+    expect(portForwardService('my cluster', 'web', 'shop', 8080, 80)).toContain(
+      "--context 'my cluster'",
+    )
   })
 })
 

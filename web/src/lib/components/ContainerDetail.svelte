@@ -41,6 +41,7 @@
   import { configMapData, refreshConfigMap } from '$stores/configMaps.svelte'
   import { secretReveals } from '$stores/secretReveals.svelte'
   import ForwardAddress from './ForwardAddress.svelte'
+  import ForwardKubectl from './ForwardKubectl.svelte'
   import PortForwardStart from './PortForwardStart.svelte'
   import FileTransfer from './FileTransfer.svelte'
   import { EyeOff, Loader, Unplug } from '@lucide/svelte'
@@ -439,9 +440,6 @@
                 stalling, not broken, and that is a different thing to tell
                 somebody than "the forward is fine".
 
-                TODO(kubectl-transparency): the kubectl-equivalent command
-                belongs on this line once it exists — this is exactly the
-                moment somebody watching a stalled forward wants it.
               -->
               <span class="flex min-w-0 items-center gap-1.5 text-gauge-warn">
                 <Loader class="size-3.5 shrink-0 animate-spin" strokeWidth={2} />
@@ -460,11 +458,17 @@
                  container will listen on is part of what it is. -->
             {#if podName}
               {#if open}
+                <!-- The command that reproduces this forward in a terminal.
+                     Beside Stop rather than in the row's text, so a list of
+                     ports stays a list. -->
+                <span class="ml-auto flex shrink-0 items-center gap-1">
+                  <ForwardKubectl forward={open} />
+
                 <button
                   type="button"
                   disabled={busy}
                   onclick={() => forwards.stop(open)}
-                  class="state-layer ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm
+                  class="state-layer inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm
                          border border-outline-variant px-2 text-label-large
                          text-on-surface-variant transition-colors duration-100
                          hover:bg-surface-container hover:text-on-surface disabled:opacity-50"
@@ -476,6 +480,7 @@
                   {/if}
                   Stop
                 </button>
+                </span>
               {:else}
                 <PortForwardStart
                   remotePort={port.containerPort}

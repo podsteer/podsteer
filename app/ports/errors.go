@@ -78,6 +78,24 @@ var (
 	// somebody to check a VPN.
 	ErrCredentialPluginMissing = errors.New("credential plugin not found")
 
+	// ErrLegacyAuthProvider means the kubeconfig authenticates through
+	// client-go's built-in `auth-provider` mechanism, which PodSteer does not
+	// register.
+	//
+	// ITS OWN SENTINEL FOR THE SAME REASON AS THE ONE ABOVE: the cluster was
+	// never contacted, nothing is wrong with the credentials, and the failure
+	// client-go raises — `no Auth Provider found for name "oidc"` — reads as a
+	// bug in PodSteer to anybody who has not met it before.
+	//
+	// It is not registered by decision rather than by omission (ADR 10):
+	// refreshing a token through the legacy oidc provider WRITES the
+	// operator's kubeconfig, and SECURITY.md's account of what PodSteer puts
+	// on disk does not include somebody's kubeconfig. The supported path is
+	// the same one every managed provider already uses — an exec credential
+	// plugin, `kubelogin` for OIDC — which PodSteer runs, with the login-shell
+	// PATH resolution that makes it work from a Dock launch.
+	ErrLegacyAuthProvider = errors.New("legacy auth-provider not registered")
+
 	// ErrCountUnavailable means the API server did not report how many objects
 	// a list holds.
 	//

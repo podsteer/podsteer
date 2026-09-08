@@ -140,6 +140,7 @@ export type {
     TableColumn,
     TableRow,
     Termination,
+    TextFile,
     TimelineEvent,
     TopConsumers,
     UpdateStatus,

@@ -12,9 +12,10 @@
   import SessionOverlay from '$lib/components/SessionOverlay.svelte'
   import CreateResourceDialog from '$lib/components/CreateResourceDialog.svelte'
   import BulkActionBar from '$lib/components/BulkActionBar.svelte'
+  import CompareDialog from '$lib/components/CompareDialog.svelte'
   import BulkActionDialog from '$lib/components/BulkActionDialog.svelte'
   import { escapeUnclaimed } from '$lib/escape'
-  import type { BulkActionId } from '$lib/bulk'
+  import type { BulkActionId, BulkItem } from '$lib/bulk'
   import NamespacesView from './NamespacesView.svelte'
 import TimelineView from './TimelineView.svelte'
   import ApplicationsView from './ApplicationsView.svelte'
@@ -200,6 +201,8 @@ import TimelineView from './TimelineView.svelte'
    * it does to each is the plan it fetches on open.
    */
   let bulkAction = $state<BulkActionId | null>(null)
+  /** The two ticked rows a diff was asked for, or null. */
+  let comparing = $state<{ left: BulkItem; right: BulkItem } | null>(null)
 
   /**
    * The skeleton the dialog opens with.
@@ -567,7 +570,32 @@ import TimelineView from './TimelineView.svelte'
      cleared on every kind or namespace change, so the bar can never name a
      count from a list that is no longer on screen. -->
 {#if session.isList}
-  <BulkActionBar {session} {isReadOnly} {readOnlyReason} onaction={(action) => (bulkAction = action)} />
+  <BulkActionBar
+    {session}
+    {isReadOnly}
+    {readOnlyReason}
+    onaction={(action) => (bulkAction = action)}
+    oncompare={(left, right) => (comparing = { left, right })}
+  />
+{/if}
+
+<!--
+  "Compare these two", from the selection rather than from the drawer.
+  Mounted here rather than in DetailDrawer because the two rows it is about
+  are the LIST's, and the drawer may be showing neither of them — or nothing
+  at all. The drawer keeps its own instance for "compare this object with
+  another", which is a different question with a different left-hand side.
+-->
+{#if comparing && session.selectedKind}
+  <CompareDialog
+    open={true}
+    clusterId={session.cluster.id}
+    kind={session.selectedKind}
+    namespace={comparing.left.namespace}
+    name={comparing.left.name}
+    againstName={comparing.right.name}
+    onclose={() => (comparing = null)}
+  />
 {/if}
 
 <BulkActionDialog

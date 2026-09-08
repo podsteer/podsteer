@@ -4,10 +4,12 @@ const listPortForwards = vi.fn()
 const startPortForward = vi.fn()
 const stopPortForward = vi.fn()
 const stopAllPortForwards = vi.fn()
+const startServicePortForward = vi.fn()
 
 vi.mock('$lib/api/client', () => ({
   listPortForwards: (...args: unknown[]) => listPortForwards(...args),
   startPortForward: (...args: unknown[]) => startPortForward(...args),
+  startServicePortForward: (...args: unknown[]) => startServicePortForward(...args),
   stopPortForward: (...args: unknown[]) => stopPortForward(...args),
   stopAllPortForwards: (...args: unknown[]) => stopAllPortForwards(...args),
 }))
@@ -36,6 +38,7 @@ beforeEach(() => {
   startPortForward.mockReset()
   stopPortForward.mockReset()
   stopAllPortForwards.mockReset()
+  startServicePortForward.mockReset()
   forwards.active = []
   forwards.error = ''
 })
@@ -131,5 +134,41 @@ describe('stopping every forward', () => {
 
     expect(forwards.error).not.toBe('')
     expect(forwards.stoppingAll).toBe(false)
+  })
+})
+
+describe('which forward belongs to which Service', () => {
+  it('remembers the Service a forward was started for, and forgets it when the forward goes', async () => {
+    // THE ONE THING THE BACKEND'S LIST CANNOT ANSWER, and the reason it
+    // cannot is the feature: a Service forward moves to another pod behind
+    // the same Service, so the pod on the forward is not what was asked for.
+    const forward = fixtureForward({ id: '7', pod: 'postgres-0' })
+    startServicePortForward.mockResolvedValue(forward)
+    listPortForwards.mockResolvedValue([forward])
+
+    await forwards.startService('dev', 'web', 'postgres', 'postgres', 5432, 15432)
+
+    expect(forwards.forService('dev', 'web', 'postgres', 5432)).toMatchObject({ id: '7' })
+    expect(forwards.serviceOf('7')).toEqual({ service: 'postgres', servicePort: 5432 })
+
+    // The backend stops listing it — pruned on the next refresh, because this
+    // store holds ids and never invents a forward.
+    listPortForwards.mockResolvedValue([])
+    await forwards.refresh()
+
+    expect(forwards.forService('dev', 'web', 'postgres', 5432)).toBeUndefined()
+    expect(forwards.serviceOf('7')).toBeNull()
+  })
+
+  it('says nothing about a forward that was started on a pod', async () => {
+    // An ordinary pod forward has no Service to name, and the kubectl line
+    // beside it must say pod/… rather than invent one.
+    const forward = fixtureForward({ id: '3' })
+    startPortForward.mockResolvedValue(forward)
+    listPortForwards.mockResolvedValue([forward])
+
+    await forwards.start('dev', 'web', 'postgres-0', 'uid-1', 5432, 'postgres', 'TCP', {}, 15432)
+
+    expect(forwards.serviceOf('3')).toBeNull()
   })
 })

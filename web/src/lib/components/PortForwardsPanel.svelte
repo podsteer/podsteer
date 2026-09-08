@@ -18,6 +18,7 @@
   import { forwards } from '$stores/forwards.svelte'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import ForwardAddress from './ForwardAddress.svelte'
+  import ForwardKubectl from './ForwardKubectl.svelte'
   import { Plug, Loader, Unplug, X } from '@lucide/svelte'
 
   let open = $state(false)
@@ -126,9 +127,6 @@
                     Distinct from a live address on purpose: the local port
                     stays bound, but nothing should be told this is fine while
                     a replacement pod is still being sought.
-
-                    TODO(kubectl-transparency): the kubectl-equivalent command
-                    belongs on this line once it exists.
                   -->
                   <span class="flex min-w-0 items-center gap-1.5 text-body-small text-gauge-warn">
                     <Loader class="size-3.5 shrink-0 animate-spin" strokeWidth={2} />
@@ -137,6 +135,8 @@
                 {:else}
                   <ForwardAddress {forward} />
                 {/if}
+
+                <ForwardKubectl {forward} />
 
                 <button
                   type="button"

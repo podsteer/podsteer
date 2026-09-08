@@ -39,6 +39,10 @@
 
   let exporting = $state(false)
   let importing = $state(false)
+  /** The file the review below is OF, so a document read from the wrong
+      place is recognisable before it is applied. Its base name only — see
+      SystemAPI.TextFile for why the rest of the path does not travel. */
+  let chosenFile = $state('')
   let applied = $state(false)
   /** The last thing that went wrong, or where the export landed. */
   let notice = $state<{ tone: 'ok' | 'bad'; text: string } | null>(null)
@@ -92,10 +96,12 @@
     notice = null
     applied = false
     parsed = null
+    chosenFile = ''
     try {
-      const text = await readTextFile('Choose a PodSteer settings file')
-      if (!text) return
-      const result = parseDocument(text)
+      const file = await readTextFile('Choose a PodSteer settings file')
+      if (!file.content) return
+      chosenFile = file.name
+      const result = parseDocument(file.content)
       if (!result.ok) {
         // Refused whole, never partly applied: nothing has been written at
         // this point and nothing will be.
@@ -216,7 +222,9 @@
       <div class="border-b border-outline-variant/60 px-4 py-3">
         <h4 class="text-title-small text-on-surface">Review before importing</h4>
         <p class="mt-0.5 text-body-medium text-on-surface-variant">
-          Written {exportedWhen(preview.exportedAt)} · settings version {preview.version}
+          {#if chosenFile}<span class="font-mono">{chosenFile}</span> · {/if}Written {exportedWhen(
+            preview.exportedAt,
+          )} · settings version {preview.version}
         </p>
 
         <!--
