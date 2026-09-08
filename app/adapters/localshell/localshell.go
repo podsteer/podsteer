@@ -45,7 +45,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -267,12 +266,10 @@ func (m *Manager) command(spec domain.LocalShellSpec) (*exec.Cmd, string, error)
 		if shell == "" {
 			return nil, "", errors.New("opening a local shell: no login shell to run")
 		}
-		// -l alone is both login AND interactive: a shell with no command
-		// argument, on a terminal, decides it is interactive by itself. That
-		// is what makes it read the operator's own startup files and draw
-		// their own prompt, rather than being a stripped shell wearing their
-		// PATH.
-		return exec.Command(shell, "-l"), "", nil
+		// What makes it a LOGIN shell is per-platform: `-l` on a POSIX shell,
+		// and nothing at all on PowerShell, which reads the operator's profile
+		// whenever it is interactive. See loginShellArgs.
+		return exec.Command(shell, loginShellArgs()...), "", nil
 	}
 
 	// NEVER INSTALLED, ONLY FOUND. An agent that is not on the PATH is simply
@@ -555,18 +552,4 @@ func shouldKill(done <-chan struct{}) bool {
 	default:
 		return true
 	}
-}
-
-// defaultLoginShell names the shell to run when nothing else says.
-//
-// $SHELL is the operator's own answer and is preferred whenever it exists;
-// the fallbacks are only for a process launched with no environment at all.
-func defaultLoginShell() string {
-	if shell := os.Getenv("SHELL"); shell != "" {
-		return shell
-	}
-	if runtime.GOOS == "darwin" {
-		return "/bin/zsh"
-	}
-	return "/bin/sh"
 }

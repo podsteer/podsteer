@@ -2,11 +2,11 @@
 
 // Lifecycle tests for the local shell.
 //
-// UNIX ONLY, deliberately: there is no pseudo-terminal on Windows in this
-// build, so there is no process to start and nothing here would be exercising
-// the implementation that ships there. What Windows does instead —
-// LocalShellSupported reporting false with a sentence — is asserted in
-// terminal_test.go against the port, on every platform.
+// UNIX ONLY, deliberately: these drive a real /bin/sh on a real terminal, and
+// Windows has neither. Its own path — ConPTY, a command LINE rather than an
+// argv, and a kill by pid because there is no process group — is exercised by
+// the parts of it that are not the console itself: see pty_windows_test.go
+// for the quoting, and shell_windows_test.go for which shell it chooses.
 //
 // Every test drives a real /bin/sh on a real terminal. A fake would prove
 // nothing about the two things that actually go wrong with a child process:
