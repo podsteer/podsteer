@@ -75,3 +75,27 @@ func kubeconfigSources(store *settingsstore.Store) func() []domain.KubeconfigSou
 		return settings.Kubeconfig.Sources
 	}
 }
+
+// proxySetting hands the Kubernetes adapter the proxy to dial through, on the
+// same terms kubeconfigSources hands it the source list.
+//
+// A FUNCTION FOR THE SAME REASON, and one more: a proxy read once at startup
+// would mean the setting took effect on the next launch, which for a setting
+// somebody changes precisely because nothing is connecting is the least useful
+// moment to apply it. Read per client build, and a change releases the clients
+// — see SettingsService.SetProxy.
+//
+// A store that cannot be read yields the zero value, whose mode normalises to
+// "environment": exactly what PodSteer did before this setting existed.
+func proxySetting(store *settingsstore.Store) func() domain.ProxySettings {
+	if store == nil {
+		return nil
+	}
+	return func() domain.ProxySettings {
+		settings, err := store.Load(context.Background())
+		if err != nil {
+			return domain.ProxySettings{Mode: domain.ProxyFromEnvironment}
+		}
+		return settings.Proxy
+	}
+}

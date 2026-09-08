@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"strings"
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
@@ -28,6 +29,15 @@ type SettingsServiceDeps struct {
 	// whole point is showing what the sources actually contributed, and only
 	// the thing that performs the merge can say.
 	Kubeconfig ports.KubeconfigPort
+	// Reconnect releases every cached client, so a transport-level setting
+	// takes effect on the clusters already open rather than only on the ones
+	// opened afterwards. Optional; without it a proxy change applies to new
+	// connections only.
+	//
+	// A FUNCTION RATHER THAN THE Invalidators SLICE, because this service has
+	// no business knowing which clusters are open — the composition root
+	// does, and it already holds both the registry and the invalidators.
+	Reconnect func()
 	// Logger receives diagnostics. Optional; defaults to slog.Default.
 	Logger *slog.Logger
 }
@@ -36,6 +46,7 @@ type SettingsServiceDeps struct {
 type SettingsService struct {
 	settings   ports.SettingsPort
 	kubeconfig ports.KubeconfigPort
+	reconnect  func()
 	logger     *slog.Logger
 }
 
@@ -58,6 +69,7 @@ func NewSettingsService(deps SettingsServiceDeps) (*SettingsService, error) {
 	return &SettingsService{
 		settings:   deps.Settings,
 		kubeconfig: deps.Kubeconfig,
+		reconnect:  deps.Reconnect,
 		logger:     logger.With(slog.String("service", "settings")),
 	}, nil
 }
@@ -171,6 +183,57 @@ func (s *SettingsService) Cluster(
 		return domain.ClusterSettings{}, err
 	}
 	return settings.Cluster(id), nil
+}
+
+// Proxy reports the proxy in force.
+func (s *SettingsService) Proxy(ctx context.Context) (domain.ProxySettings, error) {
+	settings, err := s.settings.Load(ctx)
+	if err != nil {
+		return domain.ProxySettings{}, err
+	}
+	return settings.Proxy, nil
+}
+
+// SetProxy records the proxy PodSteer's own outbound calls go through, and
+// rebuilds every open cluster's client so the change takes effect now.
+//
+// THE REBUILD IS THE HALF THAT IS EASY TO FORGET. A client-go client captures
+// its transport when it is built, so a proxy written without releasing the
+// cached clients would apply to clusters opened afterwards and to nothing the
+// operator is currently looking at — which reads exactly like the setting not
+// working, and is worse than that: some tabs on the new route and some on the
+// old, with nothing on screen saying which.
+//
+// REFUSED RATHER THAN NORMALISED, on Validate's side of the line: a bad value
+// arriving here came from the interface, and writing it would persist a bug in
+// the interface. A URL carrying credentials is refused outright — see
+// ErrSettingsProxyCredential — because a proxy password in a settings file is
+// a credential PodSteer would have put on disk, which nothing else in this
+// application does.
+func (s *SettingsService) SetProxy(ctx context.Context, proxy domain.ProxySettings) error {
+	if _, err := proxy.Dialer(); err != nil {
+		return err
+	}
+
+	if _, err := s.settings.Update(ctx, func(settings *domain.Settings) error {
+		settings.Proxy = proxy
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	s.logger.InfoContext(ctx, "proxy changed",
+		slog.String("mode", string(proxy.Mode)),
+		// The URL is a host somebody typed, not a credential — the write path
+		// refuses one carrying userinfo — and knowing which proxy is in force
+		// is the first question when a cluster stops answering.
+		slog.String("url", proxy.URL),
+		slog.Bool("has_exceptions", strings.TrimSpace(proxy.NoProxy) != ""))
+
+	if s.reconnect != nil {
+		s.reconnect()
+	}
+	return nil
 }
 
 // SetMetricsQuery records ADR 7's per-cluster value: whether a discovered

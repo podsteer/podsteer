@@ -25,7 +25,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
+
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // latestReleaseURL is the newest production release of PodSteer.
@@ -51,9 +54,36 @@ type Client struct {
 // Its own http.Client rather than http.DefaultClient: the default has no
 // timeout at all, which is how a hung connection becomes a goroutine that
 // never returns.
-func NewClient() *Client {
+//
+// proxy is the operator's proxy setting, consulted per request. THE SAME
+// SETTING THAT GOVERNS CLUSTER TRAFFIC GOVERNS THIS ONE, and the alternative
+// was worse than an inconsistency: somebody who set "no proxy, even if the
+// environment names one" — the operator whose corporate proxy cannot reach
+// their private API server — would have had the one call PodSteer makes to
+// the internet still going through it, having been told nothing does. Nil
+// means the environment, which is what this client did before the setting
+// existed.
+func NewClient(proxy func() domain.ProxySettings) *Client {
+	transport := http.DefaultTransport
+	if proxy != nil {
+		cloned := http.DefaultTransport.(*http.Transport).Clone()
+		// Per request rather than captured: the setting can change between
+		// two daily checks, and this client outlives both.
+		cloned.Proxy = func(request *http.Request) (*url.URL, error) {
+			dialer, err := proxy().Dialer()
+			if err != nil || dialer == nil {
+				// A refused setting falls back to the environment, exactly as
+				// the Kubernetes clients do — the interface validates before
+				// it writes, so a bad value here was hand-edited into a file.
+				return http.ProxyFromEnvironment(request)
+			}
+			return dialer(request)
+		}
+		transport = cloned
+	}
+
 	return &Client{
-		http: &http.Client{Timeout: requestTimeout},
+		http: &http.Client{Timeout: requestTimeout, Transport: transport},
 		url:  latestReleaseURL,
 	}
 }

@@ -314,6 +314,64 @@ func toClusterSettings(id string, cluster domain.ClusterSettings) ClusterSetting
 	}
 }
 
+// ProxySettings is the proxy PodSteer's own outbound calls go through, as the
+// interface reads and writes it.
+//
+// THREE MODES, NOT A BOOLEAN, because "off" is genuinely two different
+// intentions: leave the environment alone (which is what an operator behind a
+// corporate proxy needs and has never had to configure) and refuse a proxy
+// even though the environment names one (which is what somebody whose
+// HTTPS_PROXY reaches the internet but not their API server needs). A tick
+// box could only offer one of them.
+type ProxySettings struct {
+	// Mode is "environment", "none" or "manual".
+	Mode string `json:"mode"`
+	// Url is the proxy address; used only in manual mode. Never carries
+	// credentials — the write path refuses userinfo rather than putting a
+	// password in a settings file.
+	Url string `json:"url"`
+	// NoProxy is the exception list, in NO_PROXY's own syntax.
+	NoProxy string `json:"noProxy"`
+}
+
+// GetProxy reports the proxy setting as it currently stands.
+func (s *SettingsAPI) GetProxy() (ProxySettings, error) {
+	ctx, cancel := s.app.requestContext()
+	defer cancel()
+
+	proxy, err := s.settings.Proxy(ctx)
+	if err != nil {
+		return ProxySettings{}, apiError(s.logger, "GetProxy", err)
+	}
+
+	return ProxySettings{
+		Mode:    string(proxy.Mode),
+		Url:     proxy.URL,
+		NoProxy: proxy.NoProxy,
+	}, nil
+}
+
+// SetProxy records it, and rebuilds the clients of every open cluster so it
+// applies to what the operator is looking at rather than only to the next
+// connection.
+//
+// LOOSE STRINGS, VALIDATED IN THE DOMAIN, exactly as SetMetricsQuery's are:
+// an unknown mode, a URL that is not absolute http/https/socks5, or one
+// carrying a username and password is refused before anything is written.
+func (s *SettingsAPI) SetProxy(mode, url, noProxy string) error {
+	ctx, cancel := s.app.requestContext()
+	defer cancel()
+
+	if err := s.settings.SetProxy(ctx, domain.ProxySettings{
+		Mode:    domain.ProxyMode(mode),
+		URL:     url,
+		NoProxy: noProxy,
+	}); err != nil {
+		return apiError(s.logger, "SetProxy", err)
+	}
+	return nil
+}
+
 // SetMetricsQuery records whether a discovered monitoring backend may be
 // queried for one cluster, which one answers, and on what terms.
 //

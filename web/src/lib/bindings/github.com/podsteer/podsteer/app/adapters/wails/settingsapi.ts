@@ -58,6 +58,13 @@ export function GetKubeconfigSources(): $CancellablePromise<$models.KubeconfigSo
 }
 
 /**
+ * GetProxy reports the proxy setting as it currently stands.
+ */
+export function GetProxy(): $CancellablePromise<$models.ProxySettings> {
+    return $Call.ByID(1134859170);
+}
+
+/**
  * GetState reports where the settings live and whether they can be saved.
  */
 export function GetState(): $CancellablePromise<$models.SettingsState> {
@@ -104,4 +111,17 @@ export function RemoveKubeconfigSource(path: string): $CancellablePromise<void> 
  */
 export function SetMetricsQuery(clusterId: string, mode: string, preferredNamespace: string, preferredService: string, fleetPolicy: string): $CancellablePromise<void> {
     return $Call.ByID(4004385389, clusterId, mode, preferredNamespace, preferredService, fleetPolicy);
+}
+
+/**
+ * SetProxy records it, and rebuilds the clients of every open cluster so it
+ * applies to what the operator is looking at rather than only to the next
+ * connection.
+ * 
+ * LOOSE STRINGS, VALIDATED IN THE DOMAIN, exactly as SetMetricsQuery's are:
+ * an unknown mode, a URL that is not absolute http/https/socks5, or one
+ * carrying a username and password is refused before anything is written.
+ */
+export function SetProxy(mode: string, url: string, noProxy: string): $CancellablePromise<void> {
+    return $Call.ByID(1393179942, mode, url, noProxy);
 }

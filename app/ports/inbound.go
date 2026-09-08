@@ -432,6 +432,19 @@ type SettingsService interface {
 	// already pairs the two. A setter here would be a way to change the
 	// policy without the erasure it implies.
 	SetMetricsQuery(ctx context.Context, id domain.ClusterID, query domain.MetricsQuerySettings) error
+
+	// SetProxy records the proxy PodSteer's own outbound calls go through,
+	// and releases the cached clients so it applies to the clusters already
+	// open rather than only to the next one.
+	//
+	// REFUSES rather than normalises: this is the interface's write path, and
+	// a URL that carries credentials is refused outright rather than written
+	// to a file.
+	SetProxy(ctx context.Context, proxy domain.ProxySettings) error
+
+	// Proxy reports the proxy setting as it currently stands, so the pane can
+	// open on what is in force rather than on a default it guessed.
+	Proxy(ctx context.Context) (domain.ProxySettings, error)
 }
 
 // MetricsQueryUseCase answers a chart's request for a longer series out of a
