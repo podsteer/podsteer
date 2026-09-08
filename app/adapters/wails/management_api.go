@@ -664,6 +664,56 @@ func toPortForward(forward domain.Forward) PortForward {
 	}
 }
 
+// StartServicePortForward opens a local port onto a Service.
+//
+// KUBERNETES DOES NOT FORWARD TO A SERVICE. The API server forwards to a pod;
+// `kubectl port-forward service/x` reads the Service, picks a pod behind it
+// and translates the port. This does the same, and then does one thing kubectl
+// does not: the forward keeps the SERVICE'S SELECTOR, so when the pod it
+// landed on goes away the supervisor finds another one behind the same Service
+// and rebinds the same local port. kubectl drops, and the operator's database
+// client with it.
+//
+// The port may be named or numbered, and may be omitted only when the Service
+// has exactly one — a multi-port Service with no choice made is a question,
+// because forwarding to the wrong one produces a connection that establishes
+// and then behaves like a broken application.
+func (m *ManagementAPI) StartServicePortForward(clusterID, namespace, service, servicePort string, localPort int) (PortForward, error) {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return PortForward{}, apiError(m.logger, "StartServicePortForward", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return PortForward{}, apiError(m.logger, "StartServicePortForward", err)
+	}
+
+	target, err := m.forwards.ServiceForwardTarget(ctx, id, ns, service, servicePort)
+	if err != nil {
+		return PortForward{}, apiError(m.logger, "StartServicePortForward", err)
+	}
+
+	forward, err := m.forwards.StartPortForward(ctx, id, ns, target.Pod, target.PodUID,
+		localPort, target.ContainerPort, target.PortName, target.Protocol, target.Selector)
+	if err != nil {
+		return PortForward{}, apiError(m.logger, "StartServicePortForward", err)
+	}
+
+	m.logger.Info("service port forward started",
+		slog.String("cluster", clusterID),
+		slog.String("service", service),
+		slog.String("pod", target.Pod),
+		slog.Int("local", forward.LocalPort),
+		slog.Int("service_port", target.ServicePort),
+		slog.Int("container_port", target.ContainerPort))
+
+	return toPortForward(forward), nil
+}
+
 // StartPortForward opens a local port onto a container port.
 //
 // localPort may be zero, in which case the operating system chooses and the

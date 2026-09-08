@@ -80,6 +80,7 @@ import {
   StreamLogs as bindStreamLogs,
   StopLogStream as bindStopLogStream,
   StartPortForward as bindStartPortForward,
+  StartServicePortForward as bindStartServicePortForward,
   StopPortForward as bindStopPortForward,
   ListPortForwards as bindListPortForwards,
   CordonNode as bindCordonNode,
@@ -1347,6 +1348,25 @@ export function imageReport(
 }
 
 // --- Port forwards ----------------------------------------------------------
+
+/**
+ * Opens a local port onto a SERVICE.
+ *
+ * Kubernetes forwards to a pod and only to a pod; this resolves the Service to
+ * one of its ready pods, translates the service port to that pod's container
+ * port, and forwards there — keeping the Service's selector, so the forward
+ * survives the pod being replaced. `servicePort` may be a name or a number,
+ * and may be empty only when the Service has exactly one.
+ */
+export function startServicePortForward(
+  clusterId: string,
+  namespace: string,
+  service: string,
+  servicePort: string,
+  localPort: number,
+): Promise<PortForward> {
+  return call(() => bindStartServicePortForward(clusterId, namespace, service, servicePort, localPort))
+}
 
 /**
  * Opens a local port onto a container port.

@@ -13,26 +13,34 @@
 -->
 <script lang="ts">
   import { untrack } from 'svelte'
-  import { forwards } from '$stores/forwards.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import { probeLocalPort, freeLocalPort } from '$lib/api/client'
   import { Loader, Plug, Wand2 } from '@lucide/svelte'
 
   interface Props {
-    clusterId: string
-    namespace: string
-    podName: string
-    podUID: string
+    /** The port on the far end, for the proposal and the label. */
     remotePort: number
+    /** Its name, which is half the key a proposed local port is remembered under. */
     portName: string
-    protocol: string
-    labels: Record<string, string>
     /** Whether a start or stop for THIS port is already in flight. */
     busy: boolean
+    /**
+     * Starts the forward, with whatever local port was chosen — 0 meaning the
+     * operating system picks.
+     *
+     * A CALLBACK RATHER THAN THE START ITSELF, because there are now two
+     * things to start and only one way to choose a port. This component owns
+     * the field, the debounced probe, the free-port pick and the proposal from
+     * preferences; what those add up to is a NUMBER, and which call that
+     * number goes to — a pod's forward or a Service's — belongs to whoever
+     * knows what is being forwarded. Folding both into here would have meant
+     * a component with two sets of half-used props and a branch deciding
+     * which half was real.
+     */
+    onstart: (localPort: number) => void
   }
 
-  let { clusterId, namespace, podName, podUID, remotePort, portName, protocol, labels, busy }: Props =
-    $props()
+  let { remotePort, portName, busy, onstart }: Props = $props()
 
   /**
    * What is typed, as text. Empty means "let the operating system choose".
@@ -104,18 +112,7 @@
 
   function start(): void {
     const value = typed.trim()
-    const localPort = value === '' ? 0 : Number(value)
-    void forwards.start(
-      clusterId,
-      namespace,
-      podName,
-      podUID,
-      remotePort,
-      portName,
-      protocol,
-      labels,
-      localPort,
-    )
+    onstart(value === '' ? 0 : Number(value))
   }
 
   const startDisabled = $derived(busy || probe === 'checking' || probe === 'inUse' || probe === 'invalid')

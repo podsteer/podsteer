@@ -478,15 +478,21 @@
                 </button>
               {:else}
                 <PortForwardStart
-                  {clusterId}
-                  {namespace}
-                  {podName}
-                  {podUID}
                   remotePort={port.containerPort}
                   portName={port.name ?? ''}
-                  protocol={port.protocol ?? 'TCP'}
-                  {labels}
                   {busy}
+                  onstart={(localPort) =>
+                    void forwards.start(
+                      clusterId,
+                      namespace,
+                      podName,
+                      podUID,
+                      port.containerPort,
+                      port.name ?? '',
+                      port.protocol ?? 'TCP',
+                      labels,
+                      localPort,
+                    )}
                 />
               {/if}
             {/if}

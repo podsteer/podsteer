@@ -18,6 +18,7 @@
   import WorkloadUsage from './WorkloadUsage.svelte'
   import CertificateInspector from './CertificateInspector.svelte'
   import ReachabilityPanel from './ReachabilityPanel.svelte'
+  import ServicePorts from './ServicePorts.svelte'
   import ImagePanel from './ImagePanel.svelte'
   import { isProbeableKind } from '$lib/reachability'
   import GitOpsDetail from './GitOpsDetail.svelte'
@@ -354,6 +355,7 @@
   )
 
   const isIngress = $derived(kind === 'Ingress')
+  const isService = $derived(kind === 'Service')
 
   /**
    * The GitOps controller whose object this is, if it is one.
@@ -1638,6 +1640,25 @@
     {#if hasCertificate && clusterId && metadata.name}
       {#key `${clusterId}|${metadata.namespace}|${metadata.name}`}
         <CertificateInspector {clusterId} namespace={metadata.namespace ?? ''} name={metadata.name} />
+      {/key}
+    {/if}
+
+    <!--
+      A SERVICE'S PORTS, AND A FORWARD ONTO ONE. The only place in the panel
+      that offers to forward something that is not a pod — see the component
+      for why that is a translation PodSteer performs rather than something
+      Kubernetes does. Keyed on the object so switching Services starts the
+      section over rather than drawing one Service's forward under another's
+      name.
+    -->
+    {#if isService && clusterId && metadata.name}
+      {#key `${clusterId}|${metadata.namespace}|${metadata.name}`}
+        <ServicePorts
+          manifest={parsedManifest}
+          clusterId={clusterId ?? ''}
+          namespace={metadata.namespace ?? ''}
+          name={metadata.name}
+        />
       {/key}
     {/if}
 
