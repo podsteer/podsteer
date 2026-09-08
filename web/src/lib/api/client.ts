@@ -75,6 +75,7 @@ import {
   RestartRollout as bindRestartRollout,
   TriggerCronJob as bindTriggerCronJob,
   SuspendWorkload as bindSuspendWorkload,
+  ResizeContainer as bindResizeContainer,
   SetImage as bindSetImage,
   SetSecretKey as bindSetSecretKey,
   SetConfigMapKey as bindSetConfigMapKey,
@@ -211,6 +212,8 @@ export type K8sEvent = wails.Event
 export type ClusterPods = wails.ClusterPods
 export type ClusterWorkloads = wails.ClusterWorkloads
 export type ClusterEvents = wails.ClusterEvents
+/** What a resize asked for, and whether it restarts the container. */
+export type ResizeResult = wails.ResizeResult
 /** One cluster's share of a cross-cluster read of an arbitrary kind. */
 export type ClusterTable = wails.ClusterTable
 /** A browsable kind, as shown in the navigator. */
@@ -1788,6 +1791,51 @@ export function setConfigMapKey(
     clusterId,
     () => bindSetConfigMapKey(clusterId, namespace, name, key, value),
     () => ({ action: 'Wrote key', target: at('ConfigMap', namespace, name), detail: key }),
+  )
+}
+
+/**
+ * Changes one running container's CPU and memory in place.
+ *
+ * FOUR STRINGS, ANY OF THEM EMPTY, and empty means "leave this one alone" —
+ * which is not the same as clearing it, and is why these are strings rather
+ * than numbers. The backend refuses anything that is not a quantity
+ * Kubernetes understands, a limit below its request, and a change that
+ * changes nothing, before a request reaches the cluster.
+ *
+ * The result says what was ASKED FOR, including whether the container's own
+ * resizePolicy makes this a restart. What the kubelet does with it — apply it
+ * now, defer it, call it infeasible — arrives as a condition on the pod and
+ * is reported by the assessment as a finding.
+ */
+export function resizeContainer(
+  clusterId: string,
+  namespace: string,
+  podName: string,
+  container: string,
+  cpuRequest: string,
+  cpuLimit: string,
+  memoryRequest: string,
+  memoryLimit: string,
+): Promise<ResizeResult> {
+  return writing(
+    clusterId,
+    () =>
+      bindResizeContainer(
+        clusterId,
+        namespace,
+        podName,
+        container,
+        cpuRequest,
+        cpuLimit,
+        memoryRequest,
+        memoryLimit,
+      ),
+    () => ({
+      action: 'Resized container',
+      target: at('Pod', namespace, podName),
+      detail: container,
+    }),
   )
 }
 

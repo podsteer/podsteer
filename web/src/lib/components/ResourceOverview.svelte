@@ -1394,6 +1394,9 @@
                 pod={parsedManifest}
                 {canOpen}
                 {onopen}
+                {isReadOnly}
+                {productionGroup}
+                onchanged={() => onchanged?.()}
               />
             {/each}
           </div>
@@ -1421,6 +1424,10 @@
                 pod={parsedManifest}
                 {canOpen}
                 {onopen}
+                {isReadOnly}
+                {productionGroup}
+                onchanged={() => onchanged?.()}
+                resizable={false}
               />
             {/each}
           </div>
@@ -1445,6 +1452,9 @@
                 pod={parsedManifest}
                 {canOpen}
                 {onopen}
+                {isReadOnly}
+                {productionGroup}
+                onchanged={() => onchanged?.()}
               />
             {/each}
           </div>

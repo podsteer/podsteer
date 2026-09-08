@@ -504,7 +504,18 @@ type fakeManagementPort struct {
 	setConfigMapKeyName   string
 	setConfigMapValue     string
 
-	setImageErr       error
+	setImageErr error
+
+	// In-place resize: what was read, what was planned, and what to fail with.
+	resizeSpecCalled  bool
+	resizeSpec        domain.ContainerResize
+	resizeSpecErr     error
+	resizeCalled      bool
+	resizeID          domain.ClusterID
+	resizeNS          domain.NamespaceName
+	resizePod         string
+	resizePlan        domain.ResizePlan
+	resizeErr         error
 	setImageCalled    bool
 	setImageID        domain.ClusterID
 	setImageKind      domain.WorkloadKind
@@ -808,6 +819,30 @@ func (f *fakeManagementPort) SetConfigMapKey(_ context.Context, id domain.Cluste
 	f.setConfigMapKeyName = key
 	f.setConfigMapValue = value
 	return f.setConfigMapKeyErr
+}
+
+func (f *fakeManagementPort) ContainerResizeSpec(_ context.Context, _ domain.ClusterID, _ domain.NamespaceName, _, containerName string) (domain.ContainerResize, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resizeSpecCalled = true
+	if f.resizeSpecErr != nil {
+		return domain.ContainerResize{}, f.resizeSpecErr
+	}
+	if f.resizeSpec.Name != "" {
+		return f.resizeSpec, nil
+	}
+	return domain.ContainerResize{Name: containerName}, nil
+}
+
+func (f *fakeManagementPort) ResizePod(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, plan domain.ResizePlan) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resizeCalled = true
+	f.resizeID = id
+	f.resizeNS = namespace
+	f.resizePod = podName
+	f.resizePlan = plan
+	return f.resizeErr
 }
 
 func (f *fakeManagementPort) SetImage(_ context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name, container, image string, initContainer bool) error {
