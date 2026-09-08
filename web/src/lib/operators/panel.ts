@@ -1,9 +1,9 @@
 /**
  * Which operator's detail panel an open object gets, if any.
  *
- * This extends what `$lib/gitops/panel.ts` established to the four operators
- * whose custom resources an operator opens most often: cert-manager,
- * KEDA, External Secrets and Argo Rollouts, plus the Trivy Operator's
+ * This extends what `$lib/gitops/panel.ts` established to the operators whose
+ * custom resources an operator opens most often: cert-manager, KEDA, External
+ * Secrets, Argo Rollouts and Karpenter, plus the Trivy Operator's
  * vulnerability reports. The mechanism is the same and so is the reason for
  * it: SELECTION IS BY API GROUP AND KIND TOGETHER, never by Kind alone.
  * "Certificate" is a kind in cert-manager.io and, with an entirely different
@@ -53,6 +53,17 @@ export const ROLLOUTS_GROUP = 'argoproj.io'
 /** The API group the Trivy Operator writes its reports into. */
 export const TRIVY_GROUP = 'aquasecurity.github.io'
 
+/**
+ * The API group Karpenter's own kinds live in.
+ *
+ * NOT the provider groups — `karpenter.k8s.aws`, `karpenter.azure.com` — whose
+ * node classes are provider configuration with a different shape per cloud and
+ * no status worth a panel. A NodePool NAMES its node class, which is the part
+ * an operator follows; claiming the kind and rendering a column of empty rows
+ * would be worse than the server's own table. See karpenter.ts.
+ */
+export const KARPENTER_GROUP = 'karpenter.sh'
+
 /** The panels this module can select. */
 export type OperatorPanel =
   | 'cert-manager-certificate'
@@ -60,6 +71,8 @@ export type OperatorPanel =
   | 'external-secret'
   | 'argo-rollout'
   | 'trivy-vulnerabilityreport'
+  | 'karpenter-nodepool'
+  | 'karpenter-nodeclaim'
 
 /**
  * Selects a panel from the opened object's API group and Kind, or null.
@@ -77,6 +90,8 @@ export function operatorPanelFor(
   if (group === EXTERNAL_SECRETS_GROUP && kind === 'ExternalSecret') return 'external-secret'
   if (group === ROLLOUTS_GROUP && kind === 'Rollout') return 'argo-rollout'
   if (group === TRIVY_GROUP && kind === 'VulnerabilityReport') return 'trivy-vulnerabilityreport'
+  if (group === KARPENTER_GROUP && kind === 'NodePool') return 'karpenter-nodepool'
+  if (group === KARPENTER_GROUP && kind === 'NodeClaim') return 'karpenter-nodeclaim'
   return null
 }
 
