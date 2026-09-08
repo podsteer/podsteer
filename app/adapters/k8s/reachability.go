@@ -70,7 +70,7 @@ func (a *Adapter) probeServiceProxy(ctx context.Context, id domain.ClusterID, pl
 		ProxyGet(plan.Scheme, plan.Name, strconv.Itoa(plan.Port), "/", nil).
 		DoRaw(ctx)
 
-	return classifyProxyOutcome(op, err, time.Since(started))
+	return classifyProxyOutcome(op, plan.Scheme, err, time.Since(started))
 }
 
 // classifyProxyOutcome turns what the service proxy returned into an
@@ -88,7 +88,7 @@ func (a *Adapter) probeServiceProxy(ctx context.Context, id domain.ClusterID, pl
 //   - The API server could not reach the endpoints. Kubernetes reports that
 //     as 503 with the dial error in its message, and that message is carried
 //     verbatim because it names the address and the reason.
-func classifyProxyOutcome(op string, err error, elapsed time.Duration) (domain.ProbeObservation, error) {
+func classifyProxyOutcome(op, scheme string, err error, elapsed time.Duration) (domain.ProbeObservation, error) {
 	observation := domain.ProbeObservation{
 		Elapsed: elapsed,
 		Steps: []domain.ProbeStep{{
@@ -100,9 +100,10 @@ func classifyProxyOutcome(op string, err error, elapsed time.Duration) (domain.P
 
 	if err == nil {
 		observation.Steps = append(observation.Steps,
-			domain.ProbeStep{Name: domain.StepConnect, Status: domain.StatusOK, Detail: "the API server reached the service"},
-			domain.ProbeStep{Name: domain.StepHTTP, Status: domain.StatusOK, Detail: "the service answered"},
-		)
+			domain.ProbeStep{Name: domain.StepConnect, Status: domain.StatusOK, Detail: "the API server reached the service"})
+		observation.Steps = appendLocalTLSStep(observation.Steps, scheme, tlsNotCheckedByProxy)
+		observation.Steps = append(observation.Steps,
+			domain.ProbeStep{Name: domain.StepHTTP, Status: domain.StatusOK, Detail: "the service answered"})
 		observation.StatusCode = http.StatusOK
 		return observation, nil
 	}
@@ -132,9 +133,10 @@ func classifyProxyOutcome(op string, err error, elapsed time.Duration) (domain.P
 		if code >= 100 && code <= 599 {
 			observation.StatusCode = code
 			observation.Steps = append(observation.Steps,
-				domain.ProbeStep{Name: domain.StepConnect, Status: domain.StatusOK, Detail: "the API server reached the service"},
-				domain.ProbeStep{Name: domain.StepHTTP, Status: domain.StatusOK, Detail: message},
-			)
+				domain.ProbeStep{Name: domain.StepConnect, Status: domain.StatusOK, Detail: "the API server reached the service"})
+			observation.Steps = appendLocalTLSStep(observation.Steps, scheme, tlsNotCheckedByProxy)
+			observation.Steps = append(observation.Steps,
+				domain.ProbeStep{Name: domain.StepHTTP, Status: domain.StatusOK, Detail: message})
 			return observation, nil
 		}
 	}
@@ -208,6 +210,8 @@ func (a *Adapter) probePortForward(ctx context.Context, id domain.ClusterID, pla
 		Detail: fmt.Sprintf("connected through an ephemeral forward on local port %d", forward.LocalPort),
 	})
 
+	observation.Steps = appendLocalTLSStep(observation.Steps, plan.Scheme, tlsNotCheckedThroughForward)
+
 	if plan.HTTP() {
 		step, code := probeHTTP(ctx, fmt.Sprintf("%s://%s/", plan.Scheme, local), plan.Timeout)
 		observation.Steps = append(observation.Steps, step)
@@ -216,6 +220,35 @@ func (a *Adapter) probePortForward(ctx context.Context, id domain.ClusterID, pla
 
 	observation.Elapsed = time.Since(started)
 	return observation, nil
+}
+
+// What the two local routes say about a certificate, which is the same thing
+// in both cases: nothing, and why.
+const (
+	tlsNotCheckedByProxy = "the API server does not verify a Service's certificate when it proxies, " +
+		"so nothing here checked one"
+	tlsNotCheckedThroughForward = "a forward carries the connection to 127.0.0.1, which no certificate can name; " +
+		"probe from inside the cluster, or read the certificate itself on its Secret"
+)
+
+// appendLocalTLSStep records that the certificate was NOT checked, for an
+// https target probed from this machine.
+//
+// A STEP THAT SAYS "SKIPPED" RATHER THAN NO STEP AT ALL. Both local routes
+// reach an https endpoint without verifying anything — one because the API
+// server does not verify what it proxies, the other because a tunnel's own
+// address can never match a certificate — and a panel that simply omitted the
+// row would let a green "reachable" stand for something nobody measured. The
+// in-cluster vantage is the one that can answer this, and the detail says so.
+func appendLocalTLSStep(steps []domain.ProbeStep, scheme, detail string) []domain.ProbeStep {
+	if scheme != "https" {
+		return steps
+	}
+	return append(steps, domain.ProbeStep{
+		Name:   domain.StepTLS,
+		Status: domain.StatusSkipped,
+		Detail: detail,
+	})
 }
 
 // probeHTTP makes one request and reports what came back.

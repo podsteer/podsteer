@@ -282,11 +282,22 @@ func TestParseProbeOutputKeepsDNSAndConnectApart(t *testing.T) {
 			wantConnect: domain.StatusFailed,
 		},
 		{
+			// This case used `tls` until 2026-09-08, when the certificate
+			// became a step this build performs. The property it asserts is
+			// unchanged: a step from a future build is dropped, not refused.
 			name:        "a line this build does not understand is ignored rather than refused",
-			raw:         "tls ok TLSv1.3\ndns skipped literal\nconnect ok\n",
+			raw:         "quic ok h3 negotiated\ndns skipped literal\nconnect ok\n",
 			wantSteps:   2,
 			wantDNS:     domain.StatusSkipped,
 			wantConnect: domain.StatusOK,
+		},
+		{
+			name:        "the certificate step is read, because this build performs it",
+			raw:         "dns skipped literal\nconnect ok\ntls failed curl: (60) self-signed certificate\nhttp ok 200\n",
+			wantSteps:   4,
+			wantDNS:     domain.StatusSkipped,
+			wantConnect: domain.StatusOK,
+			wantCode:    200,
 		},
 		{
 			name:        "a status code that is not one leaves the code at zero and keeps the detail",
@@ -544,5 +555,140 @@ func TestProbeSummaryNamesWhereTheAnswerCameFrom(t *testing.T) {
 	}
 	if summary := domain.NewProbeResult(inCluster, reachable).Summary; !strings.Contains(summary, "container") {
 		t.Errorf("in-cluster summary = %q, want it to name the container", summary)
+	}
+}
+
+// TestProbeCommandAsksAboutTheCertificateOnlyForHTTPS covers the step's own
+// scope. A plaintext port has no certificate to verify, and a step reported
+// against one would be a question nobody asked.
+func TestProbeCommandAsksAboutTheCertificateOnlyForHTTPS(t *testing.T) {
+	ns := probeNamespace(t, "shop")
+
+	secure, err := domain.PlanProbe(domain.ProbeSubject{
+		Kind: "Service", Namespace: ns, Name: "web", ClusterIP: "10.96.0.1", Port: 443, PortName: "https",
+	}, domain.VantageInCluster)
+	if err != nil {
+		t.Fatalf("PlanProbe: %v", err)
+	}
+	plain, err := domain.PlanProbe(domain.ProbeSubject{
+		Kind: "Service", Namespace: ns, Name: "web", ClusterIP: "10.96.0.1", Port: 80, PortName: "http",
+	}, domain.VantageInCluster)
+	if err != nil {
+		t.Fatalf("PlanProbe: %v", err)
+	}
+
+	secureScript := domain.ProbeCommand(secure)[2]
+	plainScript := domain.ProbeCommand(plain)[2]
+
+	if !strings.Contains(secureScript, `echo "tls ok`) {
+		t.Error("an https probe does not ask whether the certificate verifies")
+	}
+	if strings.Contains(plainScript, `"tls `) {
+		t.Error("a plaintext probe asks about a certificate there is none of")
+	}
+
+	// THE VERIFYING REQUEST AND THE INSECURE ONE ARE BOTH THERE, and they are
+	// different requests on purpose: the certificate step must verify, and
+	// the HTTP step must not, or a self-signed endpoint would report nothing
+	// about what it actually serves.
+	if !strings.Contains(secureScript, `E=$(curl -sS -o /dev/null -m "$T" "$U" 2>&1); R=$?`) {
+		t.Error("the certificate step does not take its status from the assignment")
+	}
+	if strings.Contains(secureScript, `curl -sS -k`) || strings.Contains(secureScript, `curl -k -sS`) {
+		t.Error("the certificate step passes -k, which would make every certificate verify")
+	}
+	if !strings.Contains(secureScript, `curl -k -s -o /dev/null`) {
+		t.Error("the HTTP step no longer skips verification, so a self-signed endpoint reports nothing")
+	}
+
+	// A pipeline's status is its LAST stage's, so folding the message onto
+	// one line inside the assignment would report tr's success as curl's.
+	// This is the same trap as `bump-inner`'s `;`-instead-of-`&&`.
+	if strings.Contains(secureScript, `| tr '\n\r' '  ' | cut -c1-200); R=$?`) {
+		t.Error("the certificate step reads a pipeline's status, so every certificate verifies")
+	}
+
+	// And what it writes has to parse, like every other line the script emits.
+	rendered := "dns skipped 10.96.0.1 is already an address\n" +
+		"connect ok tcp handshake completed\n" +
+		"tls failed curl: (60) SSL certificate problem: self-signed certificate\n" +
+		"http ok 200\n"
+	observation, ok, err := domain.ParseProbeOutput(rendered, time.Second)
+	if !ok || err != nil {
+		t.Fatalf("the parser cannot read what the script writes: ok=%v err=%v", ok, err)
+	}
+	if len(observation.Steps) != 4 {
+		t.Fatalf("steps = %d, want 4 (%v)", len(observation.Steps), observation.Steps)
+	}
+}
+
+// TestNewProbeResultKeepsAnsweringAndVerifyingApart is the verdict half of the
+// same separation: a port that answers with a certificate nothing trusts is
+// neither reachable nor refused, and saying either would send somebody to the
+// wrong half of the problem.
+func TestNewProbeResultKeepsAnsweringAndVerifyingApart(t *testing.T) {
+	ns := probeNamespace(t, "shop")
+	plan, err := domain.PlanProbe(domain.ProbeSubject{
+		Kind: "Service", Namespace: ns, Name: "web", ClusterIP: "10.96.0.1", Port: 443, PortName: "https",
+	}, domain.VantageInCluster)
+	if err != nil {
+		t.Fatalf("PlanProbe: %v", err)
+	}
+
+	untrusted := domain.NewProbeResult(plan, domain.ProbeObservation{
+		StatusCode: 200,
+		Steps: []domain.ProbeStep{
+			{Name: domain.StepDNS, Status: domain.StatusSkipped, Detail: "already an address"},
+			{Name: domain.StepConnect, Status: domain.StatusOK, Detail: "tcp handshake completed"},
+			{Name: domain.StepTLS, Status: domain.StatusFailed, Detail: "curl: (60) self-signed certificate"},
+			{Name: domain.StepHTTP, Status: domain.StatusOK, Detail: "200"},
+		},
+	})
+
+	if untrusted.Outcome != domain.OutcomeUntrusted {
+		t.Errorf("outcome = %q, want %q", untrusted.Outcome, domain.OutcomeUntrusted)
+	}
+	// BOTH HALVES IN ONE SENTENCE, or somebody reads the half that suits them.
+	if !strings.Contains(untrusted.Summary, "HTTP 200") {
+		t.Errorf("summary = %q, want it to keep saying the port answered", untrusted.Summary)
+	}
+	if !strings.Contains(untrusted.Summary, "self-signed certificate") {
+		t.Errorf("summary = %q, want curl's own reason", untrusted.Summary)
+	}
+
+	verified := domain.NewProbeResult(plan, domain.ProbeObservation{
+		StatusCode: 200,
+		Steps: []domain.ProbeStep{
+			{Name: domain.StepConnect, Status: domain.StatusOK},
+			{Name: domain.StepTLS, Status: domain.StatusOK, Detail: "the certificate verified"},
+			{Name: domain.StepHTTP, Status: domain.StatusOK, Detail: "200"},
+		},
+	})
+	if verified.Outcome != domain.OutcomeReachable {
+		t.Errorf("outcome = %q, want reachable", verified.Outcome)
+	}
+
+	// A SKIPPED certificate step is not a failed one: a container with no
+	// curl has said nothing about anybody's certificate.
+	skipped := domain.NewProbeResult(plan, domain.ProbeObservation{
+		Steps: []domain.ProbeStep{
+			{Name: domain.StepConnect, Status: domain.StatusOK},
+			{Name: domain.StepTLS, Status: domain.StatusSkipped, Detail: "no curl in this container"},
+		},
+	})
+	if skipped.Outcome != domain.OutcomeReachable {
+		t.Errorf("outcome = %q, want reachable — a skipped step is not a failure", skipped.Outcome)
+	}
+
+	// And a refused connection is still refused, whatever the certificate
+	// step says: nothing was verified because nothing was connected to.
+	refused := domain.NewProbeResult(plan, domain.ProbeObservation{
+		Steps: []domain.ProbeStep{
+			{Name: domain.StepConnect, Status: domain.StatusFailed, Detail: "nothing accepted a connection"},
+			{Name: domain.StepTLS, Status: domain.StatusFailed, Detail: "curl: (7) Failed to connect"},
+		},
+	})
+	if refused.Outcome != domain.OutcomeRefused {
+		t.Errorf("outcome = %q, want refused", refused.Outcome)
 	}
 }

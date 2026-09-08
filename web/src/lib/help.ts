@@ -553,6 +553,40 @@ export const HELP_TOPICS = {
     ],
   },
 
+  reachability: {
+    title: 'Reachability',
+    lede: 'One probe, when you ask for one, and a separate answer for each thing that can go wrong.',
+    sections: [
+      {
+        heading: 'Two vantages, two different questions',
+        body: [
+          'From this machine means through the API server named in your kubeconfig — its service proxy, or a port-forward tunnelled through it. A success says the API server reached the endpoints, which is not the same as another workload in the cluster being able to.',
+          'From inside the cluster asks a container you name to try, over the same exec session a file copy uses. That is the answer that includes NetworkPolicy, the mesh, and DNS as that pod sees it. Nothing is created for it: no pod, no sidecar, no file written in anybody\u2019s container.',
+        ],
+      },
+      {
+        heading: 'Why resolution and connection are separate',
+        body: [
+          'A name that does not resolve and an address that refuses a connection need opposite next steps \u2014 one is a Service that is not there or a resolver not serving it, the other is a policy, a listener that is not up, or a port nothing binds. One red cross saying \u201cunreachable\u201d sends people to the wrong half of their cluster.',
+        ],
+      },
+      {
+        heading: 'The certificate is its own step',
+        body: [
+          'A service can answer on 443 with a certificate that expired last week: reachable and unusable at the same time, because every client that verifies refuses it. So the probe asks separately, and the HTTP request beside it deliberately does not verify \u2014 otherwise a self-signed endpoint would report nothing at all about what it serves.',
+          'It is verified against the CA bundle in the container doing the probing, which is the honest scope: a certificate signed by a private CA your application trusts, from a container that does not, reports as untrusted here and works fine in production. The reason shown is curl\u2019s own words.',
+          'Probing from this machine says nothing about a certificate, and says so rather than leaving the row out. The API server does not verify what it proxies, and a forward carries the connection to 127.0.0.1, which no certificate can name. To read the certificate itself \u2014 issuer, expiry, the hosts it covers \u2014 open the Secret that holds it.',
+        ],
+      },
+      {
+        heading: 'What it costs',
+        body: [
+          'Nothing runs on the refresh tick. Each attempt is bounded by a few seconds, and the in-cluster probe uses the tools already in the image \u2014 a container with no nc, curl or wget says so instead of reporting a failure that would be about the image rather than about your Service.',
+        ],
+      },
+    ],
+  },
+
   'saved-views': {
     title: 'Saved views',
     lede: 'A question you ask often, kept under a name.',

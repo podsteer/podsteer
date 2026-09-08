@@ -186,6 +186,7 @@
     title="Reachability"
     defaultOpen={false}
     hint={String(targets.length)}
+    help="reachability"
   >
     <div class="flex flex-col gap-4">
       <p class="text-body-small leading-relaxed text-on-surface-variant/70">

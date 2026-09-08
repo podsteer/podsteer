@@ -308,6 +308,17 @@ const (
 	StepDNS ProbeStepName = "dns"
 	// StepConnect is the TCP handshake.
 	StepConnect ProbeStepName = "connect"
+	// StepTLS is whether the certificate on the far end VERIFIES — a
+	// separate question from whether the port answers, and one the HTTP step
+	// below deliberately cannot answer because it does not verify.
+	//
+	// ITS OWN STEP FOR THE SAME REASON DNS AND CONNECT ARE SEPARATE. A
+	// service that answers on 443 with an expired certificate is reachable
+	// and unusable at the same time: every client that verifies refuses it,
+	// and a probe that reported only "HTTP 200" would say the opposite of
+	// what a browser is about to say. The two need opposite next steps —
+	// one is a listener, the other is a certificate or a CA bundle.
+	StepTLS ProbeStepName = "tls"
 	// StepHTTP is one request over the connection.
 	StepHTTP ProbeStepName = "http"
 )
@@ -381,6 +392,16 @@ const (
 	// OutcomeRefused means the address was dialled and the connection did not
 	// establish.
 	OutcomeRefused ProbeOutcome = "refused"
+	// OutcomeUntrusted means the port answered and its certificate did not
+	// verify from that vantage.
+	//
+	// NOT FOLDED INTO EITHER NEIGHBOUR, and it is the addition that made a
+	// fifth outcome worth having: it is not "refused", because something is
+	// listening and answering; and it is not "reachable", because every
+	// client that checks a certificate — a browser, another service's HTTP
+	// library, an Ingress talking to a backend over TLS — is about to refuse
+	// what this probe just accepted.
+	OutcomeUntrusted ProbeOutcome = "untrusted"
 	// OutcomeUnknown means the probe did not get far enough to say — it was
 	// cancelled, the container had nothing to probe with, or the output was
 	// unreadable.
@@ -422,6 +443,18 @@ func NewProbeResult(plan ProbePlan, observation ProbeObservation) ProbeResult {
 		result.Outcome = OutcomeRefused
 		result.Summary = fmt.Sprintf("%s could not connect to %s.", vantageWords(plan), plan.Address())
 	case connect.Status == StatusOK:
+		// The certificate is asked about AFTER the connection and before the
+		// verdict, because it changes the verdict without changing what the
+		// connection did: the port answered either way, and the summary has
+		// to say both things in one sentence or somebody reads the half that
+		// suits them.
+		if tls, ok := observation.step(StepTLS); ok && tls.Status == StatusFailed {
+			result.Outcome = OutcomeUntrusted
+			result.Summary = fmt.Sprintf("%s connected to %s%s, but the certificate did not verify: %s.",
+				vantageWords(plan), plan.Address(), httpWords(observation), tls.Detail)
+			return result
+		}
+
 		result.Outcome = OutcomeReachable
 		result.Summary = fmt.Sprintf("%s connected to %s%s.",
 			vantageWords(plan), plan.Address(), httpWords(observation))
@@ -529,9 +562,37 @@ fi
 
 	if scheme != "" {
 		url := fmt.Sprintf("%s://%s:%d/", scheme, host, port)
-		fmt.Fprintf(&b, `U=%s
-if command -v curl >/dev/null 2>&1; then
-  C=$(curl -k -s -o /dev/null -m "$T" -w '%%{http_code}' "$U" 2>/dev/null)
+		fmt.Fprintf(&b, "U=%s\n", shellQuote(url))
+	}
+
+	// THE CERTIFICATE, AND ONLY WITH curl. This is the one step that must not
+	// guess: GNU wget verifies by default and busybox's wget — the one
+	// actually in most images that have any wget at all — does not, and
+	// reporting "ok" from a build that checked nothing would be worse than
+	// reporting nothing. A container without curl says so and the step is
+	// skipped, exactly as a missing nc skips the connect.
+	//
+	// $? IS TAKEN FROM THE ASSIGNMENT, NOT FROM A PIPELINE. `E=$(curl ... |
+	// tr ...)` would report tr's status, so every certificate on earth would
+	// verify. The message is folded onto one line inside the echo instead,
+	// because the output format is one line per step.
+	if scheme == "https" {
+		b.WriteString(`if command -v curl >/dev/null 2>&1; then
+  E=$(curl -sS -o /dev/null -m "$T" "$U" 2>&1); R=$?
+  if [ "$R" = 0 ]; then
+    echo "tls ok the certificate verified against this container's CA bundle"
+  else
+    echo "tls failed $(echo "$E" | tr '\n\r' '  ' | cut -c1-200)"
+  fi
+else
+  echo "tls skipped no curl in this container; wget verifies or does not depending on the build, so nothing is claimed"
+fi
+`)
+	}
+
+	if scheme != "" {
+		fmt.Fprint(&b, `if command -v curl >/dev/null 2>&1; then
+  C=$(curl -k -s -o /dev/null -m "$T" -w '%{http_code}' "$U" 2>/dev/null)
   if [ -n "$C" ] && [ "$C" != "000" ]; then echo "http ok $C"; else echo "http failed the request did not complete"; fi
 elif command -v wget >/dev/null 2>&1; then
   C=$(wget --no-check-certificate -q -S -T "$T" -O /dev/null "$U" 2>&1 | awk '/HTTP\//{c=$2} END{print c}')
@@ -539,7 +600,7 @@ elif command -v wget >/dev/null 2>&1; then
 else
   echo "http skipped no curl or wget in this container"
 fi
-`, shellQuote(url))
+`)
 	}
 
 	return b.String()
@@ -630,6 +691,8 @@ func probeStepName(field string) (ProbeStepName, bool) {
 		return StepDNS, true
 	case StepConnect:
 		return StepConnect, true
+	case StepTLS:
+		return StepTLS, true
 	case StepHTTP:
 		return StepHTTP, true
 	default:

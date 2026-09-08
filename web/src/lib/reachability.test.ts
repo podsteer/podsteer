@@ -174,6 +174,13 @@ describe('outcomeTone', () => {
     expect(outcomeTone('unknown')).toBe('unknown')
     expect(outcomeTone('something new')).toBe('unknown')
   })
+
+  it('tones a certificate nothing trusts as a problem, not a qualified success', () => {
+    // The port answered, so it is not "refused" — and every client that
+    // verifies a certificate is about to refuse what the probe accepted, so
+    // it is not "reachable" either.
+    expect(outcomeTone('untrusted')).toBe('bad')
+  })
 })
 
 describe('stepTone', () => {
@@ -193,8 +200,11 @@ describe('stepLabel', () => {
     expect(stepLabel({ name: 'dns' } as ProbeStep)).toBe('Name resolution')
     expect(stepLabel({ name: 'connect' } as ProbeStep)).toBe('Connection')
     expect(stepLabel({ name: 'http' } as ProbeStep)).toBe('HTTP request')
-    // A step from a newer build renders as itself rather than vanishing.
-    expect(stepLabel({ name: 'tls' } as ProbeStep)).toBe('tls')
+    // The certificate is its own heading for the reason it is its own step:
+    // answering and verifying are different questions with opposite fixes.
+    expect(stepLabel({ name: 'tls' } as ProbeStep)).toBe('Certificate')
+    // A step from a newer build still renders as itself rather than vanishing.
+    expect(stepLabel({ name: 'quic' } as ProbeStep)).toBe('quic')
   })
 })
 
