@@ -45,6 +45,8 @@
   import { organiseDialog } from '$stores/organiseDialog.svelte'
   import { groupKey, organisation } from '$stores/organisation.svelte'
   import { groupBgClass } from '$lib/groupColour'
+  import { visibleClusters } from '$lib/clusterPins'
+  import { preferences } from '$stores/preferences.svelte'
   import { workspace } from '$stores/workspace.svelte'
   import {
     Server,
@@ -55,6 +57,7 @@
     FileCog,
     Globe,
     GripVertical,
+    Pin,
     Plug,
     Plus,
     Star,
@@ -156,6 +159,15 @@
 
   /** What has been typed into the filter. */
   let filter = $state('')
+  /**
+   * Whether the page is narrowed to the pinned clusters.
+   *
+   * NOT PERSISTED, unlike the pins themselves. Which clusters somebody works
+   * with is a standing fact; whether they are looking at only those right now
+   * is a question about this visit, and a picker that opened tomorrow still
+   * hiding most of the kubeconfig would be a puzzle rather than a preference.
+   */
+  let pinnedOnly = $state(false)
   let searchField = $state<{ focus: () => void } | undefined>()
 
   /**
@@ -169,10 +181,16 @@
    * remembers "the staging one in ParliTrack" is remembering the grouping.
    */
   const matches = $derived.by(() => {
-    const term = filter.trim().toLowerCase()
-    if (!term) return workspace.clusters
+    // Pinned first, and narrowed to the pinned ones when the toggle is on —
+    // before the text filter, so the two compose rather than fight. See
+    // $lib/clusterPins for why the toggle shows everything when nothing is
+    // pinned at all.
+    const ordered = visibleClusters(workspace.clusters, preferences.pinnedClusters, pinnedOnly)
 
-    return workspace.clusters.filter((cluster) => {
+    const term = filter.trim().toLowerCase()
+    if (!term) return ordered
+
+    return ordered.filter((cluster) => {
       const at = organisation.placementOf(cluster.id)
       const haystack = [
         cluster.id,
@@ -352,6 +370,30 @@
           onnext={openOnlyMatch}
           class="w-72"
         />
+
+        <!-- Pinned only. Disabled rather than hidden when nothing is pinned:
+             a control that appears once you have used a feature is one nobody
+             discovers, and the title says what it is for. -->
+        <button
+          type="button"
+          onclick={() => (pinnedOnly = !pinnedOnly)}
+          aria-pressed={pinnedOnly}
+          disabled={preferences.pinnedClusters.length === 0}
+          title={preferences.pinnedClusters.length === 0
+            ? 'Pin a cluster to filter by it'
+            : pinnedOnly
+              ? 'Show every cluster'
+              : 'Show only pinned clusters'}
+          class="state-layer inline-flex h-9 shrink-0 items-center gap-1.5 rounded-sm border
+                 px-3 text-label-large transition-colors duration-100
+                 disabled:pointer-events-none disabled:opacity-40
+                 {pinnedOnly
+            ? 'border-primary/40 bg-primary/[0.06] text-primary'
+            : 'border-outline-variant text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+        >
+          <Pin class="size-4 {pinnedOnly ? 'fill-current' : ''}" strokeWidth={1.8} />
+          Pinned
+        </button>
       {/if}
       <Button variant="tonal" onclick={organiseDialog.show}>
         <FolderTree class="size-4" strokeWidth={1.8} />
@@ -704,6 +746,47 @@
                                 >
                                   <GripVertical class="size-4" strokeWidth={1.8} />
                                 </div>
+
+                                <!-- Pin. A PIN RATHER THAN A STAR, though the
+                                     navigator calls the same act pinning and
+                                     draws a star for it: this card already
+                                     has a filled star, and it means something
+                                     else entirely — that this is the
+                                     kubeconfig's current context. Two stars
+                                     on one card, meaning two different
+                                     things, is worse than two glyphs for one
+                                     idea across two screens.
+
+                                     Filled once pinned, so a glance down the
+                                     page shows which they are without
+                                     hovering each card — the same rule the
+                                     navigator's pin follows. -->
+                                <button
+                                  type="button"
+                                  onclick={(event) => {
+                                    event.stopPropagation()
+                                    preferences.toggleClusterPin(cluster.id)
+                                  }}
+                                  aria-pressed={preferences.isClusterPinned(cluster.id)}
+                                  aria-label="{preferences.isClusterPinned(cluster.id)
+                                    ? 'Unpin'
+                                    : 'Pin'} {cluster.id}"
+                                  title={preferences.isClusterPinned(cluster.id)
+                                    ? 'Unpin from the top of this group'
+                                    : 'Pin to the top of this group'}
+                                  class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                                         transition-colors duration-150 hover:text-on-surface
+                                         {preferences.isClusterPinned(cluster.id)
+                                    ? 'text-primary'
+                                    : 'text-on-surface-variant'}"
+                                >
+                                  <Pin
+                                    class="size-4.5 {preferences.isClusterPinned(cluster.id)
+                                      ? 'fill-current'
+                                      : ''}"
+                                    strokeWidth={1.8}
+                                  />
+                                </button>
 
                                 <MoveClusterMenu clusterId={cluster.id} />
 

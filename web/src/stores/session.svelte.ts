@@ -49,6 +49,7 @@ import { RowSelection } from '$lib/selection.svelte'
 import { nodeItem, podItem, rowKey, tableRowItem, workloadItem, type BulkItem } from '$lib/bulk'
 import { podStatusLabel } from '$lib/format'
 import { matchesPodStatusChips } from '$lib/podStatusFilters'
+import type { SavedView, ViewState } from '$lib/savedViews'
 import { EVENT_CHIPS, WORKLOAD_CHIPS, matchesChips, type FleetRow, type FleetTab } from '$lib/fleet'
 import { describeQuery, matches, parseQuery, type Query, type Row } from '$lib/query'
 import {
@@ -1459,6 +1460,47 @@ export class ClusterSession {
     this.page = 1
     this.selection.clear()
     await this.refresh()
+  }
+
+  /**
+   * What a saved view would capture, and what one is compared against.
+   *
+   * The four things a view holds and nothing else — see $lib/savedViews for
+   * why the sort, the page and the columns are deliberately not among them.
+   */
+  readonly viewState = $derived<ViewState>({
+    kindId: this.selectedKindId,
+    namespace: this.namespace,
+    search: this.typedSearch,
+    statusFilters: this.podStatusFilters,
+  })
+
+  /**
+   * Opens a saved view.
+   *
+   * ONE RELOAD, like browseKind, and for the same reason: setting the kind
+   * and then the namespace loads the new kind across the old namespace first,
+   * which is a flash of the wrong list and, on a large cluster, an expensive
+   * one.
+   *
+   * The search is set through the field's own path rather than assigned, so
+   * the box and the term the table filters by cannot disagree — and the chips
+   * are replaced rather than merged: a view is the whole question, not an
+   * amendment to whatever was already pressed.
+   */
+  applyView = async (view: SavedView): Promise<void> => {
+    const changed = view.kindId !== this.selectedKindId || view.namespace !== this.namespace
+
+    this.selectedKindId = view.kindId
+    this.namespace = view.namespace
+    preferences.setClusterNamespace(this.cluster.id, view.namespace)
+    this.podStatusFilters = [...view.statusFilters]
+    this.setSearch(view.search)
+    this.page = 1
+    this.closeDetail()
+    if (changed) this.selection.clear()
+
+    if (changed) await this.refresh()
   }
 
   /**

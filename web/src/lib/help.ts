@@ -553,6 +553,39 @@ export const HELP_TOPICS = {
     ],
   },
 
+  'saved-views': {
+    title: 'Saved views',
+    lede: 'A question you ask often, kept under a name.',
+    sections: [
+      {
+        heading: 'What a view holds',
+        body: [
+          'The kind, the namespace, the search and the status chips \u2014 the four controls in this row. Applying one sets all four at once and reloads the list.',
+          'It does not hold the sort, the page, the column set or the page size. Each of those is already remembered on its own, per kind or for the whole application, and a view that set them too would silently change every other visit to that kind.',
+        ],
+      },
+      {
+        heading: 'Saving over one',
+        body: [
+          'A name already in use replaces that view and keeps its place in the list. Saving \u201cCrashing pods\u201d twice is correcting it, not collecting two of them.',
+          'The field is pre-filled with the name of the view you are looking at, if one matches, so adjusting a filter and pressing Save updates the view you were plainly working on.',
+        ],
+      },
+      {
+        heading: 'They are not tied to a cluster',
+        body: [
+          'The same views are offered on every cluster tab, because a view is a shape of question rather than a fact about one cluster. A namespace that does not exist here simply shows nothing, the same answer the namespace picker gives.',
+        ],
+      },
+      {
+        heading: 'Where they are kept',
+        body: [
+                    'On this machine, in the interface’s own storage, alongside the other things you have chosen. Not in the settings export: a view holds a namespace and the text you typed, and that file promises no object names appear in it, because people keep it in git and send it to colleagues.',
+        ],
+      },
+    ],
+  },
+
   settings: {
     title: 'Settings',
     lede: 'How PodSteer behaves on this machine. None of it is stored on a cluster.',

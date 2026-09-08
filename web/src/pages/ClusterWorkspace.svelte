@@ -22,6 +22,7 @@ import TimelineView from './TimelineView.svelte'
   import Navigator from '$lib/components/Navigator.svelte'
   import Pagination from '$lib/components/Pagination.svelte'
   import ColumnMenu from '$lib/components/ColumnMenu.svelte'
+  import SavedViewsMenu from '$lib/components/SavedViewsMenu.svelte'
   import InfoHint from '$lib/components/InfoHint.svelte'
   import ToolbarButton from '$lib/components/ToolbarButton.svelte'
   import { activeTable } from '$stores/activeTable.svelte'
@@ -416,6 +417,19 @@ import TimelineView from './TimelineView.svelte'
           text={'-term negates. re:pattern or /pattern/ is a regex. key=value, key!=value ' +
             'and label:key select on labels. cluster:name selects a cluster. ' +
             '"quoted phrases" keep spaces in one term.'}
+        />
+
+        <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+
+        <!-- Saved views, immediately after the controls one captures: the
+             kind is in the navigator, but the namespace, the search and the
+             chips are all in this row, so the thing that keeps them belongs
+             beside them rather than in Settings. -->
+        <SavedViewsMenu
+          current={session.viewState}
+          kindTitle={(kindId) => session.kinds.find((entry) => entry.id === kindId)?.title ?? ''}
+          allNamespaces={ALL_NAMESPACES}
+          onapply={(view) => void session.applyView(view)}
         />
 
         <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
