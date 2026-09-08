@@ -2230,6 +2230,17 @@ export interface NodeLoad {
     "usageMeasured": boolean;
 
     /**
+     * What the pods here RESERVED, raw, for the same reason the usage above
+     * is raw: a chart plots numbers, and the node panel draws the requests as
+     * a line beside the usage it is nothing like. The formatted CPUAmount and
+     * MemAmount below are the same two figures for a table cell — kept, and
+     * not replaced by these, because a browser formatting a quantity is how
+     * two surfaces come to disagree about what 1.5 cores looks like.
+     */
+    "requestedCpuMilli": number;
+    "requestedMemoryBytes": number;
+
+    /**
      * The amounts and the shares, formatted here rather than by the browser,
      * so a node's row reads the same way a capacity track does: the quantity,
      * then what proportion of the node it is.

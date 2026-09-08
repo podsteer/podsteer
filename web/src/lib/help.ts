@@ -586,6 +586,35 @@ export const HELP_TOPICS = {
     ],
   },
 
+  'node-capacity': {
+    title: 'A node\u2019s three numbers',
+    lede: 'Allocatable, requested and used are three different measurements, and everything interesting is in the gaps between them.',
+    sections: [
+      {
+        heading: 'What each one is',
+        body: [
+          'Allocatable is what the kubelet says the scheduler may hand out \u2014 the machine\u2019s capacity less what is held back for the kubelet and the system.',
+          'Requested is what the pods already placed here reserved. It is the ONLY one the scheduler looks at, so it decides whether anything new can land, however idle the machine is.',
+          'Used is what metrics-server measured. It decides whether the machine is actually working, and whether the kubelet is about to start evicting.',
+        ],
+      },
+      {
+        heading: 'The gap that explains a stuck cluster',
+        body: [
+          'A node can be 95% reserved and 8% used at the same time. Nothing new will schedule onto it and every graph looks calm \u2014 which is why the three are on one surface here rather than one figure on this panel and another on the overview.',
+          'The opposite happens too: pods that request nothing at all leave the scheduler counting a busy node as free. Both are said in words under the chart, and only when the numbers disagree in a way you would act on.',
+        ],
+      },
+      {
+        heading: 'Where the figures come from',
+        body: [
+          'Allocatable is the node object\u2019s own. Used comes from metrics-server, and is absent rather than zero when nothing answered. Requested is summed from the pods on this node by the cluster assessment, which runs on every poll whatever view is open \u2014 so it is the same number the overview\u2019s per-node load grid shows, not a second calculation of it.',
+          'Requests are a floor rather than a cap: a pod may use more than it reserved unless a limit stops it. A node working past its requests is not a fault, and the note here says so.',
+        ],
+      },
+    ],
+  },
+
   settings: {
     title: 'Settings',
     lede: 'How PodSteer behaves on this machine. None of it is stored on a cluster.',

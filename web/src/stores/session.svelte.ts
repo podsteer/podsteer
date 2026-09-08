@@ -36,6 +36,7 @@ import {
   type ApplicationInventory,
   type Consumption,
   type Node,
+  type NodeLoad,
   type Overview,
   type Pod,
   type ResourceKind,
@@ -2147,6 +2148,22 @@ export class ClusterSession {
         memoryBytes: load.usageMemoryBytes,
       })
     }
+  }
+
+  /**
+   * One node's share of the work, from the last assessment.
+   *
+   * THE PANEL'S ONLY SOURCE OF WHAT PODS RESERVED. The assessment computes it
+   * for every node on every poll whatever view is open — the same figures the
+   * overview's load grid draws — so the node panel reads them rather than
+   * summing a second time over a pod list it would have to fetch.
+   *
+   * Null while nothing has been assessed yet, which the panel says out loud:
+   * "no reserved figure" and "nothing reserved" are different facts.
+   */
+  nodeLoadFor(name: string | undefined): NodeLoad | null {
+    if (!name) return null
+    return this.overview?.nodeLoads?.find((load) => load.name === name) ?? null
   }
 
   /**
