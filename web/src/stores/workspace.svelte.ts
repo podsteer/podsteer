@@ -16,6 +16,7 @@ import {
   disconnect,
   listClusters,
   onClusterUnreachable,
+  onKubeconfigChanged,
   setReadOnly,
   type Cluster,
   type Unsubscribe,
@@ -87,7 +88,7 @@ class Workspace {
   /** A failure not owned by any one tab — connecting, or reading kubeconfig. */
   error = $state<ApiError | null>(null)
 
-  #unsubscribe: Unsubscribe | null = null
+  #unsubscribers: Unsubscribe[] = []
 
   /** The session in front, or undefined when the picker is showing. */
   readonly active = $derived(
@@ -365,8 +366,8 @@ class Workspace {
   /** Releases every tab's timer and the event subscription. */
   dispose = (): void => {
     for (const session of this.sessions) session.dispose()
-    this.#unsubscribe?.()
-    this.#unsubscribe = null
+    for (const stop of this.#unsubscribers) stop()
+    this.#unsubscribers = []
   }
 
   /** Adds a session for a cluster, or returns the existing one. */
@@ -392,21 +393,44 @@ class Workspace {
   }
 
   /**
-   * Listens for connections the backend notices have failed.
+   * Listens for what the backend notices without being asked.
    *
-   * These arrive without a call having been made, which makes them the one
-   * path by which a tab learns its cluster went away.
+   * Two things arrive this way, and they are the only two: a connection that
+   * failed on its own, and the kubeconfig changing under the application.
+   * Both are events nobody's click caused, which is what makes them events
+   * rather than answers.
    */
   #subscribe(): void {
-    this.#unsubscribe?.()
-    this.#unsubscribe = onClusterUnreachable((event) => {
-      const session = this.sessions.find((entry) => entry.cluster.id === event.clusterId)
-      if (session) {
-        session.error = new ApiError('unreachable', event.reason)
-      } else {
-        this.error = new ApiError('unreachable', event.reason)
-      }
-    })
+    for (const stop of this.#unsubscribers) stop()
+    this.#unsubscribers = [
+      onClusterUnreachable((event) => {
+        const session = this.sessions.find((entry) => entry.cluster.id === event.clusterId)
+        if (session) {
+          session.error = new ApiError('unreachable', event.reason)
+        } else {
+          this.error = new ApiError('unreachable', event.reason)
+        }
+      }),
+      /**
+       * THE LIST IS RE-READ AND NOTHING ELSE HAPPENS.
+       *
+       * A kubeconfig changing is somebody running `kubectl config
+       * use-context` in another window, or a colleague's file landing in a
+       * synced folder. What it must NOT do is touch the tabs: an open cluster
+       * is a connection this operator made, and re-reading a file is not a
+       * reason to disturb it — not to reconnect it, not to close it, and
+       * certainly not to follow a `current-context` that moved, which is a
+       * decision about somebody else's terminal.
+       *
+       * So the picker learns about a new context, a removed one leaves the
+       * list, and every open tab carries on exactly as it was. A cluster
+       * whose entry has gone keeps working until its credentials expire,
+       * which is what the connection actually depends on.
+       */
+      onKubeconfigChanged(() => {
+        void this.loadClusters()
+      }),
+    ]
   }
 }
 

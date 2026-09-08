@@ -661,6 +661,20 @@ type ClusterConnectedEvent struct {
 	At string `json:"at"`
 }
 
+// KubeconfigChangedEvent is the payload of the "kubeconfig:changed" event.
+//
+// A COUNT AND A TIME, no path and no context name. Which file changed is not
+// something the interface acts on — the answer to any of them is "re-read the
+// list" — and a path is a fact about the operator's machine that would then
+// travel the event bus into anything that records events.
+type KubeconfigChangedEvent struct {
+	// Files is how many kubeconfig files were being read when the change was
+	// noticed: a magnitude, not a list.
+	Files int `json:"files"`
+	// At is when it was noticed, in RFC 3339.
+	At string `json:"at"`
+}
+
 // ClusterUnreachableEvent is the payload of the "cluster:unreachable" event.
 type ClusterUnreachableEvent struct {
 	// ClusterID is the cluster that did not answer.
