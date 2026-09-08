@@ -33,6 +33,16 @@ const (
 	// ClusterReadFailed means the read failed for some other reason,
 	// including the cluster having been disconnected mid-read.
 	ClusterReadFailed ClusterReadStatus = "failed"
+	// ClusterReadUnserved means the cluster does not have this kind at all.
+	//
+	// ITS OWN VERDICT AND NOT A FAILURE. Only a read of an arbitrary kind can
+	// produce it, and it is the ordinary case rather than the exception: a CRD
+	// is installed on the clusters that need it, so listing Widgets across six
+	// clusters when two have the operator is a correct answer for all six.
+	// Reported as failed it would read as an outage; reported as ok with no
+	// rows it would read as "no Widgets here", which is a different and
+	// misleading claim.
+	ClusterReadUnserved ClusterReadStatus = "unserved"
 )
 
 // ClusterRead is one cluster's share of a read made across several.

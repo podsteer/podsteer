@@ -833,6 +833,31 @@ export interface ClusterShellReuse {
 }
 
 /**
+ * ClusterTable is one cluster's share of a cross-cluster read of an
+ * ARBITRARY kind.
+ * 
+ * Its own struct rather than one of the three above, and the difference is
+ * the columns: a typed row has the same shape everywhere, and a table's
+ * columns are whatever the API server's printer said on THAT cluster. They
+ * travel beside that cluster's rows so nothing has to assume two clusters
+ * printed the same set — a CRD at two versions routinely does not.
+ */
+export interface ClusterTable {
+    "cluster": string;
+    "status": string;
+    "reason": string;
+    "missing": string[] | null;
+
+    /**
+     * Columns and Rows are this cluster's own. Both are empty for a cluster
+     * that answered nothing — including one that does not serve the kind,
+     * which is `unserved` rather than a failure.
+     */
+    "columns": TableColumn[] | null;
+    "rows": TableRow[] | null;
+}
+
+/**
  * ClusterWorkloads is one cluster's share of a cross-cluster workload list.
  */
 export interface ClusterWorkloads {

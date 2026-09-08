@@ -51,7 +51,14 @@ import { nodeItem, podItem, rowKey, tableRowItem, workloadItem, type BulkItem } 
 import { podStatusLabel } from '$lib/format'
 import { matchesPodStatusChips } from '$lib/podStatusFilters'
 import type { SavedView, ViewState } from '$lib/savedViews'
-import { EVENT_CHIPS, WORKLOAD_CHIPS, matchesChips, type FleetRow, type FleetTab } from '$lib/fleet'
+import {
+  EVENT_CHIPS,
+  WORKLOAD_CHIPS,
+  matchesChips,
+  type FleetChipTab,
+  type FleetRow,
+  type FleetTab,
+} from '$lib/fleet'
 import { describeQuery, matches, parseQuery, type Query, type Row } from '$lib/query'
 import {
   annotationKeysOf,
@@ -554,7 +561,7 @@ export class ClusterSession {
    * cluster's pods is not a chip pressed on this cluster's, and the two
    * views must not surprise each other.
    */
-  fleetChips = $state<Record<FleetTab, string[]>>({ pods: [], workloads: [], events: [] })
+  fleetChips = $state<Record<FleetChipTab, string[]>>({ pods: [], workloads: [], events: [] })
 
   /**
    * Rows for whichever view is active. Only one is populated at a time.
@@ -994,6 +1001,25 @@ export class ClusterSession {
     ),
   )
 
+  /**
+   * The merged generic table's rows, filtered by the same search.
+   *
+   * NO CHIPS, deliberately: a chip is a claim about health, and the columns
+   * of an arbitrary kind are whatever that CRD's author chose to print. See
+   * FleetChipTab. The searchable text is every cell plus the name and
+   * namespace, because there is no fixed field to privilege.
+   */
+  readonly searchedFleetTableRows = $derived(
+    filterRows(
+      fleet.table.rows,
+      this.query,
+      (row) => [row.name, row.namespace, ...(row.cells ?? [])],
+      (row) => row.labels,
+      (row) => row.cluster,
+    ),
+  )
+  readonly visibleFleetTableRows = $derived(this.searchedFleetTableRows)
+
   /** Total rows of the merged table showing, after filtering. */
   readonly visibleFleetCount = $derived.by(() => {
     switch (fleet.tab) {
@@ -1003,6 +1029,8 @@ export class ClusterSession {
         return this.visibleFleetWorkloads.length
       case 'events':
         return this.visibleFleetEvents.length
+      case 'kinds':
+        return this.visibleFleetTableRows.length
     }
   })
 
@@ -1136,6 +1164,39 @@ export class ClusterSession {
   readonly sortedFleetEvents = $derived(
     sortRows(this.visibleFleetEvents, this.sort, FLEET_EVENT_SORT),
   )
+  /**
+   * The merged generic table, sorted by whichever column was clicked.
+   *
+   * The same positional-id rule the single-cluster table follows, against the
+   * MERGED columns — which is the whole reason mergeFleetTable re-indexes
+   * cells rather than concatenating rows: sorting on "c2" here has to mean
+   * one thing across every cluster.
+   */
+  readonly sortedFleetTableRows = $derived.by(() => {
+    const state = this.sort
+    const columns = fleet.table.columns
+    const index = state ? /^c(\d+)$/.exec(state.columnId)?.[1] : undefined
+    if (!state || index === undefined) return this.visibleFleetTableRows
+
+    const column = columns[Number(index)]
+    if (!column) return this.visibleFleetTableRows
+
+    const cell = (row: FleetRow<TableRow>): string => row.cells?.[Number(index)] ?? ''
+    let accessor: (row: FleetRow<TableRow>) => string | number | null
+    if (column.type === 'integer' || column.type === 'number') {
+      accessor = (row) => {
+        const parsed = Number.parseFloat(cell(row))
+        return Number.isNaN(parsed) ? null : parsed
+      }
+    } else if (column.type === 'date') {
+      accessor = (row) => parseAgeSeconds(cell(row))
+    } else {
+      accessor = cell
+    }
+    return sortRows(this.visibleFleetTableRows, state, { [state.columnId]: accessor })
+  })
+
+  readonly pagedFleetTableRows = $derived(this.#slice(this.sortedFleetTableRows))
   readonly pagedFleetPods = $derived(this.#slice(this.sortedFleetPods))
   readonly pagedFleetWorkloads = $derived(this.#slice(this.sortedFleetWorkloads))
   readonly pagedFleetEvents = $derived(this.#slice(this.sortedFleetEvents))
@@ -1566,7 +1627,7 @@ export class ClusterSession {
 
   /** Toggles one quick-filter chip on a merged table. Same page reset, same
       reasons, as the pod chips. */
-  toggleFleetChip = (tab: FleetTab, id: string): void => {
+  toggleFleetChip = (tab: FleetChipTab, id: string): void => {
     const active = this.fleetChips[tab]
     this.fleetChips = {
       ...this.fleetChips,

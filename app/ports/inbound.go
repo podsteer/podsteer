@@ -167,6 +167,12 @@ type FleetService interface {
 
 	// ListEvents lists events in the given namespace of each cluster.
 	ListEvents(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Event], error)
+
+	// ListTable lists one arbitrary kind, named by its GROUP and RESOURCE
+	// rather than by a kind id, in the given namespace of each cluster. A
+	// cluster that does not serve the kind answers Unserved, which is an
+	// ordinary answer and not a failure.
+	ListTable(ctx context.Context, ids []domain.ClusterID, group, resource string, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.ResourceTable], error)
 }
 
 // OverviewService is the use-case surface for the cluster dashboard.

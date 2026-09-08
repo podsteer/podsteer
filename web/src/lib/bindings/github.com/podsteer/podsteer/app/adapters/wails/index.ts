@@ -65,6 +65,7 @@ export type {
     ClusterShell,
     ClusterShellCandidate,
     ClusterShellReuse,
+    ClusterTable,
     ClusterWorkloads,
     CodingAgentDTO,
     ConditionCount,

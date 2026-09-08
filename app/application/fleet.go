@@ -27,6 +27,17 @@ type FleetServiceDeps struct {
 	Workloads ports.WorkloadService
 	// Events reads one cluster's events. Required.
 	Events ports.EventService
+	// Resources reads one cluster's arbitrary kinds as a table, for the
+	// merged view of a kind that has no typed reader. Required.
+	//
+	// The application service again, for the reason Workloads is: the merged
+	// table has to be the SAME read the cluster's own tab makes, or the two
+	// disagree about what is in a cluster they are both showing.
+	Resources ports.ResourceService
+	// Catalog resolves a kind's group and resource to whatever version each
+	// cluster serves it at. Required for the table read; see
+	// domain.Catalog.LookupByResource for why an id is not portable.
+	Catalog *domain.Catalog
 	// Registry says which clusters are open, and in what order. Required.
 	Registry *Registry
 	// ReadBudget is how long one cluster is waited for before it is reported
@@ -79,6 +90,8 @@ const fleetReadBudget = 4 * time.Second
 type FleetService struct {
 	workloads ports.WorkloadService
 	events    ports.EventService
+	resources ports.ResourceService
+	catalog   *domain.Catalog
 	registry  *Registry
 	budget    time.Duration
 	logger    *slog.Logger
@@ -100,6 +113,10 @@ func NewFleetService(deps FleetServiceDeps) (*FleetService, error) {
 		return nil, errors.New("application: FleetService requires a WorkloadService")
 	case deps.Events == nil:
 		return nil, errors.New("application: FleetService requires an EventService")
+	case deps.Resources == nil:
+		return nil, errors.New("application: FleetService requires a ResourceService")
+	case deps.Catalog == nil:
+		return nil, errors.New("application: FleetService requires a Catalog")
 	case deps.Registry == nil:
 		return nil, errors.New("application: FleetService requires a Registry")
 	}
@@ -117,6 +134,8 @@ func NewFleetService(deps FleetServiceDeps) (*FleetService, error) {
 	return &FleetService{
 		workloads: deps.Workloads,
 		events:    deps.Events,
+		resources: deps.Resources,
+		catalog:   deps.Catalog,
 		registry:  deps.Registry,
 		budget:    budget,
 		logger:    logger.With(slog.String("service", "fleet")),
@@ -153,6 +172,51 @@ func (s *FleetService) ListEvents(ctx context.Context, ids []domain.ClusterID, n
 		return events, nil, err
 	})
 }
+
+// ListTable lists ONE ARBITRARY KIND across every open cluster.
+//
+// The kind is named by its GROUP AND RESOURCE rather than by a kind id,
+// because an id carries a version and a version is per-cluster: a CRD served
+// at v1alpha1 on one cluster and v1 on another is the same kind, and matching
+// the whole id would report the second as not having it. See
+// domain.Catalog.LookupByResource.
+//
+// A cluster that does not serve the kind at all answers UNSERVED, which is an
+// ordinary answer and not a failure — a CRD lives on the clusters that need
+// it. Reported as failed it would read as an outage; reported as ok with no
+// rows it would say "none here", which is a different claim.
+//
+// ONE TABLE PER CLUSTER, CARRIED AS A ONE-ELEMENT SLICE. The fan-out is
+// generic over items and hands back `Items []T`; a table is one item, and
+// making the ITEM the whole table rather than its rows is what keeps a
+// cluster's columns attached to its own rows — including when a slow
+// cluster's answer arrives late and is handed to the next read, where rows
+// separated from their columns would be cells nothing could position.
+func (s *FleetService) ListTable(ctx context.Context, ids []domain.ClusterID, group, resource string, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.ResourceTable], error) {
+	name := "table:" + group + "/" + resource
+
+	return fanOut(ctx, s, name, namespace, ids, func(ctx context.Context, id domain.ClusterID) ([]domain.ResourceTable, []string, error) {
+		kind, err := s.catalog.LookupByResource(id, group, resource)
+		if err != nil {
+			// Not wrapped in anything the classifier reads: this cluster is
+			// answered UNSERVED by the caller below, and there is nothing
+			// here for an operator to fix.
+			return nil, nil, errKindUnserved
+		}
+
+		table, err := s.resources.ListTable(ctx, id, kind.ID(), namespace, domain.Projection{})
+		if err != nil {
+			return nil, nil, err
+		}
+		return []domain.ResourceTable{table}, nil, nil
+	})
+}
+
+// errKindUnserved marks the one failure that is not one: this cluster simply
+// does not have the kind. Package-private and never wrapped in an operator
+// message, because classifyRead turns it into a verdict rather than a
+// sentence.
+var errKindUnserved = errors.New("this cluster does not serve that kind")
 
 // readWorkloads reads one cluster's controllers, one list per kind.
 //
@@ -398,6 +462,8 @@ func settle[T any](s *FleetService, id domain.ClusterID, name string, items []T,
 // cancellation is nobody's fault and simply failed.
 func classifyRead(err error) domain.ClusterReadStatus {
 	switch {
+	case errors.Is(err, errKindUnserved):
+		return domain.ClusterReadUnserved
 	case errors.Is(err, ports.ErrForbidden):
 		return domain.ClusterReadForbidden
 	case errors.Is(err, ports.ErrUnreachable), errors.Is(err, context.DeadlineExceeded):

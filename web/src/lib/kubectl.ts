@@ -62,8 +62,19 @@ export function resourceArg(kind: { group: string; resource: string }): string {
  * `ResourceKind` it already has instead of re-deriving the split itself.
  */
 export function resourceArgForKind(kind: { group: string; id: string }): string {
-  const resource = kind.id.split('/').pop() ?? ''
-  return resourceArg({ group: kind.group, resource })
+  return resourceArg({ group: kind.group, resource: resourceOf(kind) })
+}
+
+/**
+ * The `resource` segment of a kind id, on its own.
+ *
+ * Shared with the cross-cluster reads, which are addressed by group and
+ * resource rather than by id — a kind id carries a VERSION, and a CRD served
+ * at v1alpha1 on one cluster and v1 on another is the same kind. This is the
+ * one place that knows the wire format; see the note above.
+ */
+export function resourceOf(kind: { id: string }): string {
+  return kind.id.split('/').pop() ?? ''
 }
 
 /**

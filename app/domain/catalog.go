@@ -196,3 +196,31 @@ func (c *Catalog) Lookup(cluster ClusterID, id string) (ResourceKind, error) {
 	return ResourceKind{}, fmt.Errorf("%w: %q is not available in cluster %q",
 		ErrInvalidResourceKind, id, cluster)
 }
+
+// LookupByResource resolves a kind by its group and resource, WHATEVER VERSION
+// that cluster serves it at.
+//
+// For reads that span several clusters, where a kind id is not portable: the
+// group and the resource are the same everywhere a CRD is installed, and the
+// version is not — one cluster serving `acme.io/v1alpha1/widgets` and another
+// `acme.io/v1/widgets` have the same Widgets, and a cross-cluster list that
+// matched on the whole id would report the second as not serving the kind.
+//
+// The FIRST match wins, in catalog order: built-ins first, then discovery's,
+// which lists one entry per resource at its preferred version. A cluster that
+// somehow offers two versions of one resource is answered with the one the
+// navigator itself would show.
+func (c *Catalog) LookupByResource(cluster ClusterID, group, resource string) (ResourceKind, error) {
+	for _, kind := range c.Kinds(cluster) {
+		if kind.Group == group && kind.Resource == resource {
+			return kind, nil
+		}
+	}
+
+	name := resource
+	if group != "" {
+		name = group + "/" + resource
+	}
+	return ResourceKind{}, fmt.Errorf("%w: %q is not available in cluster %q",
+		ErrInvalidResourceKind, name, cluster)
+}

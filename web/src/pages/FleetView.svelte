@@ -27,14 +27,16 @@
     hasClusterTerm,
     toggleClusterTerm,
     type FleetChip,
+    type FleetChipTab,
     type FleetRow,
     type FleetTab,
   } from '$lib/fleet'
   import { iconForKind } from '$lib/kindIcons'
-  import { fleet } from '$stores/fleet.svelte'
+  import { fleet, type FleetKind } from '$stores/fleet.svelte'
   import { workspace } from '$stores/workspace.svelte'
+  import { resourceOf } from '$lib/kubectl'
   import { fleetTableId, type ClusterSession } from '$stores/session.svelte'
-  import type { K8sEvent, Pod, Workload } from '$lib/api/client'
+  import type { K8sEvent, Pod, TableRow, Workload } from '$lib/api/client'
   import { Activity, Box, CircleDot, Server, TriangleAlert } from '@lucide/svelte'
 
   interface Props {
@@ -99,6 +101,71 @@
   ]
 
   /**
+   * Every kind any open cluster serves, once, for the picker.
+   *
+   * KEYED BY GROUP AND RESOURCE, not by kind id, because that is what the
+   * read takes and because two clusters serving one CRD at different versions
+   * are one entry here rather than two. The title comes from the first
+   * cluster that offered it; they agree in practice, and where they do not,
+   * one of them is what the operator saw in the navigator.
+   *
+   * Sorted by title so a list of two hundred entries can be scanned.
+   */
+  const fleetKinds = $derived.by(() => {
+    const seen = new Map<string, FleetKind>()
+    for (const open of workspace.sessions) {
+      for (const kind of open.kinds) {
+        const key = `${kind.group}/${resourceOf(kind)}`
+        if (!seen.has(key)) {
+          seen.set(key, {
+            group: kind.group,
+            resource: resourceOf(kind),
+            kind: kind.kind,
+            title: kind.title,
+          })
+        }
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.title.localeCompare(b.title))
+  })
+
+  /** What the picker's select is bound to: "group/resource", or "". */
+  const chosenKindKey = $derived(
+    fleet.tableKind ? `${fleet.tableKind.group}/${fleet.tableKind.resource}` : '',
+  )
+
+  function chooseKind(key: string): void {
+    const kind = fleetKinds.find((entry) => `${entry.group}/${entry.resource}` === key) ?? null
+    fleet.chooseKind(kind)
+    // Read at once rather than at the next tick: the operator just asked a
+    // question, and a table that stays empty until the refresh comes round
+    // reads as a kind with nothing in it.
+    void session.refresh()
+  }
+
+  /**
+   * The merged table's columns, as DataTable wants them.
+   *
+   * Positional ids ("c0"), like the single-cluster generic table — and here
+   * the position is the MERGED one, which is what mergeFleetTable exists to
+   * make meaningful across clusters. The Cluster column is first, as on every
+   * other merged table.
+   */
+  const TABLE_CLUSTER_COLUMN: Column = { id: 'cluster', label: 'Cluster', width: 190, pinned: true }
+
+  const tableColumns = $derived<Column[]>([
+    TABLE_CLUSTER_COLUMN,
+    ...fleet.table.columns.map((column, index) => ({
+      id: `c${index}`,
+      label: column.name,
+      width: index === 0 ? 300 : column.type === 'date' ? 100 : 170,
+      numeric: column.type === 'integer' || column.type === 'number',
+      pinned: index === 0,
+      defaultHidden: column.wide,
+    })),
+  ])
+
+  /**
    * How many of the search-filtered rows each chip would add, in one pass —
    * counted against the searched rows rather than the visible ones, for the
    * reason PodsView gives: an unselected chip must show what selecting it
@@ -122,6 +189,25 @@
   /** The row's cluster becomes the tab in front; the row becomes the drawer. */
   function open(row: FleetRow<Pod> | FleetRow<Workload> | FleetRow<K8sEvent>): void {
     void workspace.openInCluster(fleetRowTarget(fleet.tab, row))
+  }
+
+  /**
+   * Opening a row of the generic table.
+   *
+   * Its own function because the KIND is not the row's: a typed row knows
+   * what it is, and a table row is whatever kind the picker asked for, which
+   * is the one thing the drawer needs to resolve it. Nothing is guessed from
+   * a column called "Kind" — see GenericTableView for the same refusal.
+   */
+  function openTableRow(row: FleetRow<TableRow>): void {
+    const kind = fleet.tableKind
+    if (!kind) return
+    void workspace.openInCluster({
+      cluster: row.cluster,
+      kind: kind.kind,
+      name: row.name,
+      namespace: row.namespace,
+    })
   }
 
   /** A strip chip narrows the table to its cluster through the search box,
@@ -231,6 +317,19 @@
           ),
         }
       }
+      case 'kinds': {
+        const visible = tableColumns.filter(isColumnVisible)
+        return {
+          columns: visible.map((column) => column.label),
+          rows: session.sortedFleetTableRows.map((row) =>
+            visible.map((column) => {
+              if (column.id === 'cluster') return row.cluster
+              const index = /^c(\d+)$/.exec(column.id)?.[1]
+              return index === undefined ? '' : (row.cells?.[Number(index)] ?? '')
+            }),
+          ),
+        }
+      }
       case 'events': {
         const visible = EVENT_COLUMNS.filter(isColumnVisible)
         const cell = (event: FleetRow<K8sEvent>, id: string): string => {
@@ -270,7 +369,7 @@
      ToolbarToggle's, as on PodsView, so a chip on and a toolbar icon on read
      as the same state. -->
 {#snippet chipRow(
-  tab: FleetTab,
+  tab: FleetChipTab,
   chips: readonly { id: string; label: string }[],
   counts: Record<string, number>,
   noun: string,
@@ -391,8 +490,35 @@
       {@render chipRow('pods', POD_STATUS_CHIPS, podChipCounts, 'pods')}
     {:else if fleet.tab === 'workloads'}
       {@render chipRow('workloads', WORKLOAD_CHIPS, workloadChipCounts, 'workloads')}
-    {:else}
+    {:else if fleet.tab === 'events'}
       {@render chipRow('events', EVENT_CHIPS, eventChipCounts, 'events')}
+    {:else}
+      <!-- A PICKER RATHER THAN CHIPS. There are no quick filters for a kind
+           nobody wrote code for — a chip is a claim about health, and these
+           columns are whatever the CRD's author chose to print — and there is
+           a question this tab cannot answer without: WHICH kind. -->
+      <label class="flex items-center gap-2 text-body-medium text-on-surface-variant">
+        Kind
+        <select
+          value={chosenKindKey}
+          onchange={(event) => chooseKind(event.currentTarget.value)}
+          class="field h-8 min-w-56 px-2 text-body-medium"
+        >
+          <option value="">Choose a kind…</option>
+          {#each fleetKinds as kind (kind.group + '/' + kind.resource)}
+            <option value="{kind.group}/{kind.resource}">
+              {kind.title}{kind.group ? ` · ${kind.group}` : ''}
+            </option>
+          {/each}
+        </select>
+      </label>
+
+      {#if fleet.tableKind}
+        <span class="text-body-small text-on-surface-variant/70">
+          Read from every open cluster that has it. A cluster without it is marked
+          <span class="text-on-surface-variant">Not installed</span> rather than empty.
+        </span>
+      {/if}
     {/if}
   </div>
 
@@ -593,6 +719,61 @@
                 {formatAge(workload.ageSeconds)}
               </td>
             {/if}
+          </tr>
+        {/each}
+      {/snippet}
+    </DataTable>
+  {:else if fleet.tab === 'kinds'}
+    <DataTable
+      kindId={tableId}
+      columns={tableColumns}
+      isEmpty={session.pagedFleetTableRows.length === 0}
+      sort={session.sort}
+      onsort={session.toggleSort}
+      exportRows={exportCSV}
+    >
+      {#snippet empty()}
+        <EmptyState
+          title={!fleet.tableKind
+            ? 'Choose a kind'
+            : reading
+              ? 'Reading clusters…'
+              : `No ${fleet.tableKind.title.toLowerCase()} across your clusters`}
+          description={!fleet.tableKind
+            ? 'Any kind any open cluster serves — including a custom resource only some of them have.'
+            : reading
+              ? undefined
+              : emptyDescription(fleet.tableKind.title.toLowerCase())}
+        />
+      {/snippet}
+
+      {#snippet rows(isVisible)}
+        {#each session.pagedFleetTableRows as row (row.cluster + '/' + row.namespace + '/' + row.name)}
+          <tr
+            class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
+                   hover:bg-surface-container-low"
+            onclick={() => openTableRow(row)}
+          >
+            {#if isVisible('cluster')}
+              <td class="truncate py-1.5 pr-3 pl-5 text-on-surface-variant" title={row.cluster}>
+                {row.cluster}
+              </td>
+            {/if}
+            {#each fleet.table.columns as column, index (column.name)}
+              {#if isVisible(`c${index}`)}
+                <td
+                  class="truncate px-3 py-1.5 {index === 0
+                    ? 'font-medium text-on-surface'
+                    : 'text-on-surface-variant'} {column.type === 'integer' ||
+                  column.type === 'number'
+                    ? 'text-right tabular-nums'
+                    : ''}"
+                  title={row.cells?.[index] ?? ''}
+                >
+                  {row.cells?.[index] ?? ''}
+                </td>
+              {/if}
+            {/each}
           </tr>
         {/each}
       {/snippet}
