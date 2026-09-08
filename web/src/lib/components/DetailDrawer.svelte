@@ -1911,6 +1911,7 @@
           manifest={session.manifest}
           selectedPod={selectedPod}
           selectedNode={session.selectedNode}
+          nodeLoad={session.nodeLoadFor(session.selectedNode?.name)}
           selectedNamespaceRow={session.selectedNamespaceRow}
           selectedWorkload={selectedWorkload}
           kind={session.selectedKind?.kind}

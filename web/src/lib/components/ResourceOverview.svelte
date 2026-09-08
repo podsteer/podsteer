@@ -7,7 +7,7 @@
 -->
 <script lang="ts">
   import { parse } from 'yaml'
-  import type { NamespaceSummary, Node, Pod, Workload } from '$lib/api/client'
+  import type { NamespaceSummary, Node, NodeLoad, Pod, Workload } from '$lib/api/client'
   import DetailSection from './DetailSection.svelte'
   import DetailList, { type DetailRow } from './DetailList.svelte'
   import ContainerDetail from './ContainerDetail.svelte'
@@ -29,6 +29,7 @@
   import { standardPanelFor } from '$lib/standardapis/panel'
   import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
+  import { capacityNote } from '$lib/nodeCapacity'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
   import { podTemplateOf } from '$lib/podTemplate'
   import { classifyConditions, setConfigMapKey, type ConditionRef } from '$lib/api/client'
@@ -58,6 +59,17 @@
     usage?: UsageSample[]
     /** The node the drawer is open on, when it is a node. */
     selectedNode?: Node | null
+    /**
+     * That node's share of the work, from the assessment.
+     *
+     * THE REQUESTS COME FROM HERE AND NOWHERE ELSE. A node object says what
+     * the kubelet allocates and metrics-server says what it is consuming;
+     * what the pods on it RESERVED is a sum over those pods, which the
+     * overview already computes on every poll for every node. Recomputing it
+     * in the panel would be a second implementation of the one number the
+     * scheduler actually decides on.
+     */
+    nodeLoad?: NodeLoad | null
     /**
      * The namespace row the drawer is open on, when it is a namespace.
      *
@@ -131,6 +143,7 @@
     kind,
     group,
     usage = [],
+    nodeLoad = null,
     backend,
     clusterId,
     canOpen,
@@ -1125,27 +1138,72 @@
         id="usage"
         title="Usage"
         hint="CPU {selectedNode.cpu} · Memory {selectedNode.memory}"
+        help="node-capacity"
       >
         <div class="flex flex-col gap-4">
-          {#each [{ metric: 'cpu' as const, label: 'CPU', allocatable: selectedNode.allocatableCpu }, { metric: 'memory' as const, label: 'Memory', allocatable: selectedNode.allocatableMemory }] as track (track.metric)}
+          <!--
+            THE THREE FIGURES TOGETHER, which is the whole point of this
+            section and was the one thing it did not do. Usage against
+            allocatable was here; requests against allocatable were on the
+            cluster overview; and the comparison that explains a cluster which
+            refuses to schedule while looking idle — reserved 95%, using 8% —
+            was on neither surface. See $lib/nodeCapacity.
+          -->
+          {#each [{ metric: 'cpu' as const, label: 'CPU', dimension: 'CPU', used: selectedNode.cpu, allocatable: selectedNode.allocatableCpu, requested: nodeLoad?.cpuAmount ?? '', requestedValue: (nodeLoad?.requestedCpuMilli ?? 0) / 1000, format: formatCores }, { metric: 'memory' as const, label: 'Memory', dimension: 'memory', used: selectedNode.memory, allocatable: selectedNode.allocatableMemory, requested: nodeLoad?.memoryAmount ?? '', requestedValue: nodeLoad?.requestedMemoryBytes ?? 0, format: formatBytes }] as track (track.metric)}
+            {@const allocatableValue = parseQuantity(track.allocatable) ?? 0}
+            {@const usedValue = parseQuantity(track.used) ?? 0}
+            {@const note = nodeLoad
+              ? capacityNote(track.requestedValue, usedValue, allocatableValue, track.dimension)
+              : null}
             <div class="flex flex-col gap-1">
-              <p class="flex items-baseline justify-between text-body-small text-on-surface-variant">
+              <p class="flex items-baseline justify-between gap-3 text-body-small text-on-surface-variant">
                 <span>{track.label}</span>
                 <span class="tabular-nums">
-                  {track.metric === 'cpu' ? selectedNode.cpu : selectedNode.memory}
-                  of {track.allocatable}
+                  using {track.used}{#if nodeLoad}
+                    · {track.requested} reserved{/if} · {track.allocatable} allocatable
                 </span>
               </p>
               <UsageChart
                 samples={usage}
                 metric={track.metric}
                 markers={[
-                  { value: parseQuantity(track.allocatable) ?? 0, label: 'Allocatable', tone: 'critical' },
+                  ...(nodeLoad && track.requestedValue > 0
+                    ? [
+                        {
+                          value: track.requestedValue,
+                          label: 'Requested',
+                          tone: 'neutral' as const,
+                        },
+                      ]
+                    : []),
+                  { value: allocatableValue, label: 'Allocatable', tone: 'critical' as const },
                 ]}
-                format={track.metric === 'cpu' ? formatCores : formatBytes}
+                format={track.format}
               />
+              {#if note}
+                <!-- Said only when the three numbers disagree in a way
+                     somebody would act on. A note beside every figure on
+                     every node is one nobody reads by the third node. -->
+                <p
+                  class="text-body-small leading-relaxed {note.tone === 'warn'
+                    ? 'text-gauge-warn'
+                    : 'text-on-surface-variant/70'}"
+                >
+                  {note.text}
+                </p>
+              {/if}
             </div>
           {/each}
+          {#if !nodeLoad}
+            <!-- The requests are the assessment's, and it has not answered
+                 yet for this cluster. Said rather than left as a silently
+                 missing line, because "no reserved figure" and "nothing
+                 reserved" are different facts. -->
+            <p class="text-body-small text-on-surface-variant/60">
+              What the pods here have reserved comes from the cluster assessment, which has not
+              answered yet.
+            </p>
+          {/if}
           <MetricsBackendNote {backend} />
         </div>
       </DetailSection>
