@@ -69,7 +69,7 @@
     servesArgoApplications,
     showsEmptyCopy,
   } from '$lib/helm'
-  import { helmHistory, helmRollback, helmUninstall } from '$lib/kubectl'
+  import { helmGetValues, helmHistory, helmRollback, helmUninstall, helmUpgrade } from '$lib/kubectl'
   import { modal } from '$lib/modal'
   import { helmPayloadKey, helmPayloads } from '$stores/helmPayloads.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
@@ -287,6 +287,24 @@
   )
   const historyCommand = $derived(
     opened ? helmHistory(session.cluster.id, opened.name, commandNamespace) : '',
+  )
+
+  /**
+   * The chart the upgrade command names, when it is known.
+   *
+   * ONLY AFTER A REVISION HAS BEEN READ. Chart name is not a label — it lives
+   * inside the release payload — so until somebody presses Read the command
+   * carries a placeholder there too, rather than a name PodSteer guessed from
+   * the release name. They are routinely the same and routinely not: one
+   * chart installs under as many release names as anybody likes.
+   */
+  const chartName = $derived(payload.facts?.chart.name ?? '')
+
+  const valuesCommand = $derived(
+    opened ? helmGetValues(session.cluster.id, opened.name, commandNamespace) : '',
+  )
+  const upgradeCommand = $derived(
+    opened ? helmUpgrade(session.cluster.id, opened.name, commandNamespace, chartName) : '',
   )
 
   /** Now, for ages — read once per render rather than per row. */
@@ -762,19 +780,35 @@
 
       <h3 class="mt-5 mb-1 text-label-large font-semibold text-on-surface-variant">Commands</h3>
       <p class="mb-2 text-body-small text-on-surface-variant/70">
-        PodSteer does not perform a Helm rollback or uninstall. Both re-render a chart, diff it
-        against what is live, apply the difference and prune what the new manifest drops — that is
-        Helm's own work, and doing it approximately deletes production objects. Run these in your
-        own shell; nothing here executes them.
+        PodSteer does not perform a Helm upgrade, rollback or uninstall. Each one re-renders a
+        chart, diffs it against what is live, applies the difference and prunes what the new
+        manifest drops — that is Helm's own work, and doing it approximately deletes production
+        objects. Run these in your own shell; nothing here executes them.
       </p>
 
       <div class="flex flex-col gap-2">
+        <KubectlHint label="helm get values" command={valuesCommand} />
+        <KubectlHint label="helm upgrade" command={upgradeCommand} />
         <KubectlHint label="helm rollback" command={rollbackCommand} />
         <KubectlHint label="helm history" command={historyCommand} />
         <KubectlHint label="helm uninstall" command={uninstallCommand} />
       </div>
 
+      <!-- THE PAIR IS THE POINT, not the upgrade on its own. Helm 3 does not
+           carry a release's values forward, so an upgrade run without them
+           reverts every value somebody ever set — in a command that reads as
+           if it only changed a version. -->
       <p class="mt-3 text-body-small text-on-surface-variant/70">
+        Run <span class="font-mono">helm get values</span> first: it writes the values you supplied
+        to <span class="font-mono">values.yaml</span>, which the upgrade then reads. Helm does not
+        carry them forward on its own, and an upgrade without them reverts every value you have
+        set.
+      </p>
+
+      <p class="mt-2 text-body-small text-on-surface-variant/70">
+        <span class="font-mono">REPO</span> and <span class="font-mono">VERSION</span> are yours to
+        fill in. A release records the chart's name, never where it was fetched from, and PodSteer
+        reads no chart repositories{chartName ? '' : ' — and no revision has been read yet, so the chart name is a placeholder too'}.
         The rollback command names revision {target}; pick another above to change it.
       </p>
     </div>
