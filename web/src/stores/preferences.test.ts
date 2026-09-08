@@ -20,6 +20,7 @@ import {
   mergeExportedPreferences,
 } from './preferences.svelte'
 import { LAST_APPLIED_ANNOTATION, type CustomColumnSpec } from '$lib/customColumns'
+import { MAX_SAVED_VIEWS } from '$lib/savedViews'
 
 const STORAGE_KEY = 'podsteer.preferences.v1'
 
@@ -662,5 +663,121 @@ describe('the columns that stay put while a table scrolls sideways', () => {
 
     const { preferences: reloaded } = await reimportPreferences()
     expect(reloaded.fixedEdges).toEqual({ select: true, menu: false })
+  })
+})
+
+describe('views somebody named and kept', () => {
+  beforeEach(() => {
+    // Same reason as the block above: happy-dom has no localStorage, and
+    // these tests read back exactly what the store wrote.
+    vi.stubGlobal('localStorage', memoryStorage())
+    preferences.savedViews = []
+  })
+
+  const crashing = {
+    kindId: 'core/v1/pods',
+    namespace: 'kube-system',
+    search: 're:crash',
+    statusFilters: ['crashing'],
+  }
+
+  it('keeps a view and reads it back after a restart', async () => {
+    preferences.saveView('Crashing pods', crashing)
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.savedViews).toEqual([
+      { id: 'crashing-pods', name: 'Crashing pods', ...crashing },
+    ])
+  })
+
+  it('replaces a view saved under a name already in use, in place', () => {
+    // Saving "Crashing pods" twice is somebody correcting the view, not
+    // collecting two of them — and the row must not jump to the bottom of a
+    // list they were reading.
+    preferences.saveView('Crashing pods', crashing)
+    preferences.saveView('Other', { ...crashing, namespace: 'default' })
+    preferences.saveView('crashing PODS', { ...crashing, search: 'oomkilled' })
+
+    expect(preferences.savedViews).toHaveLength(2)
+    expect(preferences.savedViews[0]).toMatchObject({
+      id: 'crashing-pods',
+      name: 'crashing PODS',
+      search: 'oomkilled',
+    })
+  })
+
+  it('refuses a blank name rather than saving something nobody can find', () => {
+    expect(preferences.saveView('   ', crashing)).toBeNull()
+    expect(preferences.savedViews).toEqual([])
+  })
+
+  it('stops at the ceiling, and still lets an existing view be corrected', () => {
+    for (let index = 0; index < MAX_SAVED_VIEWS; index++) {
+      preferences.saveView(`View ${index}`, crashing)
+    }
+
+    expect(preferences.saveView('One more', crashing)).toBeNull()
+    expect(preferences.savedViews).toHaveLength(MAX_SAVED_VIEWS)
+
+    // Replacing is not adding, so the ceiling does not block it.
+    expect(preferences.saveView('View 0', { ...crashing, search: 'changed' })).not.toBeNull()
+    expect(preferences.savedViews[0].search).toBe('changed')
+  })
+
+  it('forgets one, and says nothing about one that was never there', () => {
+    preferences.saveView('Crashing pods', crashing)
+    preferences.deleteView('nothing-like-this')
+    expect(preferences.savedViews).toHaveLength(1)
+
+    preferences.deleteView('crashing-pods')
+    expect(preferences.savedViews).toEqual([])
+  })
+
+  it('drops a stored view that could never be applied', async () => {
+    // Validated on the way in by the same function the settings import uses:
+    // stored preferences outlive the code that wrote them.
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    stored.savedViews = [
+      { id: 'good', name: 'Good', kindId: 'core/v1/pods', namespace: '', search: '', statusFilters: [] },
+      { id: 'no-kind', name: 'Broken' },
+    ]
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.savedViews.map((view) => view.id)).toEqual(['good'])
+  })
+})
+
+describe('clusters pinned to the top of the picker', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', memoryStorage())
+    preferences.pinnedClusters = []
+  })
+
+  it('pins, unpins, and keeps the order they were pinned in', () => {
+    preferences.toggleClusterPin('prod')
+    preferences.toggleClusterPin('staging')
+    expect(preferences.pinnedClusters).toEqual(['prod', 'staging'])
+    expect(preferences.isClusterPinned('prod')).toBe(true)
+
+    preferences.toggleClusterPin('prod')
+    expect(preferences.pinnedClusters).toEqual(['staging'])
+    expect(preferences.isClusterPinned('prod')).toBe(false)
+  })
+
+  it('survives a restart', async () => {
+    preferences.toggleClusterPin('prod')
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.pinnedClusters).toEqual(['prod'])
+  })
+
+  it('keeps only strings out of a hand-edited blob', async () => {
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    stored.pinnedClusters = ['prod', 7, null, 'staging']
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.pinnedClusters).toEqual(['prod', 'staging'])
   })
 })

@@ -21,6 +21,14 @@ import {
   isAlertSound,
   type AlertSeverity,
 } from './alerts.svelte'
+import {
+  MAX_SAVED_VIEWS,
+  cleanViewName,
+  sanitiseViews,
+  savedViewId,
+  type SavedView,
+  type ViewState,
+} from '$lib/savedViews'
 import { customColumnId, normaliseSpecs, type CustomColumnSpec } from '$lib/customColumns'
 import { EDGE_COLUMNS, type EdgeColumn } from '$lib/fixedColumns'
 import {
@@ -481,6 +489,21 @@ interface PersistedShape {
    */
   pinnedKinds: Record<string, string[]>
   /**
+   * Context names the operator pinned on the home page, in the order they
+   * pinned them.
+   *
+   * THE SAME SHAPE OF FACT as pinnedKinds and namespaceByCluster: a context
+   * name is the handle the organiser, the per-cluster switches and every API
+   * here already use, and it says which clusters this operator works with —
+   * not what is in any of them.
+   */
+  pinnedClusters: string[]
+  /**
+   * Views the operator named and kept. See $lib/savedViews for what one holds
+   * and, more to the point, what it deliberately does not.
+   */
+  savedViews: SavedView[]
+  /**
    * Remembered local ports for the port-forward dialog, by the REMOTE port
    * number. See localPortByPortName below for why there are two of these, and
    * the class field for what is deliberately never in either one.
@@ -612,6 +635,8 @@ const DEFAULTS: PersistedShape = {
   showManagedFields: false,
   namespaceByCluster: {},
   pinnedKinds: {},
+  pinnedClusters: [],
+  savedViews: [],
   localPortByRemotePort: {},
   localPortByPortName: {},
   debugImage: DEFAULT_DEBUG_IMAGE,
@@ -694,6 +719,16 @@ export interface ExportedPreferences {
   showManagedFields: boolean
   /** clusterId -> pinned kind ids. A CONTEXT NAME and catalogue ids only. */
   pinnedKinds: Record<string, string[]>
+  /**
+   * The clusters pinned to the top of the picker: CONTEXT NAMES, the same
+   * fact the keys of pinnedKinds above already carry.
+   *
+   * Saved views are deliberately NOT here beside them. A view holds a
+   * namespace and the operator's own search text, and this file's own header
+   * promises no object names appear in it — a promise somebody keeps a shared
+   * file in git on the strength of. See $lib/savedViews.
+   */
+  pinnedClusters: string[]
   localPortByRemotePort: Record<string, number>
   localPortByPortName: Record<string, number>
   debugImage: string
@@ -774,6 +809,10 @@ class Preferences {
 
   /** clusterId -> pinned kind ids, in the order pinned. See the shape above. */
   pinnedKinds = $state<Record<string, string[]>>({})
+  /** Starred context names, in the order they were pinned. */
+  pinnedClusters = $state<string[]>([])
+  /** Named views, in the order they were saved. */
+  savedViews = $state<SavedView[]>([])
 
   /**
    * Remembered local ports for the port-forward dialog.
@@ -1088,6 +1127,76 @@ class Preferences {
       ...this.pinnedKinds,
       [clusterId]: existing.filter((id) => id !== kindId),
     }
+    this.#save()
+  }
+
+  // --- Pinned clusters --------------------------------------------------------
+
+  /** Whether this context is pinned. */
+  isClusterPinned = (clusterId: string): boolean => this.pinnedClusters.includes(clusterId)
+
+  /**
+   * Pins or unpins a cluster.
+   *
+   * Appended rather than sorted, and left where it is when it is already
+   * there — the same rule pinKind follows, and for the same reason: a pin
+   * pressed twice must not reorder the home page under somebody.
+   */
+  toggleClusterPin = (clusterId: string): void => {
+    this.pinnedClusters = this.pinnedClusters.includes(clusterId)
+      ? this.pinnedClusters.filter((id) => id !== clusterId)
+      : [...this.pinnedClusters, clusterId]
+    this.#save()
+  }
+
+  // --- Saved views -----------------------------------------------------------
+
+  /**
+   * Saves the view on screen under a name.
+   *
+   * A NAME ALREADY IN USE OVERWRITES THAT VIEW rather than making a second
+   * one beside it. Saving "Crashing pods" twice is somebody correcting the
+   * view, not collecting two of them, and a menu with two identical names is
+   * one nobody can choose from. Its id and position are kept, so the row does
+   * not jump to the bottom of a list the operator was reading.
+   *
+   * Returns the view, or null when there is nothing to save: a blank name, or
+   * a list already at its ceiling.
+   */
+  saveView = (name: string, current: ViewState): SavedView | null => {
+    const cleaned = cleanViewName(name)
+    if (!cleaned) return null
+
+    const captured = {
+      name: cleaned,
+      kindId: current.kindId,
+      namespace: current.namespace,
+      search: current.search,
+      statusFilters: [...current.statusFilters],
+    }
+
+    const existing = this.savedViews.find(
+      (view) => view.name.toLowerCase() === cleaned.toLowerCase(),
+    )
+    if (existing) {
+      const updated = { ...captured, id: existing.id }
+      this.savedViews = this.savedViews.map((view) => (view.id === existing.id ? updated : view))
+      this.#save()
+      return updated
+    }
+
+    if (this.savedViews.length >= MAX_SAVED_VIEWS) return null
+
+    const view = { ...captured, id: savedViewId(cleaned, this.savedViews.map((v) => v.id)) }
+    this.savedViews = [...this.savedViews, view]
+    this.#save()
+    return view
+  }
+
+  /** Forgets a view. Not present is not an error. */
+  deleteView = (id: string): void => {
+    if (!this.savedViews.some((view) => view.id === id)) return
+    this.savedViews = this.savedViews.filter((view) => view.id !== id)
     this.#save()
   }
 
@@ -1476,6 +1585,7 @@ class Preferences {
     wrapLines: this.wrapLines,
     showManagedFields: this.showManagedFields,
     pinnedKinds: plainCopy(this.pinnedKinds),
+    pinnedClusters: [...this.pinnedClusters],
     localPortByRemotePort: { ...this.localPortByRemotePort },
     localPortByPortName: { ...this.localPortByPortName },
     debugImage: this.debugImage,
@@ -1519,6 +1629,7 @@ class Preferences {
     this.wrapLines = next.wrapLines
     this.showManagedFields = next.showManagedFields
     this.pinnedKinds = plainCopy(next.pinnedKinds)
+    this.pinnedClusters = [...next.pinnedClusters]
     this.localPortByRemotePort = { ...next.localPortByRemotePort }
     this.localPortByPortName = { ...next.localPortByPortName }
     this.debugImage = next.debugImage
@@ -1625,6 +1736,17 @@ class Preferences {
           }
         }
         this.pinnedKinds = cleaned
+      }
+      if (Array.isArray(stored.pinnedClusters)) {
+        this.pinnedClusters = stored.pinnedClusters.filter(
+          (id): id is string => typeof id === 'string',
+        )
+      }
+      // Validated by the same function the settings IMPORT uses, because the
+      // two inputs are the same kind of thing: a list written by a build that
+      // is not this one. See $lib/savedViews.
+      if (stored.savedViews !== undefined) {
+        this.savedViews = sanitiseViews(stored.savedViews)
       }
       if (stored.localPortByRemotePort && typeof stored.localPortByRemotePort === 'object') {
         this.localPortByRemotePort = stored.localPortByRemotePort
@@ -1762,6 +1884,8 @@ class Preferences {
         showManagedFields: this.showManagedFields,
         namespaceByCluster: this.namespaceByCluster,
         pinnedKinds: this.pinnedKinds,
+        pinnedClusters: this.pinnedClusters,
+        savedViews: this.savedViews,
         localPortByRemotePort: this.localPortByRemotePort,
         localPortByPortName: this.localPortByPortName,
         debugImage: this.debugImage,
@@ -1859,6 +1983,7 @@ export const EXPORTED_PREFERENCE_FIELDS = [
   'wrapLines',
   'showManagedFields',
   'pinnedKinds',
+  'pinnedClusters',
   'localPortByRemotePort',
   'localPortByPortName',
   'debugImage',
@@ -2010,6 +2135,7 @@ const PREFERENCE_READERS: {
   wrapLines: asBoolean,
   showManagedFields: asBoolean,
   pinnedKinds: asRecordOf(asStringArray),
+  pinnedClusters: asStringArray,
   localPortByRemotePort: asRecordOf(asNumberIn(1, 65535)),
   localPortByPortName: asRecordOf(asNumberIn(1, 65535)),
   debugImage: asNonEmptyString,
@@ -2119,6 +2245,21 @@ export function mergeExportedPreferences(
       continue
     }
 
+    // A UNION IN MERGE MODE, like expandedCategories and for the same reason:
+    // it is a set of what is ON, and combining two people's pinned clusters is
+    // what merging them means. Anything the incoming file does not mention is
+    // left alone rather than cleared.
+    if (field === 'pinnedClusters') {
+      const arriving = incoming.pinnedClusters
+      if (!arriving) {
+        out[field] = mode === 'replace' ? [...defaults.pinnedClusters] : [...current.pinnedClusters]
+      } else {
+        out[field] =
+          mode === 'replace' ? [...arriving] : [...new Set([...current.pinnedClusters, ...arriving])]
+      }
+      continue
+    }
+
     if (field === 'expandedCategories') {
       const arriving = incoming.expandedCategories
       if (!arriving) {
@@ -2162,6 +2303,7 @@ const PREFERENCE_LABELS: Record<keyof ExportedPreferences, { label: string; unit
   wrapLines: { label: 'Wrap long lines' },
   showManagedFields: { label: 'Show managed fields' },
   pinnedKinds: { label: 'Pinned kinds', unit: 'clusters' },
+  pinnedClusters: { label: 'Pinned clusters', unit: 'clusters' },
   localPortByRemotePort: { label: 'Remembered ports, by remote port', unit: 'ports' },
   localPortByPortName: { label: 'Remembered ports, by port name', unit: 'ports' },
   debugImage: { label: 'Debug container image' },

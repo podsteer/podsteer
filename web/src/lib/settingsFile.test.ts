@@ -185,6 +185,18 @@ describe('what a settings file must never carry', () => {
     // ColumnMenu.svelte. It travels for the reason `columns` already does —
     // it is how somebody arranged a table to read, which is what this
     // document is for.
+    //
+    // `pinnedClusters` was argued for on 2026-09-08 and admitted. It is a
+    // list of kubeconfig CONTEXT NAMES — the same fact the keys of
+    // `pinnedKinds` already carry, and one the header of this file already
+    // discloses in as many words. It says which clusters somebody works with
+    // and nothing about what is inside any of them.
+    //
+    // `savedViews` was argued for on 2026-09-08 and REFUSED. A view holds a
+    // namespace and whatever was typed into the search box, and this file's
+    // header promises that no pod, node, namespace or workload appears in it.
+    // It stays in the webview's own storage. The assertion below states that
+    // refusal as a fact rather than leaving it to this comment.
     expect(Object.keys(preferences.exportable()).sort()).toEqual(
       [
         'alertSounds',
@@ -214,6 +226,7 @@ describe('what a settings file must never carry', () => {
         'nodeShellImage',
         'nodeShellNamespace',
         'pageSize',
+        'pinnedClusters',
         'pinnedKinds',
         'podMeasure',
         'refreshIntervalMs',
@@ -226,6 +239,29 @@ describe('what a settings file must never carry', () => {
         'wrapLines',
       ].sort(),
     )
+  })
+
+  it('keeps saved views out of the file, because they hold a namespace and typed text', () => {
+    // THE HEADER'S PROMISE, ASSERTED. The file says in as many words that no
+    // pod, node, namespace or workload appears in it, and people keep it in
+    // git and send it to colleagues on the strength of that. A saved view
+    // holds a namespace and whatever was typed into the search box, so it
+    // stays in the webview's own storage — where the operator can still read
+    // it and delete it.
+    preferences.saveView('Crashing pods', {
+      kindId: 'core/v1/pods',
+      namespace: 'payments-prod',
+      search: 'checkout-api',
+      statusFilters: ['crashing'],
+    })
+
+    const document = serialiseDocument(buildDocument())
+
+    expect(Object.keys(preferences.exportable())).not.toContain('savedViews')
+    expect(document).not.toContain('payments-prod')
+    expect(document).not.toContain('checkout-api')
+
+    preferences.savedViews = []
   })
 
   it('exports exactly the agreed organisation fields', () => {

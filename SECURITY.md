@@ -232,6 +232,14 @@ macOS, `~/.config/PodSteer` on Linux, `%AppData%\PodSteer` on Windows); and
 display preferences — theme, page size, column widths — which the interface
 keeps in the webview's own storage rather than in that directory.
 
+**Saved views are the one thing in that webview storage that can hold a name
+from a cluster**, and only because you typed it: a view is a namespace and a
+search you chose to keep under a name of your own. Nothing records what you
+opened — the recents list is held in memory and gone when the tab closes — and
+saved views are deliberately left out of the settings export below, so a file
+you keep in git or send to a colleague still carries no object names. Delete
+one from the same menu that saved it.
+
 **The settings file is `settings.json` in that directory**, and it holds only
 what the Go process itself has to act on before or without a window. What is in
 it: how long capacity history is kept and how often it is sampled; the
