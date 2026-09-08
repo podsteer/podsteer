@@ -1,6 +1,6 @@
 <!--
   Comparing the open object against another one — the same cluster, another
-  namespace, another open cluster, or a manifest pasted in from somewhere
+  namespace, another open cluster, a file on this machine, or a manifest pasted in from somewhere
   else.
 
   The LEFT side is always fetched fresh, with `revealSecrets=false`, on every
@@ -11,9 +11,10 @@
   (CLAUDE.md) means THIS read asks for redacted values on its own account,
   regardless of what the tab behind it happens to be showing right now.
 
-  Multi-select does not exist in PodSteer yet, so there is no list-level
-  "compare selected" here or anywhere else — see the TODO beside this
-  dialog's own trigger in DetailDrawer.svelte for where that would go.
+  Opened from two places, with the same two sides either way: the drawer's
+  own overflow menu, where the left-hand side is the object on screen, and
+  the bulk bar when exactly two rows are ticked, which fills both halves in.
+  See BulkActionBar for why two and not any number.
 -->
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
@@ -30,13 +31,23 @@
     listNodes,
     listPods,
     listWorkloads,
+    readTextFile,
     type ResourceKind,
   } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import { workspace } from '$stores/workspace.svelte'
   import { RICH_KIND_IDS, WORKLOAD_KIND_BY_ID } from '$stores/session.svelte'
   import HelpButton from './HelpButton.svelte'
-  import { Activity, ClipboardPaste, FileSearch, GitCompare, TriangleAlert, X } from '@lucide/svelte'
+  import {
+    Activity,
+    ClipboardPaste,
+    FileSearch,
+    FileUp,
+    GitCompare,
+    Loader,
+    TriangleAlert,
+    X,
+  } from '@lucide/svelte'
 
   interface Props {
     open: boolean
@@ -47,12 +58,39 @@
     kind: ResourceKind
     namespace: string
     name: string
+    /**
+     * A right-hand side to start from, in the same cluster and namespace.
+     *
+     * For "compare these two", which is what a list-level comparison is:
+     * ticking two rows and pressing Compare seeds both halves rather than
+     * making somebody retype the name of a row they just ticked. Blank
+     * everywhere else, which leaves the dialog exactly as it was.
+     */
+    againstName?: string
     onclose: () => void
   }
 
-  let { open, icon: Icon, clusterId, kind, namespace, name, onclose }: Props = $props()
+  let {
+    open,
+    icon: Icon,
+    clusterId,
+    kind,
+    namespace,
+    name,
+    againstName = '',
+    onclose,
+  }: Props = $props()
 
-  type Mode = 'object' | 'paste'
+  /**
+   * What the right-hand side is.
+   *
+   * `file` is the one that answers "what changed since the manifest I have in
+   * git" — the question a client without it sends people to `kubectl diff`
+   * for. It reads through SystemAPI.ReadTextFile like the settings import:
+   * the webview cannot open a file itself and does not learn where this one
+   * lives, only its base name and its contents.
+   */
+  type Mode = 'object' | 'file' | 'paste'
   let mode = $state<Mode>('object')
 
   // Seeded to '' rather than to the prop directly: a plain `$state(prop)`
@@ -66,6 +104,10 @@
   let targetNamespace = $state('')
   let targetName = $state('')
   let pasted = $state('')
+  /** What was read from a file, and the name to label the diff with. */
+  let fileText = $state('')
+  let fileName = $state('')
+  let reading = $state(false)
   /** Keeps `status` in the compared manifests — off by default, see
       `$lib/diff`'s own `NormaliseOptions` doc comment for why. */
   let keepStatus = $state(false)
@@ -130,8 +172,10 @@
     if (!open) return
     targetClusterId = clusterId
     targetNamespace = namespace
-    targetName = ''
+    targetName = againstName
     pasted = ''
+    fileText = ''
+    fileName = ''
     mode = 'object'
     keepStatus = false
     error = null
@@ -196,6 +240,32 @@
     void loadSuggestions()
   })
 
+  /**
+   * Reads a manifest off this machine.
+   *
+   * The file is read at the moment it is chosen rather than at Compare, so a
+   * file that cannot be read says so while the picker is still the thing the
+   * operator is thinking about — and so the button below can name what it is
+   * about to compare against.
+   */
+  async function chooseManifestFile(): Promise<void> {
+    reading = true
+    error = null
+    try {
+      const file = await readTextFile(`Choose a manifest to compare with ${name}`)
+      // Cancelling is not a failure and must not wipe a file already chosen:
+      // somebody who opens the picker and changes their mind still has the
+      // comparison they set up.
+      if (!file.content) return
+      fileText = file.content
+      fileName = file.name
+    } catch (cause) {
+      error = toApiError(cause).message
+    } finally {
+      reading = false
+    }
+  }
+
   async function compare(): Promise<void> {
     error = null
 
@@ -212,6 +282,11 @@
         error = `Name the ${kind.singular.toLowerCase()} to compare against.`
         return
       }
+    } else if (mode === 'file') {
+      if (!fileText.trim()) {
+        error = 'Choose a file to compare against.'
+        return
+      }
     } else if (!pasted.trim()) {
       error = 'Paste a manifest to compare against.'
       return
@@ -226,6 +301,9 @@
       if (mode === 'paste') {
         right = pasted
         label = 'Pasted manifest'
+      } else if (mode === 'file') {
+        right = fileText
+        label = fileName || 'File on this machine'
       } else {
         const trimmedName = targetName.trim()
         right = await getManifest(
@@ -332,6 +410,16 @@
           </button>
           <button
             type="button"
+            onclick={() => (mode = 'file')}
+            aria-pressed={mode === 'file'}
+            class="flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-body-medium font-medium transition-colors duration-100
+                   {mode === 'file' ? 'bg-primary/14 text-primary' : 'text-on-surface-variant hover:bg-surface-container'}"
+          >
+            <FileUp class="size-3.5" strokeWidth={1.8} />
+            From a file
+          </button>
+          <button
+            type="button"
             onclick={() => (mode = 'paste')}
             aria-pressed={mode === 'paste'}
             class="flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-body-medium font-medium transition-colors duration-100
@@ -383,6 +471,11 @@
               {/each}
             </datalist>
           </label>
+        {:else if mode === 'file'}
+          <p class="text-body-medium text-on-surface-variant">
+            The file is read as it is — its own `kind` and `apiVersion`, unresolved against any
+            cluster. This is the "what changed since the manifest in my repository" question.
+          </p>
         {:else}
           <p class="text-body-medium text-on-surface-variant">
             Paste a manifest below — its own `kind` and `apiVersion` are shown as they are, unresolved
@@ -411,6 +504,41 @@
           </button>
         </div>
       </div>
+
+      {#if mode === 'file'}
+        <!-- WHAT WAS READ IS NAMED, not shown. A manifest is hundreds of
+             lines and the diff below is where it belongs; what this row has
+             to answer is "which file am I about to compare against", which is
+             its name. -->
+        <div class="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onclick={() => void chooseManifestFile()}
+            disabled={reading}
+            class="state-layer inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm border
+                   border-outline-variant px-3 text-label-large text-on-surface-variant
+                   transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
+                   disabled:opacity-50"
+          >
+            {#if reading}
+              <Loader class="size-3.5 animate-spin" strokeWidth={2} />
+            {:else}
+              <FileUp class="size-3.5" strokeWidth={1.8} />
+            {/if}
+            {fileName ? 'Choose another file' : 'Choose a file…'}
+          </button>
+
+          {#if fileName}
+            <span class="min-w-0 truncate font-mono text-body-medium text-on-surface" data-selectable>
+              {fileName}
+            </span>
+          {:else}
+            <span class="text-body-medium text-on-surface-variant/70">
+              A YAML or JSON manifest on this machine — the one in your repository, typically.
+            </span>
+          {/if}
+        </div>
+      {/if}
 
       {#if mode === 'paste'}
         <textarea

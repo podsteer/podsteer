@@ -161,6 +161,8 @@ import type { TimelineTarget, WriteRecord } from '$lib/timeline'
 
 /** A cluster described by the local kubeconfig. */
 export type Cluster = wails.Cluster
+/** A file the operator picked: its base name, and everything in it. */
+export type TextFile = wails.TextFile
 /** What adding a kubeconfig would change, or did. */
 export type KubeconfigMerge = wails.KubeconfigMerge
 /** A namespace in a connected cluster. */
@@ -1564,15 +1566,16 @@ export function chooseFile(title: string): Promise<string> {
 }
 
 /**
- * Opens the native file picker and returns what the chosen file CONTAINS.
+ * Opens the native file picker and returns what the chosen file CONTAINS,
+ * with the base name to show it back under.
  *
  * Distinct from chooseFile, which returns a path: a path is only useful to a
  * Go method that will act on it, and the webview cannot open a file itself.
- * The settings import is the caller. An empty string means cancelled, as
- * everywhere else here; an empty or oversized file is an error instead, so
- * the two cannot be confused.
+ * The settings import and the compare-against-a-file diff are the callers.
+ * An empty `content` means cancelled, as everywhere else here; an empty or
+ * oversized file is an error instead, so the two cannot be confused.
  */
-export function readTextFile(title: string): Promise<string> {
+export function readTextFile(title: string): Promise<TextFile> {
   return call(() => bindReadTextFile(title))
 }
 

@@ -20,6 +20,11 @@ export const API_ERROR_CODES = [
   'not_found',
   'kubeconfig_unavailable',
   'credential_plugin_missing',
+  // The kubeconfig asks for client-go's legacy `auth-provider`, which
+  // PodSteer does not register by decision (ADR 10). Not the same as the code
+  // above it: one wants a binary installed, this one wants the context
+  // converted to an exec plugin, and the backend's message says which.
+  'legacy_auth_provider',
   'read_only',
   'cancelled',
   'invalid_input',

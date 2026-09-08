@@ -3735,6 +3735,29 @@ export interface Termination {
 }
 
 /**
+ * TextFile is a file the operator chose, as the webview receives it.
+ * 
+ * THE BASE NAME TRAVELS AND THE PATH DOES NOT. A name is what the person who
+ * picked it recognises — "deployment.yaml" beside a diff, the settings file
+ * they just imported — and it is already on their screen in the picker they
+ * used. The directories above it are not: they carry user names, project
+ * names and client names, and SECURITY.md's rule about local paths is that
+ * PodSteer names what moved and never where it lives.
+ */
+export interface TextFile {
+    /**
+     * Name is the file's base name, for showing back to the operator. Empty
+     * when the dialog was cancelled.
+     */
+    "name": string;
+
+    /**
+     * Content is the whole file. Empty when the dialog was cancelled.
+     */
+    "content": string;
+}
+
+/**
  * TimelineEvent is a Kubernetes Event as the SESSION TIMELINE records it, and
  * deliberately not as the Events page renders it.
  * 

@@ -44,6 +44,13 @@ const (
 	CodeNotFound ErrorCode = "not_found"
 	// CodeKubeconfig means the local kubeconfig could not be read.
 	CodeKubeconfig ErrorCode = "kubeconfig_unavailable"
+	// CodeLegacyAuthProvider means the kubeconfig authenticates through
+	// client-go's legacy `auth-provider`, which PodSteer does not register by
+	// decision (ADR 10). Its own code rather than CodeCredentialPlugin: both
+	// are about authentication before the request, and the fix is different —
+	// one installs a binary, the other converts a context.
+	CodeLegacyAuthProvider ErrorCode = "legacy_auth_provider"
+
 	// CodeCredentialPlugin means the kubeconfig authenticates through an
 	// executable that is not on PATH. Its own code rather than unreachable,
 	// because the cluster was never contacted and offering Retry would repeat
@@ -247,6 +254,35 @@ func credentialPluginMessage(err error) string {
 		name)
 }
 
+// legacyAuthProviderMessage says which mechanism the kubeconfig asked for and
+// what to do instead.
+//
+// IT NAMES THE FIX, which is the whole point of the code existing: client-go's
+// own words are `no Auth Provider found for name "oidc"`, which sounds like
+// something PodSteer failed to install. The oidc case gets the specific
+// answer because it is the one people actually hit — every other provider in
+// that mechanism belongs to a cloud whose own plugin already replaced it.
+func legacyAuthProviderMessage(err error) string {
+	provider := quotedName(err.Error())
+
+	if provider == "oidc" {
+		return "This context signs in with the old built-in OIDC provider, which PodSteer does not use: " +
+			"refreshing a token through it rewrites your kubeconfig, and PodSteer does not write that file. " +
+			"Convert the context to an exec credential plugin — kubelogin is the usual one — and PodSteer " +
+			"will run it the same way it runs the AWS, GKE and AKS plugins."
+	}
+
+	name := "an auth-provider"
+	if provider != "" {
+		name = fmt.Sprintf("the %q auth-provider", provider)
+	}
+	return fmt.Sprintf(
+		"This context signs in with %s, a kubectl mechanism deprecated since Kubernetes 1.22 that "+
+			"PodSteer does not carry. Convert the context to an exec credential plugin — the same "+
+			"mechanism the AWS, GKE and AKS plugins already use — and PodSteer will run it.",
+		name)
+}
+
 // quotedName pulls the binary name out of the message the adapter composed.
 func quotedName(message string) string {
 	start := strings.Index(message, `"`)
@@ -285,6 +321,14 @@ func classifyError(err error) (ErrorCode, string) {
 	// somebody to check a VPN for a cluster that was never contacted.
 	case errors.Is(err, ports.ErrCredentialPluginMissing):
 		return CodeCredentialPlugin, credentialPluginMessage(err)
+
+	// AND BEFORE THEM TOO. Left to the transport cases this reads as a
+	// cluster that will not answer, when nothing was ever dialled: the
+	// kubeconfig names an auth mechanism this build does not carry, and the
+	// message has to say which and what replaces it — or the failure looks
+	// like a bug in PodSteer.
+	case errors.Is(err, ports.ErrLegacyAuthProvider):
+		return CodeLegacyAuthProvider, legacyAuthProviderMessage(err)
 
 	// ALSO BEFORE THE RBAC CASES, for the same reason: ErrReadOnly is PodSteer
 	// refusing on its own, before the request ever reaches the API server, so

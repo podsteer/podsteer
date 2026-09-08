@@ -43,6 +43,51 @@ func TestClassifyErrorPrefersThePluginOverTheTransport(t *testing.T) {
 	}
 }
 
+func TestClassifyErrorNamesTheFixForALegacyAuthProvider(t *testing.T) {
+	// client-go's own words are `no Auth Provider found for name "oidc"`,
+	// which reads as something PodSteer failed to install. It is a decision
+	// (ADR 10): refreshing through that provider rewrites the operator's
+	// kubeconfig, which PodSteer does not do — so the message has to carry
+	// the replacement, not the refusal.
+	err := fmt.Errorf("connecting: %w: %q: %w",
+		ports.ErrLegacyAuthProvider, "oidc",
+		fmt.Errorf(`no Auth Provider found for name "oidc"`))
+
+	code, message := classifyError(err)
+
+	if code != CodeLegacyAuthProvider {
+		t.Fatalf("code %q, want %q", code, CodeLegacyAuthProvider)
+	}
+	if !strings.Contains(message, "kubelogin") {
+		t.Fatalf("message does not name the replacement: %q", message)
+	}
+	// And it must not read as PodSteer being broken or the cluster being
+	// unreachable — nothing was dialled.
+	if strings.Contains(strings.ToLower(message), "unreachable") {
+		t.Fatalf("message reads as a transport failure: %q", message)
+	}
+}
+
+func TestClassifyErrorExplainsAnyOtherLegacyAuthProvider(t *testing.T) {
+	// The oidc case is the one people hit; the others still need an answer
+	// rather than client-go's sentence.
+	err := fmt.Errorf("connecting: %w: %q: %w",
+		ports.ErrLegacyAuthProvider, "azure",
+		fmt.Errorf(`no Auth Provider found for name "azure"`))
+
+	code, message := classifyError(err)
+
+	if code != CodeLegacyAuthProvider {
+		t.Fatalf("code %q, want %q", code, CodeLegacyAuthProvider)
+	}
+	if !strings.Contains(message, "azure") {
+		t.Fatalf("message does not name the provider: %q", message)
+	}
+	if !strings.Contains(message, "exec credential plugin") {
+		t.Fatalf("message does not name the mechanism that replaces it: %q", message)
+	}
+}
+
 func TestClassifyErrorDistinguishesADisruptionBudgetFromForbidden(t *testing.T) {
 	// A PodDisruptionBudget refusal must read as its own code, not as
 	// forbidden — the two send an operator to fix opposite things.

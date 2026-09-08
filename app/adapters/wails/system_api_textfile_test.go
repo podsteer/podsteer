@@ -34,8 +34,18 @@ func TestReadTextFileReturnsTheChosenFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadTextFile() error = %v", err)
 	}
-	if got != want {
-		t.Fatalf("ReadTextFile() = %q, want %q", got, want)
+	if got.Content != want {
+		t.Fatalf("ReadTextFile().Content = %q, want %q", got.Content, want)
+	}
+	// THE BASE NAME AND NOTHING ABOVE IT. The name is what the operator
+	// recognises beside a diff; the directories above it carry user, project
+	// and client names, and SECURITY.md's rule is that PodSteer names what
+	// moved and never where it lives.
+	if got.Name != "podsteer-settings.json" {
+		t.Fatalf("ReadTextFile().Name = %q, want the base name alone", got.Name)
+	}
+	if strings.ContainsAny(got.Name, `/\`) {
+		t.Fatalf("ReadTextFile().Name = %q, want no directory in it", got.Name)
 	}
 }
 
@@ -49,8 +59,8 @@ func TestReadTextFileCancelledIsNotAnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadTextFile() error = %v, want nil — cancelling is not a failure", err)
 	}
-	if got != "" {
-		t.Fatalf("ReadTextFile() = %q, want empty", got)
+	if got.Content != "" || got.Name != "" {
+		t.Fatalf("ReadTextFile() = %+v, want the zero value", got)
 	}
 }
 

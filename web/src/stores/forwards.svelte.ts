@@ -142,6 +142,30 @@ class Forwards {
     return this.active.find((forward) => forward.id === id)
   }
 
+  /**
+   * The Service a forward was started for, if it was started for one.
+   *
+   * The REVERSE of forService, and it exists for the kubectl line: a forward
+   * PodSteer opened onto a Service is `kubectl port-forward service/x`, not
+   * `pod/<whichever pod answered today>`, and only this side knows which of
+   * the two the operator asked for.
+   */
+  serviceOf(id: string): { service: string; servicePort: number } | null {
+    for (const [key, forwardId] of Object.entries(this.#byService)) {
+      if (forwardId !== id) continue
+      // The key is `${cluster}/${namespace}/service/${service}/${port}` —
+      // built by serviceForwardKey, and read back from the right rather than
+      // split, because a namespace cannot contain a slash but nothing here
+      // should depend on a cluster context name not containing one.
+      const parts = key.split('/')
+      const port = Number(parts[parts.length - 1])
+      const service = parts[parts.length - 2]
+      if (!service || !Number.isFinite(port)) return null
+      return { service, servicePort: port }
+    }
+    return null
+  }
+
   /** Whether a start or stop for this Service port is in flight. */
   isServiceBusy(
     cluster: string,
