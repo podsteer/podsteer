@@ -343,130 +343,6 @@
 </script>
 
 
-{#snippet box(node: LaidOutNode, half: { w: number; h: number })}
-                <!-- The hit area is the whole object, icon and text together,
-                     which is also what the lines are routed between. -->
-                <rect
-                  x={-half.w} y={-half.h} width={node.width} height={node.height}
-                  rx="8"
-                  class="fill-transparent {hovered === node.id
-                    ? 'fill-surface-container-high/60'
-                    : ''}"
-                />
-
-                <!--
-                  A MISSING OBJECT IS OUTLINED, and dashed deliberately: a
-                  dashed border is the one convention that already reads as
-                  "not really there", which is exactly what a reference to
-                  something nobody created is. Colour alone would say only
-                  "unwell", and an object that exists and is failing needs
-                  opposite advice from one that was named and is absent.
-                -->
-                {#if node.missing}
-                  <rect
-                    x={-half.w} y={-half.h} width={node.width} height={node.height}
-                    rx="8"
-                    fill="none"
-                    stroke-width="1.5"
-                    stroke-dasharray="4 4"
-                    class="stroke-gauge-critical"
-                  />
-                {/if}
-
-                <!--
-                  The qualifier the box has no room for a line of: a pod's
-                  phase, "not found", how many of a folded set are. Rendered as
-                  a title so it costs no height and is read out by assistive
-                  technology alongside the label.
-                -->
-                {#if node.detail}
-                  <title>{node.name} — {node.detail}</title>
-                {/if}
-
-                <!--
-                  A FOLDED SET IS DRAWN AS A STACK. Two offset outlines behind
-                  the icon say "more than one" before the count is read, and
-                  the +/- says it opens. Without that it is a box like any
-                  other, and somebody would take "30 Pods" for the name of a
-                  thing rather than a summary of thirty.
-                -->
-                {#if foldedByID.has(node.id)}
-                  <g
-                    transform="translate(-12 {-half.h + 6})"
-                    fill="none"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    class="{node.healthy
-                      ? 'stroke-gauge-normal'
-                      : 'stroke-gauge-critical'} opacity-30"
-                  >
-                    <g transform="translate(5 5)">{@html iconGeometry(node.kind)}</g>
-                  </g>
-                  <g
-                    transform="translate(-12 {-half.h + 6})"
-                    fill="none"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    class="{node.healthy
-                      ? 'stroke-gauge-normal'
-                      : 'stroke-gauge-critical'} opacity-60"
-                  >
-                    <g transform="translate(2.5 2.5)">{@html iconGeometry(node.kind)}</g>
-                  </g>
-                {/if}
-
-                <g
-                  transform="translate(-12 {-half.h + 6})"
-                  fill="none"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  class={node.healthy
-                    ? node.subject
-                      ? 'stroke-primary'
-                      : 'stroke-gauge-normal'
-                    : 'stroke-gauge-critical'}
-                >
-                  {@html iconGeometry(node.kind)}
-                </g>
-
-                <!-- Kind above name. A map of twenty boxes is read by shape
-                     first: the kind says what a thing is, the name says which
-                     one, and that is the order they are needed in. -->
-                <text
-                  y={-half.h + 44}
-                  text-anchor="middle"
-                  class="fill-on-surface text-[11px] font-semibold"
-                >
-                  {node.apiKind || 'Container'}
-                </text>
-                <text
-                  y={-half.h + 58}
-                  text-anchor="middle"
-                  class="fill-on-surface-variant text-[10px]"
-                >
-                  {fitText(node.name, 26)}
-                </text>
-
-                {#if foldedByID.has(node.id)}
-                  <!--
-                    Only a folded set carries the control. On an expanded set
-                    it would be a badge per member, and the set's own box is
-                    the way back — clicking it again closes it.
-                  -->
-                  <g transform="translate({half.w - 16} {-half.h + 10})">
-                    <circle r="8" class="fill-surface-container-high stroke-outline-variant" />
-                    <path
-                      d="M -3.5 0 H 3.5 M 0 -3.5 V 3.5"
-                      stroke-width="1.6"
-                      stroke-linecap="round"
-                      class="stroke-on-surface"
-                    />
-                  </g>
-                {/if}
-{/snippet}
 
 <div class="flex h-full flex-col">
   <PaneToolbar>
@@ -546,6 +422,144 @@
     >
       {#if plan}
         <svg class="size-full select-none" aria-label="Dependency map">
+          <!--
+            THE NODE SNIPPET IS DECLARED HERE, INSIDE THE <svg>, AND THAT IS
+            NOT A TIDINESS CHOICE. Svelte decides an element's XML namespace
+            from where its template is WRITTEN, not from where it is
+            rendered: declared at the component's top level, every <rect>,
+            <path> and <text> below was created as an HTML element, and a
+            browser draws nothing at all for an HTMLUnknownElement called
+            "rect". The map rendered its edges — written inline in this svg —
+            and every node was invisible: no box, no icon, no label.
+
+            There is a test for it (MapNamespace.test.ts) asserting the
+            namespace rather than the appearance, because appearance is what
+            nothing here can see.
+          -->
+          {#snippet box(node: LaidOutNode, half: { w: number; h: number })}
+                          <!-- The hit area is the whole object, icon and text together,
+                               which is also what the lines are routed between. -->
+                          <rect
+                            x={-half.w} y={-half.h} width={node.width} height={node.height}
+                            rx="8"
+                            class="fill-transparent {hovered === node.id
+                              ? 'fill-surface-container-high/60'
+                              : ''}"
+                          />
+
+                          <!--
+                            A MISSING OBJECT IS OUTLINED, and dashed deliberately: a
+                            dashed border is the one convention that already reads as
+                            "not really there", which is exactly what a reference to
+                            something nobody created is. Colour alone would say only
+                            "unwell", and an object that exists and is failing needs
+                            opposite advice from one that was named and is absent.
+                          -->
+                          {#if node.missing}
+                            <rect
+                              x={-half.w} y={-half.h} width={node.width} height={node.height}
+                              rx="8"
+                              fill="none"
+                              stroke-width="1.5"
+                              stroke-dasharray="4 4"
+                              class="stroke-gauge-critical"
+                            />
+                          {/if}
+
+                          <!--
+                            The qualifier the box has no room for a line of: a pod's
+                            phase, "not found", how many of a folded set are. Rendered as
+                            a title so it costs no height and is read out by assistive
+                            technology alongside the label.
+                          -->
+                          {#if node.detail}
+                            <title>{node.name} — {node.detail}</title>
+                          {/if}
+
+                          <!--
+                            A FOLDED SET IS DRAWN AS A STACK. Two offset outlines behind
+                            the icon say "more than one" before the count is read, and
+                            the +/- says it opens. Without that it is a box like any
+                            other, and somebody would take "30 Pods" for the name of a
+                            thing rather than a summary of thirty.
+                          -->
+                          {#if foldedByID.has(node.id)}
+                            <g
+                              transform="translate(-12 {-half.h + 6})"
+                              fill="none"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              class="{node.healthy
+                                ? 'stroke-gauge-normal'
+                                : 'stroke-gauge-critical'} opacity-30"
+                            >
+                              <g transform="translate(5 5)">{@html iconGeometry(node.kind)}</g>
+                            </g>
+                            <g
+                              transform="translate(-12 {-half.h + 6})"
+                              fill="none"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              class="{node.healthy
+                                ? 'stroke-gauge-normal'
+                                : 'stroke-gauge-critical'} opacity-60"
+                            >
+                              <g transform="translate(2.5 2.5)">{@html iconGeometry(node.kind)}</g>
+                            </g>
+                          {/if}
+
+                          <g
+                            transform="translate(-12 {-half.h + 6})"
+                            fill="none"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            class={node.healthy
+                              ? node.subject
+                                ? 'stroke-primary'
+                                : 'stroke-gauge-normal'
+                              : 'stroke-gauge-critical'}
+                          >
+                            {@html iconGeometry(node.kind)}
+                          </g>
+
+                          <!-- Kind above name. A map of twenty boxes is read by shape
+                               first: the kind says what a thing is, the name says which
+                               one, and that is the order they are needed in. -->
+                          <text
+                            y={-half.h + 44}
+                            text-anchor="middle"
+                            class="fill-on-surface text-[11px] font-semibold"
+                          >
+                            {node.apiKind || 'Container'}
+                          </text>
+                          <text
+                            y={-half.h + 58}
+                            text-anchor="middle"
+                            class="fill-on-surface-variant text-[10px]"
+                          >
+                            {fitText(node.name, 26)}
+                          </text>
+
+                          {#if foldedByID.has(node.id)}
+                            <!--
+                              Only a folded set carries the control. On an expanded set
+                              it would be a badge per member, and the set's own box is
+                              the way back — clicking it again closes it.
+                            -->
+                            <g transform="translate({half.w - 16} {-half.h + 10})">
+                              <circle r="8" class="fill-surface-container-high stroke-outline-variant" />
+                              <path
+                                d="M -3.5 0 H 3.5 M 0 -3.5 V 3.5"
+                                stroke-width="1.6"
+                                stroke-linecap="round"
+                                class="stroke-on-surface"
+                              />
+                            </g>
+                          {/if}
+          {/snippet}
           <defs>
             <!-- One marker per state rather than one recoloured: an SVG marker
                  cannot inherit the stroke of the path that uses it. -->
@@ -568,6 +582,7 @@
             -->
             {#each plan.edges as edge (edge.id)}
               <path
+                data-edge
                 d={edge.path}
                 fill="none"
                 stroke-width="1.25"
