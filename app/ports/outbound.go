@@ -811,6 +811,27 @@ type ManagementPort interface {
 	// instead, for the same container-by-name merge.
 	SetImage(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name, container, image string, initContainer bool) error
 
+	// ContainerResizeSpec reads one container's declared CPU and memory and
+	// its resizePolicy, for planning an in-place change. Read from the pod
+	// rather than from a list row: the projection carries usage, not requests,
+	// and the policy — which decides whether applying a change restarts the
+	// container — is not in it at all.
+	ContainerResizeSpec(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string) (domain.ContainerResize, error)
+
+	// ResizePod changes a running container's CPU and memory in place, through
+	// the pods/resize subresource — the only door: a pod's containers are
+	// otherwise immutable, and patching the pod itself is refused.
+	//
+	// A cluster without the subresource (older than 1.33, or the feature gate
+	// off) answers 404, which this must report as
+	// ErrResizeUnsupported rather than as a missing pod.
+	//
+	// It does NOT wait for the resize to be applied and does not report that
+	// it was: the kubelet may apply it now, defer it, or call it infeasible,
+	// and which of those happened is a condition on the pod that the
+	// assessment already reads.
+	ResizePod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, plan domain.ResizePlan) error
+
 	// PromoteRollout advances a paused Argo Rollouts Rollout by one step, the
 	// way `kubectl argo rollouts promote NAME` does.
 	//

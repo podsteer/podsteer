@@ -165,6 +165,16 @@ var (
 	// is present means the subresource, not the object, is what was missing.
 	ErrEphemeralContainersUnsupported = errors.New("this cluster does not support ephemeral debug containers")
 
+	// ErrResizeUnsupported means the API server would not accept a write to a
+	// pod's resize subresource.
+	//
+	// The same shape as the sentinel above and told apart the same way: the
+	// subresource is absent before Kubernetes 1.33, or where the
+	// InPlacePodVerticalScaling gate is off, and its 404 would otherwise send
+	// an operator to look for a pod that is right there. The adapter reads the
+	// pod after the failure to tell the two apart.
+	ErrResizeUnsupported = errors.New("this cluster does not support resizing a running pod")
+
 	// ErrManifestRejected means the API server accepted the REQUEST but
 	// declined the OBJECT (HTTP 422/Invalid) — a schema validation failure,
 	// or an admission webhook's rejection. Distinct from

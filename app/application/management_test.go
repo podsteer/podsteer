@@ -1238,3 +1238,116 @@ func TestEverySingleObjectWriteRefusesAReadOnlyCluster(t *testing.T) {
 		t.Fatalf("port recorded calls %v, want none — a refused write must never reach the adapter", calls)
 	}
 }
+
+// TestResizeContainerPlansAgainstThePodRatherThanTheDialog is the reason the
+// plan is made in the service and not in the interface: between opening a
+// dialog and pressing its button the container can be resized by somebody
+// else, by a VPA, or restarted with a different spec — and every refusal
+// PlanResize makes is only true against the CURRENT figures.
+func TestResizeContainerPlansAgainstThePodRatherThanTheDialog(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{
+		resizeSpec: domain.ContainerResize{
+			Name:          "app",
+			CPURequest:    "500m",
+			MemoryRequest: "512Mi",
+			MemoryLimit:   "1Gi",
+		},
+	}
+	service := newManagementService(t, management, application.NewRegistry())
+
+	plan, err := service.ResizeContainer(context.Background(), "dev", "web", "api-0", domain.ResizeRequest{
+		Container:  "app",
+		CPURequest: "750m",
+	})
+	if err != nil {
+		t.Fatalf("ResizeContainer() error = %v", err)
+	}
+
+	if !management.resizeSpecCalled {
+		t.Error("the container was not read before it was planned against")
+	}
+	if plan.CPURequest != "750m" {
+		t.Errorf("plan.CPURequest = %q, want the typed one", plan.CPURequest)
+	}
+	// ONLY WHAT WAS TYPED IS SENT. Carrying the current figures forward would
+	// rewrite three fields nobody touched.
+	if management.resizePlan.MemoryRequest != "" || management.resizePlan.MemoryLimit != "" {
+		t.Errorf("sent plan = %+v, want the untouched figures left empty", management.resizePlan)
+	}
+	if management.resizePod != "api-0" || management.resizeNS != "web" {
+		t.Errorf("sent to %s/%s, want web/api-0", management.resizeNS, management.resizePod)
+	}
+}
+
+func TestResizeContainerRefusesOnAReadOnlyCluster(t *testing.T) {
+	t.Parallel()
+
+	const id domain.ClusterID = "prod"
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly(id, true)
+
+	management := &fakeManagementPort{}
+	service := newManagementService(t, management, registry)
+
+	_, err := service.ResizeContainer(context.Background(), id, "web", "api-0", domain.ResizeRequest{
+		Container:  "app",
+		CPURequest: "750m",
+	})
+	if !errors.Is(err, ports.ErrReadOnly) {
+		t.Fatalf("err = %v, want ErrReadOnly", err)
+	}
+	// BEFORE THE READ, not merely before the write: a refused cluster is not
+	// asked anything at all.
+	if management.resizeSpecCalled || management.resizeCalled {
+		t.Error("a read-only cluster was contacted")
+	}
+}
+
+func TestResizeContainerCarriesTheRestartWarningBack(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{
+		resizeSpec: domain.ContainerResize{
+			Name:              "app",
+			MemoryRequest:     "512Mi",
+			RestartsForMemory: true,
+		},
+	}
+	service := newManagementService(t, management, application.NewRegistry())
+
+	plan, err := service.ResizeContainer(context.Background(), "dev", "web", "api-0", domain.ResizeRequest{
+		Container:     "app",
+		MemoryRequest: "1Gi",
+	})
+	if err != nil {
+		t.Fatalf("ResizeContainer() error = %v", err)
+	}
+	if !plan.Restarts || plan.RestartReason != "memory" {
+		t.Errorf("plan = %+v, want the restart named", plan)
+	}
+}
+
+func TestResizeContainerRefusesLocallyWithoutWriting(t *testing.T) {
+	t.Parallel()
+
+	management := &fakeManagementPort{
+		resizeSpec: domain.ContainerResize{Name: "app", CPURequest: "500m"},
+	}
+	service := newManagementService(t, management, application.NewRegistry())
+
+	// The same figure that is already set: a write that changes nothing still
+	// records a change in managedFields, so it is refused here.
+	_, err := service.ResizeContainer(context.Background(), "dev", "web", "api-0", domain.ResizeRequest{
+		Container:  "app",
+		CPURequest: "500m",
+	})
+	if !errors.Is(err, domain.ErrResizeNoChange) {
+		t.Fatalf("err = %v, want ErrResizeNoChange", err)
+	}
+	if management.resizeCalled {
+		t.Error("a no-op resize reached the cluster")
+	}
+}

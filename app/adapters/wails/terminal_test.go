@@ -503,6 +503,14 @@ func (stubManagementPort) EvictPod(context.Context, domain.ClusterID, domain.Nam
 func (stubManagementPort) DrainNode(context.Context, domain.ClusterID, string, domain.DrainOptions) (domain.DrainReport, error) {
 	return domain.DrainReport{}, nil
 }
+func (stubManagementPort) ContainerResizeSpec(context.Context, domain.ClusterID, domain.NamespaceName, string, string) (domain.ContainerResize, error) {
+	return domain.ContainerResize{}, nil
+}
+
+func (stubManagementPort) ResizePod(context.Context, domain.ClusterID, domain.NamespaceName, string, domain.ResizePlan) error {
+	return nil
+}
+
 func (stubManagementPort) SetImage(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, string, string, bool) error {
 	return nil
 }

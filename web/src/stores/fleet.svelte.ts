@@ -27,17 +27,22 @@
 import {
   listFleetEvents,
   listFleetPods,
+  listFleetTable,
   listFleetWorkloads,
   type ClusterEvents,
   type ClusterPods,
+  type ClusterTable,
   type ClusterWorkloads,
   type K8sEvent,
   type Pod,
+  type TableColumn,
+  type TableRow,
   type Workload,
 } from '$lib/api/client'
 import {
   flattenFleet,
   mergeFleet,
+  mergeFleetTable,
   stripModel,
   type ClusterAnswer,
   type ClusterRead,
@@ -65,6 +70,21 @@ function asRead<T>(
   }
 }
 
+/**
+ * The kind the "Any kind" tab is pointed at.
+ *
+ * GROUP AND RESOURCE ADDRESS IT — a kind id carries a version and a version
+ * is per-cluster — while `kind` and `title` are what the interface says about
+ * it: the Kubernetes Kind is what the drawer resolves a row by, and a generic
+ * row cannot say what it is on its own.
+ */
+export interface FleetKind {
+  group: string
+  resource: string
+  kind: string
+  title: string
+}
+
 class Fleet {
   /** Which merged table is showing. Remembered across tabs, like the rows. */
   tab = $state<FleetTab>('pods')
@@ -81,6 +101,30 @@ class Fleet {
   workloads = $state.raw<ClusterAnswer<Workload>[]>([])
   events = $state.raw<ClusterAnswer<K8sEvent>[]>([])
 
+  /**
+   * The rows of the chosen arbitrary kind, and the columns each cluster
+   * printed for them.
+   *
+   * TWO PIECES OF STATE RATHER THAN ONE, because they go stale together but
+   * arrive apart: mergeFleet keeps a slow cluster's previous rows, and those
+   * rows are positioned against the columns that came WITH them. Keeping the
+   * columns per cluster — and only replacing a cluster's set when that
+   * cluster answers with one — is what stops a kept row being re-indexed
+   * against somebody else's headings.
+   */
+  tableRows = $state.raw<ClusterAnswer<TableRow>[]>([])
+  tableColumns = $state.raw<Record<string, TableColumn[]>>({})
+
+  /**
+   * Which kind the "Any kind" tab is showing: its group and resource, and
+   * the title to put above it.
+   *
+   * Null until something is chosen, which is what the tab shows a picker for
+   * rather than guessing at a first kind — a cross-cluster list of whatever
+   * sorted first is a read of six clusters nobody asked for.
+   */
+  tableKind = $state<FleetKind | null>(null)
+
   status = $state<LoadStatus>('idle')
   /** When the last read landed, in ms since the epoch. */
   lastReadAt = $state<number | null>(null)
@@ -94,6 +138,9 @@ class Fleet {
   readonly workloadRows = $derived(flattenFleet(this.workloads))
   readonly eventRows = $derived(flattenFleet(this.events))
 
+  /** The chosen kind's rows and columns, merged across clusters. */
+  readonly table = $derived(mergeFleetTable(this.tableRows, this.tableColumns))
+
   /** The status strip for the table showing. Ages are measured from the
       last read rather than the wall clock so the strip is a pure function
       of state: it changes when a read lands, not every second. */
@@ -106,6 +153,8 @@ class Fleet {
         return stripModel(this.workloads, now)
       case 'events':
         return stripModel(this.events, now)
+      case 'kinds':
+        return stripModel(this.tableRows, now)
     }
   })
 
@@ -120,6 +169,19 @@ class Fleet {
    * the way it reports any other failed refresh. A cluster that refused or
    * did not answer is not a throw: it is a chip in the strip.
    */
+  /**
+   * Points the "Any kind" tab at a kind, and forgets the last one's rows.
+   *
+   * CLEARED RATHER THAN LEFT TO BE REPLACED: the next read has not happened
+   * yet, and one tick of the previous kind's rows under the new kind's name
+   * is a table that is wrong rather than merely old.
+   */
+  chooseKind = (kind: FleetKind | null): void => {
+    this.tableKind = kind
+    this.tableRows = []
+    this.tableColumns = {}
+  }
+
   refresh = async (namespace: string): Promise<void> => {
     const ids = this.openClusters()
     const tab = this.tab
@@ -161,6 +223,34 @@ class Fleet {
           this.events = mergeFleet(
             this.events,
             answers.map((answer: ClusterEvents) => asRead(answer, answer.events)),
+            Date.now(),
+          )
+          break
+        }
+        case 'kinds': {
+          const kind = this.tableKind
+          // Nothing chosen is not an empty read: it is no read at all, and
+          // six clusters are not asked anything until somebody names a kind.
+          if (!kind) {
+            this.status = 'ready'
+            return
+          }
+
+          const answers = await listFleetTable(ids, kind.group, kind.resource, namespace)
+          if (generation !== this.#generation) return
+
+          // A cluster's columns are replaced only when that cluster answered
+          // with some — see tableColumns for why they must stay with the rows
+          // they came from.
+          const columns = { ...this.tableColumns }
+          for (const answer of answers) {
+            if (answer.columns?.length) columns[answer.cluster] = answer.columns
+          }
+          this.tableColumns = columns
+
+          this.tableRows = mergeFleet(
+            this.tableRows,
+            answers.map((answer: ClusterTable) => asRead(answer, answer.rows)),
             Date.now(),
           )
           break

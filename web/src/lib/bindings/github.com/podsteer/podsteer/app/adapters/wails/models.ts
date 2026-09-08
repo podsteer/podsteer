@@ -833,6 +833,31 @@ export interface ClusterShellReuse {
 }
 
 /**
+ * ClusterTable is one cluster's share of a cross-cluster read of an
+ * ARBITRARY kind.
+ * 
+ * Its own struct rather than one of the three above, and the difference is
+ * the columns: a typed row has the same shape everywhere, and a table's
+ * columns are whatever the API server's printer said on THAT cluster. They
+ * travel beside that cluster's rows so nothing has to assume two clusters
+ * printed the same set — a CRD at two versions routinely does not.
+ */
+export interface ClusterTable {
+    "cluster": string;
+    "status": string;
+    "reason": string;
+    "missing": string[] | null;
+
+    /**
+     * Columns and Rows are this cluster's own. Both are empty for a cluster
+     * that answered nothing — including one that does not serve the kind,
+     * which is `unserved` rather than a failure.
+     */
+    "columns": TableColumn[] | null;
+    "rows": TableRow[] | null;
+}
+
+/**
  * ClusterWorkloads is one cluster's share of a cross-cluster workload list.
  */
 export interface ClusterWorkloads {
@@ -3037,6 +3062,36 @@ export interface ReleaseSupport {
      * verdict can say it is an old table rather than a broken one.
      */
     "compiledAt": string;
+}
+
+/**
+ * ResizeResult is what a resize ASKED FOR, handed back so the interface can
+ * say it.
+ * 
+ * NOT WHAT HAPPENED. The kubelet decides that — it may change the cgroup
+ * immediately, defer the change until the node has room, or call it
+ * infeasible — and the answer arrives as a condition on the pod, which the
+ * assessment reads and reports as a finding. A result that claimed the resize
+ * was applied would be claiming the kubelet's answer before it gave one.
+ * 
+ * Restarts is the fact worth carrying back: it is decided by the container's
+ * own resizePolicy, which most people have never read, and it is the
+ * difference between changing a number and restarting a database.
+ */
+export interface ResizeResult {
+    "container": string;
+    "cpuRequest": string;
+    "cpuLimit": string;
+    "memoryRequest": string;
+    "memoryLimit": string;
+    "restarts": boolean;
+
+    /**
+     * RestartReason names the resource whose policy forces the restart —
+     * "cpu" or "memory" — for the sentence the interface shows. Empty when
+     * nothing restarts.
+     */
+    "restartReason": string;
 }
 
 /**

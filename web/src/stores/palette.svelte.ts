@@ -430,6 +430,26 @@ class CommandPaletteStore {
               kindId: RICH_KIND_IDS.events,
               run: () => openInCluster(fleetRowTarget('events', event)),
             }))
+          case 'kinds': {
+            // The chosen kind's rows, from the same merged table on screen.
+            // The KIND comes from the picker rather than from a row: a
+            // generic row does not know what it is, which is the one thing
+            // opening it needs.
+            const chosen = fleet.tableKind
+            if (!chosen) return []
+            return fleet.table.rows.map((row) => ({
+              label: row.name,
+              detail: `${row.cluster}${row.namespace ? ` · ${row.namespace}` : ''}`,
+              kindId,
+              run: () =>
+                openInCluster({
+                  cluster: row.cluster,
+                  kind: chosen.kind,
+                  name: row.name,
+                  namespace: row.namespace,
+                }),
+            }))
+          }
         }
       }
       default:

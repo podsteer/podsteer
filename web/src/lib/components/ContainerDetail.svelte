@@ -44,7 +44,8 @@
   import ForwardKubectl from './ForwardKubectl.svelte'
   import PortForwardStart from './PortForwardStart.svelte'
   import FileTransfer from './FileTransfer.svelte'
-  import { EyeOff, Loader, Unplug } from '@lucide/svelte'
+  import ResizeDialog from './ResizeDialog.svelte'
+  import { EyeOff, Loader, Scaling, Unplug } from '@lucide/svelte'
 
   interface Props {
     /** The pod this container belongs to, for forwarding its ports. */
@@ -81,6 +82,26 @@
     canOpen?: ServesKind
     /** Follows a reference to the object it names. */
     onopen?: OpenObject
+    /** Whether this cluster refuses PodSteer's own writes. The resize control
+     * is absent when it does, matching how the rest of the panel treats a
+     * write it will not make. */
+    isReadOnly?: boolean
+    /** The group's name when this cluster is marked production, for the
+     * banner the resize dialog shows. */
+    productionGroup?: string | null
+    /** Called after a resize is accepted, so the panel re-reads the pod
+     * rather than waiting for the next tick to show the new figures. */
+    onchanged?: () => void
+    /**
+     * Whether this container can be resized in place.
+     *
+     * FALSE FOR AN EPHEMERAL CONTAINER, and that is Kubernetes' rule rather
+     * than a choice made here: an ephemeral container may not declare
+     * resources at all, so there is nothing to change and the API server
+     * refuses the attempt. Offering the control and letting it fail would be
+     * a button that promises something the cluster forbids.
+     */
+    resizable?: boolean
   }
 
   let {
@@ -95,6 +116,10 @@
     context = 'pod',
     canOpen,
     onopen,
+    isReadOnly = false,
+    productionGroup = null,
+    onchanged = () => {},
+    resizable = true,
   }: Props = $props()
 
   const isTemplate = $derived(context === 'template')
@@ -123,6 +148,24 @@
    * carries the digest-resolved reference actually running, which differs
    * from the spec whenever a mutable tag has been re-pushed underneath.
    */
+  let resizeOpen = $state(false)
+
+  /**
+   * The four figures as the SPEC declares them, for the resize dialog's
+   * placeholders.
+   *
+   * From the spec rather than from `status.requests`, which is a formatted
+   * sentence for a row ("cpu: 500m, memory: 512Mi") rather than four values —
+   * and the dialog puts each one in its own box. Blank where the container
+   * declares none, which is a BestEffort container and a real thing to see.
+   */
+  const declaredResources = $derived({
+    cpuRequest: String((spec.resources?.requests?.cpu as string) ?? ''),
+    cpuLimit: String((spec.resources?.limits?.cpu as string) ?? ''),
+    memoryRequest: String((spec.resources?.requests?.memory as string) ?? ''),
+    memoryLimit: String((spec.resources?.limits?.memory as string) ?? ''),
+  })
+
   const rows = $derived.by(() => {
     const out: DetailRow[] = [{ label: 'Image', value: status?.image || spec.image || '—' }]
 
@@ -505,6 +548,40 @@
         </div>
       {/each}
     </div>
+  {/if}
+
+  {#if podName && !isTemplate && !isReadOnly && resizable}
+    <!--
+      RESIZE, BESIDE THE FIGURES IT CHANGES. On a running container only: a
+      template has nothing to resize in place, and the whole point of the
+      subresource is that it does not roll the workload.
+
+      Absent on a read-only cluster rather than disabled, matching how the
+      rest of this pane treats a write it will not make.
+    -->
+    <p class="mt-3 mb-1 text-body-medium text-on-surface">Resources</p>
+    <button
+      type="button"
+      onclick={() => (resizeOpen = true)}
+      class="state-layer inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm border
+             border-outline-variant px-2 text-label-large text-on-surface-variant
+             transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+    >
+      <Scaling class="size-3.5" strokeWidth={1.8} />
+      Resize…
+    </button>
+
+    <ResizeDialog
+      open={resizeOpen}
+      ctx={clusterId}
+      {namespace}
+      {podName}
+      container={spec.name}
+      current={declaredResources}
+      {productionGroup}
+      onclose={() => (resizeOpen = false)}
+      onapplied={onchanged}
+    />
   {/if}
 
   {#if podName && !isTemplate}

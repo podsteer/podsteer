@@ -427,6 +427,60 @@ func (s *ManagementService) SetImage(ctx context.Context, id domain.ClusterID, k
 	return nil
 }
 
+// ResizeContainer changes a running container's CPU and memory in place.
+//
+// THE PLAN IS MADE HERE, FROM THE POD, not from what the interface believed
+// when the dialog opened. Between opening it and pressing the button the
+// container may have been resized by somebody else, by a VPA, or restarted
+// with a different spec — and every refusal PlanResize makes (a limit below
+// its request, a change that changes nothing, a container that is no longer
+// there) is only true against the CURRENT figures. Planning against a stale
+// read would refuse valid edits and permit invalid ones.
+//
+// Read-only is refused first, as everywhere: PodSteer's own guard, before the
+// request exists.
+func (s *ManagementService) ResizeContainer(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, request domain.ResizeRequest) (domain.ResizePlan, error) {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return domain.ResizePlan{}, err
+	}
+
+	current, err := s.management.ContainerResizeSpec(ctx, id, namespace, podName, request.Container)
+	if err != nil {
+		return domain.ResizePlan{}, err
+	}
+
+	plan, err := domain.PlanResize(current, request)
+	if err != nil {
+		return domain.ResizePlan{}, err
+	}
+
+	s.logger.InfoContext(ctx, "resizing container",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.String("pod", podName),
+		slog.String("container", plan.Container),
+		slog.String("cpuRequest", plan.CPURequest),
+		slog.String("cpuLimit", plan.CPULimit),
+		slog.String("memoryRequest", plan.MemoryRequest),
+		slog.String("memoryLimit", plan.MemoryLimit),
+		slog.Bool("restarts", plan.Restarts))
+
+	if err := s.management.ResizePod(ctx, id, namespace, podName, plan); err != nil {
+		s.logger.ErrorContext(ctx, "failed to resize container",
+			slog.String("cluster", id.String()),
+			slog.String("pod", podName),
+			slog.String("container", plan.Container),
+			slog.String("error", err.Error()))
+		return domain.ResizePlan{}, err
+	}
+
+	// THE PLAN COMES BACK so the caller can say what was asked for — and, in
+	// particular, whether it restarts the container. What the kubelet then
+	// does with it arrives as a condition on the pod, which the assessment
+	// already reads and reports; nothing here claims it was applied.
+	return plan, nil
+}
+
 // RollbackWorkload rolls a Deployment, StatefulSet or DaemonSet back to a
 // previously recorded revision.
 //

@@ -62,8 +62,19 @@ export function resourceArg(kind: { group: string; resource: string }): string {
  * `ResourceKind` it already has instead of re-deriving the split itself.
  */
 export function resourceArgForKind(kind: { group: string; id: string }): string {
-  const resource = kind.id.split('/').pop() ?? ''
-  return resourceArg({ group: kind.group, resource })
+  return resourceArg({ group: kind.group, resource: resourceOf(kind) })
+}
+
+/**
+ * The `resource` segment of a kind id, on its own.
+ *
+ * Shared with the cross-cluster reads, which are addressed by group and
+ * resource rather than by id — a kind id carries a VERSION, and a CRD served
+ * at v1alpha1 on one cluster and v1 on another is the same kind. This is the
+ * one place that knows the wire format; see the note above.
+ */
+export function resourceOf(kind: { id: string }): string {
+  return kind.id.split('/').pop() ?? ''
 }
 
 /**
@@ -137,6 +148,56 @@ export function setImage(
     'image',
     `${kind.toLowerCase()}/${name}`,
     `${container}=${shellQuote(image)}`,
+  ].join(' ')
+}
+
+/**
+ * `kubectl --context c -n ns patch pod <name> --subresource resize --patch '…'`.
+ *
+ * THE SUBRESOURCE IS THE WHOLE COMMAND. A pod's containers are otherwise
+ * immutable, so a `kubectl patch pod` without `--subresource resize` is
+ * refused — and an operator who copied one without it would conclude the
+ * cluster does not support resizing when what is wrong is the command.
+ *
+ * kubectl has no `set resources` for a running pod: `kubectl set resources`
+ * edits a workload's template, which is a different act with a different
+ * outcome (a rollout, new pods, the old ones gone). This is the command that
+ * does what PodSteer just did.
+ *
+ * The patch is single-quoted whole, so the JSON's own double quotes survive
+ * the shell exactly as they are.
+ */
+export function resizePod(
+  ctx: string,
+  name: string,
+  ns: string,
+  container: string,
+  resources: { cpuRequest: string; cpuLimit: string; memoryRequest: string; memoryLimit: string },
+): string {
+  const requests: Record<string, string> = {}
+  const limits: Record<string, string> = {}
+  if (resources.cpuRequest) requests.cpu = resources.cpuRequest
+  if (resources.memoryRequest) requests.memory = resources.memoryRequest
+  if (resources.cpuLimit) limits.cpu = resources.cpuLimit
+  if (resources.memoryLimit) limits.memory = resources.memoryLimit
+
+  const body: Record<string, unknown> = {}
+  if (Object.keys(requests).length > 0) body.requests = requests
+  if (Object.keys(limits).length > 0) body.limits = limits
+
+  const patch = JSON.stringify({
+    spec: { containers: [{ name: container, resources: body }] },
+  })
+
+  return [
+    ...base(ctx, ns),
+    'patch',
+    'pod',
+    name,
+    '--subresource',
+    'resize',
+    '--patch',
+    shellQuote(patch),
   ].join(' ')
 }
 

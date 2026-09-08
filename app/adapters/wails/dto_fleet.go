@@ -47,6 +47,57 @@ type ClusterEvents struct {
 	Events  []Event  `json:"events"`
 }
 
+// ClusterTable is one cluster's share of a cross-cluster read of an
+// ARBITRARY kind.
+//
+// Its own struct rather than one of the three above, and the difference is
+// the columns: a typed row has the same shape everywhere, and a table's
+// columns are whatever the API server's printer said on THAT cluster. They
+// travel beside that cluster's rows so nothing has to assume two clusters
+// printed the same set — a CRD at two versions routinely does not.
+type ClusterTable struct {
+	Cluster string   `json:"cluster"`
+	Status  string   `json:"status"`
+	Reason  string   `json:"reason"`
+	Missing []string `json:"missing"`
+	// Columns and Rows are this cluster's own. Both are empty for a cluster
+	// that answered nothing — including one that does not serve the kind,
+	// which is `unserved` rather than a failure.
+	Columns []TableColumn `json:"columns"`
+	Rows    []TableRow    `json:"rows"`
+}
+
+// toClusterTables projects one table per cluster, keeping each cluster's
+// columns with its own rows.
+func toClusterTables(reads []domain.ClusterRead[domain.ResourceTable]) []ClusterTable {
+	out := make([]ClusterTable, len(reads))
+	for i, read := range reads {
+		cluster, status, reason, missing := readHeader(read)
+		entry := ClusterTable{
+			Cluster: cluster,
+			Status:  status,
+			Reason:  reason,
+			Missing: missing,
+			Columns: []TableColumn{},
+			Rows:    []TableRow{},
+		}
+
+		// One item at most — see FleetService.ListTable for why a table
+		// travels as a one-element slice.
+		if len(read.Items) > 0 {
+			table := toResourceTable(read.Items[0])
+			if table.Columns != nil {
+				entry.Columns = table.Columns
+			}
+			if table.Rows != nil {
+				entry.Rows = table.Rows
+			}
+		}
+		out[i] = entry
+	}
+	return out
+}
+
 // readHeader projects the part of a ClusterRead every kind shares.
 //
 // The reason goes through classifyError like every other error that reaches
