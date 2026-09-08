@@ -271,6 +271,11 @@ export function outcomeTone(outcome: string): OutcomeTone {
       return 'good'
     case 'refused':
     case 'name_not_resolved':
+    // A port that answers with a certificate nothing trusts is a problem
+    // rather than a qualified success: every client that verifies — a
+    // browser, another service's HTTP library, an Ingress talking to this
+    // backend over TLS — is about to refuse what the probe accepted.
+    case 'untrusted':
       return 'bad'
     default:
       return 'unknown'
@@ -284,6 +289,8 @@ export function stepLabel(step: ProbeStep): string {
       return 'Name resolution'
     case 'connect':
       return 'Connection'
+    case 'tls':
+      return 'Certificate'
     case 'http':
       return 'HTTP request'
     default:

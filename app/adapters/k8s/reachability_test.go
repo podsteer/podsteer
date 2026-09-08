@@ -3,6 +3,7 @@ package k8s
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,7 +97,7 @@ func TestClassifyProxyOutcomeTellsARefusedSubresourceFromAnAnsweredRequest(t *te
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			observation, err := classifyProxyOutcome("probing", tt.err, 3*time.Millisecond)
+			observation, err := classifyProxyOutcome("probing", "http", tt.err, 3*time.Millisecond)
 
 			if tt.wantErr {
 				if err == nil {
@@ -128,7 +129,7 @@ func TestClassifyProxyOutcomeTellsARefusedSubresourceFromAnAnsweredRequest(t *te
 // address and the reason. It is the diagnosis, so it travels verbatim.
 func TestClassifyProxyOutcomeKeepsTheDialErrorVerbatim(t *testing.T) {
 	message := "error trying to reach service: dial tcp 10.1.2.3:80: i/o timeout"
-	observation, err := classifyProxyOutcome("probing",
+	observation, err := classifyProxyOutcome("probing", "http",
 		statusError(http.StatusServiceUnavailable, metav1.StatusReasonServiceUnavailable, message), 0)
 	if err != nil {
 		t.Fatalf("unexpected error %v", err)
@@ -153,7 +154,7 @@ func TestARefusedProxyClassifiesAsForbidden(t *testing.T) {
 		schema.GroupResource{Resource: "services/proxy"}, "web",
 		errors.New(`User "dev" cannot get resource "services/proxy"`))
 
-	_, classified := classifyProxyOutcome("probing", err, 0)
+	_, classified := classifyProxyOutcome("probing", "http", err, 0)
 	if !errors.Is(classified, ports.ErrForbidden) {
 		t.Fatalf("classified = %v, want ports.ErrForbidden", classified)
 	}
@@ -202,4 +203,63 @@ func TestShellMissingRecognisesAContainerWithNoShell(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestLocalProbeSaysItDidNotCheckTheCertificate is the honesty half of the
+// TLS step. Both local routes reach an https endpoint without verifying
+// anything, and a panel that simply omitted the row would let a green
+// "reachable" stand for something nobody measured.
+func TestLocalProbeSaysItDidNotCheckTheCertificate(t *testing.T) {
+	observation, err := classifyProxyOutcome("probing", "https", nil, time.Millisecond)
+	if err != nil {
+		t.Fatalf("classifyProxyOutcome: %v", err)
+	}
+
+	step, found := findStep(observation, domain.StepTLS)
+	if !found {
+		t.Fatal("an https probe through the service proxy reports no certificate step at all")
+	}
+	if step.Status != domain.StatusSkipped {
+		t.Errorf("status = %q, want skipped — nothing verified anything here", step.Status)
+	}
+	if !strings.Contains(step.Detail, "does not verify") {
+		t.Errorf("detail = %q, want it to say the API server checked nothing", step.Detail)
+	}
+
+	// IT COMES BEFORE THE HTTP STEP, because that is the order the questions
+	// happen in and the panel renders them in the order they arrive.
+	names := []domain.ProbeStepName{}
+	for _, s := range observation.Steps {
+		names = append(names, s.Name)
+	}
+	if got := indexOfStep(names, domain.StepTLS); got == -1 || got > indexOfStep(names, domain.StepHTTP) {
+		t.Errorf("step order = %v, want the certificate before the HTTP request", names)
+	}
+
+	// And a plaintext target has no certificate to say anything about.
+	plain, err := classifyProxyOutcome("probing", "http", nil, time.Millisecond)
+	if err != nil {
+		t.Fatalf("classifyProxyOutcome: %v", err)
+	}
+	if _, found := findStep(plain, domain.StepTLS); found {
+		t.Error("a plaintext probe reports a certificate step for a certificate that does not exist")
+	}
+}
+
+func findStep(observation domain.ProbeObservation, name domain.ProbeStepName) (domain.ProbeStep, bool) {
+	for _, step := range observation.Steps {
+		if step.Name == name {
+			return step, true
+		}
+	}
+	return domain.ProbeStep{}, false
+}
+
+func indexOfStep(names []domain.ProbeStepName, want domain.ProbeStepName) int {
+	for index, name := range names {
+		if name == want {
+			return index
+		}
+	}
+	return -1
 }
