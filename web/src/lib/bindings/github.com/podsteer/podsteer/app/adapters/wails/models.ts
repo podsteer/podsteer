@@ -3065,6 +3065,36 @@ export interface ReleaseSupport {
 }
 
 /**
+ * ResizeResult is what a resize ASKED FOR, handed back so the interface can
+ * say it.
+ * 
+ * NOT WHAT HAPPENED. The kubelet decides that — it may change the cgroup
+ * immediately, defer the change until the node has room, or call it
+ * infeasible — and the answer arrives as a condition on the pod, which the
+ * assessment reads and reports as a finding. A result that claimed the resize
+ * was applied would be claiming the kubelet's answer before it gave one.
+ * 
+ * Restarts is the fact worth carrying back: it is decided by the container's
+ * own resizePolicy, which most people have never read, and it is the
+ * difference between changing a number and restarting a database.
+ */
+export interface ResizeResult {
+    "container": string;
+    "cpuRequest": string;
+    "cpuLimit": string;
+    "memoryRequest": string;
+    "memoryLimit": string;
+    "restarts": boolean;
+
+    /**
+     * RestartReason names the resource whose policy forces the restart —
+     * "cpu" or "memory" — for the sentence the interface shows. Empty when
+     * nothing restarts.
+     */
+    "restartReason": string;
+}
+
+/**
  * ResourceCount is how many objects of one kind a namespace holds.
  */
 export interface ResourceCount {

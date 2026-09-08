@@ -476,6 +476,54 @@ func (m *ManagementAPI) SetImage(clusterID, kind, namespace, name, container, im
 	return nil
 }
 
+// ResizeContainer changes a running container's CPU and memory in place,
+// through the pods/resize subresource.
+//
+// FOUR STRINGS, ANY OF THEM EMPTY. Empty means "leave this figure alone",
+// which is not the same as clearing it — so the four are strings rather than
+// numbers, and the domain refuses anything that is not a quantity Kubernetes
+// understands before a request is built.
+//
+// Returns the plan that was sent, whose Restarts field says whether the
+// container's own resizePolicy made this a restart. What the KUBELET then
+// does — apply it, defer it, call it infeasible — is a condition on the pod
+// that the assessment reads; nothing here claims the resize took effect.
+func (m *ManagementAPI) ResizeContainer(clusterID, namespace, podName, container, cpuRequest, cpuLimit, memoryRequest, memoryLimit string) (ResizeResult, error) {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return ResizeResult{}, apiError(m.logger, "ResizeContainer", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return ResizeResult{}, apiError(m.logger, "ResizeContainer", err)
+	}
+
+	plan, err := m.management.ResizeContainer(ctx, id, ns, podName, domain.ResizeRequest{
+		Container:     container,
+		CPURequest:    cpuRequest,
+		CPULimit:      cpuLimit,
+		MemoryRequest: memoryRequest,
+		MemoryLimit:   memoryLimit,
+	})
+	if err != nil {
+		return ResizeResult{}, apiError(m.logger, "ResizeContainer", err)
+	}
+
+	return ResizeResult{
+		Container:     plan.Container,
+		CPURequest:    plan.CPURequest,
+		CPULimit:      plan.CPULimit,
+		MemoryRequest: plan.MemoryRequest,
+		MemoryLimit:   plan.MemoryLimit,
+		Restarts:      plan.Restarts,
+		RestartReason: plan.RestartReason,
+	}, nil
+}
+
 // RollbackWorkload rolls a Deployment, StatefulSet or DaemonSet back to a
 // previously recorded revision, the way `kubectl rollout undo
 // --to-revision` does. dryRun asks the API server to validate the request

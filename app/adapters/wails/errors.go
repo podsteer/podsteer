@@ -79,6 +79,12 @@ const (
 	// the cluster, not the object: reporting it as "not found" would send an
 	// operator to look for a pod that is right there.
 	CodeEphemeralUnsupported ErrorCode = "ephemeral_unsupported"
+
+	// CodeResizeUnsupported means the cluster does not serve pods/resize —
+	// older than 1.33, or the feature gate off. Its own code rather than
+	// CodeNotFound, which would send somebody to look for a pod that is on
+	// screen in front of them.
+	CodeResizeUnsupported ErrorCode = "resize_unsupported"
 	// CodeTarMissing means a file copy found no tar binary in the
 	// container. Its own code because nothing else here fits: the cluster,
 	// the credentials and the network are all fine, retrying cannot help,
@@ -427,6 +433,14 @@ func classifyError(err error) (ErrorCode, string) {
 	// BEFORE ErrNotFound: the subresource being unavailable arrives as its own
 	// sentinel (the adapter already told a missing subresource apart from a
 	// missing pod), and it must never read as "the pod is gone".
+	// The same shape as the ephemeral-container case below it, and told apart
+	// from a missing pod in the adapter for the same reason: the pod is on
+	// screen in front of them.
+	case errors.Is(err, ports.ErrResizeUnsupported):
+		return CodeResizeUnsupported, "This cluster cannot resize a running pod — its API server is older than " +
+			"Kubernetes 1.33, or in-place vertical scaling is turned off. Changing the workload's own " +
+			"resources and letting it roll is the way to do it here."
+
 	case errors.Is(err, ports.ErrEphemeralContainersUnsupported):
 		return CodeEphemeralUnsupported, "This cluster does not support ephemeral debug containers — its API server is too old, or the feature is turned off."
 

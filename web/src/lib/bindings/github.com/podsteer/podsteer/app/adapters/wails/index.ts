@@ -121,6 +121,7 @@ export type {
     RBACFinding,
     RBACSubject,
     ReleaseSupport,
+    ResizeResult,
     ResourceCount,
     ResourceKind,
     ResourceTable,

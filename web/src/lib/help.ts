@@ -649,6 +649,40 @@ export const HELP_TOPICS = {
     ],
   },
 
+  'resize-container': {
+    title: 'Resize a running container',
+    lede: 'Change one container\u2019s CPU and memory without recreating the pod.',
+    sections: [
+      {
+        heading: 'What in-place means',
+        body: [
+          'A pod\u2019s containers are otherwise immutable: changing a workload\u2019s resources rolls it, replacing every pod. This writes to the pod\u2019s own resize subresource instead, and the kubelet changes the running container\u2019s cgroup \u2014 the process keeps its memory, its connections and its uptime.',
+          'It needs Kubernetes 1.33 or newer. An older cluster says so rather than reporting a missing pod.',
+        ],
+      },
+      {
+        heading: 'Whether it restarts the container',
+        body: [
+          'That is decided by the container\u2019s own resizePolicy, one entry per resource. The default is NotRequired, which is the live change described above. A container whose author chose RestartContainer for a resource gets killed and restarted when you change that resource \u2014 this dialog reads the policy and says which is about to happen before you press anything.',
+          'Only the resource you actually change matters: a container that restarts for memory is not restarted by a CPU change.',
+        ],
+      },
+      {
+        heading: 'An empty box means leave it alone',
+        body: [
+          'Only the figures you type are sent. That is not the same as clearing one \u2014 there is no way to remove a request from here, because a request removed and a request set to zero are different things and neither is what an empty box means.',
+          'A limit below its request is refused before anything is sent, as is a change that changes nothing: writing the figure that is already set still records a change on the object.',
+        ],
+      },
+      {
+        heading: 'What happens next is the kubelet\u2019s answer',
+        body: [
+          'PodSteer does not claim the resize was applied. The kubelet may apply it immediately, defer it until the node has room, or call it infeasible \u2014 and it says which as a condition on the pod, which appears in this pod\u2019s findings. Deferred means it may still happen; infeasible means this node never can, and the request has to change or the pod has to move.',
+        ],
+      },
+    ],
+  },
+
   settings: {
     title: 'Settings',
     lede: 'How PodSteer behaves on this machine. None of it is stored on a cluster.',

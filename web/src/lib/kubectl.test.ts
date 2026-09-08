@@ -21,6 +21,7 @@ import {
   helmUpgrade,
   logs,
   portForward,
+  resizePod,
   portForwardService,
   resourceArg,
   resourceArgForKind,
@@ -372,6 +373,48 @@ describe('portForward', () => {
     expect(portForward('prod', 'web-1', 'default', 8080, 80)).toBe(
       'kubectl --context prod -n default port-forward pod/web-1 8080:80',
     )
+  })
+})
+
+describe('resizePod', () => {
+  it('goes through the resize SUBRESOURCE, which is the whole command', () => {
+    // A `kubectl patch pod` without it is refused — a pod's containers are
+    // otherwise immutable — and somebody who copied one without it would
+    // conclude the cluster cannot resize when what is wrong is the command.
+    const command = resizePod('prod', 'api-0', 'web', 'app', {
+      cpuRequest: '750m',
+      cpuLimit: '',
+      memoryRequest: '',
+      memoryLimit: '',
+    })
+
+    expect(command).toContain('--subresource resize')
+    expect(command).toContain('kubectl --context prod -n web patch pod api-0')
+  })
+
+  it('sends only the figures that were set', () => {
+    const command = resizePod('prod', 'api-0', 'web', 'app', {
+      cpuRequest: '750m',
+      cpuLimit: '',
+      memoryRequest: '',
+      memoryLimit: '2Gi',
+    })
+
+    expect(command).toContain('"requests":{"cpu":"750m"}')
+    expect(command).toContain('"limits":{"memory":"2Gi"}')
+    // Empty means "leave this one alone", so it is not in the patch at all.
+    expect(command).not.toContain('"memory":""')
+  })
+
+  it('quotes the patch whole, so its own quotes survive the shell', () => {
+    const command = resizePod('prod', 'api-0', 'web', 'app', {
+      cpuRequest: '1',
+      cpuLimit: '',
+      memoryRequest: '',
+      memoryLimit: '',
+    })
+
+    expect(command).toContain(`--patch '{"spec":`)
   })
 })
 
