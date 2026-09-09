@@ -331,6 +331,38 @@ export function toggleClusterSelection(
   return live.length === open.length ? [] : live
 }
 
+/** What a scrolling strip can still reveal, in each direction. */
+export interface StripScroll {
+  overflowing: boolean
+  atStart: boolean
+  atEnd: boolean
+}
+
+/**
+ * Reads a scroller's geometry into the two facts the arrows and the mask need.
+ *
+ * A PURE FUNCTION OF THREE NUMBERS, extracted from the view so the rule can
+ * be tested without a layout engine. The slack of one pixel in each
+ * comparison is not sloppiness: a scroll position is fractional on a
+ * trackpad and on a display with a non-integer device ratio, so `scrollLeft
+ * === 0` is a test that a strip scrolled fully back to the left can fail —
+ * leaving an arrow pointing at nothing.
+ */
+export function stripScrollState(metrics: {
+  scrollWidth: number
+  clientWidth: number
+  scrollLeft: number
+}): StripScroll {
+  const slack = metrics.scrollWidth - metrics.clientWidth
+  if (slack <= 1) return { overflowing: false, atStart: true, atEnd: true }
+
+  return {
+    overflowing: true,
+    atStart: metrics.scrollLeft <= 1,
+    atEnd: metrics.scrollLeft >= slack - 1,
+  }
+}
+
 /** Where a row of a merged table leads: one object, in one cluster. */
 export interface FleetTarget {
   cluster: string

@@ -24,6 +24,7 @@
     FLEET_TABS,
     WORKLOAD_CHIPS,
     fleetRowTarget,
+    stripScrollState,
     type FleetChip,
     type FleetChipTab,
     type FleetRow,
@@ -35,7 +36,15 @@
   import { resourceOf } from '$lib/kubectl'
   import { fleetTableId, type ClusterSession } from '$stores/session.svelte'
   import type { K8sEvent, Pod, TableRow, Workload } from '$lib/api/client'
-  import { Activity, Box, CircleDot, Server, TriangleAlert } from '@lucide/svelte'
+  import {
+    Activity,
+    Box,
+    ChevronLeft,
+    ChevronRight,
+    CircleDot,
+    Server,
+    TriangleAlert,
+  } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -222,6 +231,86 @@
    */
   function toggleCluster(cluster: string): void {
     session.toggleFleetCluster(cluster)
+  }
+
+  /**
+   * The strip scrolls sideways rather than wrapping.
+   *
+   * WRAPPING WAS NOT SQUEEZING — nothing was ever truncated — but a chip is
+   * about 200px and the view tabs take the first 300 of the same line, so
+   * six clusters became two rows on a wide window and three on a laptop,
+   * and twenty became eight. The toolbar grew downwards and pushed the table
+   * off the screen it exists to show.
+   *
+   * WHAT SCROLLING COSTS, AND WHAT PAYS FOR IT. The strip's contract is that
+   * "a cluster that did not answer is a chip here, never an empty table", and
+   * a chip scrolled out of sight is exactly that empty table again. So two
+   * things sit outside the scrolling region and can never be scrolled away:
+   * the count of clusters that did not answer, and the arrows that say there
+   * is more in a direction. macOS hides scrollbars at rest, so without the
+   * arrows a full row and a cut-off row look identical — which is the whole
+   * failure being avoided.
+   */
+  let strip = $state<HTMLElement | null>(null)
+  let overflowing = $state(false)
+  let atStart = $state(true)
+  let atEnd = $state(true)
+
+  function measureStrip(): void {
+    if (!strip) return
+    ;({ overflowing, atStart, atEnd } = stripScrollState(strip))
+  }
+
+  $effect(() => {
+    // Read the length so a cluster opening or closing re-measures; the
+    // observer below only fires for the element's own box.
+    fleet.strip.length
+    const element = strip
+    if (!element) return
+
+    measureStrip()
+    const observer = new ResizeObserver(measureStrip)
+    observer.observe(element)
+    for (const child of element.children) observer.observe(child)
+    return () => observer.disconnect()
+  })
+
+  /**
+   * Fades the chips themselves at whichever edge has more beyond it.
+   *
+   * A MASK RATHER THAN A GRADIENT OVERLAY, which is not a detail: an overlay
+   * has to be painted in the toolbar's own colour to be invisible, and the
+   * toolbar is translucent, so the "matching" colour would be a guess that is
+   * wrong on any background it is ever put on. A mask fades the content to
+   * transparent and lets whatever is behind show through unchanged.
+   */
+  const stripMask = $derived.by(() => {
+    if (!overflowing) return ''
+    const stops = [
+      atStart ? 'black 0' : 'transparent 0, black 2.5rem',
+      atEnd ? 'black 100%' : 'black calc(100% - 2.5rem), transparent 100%',
+    ].join(', ')
+    const gradient = `linear-gradient(to right, ${stops})`
+    return `mask-image: ${gradient}; -webkit-mask-image: ${gradient};`
+  })
+
+  /** Scrolls by most of a screenful, leaving one chip as the overlap that
+      says where you were — the same rule a page-down key follows. */
+  function scrollStrip(direction: -1 | 1): void {
+    strip?.scrollBy({ left: direction * strip.clientWidth * 0.8, behavior: 'smooth' })
+  }
+
+  /**
+   * Brings the first cluster that did not answer into view.
+   *
+   * The summary is a button rather than a label because knowing two clusters
+   * are unhappy without being able to reach them is half an answer, and on a
+   * strip of twenty the chip may be a long way to the right.
+   */
+  function scrollToDegraded(): void {
+    const first = fleet.strip.findIndex((entry) => entry.status !== 'ok')
+    if (first < 0) return
+    strip?.children[first]?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
   }
 
   /** The same colour rule WorkloadsView draws with. */
@@ -423,7 +512,7 @@
     is a chip here, never an empty table or a spinner over the others.
   -->
   <div
-    class="flex flex-wrap items-center gap-2 border-b border-outline-variant/40
+    class="flex items-center gap-2 border-b border-outline-variant/40
            bg-surface-container-low/40 px-4 py-2"
   >
     <div
@@ -458,41 +547,106 @@
       </span>
     {/if}
 
-    {#each fleet.strip as entry (entry.cluster)}
-      {@const pressed = session.fleetClusters.includes(entry.cluster)}
+    <!--
+      The scrolling region, and the two things that must never scroll with it.
+      See measureStrip in the script for why the arrows and the summary sit
+      outside it rather than inside.
+    -->
+    <div class="relative flex min-w-0 flex-1 items-center">
+      {#if overflowing && !atStart}
+        <!-- tabindex -1 rather than focusable: tabbing through the chips
+             scrolls them into view on its own, so these would be two extra
+             stops that do nothing a keyboard user needs. -->
+        <button
+          type="button"
+          tabindex="-1"
+          aria-hidden="true"
+          onclick={() => scrollStrip(-1)}
+          class="absolute left-0 z-10 flex h-6 w-6 items-center justify-center rounded-full
+                 bg-surface-container-high/90 text-on-surface-variant shadow-level-1
+                 hover:text-on-surface"
+        >
+          <ChevronLeft class="size-4" strokeWidth={2} />
+        </button>
+      {/if}
+
+      <div
+        bind:this={strip}
+        onscroll={measureStrip}
+        style={stripMask}
+        class="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-0.5
+               [-ms-overflow-style:none] [scrollbar-width:none]
+               [&::-webkit-scrollbar]:hidden"
+      >
+        {#each fleet.strip as entry (entry.cluster)}
+          {@const pressed = session.fleetClusters.includes(entry.cluster)}
+          <button
+            type="button"
+            onclick={() => toggleCluster(entry.cluster)}
+            aria-pressed={pressed}
+            title={entry.title}
+            class="flex max-w-72 shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1
+                   text-label-small transition-colors duration-100
+                   {pressed
+                     ? 'border-primary/40 bg-primary/14 text-primary'
+                     : 'border-outline-variant/50 text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+          >
+            <StatusIndicator
+              tone={entry.tone}
+              label={entry.label}
+              icon={Server}
+              pulse={entry.status === 'slow'}
+            />
+            <span class="truncate">{entry.cluster}</span>
+            <!-- The count when there are rows to count; otherwise the verdict,
+                 because "0" under a forbidden cluster reads as "no pods". -->
+            {#if entry.rows > 0 || entry.status === 'ok'}
+              <span
+                class="tabular-nums {pressed ? 'text-primary/70' : 'text-on-surface-variant/60'}"
+              >
+                {entry.rows}{entry.stale ? '*' : ''}
+              </span>
+            {:else}
+              <span class="lowercase {pressed ? 'text-primary/70' : 'text-on-surface-variant/60'}">
+                {entry.label}
+              </span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+
+      {#if overflowing && !atEnd}
+        <button
+          type="button"
+          tabindex="-1"
+          aria-hidden="true"
+          onclick={() => scrollStrip(1)}
+          class="absolute right-0 z-10 flex h-6 w-6 items-center justify-center rounded-full
+                 bg-surface-container-high/90 text-on-surface-variant shadow-level-1
+                 hover:text-on-surface"
+        >
+          <ChevronRight class="size-4" strokeWidth={2} />
+        </button>
+      {/if}
+    </div>
+
+    <!--
+      OUTSIDE THE SCROLLER, ALWAYS. This is the sentence the strip exists to
+      say, and a strip that can hide it has stopped saying it.
+    -->
+    {#if fleet.degraded > 0}
       <button
         type="button"
-        onclick={() => toggleCluster(entry.cluster)}
-        aria-pressed={pressed}
-        title={entry.title}
-        class="flex max-w-72 items-center gap-1.5 rounded-full border px-2.5 py-1 text-label-small
-               transition-colors duration-100
-               {pressed
-                 ? 'border-primary/40 bg-primary/14 text-primary'
-                 : 'border-outline-variant/50 text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+        onclick={scrollToDegraded}
+        title="Show the clusters that did not answer in full"
+        class="flex shrink-0 items-center gap-1.5 rounded-full border border-gauge-warn/40
+               px-2.5 py-1 text-label-small text-gauge-warn transition-colors duration-100
+               hover:bg-gauge-warn/10"
       >
-        <StatusIndicator
-          tone={entry.tone}
-          label={entry.label}
-          icon={Server}
-          pulse={entry.status === 'slow'}
-        />
-        <span class="truncate">{entry.cluster}</span>
-        <!-- The count when there are rows to count; otherwise the verdict,
-             because "0" under a forbidden cluster reads as "no pods". -->
-        {#if entry.rows > 0 || entry.status === 'ok'}
-          <span
-            class="tabular-nums {pressed ? 'text-primary/70' : 'text-on-surface-variant/60'}"
-          >
-            {entry.rows}{entry.stale ? '*' : ''}
-          </span>
-        {:else}
-          <span class="lowercase {pressed ? 'text-primary/70' : 'text-on-surface-variant/60'}">
-            {entry.label}
-          </span>
-        {/if}
+        <TriangleAlert class="size-3.5 shrink-0" strokeWidth={2} />
+        {fleet.degraded} not answering
       </button>
-    {/each}
+    {/if}
   </div>
 
   <!-- Quick filters, per table. Each SELECTS on a field Go already put on

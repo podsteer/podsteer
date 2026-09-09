@@ -9,6 +9,7 @@ import {
   mergeFleet,
   mergeFleetTable,
   stripModel,
+  stripScrollState,
   toggleClusterSelection,
   toggleClusterTerm,
   WORKLOAD_CHIPS,
@@ -389,5 +390,51 @@ describe('selecting which clusters the merged table shows', () => {
     // it, so the two never fight over the same string.
     expect(hasClusterTerm('web cluster:prod', 'prod')).toBe(true)
     expect(toggleClusterSelection([], 'prod', ['prod'])).toEqual([])
+  })
+})
+
+describe('the strip that scrolls instead of wrapping', () => {
+  it('says nothing is hidden when everything fits', () => {
+    const state = stripScrollState({ scrollWidth: 400, clientWidth: 400, scrollLeft: 0 })
+
+    expect(state).toEqual({ overflowing: false, atStart: true, atEnd: true })
+  })
+
+  it('reports more to the right when parked at the left', () => {
+    const state = stripScrollState({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 0 })
+
+    expect(state).toEqual({ overflowing: true, atStart: true, atEnd: false })
+  })
+
+  it('reports both directions in the middle', () => {
+    const state = stripScrollState({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 300 })
+
+    expect(state).toEqual({ overflowing: true, atStart: false, atEnd: false })
+  })
+
+  it('reports the end reached', () => {
+    const state = stripScrollState({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 800 })
+
+    expect(state.atEnd).toBe(true)
+    expect(state.atStart).toBe(false)
+  })
+
+  it('tolerates a fractional scroll position', () => {
+    // A trackpad and a non-integer device pixel ratio both produce these. An
+    // exact comparison leaves an arrow pointing at nothing on a strip that
+    // has in fact scrolled all the way back.
+    expect(stripScrollState({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 0.4 }).atStart).toBe(
+      true,
+    )
+    expect(
+      stripScrollState({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 799.6 }).atEnd,
+    ).toBe(true)
+  })
+
+  it('treats a sub-pixel difference as fitting', () => {
+    // Rounding inside the layout engine, not a chip hidden off the edge.
+    const state = stripScrollState({ scrollWidth: 400.5, clientWidth: 400, scrollLeft: 0 })
+
+    expect(state.overflowing).toBe(false)
   })
 })
