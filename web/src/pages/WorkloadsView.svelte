@@ -30,7 +30,29 @@
   import type { Workload } from '$lib/api/client'
   import { Container, CircleDot } from '@lucide/svelte'
   import { iconForKind } from '$lib/kindIcons'
-  import { gitOpsOwner } from '$lib/gitops'
+  import { managementWarning, type GitOpsManagement } from '$lib/gitops'
+  import { managementFromMarker } from '$lib/gitopsChain'
+
+  /**
+   * What holds this row's spec in Git, from the row itself.
+   *
+   * THE KIND AND NAME ARE PART OF THE EVIDENCE, not decoration. A ReplicaSet
+   * carries a copy of its Deployment's tracking id — the Deployment
+   * controller puts it there — so a rule that read the annotation alone
+   * called every ReplicaSet Argo CD-managed and warned that an edit would be
+   * reverted, which Argo CD would never do. Handing over what the object IS
+   * lets the marker be compared with what it names.
+   */
+  function managementOf(workload: Workload): GitOpsManagement | null {
+    return managementFromMarker({
+      kind: workload.kind,
+      metadata: {
+        name: workload.name,
+        labels: workload.labels,
+        annotations: workload.annotations,
+      },
+    })
+  }
   import GitOpsBadge from '$lib/components/GitOpsBadge.svelte'
 
   const UNMEASURED: Measured = {
@@ -210,10 +232,9 @@
         case 'images':
           return (workload.images ?? []).join(', ') || '—'
         case 'gitops': {
-          const owner = gitOpsOwner({
-            metadata: { labels: workload.labels, annotations: workload.annotations },
-          })
-          if (!owner) return '—'
+          const management = managementOf(workload)
+          if (!management) return '—'
+          const { owner } = management
           return owner.source ? `${owner.label}/${owner.source}` : owner.label
         }
         case 'controlledBy':
@@ -370,12 +391,10 @@
           </td>
         {/if}
         {#if isVisible('gitops')}
-          {@const owner = gitOpsOwner({
-            metadata: { labels: workload.labels, annotations: workload.annotations },
-          })}
+          {@const management = managementOf(workload)}
           <td class="truncate px-3 py-1.5">
-            {#if owner}
-              <GitOpsBadge {owner} />
+            {#if management}
+              <GitOpsBadge owner={management.owner} title={managementWarning(management)} />
             {:else}
               <span class="text-on-surface-variant/40">—</span>
             {/if}

@@ -11,9 +11,11 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import type { GitOpsManagement } from '$lib/gitops'
   import { scale } from '$lib/kubectl'
   import Button from './Button.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import GitOpsNotice from './GitOpsNotice.svelte'
   import DialogFooter from './DialogFooter.svelte'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
   import { describeAutoscaler, type AutoscalerCheck } from '$lib/autoscalers'
@@ -29,6 +31,8 @@
      * on the type-the-name gate when the chosen target is also zero.
      */
     productionGroup?: string | null
+    /** The GitOps controller holding this object's spec, when one does. */
+    management?: GitOpsManagement | null
     onclose: () => void
     onconfirm: (replicas: number) => void
     /** The kubeconfig context this cluster connects through. See $lib/kubectl. */
@@ -54,6 +58,7 @@
   let {
     open,
     currentReplicas,
+    management = null,
     onclose,
     onconfirm,
     ctx,
@@ -174,6 +179,8 @@
     aria-label="Scale replicas"
   >
     <DialogHeader title="Scale replicas" help="scale" {onclose} />
+
+    <GitOpsNotice {management} />
 
     {#if productionGroup}
       <p

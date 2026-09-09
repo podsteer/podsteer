@@ -35,7 +35,8 @@
   import CompareDialog from './CompareDialog.svelte'
   import { withoutManagedFields } from '$lib/manifest'
   import { stripForDuplicate } from '$lib/duplicate'
-  import { gitOpsOwner, revertWarning } from '$lib/gitops'
+  import { managementWarning, type GitOpsManagement } from '$lib/gitops'
+  import { resolveManagement } from '$lib/gitopsChain'
   import GitOpsBadge from './GitOpsBadge.svelte'
   import { organisation } from '$stores/organisation.svelte'
   import {
@@ -65,7 +66,7 @@
   import DependencyMap from './DependencyMap.svelte'
   import { DeleteResource, RestartRollout } from '$bindings/managementapi'
   import { ListPodsForWorkload } from '$bindings/workloadapi'
-  import { triggerCronJob, suspendWorkload, cordonNode, evictPod, type Pod, type Revision } from '$lib/api/client'
+  import { triggerCronJob, suspendWorkload, cordonNode, evictPod, getManifest, type Pod, type Revision } from '$lib/api/client'
   import { podTemplateOf, type PodTemplate } from '$lib/podTemplate'
   import {
     X,
@@ -285,13 +286,45 @@
    * evidence lives in labels and annotations that the table columns do not
    * carry — and because the manifest is already here for the YAML tab.
    */
-  const managedBy = $derived.by(() => {
-    if (!session.manifest) return null
-    try {
-      return gitOpsOwner(parse(session.manifest))
-    } catch {
-      return null
+  let managedBy = $state<GitOpsManagement | null>(null)
+
+  /**
+   * Resolves it, which for most objects is not a read at all.
+   *
+   * AN EFFECT RATHER THAN A DERIVED, because the answer is not always in the
+   * manifest. A Deployment says so itself and this settles synchronously; a
+   * POD SAYS NOTHING — it carries no GitOps marker, only a pod-template-hash
+   * — so the only way to know its spec comes from Git is to ask what controls
+   * it, which is a read. See $lib/gitopsChain.
+   *
+   * Guarded by a generation, for the reason every other read here is: opening
+   * a second object while the first one's walk is in flight must not leave
+   * the first object's answer on screen.
+   */
+  let managementGeneration = 0
+  $effect(() => {
+    const text = session.manifest
+    const namespace = session.selectedNamespace
+
+    const generation = ++managementGeneration
+    if (!text) {
+      managedBy = null
+      return
     }
+
+    let parsed: unknown
+    try {
+      parsed = parse(text)
+    } catch {
+      managedBy = null
+      return
+    }
+
+    void resolveManagement(parsed, namespace, (kindId, ns, name) =>
+      getManifest(session.cluster.id, kindId, ns, name).then((body: string) => parse(body)),
+    ).then((found) => {
+      if (generation === managementGeneration) managedBy = found
+    })
   })
 
   /**
@@ -1172,7 +1205,7 @@
       role="status"
     >
       <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={2} />
-      <span class="min-w-0">{revertWarning(managedBy)}</span>
+      <span class="min-w-0">{managementWarning(managedBy)}</span>
     </p>
   {/if}
 {/snippet}
@@ -1606,7 +1639,7 @@
                somebody editing the manifest. -->
           {#if managedBy}
             <span class="shrink-0 text-on-surface-variant/40" aria-hidden="true">·</span>
-            <GitOpsBadge owner={managedBy} compact />
+            <GitOpsBadge owner={managedBy.owner} title={managementWarning(managedBy)} compact />
           {/if}
         </p>
       </div>
@@ -1908,6 +1941,7 @@
         />
       {:else if activeTab === 'overview'}
         <ResourceOverview
+          management={managedBy}
           manifest={session.manifest}
           selectedPod={selectedPod}
           selectedNode={session.selectedNode}
@@ -2090,6 +2124,7 @@
 
   <!-- Dialogs -->
   <DeleteDialog
+    management={managedBy}
     open={deleteDialogOpen}
     resourceName={session.selectedName}
     resourceKind={session.selectedKind?.singular ?? 'resource'}
@@ -2103,6 +2138,7 @@
 
   {#if selectedWorkload && mappedWorkloadKind}
     <ScaleDialog
+      management={managedBy}
       open={scaleDialogOpen}
       currentReplicas={selectedWorkload.desired}
       ctx={session.cluster.id}
@@ -2118,6 +2154,8 @@
     />
 
     <SetImageDialog
+
+      management={managedBy}
       open={setImageDialogOpen}
       ctx={session.cluster.id}
       kind={mappedWorkloadKind}
@@ -2135,6 +2173,7 @@
 
     {#if rollbackTarget}
       <RollbackDialog
+        management={managedBy}
         open={rollbackDialogOpen}
         ctx={session.cluster.id}
         kind={mappedWorkloadKind}
@@ -2222,6 +2261,7 @@
 
   {#if selectedWorkload}
     <RestartDialog
+      management={managedBy}
       open={restartDialogOpen}
       workloadName={selectedWorkload.name}
       workloadKind={session.selectedKind?.singular ?? 'workload'}
@@ -2245,6 +2285,8 @@
     />
 
     <SuspendDialog
+
+      management={managedBy}
       open={suspendDialogOpen}
       ctx={session.cluster.id}
       namespace={selectedWorkload.namespace}

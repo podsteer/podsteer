@@ -10,9 +10,11 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import type { GitOpsManagement } from '$lib/gitops'
   import { suspend } from '$lib/kubectl'
   import Button from './Button.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import GitOpsNotice from './GitOpsNotice.svelte'
   import DialogFooter from './DialogFooter.svelte'
 
   interface Props {
@@ -24,11 +26,13 @@
     workloadName: string | null
     /** 'CronJob' or 'Job'. Anything else falls back to the CronJob copy. */
     workloadKind: string
+    /** The GitOps controller holding this object's spec, when one does. */
+    management?: GitOpsManagement | null
     onclose: () => void
     onconfirm: () => void
   }
 
-  let { open, ctx, namespace, workloadName, workloadKind, onclose, onconfirm }: Props = $props()
+  let { open, ctx, namespace, workloadName, workloadKind, onclose, onconfirm, management = null }: Props = $props()
 
   const isJob = $derived(workloadKind === 'Job')
 
@@ -83,6 +87,8 @@
     aria-label="Suspend {workloadKind}"
   >
     <DialogHeader title="Suspend {workloadKind}" help="suspend" {onclose} />
+
+    <GitOpsNotice {management} />
 
     <p class="mt-4 text-body-medium text-on-surface-variant">
       {#if isJob}

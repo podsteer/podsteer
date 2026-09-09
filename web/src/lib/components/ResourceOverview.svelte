@@ -8,6 +8,7 @@
 <script lang="ts">
   import { parse } from 'yaml'
   import type { NamespaceSummary, Node, NodeLoad, Pod, Workload } from '$lib/api/client'
+  import type { GitOpsManagement } from '$lib/gitops'
   import DetailSection from './DetailSection.svelte'
   import DetailList, { type DetailRow } from './DetailList.svelte'
   import ContainerDetail from './ContainerDetail.svelte'
@@ -42,6 +43,13 @@
 
   interface Props {
     manifest: string | null
+    /**
+     * The GitOps controller holding this object's spec, when one does.
+     *
+     * Passed down rather than resolved here: a pod carries no marker of its
+     * own, so answering it costs a read, and the drawer has already made it.
+     */
+    management?: GitOpsManagement | null
     selectedPod?: Pod | null
     selectedWorkload?: Workload | null
     kind?: string
@@ -135,6 +143,7 @@
   }
 
   let {
+    management = null,
     manifest,
     selectedPod,
     selectedNode,
@@ -1384,6 +1393,7 @@
             -->
             {#each containers as container (`${containerScope}/${container.name}`)}
               <ContainerDetail
+                {management}
                 spec={container}
                 status={statusFor(container.name)}
                 clusterId={selectedPod?.clusterId ?? ''}
@@ -1414,6 +1424,7 @@
           <div class="flex flex-col">
             {#each ephemeralContainers as container (`${containerScope}/${container.name}`)}
               <ContainerDetail
+                {management}
                 spec={container}
                 status={statusFor(container.name)}
                 clusterId={selectedPod?.clusterId ?? ''}
@@ -1442,6 +1453,7 @@
           <div class="flex flex-col">
             {#each initContainers as container (`${containerScope}/${container.name}`)}
               <ContainerDetail
+                {management}
                 spec={container}
                 status={statusFor(container.name)}
                 clusterId={selectedPod?.clusterId ?? ''}
@@ -1517,6 +1529,7 @@
         <div class="flex flex-col">
           {#each templateContainers as container, index (container.name ?? index)}
             <ContainerDetail
+              {management}
               spec={container}
               context="template"
               clusterId={clusterId ?? ''}
@@ -1549,6 +1562,7 @@
           <div class="flex flex-col">
             {#each templateInitContainers as container, index (container.name ?? index)}
               <ContainerDetail
+                {management}
                 spec={container}
                 context="template"
                 clusterId={clusterId ?? ''}

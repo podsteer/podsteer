@@ -10,9 +10,11 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import type { GitOpsManagement } from '$lib/gitops'
   import { del } from '$lib/kubectl'
   import Button from './Button.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import GitOpsNotice from './GitOpsNotice.svelte'
   import DialogFooter from './DialogFooter.svelte'
   import { nameConfirmed } from '$lib/confirm'
   import { TriangleAlert } from '@lucide/svelte'
@@ -27,6 +29,8 @@
      * banner and turns on the type-the-name requirement below.
      */
     productionGroup?: string | null
+    /** The GitOps controller holding this object's spec, when one does. */
+    management?: GitOpsManagement | null
     onclose: () => void
     onconfirm: () => void
     /** The kubeconfig context this cluster connects through. See $lib/kubectl. */
@@ -37,7 +41,7 @@
     namespace: string
   }
 
-  let { open, resourceName, resourceKind, productionGroup, onclose, onconfirm, ctx, resource, namespace }: Props =
+  let { open, resourceName, resourceKind, productionGroup, onclose, onconfirm, ctx, resource, namespace, management = null }: Props =
     $props()
 
   const requiresTypedName = $derived(!!productionGroup)
@@ -92,6 +96,8 @@
     aria-label="Delete resource"
   >
     <DialogHeader title="Delete {resourceKind}" help="delete" {onclose} />
+
+    <GitOpsNotice {management} />
 
     {#if productionGroup}
       <p

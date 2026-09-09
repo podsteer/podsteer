@@ -26,6 +26,23 @@ export interface GitOpsOwner {
   source: string
   /** The kind of the owning object, for wording that reads naturally. */
   sourceKind: string
+  /**
+   * The object the controller actually applies, when it says so.
+   *
+   * ARGO CD'S TRACKING ID NAMES ITS TARGET, and that is not always the object
+   * carrying it. The Deployment controller copies a Deployment's annotations
+   * onto every ReplicaSet it creates, so a ReplicaSet ends up holding a
+   * tracking id that reads `…:apps/Deployment:synapctx/web` — a perfectly
+   * accurate statement about a Deployment, found on something else. Reading
+   * it as "this ReplicaSet is managed by Argo CD" produced a warning that was
+   * wrong twice over: Argo CD never touches the ReplicaSet, and what really
+   * undoes an edit to one is the Deployment controller.
+   *
+   * Null for the older signals — the `argocd.argoproj.io/instance` label and
+   * `app.kubernetes.io/managed-by` — which name no target, so nothing can be
+   * compared and the object is taken at its word.
+   */
+  target: { kind: string; name: string; namespace: string } | null
 }
 
 /** Metadata as it appears in a parsed manifest. */
@@ -63,7 +80,7 @@ export function gitOpsOwner(manifest: unknown): GitOpsOwner | null {
   // value from the `instance` label beside it, the label naming a parent app.
   const trackingId = annotations['argocd.argoproj.io/tracking-id']
   if (trackingId) {
-    return argo(trackingId.split(':')[0] ?? '')
+    return argo(trackingId.split(':')[0] ?? '', parseTarget(trackingId))
   }
 
   // The older tracking method, and unambiguous because it is Argo CD's own
@@ -86,12 +103,31 @@ export function gitOpsOwner(manifest: unknown): GitOpsOwner | null {
   return null
 }
 
-function argo(application: string): GitOpsOwner {
-  return { tool: 'argocd', label: 'Argo CD', source: application, sourceKind: 'Application' }
+function argo(application: string, target: GitOpsOwner['target'] = null): GitOpsOwner {
+  return { tool: 'argocd', label: 'Argo CD', source: application, sourceKind: 'Application', target }
 }
 
 function flux(source: string, sourceKind: string): GitOpsOwner {
-  return { tool: 'flux', label: 'Flux', source, sourceKind }
+  return { tool: 'flux', label: 'Flux', source, sourceKind, target: null }
+}
+
+/**
+ * Reads the object out of a tracking id.
+ *
+ * The form is `<application>:<group>/<Kind>:<namespace>/<name>`, and the
+ * group is optional for core kinds — `web:/Service:platform/web`. Anything
+ * that does not parse returns null, which means "no target to compare" and
+ * leaves the object taken at its word.
+ */
+function parseTarget(trackingId: string): GitOpsOwner['target'] {
+  const parts = trackingId.split(':')
+  if (parts.length < 3) return null
+
+  const kind = parts[1]?.split('/').pop() ?? ''
+  const [namespace, name] = (parts[2] ?? '').split('/')
+  if (!kind || !name) return null
+
+  return { kind, name, namespace: namespace ?? '' }
 }
 
 /**
@@ -107,4 +143,42 @@ export function revertWarning(owner: GitOpsOwner): string {
     : owner.label
 
   return `This object is managed by ${by}. Changes made here are reverted the next time it reconciles against Git.`
+}
+
+/**
+ * How an object comes to be under a GitOps controller.
+ *
+ * `direct` is the object the controller applies — a Deployment with Argo CD's
+ * tracking annotation on it. `inherited` is everything below that: a POD
+ * carries no GitOps marker at all (measured on a real cluster: the Deployment
+ * had the tracking id, its pods had `app.kubernetes.io/name` and a
+ * pod-template-hash and nothing else), so the only way to know a pod's spec
+ * comes from Git is to ask what controls it.
+ *
+ * THE TWO CASES NEED DIFFERENT SENTENCES, and getting that wrong is how a
+ * warning stops being read. A change to the Deployment is reverted, usually
+ * within seconds where self-heal is on. A change to one of its pods is NOT
+ * reverted — Argo CD reconciles the Deployment, and an in-place resize does
+ * not change the Deployment, so the Application stays Synced and the pod
+ * keeps the new figures. It is lost later, when something replaces the pod.
+ */
+export interface GitOpsManagement {
+  owner: GitOpsOwner
+  through: 'direct' | 'inherited'
+  /** The controller carrying the marker. Empty when `through` is direct. */
+  controller: { kind: string; name: string } | null
+}
+
+/** One sentence for either case, saying what actually happens. */
+export function managementWarning(management: GitOpsManagement): string {
+  if (management.through === 'direct') return revertWarning(management.owner)
+
+  const { owner, controller } = management
+  const by = owner.source ? `${owner.label} — the ${owner.source} ${owner.sourceKind}` : owner.label
+  const above = controller ? `the ${controller.name} ${controller.kind}` : 'its controller'
+
+  // DELIBERATELY NOT "will be reverted". The controller does not watch this
+  // object, so the change stands; what ends it is the replacement, which
+  // comes from Git.
+  return `This belongs to ${above}, which is managed by ${by}. A change here stays on this object, but its replacement comes from Git — so the next rollout, restart or eviction brings back the figures Git holds.`
 }

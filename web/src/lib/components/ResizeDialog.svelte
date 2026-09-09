@@ -24,11 +24,13 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import type { GitOpsManagement } from '$lib/gitops'
   import { resizePod as kubectlResize } from '$lib/kubectl'
   import { resizeContainer } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import Button from './Button.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import GitOpsNotice from './GitOpsNotice.svelte'
   import DialogFooter from './DialogFooter.svelte'
   import { RotateCw, TriangleAlert } from '@lucide/svelte'
 
@@ -51,6 +53,8 @@
     }
     /** The group's name when this cluster is marked production. */
     productionGroup?: string | null
+    /** The GitOps controller holding this object's spec, when one does. */
+    management?: GitOpsManagement | null
     onclose: () => void
     onapplied: () => void
   }
@@ -63,6 +67,7 @@
     container,
     current,
     productionGroup,
+    management = null,
     onclose,
     onapplied,
   }: Props = $props()
@@ -163,6 +168,8 @@
     aria-label="Resize container"
   >
     <DialogHeader title="Resize container" help="resize-container" {onclose} />
+
+    <GitOpsNotice {management} />
 
     {#if productionGroup}
       <p
