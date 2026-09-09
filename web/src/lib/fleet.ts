@@ -279,6 +279,90 @@ function stripTitle<T>(answer: ClusterAnswer<T>, ageSeconds: number | null): str
   }
 }
 
+/**
+ * Which clusters the merged table is showing, as the strip's chips set it.
+ *
+ * THE CHIPS USED TO WRITE `cluster:` TERMS INTO THE SEARCH BOX, and that was
+ * a control lying about what it could do. Query terms are ANDed — see
+ * matches() in $lib/query — and a row belongs to exactly one cluster, so
+ * pressing two chips produced `cluster:a cluster:b`, which matches nothing.
+ * Both chips rendered pressed, over an empty table, with `aria-pressed`
+ * telling a screen reader they were both on. A control shaped like a
+ * multi-select has to be one.
+ *
+ * EMPTY MEANS EVERY CLUSTER, which is what keeps the resting state the one
+ * an operator already has: no chip pressed, every cluster in the table. It
+ * also means "all of them selected" and "none of them selected" cannot be
+ * two different-looking states that show the same rows — selecting the last
+ * one normalises back to empty. See toggleClusterSelection.
+ *
+ * The typed `cluster:` term still works and is untouched: it is a search,
+ * this is a selection, and the search box remains the place a narrowing
+ * somebody typed can be seen and edited.
+ */
+export function includesCluster(selection: readonly string[], cluster: string): boolean {
+  return selection.length === 0 || selection.includes(cluster)
+}
+
+/**
+ * Adds or removes one cluster, keeping the "empty means all" invariant.
+ *
+ * Three rules, in the order they are reached:
+ *
+ *   - Pressing a chip while nothing is selected ISOLATES that cluster, which
+ *     is what pressing one chip did before and what an operator expects from
+ *     a row of filters that are all off.
+ *   - Pressing another adds it. This is the case that was broken.
+ *   - Selecting every open cluster is the same table as selecting none, so it
+ *     collapses to none rather than leaving every chip lit.
+ */
+export function toggleClusterSelection(
+  selection: readonly string[],
+  cluster: string,
+  open: readonly string[],
+): string[] {
+  const next = selection.includes(cluster)
+    ? selection.filter((id) => id !== cluster)
+    : [...selection, cluster]
+
+  // Only clusters still open can be selected: a tab closed while its chip was
+  // pressed must not go on filtering a table it has no rows in.
+  const live = next.filter((id) => open.includes(id))
+  return live.length === open.length ? [] : live
+}
+
+/** What a scrolling strip can still reveal, in each direction. */
+export interface StripScroll {
+  overflowing: boolean
+  atStart: boolean
+  atEnd: boolean
+}
+
+/**
+ * Reads a scroller's geometry into the two facts the arrows and the mask need.
+ *
+ * A PURE FUNCTION OF THREE NUMBERS, extracted from the view so the rule can
+ * be tested without a layout engine. The slack of one pixel in each
+ * comparison is not sloppiness: a scroll position is fractional on a
+ * trackpad and on a display with a non-integer device ratio, so `scrollLeft
+ * === 0` is a test that a strip scrolled fully back to the left can fail —
+ * leaving an arrow pointing at nothing.
+ */
+export function stripScrollState(metrics: {
+  scrollWidth: number
+  clientWidth: number
+  scrollLeft: number
+}): StripScroll {
+  const slack = metrics.scrollWidth - metrics.clientWidth
+  if (slack <= 1) return { overflowing: false, atStart: true, atEnd: true }
+
+  return {
+    overflowing: true,
+    atStart: metrics.scrollLeft <= 1,
+    atEnd: metrics.scrollLeft >= slack - 1,
+  }
+}
+
 /** Where a row of a merged table leads: one object, in one cluster. */
 export interface FleetTarget {
   cluster: string
