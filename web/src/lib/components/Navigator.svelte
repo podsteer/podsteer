@@ -363,47 +363,12 @@
 
   <!-- Resource tree -->
   <div class="min-h-0 flex-1 overflow-y-auto py-1.5">
-    <!-- The dashboard is pinned above the categories rather than filed inside
-         one: it is not a kind, and it is where an operator starts. The badge
-         carries the assessment's own verdict, so the sidebar answers "is
-         anything wrong" from any view. -->
-    <div class="px-1.5 pb-1">
-      <button
-        type="button"
-        onclick={() => session.selectKind(OVERVIEW_KIND_ID)}
-        aria-current={onOverview ? 'page' : undefined}
-        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
-               transition-all duration-100 ease-standard
-               {onOverview
-                 ? 'bg-primary/12 text-primary'
-                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
-      >
-        <LayoutDashboard
-          class="size-4 shrink-0 transition-colors duration-100
-                 {onOverview ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
-          strokeWidth={1.8}
-        />
-        <span class="flex-1 truncate text-body-medium font-medium">Overview</span>
-        {#if session.issueCount > 0}
-          <span
-            class="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-label-small tabular-nums
-                   {session.hasCriticalIssues
-                     ? 'bg-error-container text-on-error-container'
-                     : 'bg-warning-container text-on-warning-container'}"
-            title="{session.issueCount} findings need attention"
-          >
-            <AlertTriangle class="size-3" strokeWidth={2.2} />
-            {session.issueCount}
-          </span>
-        {/if}
-      </button>
-    </div>
-
-    <!-- Every open cluster's pods, workloads or events in one table. Pinned
-         beside the dashboard for the reason the dashboard is: it is not a
-         kind, and no single cluster could serve it — see FLEET_KIND_ID. The
-         badge is how many tabs it merges; one is honest, if not much of a
-         merge. -->
+    <!-- Every open cluster's pods, workloads or events in one table, and the
+         first thing in the tree because it is the only entry that is not
+         about the cluster whose tab this is. Above the rule for that reason:
+         everything below answers for one cluster. It is not a kind and no
+         single cluster could serve it — see FLEET_KIND_ID. The badge is how
+         many tabs it merges; one is honest, if not much of a merge. -->
     <div class="px-1.5 pb-1">
       <button
         type="button"
@@ -431,103 +396,13 @@
       </button>
     </div>
 
-    <!-- The RBAC explorer, pinned beside the other two and for the same
-         reason: "what may this kubeconfig do here" is a question asked of the
-         review APIs, not an object anything can GET, so it is a pseudo-entry
-         rather than an entry in domain/catalog.go. Roles and ClusterRoles
-         themselves stay where they are, under Access Control. -->
-    <div class="px-1.5 pb-1">
-      <button
-        type="button"
-        onclick={() => session.selectKind(RBAC_KIND_ID)}
-        aria-current={onRBAC ? 'page' : undefined}
-        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
-               transition-all duration-100 ease-standard
-               {onRBAC
-                 ? 'bg-primary/12 text-primary'
-                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
-      >
-        <KeyRound
-          class="size-4 shrink-0 transition-colors duration-100
-                 {onRBAC ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
-          strokeWidth={1.8}
-        />
-        <span class="flex-1 truncate text-body-medium font-medium">Permissions</span>
-      </button>
-    </div>
+    <div class="mx-3 my-1.5 h-px bg-outline-variant/40" aria-hidden="true"></div>
 
-    <!-- What changed in this cluster while the tab has been open. Pinned
-         beside the other two that are not kinds, and for the same reason:
-         there is nothing to GET called a timeline — see TIMELINE_KIND_ID.
-         It is the only entry here that costs no request at all, because
-         every entry in it was recorded from a read something else made. -->
-    <div class="px-1.5 pb-1">
-      <button
-        type="button"
-        onclick={() => session.selectKind(TIMELINE_KIND_ID)}
-        aria-current={onTimeline ? 'page' : undefined}
-        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
-               transition-all duration-100 ease-standard
-               {onTimeline
-                 ? 'bg-primary/12 text-primary'
-                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
-      >
-        <Clock
-          class="size-4 shrink-0 transition-colors duration-100
-                 {onTimeline ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
-          strokeWidth={1.8}
-        />
-        <span class="flex-1 truncate text-body-medium font-medium">Timeline</span>
-        {#if timelineCount > 0}
-          <!-- Capped by formatBadgeCount. This is the one badge in the
-               navigator that can reach four digits — every other counts kinds
-               or open clusters — because it counts entries bounded by
-               MAX_ENTRIES_PER_CLUSTER rather than by anything in the cluster,
-               and a sidebar that widens because a cluster got busy is worse
-               than a number that stops being exact. -->
-          <span
-            class="shrink-0 rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small
-                   tabular-nums text-on-surface-variant/70"
-            title="{timelineCount} recorded this session"
-          >
-            {formatBadgeCount(timelineCount)}
-          </span>
-        {/if}
-      </button>
-    </div>
-
-    <!-- What Helm has installed here. The SIXTH pinned pseudo-entry, and one
-         for the reason the other five are: there is no object to GET called a
-         Helm release — it is a set of Secrets Helm labelled, read back by
-         those labels — so a catalogue entry would offer it to every consumer
-         that expects to be able to fetch what it names. See HELM_KIND_ID.
-
-         It also fetches NOTHING on the refresh tick, and the page owns its
-         own Refresh: a metadata LIST of Secrets on a ten-second timer is the
-         audit pattern the Secrets doctrine exists to prevent. -->
-    <div class="px-1.5 pb-1">
-      <button
-        type="button"
-        onclick={() => session.selectKind(HELM_KIND_ID)}
-        aria-current={onHelm ? 'page' : undefined}
-        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
-               transition-all duration-100 ease-standard
-               {onHelm
-                 ? 'bg-primary/12 text-primary'
-                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
-      >
-        <Package
-          class="size-4 shrink-0 transition-colors duration-100
-                 {onHelm ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
-          strokeWidth={1.8}
-        />
-        <span class="flex-1 truncate text-body-medium font-medium">Helm</span>
-      </button>
-    </div>
-
-    <!-- Pinned kinds: directly under Overview and above every category, so a
-         cluster with sixty custom resources still opens on the handful an
-         operator actually works with. Rendered in the order pinned — see
+    <!-- Pinned kinds, with Recent below them: what THIS operator reaches for,
+         above everything the cluster happens to contain, so a cluster with
+         sixty custom resources still opens on the handful they work with.
+         Both are chosen by use rather than by category, which is why they
+         share a band of their own. Rendered in the order pinned — see
          preferences.pinKind — and skipped, not removed, for a kind this
          cluster no longer serves (see the comment on `pinnedKinds` above). -->
     {#if pinnedKinds.length > 0}
@@ -671,15 +546,93 @@
       </div>
     {/if}
 
-    {#if session.kinds.length === 0}
-      <div class="flex flex-col items-center gap-2 px-4 py-8">
-        <div class="size-8 animate-pulse rounded-full bg-surface-container-high"></div>
-        <p class="text-body-small text-on-surface-variant/70">Loading resources…</p>
-      </div>
+    <!-- Only when there is something above it to separate. An operator with
+         nothing pinned and nothing opened yet sees one list, not a rule with
+         a gap over it. -->
+    {#if pinnedKinds.length > 0 || session.recentObjects.length > 0}
+      <div class="mx-3 my-1.5 h-px bg-outline-variant/40" aria-hidden="true"></div>
     {/if}
 
-    <!-- Applications, pinned beside the dashboard for the same reason: there
-         is no object called an application. It is a grouping of what is
+    <!-- The dashboard opens the cluster's own band — everything from here to
+         Custom Resources answers for this cluster, in the order an operator
+         reads it: the verdict, what changed, what is deployed, then the
+         objects themselves. It is not a kind, and it is where they start. The badge
+         carries the assessment's own verdict, so the sidebar answers "is
+         anything wrong" from any view. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(OVERVIEW_KIND_ID)}
+        aria-current={onOverview ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onOverview
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <LayoutDashboard
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onOverview ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">Overview</span>
+        {#if session.issueCount > 0}
+          <span
+            class="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-label-small tabular-nums
+                   {session.hasCriticalIssues
+                     ? 'bg-error-container text-on-error-container'
+                     : 'bg-warning-container text-on-warning-container'}"
+            title="{session.issueCount} findings need attention"
+          >
+            <AlertTriangle class="size-3" strokeWidth={2.2} />
+            {session.issueCount}
+          </span>
+        {/if}
+      </button>
+    </div>
+
+    <!-- What changed in this cluster while the tab has been open. Pinned
+         beside the other two that are not kinds, and for the same reason:
+         there is nothing to GET called a timeline — see TIMELINE_KIND_ID.
+         It is the only entry here that costs no request at all, because
+         every entry in it was recorded from a read something else made. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(TIMELINE_KIND_ID)}
+        aria-current={onTimeline ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onTimeline
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <Clock
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onTimeline ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">Timeline</span>
+        {#if timelineCount > 0}
+          <!-- Capped by formatBadgeCount. This is the one badge in the
+               navigator that can reach four digits — every other counts kinds
+               or open clusters — because it counts entries bounded by
+               MAX_ENTRIES_PER_CLUSTER rather than by anything in the cluster,
+               and a sidebar that widens because a cluster got busy is worse
+               than a number that stops being exact. -->
+          <span
+            class="shrink-0 rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small
+                   tabular-nums text-on-surface-variant/70"
+            title="{timelineCount} recorded this session"
+          >
+            {formatBadgeCount(timelineCount)}
+          </span>
+        {/if}
+      </button>
+    </div>
+
+    <!-- Applications closes the three views that are not kinds, before the
+         categories that are: there is no object called an application. It is a grouping of what is
          there by the labels Kubernetes recommends they carry, so it belongs
          with the other view that is not a kind rather than filed among the
          kinds. -->
@@ -706,6 +659,13 @@
         <span class="flex-1 truncate text-body-medium">Applications</span>
       </button>
     </div>
+
+    {#if session.kinds.length === 0}
+      <div class="flex flex-col items-center gap-2 px-4 py-8">
+        <div class="size-8 animate-pulse rounded-full bg-surface-container-high"></div>
+        <p class="text-body-small text-on-surface-variant/70">Loading resources…</p>
+      </div>
+    {/if}
 
 
     {#each sections as section (section.category)}
@@ -814,6 +774,68 @@
         {/if}
       </div>
     {/each}
+
+    <div class="mx-3 my-1.5 h-px bg-outline-variant/40" aria-hidden="true"></div>
+
+    <!-- What Helm has installed here, in a band of its own below the kinds:
+         it is a view of what somebody INSTALLED rather than of what the
+         cluster holds, which is a different question from any category above
+         it. A pseudo-entry for the reason the others are: there is no object
+         to GET called a Helm release — it is a set of Secrets Helm labelled, read back by
+         those labels — so a catalogue entry would offer it to every consumer
+         that expects to be able to fetch what it names. See HELM_KIND_ID.
+
+         It also fetches NOTHING on the refresh tick, and the page owns its
+         own Refresh: a metadata LIST of Secrets on a ten-second timer is the
+         audit pattern the Secrets doctrine exists to prevent. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(HELM_KIND_ID)}
+        aria-current={onHelm ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onHelm
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <Package
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onHelm ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">Helm</span>
+      </button>
+    </div>
+
+    <div class="mx-3 my-1.5 h-px bg-outline-variant/40" aria-hidden="true"></div>
+
+    <!-- The RBAC explorer, last and alone: it is the only entry that asks
+         about the OPERATOR rather than about the cluster, and a question
+         about yourself does not belong among the things you are looking at.
+         "What may this kubeconfig do here" is asked of the review APIs and is
+         not an object anything can GET, so it is a pseudo-entry
+         rather than an entry in domain/catalog.go. Roles and ClusterRoles
+         themselves stay where they are, under Access Control. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(RBAC_KIND_ID)}
+        aria-current={onRBAC ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onRBAC
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <KeyRound
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onRBAC ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">Permissions</span>
+      </button>
+    </div>
   </div>
 
   <!-- Resize handle -->

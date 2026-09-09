@@ -96,6 +96,16 @@ class Fleet {
    */
   openClusters: () => string[] = () => []
 
+  /**
+   * The ids of the open clusters that are NOT answering. Assigned by
+   * $stores/workspace, like openClusters and for the same reason: importing
+   * it here would close a circle through $stores/session.
+   *
+   * The strip needs this because a fleet read cannot discover it — see
+   * stripModel in $lib/fleet.
+   */
+  silentClusters: () => string[] = () => []
+
   /** Each cluster's last answer, per table, in tab order. */
   pods = $state.raw<ClusterAnswer<Pod>[]>([])
   workloads = $state.raw<ClusterAnswer<Workload>[]>([])
@@ -146,15 +156,16 @@ class Fleet {
       of state: it changes when a read lands, not every second. */
   readonly strip = $derived.by<FleetStripEntry[]>(() => {
     const now = this.lastReadAt ?? 0
+    const silent = new Set(this.silentClusters())
     switch (this.tab) {
       case 'pods':
-        return stripModel(this.pods, now)
+        return stripModel(this.pods, now, silent)
       case 'workloads':
-        return stripModel(this.workloads, now)
+        return stripModel(this.workloads, now, silent)
       case 'events':
-        return stripModel(this.events, now)
+        return stripModel(this.events, now, silent)
       case 'kinds':
-        return stripModel(this.tableRows, now)
+        return stripModel(this.tableRows, now, silent)
     }
   })
 
