@@ -11,11 +11,13 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import type { GitOpsManagement } from '$lib/gitops'
   import { rolloutUndo } from '$lib/kubectl'
   import { rollbackWorkload } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import Button from './Button.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import GitOpsNotice from './GitOpsNotice.svelte'
   import DialogFooter from './DialogFooter.svelte'
   import { TriangleAlert, Check, Loader } from '@lucide/svelte'
 
@@ -32,6 +34,8 @@
     productionGroup?: string | null
     isReadOnly: boolean
     readOnlyReason: string
+    /** The GitOps controller holding this object's spec, when one does. */
+    management?: GitOpsManagement | null
     onclose: () => void
     /** Called once the real rollback (not the preview) succeeds. */
     onrolledback: () => void
@@ -47,6 +51,7 @@
     productionGroup,
     isReadOnly,
     readOnlyReason,
+    management = null,
     onclose,
     onrolledback,
   }: Props = $props()
@@ -139,6 +144,8 @@
     aria-label="Roll back"
   >
     <DialogHeader title="Roll back to revision {toRevision}" help="rollback" {onclose} />
+
+    <GitOpsNotice {management} />
 
     {#if productionGroup}
       <p

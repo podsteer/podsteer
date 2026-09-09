@@ -4,9 +4,11 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import type { GitOpsManagement } from '$lib/gitops'
   import { rolloutRestart } from '$lib/kubectl'
   import Button from './Button.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import GitOpsNotice from './GitOpsNotice.svelte'
   import DialogFooter from './DialogFooter.svelte'
   import { TriangleAlert } from '@lucide/svelte'
 
@@ -21,6 +23,8 @@
      * so it does not gain the type-the-name gate those two do.
      */
     productionGroup?: string | null
+    /** The GitOps controller holding this object's spec, when one does. */
+    management?: GitOpsManagement | null
     onclose: () => void
     onconfirm: () => void
     /** The kubeconfig context this cluster connects through. See $lib/kubectl. */
@@ -28,7 +32,7 @@
     namespace: string
   }
 
-  let { open, workloadName, workloadKind, productionGroup, onclose, onconfirm, ctx, namespace }: Props = $props()
+  let { open, workloadName, workloadKind, productionGroup, onclose, onconfirm, ctx, namespace, management = null }: Props = $props()
 
   /**
    * Escape closes; Enter confirms, but only where Enter meant nothing else.
@@ -86,6 +90,8 @@
     aria-label="Restart rollout"
   >
     <DialogHeader title="Restart {workloadKind}" help="restart" {onclose} />
+
+    <GitOpsNotice {management} />
 
     {#if productionGroup}
       <p

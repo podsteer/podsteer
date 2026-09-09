@@ -22,9 +22,20 @@
     owner: GitOpsOwner
     /** Compact drops the owning object's name, for a tight header. */
     compact?: boolean
+    /**
+     * The hover sentence, when the caller knows more than the owner does.
+     *
+     * A row that only has an object's own labels cannot tell whether the
+     * marker is about that object or copied onto it from above, and the
+     * default sentence — the revert — is right for the common case of a
+     * workload. Where the caller HAS resolved it (see $lib/gitopsChain), it
+     * passes the accurate sentence in rather than letting this promise a
+     * revert that will not happen.
+     */
+    title?: string
   }
 
-  let { owner, compact = false }: Props = $props()
+  let { owner, compact = false, title }: Props = $props()
 </script>
 
 <!-- The whole sentence on hover. The chip has room for who, not for what
@@ -32,7 +43,7 @@
 <span
   class="inline-flex min-w-0 shrink-0 items-center gap-1.5 rounded-full bg-surface-container-high
          px-2 py-0.5 text-body-small text-on-surface-variant"
-  title={revertWarning(owner)}
+  title={title ?? revertWarning(owner)}
 >
   <GitBranch class="size-3.5 shrink-0 text-on-surface-variant/70" strokeWidth={1.8} />
   <span class="shrink-0">{owner.label}</span>

@@ -20,6 +20,7 @@
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
+  import type { GitOpsManagement } from '$lib/gitops'
   import { setImage as kubectlSetImage } from '$lib/kubectl'
   import { setImage as callSetImage } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
@@ -27,6 +28,7 @@
   import type { PodTemplate } from '$lib/podTemplate'
   import Button from './Button.svelte'
   import DialogHeader from './DialogHeader.svelte'
+  import GitOpsNotice from './GitOpsNotice.svelte'
   import DialogFooter from './DialogFooter.svelte'
   import { TriangleAlert, Check } from '@lucide/svelte'
 
@@ -47,12 +49,14 @@
     template: PodTemplate | null
     /** The group's name, when this workload's cluster is marked production — null or undefined otherwise. */
     productionGroup?: string | null
+    /** The GitOps controller holding this object's spec, when one does. */
+    management?: GitOpsManagement | null
     onclose: () => void
     /** Called once every changed container has been written successfully. */
     onapplied: () => void
   }
 
-  let { open, ctx, kind, name, namespace, template, productionGroup, onclose, onapplied }: Props = $props()
+  let { open, ctx, kind, name, namespace, template, productionGroup, onclose, onapplied, management = null }: Props = $props()
 
   /** One row per container in the template: name, current image, and whether it is an init container. */
   interface Row {
@@ -187,6 +191,8 @@
     aria-label="Set image"
   >
     <DialogHeader title="Set image" help="set-image" {onclose} />
+
+    <GitOpsNotice {management} />
 
     {#if productionGroup}
       <p

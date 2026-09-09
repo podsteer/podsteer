@@ -36,6 +36,7 @@
     type PodManifest,
   } from '$lib/container'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
+  import type { GitOpsManagement } from '$lib/gitops'
   import { setConfigMapKey, type Container } from '$lib/api/client'
   import { forwards } from '$stores/forwards.svelte'
   import { configMapData, refreshConfigMap } from '$stores/configMaps.svelte'
@@ -48,6 +49,8 @@
   import { EyeOff, Loader, Scaling, Unplug } from '@lucide/svelte'
 
   interface Props {
+    /** The GitOps controller holding this container's spec, when one does. */
+    management?: GitOpsManagement | null
     /** The pod this container belongs to, for forwarding its ports. */
     podName?: string
     podUID?: string
@@ -105,6 +108,7 @@
   }
 
   let {
+    management = null,
     spec,
     status,
     clusterId,
@@ -578,6 +582,7 @@
       {podName}
       container={spec.name}
       current={declaredResources}
+      {management}
       {productionGroup}
       onclose={() => (resizeOpen = false)}
       onapplied={onchanged}
