@@ -41,17 +41,25 @@ func TestCommandLineKeepsEveryArgumentSeparate(t *testing.T) {
 func TestCommandLineSurvivesAnArgumentWithAQuote(t *testing.T) {
 	t.Parallel()
 
-	// An agent prompt is operator text and can contain anything. The escaping
-	// is the standard library's own, so this asserts that it is USED rather
-	// than re-deriving the rule.
-	cmd := exec.Command("pwsh.exe", `say "hi"`)
+	// An agent prompt is operator text and can contain anything, and an
+	// unescaped quote in it is re-split by whatever parses the far end's
+	// command line.
+	//
+	// THE Cmd IS CONSTRUCTED RATHER THAN LOOKED UP. exec.Command resolves its
+	// program through PATH, so on a real Windows machine "pwsh.exe" becomes
+	// `C:\Program Files\PowerShell\7\pwsh.exe` — quoted, because it has a
+	// space in it — and this test was asserting on whichever PowerShell that
+	// machine happened to have installed. It never noticed, because nothing
+	// ran it until CI did.
+	const program = `C:\tools\pwsh.exe`
+	cmd := &exec.Cmd{Path: program, Args: []string{program, `say "hi"`}}
 
-	got := commandLine(cmd)
-	if got == `pwsh.exe say "hi"` {
-		t.Fatalf("commandLine() = %s, which the far end would re-split", got)
-	}
-	if got[:len("pwsh.exe ")] != "pwsh.exe " {
-		t.Fatalf("commandLine() = %s, want the program first", got)
+	// The literal that syscall.EscapeArg produces, written out rather than
+	// computed: the point of the test is that the command line the far end
+	// receives is the C runtime's own escaping, and re-deriving it here with
+	// the same call the code makes would assert nothing.
+	if got, want := commandLine(cmd), program+` "say \"hi\""`; got != want {
+		t.Fatalf("commandLine() = %s, want %s", got, want)
 	}
 }
 

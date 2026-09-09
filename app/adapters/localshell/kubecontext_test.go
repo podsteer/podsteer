@@ -14,6 +14,7 @@ package localshell
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -182,6 +183,16 @@ func TestContextOverlayQuotesAnAwkwardContextName(t *testing.T) {
 // os.MkdirTemp and os.WriteFile to stay as they are. The file holds no secret,
 // but every other file PodSteer writes is 0600 and a reader who finds one that
 // is not will reasonably wonder what makes it different.
+//
+// WHAT "PRIVATE" MEANS IS PER PLATFORM, which this test used to ignore. Mode
+// bits are a POSIX fact: Windows reports 0777 on a directory and 0666 on a
+// writable file whatever mode Go was asked for, because access there is
+// decided by an ACL that os.FileMode cannot express. Privacy on Windows comes
+// from WHERE the overlay is written — os.MkdirTemp("") puts it under the
+// user's own profile, inheriting that profile's ACL — so that is what is
+// checked there. Asserting 0700 was asserting something the platform never
+// promised, and nothing noticed until CI started running this package on a
+// Windows runner.
 func TestContextOverlayIsPrivateOnDisk(t *testing.T) {
 	t.Parallel()
 
@@ -191,20 +202,29 @@ func TestContextOverlayIsPrivateOnDisk(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
-	dirInfo, err := os.Stat(dir)
-	if err != nil {
-		t.Fatalf("stat on the overlay directory: %v", err)
-	}
-	if perm := dirInfo.Mode().Perm(); perm != 0o700 {
-		t.Errorf("directory mode = %04o, want 0700", perm)
-	}
+	if runtime.GOOS == "windows" {
+		// The one thing that WOULD take the privacy away here is moving the
+		// overlay somewhere shared — a C:\ProgramData, a directory beside the
+		// binary — so the location is what this asserts.
+		if parent, want := filepath.Dir(dir), filepath.Clean(os.TempDir()); !strings.EqualFold(parent, want) {
+			t.Errorf("overlay directory sits in %q, want the user's own temp directory %q", parent, want)
+		}
+	} else {
+		dirInfo, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat on the overlay directory: %v", err)
+		}
+		if perm := dirInfo.Mode().Perm(); perm != 0o700 {
+			t.Errorf("directory mode = %04o, want 0700", perm)
+		}
 
-	fileInfo, err := os.Stat(overlay)
-	if err != nil {
-		t.Fatalf("stat on the overlay: %v", err)
-	}
-	if perm := fileInfo.Mode().Perm(); perm != 0o600 {
-		t.Errorf("overlay mode = %04o, want 0600", perm)
+		fileInfo, err := os.Stat(overlay)
+		if err != nil {
+			t.Fatalf("stat on the overlay: %v", err)
+		}
+		if perm := fileInfo.Mode().Perm(); perm != 0o600 {
+			t.Errorf("overlay mode = %04o, want 0600", perm)
+		}
 	}
 
 	// The directory name is what somebody clearing a temp folder reads, so it
