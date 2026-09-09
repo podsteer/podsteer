@@ -24,6 +24,11 @@ type goneCluster struct {
 	// recoverAfter, when positive, makes the Nth assessment and everything
 	// after it succeed — the blip that retrying is meant to ride out.
 	recoverAfter int64
+	// servedFromCache makes every read EXCEPT the version succeed, which is
+	// what a cluster with live watches looks like the moment its network goes
+	// away: the informer stores answer from memory until their reflectors
+	// notice, and only /version actually leaves the machine.
+	servedFromCache bool
 }
 
 func (g *goneCluster) fail() error {
@@ -35,6 +40,9 @@ func (g *goneCluster) fail() error {
 func (g *goneCluster) err(counts bool) error {
 	if counts {
 		g.assessments.Add(1)
+	}
+	if g.servedFromCache && !counts {
+		return nil
 	}
 	if g.recoverAfter > 0 && g.assessments.Load() >= g.recoverAfter {
 		return nil
@@ -252,5 +260,31 @@ func TestCancellationIsNotRetried(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Errorf("a cancelled request took %s; it should abandon immediately", elapsed)
+	}
+}
+
+// THE SECOND HALF OF THE SAME BUG, and the one live watches introduced.
+//
+// The rule used to be a ratio — every read failed, and all of them on
+// transport — which was sound while every read went to the API server. A
+// watched kind is answered from an in-memory store instead, so after the VPN
+// goes away the pod and node lists keep succeeding for as long as the
+// reflector takes to notice, one read fails, the assessment degrades around
+// it, and the dashboard reports a healthy cluster nothing can reach.
+//
+// /version always leaves the machine. A transport failure on it is the
+// answer, whatever the stores are still willing to say.
+func TestVersionUnreachableIsAnErrorEvenWhenCachesStillAnswer(t *testing.T) {
+	t.Parallel()
+
+	service := goneService(t, &goneCluster{servedFromCache: true})
+
+	overview, err := service.Overview(context.Background(), domain.ClusterID("dev"))
+	if err == nil {
+		t.Fatalf("cluster unreachable but the assessment succeeded; health = %q, unavailable = %v",
+			overview.Health, overview.Unavailable)
+	}
+	if !errors.Is(err, ports.ErrUnreachable) {
+		t.Errorf("error = %v, want one wrapping ErrUnreachable", err)
 	}
 }

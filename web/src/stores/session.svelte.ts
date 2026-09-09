@@ -1713,7 +1713,58 @@ export class ClusterSession {
     const error = toApiError(cause)
     this.error = error
     if (error.code === 'cluster_not_found') this.onVanished?.(error)
+    this.#recordFailure(error)
     return error
+  }
+
+  /**
+   * When this cluster stopped answering, or null while it is.
+   *
+   * THE TAB USED TO REPORT `cluster.isReachable`, WHICH IS A FACT ABOUT THE
+   * PAST: it means "a round trip completed once and told us the server
+   * version", and nothing ever unsets it. A laptop that changes VPN keeps a
+   * green dot, the word "reachable" in the status bar, and — on a watched
+   * kind — a list of rows served from the in-memory store, because that read
+   * never touches the network. Every surface an operator can see says the
+   * cluster is fine while nothing can reach it.
+   *
+   * This is the other half: what the LAST read actually did. The first
+   * failure's time is kept rather than the most recent one, so the interface
+   * can say how long it has been out rather than merely that it is.
+   */
+  unreachableSince = $state<number | null>(null)
+
+  /** Whether the cluster is answering right now. */
+  readonly answering = $derived(this.unreachableSince === null)
+
+  /**
+   * Marks the cluster silent, if this failure is a failure of the network.
+   *
+   * ONLY A TRANSPORT FAILURE COUNTS. An account that may not list one kind is
+   * a perfectly reachable cluster refusing one request, and painting the tab
+   * red for it would send somebody to check a VPN over a permission — the
+   * same split classifyRead makes on the Go side, for the same reason. A
+   * cancelled request is nobody's fault and is not a verdict either.
+   */
+  #recordFailure(error: ApiError): void {
+    if (error.code !== 'unreachable') return
+    // The FIRST failure's time, kept across the ones that follow it.
+    this.unreachableSince ??= Date.now()
+  }
+
+  /**
+   * Records a read that PROVABLY reached the API server.
+   *
+   * NOT EVERY SUCCESS QUALIFIES, which is the asymmetry that makes this a
+   * second method rather than a null argument to the one above. A pod list on
+   * a watched kind is answered from an in-memory store, so it succeeds just
+   * as happily with the network gone — clearing on it would undo the
+   * assessment's verdict on the very same tick that raised it. A failure is
+   * evidence wherever it comes from; a success is only evidence from a read
+   * that had to leave the machine.
+   */
+  #recordAnswered(): void {
+    this.unreachableSince = null
   }
 
   /** Reloads whichever view is active. */
@@ -1736,6 +1787,13 @@ export class ClusterSession {
       this.status = 'ready'
       this.lastRefreshedAt = new Date()
       this.error = null
+
+      // ONLY THE OVERVIEW'S OWN FETCH COUNTS AS CONTACT. On every other view
+      // #fetch runs the assessment alongside (and records it there); on this
+      // one #fetch IS the assessment, so its success is the network read that
+      // proves the cluster is there. Any other view's rows may have come from
+      // a watch store — see #recordAnswered.
+      if (this.viewMode === 'overview') this.#recordAnswered()
     } catch (cause) {
       if (request !== this.#request) return
       this.status = 'error'
@@ -1786,7 +1844,15 @@ export class ClusterSession {
   async #refreshAssessment(): Promise<void> {
     try {
       this.#adopt(await getOverview(this.cluster.id))
-    } catch {
+      // THE ONE READ THAT ALWAYS TOUCHES THE NETWORK. A pod list on a watched
+      // cluster is served from the in-memory store and cannot tell anybody
+      // whether the API server is still there; this runs on every tick
+      // whatever is on screen, so it is what the tab's dot is entitled to
+      // believe. The Go side makes the same call authoritative for the
+      // assessment itself — see OverviewService.assess.
+      this.#recordAnswered()
+    } catch (cause) {
+      this.#recordFailure(toApiError(cause))
       // The next cycle tries again. A missed assessment is a stale badge for
       // one interval, not something to interrupt anyone over.
       //
