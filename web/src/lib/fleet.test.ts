@@ -438,3 +438,61 @@ describe('the strip that scrolls instead of wrapping', () => {
     expect(state.overflowing).toBe(false)
   })
 })
+
+describe('a chip for a cluster that is not answering', () => {
+  const answered = (cluster: string, rows: number): ClusterAnswer<string> => ({
+    cluster,
+    status: 'ok',
+    reason: '',
+    missing: [],
+    rows: Array.from({ length: rows }, (_, index) => `row-${index}`),
+    rowsAt: 1_000_000,
+    stale: false,
+  })
+
+  it('reports ok when nothing says otherwise', () => {
+    const [chip] = stripModel([answered('dev', 188)], 1_000_000)
+
+    expect(chip?.status).toBe('ok')
+    expect(chip?.stale).toBe(false)
+  })
+
+  it('OVERRIDES a confident read from a cluster nothing can reach', () => {
+    // THE BUG. On a watched kind the backend answers from an in-memory store
+    // without touching the network, so a cluster whose VPN had gone away kept
+    // returning `188` with an ok verdict — a green chip and a confident count
+    // for a cluster that was not there.
+    const [chip] = stripModel([answered('dev', 188)], 1_000_000, new Set(['dev']))
+
+    expect(chip?.status).toBe('unreachable')
+    expect(chip?.tone).toBe('error')
+    expect(chip?.rows).toBe(188)
+    expect(chip?.stale).toBe(true)
+  })
+
+  it('claims no age for rows whose age nobody knows', () => {
+    // A read served from a store is stamped with the moment it was served,
+    // so "0s ago" would be the store's answer rather than the cluster's.
+    const [chip] = stripModel([answered('dev', 188)], 1_000_000, new Set(['dev']))
+
+    expect(chip?.ageSeconds).toBeNull()
+    expect(chip?.title).toContain('read before it stopped')
+  })
+
+  it('does not claim stale rows when there are none', () => {
+    const [chip] = stripModel([{ ...answered('dev', 0) }], 1_000_000, new Set(['dev']))
+
+    expect(chip?.stale).toBe(false)
+    expect(chip?.title).toBe('dev — not answering')
+  })
+
+  it('leaves the clusters that are answering alone', () => {
+    const chips = stripModel(
+      [answered('dev', 188), answered('prod', 84)],
+      1_000_000,
+      new Set(['dev']),
+    )
+
+    expect(chips.map((chip) => chip.status)).toEqual(['unreachable', 'ok'])
+  })
+})

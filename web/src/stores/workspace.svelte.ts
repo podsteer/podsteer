@@ -520,3 +520,10 @@ export const workspace = new Workspace()
 // $stores/session. Read at each fleet refresh, so a tab opened or closed a
 // moment ago is in or out of the next read without anything being told.
 fleet.openClusters = () => workspace.sessions.map((session) => session.cluster.id)
+
+// And which of them have stopped answering, which a fleet read cannot find out
+// for itself: on a watched kind the backend answers from an in-memory store
+// without touching the network, so a cluster that has gone away keeps
+// returning a confident count. See stripModel in $lib/fleet.
+fleet.silentClusters = () =>
+  workspace.sessions.filter((session) => !session.answering).map((session) => session.cluster.id)

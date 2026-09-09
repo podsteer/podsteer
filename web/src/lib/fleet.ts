@@ -235,23 +235,64 @@ const STRIP_TONES: Record<ClusterReadStatus, { tone: Tone; label: string }> = {
   unserved: { tone: 'neutral', label: 'Not installed' },
 }
 
-/** The status strip: one entry per cluster, in tab order. */
-export function stripModel<T>(answers: readonly ClusterAnswer<T>[], now: number): FleetStripEntry[] {
+/**
+ * The status strip: one entry per cluster, in tab order.
+ *
+ * `silent` names the clusters that are not answering, which the read cannot
+ * find out for itself.
+ *
+ * A LIST THAT SUCCEEDED IS NOT PROOF THE CLUSTER IS THERE. On a watched kind
+ * the Go side answers from an in-memory informer store without touching the
+ * network, so a cluster whose VPN went away goes on returning a confident 188
+ * pods, with an ok verdict, for as long as its reflector takes to notice its
+ * stream is dead — which is the same staleness OverviewService.assess was
+ * taught to see through by making /version authoritative. The strip cannot
+ * ask /version, but something already has: the workspace pings every cluster
+ * whose tab is not in front, and the tab in front records contact on every
+ * refresh. So the fact is brought in rather than re-derived.
+ *
+ * The Go verdict is left saying exactly what it knows — the read succeeded —
+ * and the chip says what the operator needs, which is a question about the
+ * CLUSTER rather than about one read of it.
+ */
+export function stripModel<T>(
+  answers: readonly ClusterAnswer<T>[],
+  now: number,
+  silent: ReadonlySet<string> = new Set(),
+): FleetStripEntry[] {
   return answers.map((answer) => {
-    const { tone, label } = STRIP_TONES[answer.status]
+    const quiet = silent.has(answer.cluster)
+    const status: ClusterReadStatus = quiet ? 'unreachable' : answer.status
+    const { tone, label } = STRIP_TONES[status]
+
+    // NO AGE FOR A SILENT CLUSTER, rather than a reassuring zero. A read
+    // served from a store is stamped with the moment it was served, so the
+    // honest answer to "how old are these rows" is that nobody knows.
     const ageSeconds =
-      answer.rowsAt === null ? null : Math.max(0, Math.round((now - answer.rowsAt) / 1000))
+      quiet || answer.rowsAt === null
+        ? null
+        : Math.max(0, Math.round((now - answer.rowsAt) / 1000))
+
     return {
       cluster: answer.cluster,
-      status: answer.status,
+      status,
       tone,
       label,
       rows: answer.rows.length,
-      stale: answer.stale,
+      // Whatever is on screen for a cluster that is not answering was read
+      // before it stopped, whether or not the last read said so.
+      stale: quiet ? answer.rows.length > 0 : answer.stale,
       ageSeconds,
-      title: stripTitle(answer, ageSeconds),
+      title: quiet ? silentTitle(answer) : stripTitle(answer, ageSeconds),
     }
   })
+}
+
+/** The sentence for a cluster nothing can reach, whatever its last read said. */
+function silentTitle<T>(answer: ClusterAnswer<T>): string {
+  const count = `${answer.rows.length} row${answer.rows.length === 1 ? '' : 's'}`
+  if (answer.rows.length === 0) return `${answer.cluster} — not answering`
+  return `${answer.cluster} — not answering; showing ${count} read before it stopped`
 }
 
 /**
