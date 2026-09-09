@@ -378,7 +378,11 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID, targe
 		// fact is how they come to disagree.
 		metricsStatus = domain.MetricsMeasuredOK
 
-		version    domain.ServerVersion
+		version domain.ServerVersion
+		// versionErr is the /version read's own outcome, kept apart from the
+		// others because it is the only read that proves anything about the
+		// network. See the check after wg.Wait().
+		versionErr error
 		nodes      []domain.Node
 		pods       []domain.Pod
 		workloads  []domain.Workload
@@ -451,6 +455,10 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID, targe
 	run("version", func() error {
 		result, err := s.cluster.ServerVersion(ctx, id)
 		version = result
+		// Written without the mutex like every other source's result: each
+		// closure owns its own variables and wg.Wait() below is the
+		// happens-before edge for all of them.
+		versionErr = err
 		return err
 	})
 
@@ -645,15 +653,37 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID, targe
 
 	wg.Wait()
 
+	// THE VERSION READ IS THE LIVENESS PROBE, NOT ONE SOURCE AMONG MANY.
+	//
+	// The ratio rule below was written when every source here was a network
+	// read, so "all of them failed on transport" and "the cluster is gone"
+	// were the same sentence. LIVE WATCHES BROKE THAT PREMISE: a watched kind
+	// is answered from an in-memory store without touching the network, so
+	// pods and nodes go on succeeding for as long as the reflector takes to
+	// notice its stream is dead — up to its whole watch timeout. The ratio
+	// then reads one failure out of a dozen, degrades around it, and hands
+	// back a confident overview of a cluster nothing can reach. That is how a
+	// laptop that changed VPN kept a green tab, the word "reachable" in the
+	// status bar and a full pod list.
+	//
+	// /version is the one read that always goes to the API server and asks
+	// nothing of RBAC, so a TRANSPORT failure on it is not a degraded source
+	// — it is the answer. Only ErrUnreachable counts: a 403, a bad
+	// kubeconfig or a cancelled request all say the cluster was reached, or
+	// that nobody tried.
+	if errors.Is(versionErr, ports.ErrUnreachable) {
+		return domain.Overview{}, fmt.Errorf("assessing %q: %w", id, ports.ErrUnreachable)
+	}
+
 	// EVERY READ FAILED, AND ALL OF THEM ON TRANSPORT. That is not a degraded
 	// assessment, it is the absence of one, and returning it as an overview is
 	// what produced a green "No problems found" on a cluster the laptop could
 	// no longer reach.
 	//
-	// The ratio matters rather than any single call: one source failing this
-	// way is a flaky endpoint, and the assessment should still degrade around
-	// it as it always has. All of them failing this way is the cluster being
-	// gone.
+	// Kept alongside the version check rather than replaced by it: this one
+	// needs no source to be privileged, and it still catches the case where
+	// the version read fails some other way while everything else fails on
+	// transport.
 	if attempted > 0 && unreachable == attempted {
 		return domain.Overview{}, fmt.Errorf("assessing %q: %w", id, ports.ErrUnreachable)
 	}

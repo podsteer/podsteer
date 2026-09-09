@@ -42,6 +42,7 @@
   import { isMac } from '$lib/platform'
   import { shortcut } from '$stores/shortcuts.svelte'
   import { workspace } from '$stores/workspace.svelte'
+  import type { ClusterSession } from '$stores/session.svelte'
   import { organisation } from '$stores/organisation.svelte'
   import { groupBgClass } from '$lib/groupColour'
   import { preferences, THEME_LABELS } from '$stores/preferences.svelte'
@@ -85,9 +86,24 @@
     settingsDialog.toggle()
   }
 
-  /** Dot colour by connection health, so a dead tab is visible at a glance. */
-  function toneFor(reachable: boolean): string {
-    return reachable ? 'bg-success' : 'bg-error'
+  /**
+   * Dot colour by connection health, so a dead tab is visible at a glance.
+   *
+   * IT READS THE SESSION, NOT THE CLUSTER. `cluster.isReachable` means "a
+   * round trip completed once" and nothing ever unsets it — a laptop that
+   * changes network keeps a green dot for as long as the tab is open. What
+   * this needs is whether the cluster is answering NOW, which is what the
+   * session records on every tick. See ClusterSession.unreachableSince.
+   */
+  function toneFor(session: ClusterSession): string {
+    if (!session.cluster.isReachable) return 'bg-error'
+    return session.answering ? 'bg-success' : 'bg-error'
+  }
+
+  /** The word beside the dot, in the tooltip and the accessible name. */
+  function healthWord(session: ClusterSession): string {
+    if (!session.cluster.isReachable) return 'not reachable'
+    return session.answering ? 'reachable' : 'not answering'
   }
 
   /**
@@ -150,14 +166,12 @@
         <button
           type="button"
           onclick={() => workspace.focus(session.cluster.id)}
-          title="{session.cluster.id} — {session.cluster.host} — {session.cluster.isReachable
-            ? 'reachable'
-            : 'not reachable'}{settings.environment ? ` — ${settings.environment}` : ''}{settings.readOnly
+          title="{session.cluster.id} — {session.cluster.host} — {healthWord(
+            session,
+          )}{settings.environment ? ` — ${settings.environment}` : ''}{settings.readOnly
             ? ' — read-only'
             : ''}"
-          aria-label="{session.cluster.id}, {session.cluster.isReachable
-            ? 'reachable'
-            : 'not reachable'}{settings.environment
+          aria-label="{session.cluster.id}, {healthWord(session)}{settings.environment
             ? `, ${settings.environment}`
             : ''}{settings.readOnly ? ', read-only' : ''}"
           aria-current={active ? 'page' : undefined}
@@ -180,7 +194,7 @@
             accessible name and its tooltip.
           -->
           <span
-            class="size-1.5 shrink-0 rounded-full {toneFor(session.cluster.isReachable)}"
+            class="size-1.5 shrink-0 rounded-full {toneFor(session)}"
             aria-hidden="true"
           ></span>
           <!-- The group's own colour, a second dot rather than an underline:

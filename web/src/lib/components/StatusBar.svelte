@@ -15,7 +15,7 @@
   import { forwards } from '$stores/forwards.svelte'
   import { nodeShells } from '$stores/nodeShells.svelte'
   import { clusterShells } from '$stores/clusterShells.svelte'
-  import { formatClockTime } from '$lib/format'
+  import { formatAge, formatClockTime } from '$lib/format'
   import { iconForKind } from '$lib/kindIcons'
   import { shortcut } from '$stores/shortcuts.svelte'
   import { openURL } from '$lib/api/client'
@@ -55,6 +55,44 @@
   function openSocial(url: string): void {
     void openURL(url)
   }
+
+  /**
+   * A clock that runs only while a cluster has stopped answering.
+   *
+   * The silence needs a duration to be useful — "not answering" alone leaves
+   * an operator wondering whether it happened a second ago or ten minutes
+   * ago, which is the difference between waiting and going to look at the
+   * VPN. Nothing ticks while the cluster is fine, so the common case pays
+   * nothing for it.
+   */
+  let now = $state(Date.now())
+  $effect(() => {
+    if (session?.unreachableSince == null) return
+    const clock = setInterval(() => (now = Date.now()), 1000)
+    return () => clearInterval(clock)
+  })
+
+  /**
+   * What the last read actually did, not what the first one once did.
+   *
+   * `cluster.isReachable` means "a round trip completed once and told us the
+   * server version"; nothing unsets it. A laptop that changes VPN kept the
+   * green dot and the word "reachable" here for as long as the tab was open,
+   * because a watched kind is served from the in-memory store and never
+   * touches the network. The session records every tick's outcome — see
+   * ClusterSession.unreachableSince — so this can report the present tense.
+   */
+  const health = $derived.by(() => {
+    if (!session) return null
+    if (!session.cluster.isReachable) return { ok: false, word: 'not reachable', silence: '' }
+    if (session.answering) return { ok: true, word: 'reachable', silence: '' }
+    const since = session.unreachableSince ?? now
+    return {
+      ok: false,
+      word: 'not answering',
+      silence: formatAge(Math.max(0, now - since) / 1000),
+    }
+  })
 </script>
 
 {#snippet sep()}
@@ -72,13 +110,20 @@
          whether this cluster is answering. -->
     <span class="flex items-center gap-1.5">
       <span
-        class="size-1.5 rounded-full {session.cluster.isReachable ? 'bg-success' : 'bg-error'}"
+        class="size-1.5 rounded-full {health?.ok ? 'bg-success' : 'bg-error'}"
         aria-hidden="true"
       ></span>
       <span class="truncate font-medium">{session.cluster.id}</span>
-      <span class="sr-only">
-        {session.cluster.isReachable ? 'reachable' : 'not reachable'}
-      </span>
+      {#if health && !health.ok}
+        <!-- Said out loud, not only in colour, and only when it is news: a
+             cluster nobody can reach is the one fact on this bar worth
+             interrupting somebody with. -->
+        <span class="shrink-0 font-medium text-error">
+          {health.word}{health.silence ? ` for ${health.silence}` : ''}
+        </span>
+      {:else}
+        <span class="sr-only">{health?.word ?? ''}</span>
+      {/if}
 
       <!-- The environment word, said plainly rather than only in colour —
            the status bar is read at a glance while acting on a cluster, and
