@@ -1,6 +1,7 @@
 package wails
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -226,5 +227,59 @@ func TestAPodThatNeverRanIsNotReportedAsAnAdmissionRefusal(t *testing.T) {
 	}
 	if code, _ := classifyError(fmt.Errorf("x: %w", ports.ErrPodRejectedByAdmission)); code == CodePodDidNotStart {
 		t.Fatal("an admission refusal was reported as a pod that never started")
+	}
+}
+
+// THE BUG THIS PINS. A cancellation and a deadline shared one code and one
+// sentence — "The request was cancelled or timed out" — and they are opposite
+// facts. A cancellation is the caller giving up; a deadline is the cluster
+// failing to answer. Reported as one, a cluster whose network had gone away
+// kept a green tab: its calls EXPIRED rather than failing, because a blackholed
+// packet is never refused, and an expiry that reads as "cancelled" is correctly
+// ignored when deciding whether a cluster is still there.
+func TestACancelledRequestIsNotAClusterProblem(t *testing.T) {
+	t.Parallel()
+
+	code, message := classifyError(fmt.Errorf("listing pods: %w", context.Canceled))
+
+	if code != CodeCancelled {
+		t.Errorf("code = %q, want %q", code, CodeCancelled)
+	}
+	if strings.Contains(message, "timed out") {
+		t.Errorf("message = %q; a cancellation is not a timeout and must not say so", message)
+	}
+}
+
+func TestARequestThatTimedOutSaysTheClusterDidNotAnswer(t *testing.T) {
+	t.Parallel()
+
+	code, message := classifyError(fmt.Errorf("assessing: %w", context.DeadlineExceeded))
+
+	// The same code as the three transport failures, deliberately: the UI
+	// branches on the code to decide whether the cluster is still there and
+	// whether to offer Retry, and both answers are the ones it gives them.
+	if code != CodeUnreachable {
+		t.Errorf("code = %q, want %q — a deadline is the cluster not answering", code, CodeUnreachable)
+	}
+	if !strings.Contains(message, "did not answer") {
+		t.Errorf("message = %q, want one that says the cluster did not answer", message)
+	}
+}
+
+// A transport failure classified by the Kubernetes adapter still wins: it
+// carries a more specific diagnosis than "the deadline passed".
+func TestAClassifiedTransportFailureKeepsItsOwnMessage(t *testing.T) {
+	t.Parallel()
+
+	err := fmt.Errorf("listing pods: %w: %w: %w",
+		ports.ErrUnreachable, ports.ErrConnectionRefused, context.DeadlineExceeded)
+
+	code, message := classifyError(err)
+
+	if code != CodeUnreachable {
+		t.Fatalf("code = %q, want %q", code, CodeUnreachable)
+	}
+	if !strings.Contains(message, "refused the connection") {
+		t.Errorf("message = %q, want the refused-connection diagnosis rather than the deadline's", message)
 	}
 }

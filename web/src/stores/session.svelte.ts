@@ -1807,6 +1807,24 @@ export class ClusterSession {
     this.unreachableSince = null
   }
 
+  /**
+   * Files a heartbeat's outcome, for the tabs that are not in front.
+   *
+   * A background tab's views are not mounted, so nothing polls it and its dot
+   * is a claim about the last time somebody looked — see $stores/workspace,
+   * which owns the heartbeat, and App.svelte, which mounts one workspace at a
+   * time and moves the refresh timer with it. Public because the heartbeat is
+   * the workspace's job rather than this session's: only the workspace knows
+   * which tab is in front.
+   */
+  noteLiveness = (error: ApiError | null): void => {
+    if (error === null) {
+      this.#recordAnswered()
+      return
+    }
+    this.#recordFailure(error)
+  }
+
   /** Reloads whichever view is active. */
   refresh = async (): Promise<void> => {
     const request = ++this.#request

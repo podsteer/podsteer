@@ -14,7 +14,8 @@
   import StatusBar from '$lib/components/StatusBar.svelte'
   import ClusterView from '$pages/ClusterView.svelte'
   import ClusterWorkspace from '$pages/ClusterWorkspace.svelte'
-  import { workspace } from '$stores/workspace.svelte'
+  import { HEARTBEAT_INTERVAL_MS, workspace } from '$stores/workspace.svelte'
+  import { preferences } from '$stores/preferences.svelte'
   import { windowState } from '$stores/windowState.svelte'
   import { loadAppInfo } from '$stores/system.svelte'
   import { updates } from '$stores/updates.svelte'
@@ -170,6 +171,23 @@
       shortcutSheet.show()
     }
   }
+  /**
+   * The heartbeat for the tabs that are not in front.
+   *
+   * HERE RATHER THAN IN ClusterWorkspace, which is the whole point: that
+   * component is mounted for one session at a time and takes its refresh
+   * timer with it, so anything living there can only ever ask about the tab
+   * somebody is already looking at. This outlives every tab switch.
+   *
+   * Off when refresh is manual — see Workspace.startHeartbeat.
+   */
+  $effect(() => {
+    workspace.startHeartbeat(
+      preferences.effectiveIntervalMs === 0 ? 0 : HEARTBEAT_INTERVAL_MS,
+    )
+    return () => workspace.stopHeartbeat()
+  })
+
 </script>
 
 <svelte:window onkeydown={onKeydown} />

@@ -22,6 +22,17 @@ type ClusterService interface {
 	// connected cluster is not an error — it refreshes it.
 	Connect(ctx context.Context, id domain.ClusterID) (domain.Cluster, error)
 
+	// Ping asks a connected cluster whether it is still answering.
+	//
+	// THE ONE READ THAT PROVES CONTACT AND COSTS ALMOST NOTHING. It reads
+	// /version: no RBAC applies to it, it returns a few dozen bytes, and it
+	// cannot be served from a watch store — which every list on a watched
+	// cluster can, so a list that succeeds says nothing about the network.
+	// It exists for the tabs that are not in front: their views are not
+	// mounted and therefore do not poll, so without this a cluster that went
+	// away is discovered only when somebody clicks its tab.
+	Ping(ctx context.Context, id domain.ClusterID) error
+
 	// Disconnect closes a connection and releases everything cached for it.
 	Disconnect(ctx context.Context, id domain.ClusterID) error
 
