@@ -26,6 +26,7 @@
     customColumnId,
     isCustomColumnId,
     isValidKey,
+    needsWholeObject,
     type ColumnSource,
     type CustomColumnSpec,
     type MetadataKeys,
@@ -33,6 +34,7 @@
   import { controlKindOf, isControlColumn, type EdgeColumn } from '$lib/fixedColumns'
   import { Columns3, RotateCcw, Pin, Plus, X, ChevronUp, ChevronDown } from '@lucide/svelte'
   import Checkbox from './Checkbox.svelte'
+  import HelpButton from './HelpButton.svelte'
 
   interface Props {
     kindId: string
@@ -101,7 +103,12 @@
   /** What the rows carried when the menu was opened. */
   let onScreen = $state<MetadataKeys>({ labels: [], annotations: [] })
 
-  const suggestions = $derived(source === 'label' ? onScreen.labels : onScreen.annotations)
+  // A JSONPath column has nothing to suggest: the paths are the object's
+  // shape, which this side never sees. The field is free text and the
+  // expression is judged where it is evaluated.
+  const suggestions = $derived(
+    source === 'label' ? onScreen.labels : source === 'annotation' ? onScreen.annotations : [],
+  )
   const trimmed = $derived(key.trim())
   const alreadyAdded = $derived(custom.some((spec) => spec.source === source && spec.key === trimmed))
   const canAdd = $derived(trimmed !== '' && isValidKey(source, trimmed) && !alreadyAdded)
@@ -113,9 +120,26 @@
     if (source === 'annotation' && trimmed === LAST_APPLIED_ANNOTATION) {
       return 'The last-applied manifest is a whole document, not a value'
     }
+    if (source === 'jsonpath' && !isValidKey(source, trimmed)) {
+      return 'A path starts with a dot or a brace, as in .status.phase'
+    }
     if (!isValidKey(source, trimmed)) return 'A key cannot contain spaces or commas'
     return ''
   })
+
+  /**
+   * Whether this kind's list already fetches whole objects — because it has
+   * a JSONPath column, or because the one being typed would add the first.
+   *
+   * SAID BEFORE THE COLUMN IS ADDED, not after. It is the one custom column
+   * that changes what a list costs, and an operator who is about to make
+   * every refresh of a five-thousand-pod list fetch whole objects should
+   * know that from the control rather than from a graph later.
+   */
+  const wholeObjects = $derived(needsWholeObject(custom))
+  const wouldFetchWholeObjects = $derived(
+    !wholeObjects && source === 'jsonpath' && trimmed !== '' && problem === '',
+  )
 
   function toggle(): void {
     open = !open
@@ -198,6 +222,14 @@
       role="group"
       aria-label="Columns"
     >
+      <!-- The (?) beside the heading rather than a paragraph in the menu:
+           what a JSONPath column costs is worth a page, and this control is
+           already dense. -->
+      <div class="flex items-center justify-between gap-2 px-3 pt-1 pb-1.5">
+        <span class="text-body-medium text-on-surface">Columns</span>
+        <HelpButton topic="custom-columns" about="custom columns" />
+      </div>
+
       <p class="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant/60">
         Columns
       </p>
@@ -352,12 +384,15 @@
           >
             <option value="label">Label</option>
             <option value="annotation">Annotation</option>
+            <option value="jsonpath">JSONPath</option>
           </select>
           <input
             type="text"
             bind:value={key}
             list="column-key-suggestions"
-            placeholder="key, e.g. app.kubernetes.io/name"
+            placeholder={source === 'jsonpath'
+              ? '.status.phase'
+              : 'key, e.g. app.kubernetes.io/name'}
             aria-label="{source} key"
             aria-invalid={problem !== '' ? 'true' : undefined}
             onkeydown={onKeyFieldKeydown}
@@ -385,6 +420,16 @@
         </div>
         {#if problem !== ''}
           <p class="text-[11px] text-error" role="alert">{problem}</p>
+        {:else if wouldFetchWholeObjects}
+          <p class="text-[11px] text-on-surface-variant/60">
+            A path reads into spec and status, so this list will fetch whole objects on every
+            refresh. Labels and annotations do not.
+          </p>
+        {:else if source === 'jsonpath'}
+          <p class="text-[11px] text-on-surface-variant/60">
+            The same paths kubectl takes: <span class="font-mono">.status.phase</span>,
+            <span class="font-mono">.spec.containers[0].image</span>.
+          </p>
         {:else if suggestions.length > 0}
           <p class="text-[11px] text-on-surface-variant/60">
             {suggestions.length} {source} key{suggestions.length === 1 ? '' : 's'} on this list

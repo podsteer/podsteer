@@ -61,6 +61,10 @@ type EventSpec struct {
 	// Annotations are the event's annotations, populated SELECTIVELY by the
 	// adapter — only the keys a Projection asked for. See Projection.
 	Annotations map[string]string
+	// Custom holds the operator's own JSONPath columns, keyed by the
+	// interface's column id and already rendered as text. Nil when none were
+	// asked for, which is every read but a list view's.
+	Custom map[string]string
 }
 
 // Event is a Kubernetes Event as observed at a point in time.
@@ -82,6 +86,7 @@ type Event struct {
 	lastSeen     time.Time
 	labels       map[string]string
 	annotations  map[string]string
+	custom       map[string]string
 }
 
 // NewEvent validates spec and returns the corresponding Event.
@@ -114,6 +119,7 @@ func NewEvent(spec EventSpec) (Event, error) {
 		lastSeen:     spec.LastSeen.UTC(),
 		labels:       maps.Clone(spec.Labels),
 		annotations:  maps.Clone(spec.Annotations),
+		custom:       maps.Clone(spec.Custom),
 	}, nil
 }
 
@@ -159,6 +165,10 @@ func (e Event) Labels() map[string]string { return maps.Clone(e.labels) }
 // Annotations returns a copy of the projected annotations — only the keys
 // that were asked for when the event was read. See EventSpec.Annotations.
 func (e Event) Annotations() map[string]string { return maps.Clone(e.annotations) }
+
+// Custom returns a copy of the operator's own JSONPath column values, keyed
+// by column id.
+func (e Event) Custom() map[string]string { return maps.Clone(e.custom) }
 
 // IsWarning reports whether the event describes something going wrong.
 func (e Event) IsWarning() bool { return e.eventType == EventWarning }

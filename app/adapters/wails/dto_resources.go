@@ -115,8 +115,12 @@ type Node struct {
 	Labels map[string]string `json:"labels"`
 	// Annotations are only the projected keys — see Pod.Annotations.
 	Annotations map[string]string `json:"annotations"`
-	CreatedAt   string            `json:"createdAt"`
-	AgeSeconds  int64             `json:"ageSeconds"`
+	// Custom holds the operator's own JSONPath columns, keyed by the column
+	// id the interface knows them by and already rendered as text. Nil unless
+	// this list was asked for one — see domain.Projection.
+	Custom     map[string]string `json:"custom"`
+	CreatedAt  string            `json:"createdAt"`
+	AgeSeconds int64             `json:"ageSeconds"`
 }
 
 func toNode(node domain.Node, now time.Time) Node {
@@ -127,6 +131,7 @@ func toNode(node domain.Node, now time.Time) Node {
 		Name:           node.Name(),
 		Labels:         emptyIfNil(node.Labels()),
 		Annotations:    emptyIfNil(node.Annotations()),
+		Custom:         emptyIfNil(node.Custom()),
 		Status:         node.Status(),
 		Roles:          node.Roles(),
 		IsControlPlane: node.IsControlPlane(),
@@ -192,8 +197,12 @@ type Workload struct {
 	// Annotations carries only the GitOps keys — see gitOpsAnnotations in the
 	// k8s mapper for why it is not the whole set.
 	Annotations map[string]string `json:"annotations"`
-	CreatedAt   string            `json:"createdAt"`
-	AgeSeconds  int64             `json:"ageSeconds"`
+	// Custom holds the operator's own JSONPath columns, keyed by the column
+	// id the interface knows them by and already rendered as text. Nil unless
+	// this list was asked for one — see domain.Projection.
+	Custom     map[string]string `json:"custom"`
+	CreatedAt  string            `json:"createdAt"`
+	AgeSeconds int64             `json:"ageSeconds"`
 }
 
 func toWorkload(workload domain.Workload, now time.Time) Workload {
@@ -232,6 +241,7 @@ func toWorkload(workload domain.Workload, now time.Time) Workload {
 		LastScheduled: formatTime(workload.LastScheduled()),
 		Labels:        labels,
 		Annotations:   annotations,
+		Custom:        emptyIfNil(workload.Custom()),
 		CreatedAt:     formatTime(workload.CreatedAt()),
 		AgeSeconds:    int64(workload.Age(now).Seconds()),
 	}
@@ -489,6 +499,10 @@ type Event struct {
 	Labels map[string]string `json:"labels"`
 	// Annotations are only the projected keys — see Pod.Annotations.
 	Annotations map[string]string `json:"annotations"`
+	// Custom holds the operator's own JSONPath columns, keyed by the column
+	// id the interface knows them by and already rendered as text. Nil unless
+	// this list was asked for one — see domain.Projection.
+	Custom map[string]string `json:"custom"`
 }
 
 func toEvent(event domain.Event, now time.Time) Event {
@@ -497,6 +511,7 @@ func toEvent(event domain.Event, now time.Time) Event {
 		Namespace:      event.Namespace().String(),
 		Labels:         emptyIfNil(event.Labels()),
 		Annotations:    emptyIfNil(event.Annotations()),
+		Custom:         emptyIfNil(event.Custom()),
 		Type:           string(event.Type()),
 		IsWarning:      event.IsWarning(),
 		Reason:         event.Reason(),
@@ -553,6 +568,10 @@ type TableRow struct {
 	Labels map[string]string `json:"labels"`
 	// Annotations are only the projected keys — see Pod.Annotations.
 	Annotations map[string]string `json:"annotations"`
+	// Custom holds the operator's own JSONPath columns, keyed by the column
+	// id the interface knows them by and already rendered as text. Nil unless
+	// this list was asked for one — see domain.Projection.
+	Custom map[string]string `json:"custom"`
 }
 
 func toResourceTable(table domain.ResourceTable) ResourceTable {
@@ -580,6 +599,7 @@ func toResourceTable(table domain.ResourceTable) ResourceTable {
 			Cells:       cells,
 			Labels:      emptyIfNil(row.Labels),
 			Annotations: emptyIfNil(row.Annotations),
+			Custom:      emptyIfNil(row.Custom),
 		})
 	}
 

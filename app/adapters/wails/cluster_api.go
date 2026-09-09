@@ -223,7 +223,7 @@ func (c *ClusterAPI) ListNamespaces(clusterID string) ([]Namespace, error) {
 //
 // annotationKeys names the annotations each row should carry — the same
 // projection WorkloadAPI.ListPods takes, for the same reason.
-func (c *ClusterAPI) ListNamespaceSummaries(clusterID string, annotationKeys []string) ([]NamespaceSummary, error) {
+func (c *ClusterAPI) ListNamespaceSummaries(clusterID string, annotationKeys []string, expressions []CustomExpression) ([]NamespaceSummary, error) {
 	ctx, cancel := c.app.requestContext()
 	defer cancel()
 
@@ -232,7 +232,7 @@ func (c *ClusterAPI) ListNamespaceSummaries(clusterID string, annotationKeys []s
 		return nil, apiError(c.logger, "ListNamespaceSummaries", err)
 	}
 
-	summaries, err := c.clusters.ListNamespaceSummaries(ctx, id, domain.NewProjection(annotationKeys))
+	summaries, err := c.clusters.ListNamespaceSummaries(ctx, id, projectionFor(annotationKeys, expressions))
 	if err != nil {
 		return nil, apiError(c.logger, "ListNamespaceSummaries", err)
 	}
@@ -244,7 +244,7 @@ func (c *ClusterAPI) ListNamespaceSummaries(clusterID string, annotationKeys []s
 // cluster provides metrics.
 //
 // annotationKeys is the same projection ListNamespaceSummaries takes.
-func (c *ClusterAPI) ListNodes(clusterID string, annotationKeys []string) ([]Node, error) {
+func (c *ClusterAPI) ListNodes(clusterID string, annotationKeys []string, expressions []CustomExpression) ([]Node, error) {
 	ctx, cancel := c.app.requestContext()
 	defer cancel()
 
@@ -253,7 +253,7 @@ func (c *ClusterAPI) ListNodes(clusterID string, annotationKeys []string) ([]Nod
 		return nil, apiError(c.logger, "ListNodes", err)
 	}
 
-	nodes, err := c.clusters.ListNodes(ctx, id, domain.NewProjection(annotationKeys))
+	nodes, err := c.clusters.ListNodes(ctx, id, projectionFor(annotationKeys, expressions))
 	if err != nil {
 		return nil, apiError(c.logger, "ListNodes", err)
 	}

@@ -105,6 +105,7 @@ type Namespace struct {
 	phase       NamespacePhase
 	labels      map[string]string
 	annotations map[string]string
+	custom      map[string]string
 	createdAt   time.Time
 }
 
@@ -140,6 +141,18 @@ func (n Namespace) WithMetadata(labels, annotations map[string]string) Namespace
 	n.annotations = maps.Clone(annotations)
 	return n
 }
+
+// WithCustom returns a copy carrying the operator's own JSONPath columns,
+// keyed by column id. A separate method from WithMetadata for the reason
+// that one is separate from the constructor: it is incidental, and only a
+// list view ever has any.
+func (n Namespace) WithCustom(custom map[string]string) Namespace {
+	n.custom = maps.Clone(custom)
+	return n
+}
+
+// Custom returns a copy of the operator's own JSONPath column values.
+func (n Namespace) Custom() map[string]string { return maps.Clone(n.custom) }
 
 // Name returns the namespace name.
 func (n Namespace) Name() NamespaceName { return n.name }

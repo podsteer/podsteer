@@ -1,11 +1,25 @@
 /**
- * Custom columns: one label or annotation key, shown verbatim as a column.
+ * Custom columns: a label, an annotation, or an operator's own JSONPath.
  *
- * QUOTATION ONLY. A custom column shows the value of one metadata key exactly
- * as the object carries it — no JSONPath into spec, no derivation — which is
- * what lets the same code serve every list in the application, the generic
- * server-printed tables included: every row of every kind already carries
- * its labels, and carries the annotations somebody asked for.
+ * TWO KINDS OF COLUMN, AND THE DIFFERENCE IS WHAT THE LIST COSTS. A label or
+ * an annotation is quotation: the value of one metadata key, shown exactly as
+ * the object carries it, on rows every list already fetches. A JSONPath
+ * column reads into spec and status, which no cheap list carries — so asking
+ * for one changes how that kind's list is FETCHED, and the picker says so
+ * before the column is added rather than after.
+ *
+ * WHAT A JSONPATH COLUMN CHANGES, once, per kind that has one:
+ *
+ *   - The server-printed lists ask for whole objects instead of metadata
+ *     (`includeObject=Object`), which is one larger response rather than one
+ *     more request.
+ *   - The typed lists stop reading from the watch store, which strips fields
+ *     nothing else reads — so an expression naming one of them reads the same
+ *     on every cluster instead of depending on whether the watch happened to
+ *     be serving.
+ *
+ * The expressions are evaluated in Go, by kubectl's own JSONPath library, and
+ * only the resulting cells cross the bridge. See app/adapters/k8s/customcolumns.go.
  *
  * The specs are persisted per KIND in preferences.svelte.ts. A kind id and a
  * label key are not object names — "this operator watches the `team` label
@@ -22,9 +36,16 @@ import type { Column } from './components/DataTable.svelte'
 import type { SortValue } from './sort'
 
 /** Where a custom column reads its value from. */
-export type ColumnSource = 'label' | 'annotation'
+export type ColumnSource = 'label' | 'annotation' | 'jsonpath'
 
-/** One custom column: a source and the key to read from it. */
+/**
+ * One custom column: a source and the key to read from it.
+ *
+ * For a JSONPath column the key IS the expression, which is why `isValidKey`
+ * asks a different question of it: an expression contains dots, brackets and
+ * — in the braced form kubectl also accepts — braces, none of which a label
+ * key may contain.
+ */
 export interface CustomColumnSpec {
   source: ColumnSource
   key: string
@@ -43,6 +64,8 @@ export interface CustomColumnSpec {
 export interface MetadataRow {
   labels?: { [key: string]: string | undefined } | null
   annotations?: { [key: string]: string | undefined } | null
+  /** JSONPath column values, keyed by column id and rendered in Go. */
+  custom?: { [key: string]: string | undefined } | null
 }
 
 /** The keys present on the rows on screen, for the column picker. */
@@ -67,7 +90,7 @@ export const LAST_APPLIED_ANNOTATION = 'kubectl.kubernetes.io/last-applied-confi
     characters at most); an annotation may not be, and truncates. */
 const CUSTOM_COLUMN_WIDTH = 160
 
-const SOURCES: readonly ColumnSource[] = ['label', 'annotation']
+const SOURCES: readonly ColumnSource[] = ['label', 'annotation', 'jsonpath']
 
 /**
  * Whether `key` can name a label or annotation.
@@ -81,6 +104,13 @@ const SOURCES: readonly ColumnSource[] = ['label', 'annotation']
  */
 export function isValidKey(source: ColumnSource, key: string): boolean {
   if (key === '' || /[\s,]/.test(key)) return false
+
+  // AN EXPRESSION IS NOT A KEY, so the rule is a different one: it has to
+  // start where a path starts, and the syntax past that is kubectl's library
+  // to judge — a path this refused but kubectl accepts would be a dialect,
+  // and a path it accepted but kubectl rejects renders a cell that says so.
+  if (source === 'jsonpath') return key.startsWith('.') || key.startsWith('{')
+
   return !(source === 'annotation' && key === LAST_APPLIED_ANNOTATION)
 }
 
@@ -152,8 +182,34 @@ export function annotationKeysOf(specs: readonly CustomColumnSpec[]): string[] {
   return [...keys].sort()
 }
 
+/**
+ * The JSONPath columns a list must be asked for, as the backend takes them:
+ * the column's own id, and the expression.
+ *
+ * THE ID TRAVELS BECAUSE THE PATH IS NOT A KEY — two columns may read the
+ * same path, and a cell has to find its own value in what comes back. It is
+ * the same id the column is drawn under, so a row's `custom` map is read with
+ * exactly the string the column already has.
+ */
+export function expressionsOf(
+  specs: readonly CustomColumnSpec[],
+): { id: string; path: string }[] {
+  return specs
+    .filter((spec) => spec.source === 'jsonpath')
+    .map((spec) => ({ id: customColumnId(spec), path: spec.key }))
+}
+
+/** Whether any of these columns needs the list fetched differently. */
+export function needsWholeObject(specs: readonly CustomColumnSpec[]): boolean {
+  return specs.some((spec) => spec.source === 'jsonpath')
+}
+
 /** The value a row shows under a custom column, or '' when it has none. */
 export function customValue(row: MetadataRow, spec: CustomColumnSpec): string {
+  // A JSONPath value was computed in Go and arrives already rendered, filed
+  // under the column's id rather than under the path — see expressionsOf.
+  if (spec.source === 'jsonpath') return row.custom?.[customColumnId(spec)] ?? ''
+
   const source = spec.source === 'label' ? row.labels : row.annotations
   return source?.[spec.key] ?? ''
 }

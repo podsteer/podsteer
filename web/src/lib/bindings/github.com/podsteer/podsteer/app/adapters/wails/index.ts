@@ -74,6 +74,7 @@ export type {
     Consumption,
     Container,
     Credit,
+    CustomExpression,
     DiskSummary,
     DrainFailure,
     DrainPlanDTO,

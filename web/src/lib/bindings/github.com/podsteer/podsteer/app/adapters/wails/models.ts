@@ -1142,6 +1142,28 @@ export interface Credit {
 }
 
 /**
+ * CustomExpression is one operator-written JSONPath column, as the interface
+ * sends it: the column's own id, and the path to read.
+ * 
+ * A STRUCT RATHER THAN TWO PARALLEL SLICES. Every list call already takes the
+ * annotation keys as a bare []string, and a second bare slice beside it —
+ * ids here, paths there, correct only while their lengths agree — is the
+ * shape that goes wrong silently the first time one is filtered.
+ */
+export interface CustomExpression {
+    /**
+     * ID is the column id the interface knows this column by. It comes back
+     * as the key of each row's `custom` map.
+     */
+    "id": string;
+
+    /**
+     * Path is the JSONPath, as typed: `.status.phase`, `{.spec.replicas}`.
+     */
+    "path": string;
+}
+
+/**
  * DiskSummary is what the kubelets said about node filesystems.
  */
 export interface DiskSummary {
@@ -1291,6 +1313,13 @@ export interface Event {
      * Annotations are only the projected keys — see Pod.Annotations.
      */
     "annotations": { [_ in string]?: string } | null;
+
+    /**
+     * Custom holds the operator's own JSONPath columns, keyed by the column
+     * id the interface knows them by and already rendered as text. Nil unless
+     * this list was asked for one — see domain.Projection.
+     */
+    "custom": { [_ in string]?: string } | null;
 }
 
 /**
@@ -1939,6 +1968,13 @@ export interface Namespace {
     "annotations": { [_ in string]?: string } | null;
 
     /**
+     * Custom holds the operator's own JSONPath columns, keyed by the column
+     * id the interface knows them by and already rendered as text. Nil unless
+     * this list was asked for one — see domain.Projection.
+     */
+    "custom": { [_ in string]?: string } | null;
+
+    /**
      * CreatedAt is the creation timestamp in RFC 3339, empty if unknown.
      */
     "createdAt": string;
@@ -2026,6 +2062,13 @@ export interface NamespaceSummary {
      * Annotations are only the projected keys — see Pod.Annotations.
      */
     "annotations": { [_ in string]?: string } | null;
+
+    /**
+     * Custom holds the operator's own JSONPath columns, keyed by the column
+     * id the interface knows them by and already rendered as text. Nil unless
+     * this list was asked for one — see domain.Projection.
+     */
+    "custom": { [_ in string]?: string } | null;
 
     /**
      * CreatedAt is the creation timestamp in RFC 3339, empty if unknown.
@@ -2208,6 +2251,13 @@ export interface Node {
      * Annotations are only the projected keys — see Pod.Annotations.
      */
     "annotations": { [_ in string]?: string } | null;
+
+    /**
+     * Custom holds the operator's own JSONPath columns, keyed by the column
+     * id the interface knows them by and already rendered as text. Nil unless
+     * this list was asked for one — see domain.Projection.
+     */
+    "custom": { [_ in string]?: string } | null;
     "createdAt": string;
     "ageSeconds": number;
 }
@@ -2667,6 +2717,13 @@ export interface Pod {
      * columns' — never the whole map. See domain.Projection.
      */
     "annotations": { [_ in string]?: string } | null;
+
+    /**
+     * Custom holds the operator's own JSONPath columns, keyed by the column
+     * id the interface knows them by and already rendered as text. Nil unless
+     * this list was asked for one — see domain.Projection.
+     */
+    "custom": { [_ in string]?: string } | null;
 
     /**
      * CreatedAt is the creation timestamp in RFC 3339, empty if unknown.
@@ -3754,6 +3811,13 @@ export interface TableRow {
      * Annotations are only the projected keys — see Pod.Annotations.
      */
     "annotations": { [_ in string]?: string } | null;
+
+    /**
+     * Custom holds the operator's own JSONPath columns, keyed by the column
+     * id the interface knows them by and already rendered as text. Nil unless
+     * this list was asked for one — see domain.Projection.
+     */
+    "custom": { [_ in string]?: string } | null;
 }
 
 /**
@@ -4016,6 +4080,13 @@ export interface Workload {
      * k8s mapper for why it is not the whole set.
      */
     "annotations": { [_ in string]?: string } | null;
+
+    /**
+     * Custom holds the operator's own JSONPath columns, keyed by the column
+     * id the interface knows them by and already rendered as text. Nil unless
+     * this list was asked for one — see domain.Projection.
+     */
+    "custom": { [_ in string]?: string } | null;
     "createdAt": string;
     "ageSeconds": number;
 }

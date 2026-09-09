@@ -48,6 +48,10 @@ type NodeSpec struct {
 	// Annotations are the node's annotations, populated SELECTIVELY by the
 	// adapter — only the keys a Projection asked for. See Projection.
 	Annotations map[string]string
+	// Custom holds the operator's own JSONPath columns, keyed by the
+	// interface's column id and already rendered as text. Nil when none were
+	// asked for, which is every read but a list view's.
+	Custom map[string]string
 	// Roles are the node's roles, derived from its labels, e.g. "control-plane".
 	Roles []string
 	// Ready reports whether the Ready condition is true.
@@ -92,6 +96,7 @@ type Node struct {
 	clusterID        ClusterID
 	labels           map[string]string
 	annotations      map[string]string
+	custom           map[string]string
 	roles            []string
 	ready            bool
 	activeConditions []NodeCondition
@@ -124,6 +129,7 @@ func NewNode(spec NodeSpec) (Node, error) {
 		clusterID:        spec.ClusterID,
 		labels:           maps.Clone(spec.Labels),
 		annotations:      maps.Clone(spec.Annotations),
+		custom:           maps.Clone(spec.Custom),
 		roles:            slices.Clone(spec.Roles),
 		ready:            spec.Ready,
 		activeConditions: slices.Clone(spec.ActiveConditions),
@@ -153,6 +159,10 @@ func (n Node) Labels() map[string]string { return maps.Clone(n.labels) }
 // Annotations returns a copy of the projected annotations — only the keys
 // that were asked for when the node was read. See NodeSpec.Annotations.
 func (n Node) Annotations() map[string]string { return maps.Clone(n.annotations) }
+
+// Custom returns a copy of the operator's own JSONPath column values, keyed
+// by column id.
+func (n Node) Custom() map[string]string { return maps.Clone(n.custom) }
 
 // Roles returns a copy of the node's roles.
 func (n Node) Roles() []string { return slices.Clone(n.roles) }

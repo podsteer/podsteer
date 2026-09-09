@@ -44,7 +44,7 @@ func NewWorkloadAPI(workloads ports.WorkloadService, app *App, logger *slog.Logg
 // annotationKeys names the annotations each row should carry — the ones the
 // operator has put on a custom column of this kind. Nothing else of the
 // annotation map crosses the bridge; see domain.Projection for why.
-func (w *WorkloadAPI) ListPods(clusterID, namespace string, annotationKeys []string) ([]Pod, error) {
+func (w *WorkloadAPI) ListPods(clusterID, namespace string, annotationKeys []string, expressions []CustomExpression) ([]Pod, error) {
 	ctx, cancel := w.app.requestContext()
 	defer cancel()
 
@@ -58,7 +58,7 @@ func (w *WorkloadAPI) ListPods(clusterID, namespace string, annotationKeys []str
 		return nil, apiError(w.logger, "ListPods", err)
 	}
 
-	pods, err := w.workloads.ListPods(ctx, id, name, domain.NewProjection(annotationKeys))
+	pods, err := w.workloads.ListPods(ctx, id, name, projectionFor(annotationKeys, expressions))
 	if err != nil {
 		return nil, apiError(w.logger, "ListPods", err)
 	}
@@ -164,7 +164,7 @@ func (w *WorkloadAPI) WorkloadConsumption(clusterID, kind, namespace string) (ma
 // vocabulary for the same six things.
 //
 // annotationKeys is the same projection ListPods takes.
-func (w *WorkloadAPI) ListWorkloads(clusterID, kind, namespace string, annotationKeys []string) ([]Workload, error) {
+func (w *WorkloadAPI) ListWorkloads(clusterID, kind, namespace string, annotationKeys []string, expressions []CustomExpression) ([]Workload, error) {
 	ctx, cancel := w.app.requestContext()
 	defer cancel()
 
@@ -178,7 +178,7 @@ func (w *WorkloadAPI) ListWorkloads(clusterID, kind, namespace string, annotatio
 		return nil, apiError(w.logger, "ListWorkloads", err)
 	}
 
-	workloads, err := w.workloads.ListWorkloads(ctx, id, domain.WorkloadKind(kind), name, domain.NewProjection(annotationKeys))
+	workloads, err := w.workloads.ListWorkloads(ctx, id, domain.WorkloadKind(kind), name, projectionFor(annotationKeys, expressions))
 	if err != nil {
 		return nil, apiError(w.logger, "ListWorkloads", err)
 	}

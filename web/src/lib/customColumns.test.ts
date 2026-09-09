@@ -8,9 +8,11 @@ import {
   customSearchText,
   customSortAccessor,
   customValue,
+  expressionsOf,
   isCustomColumnId,
   isValidKey,
   keysOnScreen,
+  needsWholeObject,
   normaliseSpecs,
   parseCustomColumnId,
   toColumns,
@@ -185,5 +187,74 @@ describe('keysOnScreen', () => {
   it('never offers the last-applied manifest even if a row somehow carries it', () => {
     const keys = keysOnScreen([row({}, { [LAST_APPLIED_ANNOTATION]: '{}', team: 't' })])
     expect(keys.annotations).toEqual(['team'])
+  })
+})
+
+describe('JSONPath columns', () => {
+  const path = (key: string): CustomColumnSpec => ({ source: 'jsonpath', key })
+
+  it('accepts the two forms kubectl accepts, and refuses what is not a path', () => {
+    // A path this refused but kubectl accepts would be a dialect; the syntax
+    // past the first character is the evaluator's to judge.
+    expect(isValidKey('jsonpath', '.status.phase')).toBe(true)
+    expect(isValidKey('jsonpath', '{.spec.replicas}')).toBe(true)
+    expect(isValidKey('jsonpath', 'status.phase')).toBe(false)
+    expect(isValidKey('jsonpath', '')).toBe(false)
+  })
+
+  it('reads its value from the row’s computed map, under the COLUMN id', () => {
+    // Not under the path: two columns may read the same path, and the id is
+    // what the backend files each answer under.
+    const spec = path('.status.phase')
+    const row = { custom: { [customColumnId(spec)]: 'Running' } }
+
+    expect(customValue(row, spec)).toBe('Running')
+  })
+
+  it('shows a dash for a row the expression found nothing on', () => {
+    expect(customCell({ custom: {} }, path('.status.phase'))).toBe('—')
+    expect(customCell({}, path('.status.phase'))).toBe('—')
+  })
+
+  it('asks the backend for the expression under the id it draws the column with', () => {
+    const specs = [path('.status.phase'), { source: 'label' as const, key: 'team' }]
+
+    expect(expressionsOf(specs)).toEqual([
+      { id: customColumnId(path('.status.phase')), path: '.status.phase' },
+    ])
+    // A label column asks for nothing: every row carries its labels.
+    expect(expressionsOf([{ source: 'label', key: 'team' }])).toEqual([])
+  })
+
+  it('says which column sets change how a list is fetched', () => {
+    // The one thing this feature costs, and the reason the picker warns.
+    expect(needsWholeObject([path('.status.phase')])).toBe(true)
+    expect(needsWholeObject([{ source: 'annotation', key: 'team' }])).toBe(false)
+    expect(needsWholeObject([])).toBe(false)
+  })
+
+  it('round-trips a path through a column id, brackets and all', () => {
+    // The id is `source:key`, split on the FIRST colon — and an expression
+    // routinely contains dots and brackets, which must survive.
+    const spec = path('.spec.containers[0].image')
+    expect(parseCustomColumnId(customColumnId(spec))).toEqual(spec)
+  })
+
+  it('keeps a stored JSONPath column and drops one that is not a path', () => {
+    const kept = normaliseSpecs([
+      { source: 'jsonpath', key: '.status.phase' },
+      { source: 'jsonpath', key: 'status.phase' },
+      { source: 'jsonpath', key: '' },
+    ])
+
+    expect(kept).toEqual([path('.status.phase')])
+  })
+
+  it('sorts a row the expression found nothing on last, like every other column', () => {
+    const spec = path('.status.phase')
+    const accessor = customSortAccessor(customColumnId(spec))!
+
+    expect(accessor({ custom: { [customColumnId(spec)]: 'Running' } })).toBe('Running')
+    expect(accessor({ custom: {} })).toBeNull()
   })
 })

@@ -45,6 +45,7 @@ func mapPod(clusterID domain.ClusterID, pod *corev1.Pod, projection domain.Proje
 		Containers:  mapContainers(pod),
 		Labels:      pod.Labels,
 		Annotations: projection.Annotations(pod.Annotations),
+		Custom:      customColumns(projection, pod),
 		Owners:      mapOwnerReferences(pod.OwnerReferences),
 		QoSClass:    domain.NewQoSClass(string(pod.Status.QOSClass)),
 		Reason:      podReason(pod),
@@ -237,7 +238,9 @@ func mapNamespace(namespace *corev1.Namespace, projection domain.Projection) (do
 	if err != nil {
 		return domain.Namespace{}, err
 	}
-	return mapped.WithMetadata(namespace.Labels, projection.Annotations(namespace.Annotations)), nil
+	return mapped.
+		WithMetadata(namespace.Labels, projection.Annotations(namespace.Annotations)).
+		WithCustom(customColumns(projection, namespace)), nil
 }
 
 // mapServerVersion translates the API server's version report.
@@ -282,6 +285,7 @@ func mapNode(clusterID domain.ClusterID, node *corev1.Node, projection domain.Pr
 		ClusterID:        clusterID,
 		Labels:           node.Labels,
 		Annotations:      projection.Annotations(node.Annotations),
+		Custom:           customColumns(projection, node),
 		Roles:            nodeRoles(node),
 		Ready:            ready,
 		ActiveConditions: active,
@@ -352,7 +356,7 @@ func mapDeployment(clusterID domain.ClusterID, item *appsv1.Deployment, projecti
 		Current:   item.Status.Replicas,
 		Updated:   item.Status.UpdatedReplicas,
 		Available: item.Status.AvailableReplicas,
-	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection)
+	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection, item)
 }
 
 // mapStatefulSet translates a StatefulSet.
@@ -363,7 +367,7 @@ func mapStatefulSet(clusterID domain.ClusterID, item *appsv1.StatefulSet, projec
 		Current:   item.Status.Replicas,
 		Updated:   item.Status.UpdatedReplicas,
 		Available: item.Status.AvailableReplicas,
-	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection)
+	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection, item)
 }
 
 // mapDaemonSet translates a DaemonSet.
@@ -377,7 +381,7 @@ func mapDaemonSet(clusterID domain.ClusterID, item *appsv1.DaemonSet, projection
 		Current:   item.Status.CurrentNumberScheduled,
 		Updated:   item.Status.UpdatedNumberScheduled,
 		Available: item.Status.NumberAvailable,
-	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection)
+	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection, item)
 }
 
 // mapReplicaSet translates a ReplicaSet.
@@ -388,7 +392,7 @@ func mapReplicaSet(clusterID domain.ClusterID, item *appsv1.ReplicaSet, projecti
 		Current:   item.Status.Replicas,
 		Updated:   item.Status.FullyLabeledReplicas,
 		Available: item.Status.AvailableReplicas,
-	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection)
+	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection, item)
 }
 
 // mapJob translates a Job.
@@ -403,7 +407,7 @@ func mapJob(clusterID domain.ClusterID, item *batchv1.Job, projection domain.Pro
 		Updated:   item.Status.Succeeded,
 		Available: item.Status.Active,
 		Failed:    item.Status.Failed,
-	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection)
+	}, podTemplateImages(item.Spec.Template), matchLabels(item.Spec.Selector), projection, item)
 	if err != nil {
 		return domain.Workload{}, err
 	}
@@ -431,6 +435,7 @@ func mapCronJob(clusterID domain.ClusterID, item *batchv1.CronJob, projection do
 		Images:        podTemplateImages(item.Spec.JobTemplate.Spec.Template),
 		Labels:        item.Labels,
 		Annotations:   projectAnnotations(item.Annotations, projection),
+		Custom:        customColumns(projection, item),
 		Owner:         domain.Controller(mapOwnerReferences(item.OwnerReferences)),
 		Suspended:     derefBool(item.Spec.Suspend),
 		Schedule:      item.Spec.Schedule,
@@ -448,6 +453,9 @@ type workloadCounts struct {
 }
 
 // newWorkload assembles the shared parts of a controller translation.
+// object is the whole controller, for the operator's own JSONPath columns:
+// meta alone cannot answer `.spec.replicas`, and passing it separately keeps
+// every caller's existing arguments unchanged.
 func newWorkload(
 	clusterID domain.ClusterID,
 	kind domain.WorkloadKind,
@@ -456,6 +464,7 @@ func newWorkload(
 	images []string,
 	selector map[string]string,
 	projection domain.Projection,
+	object any,
 ) (domain.Workload, error) {
 	namespace, err := domain.NewNamespaceName(meta.Namespace)
 	if err != nil {
@@ -477,6 +486,7 @@ func newWorkload(
 		Selector:    selector,
 		Labels:      meta.Labels,
 		Annotations: projectAnnotations(meta.Annotations, projection),
+		Custom:      customColumns(projection, object),
 		Owner:       domain.Controller(mapOwnerReferences(meta.OwnerReferences)),
 		CreatedAt:   meta.CreationTimestamp.Time,
 	})
@@ -586,6 +596,7 @@ func mapEvent(clusterID domain.ClusterID, event *corev1.Event, projection domain
 		LastSeen:     eventLastSeen(event),
 		Labels:       event.Labels,
 		Annotations:  projection.Annotations(event.Annotations),
+		Custom:       customColumns(projection, event),
 	})
 }
 

@@ -212,6 +212,8 @@ export type K8sEvent = wails.Event
 export type ClusterPods = wails.ClusterPods
 export type ClusterWorkloads = wails.ClusterWorkloads
 export type ClusterEvents = wails.ClusterEvents
+/** One operator-written JSONPath column, as a list call takes it. */
+export type CustomExpression = wails.CustomExpression
 /** What a resize asked for, and whether it restarts the container. */
 export type ResizeResult = wails.ResizeResult
 /** One cluster's share of a cross-cluster read of an arbitrary kind. */
@@ -620,8 +622,9 @@ export function listNamespaces(clusterId: string): Promise<Namespace[]> {
 export function listNamespaceSummaries(
   clusterId: string,
   annotationKeys: string[] = [],
+  expressions: CustomExpression[] = [],
 ): Promise<NamespaceSummary[]> {
-  return callList(() => bindListNamespaceSummaries(clusterId, annotationKeys))
+  return callList(() => bindListNamespaceSummaries(clusterId, annotationKeys, expressions))
 }
 
 /**
@@ -675,8 +678,12 @@ export function classifyConditions(conditions: ConditionRef[]): Promise<string[]
 
 /** Lists the nodes of a connected cluster, with usage where available.
     `annotationKeys` is the projection listNamespaceSummaries describes. */
-export function listNodes(clusterId: string, annotationKeys: string[] = []): Promise<Node[]> {
-  return callList(() => bindListNodes(clusterId, annotationKeys))
+export function listNodes(
+  clusterId: string,
+  annotationKeys: string[] = [],
+  expressions: CustomExpression[] = [],
+): Promise<Node[]> {
+  return callList(() => bindListNodes(clusterId, annotationKeys, expressions))
 }
 
 // --- Overview ---------------------------------------------------------------
@@ -893,8 +900,9 @@ export function listPods(
   clusterId: string,
   namespace: string,
   annotationKeys: string[] = [],
+  expressions: CustomExpression[] = [],
 ): Promise<Pod[]> {
-  return callList(() => bindListPods(clusterId, namespace, annotationKeys))
+  return callList(() => bindListPods(clusterId, namespace, annotationKeys, expressions))
 }
 
 /** Lists controllers of one kind, named as "Deployment", "StatefulSet", etc.
@@ -904,8 +912,9 @@ export function listWorkloads(
   kind: string,
   namespace: string,
   annotationKeys: string[] = [],
+  expressions: CustomExpression[] = [],
 ): Promise<Workload[]> {
-  return callList(() => bindListWorkloads(clusterId, kind, namespace, annotationKeys))
+  return callList(() => bindListWorkloads(clusterId, kind, namespace, annotationKeys, expressions))
 }
 
 /** The dependency chain around one pod, from what routes to it to what it needs. */
@@ -1200,8 +1209,9 @@ export function listEvents(
   clusterId: string,
   namespace: string,
   annotationKeys: string[] = [],
+  expressions: CustomExpression[] = [],
 ): Promise<K8sEvent[]> {
-  return callList(() => bindListEvents(clusterId, namespace, annotationKeys))
+  return callList(() => bindListEvents(clusterId, namespace, annotationKeys, expressions))
 }
 
 /** Lists events for one specific object — what the detail drawer's Events tab shows. */
@@ -1225,8 +1235,9 @@ export function listTable(
   kindId: string,
   namespace: string,
   annotationKeys: string[] = [],
+  expressions: CustomExpression[] = [],
 ): Promise<ResourceTable> {
-  return call(() => bindListTable(clusterId, kindId, namespace, annotationKeys))
+  return call(() => bindListTable(clusterId, kindId, namespace, annotationKeys, expressions))
 }
 
 /**

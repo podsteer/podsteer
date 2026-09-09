@@ -58,6 +58,11 @@ type TableRow struct {
 	// Annotations are the projected subset of the object's annotations, from
 	// the same row metadata. See Projection for why it is a subset.
 	Annotations map[string]string
+	// Custom holds the operator's own JSONPath columns, keyed by the
+	// interface's column id and already rendered as text. Nil unless the
+	// projection carried expressions — see Projection.NeedsWholeObject for
+	// what asking for one changes about the read.
+	Custom map[string]string
 }
 
 // NewResourceTable assembles a table, guaranteeing every row has exactly one
