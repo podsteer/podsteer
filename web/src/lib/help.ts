@@ -717,6 +717,40 @@ export const HELP_TOPICS = {
     ],
   },
 
+  keyboard: {
+    title: 'Keyboard shortcuts',
+    lede: 'Every shortcut, and how to change one.',
+    sections: [
+      {
+        heading: 'Changing one',
+        body: [
+          'Press Change on a row and then the keys you want; Escape cancels. The keyboard is the input device for this, so there is no field to type \u201cCtrl+Shift+P\u201d into as text \u2014 which is a field that also accepts \u201cCtlr+P\u201d.',
+          'Cmd and Ctrl are one modifier here. PodSteer has always accepted either and shown the one your platform writes, so a shortcut you set on a Mac still works when you open the same settings file on Linux.',
+        ],
+      },
+      {
+        heading: 'What it will not accept, and why',
+        body: [
+          'A key with no modifier, unless it is a function key: bound to a bare letter, a shortcut would fire while you were typing into the search box, and nothing can tell those two apart without knowing what has focus.',
+          'Escape, Tab, Enter and the arrows. Escape closes whatever is open, one layer at a time, and the others move through a list \u2014 taking either would break something you use more often than the shortcut.',
+          'A combination another shortcut already has. The refusal names the other one, because two handlers on one key is not a preference: whichever fired first would look like the other being broken. Rebind the other one first and the key frees immediately.',
+        ],
+      },
+      {
+        heading: 'The two that are fixed',
+        body: [
+          'Switching to the Nth cluster tab is nine keys behind one entry, and the shortcut sheet\u2019s own combination has a bare \u201c?\u201d alternative that only applies when you are not typing. Neither is one combination, so neither can be expressed in a rebinding \u2014 they say so on their row rather than being left out of the list.',
+        ],
+      },
+      {
+        heading: 'Where they are kept',
+        body: [
+          'On this machine, with the other display preferences, and only the ones you changed \u2014 a shortcut you never touched follows this build\u2019s default, so it can be improved without your storage pinning the old one. They travel in the settings export, which is the thing you most want on a second machine.',
+        ],
+      },
+    ],
+  },
+
   settings: {
     title: 'Settings',
     lede: 'How PodSteer behaves on this machine. None of it is stored on a cluster.',

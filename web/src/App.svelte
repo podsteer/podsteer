@@ -27,7 +27,8 @@
   import { clusterShells } from '$stores/clusterShells.svelte'
   import { shortcutSheet } from '$stores/shortcutSheet.svelte'
   import { palette } from '$stores/palette.svelte'
-  import { isTypingTarget, shortcut } from '$lib/shortcuts'
+  import { isTypingTarget } from '$lib/shortcuts'
+  import { shortcut } from '$stores/shortcuts.svelte'
 
   /**
    * The shortest time the splash stays up. Initialisation is faster than this

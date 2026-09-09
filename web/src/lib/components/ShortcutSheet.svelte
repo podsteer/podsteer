@@ -1,15 +1,18 @@
 <!--
   Every keyboard shortcut the application has, grouped by where it applies.
 
-  Reads SHORTCUTS directly (see $lib/shortcuts) rather than keeping its own
-  copy — this list and the handlers that act on ⌘B, ⌘R and the rest are two
-  views of the same table, so they cannot silently disagree about what a key
-  does or how it is spelled on this platform.
+  Reads the RESOLVED table (see $stores/shortcuts.svelte) rather than keeping
+  its own copy — this list and the handlers that act on ⌘B, ⌘R and the rest
+  are two views of one table, so they cannot silently disagree about what a
+  key does, how it is spelled on this platform, or what an operator rebound it
+  to five seconds ago.
 -->
 <script lang="ts">
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
-  import { SHORTCUTS, type ShortcutScope } from '$lib/shortcuts'
+  import { type ShortcutScope } from '$lib/shortcuts'
+  import { shortcuts } from '$stores/shortcuts.svelte'
+  import { preferences } from '$stores/preferences.svelte'
   import { X } from '@lucide/svelte'
 
   interface Props {
@@ -110,8 +113,12 @@
     </header>
 
     <div class="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+      <p class="mb-1 text-body-medium text-on-surface-variant/70">
+        Any of these can be changed in Settings → Keyboard, apart from the two that are more than
+        one combination.
+      </p>
       {#each GROUPS as group (group.scope)}
-        {@const entries = SHORTCUTS.filter((entry) => entry.scope === group.scope)}
+        {@const entries = shortcuts.all.filter((entry) => entry.scope === group.scope)}
         {#if entries.length > 0}
           <section class="mt-3 first:mt-0">
             <h3 class="text-title-small text-on-surface">{group.label}</h3>
@@ -131,7 +138,16 @@
                   >
                     {entry.keys}
                   </kbd>
-                  <span class="text-body-medium text-on-surface-variant">{entry.description}</span>
+                  <span class="text-body-medium text-on-surface-variant">
+                    {entry.description}
+                    {#if preferences.shortcutBindings[entry.id]}
+                      <!-- Marked, because a sheet that showed a changed key
+                           silently is a sheet somebody reads as the
+                           application's own default and then reports as
+                           wrong on another machine. -->
+                      <span class="text-label-small text-on-surface-variant/60">· changed</span>
+                    {/if}
+                  </span>
                 </li>
               {/each}
             </ul>

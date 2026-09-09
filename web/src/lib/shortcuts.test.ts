@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { isTypingTarget, shortcut, SHORTCUTS } from './shortcuts'
+import { isTypingTarget, shortcut, SHORTCUTS, resolveShortcuts, conflictWith } from './shortcuts'
+import type { Binding } from './shortcutBinding'
 
 function keydown(init: KeyboardEventInit): KeyboardEvent {
   return new KeyboardEvent('keydown', init)
@@ -111,5 +112,80 @@ describe('isTypingTarget', () => {
     expect(isTypingTarget(document.createElement('div'))).toBe(false)
     expect(isTypingTarget(document.createElement('button'))).toBe(false)
     expect(isTypingTarget(null)).toBe(false)
+  })
+})
+
+describe('an operator’s own bindings', () => {
+  const rebound = (id: string, binding: Binding) => resolveShortcuts({ [id]: binding })
+
+  it('changes what fires AND what is displayed, from one binding', () => {
+    // THE WHOLE POINT OF THE REFACTOR. The keys string and the predicate used
+    // to be two hand-written halves that agreed because one person wrote both
+    // lines; neither can be a literal once an operator picks a key, so both
+    // are derived and cannot disagree.
+    const table = rebound('refresh', { accel: true, shift: false, alt: false, key: 'f5' })
+    const refresh = shortcut('refresh', table)
+
+    expect(refresh.keys).toBe('Ctrl+F5')
+    expect(refresh.matches(keydown({ key: 'f5', metaKey: true }))).toBe(true)
+    expect(refresh.matches(keydown({ key: 'r', metaKey: true }))).toBe(false)
+  })
+
+  it('drops the alternate when the operator picks their own key', () => {
+    // ⌘P alongside ⌘⇧P is a default worth having; an alternate that survived
+    // a rebinding would be a key somebody cannot get rid of.
+    const table = rebound('command-palette', { accel: true, shift: false, alt: false, key: 'j' })
+    const palette = shortcut('command-palette', table)
+
+    expect(palette.matches(keydown({ key: 'j', metaKey: true }))).toBe(true)
+    expect(palette.matches(keydown({ key: 'p', metaKey: true }))).toBe(false)
+    expect(palette.keys).toBe('Ctrl+J')
+  })
+
+  it('ignores an override on a shortcut that is not one combination', () => {
+    // Switching to the Nth tab is nine keys behind one id. A stored override
+    // — from a hand-edited file, or a future build — must not cost somebody
+    // the ability to switch tabs.
+    const table = rebound('switch-tab', { accel: true, shift: false, alt: false, key: 'z' })
+    const switchTab = shortcut('switch-tab', table)
+
+    expect(switchTab.matches(keydown({ key: '3', metaKey: true }))).toBe(true)
+    expect(switchTab.matches(keydown({ key: 'z', metaKey: true }))).toBe(false)
+    expect(switchTab.rebindable).toBe(false)
+  })
+
+  it('leaves every other shortcut exactly as it was', () => {
+    const table = rebound('refresh', { accel: true, shift: false, alt: false, key: 'f5' })
+
+    for (const entry of table) {
+      if (entry.id === 'refresh') continue
+      expect(entry.keys, entry.id).toBe(shortcut(entry.id).keys)
+    }
+  })
+})
+
+describe('conflicts', () => {
+  it('names the shortcut a proposed binding would collide with', () => {
+    // Two handlers on one combination is not a preference somebody can have:
+    // whichever fired first would look like the other being broken.
+    const table = resolveShortcuts()
+    const clash = conflictWith(table, 'refresh', { accel: true, shift: false, alt: false, key: 'b' })
+
+    expect(clash?.id).toBe('toggle-navigator')
+  })
+
+  it('does not report a shortcut colliding with itself', () => {
+    const table = resolveShortcuts()
+    expect(conflictWith(table, 'refresh', shortcut('refresh').binding)).toBeNull()
+  })
+
+  it('frees a key as soon as the shortcut holding it is rebound', () => {
+    // Asked against the RESOLVED table, so the answer follows a rebinding in
+    // the same tick rather than after a reload.
+    const table = resolveShortcuts({
+      'toggle-navigator': { accel: true, shift: false, alt: false, key: 'f2' },
+    })
+
+    expect(conflictWith(table, 'refresh', { accel: true, shift: false, alt: false, key: 'b' })).toBeNull()
   })
 })

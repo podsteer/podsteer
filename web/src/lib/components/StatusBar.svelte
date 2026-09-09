@@ -17,7 +17,7 @@
   import { clusterShells } from '$stores/clusterShells.svelte'
   import { formatClockTime } from '$lib/format'
   import { iconForKind } from '$lib/kindIcons'
-  import { shortcut } from '$lib/shortcuts'
+  import { shortcut } from '$stores/shortcuts.svelte'
   import { openURL } from '$lib/api/client'
   import { ExternalLink, Clock, Server, RefreshCw, Keyboard, Lock } from '@lucide/svelte'
   import ShareMenu from './ShareMenu.svelte'
