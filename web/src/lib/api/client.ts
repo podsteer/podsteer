@@ -18,6 +18,7 @@ import {
   Connect as bindConnect,
   Connections as bindConnections,
   Disconnect as bindDisconnect,
+  Ping as bindPing,
   ListClusters as bindListClusters,
   ListNamespaces as bindListNamespaces,
   ListNamespaceSummaries as bindListNamespaceSummaries,
@@ -577,6 +578,17 @@ export function connect(clusterId: string): Promise<Cluster> {
  */
 export function cancelConnect(clusterId: string): Promise<void> {
   return call(() => bindCancelConnect(clusterId))
+}
+
+/**
+ * Asks a connected cluster whether it is still answering.
+ *
+ * The cheapest read there is — /version, which no RBAC applies to and which
+ * cannot be served from a watch store — so it can be asked of several open
+ * clusters on a slow clock without being a fleet read in disguise.
+ */
+export function pingCluster(clusterId: string): Promise<void> {
+  return call(() => bindPing(clusterId))
 }
 
 /** Closes a cluster, for when its tab is closed. */

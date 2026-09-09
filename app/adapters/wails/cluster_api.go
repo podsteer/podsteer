@@ -181,6 +181,26 @@ func (c *ClusterAPI) Disconnect(clusterID string) error {
 	return nil
 }
 
+// Ping reports whether a connected cluster is still answering.
+//
+// Returns nothing on success: the caller wants the error or its absence, and
+// handing back the version would invite somebody to display a fact this call
+// makes no promise to keep current.
+func (c *ClusterAPI) Ping(clusterID string) error {
+	ctx, cancel := c.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(c.logger, "Ping", err)
+	}
+
+	if err := c.clusters.Ping(ctx, id); err != nil {
+		return apiError(c.logger, "Ping", err)
+	}
+	return nil
+}
+
 // Connections returns the open clusters, in the order they were opened.
 //
 // The frontend rebuilds its tab bar from this, which is why the order must be

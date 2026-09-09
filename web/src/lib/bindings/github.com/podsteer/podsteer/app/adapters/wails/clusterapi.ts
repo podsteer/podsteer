@@ -119,6 +119,17 @@ export function ListNodes(clusterID: string, annotationKeys: string[] | null, ex
 }
 
 /**
+ * Ping reports whether a connected cluster is still answering.
+ * 
+ * Returns nothing on success: the caller wants the error or its absence, and
+ * handing back the version would invite somebody to display a fact this call
+ * makes no promise to keep current.
+ */
+export function Ping(clusterID: string): $CancellablePromise<void> {
+    return $Call.ByID(3798353871, clusterID);
+}
+
+/**
  * PreviewKubeconfig reports what adding the given kubeconfig would change.
  * 
  * Separate from AddKubeconfig so the dialog can show what is about to happen

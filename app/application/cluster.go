@@ -266,6 +266,23 @@ func (s *ClusterService) Connections(_ context.Context) ([]domain.Cluster, error
 	return s.registry.All(), nil
 }
 
+// Ping reads the cluster's version and reports only whether it answered.
+//
+// The version itself is discarded on purpose: this is not a refresh of what
+// PodSteer knows about the cluster, it is the question "is anything there".
+// Answering it with the smallest call the API server serves keeps a
+// heartbeat over several open clusters cheap enough to run on a slow clock.
+func (s *ClusterService) Ping(ctx context.Context, id domain.ClusterID) error {
+	if _, err := s.registry.Get(id); err != nil {
+		return fmt.Errorf("pinging cluster: %w", err)
+	}
+
+	if _, err := s.cluster.ServerVersion(ctx, id); err != nil {
+		return fmt.Errorf("pinging cluster %q: %w", id, err)
+	}
+	return nil
+}
+
 // ListNamespaces returns the namespaces of a connected cluster, sorted by name.
 func (s *ClusterService) ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
 	if _, err := s.registry.Get(id); err != nil {

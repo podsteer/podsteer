@@ -56,7 +56,9 @@ const (
 	// because the cluster was never contacted and offering Retry would repeat
 	// a failure nothing about the cluster can fix.
 	CodeCredentialPlugin ErrorCode = "credential_plugin_missing"
-	// CodeCancelled means the call was cancelled or timed out.
+	// CodeCancelled means the caller gave up: the operator navigated away,
+	// or a newer request superseded this one. NOT a timeout — see
+	// classifyError, which reports a deadline as CodeUnreachable.
 	CodeCancelled ErrorCode = "cancelled"
 	// CodeInvalidInput means the frontend sent an unusable argument.
 	CodeInvalidInput ErrorCode = "invalid_input"
@@ -513,8 +515,26 @@ func classifyError(err error) (ErrorCode, string) {
 	case errors.Is(err, ports.ErrKubeconfigUnavailable):
 		return CodeKubeconfig, "Your kubeconfig could not be read"
 
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return CodeCancelled, "The request was cancelled or timed out"
+	// TWO OPPOSITE FACTS, AND THEY USED TO SHARE A CODE AND A SENTENCE.
+	//
+	// A cancellation is nobody's fault: the operator navigated away, or a
+	// newer request superseded this one. A DEADLINE is a statement about the
+	// cluster — it did not answer in the time a call is given. Reported as
+	// one, the interface could not tell them apart, so a cluster whose
+	// network had gone away kept a green tab: every call to it expired rather
+	// than failing (a blackholed packet is not a refused one), the expiry
+	// arrived as "cancelled", and a cancellation is correctly ignored when
+	// deciding whether a cluster is answering.
+	case errors.Is(err, context.Canceled):
+		return CodeCancelled, "The request was cancelled"
+
+	// The same category as the three transport failures above, and therefore
+	// the same code: the UI branches on the code to decide whether to offer
+	// Retry and whether the cluster is still there, and both answers here are
+	// the ones it gives them. The diagnosis lives in the message, as it does
+	// for the other three.
+	case errors.Is(err, context.DeadlineExceeded):
+		return CodeUnreachable, "The cluster did not answer before the request timed out — it may be offline, or reachable only from a network this machine is not on"
 
 	case errors.Is(err, domain.ErrEmptyClusterID),
 		errors.Is(err, domain.ErrInvalidNamespaceName),

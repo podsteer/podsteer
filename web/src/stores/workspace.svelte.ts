@@ -17,6 +17,7 @@ import {
   listClusters,
   onClusterUnreachable,
   onKubeconfigChanged,
+  pingCluster,
   setReadOnly,
   type Cluster,
   type Unsubscribe,
@@ -432,7 +433,78 @@ class Workspace {
       }),
     ]
   }
+
+  /**
+   * Asks every cluster whose tab is NOT in front whether it still answers.
+   *
+   * THE TAB IN FRONT IS SKIPPED because it is already being polled: its
+   * workspace is mounted and its own refresh is recording contact on every
+   * tick. Asking it again would be a second request per interval for an
+   * answer it already has.
+   *
+   * WHY THIS EXISTS AT ALL. One workspace is mounted at a time — see
+   * App.svelte, which keys it on the cluster id so the refresh timer moves
+   * with the tab — so a background tab polls nothing. Its dot therefore said
+   * what was true when somebody last looked at it, which on a laptop that
+   * changes network is a green dot on a cluster that has been gone for an
+   * hour.
+   *
+   * SILENT ON EVERY OTHER FAILURE. A ping that comes back forbidden or
+   * refused is not this function's business — it hands the outcome to the
+   * session, which counts only a transport failure. Nothing here raises an
+   * error banner: an operator reading one cluster must not be interrupted by
+   * a background question about another.
+   */
+  beat = async (): Promise<void> => {
+    const active = this.activeClusterId
+    await Promise.all(
+      this.sessions
+        .filter((session) => session.cluster.id !== active)
+        .map(async (session) => {
+          try {
+            await pingCluster(session.cluster.id)
+            session.noteLiveness(null)
+          } catch (cause) {
+            session.noteLiveness(toApiError(cause))
+          }
+        }),
+    )
+  }
+
+  /**
+   * Starts the heartbeat, and stops any previous one.
+   *
+   * NOT STARTED WHEN AUTO-REFRESH IS OFF. Somebody who set refresh to manual
+   * chose to stop talking to their clusters, and a heartbeat they did not ask
+   * for would be this application deciding otherwise — the same rule the
+   * watch manager states when it reaps a watch nobody is reading.
+   */
+  startHeartbeat = (intervalMs: number): void => {
+    this.stopHeartbeat()
+    if (intervalMs <= 0) return
+    this.#heartbeat = setInterval(() => void this.beat(), intervalMs)
+  }
+
+  stopHeartbeat = (): void => {
+    if (this.#heartbeat === null) return
+    clearInterval(this.#heartbeat)
+    this.#heartbeat = null
+  }
+
+  #heartbeat: ReturnType<typeof setInterval> | null = null
 }
+
+/**
+ * How often a tab that is not in front is asked whether its cluster answers.
+ *
+ * Thirty seconds, and deliberately slower than any refresh interval offered.
+ * This is not a refresh — it reads /version and displays nothing — it is the
+ * question "is that cluster still there", asked so a dot can stop claiming
+ * something nobody has checked in an hour. One tiny request per background
+ * cluster per half-minute is a cost worth paying for a tab bar that is true;
+ * anything faster would be a poll of every open cluster wearing a disguise.
+ */
+export const HEARTBEAT_INTERVAL_MS = 30_000
 
 /**
  * The application-wide workspace.
