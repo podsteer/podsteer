@@ -97,8 +97,8 @@ export function ListClusters(): $CancellablePromise<$models.Cluster[] | null> {
  * annotationKeys names the annotations each row should carry — the same
  * projection WorkloadAPI.ListPods takes, for the same reason.
  */
-export function ListNamespaceSummaries(clusterID: string, annotationKeys: string[] | null): $CancellablePromise<$models.NamespaceSummary[] | null> {
-    return $Call.ByID(3424122106, clusterID, annotationKeys);
+export function ListNamespaceSummaries(clusterID: string, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null): $CancellablePromise<$models.NamespaceSummary[] | null> {
+    return $Call.ByID(3424122106, clusterID, annotationKeys, expressions);
 }
 
 /**
@@ -114,8 +114,8 @@ export function ListNamespaces(clusterID: string): $CancellablePromise<$models.N
  * 
  * annotationKeys is the same projection ListNamespaceSummaries takes.
  */
-export function ListNodes(clusterID: string, annotationKeys: string[] | null): $CancellablePromise<$models.Node[] | null> {
-    return $Call.ByID(1549587712, clusterID, annotationKeys);
+export function ListNodes(clusterID: string, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null): $CancellablePromise<$models.Node[] | null> {
+    return $Call.ByID(1549587712, clusterID, annotationKeys, expressions);
 }
 
 /**

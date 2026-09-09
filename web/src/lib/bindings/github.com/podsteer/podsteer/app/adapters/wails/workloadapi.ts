@@ -36,8 +36,8 @@ export function ListApplications(clusterID: string, $namespace: string): $Cancel
  * operator has put on a custom column of this kind. Nothing else of the
  * annotation map crosses the bridge; see domain.Projection for why.
  */
-export function ListPods(clusterID: string, $namespace: string, annotationKeys: string[] | null): $CancellablePromise<$models.Pod[] | null> {
-    return $Call.ByID(651969882, clusterID, $namespace, annotationKeys);
+export function ListPods(clusterID: string, $namespace: string, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null): $CancellablePromise<$models.Pod[] | null> {
+    return $Call.ByID(651969882, clusterID, $namespace, annotationKeys, expressions);
 }
 
 /**
@@ -63,8 +63,8 @@ export function ListPodsOnNode(clusterID: string, nodeName: string): $Cancellabl
  * 
  * annotationKeys is the same projection ListPods takes.
  */
-export function ListWorkloads(clusterID: string, kind: string, $namespace: string, annotationKeys: string[] | null): $CancellablePromise<$models.Workload[] | null> {
-    return $Call.ByID(2073109092, clusterID, kind, $namespace, annotationKeys);
+export function ListWorkloads(clusterID: string, kind: string, $namespace: string, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null): $CancellablePromise<$models.Workload[] | null> {
+    return $Call.ByID(2073109092, clusterID, kind, $namespace, annotationKeys, expressions);
 }
 
 /**

@@ -270,6 +270,10 @@ type PodSpec struct {
 	// adapter — only the keys a Projection asked for. See Projection for why
 	// the whole map never travels.
 	Annotations map[string]string
+	// Custom holds the operator's own JSONPath columns, keyed by the
+	// interface's column id and already rendered as text. Nil when none were
+	// asked for, which is every read but a list view's.
+	Custom map[string]string
 	// Owners are the pod's owner references. The controlling one is what the
 	// "Controlled By" column shows.
 	Owners []OwnerReference
@@ -335,6 +339,7 @@ type Pod struct {
 	containers  []Container
 	labels      map[string]string
 	annotations map[string]string
+	custom      map[string]string
 	owners      []OwnerReference
 	qosClass    QoSClass
 	usage       Metrics
@@ -388,6 +393,7 @@ func NewPod(spec PodSpec) (Pod, error) {
 		containers:  containers,
 		labels:      maps.Clone(spec.Labels),
 		annotations: maps.Clone(spec.Annotations),
+		custom:      maps.Clone(spec.Custom),
 		owners:      slices.Clone(spec.Owners),
 		qosClass:    spec.QoSClass,
 		usage:       spec.Usage,
@@ -432,6 +438,10 @@ func (p Pod) Labels() map[string]string { return maps.Clone(p.labels) }
 // Annotations returns a copy of the projected annotations — only the keys
 // that were asked for when the pod was read. See PodSpec.Annotations.
 func (p Pod) Annotations() map[string]string { return maps.Clone(p.annotations) }
+
+// Custom returns a copy of the operator's own JSONPath column values, keyed
+// by column id.
+func (p Pod) Custom() map[string]string { return maps.Clone(p.custom) }
 
 // Owners returns a copy of the pod's owner references.
 func (p Pod) Owners() []OwnerReference { return slices.Clone(p.owners) }

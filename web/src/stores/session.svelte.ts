@@ -62,6 +62,7 @@ import {
 import { describeQuery, matches, parseQuery, type Query, type Row } from '$lib/query'
 import {
   annotationKeysOf,
+  expressionsOf,
   customSearchText,
   customSortAccessor,
   keysOnScreen,
@@ -854,6 +855,17 @@ export class ClusterSession {
    * row carries its labels already.
    */
   readonly annotationKeys = $derived(annotationKeysOf(this.customColumns))
+
+  /**
+   * The JSONPath columns the current view's list is asked for.
+   *
+   * SENT WITH EVERY LIST READ, and the reason they are separate from the
+   * annotation keys above is what they cost: an annotation is on a row the
+   * list was fetching anyway, while an expression makes the backend fetch
+   * whole objects and, for a watched kind, skip the store. Empty for every
+   * list nobody has put an expression on, which is almost all of them.
+   */
+  readonly columnExpressions = $derived(expressionsOf(this.customColumns))
 
   /**
    * Pods after the search filter alone, BEFORE the status quick-filter chips.
@@ -1961,13 +1973,13 @@ export class ClusterSession {
       // its custom columns — and nothing else of the annotation map. See
       // $lib/customColumns and the client's listNamespaceSummaries note.
       case 'pods':
-        return listPods(id, namespace, this.annotationKeys)
+        return listPods(id, namespace, this.annotationKeys, this.columnExpressions)
       case 'nodes':
-        return listNodes(id, this.annotationKeys)
+        return listNodes(id, this.annotationKeys, this.columnExpressions)
       case 'events':
-        return listEvents(id, namespace, this.annotationKeys)
+        return listEvents(id, namespace, this.annotationKeys, this.columnExpressions)
       case 'namespaces':
-        return listNamespaceSummaries(id, this.annotationKeys)
+        return listNamespaceSummaries(id, this.annotationKeys, this.columnExpressions)
       case 'applications':
         return listApplications(id, namespace)
       case 'workloads': {
@@ -1987,10 +1999,10 @@ export class ClusterSession {
           .catch(() => {
             if (generation === this.#usageGeneration) this.workloadUsage = {}
           })
-        return listWorkloads(id, kind, namespace, this.annotationKeys)
+        return listWorkloads(id, kind, namespace, this.annotationKeys, this.columnExpressions)
       }
       default:
-        return listTable(id, this.selectedKindId, namespace, this.annotationKeys)
+        return listTable(id, this.selectedKindId, namespace, this.annotationKeys, this.columnExpressions)
     }
   }
 

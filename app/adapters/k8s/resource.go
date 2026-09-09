@@ -53,10 +53,23 @@ func (a *Adapter) ListTable(ctx context.Context, id domain.ClusterID, kind domai
 	// a guess that breaks on any CRD whose printer puts the name elsewhere.
 	// The same attachment carries the labels and annotations, which is what
 	// lets a custom column on a CRD read them without a GET per row.
+	//
+	// A JSONPATH COLUMN ASKS FOR THE WHOLE OBJECT INSTEAD, and that is the
+	// only thing it costs. `Object` attaches each row's complete object where
+	// `Metadata` attaches only its metadata — the same one list, the same one
+	// request, a larger response — so an expression can reach spec and status
+	// while the server's own printer columns keep working exactly as before.
+	// The bytes stay between here and the API server: what crosses to the
+	// interface is still a table of rendered cells. See customColumns.
+	include := "Metadata"
+	if projection.NeedsWholeObject() {
+		include = "Object"
+	}
+
 	body, err := restClient.Get().
 		AbsPath(resourcePath(kind, namespace, "")).
 		SetHeader("Accept", tableMediaType).
-		Param("includeObject", "Metadata").
+		Param("includeObject", include).
 		Param("limit", fmt.Sprint(tableListLimit)).
 		DoRaw(ctx)
 	if err != nil {
@@ -183,6 +196,7 @@ func mapTable(kind domain.ResourceKind, table *metav1.Table, projection domain.P
 			Cells:       cells,
 			Labels:      metadata.labels,
 			Annotations: metadata.annotations,
+			Custom:      metadata.custom,
 		})
 	}
 
@@ -195,6 +209,7 @@ type tableRowMetadata struct {
 	namespace   domain.NamespaceName
 	labels      map[string]string
 	annotations map[string]string
+	custom      map[string]string
 }
 
 // rowMetadata extracts a row's identity, labels and projected annotations
@@ -223,7 +238,29 @@ func rowMetadata(row *metav1.TableRow, projection domain.Projection) tableRowMet
 		namespace:   namespace,
 		labels:      partial.Labels,
 		annotations: projection.Annotations(partial.Annotations),
+		custom:      rowExpressions(row, projection),
 	}
+}
+
+// rowExpressions evaluates the operator's JSONPath columns against a row's
+// attached object.
+//
+// DECODED AS GENERIC DATA, not into a typed object: a table row can be any
+// kind, including a CRD this build has never heard of, which is the whole
+// reason the generic list exists. The same raw bytes were already decoded
+// once as PartialObjectMetadata above; decoding them again as a map is the
+// price of not requiring a Go type per kind, and it happens only for the
+// rows of a list that actually has an expression on it.
+func rowExpressions(row *metav1.TableRow, projection domain.Projection) map[string]string {
+	if !projection.NeedsWholeObject() || len(row.Object.Raw) == 0 {
+		return nil
+	}
+
+	var object map[string]any
+	if err := json.Unmarshal(row.Object.Raw, &object); err != nil {
+		return nil
+	}
+	return customColumns(projection, object)
 }
 
 // renderCell converts a table cell to its display string.

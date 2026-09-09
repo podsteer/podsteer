@@ -79,7 +79,7 @@ func (b *BrowseAPI) ListKinds(clusterID string) ([]ResourceKind, error) {
 //
 // annotationKeys names the annotations each row should carry — the same
 // projection WorkloadAPI.ListPods takes, for the same reason.
-func (b *BrowseAPI) ListEvents(clusterID, namespace string, annotationKeys []string) ([]Event, error) {
+func (b *BrowseAPI) ListEvents(clusterID, namespace string, annotationKeys []string, expressions []CustomExpression) ([]Event, error) {
 	ctx, cancel := b.app.requestContext()
 	defer cancel()
 
@@ -93,7 +93,7 @@ func (b *BrowseAPI) ListEvents(clusterID, namespace string, annotationKeys []str
 		return nil, apiError(b.logger, "ListEvents", err)
 	}
 
-	events, err := b.events.ListEvents(ctx, id, name, domain.NewProjection(annotationKeys))
+	events, err := b.events.ListEvents(ctx, id, name, projectionFor(annotationKeys, expressions))
 	if err != nil {
 		return nil, apiError(b.logger, "ListEvents", err)
 	}
@@ -130,7 +130,7 @@ func (b *BrowseAPI) ListEventsForResource(clusterID, namespace, kind, name strin
 //
 // annotationKeys is the same projection ListEvents takes; every row also
 // carries its labels, read from the table's own row metadata.
-func (b *BrowseAPI) ListTable(clusterID, kindID, namespace string, annotationKeys []string) (ResourceTable, error) {
+func (b *BrowseAPI) ListTable(clusterID, kindID, namespace string, annotationKeys []string, expressions []CustomExpression) (ResourceTable, error) {
 	ctx, cancel := b.app.requestContext()
 	defer cancel()
 
@@ -144,7 +144,7 @@ func (b *BrowseAPI) ListTable(clusterID, kindID, namespace string, annotationKey
 		return ResourceTable{}, apiError(b.logger, "ListTable", err)
 	}
 
-	table, err := b.resources.ListTable(ctx, id, kindID, name, domain.NewProjection(annotationKeys))
+	table, err := b.resources.ListTable(ctx, id, kindID, name, projectionFor(annotationKeys, expressions))
 	if err != nil {
 		return ResourceTable{}, apiError(b.logger, "ListTable", err)
 	}

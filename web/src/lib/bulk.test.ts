@@ -109,7 +109,7 @@ describe('items', () => {
       kind: 'ConfigMap',
       namespaced: true,
     } as ResourceKind
-    const row = { name: 'settings', namespace: 'web', cells: [], labels: {}, annotations: {} } as TableRow
+    const row = { name: 'settings', namespace: 'web', cells: [], labels: {}, annotations: {}, custom: {} } as TableRow
     const item = tableRowItem(configMapKind, row)
     expect(item).toMatchObject({ name: 'settings', namespace: 'web', controllerKind: '', controllerName: '' })
   })
@@ -154,7 +154,7 @@ describe('items', () => {
       kind: 'StorageClass',
       namespaced: false,
     } as ResourceKind
-    const row = { name: 'fast', namespace: '', cells: [], labels: {}, annotations: {} } as TableRow
+    const row = { name: 'fast', namespace: '', cells: [], labels: {}, annotations: {}, custom: {} } as TableRow
     expect(tableRowItem(classKind, row).namespace).toBe('')
   })
 })

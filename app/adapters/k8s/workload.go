@@ -59,7 +59,19 @@ func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace d
 	// same instant. Coalescing that is the same job it was doing before, so
 	// the mapping happens once per tick rather than once per caller.
 	return cachedSlice(&a.reads, ctx, readKey(id.String(), "pods", namespace.String(), projection.String()), func(ctx context.Context) ([]domain.Pod, error) {
-		if stored, serving := watched[*corev1.Pod](a.watches, id, watchPods); serving {
+		// THE STORE IS BYPASSED FOR A JSONPATH COLUMN, and that is the whole
+		// of what an operator's own expression costs.
+		//
+		// stripPod removes what nothing here reads before a pod is stored —
+		// volumes, affinity, tolerations, nodeSelector, container env and
+		// command among them — which is what keeps five thousand pods
+		// affordable in memory. An expression may name any of those, and a
+		// column that rendered blank on a cluster the watch happens to be
+		// serving and full on one it is not would be the worst kind of
+		// wrong: two answers for one question, decided by something the
+		// operator cannot see. So a list with expressions goes to the
+		// network, where the object is whole. See Projection.NeedsWholeObject.
+		if stored, serving := watched[*corev1.Pod](a.watches, id, watchPods); serving && !projection.NeedsWholeObject() {
 			return mapWatchedPods(id, stored, namespace, projection)
 		}
 		return a.listPods(ctx, id, namespace, projection)
@@ -150,14 +162,17 @@ func (a *Adapter) ListWorkloads(ctx context.Context, id domain.ClusterID, kind d
 		// refresh re-reads: ReplicaSets stand between a Deployment and its
 		// pods, Jobs between a CronJob and its. The other four are one small
 		// list each and go to the cluster.
-		switch kind {
-		case domain.WorkloadReplicaSet:
+		// The same bypass the pod list makes, for the same reason: these two
+		// are stored, and a stored object is not a whole one.
+		switch {
+		case projection.NeedsWholeObject():
+		case kind == domain.WorkloadReplicaSet:
 			if stored, serving := watched[*appsv1.ReplicaSet](a.watches, id, watchReplicaSets); serving {
 				return mapWatched(id, stored, namespace, func(id domain.ClusterID, item *appsv1.ReplicaSet) (domain.Workload, error) {
 					return mapReplicaSet(id, item, projection)
 				}), nil
 			}
-		case domain.WorkloadJob:
+		case kind == domain.WorkloadJob:
 			if stored, serving := watched[*batchv1.Job](a.watches, id, watchJobs); serving {
 				return mapWatched(id, stored, namespace, func(id domain.ClusterID, item *batchv1.Job) (domain.Workload, error) {
 					return mapJob(id, item, projection)

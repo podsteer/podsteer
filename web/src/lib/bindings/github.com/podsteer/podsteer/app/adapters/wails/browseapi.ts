@@ -87,8 +87,8 @@ export function InspectTLSSecret(clusterID: string, $namespace: string, name: st
  * annotationKeys names the annotations each row should carry — the same
  * projection WorkloadAPI.ListPods takes, for the same reason.
  */
-export function ListEvents(clusterID: string, $namespace: string, annotationKeys: string[] | null): $CancellablePromise<$models.Event[] | null> {
-    return $Call.ByID(1396241276, clusterID, $namespace, annotationKeys);
+export function ListEvents(clusterID: string, $namespace: string, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null): $CancellablePromise<$models.Event[] | null> {
+    return $Call.ByID(1396241276, clusterID, $namespace, annotationKeys, expressions);
 }
 
 /**
@@ -117,8 +117,8 @@ export function ListKinds(clusterID: string): $CancellablePromise<$models.Resour
  * annotationKeys is the same projection ListEvents takes; every row also
  * carries its labels, read from the table's own row metadata.
  */
-export function ListTable(clusterID: string, kindID: string, $namespace: string, annotationKeys: string[] | null): $CancellablePromise<$models.ResourceTable> {
-    return $Call.ByID(2074631175, clusterID, kindID, $namespace, annotationKeys);
+export function ListTable(clusterID: string, kindID: string, $namespace: string, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null): $CancellablePromise<$models.ResourceTable> {
+    return $Call.ByID(2074631175, clusterID, kindID, $namespace, annotationKeys, expressions);
 }
 
 /**

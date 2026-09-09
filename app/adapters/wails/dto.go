@@ -86,6 +86,10 @@ type Namespace struct {
 	Labels map[string]string `json:"labels"`
 	// Annotations are only the projected keys — see Pod.Annotations.
 	Annotations map[string]string `json:"annotations"`
+	// Custom holds the operator's own JSONPath columns, keyed by the column
+	// id the interface knows them by and already rendered as text. Nil unless
+	// this list was asked for one — see domain.Projection.
+	Custom map[string]string `json:"custom"`
 	// CreatedAt is the creation timestamp in RFC 3339, empty if unknown.
 	CreatedAt string `json:"createdAt"`
 	// AgeSeconds is the age at the time of the call.
@@ -100,6 +104,7 @@ func toNamespace(namespace domain.Namespace, now time.Time) Namespace {
 		IsActive:    namespace.IsActive(),
 		Labels:      emptyIfNil(namespace.Labels()),
 		Annotations: emptyIfNil(namespace.Annotations()),
+		Custom:      emptyIfNil(namespace.Custom()),
 		CreatedAt:   formatTime(namespace.CreatedAt()),
 		AgeSeconds:  int64(namespace.Age(now).Seconds()),
 	}
@@ -305,6 +310,10 @@ type Pod struct {
 	// Annotations are ONLY the keys the list was asked for — the custom
 	// columns' — never the whole map. See domain.Projection.
 	Annotations map[string]string `json:"annotations"`
+	// Custom holds the operator's own JSONPath columns, keyed by the column
+	// id the interface knows them by and already rendered as text. Nil unless
+	// this list was asked for one — see domain.Projection.
+	Custom map[string]string `json:"custom"`
 	// CreatedAt is the creation timestamp in RFC 3339, empty if unknown.
 	CreatedAt string `json:"createdAt"`
 	// AgeSeconds is the age at the time of the call.
@@ -384,6 +393,7 @@ func toPod(pod domain.Pod, now time.Time) Pod {
 		Findings:           toPodFindings(domain.AssessPod(pod, now)),
 		Labels:             emptyIfNil(pod.Labels()),
 		Annotations:        emptyIfNil(pod.Annotations()),
+		Custom:             emptyIfNil(pod.Custom()),
 		CreatedAt:          formatTime(pod.CreatedAt()),
 		AgeSeconds:         int64(pod.Age(now).Seconds()),
 	}

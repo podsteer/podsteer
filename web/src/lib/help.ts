@@ -683,6 +683,40 @@ export const HELP_TOPICS = {
     ],
   },
 
+  'custom-columns': {
+    title: 'Your own columns',
+    lede: 'A label, an annotation, or a JSONPath into the object \u2014 and only one of the three changes what the list costs.',
+    sections: [
+      {
+        heading: 'Labels and annotations are free',
+        body: [
+          'Every row of every list already carries its labels, and a list carries the annotation keys somebody asked for. Adding either kind of column costs no extra request and no extra bytes worth counting.',
+          'Annotations are asked for by key rather than fetched whole, because on a real cluster the annotation map is dominated by kubectl\u2019s copy of the last applied manifest \u2014 tens of kilobytes per object, on every refresh. That one key cannot be a column at all.',
+        ],
+      },
+      {
+        heading: 'A JSONPath column reads into the object',
+        body: [
+          'The same paths kubectl takes, evaluated by kubectl\u2019s own library: `.status.phase`, `.spec.containers[0].image`, `{.spec.replicas}`. Both the braced and unbraced forms work, so an expression from a script means the same thing here.',
+          'It reads into spec and status, which no cheap list carries \u2014 so a kind with one fetches whole objects on every refresh, and for the kinds PodSteer watches it stops reading from the in-memory store. That is the whole cost, it applies per kind, and the column picker says so before you add the first one.',
+        ],
+      },
+      {
+        heading: 'Why the store is skipped',
+        body: [
+          'PodSteer keeps watched pods in memory with the fields nothing reads removed \u2014 volumes, tolerations, node selectors, container environment \u2014 which is what makes five thousand pods affordable. An expression may name any of those, and a column that read blank on one cluster and full on another, decided by whether a watch happened to be running, would be worse than no column.',
+        ],
+      },
+      {
+        heading: 'What a cell means',
+        body: [
+          'A value is shown exactly as the object carries it. A dash means the path matched nothing on that row \u2014 the same answer a missing label gives. A cell beginning with an exclamation mark means the path itself could not be read, which is a typo rather than a fact about the object.',
+          'Sorting puts rows with no value last in both directions, so a column of dashes never floats to the top.',
+        ],
+      },
+    ],
+  },
+
   settings: {
     title: 'Settings',
     lede: 'How PodSteer behaves on this machine. None of it is stored on a cluster.',
