@@ -54,7 +54,9 @@ import type { SavedView, ViewState } from '$lib/savedViews'
 import {
   EVENT_CHIPS,
   WORKLOAD_CHIPS,
+  includesCluster,
   matchesChips,
+  toggleClusterSelection,
   type FleetChipTab,
   type FleetRow,
   type FleetTab,
@@ -565,6 +567,21 @@ export class ClusterSession {
   fleetChips = $state<Record<FleetChipTab, string[]>>({ pods: [], workloads: [], events: [] })
 
   /**
+   * Which clusters the merged tables are showing, set by the strip's chips.
+   *
+   * Empty means every open cluster — see includesCluster in $lib/fleet for
+   * why that is the resting state rather than "all selected", and for what
+   * the chips used to do instead.
+   *
+   * PER SESSION, beside fleetChips rather than in $stores/fleet: the rows
+   * are read once for the whole workspace, but which of them a tab is
+   * looking at is that tab's business, exactly as its search, sort and page
+   * are. Two tabs on the merged table can be narrowed differently without
+   * either one re-reading anything.
+   */
+  fleetClusters = $state<string[]>([])
+
+  /**
    * Rows for whichever view is active. Only one is populated at a time.
    *
    * `$state.raw`, not `$state`, and the difference is the cost of a refresh.
@@ -972,9 +989,21 @@ export class ClusterSession {
    * fields are exactly the single-cluster list's, so a search that finds a
    * pod in one tab finds it here too.
    */
+  /**
+   * Keeps only the clusters the strip's chips have selected.
+   *
+   * Applied BEFORE the search rather than as one more query term, because a
+   * selection of several clusters is an OR and the query language ANDs — the
+   * whole reason the chips could not select two. See $lib/fleet.
+   */
+  #onSelectedClusters<T extends { cluster: string }>(rows: readonly T[]): T[] {
+    if (this.fleetClusters.length === 0) return rows as T[]
+    return rows.filter((row) => includesCluster(this.fleetClusters, row.cluster))
+  }
+
   readonly searchedFleetPods = $derived(
     filterRows(
-      fleet.podRows,
+      this.#onSelectedClusters(fleet.podRows),
       this.query,
       (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase],
       (pod) => pod.labels,
@@ -986,7 +1015,7 @@ export class ClusterSession {
   )
   readonly searchedFleetWorkloads = $derived(
     filterRows(
-      fleet.workloadRows,
+      this.#onSelectedClusters(fleet.workloadRows),
       this.query,
       (workload) => [workload.name, workload.namespace, workload.kind, workload.status],
       (workload) => workload.labels,
@@ -1000,7 +1029,7 @@ export class ClusterSession {
   )
   readonly searchedFleetEvents = $derived(
     filterRows(
-      fleet.eventRows,
+      this.#onSelectedClusters(fleet.eventRows),
       this.query,
       (event) => [event.reason, event.message, event.involvedObject, event.namespace],
       undefined,
@@ -1023,7 +1052,7 @@ export class ClusterSession {
    */
   readonly searchedFleetTableRows = $derived(
     filterRows(
-      fleet.table.rows,
+      this.#onSelectedClusters(fleet.table.rows),
       this.query,
       (row) => [row.name, row.namespace, ...(row.cells ?? [])],
       (row) => row.labels,
@@ -1639,6 +1668,17 @@ export class ClusterSession {
 
   /** Toggles one quick-filter chip on a merged table. Same page reset, same
       reasons, as the pod chips. */
+  /**
+   * Adds or removes one cluster from the merged table's selection.
+   *
+   * Resets the page for the same reason toggleFleetChip does: page 4 of a
+   * list that just lost two clusters is a page that may no longer exist.
+   */
+  toggleFleetCluster = (cluster: string): void => {
+    this.fleetClusters = toggleClusterSelection(this.fleetClusters, cluster, fleet.openClusters())
+    this.page = 1
+  }
+
   toggleFleetChip = (tab: FleetChipTab, id: string): void => {
     const active = this.fleetChips[tab]
     this.fleetChips = {

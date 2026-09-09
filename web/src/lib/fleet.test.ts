@@ -4,10 +4,12 @@ import {
   fleetRowTarget,
   flattenFleet,
   hasClusterTerm,
+  includesCluster,
   matchesChips,
   mergeFleet,
   mergeFleetTable,
   stripModel,
+  toggleClusterSelection,
   toggleClusterTerm,
   WORKLOAD_CHIPS,
   type ClusterAnswer,
@@ -334,5 +336,58 @@ describe('mergeFleetTable', () => {
     })
 
     expect(merged.rows.map((r) => r.name)).toEqual(['one', 'kept'])
+  })
+})
+
+describe('selecting which clusters the merged table shows', () => {
+  const open = ['alpha', 'beta', 'gamma']
+
+  it('shows every cluster when nothing is selected', () => {
+    // The resting state, and the one an operator already has: no chip
+    // pressed, every cluster in the table.
+    expect(includesCluster([], 'alpha')).toBe(true)
+    expect(includesCluster([], 'anything')).toBe(true)
+  })
+
+  it('isolates the first cluster pressed', () => {
+    expect(toggleClusterSelection([], 'beta', open)).toEqual(['beta'])
+    expect(includesCluster(['beta'], 'beta')).toBe(true)
+    expect(includesCluster(['beta'], 'alpha')).toBe(false)
+  })
+
+  it('ADDS the second, which is the bug this closes', () => {
+    // Through the search box this produced `cluster:beta cluster:gamma`,
+    // ANDed by the query language, matching no row — while both chips
+    // rendered pressed over the empty table.
+    const both = toggleClusterSelection(['beta'], 'gamma', open)
+
+    expect(both).toEqual(['beta', 'gamma'])
+    expect(includesCluster(both, 'beta')).toBe(true)
+    expect(includesCluster(both, 'gamma')).toBe(true)
+    expect(includesCluster(both, 'alpha')).toBe(false)
+  })
+
+  it('removes one that is pressed again', () => {
+    expect(toggleClusterSelection(['beta', 'gamma'], 'gamma', open)).toEqual(['beta'])
+  })
+
+  it('collapses to nothing when every cluster is selected', () => {
+    // "All of them" and "none of them" show the same table, so they must not
+    // be two states that look different — every chip lit means the same rows
+    // as no chip lit, and the unlit row is the honest one.
+    expect(toggleClusterSelection(['alpha', 'beta'], 'gamma', open)).toEqual([])
+  })
+
+  it('drops a cluster whose tab was closed', () => {
+    // Its chip is gone and its rows with it; leaving the id in would filter
+    // the table down to a cluster that is no longer there.
+    expect(toggleClusterSelection(['alpha', 'beta'], 'beta', ['alpha', 'gamma'])).toEqual(['alpha'])
+  })
+
+  it('leaves a typed cluster: term alone', () => {
+    // The search box keeps its own narrowing; the chips no longer write to
+    // it, so the two never fight over the same string.
+    expect(hasClusterTerm('web cluster:prod', 'prod')).toBe(true)
+    expect(toggleClusterSelection([], 'prod', ['prod'])).toEqual([])
   })
 })

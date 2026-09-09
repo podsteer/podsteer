@@ -24,8 +24,6 @@
     FLEET_TABS,
     WORKLOAD_CHIPS,
     fleetRowTarget,
-    hasClusterTerm,
-    toggleClusterTerm,
     type FleetChip,
     type FleetChipTab,
     type FleetRow,
@@ -210,10 +208,20 @@
     })
   }
 
-  /** A strip chip narrows the table to its cluster through the search box,
-      so the filter is visible, editable and removable like any other term. */
+  /**
+   * A strip chip narrows the table to the clusters selected.
+   *
+   * IT USED TO WRITE A `cluster:` TERM INTO THE SEARCH BOX, which made the
+   * filter visible and editable there — a good property, paid for with a
+   * broken one: query terms are ANDed, so a second pressed chip matched no
+   * row at all and the table emptied while both chips stayed lit. A row of
+   * toggles has to be able to hold two. See $lib/fleet.
+   *
+   * A typed `cluster:` term still narrows the table exactly as it did; what
+   * moved is only what the chips write.
+   */
   function toggleCluster(cluster: string): void {
-    session.setSearch(toggleClusterTerm(session.typedSearch, cluster))
+    session.toggleFleetCluster(cluster)
   }
 
   /** The same colour rule WorkloadsView draws with. */
@@ -240,6 +248,14 @@
   function emptyDescription(noun: string): string {
     if (session.search) return `Nothing matches "${session.search}".`
     if (fleet.degraded > 0) return 'Some clusters did not answer — the strip above says which, and why.'
+    // A NARROWED TABLE IS NOT AN EMPTY FLEET. Saying "across your 6 open
+    // clusters" while five of them are deselected names a search nobody made.
+    if (session.fleetClusters.length > 0) {
+      const chosen = `${session.fleetClusters.length} selected cluster${
+        session.fleetClusters.length === 1 ? '' : 's'
+      }`
+      return `No ${noun} in this namespace across the ${chosen}.`
+    }
     const clusters = `${openCount} open cluster${openCount === 1 ? '' : 's'}`
     return `No ${noun} in this namespace across your ${clusters}.`
   }
@@ -443,7 +459,7 @@
     {/if}
 
     {#each fleet.strip as entry (entry.cluster)}
-      {@const pressed = hasClusterTerm(session.typedSearch, entry.cluster)}
+      {@const pressed = session.fleetClusters.includes(entry.cluster)}
       <button
         type="button"
         onclick={() => toggleCluster(entry.cluster)}
