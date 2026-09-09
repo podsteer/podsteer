@@ -192,6 +192,13 @@ describe('what a settings file must never carry', () => {
     // discloses in as many words. It says which clusters somebody works with
     // and nothing about what is inside any of them.
     //
+    // `shortcutBindings` was argued for on 2026-09-09 and admitted. A key
+    // combination is not an object name and not a fact about a cluster: it is
+    // the same shape of preference as a column layout, and it is the one an
+    // operator most wants on their second machine. The reader validates each
+    // entry through the same function storage goes through, so an imported
+    // file cannot install a binding this build would refuse.
+    //
     // `savedViews` was argued for on 2026-09-08 and REFUSED. A view holds a
     // namespace and whatever was typed into the search box, and this file's
     // header promises that no pod, node, namespace or workload appears in it.
@@ -231,6 +238,7 @@ describe('what a settings file must never carry', () => {
         'podMeasure',
         'refreshIntervalMs',
         'sections',
+        'shortcutBindings',
         'showManagedFields',
         'themePreference',
         'thresholds',

@@ -11,17 +11,25 @@
  * consumer — the handlers and the sheet alike — goes through `shortcut(id)`
  * rather than re-typing a key.
  *
- * `keys` is a DISPLAY string, built once at module load via platform.ts's
- * `accelerator`, so a Mac reads "⌘B" and everything else reads "Ctrl+B"
- * without either place having to know which platform it is.
+ * WHAT THIS MODULE HOLDS IS THE DEFAULTS. Each entry carries a BINDING as
+ * data — modifiers and a key — and both halves everything else uses are
+ * derived from it: `formatBinding` for the display, `matchesBinding` for the
+ * predicate (see shortcutBinding.ts). They cannot disagree because neither is
+ * written down.
  *
- * `matches` is the other half — a predicate over the actual KeyboardEvent —
- * so a handler that calls `shortcut('refresh').matches(event)` cannot drift
- * from what the sheet displays for the same id: change one, the other
- * follows, because they are read from the same object.
+ * An operator's own bindings live in preferences and are applied by
+ * $stores/shortcuts.svelte, which is what every consumer reads. This module
+ * stays plain and pure so the table itself — the ids, the defaults, the
+ * scopes — is arguable in a test with no store around it.
  */
 
-import { accelerator, isMac } from './platform'
+import { isMac } from './platform'
+import {
+  formatBinding,
+  matchesBinding,
+  sameBinding,
+  type Binding,
+} from './shortcutBinding'
 
 export type ShortcutScope = 'global' | 'cluster'
 
@@ -32,6 +40,18 @@ export interface Shortcut {
   keys: string
   /** What it does, in the same voice the sheet shows it in. */
   description: string
+  /** The combination in force. Derived from the default or the operator's. */
+  binding: Binding
+  /**
+   * Whether this one can be rebound.
+   *
+   * FALSE FOR THE TWO THAT ARE NOT A COMBINATION. "Switch to the Nth tab" is
+   * nine keys behind one id, and the shortcut sheet's own ⌘/ has a bare "?"
+   * alternative that depends on what has focus rather than on the combo — a
+   * rebinding field can express neither, and offering one that silently
+   * dropped half the behaviour would be worse than saying so.
+   */
+  rebindable: boolean
   /**
    * Where it applies. GLOBAL shortcuts work from any tab, including the
    * cluster picker, where no ClusterSession exists yet. CLUSTER shortcuts act
@@ -41,6 +61,36 @@ export interface Shortcut {
   scope: ShortcutScope
   /** Whether a KeyboardEvent triggers this shortcut. */
   matches: (event: KeyboardEvent) => boolean
+}
+
+/** One entry of the defaults table, before a binding is resolved. */
+export interface ShortcutDefault {
+  id: string
+  description: string
+  scope: ShortcutScope
+  binding: Binding
+  rebindable?: boolean
+  /**
+   * A second combination this shortcut also answers to, kept only while it
+   * is at its default.
+   *
+   * ⌘P alongside ⌘⇧P for the palette: k9s and Lens both train the bare
+   * accelerator, and the convention elsewhere is the shifted one. An operator
+   * who picks their own key gets exactly what they picked — an alternate they
+   * did not choose, surviving a rebinding, is a key they cannot get rid of.
+   */
+  alternate?: Binding
+  /** How the pair reads when both are in force. */
+  alternateKeys?: string
+  /**
+   * A predicate of its own, for the entry that is not a combination.
+   *
+   * Only switch-tab has one: nine keys behind one id cannot be expressed as a
+   * Binding, which is the same fact `rebindable: false` states. Every other
+   * entry's predicate is DERIVED from its binding and cannot be written down
+   * — that is the point of the refactor this field is the exception to.
+   */
+  matches?: (event: KeyboardEvent) => boolean
 }
 
 /** Whether Cmd (macOS) or Ctrl (everywhere else) is held — the app accepts
@@ -55,95 +105,146 @@ function accel(key: string): (event: KeyboardEvent) => boolean {
   return (event) => accelerated(event) && event.key.toLowerCase() === key
 }
 
-export const SHORTCUTS: Shortcut[] = [
+/** A binding of accelerator plus one key, which is what most of these are. */
+function accelKey(key: string): Binding {
+  return { accel: true, shift: false, alt: false, key }
+}
+
+/**
+ * The defaults, in the order the sheet lists them.
+ *
+ * THE KEYS ARE NOT WRITTEN DOWN HERE, only the combination — what an entry
+ * displays as is formatBinding's answer, on whichever platform is asking.
+ */
+export const SHORTCUT_DEFAULTS: ShortcutDefault[] = [
   {
     id: 'toggle-navigator',
-    keys: accelerator('B'),
     description: 'Show or hide the resource navigator',
     scope: 'cluster',
-    matches: accel('b'),
+    binding: accelKey('b'),
   },
   {
     id: 'refresh',
-    keys: accelerator('R'),
     description: 'Refresh the active view',
     scope: 'cluster',
-    matches: accel('r'),
+    binding: accelKey('r'),
   },
   {
     id: 'focus-search',
-    keys: accelerator('K'),
     description: 'Focus the search field',
     scope: 'cluster',
-    matches: accel('k'),
+    binding: accelKey('k'),
   },
   {
     id: 'command-palette',
-    // Two accelerators for one action, both spelled out because
-    // accelerator() only ever formats a single combo — see 'switch-tab'
-    // above for the same reason. ⌘⇧P matches every other application's
-    // "command palette" convention (VS Code, Slack, Linear); ⌘P is offered
-    // alongside it because k9s and Lens both train the same muscle memory
-    // on a bare accelerator+P, and neither collides with anything already
-    // in this table. ⌘K is deliberately left alone — see focus-search.
-    keys: isMac ? '⌘⇧P or ⌘P' : 'Ctrl+Shift+P or Ctrl+P',
     description: 'Open the command palette',
     scope: 'global',
-    // Shift is not checked: a letter's `event.key` case already differs
-    // when Shift is held, and matching case-insensitively (as accel() does)
-    // is what makes ⌘P and ⌘⇧P both land here without two separate ids
-    // fighting over which one the sheet displays.
-    matches: accel('p'),
+    // ⌘⇧P is what every other application trains; ⌘P is what k9s and Lens
+    // train. Both are offered by default and neither collides with anything
+    // else in this table. ⌘K is deliberately left to focus-search.
+    binding: { accel: true, shift: false, alt: false, key: 'p' },
+    alternate: { accel: true, shift: true, alt: false, key: 'p' },
+    alternateKeys: isMac ? '⌘⇧P or ⌘P' : 'Ctrl+Shift+P or Ctrl+P',
   },
   {
     id: 'next-tab',
-    keys: accelerator(']'),
     description: 'Switch to the next tab',
     scope: 'global',
-    matches: accel(']'),
+    binding: accelKey(']'),
   },
   {
     id: 'previous-tab',
-    keys: accelerator('['),
     description: 'Switch to the previous tab',
     scope: 'global',
-    matches: accel('['),
+    binding: accelKey('['),
   },
   {
     id: 'switch-tab',
-    // Its own spelling rather than accelerator('1') — this covers nine keys,
-    // not one, and accelerator() only ever formats a single character.
-    keys: isMac ? '⌘1–9' : 'Ctrl+1–9',
     description: 'Switch to the Nth open cluster tab',
     scope: 'global',
-    matches: (event) => accelerated(event) && /^[1-9]$/.test(event.key),
+    // Nine keys behind one id. The binding names the first of them so the
+    // table has one, and `rebindable: false` is why nothing ever offers to
+    // change it — see Shortcut.rebindable.
+    binding: accelKey('1'),
+    rebindable: false,
+    alternateKeys: isMac ? '⌘1–9' : 'Ctrl+1–9',
+    matches: (event) => (event.metaKey || event.ctrlKey) && /^[1-9]$/.test(event.key),
   },
   {
     id: 'new-cluster',
-    keys: accelerator('N'),
     description: 'Go to the cluster picker',
     scope: 'global',
-    matches: accel('n'),
+    binding: accelKey('n'),
   },
   {
     id: 'settings',
-    keys: accelerator(','),
     description: 'Open Settings',
     scope: 'global',
-    matches: accel(','),
+    binding: accelKey(','),
   },
   {
     id: 'shortcut-sheet',
-    // The bare "?" alternative is deliberately not part of `matches`: it only
-    // applies when focus is not inside a text field, which is a fact about
-    // the DOM at the moment of the keystroke, not about the combo itself. See
-    // isTypingTarget below and its one caller in App.svelte.
-    keys: `${accelerator('/')} or ?`,
     description: 'Show this list of keyboard shortcuts',
     scope: 'global',
-    matches: accel('/'),
+    // The bare "?" alternative lives in App.svelte rather than here: it
+    // applies only when focus is outside a text field, which is a fact about
+    // the DOM at the moment of the keystroke and not about the combination.
+    // That is also why this one is not rebindable.
+    binding: accelKey('/'),
+    rebindable: false,
+    alternateKeys: isMac ? '⌘/ or ?' : 'Ctrl+/ or ?',
   },
 ]
+
+/**
+ * Resolves the defaults against an operator's own bindings.
+ *
+ * ONE FUNCTION, AND EVERY CONSUMER READS ITS OUTPUT. The display string and
+ * the predicate are both computed here from the same binding, so a rebound
+ * shortcut cannot be shown as one key and fire on another.
+ *
+ * An override on a shortcut that is not rebindable is IGNORED rather than
+ * refused: storage outlives the code that wrote it, a future build may make
+ * one of them rebindable, and neither case is worth leaving somebody unable
+ * to switch tabs over.
+ */
+export function resolveShortcuts(overrides: Record<string, Binding> = {}): Shortcut[] {
+  return SHORTCUT_DEFAULTS.map((entry) => {
+    const rebindable = entry.rebindable !== false
+    const override = rebindable ? overrides[entry.id] : undefined
+    const binding = override ?? entry.binding
+    const custom = override !== undefined
+
+    // The alternate survives only at the default: an operator who chose a key
+    // gets exactly the key they chose. Switch-tab keeps its own spelling
+    // because it was never one combination to begin with.
+    const alternate = custom ? undefined : entry.alternate
+    const keys = custom || !entry.alternateKeys ? formatBinding(binding) : entry.alternateKeys
+
+    return {
+      id: entry.id,
+      keys,
+      description: entry.description,
+      scope: entry.scope,
+      binding,
+      rebindable,
+      matches:
+        entry.matches ??
+        ((event: KeyboardEvent) =>
+          matchesBinding(binding, event) ||
+          (alternate !== undefined && matchesBinding(alternate, event))),
+    }
+  })
+}
+
+/**
+ * The shortcuts as they are with no overrides at all.
+ *
+ * Kept for the places that legitimately want the defaults — the tests, and
+ * the reset in Settings. Everything an operator SEES goes through
+ * $stores/shortcuts.svelte instead, or it would not follow a rebinding.
+ */
+export const SHORTCUTS: Shortcut[] = resolveShortcuts()
 
 /**
  * Looks a shortcut up by id.
@@ -153,10 +254,27 @@ export const SHORTCUTS: Shortcut[] = [
  * every call site names a literal id that is meant to exist, and finding out
  * at once beats a handler that silently never fires.
  */
-export function shortcut(id: string): Shortcut {
-  const found = SHORTCUTS.find((entry) => entry.id === id)
+export function shortcut(id: string, table: Shortcut[] = SHORTCUTS): Shortcut {
+  const found = table.find((entry) => entry.id === id)
   if (!found) throw new Error(`Unknown shortcut id: ${id}`)
   return found
+}
+
+/**
+ * The shortcut an override would collide with, or null when it is free.
+ *
+ * A COLLISION IS REFUSED RATHER THAN RESOLVED, and the refusal names the
+ * other shortcut: two handlers on one combination is not a preference an
+ * operator can have — whichever fired first would look like the other one
+ * being broken. Compared against the table AS RESOLVED, so a key freed by
+ * rebinding something else is immediately available.
+ */
+export function conflictWith(table: Shortcut[], id: string, binding: Binding): Shortcut | null {
+  for (const entry of table) {
+    if (entry.id === id) continue
+    if (sameBinding(entry.binding, binding)) return entry
+  }
+  return null
 }
 
 /**

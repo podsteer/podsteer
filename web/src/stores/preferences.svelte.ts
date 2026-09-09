@@ -29,6 +29,7 @@ import {
   type SavedView,
   type ViewState,
 } from '$lib/savedViews'
+import { readBinding, type Binding } from '$lib/shortcutBinding'
 import { customColumnId, normaliseSpecs, type CustomColumnSpec } from '$lib/customColumns'
 import { EDGE_COLUMNS, type EdgeColumn } from '$lib/fixedColumns'
 import {
@@ -504,6 +505,15 @@ interface PersistedShape {
    */
   savedViews: SavedView[]
   /**
+   * Keyboard shortcuts the operator rebound, by shortcut id.
+   *
+   * ONLY THE OVERRIDES, never the whole table: a stored copy of every
+   * shortcut would pin today's defaults into somebody's storage, so a
+   * shortcut they never touched could never be improved. A missing entry
+   * means "whatever this build's default is", which is what a reset writes.
+   */
+  shortcutBindings: Record<string, Binding>
+  /**
    * Remembered local ports for the port-forward dialog, by the REMOTE port
    * number. See localPortByPortName below for why there are two of these, and
    * the class field for what is deliberately never in either one.
@@ -637,6 +647,7 @@ const DEFAULTS: PersistedShape = {
   pinnedKinds: {},
   pinnedClusters: [],
   savedViews: [],
+  shortcutBindings: {},
   localPortByRemotePort: {},
   localPortByPortName: {},
   debugImage: DEFAULT_DEBUG_IMAGE,
@@ -719,6 +730,14 @@ export interface ExportedPreferences {
   showManagedFields: boolean
   /** clusterId -> pinned kind ids. A CONTEXT NAME and catalogue ids only. */
   pinnedKinds: Record<string, string[]>
+  /**
+   * Keyboard shortcuts the operator rebound, by shortcut id.
+   *
+   * A KEY COMBINATION IS NOT AN OBJECT NAME, and it is not even a fact about
+   * a cluster: it is the same shape of preference as a column layout, and it
+   * is the one somebody most wants on their other machine.
+   */
+  shortcutBindings: Record<string, Binding>
   /**
    * The clusters pinned to the top of the picker: CONTEXT NAMES, the same
    * fact the keys of pinnedKinds above already carry.
@@ -813,6 +832,8 @@ class Preferences {
   pinnedClusters = $state<string[]>([])
   /** Named views, in the order they were saved. */
   savedViews = $state<SavedView[]>([])
+  /** Rebound keyboard shortcuts, by shortcut id. Only the overrides. */
+  shortcutBindings = $state<Record<string, Binding>>({})
 
   /**
    * Remembered local ports for the port-forward dialog.
@@ -1197,6 +1218,31 @@ class Preferences {
   deleteView = (id: string): void => {
     if (!this.savedViews.some((view) => view.id === id)) return
     this.savedViews = this.savedViews.filter((view) => view.id !== id)
+    this.#save()
+  }
+
+  // --- Keyboard shortcuts ----------------------------------------------------
+
+  /** Rebinds one shortcut. The caller has already checked for a conflict —
+      see conflictWith, which needs the RESOLVED table this store feeds. */
+  setShortcutBinding = (id: string, binding: Binding): void => {
+    this.shortcutBindings = { ...this.shortcutBindings, [id]: binding }
+    this.#save()
+  }
+
+  /** Returns one shortcut to its default. Not present is not an error. */
+  clearShortcutBinding = (id: string): void => {
+    if (!(id in this.shortcutBindings)) return
+    const next = { ...this.shortcutBindings }
+    delete next[id]
+    this.shortcutBindings = next
+    this.#save()
+  }
+
+  /** Returns every shortcut to its default. */
+  resetShortcutBindings = (): void => {
+    if (Object.keys(this.shortcutBindings).length === 0) return
+    this.shortcutBindings = {}
     this.#save()
   }
 
@@ -1586,6 +1632,7 @@ class Preferences {
     showManagedFields: this.showManagedFields,
     pinnedKinds: plainCopy(this.pinnedKinds),
     pinnedClusters: [...this.pinnedClusters],
+    shortcutBindings: plainCopy(this.shortcutBindings),
     localPortByRemotePort: { ...this.localPortByRemotePort },
     localPortByPortName: { ...this.localPortByPortName },
     debugImage: this.debugImage,
@@ -1630,6 +1677,7 @@ class Preferences {
     this.showManagedFields = next.showManagedFields
     this.pinnedKinds = plainCopy(next.pinnedKinds)
     this.pinnedClusters = [...next.pinnedClusters]
+    this.shortcutBindings = plainCopy(next.shortcutBindings)
     this.localPortByRemotePort = { ...next.localPortByRemotePort }
     this.localPortByPortName = { ...next.localPortByPortName }
     this.debugImage = next.debugImage
@@ -1747,6 +1795,18 @@ class Preferences {
       // is not this one. See $lib/savedViews.
       if (stored.savedViews !== undefined) {
         this.savedViews = sanitiseViews(stored.savedViews)
+      }
+      // Checked one entry at a time rather than adopted whole: a corrupt
+      // override falls back to that shortcut's default, which is the one
+      // failure mode that must not leave somebody unable to open Settings and
+      // put it right. See readBinding.
+      if (stored.shortcutBindings && typeof stored.shortcutBindings === 'object') {
+        const bindings: Record<string, Binding> = {}
+        for (const [id, value] of Object.entries(stored.shortcutBindings)) {
+          const binding = readBinding(value)
+          if (binding) bindings[id] = binding
+        }
+        this.shortcutBindings = bindings
       }
       if (stored.localPortByRemotePort && typeof stored.localPortByRemotePort === 'object') {
         this.localPortByRemotePort = stored.localPortByRemotePort
@@ -1886,6 +1946,7 @@ class Preferences {
         pinnedKinds: this.pinnedKinds,
         pinnedClusters: this.pinnedClusters,
         savedViews: this.savedViews,
+        shortcutBindings: this.shortcutBindings,
         localPortByRemotePort: this.localPortByRemotePort,
         localPortByPortName: this.localPortByPortName,
         debugImage: this.debugImage,
@@ -1984,6 +2045,7 @@ export const EXPORTED_PREFERENCE_FIELDS = [
   'showManagedFields',
   'pinnedKinds',
   'pinnedClusters',
+  'shortcutBindings',
   'localPortByRemotePort',
   'localPortByPortName',
   'debugImage',
@@ -2136,6 +2198,12 @@ const PREFERENCE_READERS: {
   showManagedFields: asBoolean,
   pinnedKinds: asRecordOf(asStringArray),
   pinnedClusters: asStringArray,
+  // Read one at a time by the same function storage goes through, so an
+  // imported file cannot install a binding this build would refuse.
+  shortcutBindings: (raw) => {
+    const map = asRecordOf((value: unknown) => readBinding(value) ?? REJECT)(raw)
+    return map as Record<string, Binding> | undefined
+  },
   localPortByRemotePort: asRecordOf(asNumberIn(1, 65535)),
   localPortByPortName: asRecordOf(asNumberIn(1, 65535)),
   debugImage: asNonEmptyString,
@@ -2304,6 +2372,7 @@ const PREFERENCE_LABELS: Record<keyof ExportedPreferences, { label: string; unit
   showManagedFields: { label: 'Show managed fields' },
   pinnedKinds: { label: 'Pinned kinds', unit: 'clusters' },
   pinnedClusters: { label: 'Pinned clusters', unit: 'clusters' },
+  shortcutBindings: { label: 'Rebound keyboard shortcuts', unit: 'shortcuts' },
   localPortByRemotePort: { label: 'Remembered ports, by remote port', unit: 'ports' },
   localPortByPortName: { label: 'Remembered ports, by port name', unit: 'ports' },
   debugImage: { label: 'Debug container image' },

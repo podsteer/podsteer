@@ -63,7 +63,7 @@
     RETENTION_OPTIONS,
     SAMPLING_INTERVALS,
   } from '$stores/history.svelte'
-  import { shortcut } from '$lib/shortcuts'
+  import { shortcut } from '$stores/shortcuts.svelte'
   import { updates } from '$stores/updates.svelte'
   import { notifications } from '$stores/notifications.svelte'
   import Button from './Button.svelte'
@@ -80,6 +80,7 @@
   import Select from './Select.svelte'
   import GaugeTrack from './GaugeTrack.svelte'
   import SettingsTransfer from './SettingsTransfer.svelte'
+  import ShortcutSettings from './ShortcutSettings.svelte'
   import KubeconfigSources from './KubeconfigSources.svelte'
   import ClusterSettingsPane from './ClusterSettingsPane.svelte'
   import TerminalImagesPane from './TerminalImagesPane.svelte'
@@ -87,16 +88,17 @@
   import ProxyPane from './ProxyPane.svelte'
   import { kubeconfigSources } from '$stores/kubeconfigSources.svelte'
   import {
-    RefreshCw,
-    Palette,
-    Database,
-    Scale,
+    ArrowLeftRight,
     Bell,
+    Database,
+    FolderCog,
     Gauge,
     Globe,
+    Keyboard,
+    Palette,
     Play,
-    ArrowLeftRight,
-    FolderCog,
+    RefreshCw,
+    Scale,
     Server,
     SquareTerminal,
     X,
@@ -167,6 +169,10 @@
     { id: 'images', label: 'Terminal images', icon: SquareTerminal },
     // Next to Data, because both are about what leaves this machine, and
     // before Credits, which is the one section nobody browses for.
+    // After Appearance because it is the other section about how the
+    // application behaves under the operator's hands rather than about a
+    // cluster, and before the cluster-shaped ones for the same reason.
+    { id: 'keyboard', label: 'Keyboard', icon: Keyboard },
     { id: 'transfer', label: 'Export & import', icon: ArrowLeftRight },
     { id: 'credits', label: 'Credits', icon: Scale },
   ] as const
@@ -943,6 +949,8 @@
           />
         {:else if section === 'images'}
           <TerminalImagesPane />
+        {:else if section === 'keyboard'}
+          <ShortcutSettings />
         {:else if section === 'transfer'}
           <SettingsTransfer />
         {:else}

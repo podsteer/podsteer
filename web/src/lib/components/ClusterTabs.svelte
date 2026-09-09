@@ -40,7 +40,7 @@
 -->
 <script lang="ts">
   import { isMac } from '$lib/platform'
-  import { shortcut } from '$lib/shortcuts'
+  import { shortcut } from '$stores/shortcuts.svelte'
   import { workspace } from '$stores/workspace.svelte'
   import { organisation } from '$stores/organisation.svelte'
   import { groupBgClass } from '$lib/groupColour'
