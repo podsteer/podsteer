@@ -301,6 +301,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
+      # THE ONLY JOB THAT CAN RUN THIS CODE AT ALL.
+      #
+      # `quality` runs the suite on Linux, where every file in this package
+      # behind a `windows` build tag is invisible to the compiler — so the
+      # ConPTY implementation, its argument quoting and its shell lookup were
+      # compiled by the packaging step below and executed by nobody. This job
+      # already has a Windows runner and a Go toolchain on it; the tests cost
+      # seconds, and they are the difference between "it built" and "a console
+      # started, a child ran in it, and its bytes came back".
+      #
+      # Before the packaging step rather than after: a broken local shell
+      # should fail here, not after a full application build.
+      - name: Test The Windows Local Shell
+        if: runner.os == 'Windows'
+        run: go test ./app/adapters/localshell/...
+
       # Only for `wails3 generate icons`, which renders the .icns and the .ico
       # the packaging step needs. Nothing here compiles through the CLI any
       # more: `make package` is `go build` plus file copies.
