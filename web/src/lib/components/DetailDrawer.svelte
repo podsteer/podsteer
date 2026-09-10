@@ -144,6 +144,18 @@
   let evictDialogOpen = $state(false)
   let setImageDialogOpen = $state(false)
   let actionError = $state<string | null>(null)
+
+  /**
+   * What the API server warned about on the last apply or validate.
+   *
+   * KEPT ON SCREEN RATHER THAN FLASHED, because a warning is a fact about the
+   * manifest rather than an event: "apps/v1beta1 is deprecated in v1.25+" is
+   * still true two seconds later, and a toast that has gone by the time the
+   * operator finishes reading it is the same as not showing it. Cleared when
+   * the next edit starts, beside actionError, so it never describes a draft
+   * that is no longer on screen.
+   */
+  let applyWarnings = $state<string[]>([])
   let workloadPods = $state<Pod[]>([])
 
   /** "Image updated" after SetImageDialog applies every changed container. The same self-clearing flag as `copied` and `triggered` — see $lib/flash.svelte. */
@@ -974,10 +986,16 @@
   async function applyEdit(): Promise<void> {
     if (draft === null) return
     actionError = null
+    applyWarnings = []
     conflict = false
     try {
       const outcome = await session.updateResource(draft)
       stopEditing()
+      // THE SERVER ACCEPTED IT AND SAID SOMETHING ANYWAY. A deprecated
+      // apiVersion, an admission webhook that warned rather than rejected —
+      // this is the cluster telling the operator something at the one moment
+      // they can act on it, and it used to be discarded before it left Go.
+      applyWarnings = outcome.warnings ?? []
       applyResultMessage = outcome.created ? 'Created' : 'Applied'
       applyResult.show()
       // Reloads the manifest so the NEXT apply carries the resourceVersion
@@ -1005,11 +1023,19 @@
   async function validateManifest(): Promise<void> {
     if (draft === null) return
     actionError = null
+    applyWarnings = []
     conflict = false
     validating = true
     try {
-      await session.validateResource(draft)
-      applyResultMessage = 'Valid — the server accepted this manifest'
+      const outcome = await session.validateResource(draft)
+      // "Valid" ON ITS OWN WOULD BE A CLAIM THIS CANNOT KEEP. A dry run that
+      // the server accepted while warning that the kind is deprecated is not
+      // the same answer as one it accepted silently, and validate is the
+      // control an operator presses precisely to be told before committing.
+      applyWarnings = outcome.warnings ?? []
+      applyResultMessage = applyWarnings.length > 0
+        ? 'Valid, with warnings'
+        : 'Valid — the server accepted this manifest'
       applyResult.show()
     } catch (error) {
       actionError = error instanceof ApiError ? error.message : `Failed to validate: ${error}`
@@ -1880,6 +1906,20 @@
     </div>
 
     <!-- Error message -->
+    <!--
+      The API server's own warnings about a write it ACCEPTED. Distinct from
+      actionError in tone as well as colour: nothing failed, and an operator
+      who reads this as a failure will go looking for a problem that is not
+      there. Each warning is the server's sentence verbatim — PodSteer neither
+      re-words it nor decides which ones matter.
+    -->
+    {#each applyWarnings as warning (warning)}
+      <div class="flex items-start gap-2 border-b border-gauge-warn/20 bg-gauge-warn/10 px-4 py-2 text-body-small text-on-surface">
+        <TriangleAlert class="mt-0.5 size-3.5 shrink-0 text-gauge-warn" strokeWidth={2} />
+        <span data-selectable>{warning}</span>
+      </div>
+    {/each}
+
     {#if actionError}
       <div class="flex items-center gap-2 border-b border-error/20 bg-error-container/50 px-4 py-2 text-body-small text-on-error-container">
         <Activity class="size-3.5 shrink-0 text-error" strokeWidth={2} />
