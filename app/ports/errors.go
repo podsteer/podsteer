@@ -78,6 +78,39 @@ var (
 	// somebody to check a VPN.
 	ErrCredentialPluginMissing = errors.New("credential plugin not found")
 
+	// ErrVendorCLIMissing means a cloud CLI PodSteer offers to drive is not on
+	// PATH.
+	//
+	// THE SIBLING OF THE SENTINEL ABOVE, and for the same reason: nothing was
+	// contacted, nothing is wrong with anybody's credentials, and a program is
+	// absent. PodSteer never obtains one — the local shell's rule, "never
+	// installed, only found" — so the answer is a sentence naming what was
+	// looked for, not an offer to fetch it.
+	ErrVendorCLIMissing = errors.New("that cloud CLI is not on PATH")
+
+	// ErrVendorCLIDeclined means the CLI ran and would not answer: not signed
+	// in, a session expired, a permission it does not have.
+	//
+	// THE VENDOR'S OWN WORDS TRAVEL WITH IT, verbatim, because that text IS
+	// the diagnosis — the same rule ErrCommandFailed follows. PodSteer knows
+	// less about why an AWS session expired than the AWS CLI does, and a
+	// paraphrase would replace something the operator can act on with
+	// something PodSteer guessed.
+	ErrVendorCLIDeclined = errors.New("that cloud CLI declined")
+
+	// ErrVendorCLITimedOut means it did not finish inside the bound the plan
+	// carried, and was stopped.
+	//
+	// Its own sentinel rather than ErrVendorCLIDeclined: a CLI that answered
+	// "no" and a CLI that answered nothing at all call for different
+	// sentences, and only one of them is worth trying again.
+	ErrVendorCLITimedOut = errors.New("that cloud CLI did not finish in time")
+
+	// ErrVendorCLIUnreadable means it printed something PodSteer will not
+	// decode — output of the wrong shape, or more of it than a listing can
+	// sanely be.
+	ErrVendorCLIUnreadable = errors.New("could not read what that cloud CLI printed")
+
 	// ErrLegacyAuthProvider means the kubeconfig authenticates through
 	// client-go's built-in `auth-provider` mechanism, which PodSteer does not
 	// register.

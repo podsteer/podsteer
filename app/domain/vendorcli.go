@@ -90,6 +90,17 @@ type VendorCLI struct {
 	SignInHint string
 }
 
+// VendorCLIStatus is one row of the table and whether its binary is here.
+//
+// Installed is a fact about this machine, found with a PATH lookup and no
+// process started. Path is where it was found, shown so an operator can see
+// WHICH one PodSteer would run when several are installed.
+type VendorCLIStatus struct {
+	VendorCLI
+	Installed bool
+	Path      string
+}
+
 // VendorCluster is one cluster a CLI reported.
 //
 // Params carries whatever else that provider needs to name it again — a
