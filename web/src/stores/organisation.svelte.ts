@@ -249,6 +249,18 @@ class Organisation {
    * appears nowhere in the picker. Falling back is always better than
    * vanishing.
    */
+  /**
+   * The group's own name, for saying in words what its colour says in a dot.
+   *
+   * Empty for the default group, which has no name worth reading out: every
+   * cluster starts there, so announcing it on every tab would be noise.
+   */
+  groupNameOf = (clusterId: string): string => {
+    const placement = this.placementOf(clusterId)
+    if (placement.group === DEFAULT_GROUP_ID) return ''
+    return this.groups.find((candidate) => candidate.id === placement.group)?.name ?? ''
+  }
+
   placementOf = (clusterId: string): Placement => {
     const stored = this.assignments[clusterId]
     if (!stored) return HOME

@@ -156,7 +156,7 @@
                 </span>
               </div>
 
-              <p class="mt-0.5 truncate text-body-small text-on-surface-variant" data-selectable>
+              <p class="mt-0.5 truncate text-body-medium text-on-surface-variant" data-selectable>
                 {(revision.images ?? []).join(', ') || 'no images recorded'}
               </p>
 
@@ -167,7 +167,7 @@
               {/if}
 
               {#if revision.replicas > 0}
-                <p class="mt-0.5 text-body-small text-on-surface-variant/60">
+                <p class="mt-0.5 text-body-medium text-on-surface-variant/60">
                   {revision.replicas} {revision.replicas === 1 ? 'replica' : 'replicas'}
                 </p>
               {/if}

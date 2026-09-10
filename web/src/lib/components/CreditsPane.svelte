@@ -206,7 +206,7 @@
                   {:else}
                     <pre
                       class="max-h-64 overflow-auto rounded border border-outline-variant/40
-                             bg-surface p-2 text-[11px] leading-relaxed whitespace-pre-wrap
+                             bg-surface p-2 text-label-small leading-relaxed whitespace-pre-wrap
                              text-on-surface-variant"
                       data-selectable>{openText}</pre>
                   {/if}
@@ -217,7 +217,7 @@
                     </p>
                     <pre
                       class="max-h-48 overflow-auto rounded border border-outline-variant/40
-                             bg-surface p-2 text-[11px] leading-relaxed whitespace-pre-wrap
+                             bg-surface p-2 text-label-small leading-relaxed whitespace-pre-wrap
                              text-on-surface-variant"
                       data-selectable>{openNotice}</pre>
                   {/if}

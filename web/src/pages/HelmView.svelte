@@ -426,7 +426,7 @@
         {/if}
 
         <div class="overflow-x-auto">
-          <table class="w-full min-w-[40rem] border-collapse text-body-small">
+          <table class="w-full min-w-[40rem] border-collapse text-body-medium">
             <thead>
               <tr class="border-b border-outline-variant text-left text-on-surface-variant/70">
                 <th class="py-1.5 pr-4 font-medium">Release</th>
@@ -535,7 +535,7 @@
       </p>
 
       <div class="overflow-x-auto">
-        <table class="w-full border-collapse text-body-small">
+        <table class="w-full border-collapse text-body-medium">
           <thead>
             <tr class="border-b border-outline-variant text-left text-on-surface-variant/70">
               <th class="py-1.5 pr-3 font-medium">Rev</th>
@@ -655,10 +655,21 @@
 
         {#if payload.facts}
           {@const facts = payload.facts}
-          <div class="mb-2 flex flex-wrap gap-1 border-b border-outline-variant/60">
+          <!-- WHICH TAB IS OPEN WAS A COLOUR AND A BORDER. Everything about
+               this was a tab strip except the part assistive technology reads,
+               so the current tab was announced as an ordinary button
+               indistinguishable from the other three. The drawer and the fleet
+               view both do this properly; this now matches them. -->
+          <div
+            role="tablist"
+            aria-label="Release payload"
+            class="mb-2 flex flex-wrap gap-1 border-b border-outline-variant/60"
+          >
             {#each [['chart', 'Chart'], ['values', 'Values'], ['notes', 'Notes'], ['manifest', 'Manifest']] as [id, label] (id)}
               <button
                 type="button"
+                role="tab"
+                aria-selected={tab === id}
                 class="cursor-pointer border-b-2 px-2.5 py-1.5 text-label-medium transition-colors
                        {tab === id
                          ? 'border-primary text-primary'
@@ -675,7 +686,7 @@
                  name, chart version and app version are not labels — they
                  exist only in the payload — which is why the list cannot show
                  them without reading every release's Secret on page open. -->
-            <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-body-small">
+            <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-body-medium">
               <dt class="text-on-surface-variant/70">Chart</dt>
               <dd class="font-mono text-on-surface">{facts.chart.name || '—'}</dd>
               <dt class="text-on-surface-variant/70">Chart version</dt>

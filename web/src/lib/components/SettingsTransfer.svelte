@@ -259,12 +259,19 @@
         <!-- Merge first, and the default: combining two people's arrangements
              is the ordinary reason to import one, and replace is the one that
              throws something away. -->
-        <div class="mt-3 flex">
+        <!-- A RADIO GROUP, NOT TWO TOGGLES. Drawn as a segmented control and
+             announced as two independent buttons, each "pressed" or not,
+             nothing said these are one exclusive choice — on the control that
+             decides whether an import ADDS to the operator's arrangement or
+             throws it away. aria-pressed is right for a thing with two states
+             of its own; this is one thing with two values. -->
+        <div class="mt-3 flex" role="radiogroup" aria-label="How to apply this file">
           {#each [{ id: 'merge', label: 'Merge' }, { id: 'replace', label: 'Replace' }] as choice (choice.id)}
             <button
               type="button"
+              role="radio"
               onclick={() => (mode = choice.id as ImportMode)}
-              aria-pressed={mode === choice.id}
+              aria-checked={mode === choice.id}
               class="state-layer h-9 min-w-28 border text-label-large transition-colors
                      duration-150 ease-standard
                      {choice.id === 'merge' ? 'rounded-l-xs' : '-ml-px rounded-r-xs'}

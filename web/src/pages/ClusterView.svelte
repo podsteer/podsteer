@@ -362,7 +362,7 @@
   {#if mark}
     <span
       title={`${mark.label} — ${mark.evidence}`}
-      class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium
+      class="shrink-0 rounded-full px-1.5 py-0.5 text-label-small font-medium
              {mark.hosted
         ? 'bg-surface-container-high text-on-surface-variant'
         : 'border border-outline-variant/60 text-on-surface-variant/80'}"
@@ -513,13 +513,13 @@
               <h3 class="truncate text-title-medium font-semibold text-on-surface">
                 {project.name}
               </h3>
-              <span class="shrink-0 rounded-full bg-surface-container-high px-2 py-0.5 text-[11px]
+              <span class="shrink-0 rounded-full bg-surface-container-high px-2 py-0.5 text-label-small
                            tabular-nums text-on-surface-variant/60">
                 {project.clusterCount}
               </span>
               {#if projectCollapsed && projectOpen > 0}
                 <!-- The one fact you would have to expand to learn. -->
-                <span class="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[11px]
+                <span class="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-label-small
                              font-medium text-primary">
                   {projectOpen} open
                 </span>
@@ -564,12 +564,12 @@
                       <h4 class="truncate text-title-small font-medium text-on-surface">
                         {group.name}
                       </h4>
-                      <span class="shrink-0 rounded-full bg-surface-container-high px-2 py-0.5 text-[11px]
+                      <span class="shrink-0 rounded-full bg-surface-container-high px-2 py-0.5 text-label-small
                                    tabular-nums text-on-surface-variant/60">
                         {group.clusters.length}
                       </span>
                       {#if groupCollapsed && openCount(group.clusters) > 0}
-                        <span class="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[11px]
+                        <span class="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-label-small
                                      font-medium text-primary">
                           {openCount(group.clusters)} open
                         </span>
@@ -678,7 +678,7 @@
                                   {cluster.id}
                                 </h5>
                                 {#if open}
-                                  <span class="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px]
+                                  <span class="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-label-small
                                                font-medium text-primary">
                                     open
                                   </span>
@@ -694,7 +694,7 @@
                                 {@render distributionMark(markFor(cluster, remembered))}
                                 {#if group.settings.environment}
                                   <span
-                                    class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium
+                                    class="shrink-0 rounded-full px-1.5 py-0.5 text-label-small font-medium
                                            {group.settings.environment === 'production'
                                       ? 'bg-error/15 text-error'
                                       : 'bg-surface-container-high text-on-surface-variant'}"

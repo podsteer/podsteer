@@ -237,7 +237,7 @@
               carried a severity it does not. Reading down a mixed column is
               easier when the only thing changing is the word.
             -->
-            <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-small text-on-surface-variant">
+            <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-medium text-on-surface-variant">
               {node.roles?.length ? node.roles.join(', ') : 'worker'}
             </span>
           </td>

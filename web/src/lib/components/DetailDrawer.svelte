@@ -1866,7 +1866,7 @@
             aria-controls="detail-panel"
             tabindex={active ? 0 : -1}
             onclick={() => (activeTab = tab.id)}
-            class="flex items-center gap-1.5 border-b-2 px-3 py-2 text-body-small font-medium
+            class="flex items-center gap-1.5 border-b-2 px-3 py-2 text-label-medium font-medium
                    transition-colors duration-100
                    {active
                      ? 'border-primary text-primary'

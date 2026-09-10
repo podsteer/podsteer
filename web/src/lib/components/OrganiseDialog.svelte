@@ -627,10 +627,21 @@
                              border-outline-variant bg-surface-container-highest py-1 shadow-level-2"
                     >
                       {#if movingGroup === group.id && !group.isDefault}
-                        <p class="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider
-                                  text-on-surface-variant">
+                        <!-- THE HEADING IS WHAT SAYS WHAT CHOOSING ONE DOES,
+                             and inside a menu it was read by nothing: a menu
+                             exposes only its items, so this list announced as
+                             a row of bare project names with no indication
+                             that picking one MOVES the group. Labelling the
+                             group with it is the fix ColumnMenu records for a
+                             list of checkboxes. -->
+                        <p
+                          id="move-group-{group.id}"
+                          class="px-3 pb-1 pt-2 text-label-small font-semibold uppercase tracking-wider
+                                 text-on-surface-variant"
+                        >
                           Move to project
                         </p>
+                        <div role="group" aria-labelledby="move-group-{group.id}">
                         {#each tree as target (target.id)}
                           <button type="button" role="menuitem"
                             disabled={target.id === project.id}
@@ -650,6 +661,7 @@
                             {/if}
                           </button>
                         {/each}
+                        </div>
                       {:else}
                         <button type="button" role="menuitem"
                           onclick={() => startRename(grow, group.name)}

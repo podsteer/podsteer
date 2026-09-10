@@ -230,7 +230,7 @@
         <HelpButton topic="custom-columns" about="custom columns" />
       </div>
 
-      <p class="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant/60">
+      <p class="px-3 py-1 text-label-small font-semibold uppercase tracking-wider text-on-surface-variant/60">
         Columns
       </p>
 
@@ -267,7 +267,7 @@
              the list above because there is nothing there to decide — neither
              can be hidden, sorted by or resized. -->
         <p
-          class="mt-1 border-t border-outline-variant/30 px-3 pt-2 pb-1 text-[10px] font-semibold
+          class="mt-1 border-t border-outline-variant/30 px-3 pt-2 pb-1 text-label-small font-semibold
                  uppercase tracking-wider text-on-surface-variant/60"
         >
           Fixed
@@ -288,7 +288,7 @@
             </li>
           {/each}
         </ul>
-        <p class="px-3 pb-1 text-[11px] text-on-surface-variant/60">
+        <p class="px-3 pb-1 text-label-small text-on-surface-variant/60">
           Stays in view while the table scrolls sideways. Applies to every list.
         </p>
       {/if}
@@ -298,7 +298,7 @@
            annotation `team` are two different columns with one word for a
            heading, and the badge is what tells them apart here. -->
       <p
-        class="mt-1 border-t border-outline-variant/30 px-3 pt-2 pb-1 text-[10px] font-semibold
+        class="mt-1 border-t border-outline-variant/30 px-3 pt-2 pb-1 text-label-small font-semibold
                uppercase tracking-wider text-on-surface-variant/60"
       >
         Your columns
@@ -318,7 +318,7 @@
               />
               <span class="min-w-0 flex-1 truncate" title={spec.key}>{spec.key}</span>
               <span
-                class="shrink-0 rounded bg-surface-container-highest px-1 text-[10px] uppercase
+                class="shrink-0 rounded bg-surface-container-highest px-1 text-label-small uppercase
                        tracking-wider text-on-surface-variant/70"
               >
                 {spec.source}
@@ -419,19 +419,19 @@
           </button>
         </div>
         {#if problem !== ''}
-          <p class="text-[11px] text-error" role="alert">{problem}</p>
+          <p class="text-label-small text-error" role="alert">{problem}</p>
         {:else if wouldFetchWholeObjects}
-          <p class="text-[11px] text-on-surface-variant/60">
+          <p class="text-label-small text-on-surface-variant/60">
             A path reads into spec and status, so this list will fetch whole objects on every
             refresh. Labels and annotations do not.
           </p>
         {:else if source === 'jsonpath'}
-          <p class="text-[11px] text-on-surface-variant/60">
+          <p class="text-label-small text-on-surface-variant/60">
             The same paths kubectl takes: <span class="font-mono">.status.phase</span>,
             <span class="font-mono">.spec.containers[0].image</span>.
           </p>
         {:else if suggestions.length > 0}
-          <p class="text-[11px] text-on-surface-variant/60">
+          <p class="text-label-small text-on-surface-variant/60">
             {suggestions.length} {source} key{suggestions.length === 1 ? '' : 's'} on this list
           </p>
         {/if}

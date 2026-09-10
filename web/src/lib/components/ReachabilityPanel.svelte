@@ -235,7 +235,7 @@
                       autocomplete="off"
                       spellcheck="false"
                       placeholder="pod name"
-                      class="field mt-1 w-full px-3 py-1.5 text-body-small"
+                      class="field mt-1 w-full px-3 py-1.5 text-body-medium"
                     />
                   </label>
                   <label class="min-w-0 flex-1">
@@ -247,7 +247,7 @@
                       autocomplete="off"
                       spellcheck="false"
                       placeholder="container name"
-                      class="field mt-1 w-full px-3 py-1.5 text-body-small"
+                      class="field mt-1 w-full px-3 py-1.5 text-body-medium"
                     />
                   </label>
                 </div>
@@ -311,8 +311,13 @@
                   class="mt-0.5 size-3.5 shrink-0 {TONE_CLASS[stepTone(step)]}"
                   strokeWidth={2}
                 />
-                <dt class="text-body-small font-medium text-on-surface">{stepLabel(step)}</dt>
-                <dd class="min-w-0 flex-1 text-body-small text-on-surface-variant" data-selectable>
+                <!-- THE ANSWER ITSELF. A name that did not resolve and an
+                     address that refused need opposite next steps, which is
+                     why they are separate steps at all — and both were set at
+                     the caption size beside a 14px label/value list
+                     everywhere else in this drawer. -->
+                <dt class="text-body-medium font-medium text-on-surface">{stepLabel(step)}</dt>
+                <dd class="min-w-0 flex-1 text-body-medium text-on-surface-variant" data-selectable>
                   {step.detail || step.status}
                 </dd>
               </div>
