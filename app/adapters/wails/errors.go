@@ -293,7 +293,8 @@ func legacyAuthProviderMessage(err error) string {
 
 	if provider == "oidc" {
 		return "This context signs in with the old built-in OIDC provider, which PodSteer does not use: " +
-			"refreshing a token through it rewrites your kubeconfig, and PodSteer does not write that file. " +
+			"refreshing a token through it rewrites your kubeconfig in the background, at a moment " +
+			"nobody chose — and the only kubeconfig write PodSteer makes is the one you press, in Add cluster. " +
 			"Convert the context to an exec credential plugin — kubelogin is the usual one — and PodSteer " +
 			"will run it the same way it runs the AWS, GKE and AKS plugins."
 	}

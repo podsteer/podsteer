@@ -54,8 +54,8 @@ export const HELP_TOPICS = {
       {
         heading: 'Your kubeconfig is not rewritten',
         body: [
-          'The shell is told which context the open tab is on, but current-context in your kubeconfig is left exactly as it is, so pass --context when you want this cluster.',
-          'That is deliberate: kubectl in your other terminals must not change target because you opened a pane here.',
+          "The tab's context is already selected for this shell, so kubectl needs no --context flag. It is selected by a small kubeconfig PodSteer owns, placed first in this shell's KUBECONFIG and deleted when the terminal closes — your own file is opened for reading and nothing else.",
+          'That is why current-context in your kubeconfig is left exactly as it is: kubectl in your other terminals must not change target because you opened a pane here. Running kubectl config use-context in this shell writes to the overlay and dies with the session.',
         ],
       },
       {
@@ -416,7 +416,7 @@ export const HELP_TOPICS = {
       {
         heading: 'Where clusters come from',
         body: [
-          'PodSteer reads the kubeconfig files your shell already uses, and every context in them is a cluster it can open. It does not store credentials of its own and never writes to those files.',
+          'PodSteer reads the kubeconfig files your shell already uses, and every context in them is a cluster it can open. It stores no credentials of its own. The one time it writes a kubeconfig is this dialog — the merge below, which backs the file up first, refuses to replace a context that already exists, and never touches current-context.',
         ],
       },
       {
@@ -758,13 +758,13 @@ export const HELP_TOPICS = {
       {
         heading: 'Where it is kept',
         body: [
-          'Settings live in a file in your own configuration directory. There is no account, nothing is synchronised anywhere, and nothing about your clusters leaves this machine.',
+          'Settings live in two places on this machine and nowhere else. What the PodSteer process itself must act on — your kubeconfig sources, a proxy, the per-cluster marks — is a file in your own configuration directory; what only the interface needs — theme, page size, columns, thresholds, shortcuts — is kept by the window itself. There is no account, nothing is synchronised anywhere, and nothing about your clusters leaves this machine.',
         ],
       },
       {
         heading: 'Refresh',
         body: [
-          'How often the open view re-reads the cluster. Every view reads only what it is showing, so a shorter interval costs API calls in proportion to what you have open, not to the size of the cluster.',
+          'How often the open view re-reads the cluster. The view reads what it is showing — but every tick ALSO runs the cluster assessment, which reads every pod, node and event whatever view is open, because the navigator badge and the alarms are drawn from it. On a large cluster a shorter interval therefore costs in proportion to the cluster and not to what you have open: on five thousand pods a tick is several megabytes.',
         ],
       },
     ],
