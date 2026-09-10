@@ -112,6 +112,24 @@ rather than a new destination.
 The one exception is an **update check**, added in v0.1.2. It asks
 `api.github.com` once a day whether a newer release has been published.
 
+**And one thing PodSteer does not do itself, but causes.** Add cluster can run
+a cloud CLI you already have — the one you installed and signed in to — to
+list the clusters it can see and to write a kubeconfig entry for one you
+choose. PodSteer's own process still contacts nothing new: it starts a program
+on your machine, as you, and reads what it prints. But that program contacts
+your cloud provider, because you pressed a button here, and saying "PodSteer
+contacts nothing new" without saying this would be true in the letter and
+misleading in the substance.
+
+What it does not do is as much the point: it does not read your cloud
+credentials, it does not install or download a CLI, it passes no region,
+subscription or project of its own — you get what your CLI is configured to
+see — and it never runs one unless you press something. The CLI writes into a
+temporary file PodSteer owns and deletes; your own kubeconfig is written only
+by the merge described below, with its backup and its untouched
+`current-context`. The list of CLIs is fixed inside the binary and cannot be
+pointed at another program by a setting, a file or an environment variable.
+
 **This is new in v0.1.2**, and it is called out because v0.1.0 and v0.1.1
 stated the opposite here: anyone who reviewed those releases against this file
 should re-read the list below rather than assume it still applies.
