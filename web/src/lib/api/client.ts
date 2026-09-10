@@ -28,6 +28,12 @@ import {
   SetReadOnly as bindSetReadOnly,
 } from '$bindings/clusterapi'
 import {
+  Providers as bindVendorProviders,
+  ListClusters as bindVendorListClusters,
+  KubeconfigFor as bindVendorKubeconfigFor,
+  Cancel as bindVendorCancel,
+} from '$bindings/vendorcliapi'
+import {
   GetManifest as bindGetManifest,
   RevealSecretKey as bindRevealSecretKey,
   InspectTLSSecret as bindInspectTLSSecret,
@@ -168,6 +174,9 @@ export type Cluster = wails.Cluster
 export type TextFile = wails.TextFile
 /** What adding a kubeconfig would change, or did. */
 export type KubeconfigMerge = wails.KubeconfigMerge
+export type VendorProvider = wails.VendorProvider
+export type VendorCluster = wails.VendorCluster
+export type VendorClusterList = wails.VendorClusterList
 /** A namespace in a connected cluster. */
 export type Namespace = wails.Namespace
 
@@ -589,6 +598,48 @@ export function cancelConnect(clusterId: string): Promise<void> {
  */
 export function pingCluster(clusterId: string): Promise<void> {
   return call(() => bindPing(clusterId))
+}
+
+/**
+ * The cloud CLIs PodSteer can drive, and whether each is on this machine.
+ *
+ * A PATH LOOKUP AND NOTHING ELSE — opening the dialog runs nobody's cloud CLI.
+ * See decision 12 for what driving one is allowed to do.
+ */
+export function vendorProviders(): Promise<VendorProvider[]> {
+  // The binding is nullable because Go's zero slice crosses as null; an
+  // absent table and an empty one mean the same thing to the pane.
+  return call(() => bindVendorProviders()).then((rows) => rows ?? [])
+}
+
+/**
+ * Asks one CLI which clusters it can see.
+ *
+ * A CLI that declines — not signed in, session expired — comes back as a
+ * listing with `status: 'declined'` and its own words in `reason`, NOT as a
+ * rejected promise: that is a state the pane is about, not a failure of the
+ * call. Only a failure to run it rejects.
+ */
+export function vendorListClusters(provider: string): Promise<VendorClusterList> {
+  return call(() => bindVendorListClusters(provider))
+}
+
+/**
+ * Has the CLI write a kubeconfig entry for a cluster it listed, and returns
+ * the text.
+ *
+ * `selection` is the opaque id that listing issued. A cluster NAME is never
+ * sent back: a name that does not make the round trip cannot come back
+ * changed. The text returned goes through previewKubeconfig and addKubeconfig
+ * exactly as a pasted document does.
+ */
+export function vendorKubeconfigFor(provider: string, selection: string): Promise<string> {
+  return call(() => bindVendorKubeconfigFor(provider, selection))
+}
+
+/** Stops a listing that is still running. */
+export function vendorCancel(provider: string): Promise<void> {
+  return call(() => bindVendorCancel(provider))
 }
 
 /** Closes a cluster, for when its tab is closed. */

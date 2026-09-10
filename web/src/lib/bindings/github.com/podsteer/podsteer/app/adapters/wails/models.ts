@@ -3985,6 +3985,72 @@ export interface UpgradeSummary {
 }
 
 /**
+ * VendorCluster is one cluster a CLI reported.
+ */
+export interface VendorCluster {
+    "name": string;
+
+    /**
+     * Params are whatever else that provider needs to name it again — a
+     * resource group, a location — shown as a second line so an operator can
+     * tell two clusters of the same name apart.
+     */
+    "params": { [_ in string]?: string } | null;
+
+    /**
+     * Selection is the id to send back to choose this one.
+     */
+    "selection": string;
+}
+
+/**
+ * VendorClusterList is one CLI's answer.
+ */
+export interface VendorClusterList {
+    "provider": string;
+
+    /**
+     * Status is "listed" or "declined". LISTED WITH NOTHING IN IT IS NOT
+     * DECLINED: an account with no clusters and a CLI that would not answer
+     * need opposite sentences.
+     */
+    "status": string;
+    "clusters": VendorCluster[] | null;
+
+    /**
+     * Reason is the CLI's own words when it declined, verbatim.
+     */
+    "reason": string;
+}
+
+/**
+ * VendorProvider is one cloud CLI and whether it is on this machine.
+ */
+export interface VendorProvider {
+    "id": string;
+    "label": string;
+
+    /**
+     * Binary is what was looked for, so a pane can say which program is
+     * missing rather than only that one is.
+     */
+    "binary": string;
+
+    /**
+     * Path is where it was found — shown so an operator can see WHICH one
+     * PodSteer would run when several are installed.
+     */
+    "path": string;
+    "installed": boolean;
+
+    /**
+     * SignInHint is one sentence shown beside the CLI's own words, never
+     * instead of them.
+     */
+    "signInHint": string;
+}
+
+/**
  * VersionCount is one kubelet version and how many nodes run it.
  * 
  * A slice rather than a map because Wails generates a TypeScript index

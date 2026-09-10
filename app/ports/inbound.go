@@ -497,3 +497,27 @@ type MetricsQueryUseCase interface {
 		window time.Duration,
 	) (domain.BackendSeriesResult, error)
 }
+
+// VendorCLIService is what the frontend asks about cloud CLIs.
+//
+// THE FRONTEND NEVER SENDS A CLUSTER NAME BACK. It chooses by an opaque id the
+// last listing issued, and the service turns that into the cluster the CLI
+// itself printed. That is stronger than validating what came back, because
+// there is nothing to validate: a selection the service never issued, or one
+// from a listing since superseded, is refused rather than checked.
+type VendorCLIService interface {
+	// Providers reports the CLIs in the table and whether each is installed.
+	Providers(ctx context.Context) []domain.VendorCLIStatus
+
+	// ListClusters asks one CLI what it can see, and remembers the answer so
+	// a selection can be made against it.
+	ListClusters(ctx context.Context, provider string) (domain.VendorClusterList, error)
+
+	// KubeconfigFor has the CLI write an entry for a cluster the last listing
+	// issued, and returns the text — which the caller then adds through the
+	// same path as a pasted kubeconfig.
+	KubeconfigFor(ctx context.Context, provider, selection string) (string, error)
+
+	// Cancel stops a listing or a write that is still running.
+	Cancel(ctx context.Context, provider string) error
+}

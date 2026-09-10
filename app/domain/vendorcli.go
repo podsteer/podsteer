@@ -109,6 +109,10 @@ type VendorCLIStatus struct {
 type VendorCluster struct {
 	Name   string
 	Params map[string]string
+	// Selection is the opaque id the application issues for this row, and the
+	// only thing the frontend ever sends back. A name that never makes the
+	// round trip cannot come back changed.
+	Selection string
 }
 
 // VendorListStatus is what came of asking.

@@ -45,6 +45,15 @@ export const API_ERROR_CODES = [
   // `forbidden`: the account was allowed and the object was refused, and the
   // message is the API server's own words, which name the field to change.
   'pod_rejected',
+  // A cloud CLI PodSteer offers to drive — see decision 12. None of these is
+  // a fault in a cluster, in credentials or in the network, and none is
+  // retryable in the sense the transport codes are: a missing binary needs
+  // installing, a declined one needs signing in to, and both are answered by
+  // the CLI's own words rather than by anything PodSteer knows.
+  'vendor_cli_missing',
+  'vendor_cli_declined',
+  'vendor_cli_timed_out',
+  'vendor_cli_unreadable',
   'internal',
 ] as const
 

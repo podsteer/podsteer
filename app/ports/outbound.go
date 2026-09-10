@@ -1132,3 +1132,34 @@ type SettingsPort interface {
 	// would reach the disk.
 	State() domain.SettingsState
 }
+
+// VendorCLIPort drives a cloud CLI the operator already has.
+//
+// SEPARATE FROM EVERYTHING ELSE HERE, because it is the only port whose
+// implementer starts a program on the operator's machine. Narrowing by
+// interface is already load-bearing in this application — HelmPort exists as
+// its own type so the MCP server can be handed a listing and never a payload
+// read — and a port that can run a binary is the one most worth keeping out of
+// surfaces that are handed readers.
+//
+// It reaches no cluster and holds no client. See decision 12 for what it is
+// allowed to do and, more importantly, what it refuses.
+type VendorCLIPort interface {
+	// Providers reports every CLI the shipped table describes and whether its
+	// binary is on PATH. No process is started: opening a dialog is not a
+	// request to run anything.
+	Providers() []domain.VendorCLIStatus
+
+	// ListClusters runs one CLI's listing command. A CLI that DECLINES —
+	// not signed in, session expired — is a listing with that status and its
+	// own words, not an error: only a failure to run it is an error.
+	ListClusters(ctx context.Context, provider string) (domain.VendorClusterList, error)
+
+	// WriteKubeconfig has the CLI write an entry for one cluster and returns
+	// the text it wrote. Into a file PodSteer owns and deletes, never the
+	// operator's own — these CLIs set current-context when they write one.
+	WriteKubeconfig(ctx context.Context, provider string, cluster domain.VendorCluster) (string, error)
+
+	// Cancel stops a run in the air, if there is one.
+	Cancel(provider string)
+}
