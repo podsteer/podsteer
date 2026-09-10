@@ -429,7 +429,27 @@ be left alone, shown before anything is written, and applied only on confirm.
 A malformed document is refused with the reason and never partly applied.
 Nothing outside what the file carries is touched, even by Replace.
 
-A sixth kind of write is a **desktop notification**, and it is counted as a
+A sixth kind of write is **your own kubeconfig**, and it happens once, when
+you add a cluster. Add cluster → paste or pick a kubeconfig merges what you
+gave it into the file PodSteer reads. It is the only write PodSteer ever makes
+to that file, and it is hedged accordingly:
+
+- **You asked for it, in a dialog**, and the dialog shows what the merge would
+  change before it changes anything.
+- **A backup is written first**, beside the original as `<path>.podsteer.bak`.
+- **The write is atomic** — a temporary file, synced, then renamed over the
+  original — so an interrupted write cannot leave you with half a kubeconfig.
+- **`current-context` is never touched.** Which cluster your terminal talks to
+  is yours to decide, which is also why the local terminal writes a separate
+  three-line overlay rather than setting it here.
+
+Nothing else writes it. In particular PodSteer does not register client-go's
+legacy `auth-provider: oidc`, whose token refresh would rewrite this file in
+the background, at a moment nobody chose — see decision 10 in
+podsteer/business-docs. A kubeconfig using it is refused, and the refusal says
+so and names the replacement.
+
+A seventh kind of write is a **desktop notification**, and it is counted as a
 write on purpose: your operating system keeps the notifications it has shown
 you — on macOS in Notification Centre, which is a database on disk, and on
 Linux a notification daemon may log what it displayed. So the same rule
@@ -458,7 +478,7 @@ applies to one as to everything else in this list.
 - **Permission is asked for when you turn it on**, never at startup, and the
   pane says so if your system has not granted it.
 
-A seventh kind of write is the smallest and the shortest-lived: the **context
+An eighth kind of write is the smallest and the shortest-lived: the **context
 overlay** each local terminal gets. It is three lines of YAML in a private
 temporary directory — `apiVersion`, `kind` and the `current-context` of the tab
 you opened the terminal beside — written so that kubectl in that shell targets
