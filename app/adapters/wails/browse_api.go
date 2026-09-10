@@ -220,30 +220,31 @@ func (b *BrowseAPI) AssessCertificateRenewal(certificate CertificateRenewalRef) 
 // in the cluster has recorded about one namespace's workloads.
 //
 // CALLED ON ITS OWN, NEVER FROM A LIST. The pod list is drawn without it and
-// the chips fill in when this answers; a cluster with no scanner returns an
-// empty slice and the list is exactly what it was before this existed. See
-// ports.ResourcePort.ListVulnerabilitySummaries and the adapter's cache for
-// why this must never ride the refresh tick.
-func (b *BrowseAPI) VulnerabilitySummaries(clusterID, namespace string) ([]VulnerabilitySummary, error) {
+// the chips fill in when this answers; a cluster with no scanner returns a
+// listing saying so and the list is exactly what it was before this existed.
+// See ports.ResourcePort.ListVulnerabilitySummaries and the adapter's cache
+// for why this must never ride the refresh tick, and why the STATUS travels
+// with the summaries rather than an absence standing for all four outcomes.
+func (b *BrowseAPI) VulnerabilitySummaries(clusterID, namespace string) (VulnerabilityListing, error) {
 	ctx, cancel := b.app.requestContext()
 	defer cancel()
 
 	id, err := domain.NewClusterID(clusterID)
 	if err != nil {
-		return nil, apiError(b.logger, "VulnerabilitySummaries", err)
+		return VulnerabilityListing{}, apiError(b.logger, "VulnerabilitySummaries", err)
 	}
 
 	ns, err := domain.NewNamespaceName(namespace)
 	if err != nil {
-		return nil, apiError(b.logger, "VulnerabilitySummaries", err)
+		return VulnerabilityListing{}, apiError(b.logger, "VulnerabilitySummaries", err)
 	}
 
-	summaries, err := b.resources.VulnerabilitySummaries(ctx, id, ns)
+	listing, err := b.resources.VulnerabilitySummaries(ctx, id, ns)
 	if err != nil {
-		return nil, apiError(b.logger, "VulnerabilitySummaries", err)
+		return VulnerabilityListing{}, apiError(b.logger, "VulnerabilitySummaries", err)
 	}
 
-	return toVulnerabilitySummaries(summaries), nil
+	return toVulnerabilityListing(listing), nil
 }
 
 // GetManifest returns one object as YAML, for the detail view.

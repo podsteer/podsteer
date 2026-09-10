@@ -201,10 +201,16 @@ func (a *Adapter) ListHelmReleases(
 			// helmReleaseSecretType: it saves wire bytes and saves the API
 			// server no work at all, since the server reads and decrypts
 			// every Secret in scope before filtering.
-			FieldSelector:   "type=" + helmReleaseSecretType,
-			Limit:           pageSize,
-			Continue:        continueToken,
-			ResourceVersion: cachedResourceVersion,
+			FieldSelector: "type=" + helmReleaseSecretType,
+			Limit:         pageSize,
+			Continue:      continueToken,
+			// NO ResourceVersion, AND ITS ABSENCE IS THE WHOLE PAGING LOOP.
+			// Asking the watch cache for a LIMITED list makes the server drop
+			// the limit and return every matching Secret in one response with
+			// no Continue token — so helmPageSize and helmScanLimit were both
+			// inert, this loop ran exactly once, and it read the lot. On the
+			// one read in this package that makes the API server decrypt
+			// every Secret in scope. See cachedResourceVersion.
 		})
 		if err != nil {
 			wrapped := classify(op, err)

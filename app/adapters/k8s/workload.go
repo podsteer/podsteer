@@ -697,9 +697,13 @@ func (a *Adapter) ListEventsForResource(ctx context.Context, id domain.ClusterID
 	}).String()
 
 	list, err := client.CoreV1().Events(namespace.String()).List(ctx, metav1.ListOptions{
-		FieldSelector:   selector,
-		Limit:           eventListLimit,
-		ResourceVersion: cachedResourceVersion,
+		FieldSelector: selector,
+		Limit:         eventListLimit,
+		// NO ResourceVersion: a limited list sent to the watch cache has its
+		// limit dropped, so this cap did not exist. See cachedResourceVersion.
+		// The quorum read it costs is affordable precisely here — this runs
+		// when the drawer is pointed at an object, once per selection, not on
+		// the refresh tick (see EventsView.svelte).
 	})
 	if err != nil {
 		return nil, classify(op, err)

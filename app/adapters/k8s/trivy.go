@@ -2,15 +2,18 @@ package k8s
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
@@ -52,13 +55,26 @@ const (
 	trivyResourceNameLabel = "trivy-operator.resource.name"
 )
 
-// vulnerabilityListLimit caps one namespace's reports.
+// vulnerabilityPageSize bounds one page of the summary read.
 //
-// One report per container per workload, so a busy namespace holds hundreds
-// rather than thousands — but this is a side read that must never become the
-// expensive thing on the page, and a cluster that has somehow accumulated
-// more than this is one where a partial answer beats a stall.
-const vulnerabilityListLimit = 500
+// The read is SERVER-RENDERED ROWS, not objects — see readVulnerabilityRows
+// — so a page is about 2-3 KB per report rather than the 50-150 KB a
+// VulnerabilityReport weighs with its CVE list attached. Five hundred rows is
+// therefore about a megabyte, which is the size a page wants to be.
+const vulnerabilityPageSize = 500
+
+// vulnerabilityScanCeiling caps how many reports one listing reads in total.
+//
+// One report per container per workload, so a namespace holds hundreds; five
+// thousand in ONE namespace is already extraordinary, and at that point a
+// floor that SAYS it is a floor beats both a stall and a silent prefix. Ten
+// pages, about twelve megabytes, paid at most once per cache window and never
+// on the refresh tick.
+//
+// This is a real ceiling now. It replaces a `Limit` the API server was
+// discarding — see cachedResourceVersion — which meant the read had no bound
+// at all on a warm watch cache and pulled every report as a whole object.
+const vulnerabilityScanCeiling = 5000
 
 // vulnerabilityCacheTTL is how long one namespace's summary stands.
 //
@@ -85,7 +101,7 @@ type vulnerabilityCache struct {
 
 type vulnerabilityEntry struct {
 	at      time.Time
-	summary []domain.VulnerabilitySummary
+	listing domain.VulnerabilityListing
 	// generation is the connection this answer was computed against. A read
 	// that passed Invalidate and writes afterwards lands under a generation
 	// nothing will match, so it teaches the new connection nothing — the
@@ -108,8 +124,8 @@ type vulnerabilityEntry struct {
 // somebody opens a pod list. A transport failure is NOT cached: a cluster
 // that was merely unreachable comes back, and should be asked again when it
 // does.
-func (a *Adapter) ListVulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.VulnerabilitySummary, error) {
-	// CAPTURED BEFORE ANYTHING ELSE, and carried through to both writes
+func (a *Adapter) ListVulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.VulnerabilityListing, error) {
+	// CAPTURED BEFORE ANYTHING ELSE, and carried through to every write
 	// below. Invalidate drops this cache, but a list already in flight when
 	// it runs writes afterwards; ordering alone cannot close that window.
 	generation := a.generations.at(id)
@@ -120,106 +136,243 @@ func (a *Adapter) ListVulnerabilitySummaries(ctx context.Context, id domain.Clus
 
 	set, err := a.factory.clientsFor(id)
 	if err != nil {
-		return nil, err
+		return domain.VulnerabilityListing{}, err
 	}
 
 	op := fmt.Sprintf("listing vulnerability reports in %q of %q", namespace, id)
-	reports, err := set.dynamic.Resource(vulnerabilityReportGVR).
-		Namespace(namespace.String()).
-		List(ctx, metav1.ListOptions{
-			Limit: vulnerabilityListLimit,
-			// The watch cache, like every other poll-adjacent list here: a
-			// report seconds out of date is a report about an image that has
-			// not changed in hours.
-			ResourceVersion: cachedResourceVersion,
-		})
+	restClient := set.discovery.RESTClient()
+	if restClient == nil {
+		return domain.VulnerabilityListing{}, fmt.Errorf("%s: no REST client available", op)
+	}
+
+	listing, err := a.readVulnerabilityRows(ctx, restClient, op, namespace)
 	if err != nil {
 		wrapped := classify(op, err)
 
 		// NotFound covers the case this exists for: the CRD is not installed,
 		// which is most clusters. It is filed beside the two refusals because
-		// the outcome is identical — nothing to show — and because asking
-		// again on the next pod list would be asking a question already
-		// answered.
-		if errors.Is(wrapped, ports.ErrNotFound) ||
-			errors.Is(wrapped, ports.ErrForbidden) ||
-			errors.Is(wrapped, ports.ErrUnauthenticated) {
-			a.vulnerabilities.put(id, namespace, generation, nil)
-			return nil, nil
+		// asking again on the next pod list would be asking a question
+		// already answered — but the ANSWERS are no longer identical, and
+		// that is the change. "No scanner" and "you may not look" are
+		// different sentences, and a row with no chip means something
+		// different under each.
+		switch {
+		case errors.Is(wrapped, ports.ErrNotFound):
+			listing = domain.VulnerabilityListing{Status: domain.VulnerabilityReadNotInstalled}
+		case errors.Is(wrapped, ports.ErrForbidden), errors.Is(wrapped, ports.ErrUnauthenticated):
+			listing = domain.VulnerabilityListing{Status: domain.VulnerabilityReadForbidden}
+		default:
+			// A transport failure is NOT cached: a cluster that was merely
+			// unreachable comes back, and should be asked again when it does.
+			return domain.VulnerabilityListing{}, wrapped
 		}
-		return nil, wrapped
 	}
 
-	summaries := summariseVulnerabilityReports(reports.Items)
-	a.vulnerabilities.put(id, namespace, generation, summaries)
-	return summaries, nil
+	a.vulnerabilities.put(id, namespace, generation, listing)
+	return listing, nil
 }
 
-// summariseVulnerabilityReports groups the operator's reports by the workload
-// they name and sums each group.
+// readVulnerabilityRows reads one namespace's reports as SERVER-RENDERED
+// TABLE ROWS, paged, and sums them by subject.
 //
-// ONE REPORT PER CONTAINER, so a workload's numbers are a sum rather than a
-// single report's summary — reading only the first would under-report every
-// multi-container pod, and reading the highest would under-report it
-// differently. Sorted by subject so two calls with the same cluster state
-// produce the same slice, which is what makes the cache comparable and the
-// tests deterministic.
-func summariseVulnerabilityReports(items []unstructured.Unstructured) []domain.VulnerabilitySummary {
-	bySubject := make(map[string]domain.VulnerabilitySummary, len(items))
-
-	for _, item := range items {
-		labels := item.GetLabels()
-		subject := domain.VulnerabilitySubject(labels[trivyResourceKindLabel], labels[trivyResourceNameLabel])
-		if subject == "" {
-			// The operator did not say what this report is about. Attributing
-			// it to something by guessing at the object's name would put
-			// somebody else's findings on a workload's row.
-			continue
-		}
-
-		held := bySubject[subject]
-		held.Subject = subject
-		held.Counts = held.Counts.Add(reportSummary(item.Object))
-		held.Reports++
-		bySubject[subject] = held
+// WHY ROWS AND NOT OBJECTS, which is the whole reason this is cheap. Every
+// number PodSteer wants is already a printer column on the CRD: Trivy
+// declares Critical/High/Medium/Low/Unknown off `.report.summary.*`, plus
+// Scanner, in additionalPrinterColumns. The API server renders those into a
+// Table for any client that asks for one — the same mechanism ListTable uses
+// for every CRD PodSteer has no model for. So the severity counts arrive in
+// about 2-3 KB per report instead of the 50-150 KB a VulnerabilityReport
+// weighs once its CVE list is attached, which is what the previous read
+// transferred, per namespace, per cache window.
+//
+// includeObject=Metadata is what carries the operator's labels, and those are
+// the only thing that says which workload a report is about.
+//
+// AND IT PAGES, which the previous read only appeared to do. See
+// cachedResourceVersion: a Limit sent with ResourceVersion "0" is discarded
+// by the server, so the old read had no bound and no Continue token. Nothing
+// here asks for the watch cache.
+func (a *Adapter) readVulnerabilityRows(
+	ctx context.Context,
+	restClient rest.Interface,
+	op string,
+	namespace domain.NamespaceName,
+) (domain.VulnerabilityListing, error) {
+	kind := domain.ResourceKind{
+		Group:      vulnerabilityReportGVR.Group,
+		Version:    vulnerabilityReportGVR.Version,
+		Resource:   vulnerabilityReportGVR.Resource,
+		Namespaced: true,
 	}
 
-	summaries := make([]domain.VulnerabilitySummary, 0, len(bySubject))
+	bySubject := make(map[string]domain.VulnerabilitySummary)
+	listing := domain.VulnerabilityListing{Status: domain.VulnerabilityReadComplete}
+	continueToken := ""
+
+	for listing.Read < vulnerabilityScanCeiling {
+		pageSize := min(int64(vulnerabilityScanCeiling-listing.Read), vulnerabilityPageSize)
+
+		request := restClient.Get().
+			AbsPath(resourcePath(kind, namespace, "")).
+			SetHeader("Accept", tableMediaType).
+			Param("includeObject", "Metadata").
+			Param("limit", strconv.FormatInt(pageSize, 10))
+		if continueToken != "" {
+			request = request.Param("continue", continueToken)
+		}
+
+		body, err := request.DoRaw(ctx)
+		if err != nil {
+			return domain.VulnerabilityListing{}, err
+		}
+
+		var table metav1.Table
+		if err := json.Unmarshal(body, &table); err != nil {
+			return domain.VulnerabilityListing{}, fmt.Errorf("%s: decoding table: %w", op, err)
+		}
+
+		columns := severityColumns(table.ColumnDefinitions)
+		if !columns.usable() {
+			// The counts are printer columns and always have been, so this
+			// means a rename in some future CRD version. Reporting zeros
+			// would be inventing a clean bill of health for every workload in
+			// the namespace, which is the one answer this must never give.
+			return domain.VulnerabilityListing{}, fmt.Errorf(
+				"%s: the reports carry no severity columns — the scanner's CRD may have changed", op)
+		}
+
+		for i := range table.Rows {
+			row := &table.Rows[i]
+			labels := rowMetadata(row, domain.Projection{}).labels
+			subject := domain.VulnerabilitySubject(
+				labels[trivyResourceKindLabel], labels[trivyResourceNameLabel])
+			listing.Read++
+			if subject == "" {
+				// The operator did not say what this report is about.
+				// Attributing it by guessing at the object's name would put
+				// somebody else's findings on a workload's row.
+				continue
+			}
+
+			held := bySubject[subject]
+			held.Subject = subject
+			held.Counts = held.Counts.Add(columns.counts(row.Cells))
+			held.Reports++
+			bySubject[subject] = held
+		}
+
+		continueToken = table.Continue
+		if continueToken == "" {
+			break
+		}
+		listing.Remaining = int(ptrValue(table.RemainingItemCount))
+	}
+
+	if continueToken != "" {
+		// Stopped at the ceiling with reports left. Everything downstream
+		// must be able to say so: a subject with no summary in a truncated
+		// listing has not been shown to be clean.
+		listing.Status = domain.VulnerabilityReadTruncated
+		listing.Cap = vulnerabilityScanCeiling
+	} else {
+		listing.Remaining = 0
+	}
+
+	listing.Summaries = make([]domain.VulnerabilitySummary, 0, len(bySubject))
 	for _, summary := range bySubject {
-		summaries = append(summaries, summary)
+		listing.Summaries = append(listing.Summaries, summary)
 	}
-	sort.Slice(summaries, func(i, j int) bool { return summaries[i].Subject < summaries[j].Subject })
+	sort.Slice(listing.Summaries, func(i, j int) bool {
+		return listing.Summaries[i].Subject < listing.Summaries[j].Subject
+	})
 
-	return summaries
+	return listing, nil
 }
 
-// reportSummary reads `report.summary` — the counts Trivy itself computed.
-//
-// The individual vulnerability list is deliberately NOT read here. It is tens
-// of kilobytes per report and the pod list needs four numbers; the panel that
-// wants the list gets it from the one GET the drawer already makes when
-// somebody opens a report.
-func reportSummary(object map[string]any) domain.VulnerabilityCounts {
-	return domain.VulnerabilityCounts{
-		Critical: nestedCount(object, "criticalCount"),
-		High:     nestedCount(object, "highCount"),
-		Medium:   nestedCount(object, "mediumCount"),
-		Low:      nestedCount(object, "lowCount"),
-		Unknown:  nestedCount(object, "unknownCount"),
-	}
-}
-
-// nestedCount reads one count out of report.summary, treating an absent or
-// non-numeric field as zero — the same reading kubectl gives a printer column
-// it cannot find, and the only honest one for a field the CRD may not have
-// carried in the version that wrote this object.
-func nestedCount(object map[string]any, field string) int {
-	value, found, err := unstructured.NestedInt64(object, "report", "summary", field)
-	if !found || err != nil {
+// ptrValue reads an optional count the server may not have sent.
+func ptrValue(value *int64) int64 {
+	if value == nil {
 		return 0
 	}
-	return int(value)
+	return *value
 }
+
+// severityColumns is where each severity's count sits in a rendered row.
+//
+// BY COLUMN NAME, case-insensitively, because a Table carries no jsonPath —
+// the name is the only thing identifying a column, and position is whatever
+// the CRD author chose. Trivy has declared these since Starboard; a rename is
+// the realistic skew, and it is reported rather than guessed around.
+type severityColumnIndex struct {
+	critical, high, medium, low, unknown int
+}
+
+func severityColumns(definitions []metav1.TableColumnDefinition) severityColumnIndex {
+	index := severityColumnIndex{critical: -1, high: -1, medium: -1, low: -1, unknown: -1}
+	for at, definition := range definitions {
+		switch strings.ToLower(definition.Name) {
+		case "critical":
+			index.critical = at
+		case "high":
+			index.high = at
+		case "medium":
+			index.medium = at
+		case "low":
+			index.low = at
+		case "unknown":
+			index.unknown = at
+		}
+	}
+	return index
+}
+
+// usable reports whether the two columns anybody acts on were found.
+//
+// Critical and High decide it. Medium, Low and Unknown are read when present
+// and left at zero when not, because a CRD that stopped printing Low would
+// still let this answer the question the row asks; one that stopped printing
+// Critical would not.
+func (i severityColumnIndex) usable() bool { return i.critical >= 0 && i.high >= 0 }
+
+// counts reads one row's cells into the domain's buckets.
+func (i severityColumnIndex) counts(cells []any) domain.VulnerabilityCounts {
+	return domain.VulnerabilityCounts{
+		Critical: cellCount(cells, i.critical),
+		High:     cellCount(cells, i.high),
+		Medium:   cellCount(cells, i.medium),
+		Low:      cellCount(cells, i.low),
+		Unknown:  cellCount(cells, i.unknown),
+	}
+}
+
+// cellCount reads one integer cell, treating anything unreadable as zero —
+// the same reading nestedCount gives a field the CRD may not have carried.
+func cellCount(cells []any, at int) int {
+	if at < 0 || at >= len(cells) {
+		return 0
+	}
+	switch value := cells[at].(type) {
+	case float64:
+		return int(value)
+	case int64:
+		return int(value)
+	case json.Number:
+		parsed, err := value.Int64()
+		if err != nil {
+			return 0
+		}
+		return int(parsed)
+	default:
+		return 0
+	}
+}
+
+// The full-object summarisation that used to live here is gone with the read
+// that needed it. Every number PodSteer shows is a printer column now, so
+// nothing decodes report.summary out of an object body — see
+// readVulnerabilityRows. The per-report DETAIL panel still parses a manifest,
+// but it does that in the frontend, from the one object the drawer already
+// fetched: web/src/lib/operators/trivy.ts.
 
 // vulnerabilityCacheKey composes the per-cluster, per-namespace key. The
 // separator is one domain.ClusterID is forbidden from containing (see
@@ -228,18 +381,18 @@ func vulnerabilityCacheKey(id domain.ClusterID, namespace domain.NamespaceName) 
 	return id.String() + "\x00" + namespace.String()
 }
 
-func (c *vulnerabilityCache) get(id domain.ClusterID, namespace domain.NamespaceName, generation uint64) ([]domain.VulnerabilitySummary, bool) {
+func (c *vulnerabilityCache) get(id domain.ClusterID, namespace domain.NamespaceName, generation uint64) (domain.VulnerabilityListing, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	entry, ok := c.entries[vulnerabilityCacheKey(id, namespace)]
 	if !ok || entry.generation != generation || time.Since(entry.at) > vulnerabilityCacheTTL {
-		return nil, false
+		return domain.VulnerabilityListing{}, false
 	}
-	return entry.summary, true
+	return entry.listing, true
 }
 
-func (c *vulnerabilityCache) put(id domain.ClusterID, namespace domain.NamespaceName, generation uint64, summary []domain.VulnerabilitySummary) {
+func (c *vulnerabilityCache) put(id domain.ClusterID, namespace domain.NamespaceName, generation uint64, listing domain.VulnerabilityListing) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -248,7 +401,7 @@ func (c *vulnerabilityCache) put(id domain.ClusterID, namespace domain.Namespace
 	}
 	c.entries[vulnerabilityCacheKey(id, namespace)] = vulnerabilityEntry{
 		at:         time.Now(),
-		summary:    summary,
+		listing:    listing,
 		generation: generation,
 	}
 }

@@ -157,6 +157,7 @@ export type {
     VendorClusterList,
     VendorProvider,
     VersionCount,
+    VulnerabilityListing,
     VulnerabilitySummary,
     Workload,
     WorkloadKindSummary

@@ -4195,6 +4195,41 @@ export interface VersionCount {
 }
 
 /**
+ * VulnerabilityListing is one namespace's scanner read, and what it did not
+ * read.
+ * 
+ * STATUS IS NOT DECORATION. The four ordinary outcomes — no scanner, no
+ * permission, nothing found, and stopped at the ceiling — all leave rows
+ * undecorated, and only one of them means the workloads are clean. The
+ * interface has to tell them apart or an absent mark becomes a claim nobody
+ * made. See ports.ResourcePort.ListVulnerabilitySummaries.
+ */
+export interface VulnerabilityListing {
+    "summaries": VulnerabilitySummary[] | null;
+
+    /**
+     * Status is "complete", "truncated", "not-installed" or "forbidden".
+     */
+    "status": string;
+
+    /**
+     * Read is how many reports were consumed.
+     */
+    "read": number;
+
+    /**
+     * Remaining is what the server said it withheld, or 0 when it did not
+     * say — so 0 means unknown, not none.
+     */
+    "remaining": number;
+
+    /**
+     * Cap is the ceiling that stopped a truncated read, 0 otherwise.
+     */
+    "cap": number;
+}
+
+/**
  * VulnerabilitySummary is what a scanner already running in the cluster
  * recorded about ONE workload, as a pod row reads it.
  * 

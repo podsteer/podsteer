@@ -25,6 +25,32 @@ import (
 // behind, so an object deleted a moment ago may appear in one more refresh.
 // In practice that is invisible — a deleting pod reports Terminating for
 // seconds regardless — and it is undone by removing this one field.
+//
+// NEVER SEND THIS WITH A Limit. THE SERVER DROPS THE LIMIT, SILENTLY.
+//
+// This is the trap that made three of this package's caps decorative, and it
+// is invisible from the client: the request is accepted, no error comes back,
+// and the response simply contains everything. In the API server,
+// ShouldDelegateList excludes ResourceVersion "0" from the branch that would
+// send a limited list to etcd, so the watch cache answers it — and
+// computeListLimit returns 0 whenever ResourceVersion is "0", with the
+// upstream comment "as of today, the limit is ignored for requests that set
+// RV == 0". The response therefore carries no Continue token either, so a
+// paging loop reads one page, sees no token, and reports itself complete
+// having read the whole collection in one request.
+//
+// WORSE, IT IS NOT EVEN CONSISTENT. When the watch cache for that resource is
+// not yet ready, a limited list with no selectors IS delegated to etcd
+// (shouldDelegateListOnNotReadyCache), where the limit binds. So the same
+// cluster truncates at the cap shortly after an API-server restart and reads
+// the whole collection once the cache warms — two opposite bugs from one
+// line, decided by something no operator can see.
+//
+// THE RULE: a read that names a Limit must NOT name this. Consistency is not
+// what it is giving up — a limited read with no ResourceVersion is a quorum
+// read, which is the price of a cap that binds and a Continue token that
+// exists. A read with no Limit uses this freely; that is what it is for.
+// TestNoLimitedListAsksForTheWatchCache enforces the pairing.
 const cachedResourceVersion = "0"
 
 // Adapter is the driven adapter for Kubernetes.

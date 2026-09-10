@@ -25,7 +25,7 @@ import (
 // with a forget method and not listing it below fails here rather than in
 // somebody's graphs a month later.
 func TestEveryPerClusterCacheIsDroppedOnInvalidate(t *testing.T) {
-	files := parsePackage(t)
+	files, _ := parsePackage(t)
 
 	// Types that can forget one cluster at all.
 	forgetful := map[string]bool{}
@@ -69,8 +69,9 @@ func TestEveryPerClusterCacheIsDroppedOnInvalidate(t *testing.T) {
 	}
 }
 
-// parsePackage reads this package's non-test files.
-func parsePackage(t *testing.T) []*ast.File {
+// parsePackage reads this package's non-test files, with the file set the
+// positions belong to so a finding can name its own line.
+func parsePackage(t *testing.T) ([]*ast.File, *token.FileSet) {
 	t.Helper()
 
 	entries, err := os.ReadDir(".")
@@ -91,7 +92,7 @@ func parsePackage(t *testing.T) []*ast.File {
 		}
 		files = append(files, file)
 	}
-	return files
+	return files, fset
 }
 
 // receiverType names the type a method hangs off, pointer or not.
