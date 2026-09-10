@@ -579,6 +579,35 @@ export function apply(ctx: string, ns?: string): string {
 }
 
 /**
+ * `kubectl --context c [-n ns] apply --server-side --field-manager=podsteer -f -`.
+ *
+ * WHAT THE CREATE AND DUPLICATE DIALOGS ACTUALLY SEND, and the flags are not
+ * cosmetic. A plain `kubectl apply` is a CLIENT-side apply: it merges through
+ * the last-applied-configuration annotation, records itself as
+ * `kubectl-client-side-apply`, and would not produce the ownership conflict
+ * the dialog is showing. Handing an operator that command as "the equivalent"
+ * would be a claim this cannot keep — they would run it, get a different
+ * result, and reasonably conclude the dialog had lied.
+ *
+ * `force` adds `--force-conflicts`, which is what the Override button does.
+ */
+export function applyServerSide(ctx: string, ns?: string, force = false): string {
+  const flags = ['apply', '--server-side', `--field-manager=${FIELD_MANAGER}`]
+  if (force) flags.push('--force-conflicts')
+  return [...base(ctx, ns), ...flags, '-f', '-'].join(' ')
+}
+
+/**
+ * The field manager PodSteer records against every field it writes.
+ *
+ * Kept in step with the Go constant of the same name (app/adapters/k8s/
+ * applyresource.go) BY HAND, which is the honest description: nothing checks
+ * it. If the two drift, the hint tells an operator to write a different
+ * manager's name onto their objects than the application does.
+ */
+const FIELD_MANAGER = 'podsteer'
+
+/**
  * `kubectl --context c [-n ns] apply -f - --dry-run=server`.
  *
  * What Validate actually sends: the same manifest apply asks the API server
