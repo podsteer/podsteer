@@ -327,6 +327,35 @@
     return (pod.findings ?? []).filter((finding) => finding.severity !== 'info')
   }
 
+  /**
+   * The clusters whose share of the merged table stopped at its cap.
+   *
+   * Only the clusters actually on screen: a selection narrowed to two must
+   * not carry a caveat about a third the operator cannot see. See
+   * $stores/fleet.tableTruncated.
+   */
+  const truncatedClusters = $derived(
+    Object.keys(fleet.tableTruncated)
+      .filter(
+        (id) =>
+          session.selectedFleetClusters.length === 0 ||
+          session.selectedFleetClusters.includes(id),
+      )
+      .sort(),
+  )
+
+  /** The cap those reads stopped at, grouped for reading. */
+  const truncatedCap = $derived(
+    (fleet.tableTruncated[truncatedClusters[0]] ?? 0).toLocaleString(),
+  )
+
+  /** "prod-eu stopped at 1,000 rows." / "a, b stopped at 1,000 rows each." */
+  const truncatedSentence = $derived(
+    truncatedClusters.length === 1
+      ? `${truncatedClusters[0]} stopped at ${truncatedCap} rows.`
+      : `${truncatedClusters.join(', ')} each stopped at ${truncatedCap} rows.`,
+  )
+
   /** Same rule ColumnMenu and DataTable apply, keyed by the table showing. */
   function isColumnVisible(column: Column): boolean {
     const stored = preferences.columns[tableId]?.[column.id]?.hidden
@@ -901,6 +930,24 @@
       onsort={session.toggleSort}
       exportRows={exportCSV}
     >
+      {#snippet notice()}
+        {#if truncatedClusters.length > 0}
+          <!--
+            NAMED, NOT COUNTED, and the same rule the strip already keeps: a
+            cluster whose share of this table is a prefix is a fact about THAT
+            cluster, and a merged table that says only "some rows are missing"
+            leaves the operator unable to tell which cluster to go and look at.
+          -->
+          <p
+            class="border-b border-outline-variant/60 px-3 py-2 text-body-medium text-gauge-warn"
+            role="status"
+          >
+            {truncatedSentence} The search, the sort and the count below describe what was
+            read, not what those clusters hold.
+          </p>
+        {/if}
+      {/snippet}
+
       {#snippet empty()}
         <EmptyState
           title={!fleet.tableKind

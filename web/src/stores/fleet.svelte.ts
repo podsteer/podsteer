@@ -43,6 +43,7 @@ import {
   flattenFleet,
   mergeFleet,
   mergeFleetTable,
+  replacesRows,
   stripModel,
   type ClusterAnswer,
   type ClusterRead,
@@ -126,6 +127,18 @@ class Fleet {
   tableColumns = $state.raw<Record<string, TableColumn[]>>({})
 
   /**
+   * Which clusters' shares of the merged table stopped at their cap, and at
+   * what.
+   *
+   * PER CLUSTER, because the cap is per read: one cluster can be complete and
+   * the next a prefix of the same kind, and one flag for the whole table
+   * could only be wrong in one direction or the other. Kept beside the rows
+   * and the columns for the reason they are — it is a fact about a cluster's
+   * answer, and it has to travel with it.
+   */
+  tableTruncated = $state.raw<Record<string, number>>({})
+
+  /**
    * Which kind the "Any kind" tab is showing: its group and resource, and
    * the title to put above it.
    *
@@ -191,6 +204,7 @@ class Fleet {
     this.tableKind = kind
     this.tableRows = []
     this.tableColumns = {}
+    this.tableTruncated = {}
   }
 
   refresh = async (namespace: string): Promise<void> => {
@@ -254,10 +268,22 @@ class Fleet {
           // with some — see tableColumns for why they must stay with the rows
           // they came from.
           const columns = { ...this.tableColumns }
+          // Replaced per cluster, exactly as the columns are: a cluster that
+          // did not answer this tick keeps whatever was last true of it,
+          // rather than having its caveat cleared by somebody else's read.
+          const truncated = { ...this.tableTruncated }
           for (const answer of answers) {
             if (answer.columns?.length) columns[answer.cluster] = answer.columns
+            // Changed on exactly the ticks mergeFleet replaces this cluster's
+            // ROWS — see replacesRows. A caveat that can be cleared while the
+            // rows it qualifies are still on screen is worse than none.
+            if (replacesRows(asRead(answer, answer.rows))) {
+              if (answer.truncated) truncated[answer.cluster] = answer.cap
+              else delete truncated[answer.cluster]
+            }
           }
           this.tableColumns = columns
+          this.tableTruncated = truncated
 
           this.tableRows = mergeFleet(
             this.tableRows,

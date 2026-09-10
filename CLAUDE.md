@@ -182,6 +182,35 @@ is a connection they did not press a button for.
 kubeconfig context, which the fake clientset cannot — every other test in the
 package pins the fallback.
 
+## A `Limit` and the watch cache cannot be asked for together
+
+`cachedResourceVersion` (`"0"`, `app/adapters/k8s/adapter.go`) asks the API
+server to answer a LIST from its watch cache instead of a quorum read from
+etcd. Every poll here uses it, and should.
+
+**A list that also names a `Limit` must not.** The server DROPS the limit:
+`ShouldDelegateList` excludes `"0"` from the branch that would send a limited
+list to etcd, so the watch cache answers it, and `computeListLimit` returns 0
+whenever the resource version is `"0"` — upstream's own comment reads "as of
+today, the limit is ignored for requests that set RV == 0". The request is
+accepted, no error comes back, and the response simply contains everything,
+with no `Continue` token — so a paging loop reads one page, sees no token, and
+reports itself complete having read the whole collection.
+
+**It is not even consistent.** When that resource's watch cache is not ready, a
+limited list with no selectors IS delegated to etcd
+(`shouldDelegateListOnNotReadyCache`) and the limit binds. So the same cluster
+truncates at the cap shortly after an API-server restart and reads everything
+once the cache warms: two opposite bugs from one line, decided by something no
+operator can see.
+
+Three reads here were written that way, and the caps in their names had no
+effect: the Helm listing (where the cap governed how many Secrets the server
+was asked to decrypt), the vulnerability read, and one object's events.
+`TestNoLimitedListAsksForTheWatchCache` walks this package's AST and fails on
+the pairing, so it cannot come back. A read with no `Limit` uses the watch
+cache freely; that is what it is for.
+
 ## The polled lists are coalesced, and it is a singleflight not a cache
 
 Every refresh fires the assessment AND the open list at the same instant, and
@@ -1428,8 +1457,10 @@ read as "no Helm here" when it means "not permitted here"**. Hence
 **deliberately no "absent"**: a cluster with no releases is LISTED with zero
 rows, which is what keeps the two distinguishable. `helmCache` is the one
 per-cluster cache here that stores a **refusal WITH its error** rather than as
-an empty answer — the collapse `backendCache` and `vulnerabilityCache` make
-deliberately is exactly what this must not — and `showsEmptyCopy`
+an empty answer — the collapse `backendCache` makes deliberately is exactly
+what this must not, and `vulnerabilityCache` no longer makes it at all: a
+security signal cannot let "not read" and "nothing found" share one answer,
+so it carries a status instead — and `showsEmptyCopy`
 (`web/src/lib/helm.ts`) is the guard that keeps a call site from testing
 `releases.length === 0` and rendering the zero-row copy to somebody who was
 simply not allowed to look.
@@ -2646,12 +2677,33 @@ belong on a production cluster.
 **The pod list's severity marks are a discovered add-on read, not part of the
 poll.** `Adapter.ListVulnerabilitySummaries` (`app/adapters/k8s/trivy.go`)
 reads what the Trivy Operator already wrote — PodSteer scans nothing, fetches
-no advisory database and grades nothing — as ONE bounded list per cluster and
+no advisory database and grades nothing — as a PAGED read per cluster and
 namespace, cached ten minutes (`vulnerabilityCacheTTL`, between
 `backendCache`'s thirty and `readCache`'s seconds) and forgotten when a cluster
-is invalidated. No scanner installed (404), an account that may not read the
-reports (403), and a namespace nothing has been scanned in all return an empty
-answer, and all three are CACHED, the same discipline `DiscoverMetricsBackend`
+is invalidated.
+
+**It reads SERVER-RENDERED TABLE ROWS, not objects, and that is a 50× saving
+rather than a preference.** Every number shown is already an
+`additionalPrinterColumn` on Trivy's CRD (`Critical`/`High`/`Medium`/`Low`/
+`Unknown` off `.report.summary.*`), so `readVulnerabilityRows` asks for the
+same Table transform `ListTable` uses, with `includeObject=Metadata` for the
+labels that name the workload. A row is 2–3 KB; a `VulnerabilityReport` with
+its CVE list attached is 50–150 KB, and the previous read transferred those,
+per namespace, per cache window. Columns are matched by NAME, case-insensitively
+— a Table carries no jsonPath — and a report set with no `Critical`/`High`
+column is an ERROR rather than zeros, because zeros would be a clean bill of
+health for every workload in the namespace.
+
+**Four ordinary outcomes leave rows undecorated and only one means "clean".**
+`domain.VulnerabilityListing` carries which: `complete`, `truncated`,
+`not-installed`, `forbidden`. This used to be one empty slice for all of them,
+which was survivable only while the read had no ceiling it could hit; now that
+it does, an absent mark had to stop meaning four things at once. `Complete()`
+is the question every reader asks before treating an absence as an answer, and
+`$stores/vulnerabilities.vulnerabilityReadFor` is its frontend half — a
+truncated read puts a notice above the pod list, because that is the one case
+where a row without a mark is a claim nobody earned. No scanner and no
+permission are still CACHED, the same discipline `DiscoverMetricsBackend`
 follows: an account that may never list something should not have that retried
 into its audit log every time a pod list opens. The frontend
 (`$stores/vulnerabilities`) asks once per cluster and namespace for the life of

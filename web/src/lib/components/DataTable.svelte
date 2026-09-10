@@ -144,6 +144,17 @@
     /** Shown instead of rows when there are none. */
     empty?: Snippet
     isEmpty?: boolean
+    /**
+     * A standing fact about the whole listing, drawn above the rows.
+     *
+     * OUTSIDE THE SCROLLING REGION, deliberately, and that is the reason it
+     * is a slot here rather than markup each view puts above the table: a
+     * caveat about what the rows ARE is worth nothing if it scrolls away from
+     * the rows it qualifies. Rendered whether or not the table is empty, for
+     * the same reason — "nothing matches" and "the read stopped early" are
+     * two facts an operator needs together, not one instead of the other.
+     */
+    notice?: Snippet
     /** The sort in effect, or null for server order. */
     sort?: SortState | null
     /** Header click: cycles the column ascending, descending, unsorted. */
@@ -170,6 +181,7 @@
     columns,
     rows,
     empty,
+    notice,
     isEmpty = false,
     sort = null,
     onsort,
@@ -523,6 +535,7 @@
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
+  {#if notice}{@render notice()}{/if}
   <div class="min-h-0 flex-1 overflow-auto" bind:this={scroller}>
     {#if isEmpty}
       {#if empty}{@render empty()}{/if}

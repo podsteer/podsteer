@@ -42,6 +42,38 @@ type VulnerabilitySummary struct {
 	Reports int `json:"reports"`
 }
 
+// VulnerabilityListing is one namespace's scanner read, and what it did not
+// read.
+//
+// STATUS IS NOT DECORATION. The four ordinary outcomes — no scanner, no
+// permission, nothing found, and stopped at the ceiling — all leave rows
+// undecorated, and only one of them means the workloads are clean. The
+// interface has to tell them apart or an absent mark becomes a claim nobody
+// made. See ports.ResourcePort.ListVulnerabilitySummaries.
+type VulnerabilityListing struct {
+	Summaries []VulnerabilitySummary `json:"summaries"`
+	// Status is "complete", "truncated", "not-installed" or "forbidden".
+	Status string `json:"status"`
+	// Read is how many reports were consumed.
+	Read int `json:"read"`
+	// Remaining is what the server said it withheld, or 0 when it did not
+	// say — so 0 means unknown, not none.
+	Remaining int `json:"remaining"`
+	// Cap is the ceiling that stopped a truncated read, 0 otherwise.
+	Cap int `json:"cap"`
+}
+
+// toVulnerabilityListing converts one namespace's read, status and all.
+func toVulnerabilityListing(listing domain.VulnerabilityListing) VulnerabilityListing {
+	return VulnerabilityListing{
+		Summaries: toVulnerabilitySummaries(listing.Summaries),
+		Status:    string(listing.Status),
+		Read:      listing.Read,
+		Remaining: listing.Remaining,
+		Cap:       listing.Cap,
+	}
+}
+
 // toVulnerabilitySummaries converts the domain's per-workload sums.
 func toVulnerabilitySummaries(summaries []domain.VulnerabilitySummary) []VulnerabilitySummary {
 	out := make([]VulnerabilitySummary, 0, len(summaries))

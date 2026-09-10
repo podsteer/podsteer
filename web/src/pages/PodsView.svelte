@@ -30,7 +30,11 @@
   import type { Pod } from '$lib/api/client'
   import { Box, CircleDot, TriangleAlert, Plug, Loader, ShieldAlert } from '@lucide/svelte'
   import { forwards } from '$stores/forwards.svelte'
-  import { ensureVulnerabilities, vulnerabilitiesFor } from '$stores/vulnerabilities.svelte'
+  import {
+    ensureVulnerabilities,
+    vulnerabilitiesFor,
+    vulnerabilityReadFor,
+  } from '$stores/vulnerabilities.svelte'
 
   interface Props {
     session: ClusterSession
@@ -89,6 +93,14 @@
 
   /** The built-in columns, then the operator's own — see $lib/customColumns —
       and the row menu last, because it is the end of the row. */
+  /**
+   * How much of the scanner's answer this list actually has.
+   *
+   * Read here rather than per row: it qualifies every mark in the list, and the
+   * only row it is about is the one that ISN'T marked.
+   */
+  const scannerRead = $derived(vulnerabilityReadFor(session.cluster.id, session.namespace))
+
   const columns = $derived<Column[]>([
     ...COLUMNS,
     ...toColumns(session.customColumns),
@@ -287,6 +299,32 @@
       ontoggle: () => session.selection.toggleAllVisible(),
     }}
   >
+    {#snippet notice()}
+      {#if scannerRead?.truncated}
+        <!--
+          THE ONE CASE WHERE A MISSING MARK IS A CLAIM. Every other row here
+          is undecorated because the scanner found nothing, or because there
+          is no scanner — neither of which says anything false. A read that
+          stopped at its ceiling is different: some workloads below have
+          findings nobody has been shown, and an unmarked row would be read as
+          a clean one. Outside the scrolling region, like the generic table's,
+          because a caveat that scrolls away from the rows it qualifies is not
+          a caveat.
+        -->
+        <p
+          class="border-b border-outline-variant/60 px-3 py-2 text-body-medium text-gauge-warn"
+          role="status"
+        >
+          Vulnerability marks are incomplete: {scannerRead.read.toLocaleString()} reports read{
+            scannerRead.remaining > 0
+              ? ` of ${(scannerRead.read + scannerRead.remaining).toLocaleString()}`
+              : ''
+          }, stopping at {scannerRead.cap.toLocaleString()}. A row without a mark may still have
+          findings.
+        </p>
+      {/if}
+    {/snippet}
+
     {#snippet empty()}
       <EmptyState
         title="No pods here"

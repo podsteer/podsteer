@@ -9,11 +9,17 @@ import {
   ensureVulnerabilities,
   forgetVulnerabilities,
   vulnerabilitiesFor,
+  vulnerabilityReadFor,
 } from './vulnerabilities.svelte'
 
 /** One summary shaped the way the Go side hands them over. */
 function summary(subject: string, critical: number, high: number) {
   return { subject, critical, high, medium: 0, low: 0, unknown: 0, reports: 1 }
+}
+
+/** A completed read carrying those summaries — the ordinary answer. */
+function listing(summaries: ReturnType<typeof summary>[], status = 'complete') {
+  return { summaries, status, read: summaries.length, remaining: 0, cap: 0 }
 }
 
 /** Lets the promise chain inside ensureVulnerabilities settle. */
@@ -30,7 +36,7 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
     // The operator writes one report per container of the WORKLOAD — a
     // ReplicaSet for a Deployment's pods — and every replica runs the same
     // images, so keying on the pod's name would find nothing for any of them.
-    vulnerabilitySummaries.mockResolvedValue([summary('ReplicaSet/web-abc123', 2, 5)])
+    vulnerabilitySummaries.mockResolvedValue(listing([summary('ReplicaSet/web-abc123', 2, 5)]))
 
     ensureVulnerabilities('dev', 'shop')
     await settle()
@@ -46,7 +52,7 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
   it('falls back to the pod itself for a bare pod nothing owns', async () => {
     // A pod with no controller is scanned under its own name, which is the
     // one case where the pod IS the subject.
-    vulnerabilitySummaries.mockResolvedValue([summary('Pod/debug', 0, 1)])
+    vulnerabilitySummaries.mockResolvedValue(listing([summary('Pod/debug', 0, 1)]))
 
     ensureVulnerabilities('dev', 'shop')
     await settle()
@@ -55,7 +61,7 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
   })
 
   it('answers nothing for a workload the scanner has not reported on', async () => {
-    vulnerabilitySummaries.mockResolvedValue([summary('ReplicaSet/web-abc123', 1, 0)])
+    vulnerabilitySummaries.mockResolvedValue(listing([summary('ReplicaSet/web-abc123', 1, 0)]))
 
     ensureVulnerabilities('dev', 'shop')
     await settle()
@@ -68,7 +74,7 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
   it('reads one cluster and namespace once, however many rows ask', async () => {
     // The whole design: this must never ride the refresh tick. Five hundred
     // rows and ten ticks are still one call.
-    vulnerabilitySummaries.mockResolvedValue([])
+    vulnerabilitySummaries.mockResolvedValue(listing([]))
 
     ensureVulnerabilities('dev', 'shop')
     ensureVulnerabilities('dev', 'shop')
@@ -79,7 +85,7 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
   })
 
   it('keeps clusters and namespaces apart', async () => {
-    vulnerabilitySummaries.mockResolvedValue([])
+    vulnerabilitySummaries.mockResolvedValue(listing([]))
 
     ensureVulnerabilities('dev', 'shop')
     ensureVulnerabilities('dev', 'admin')
@@ -107,7 +113,7 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
   it('says nothing has been reported before the read answers', () => {
     // The list is drawn first and the marks arrive later, so every row has to
     // render correctly with no answer at all.
-    vulnerabilitySummaries.mockResolvedValue([summary('ReplicaSet/web', 9, 9)])
+    vulnerabilitySummaries.mockResolvedValue(listing([summary('ReplicaSet/web', 9, 9)]))
 
     ensureVulnerabilities('dev', 'shop')
 
@@ -118,7 +124,7 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
 
   it('forgets one cluster without costing another its answers', async () => {
     // Closing one tab must not make every other tab read again.
-    vulnerabilitySummaries.mockResolvedValue([summary('ReplicaSet/web', 1, 1)])
+    vulnerabilitySummaries.mockResolvedValue(listing([summary('ReplicaSet/web', 1, 1)]))
 
     ensureVulnerabilities('dev', 'shop')
     ensureVulnerabilities('staging', 'shop')
@@ -129,5 +135,65 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
     const owner = { name: 'web-1', controlledBy: 'ReplicaSet/web' }
     expect(vulnerabilitiesFor('dev', 'shop', owner)).toBeUndefined()
     expect(vulnerabilitiesFor('staging', 'shop', owner)?.critical).toBe(1)
+  })
+})
+
+describe('whether an unmarked row has been shown to be clean', () => {
+  beforeEach(() => {
+    forgetVulnerabilities('dev')
+    vulnerabilitySummaries.mockReset()
+  })
+
+  it('only a completed read says so', async () => {
+    // THE RULE THIS STORE EXISTS TO KEEP. An absent mark means "the scanner
+    // found nothing" on a complete read and "nobody looked" on every other
+    // kind, and on a security signal those must never be the same answer.
+    const cases = [
+      { status: 'complete', complete: true, truncated: false },
+      { status: 'truncated', complete: false, truncated: true },
+      { status: 'not-installed', complete: false, truncated: false },
+      { status: 'forbidden', complete: false, truncated: false },
+      { status: '', complete: false, truncated: false },
+    ]
+
+    for (const expected of cases) {
+      forgetVulnerabilities('dev')
+      vulnerabilitySummaries.mockResolvedValue(listing([], expected.status))
+
+      ensureVulnerabilities('dev', 'shop')
+      await settle()
+
+      const read = vulnerabilityReadFor('dev', 'shop')
+      expect(read?.complete, expected.status).toBe(expected.complete)
+      expect(read?.truncated, expected.status).toBe(expected.truncated)
+    }
+  })
+
+  it('a failed read is not a clean bill of health', async () => {
+    // Recorded as asked so it is not retried per render — but with no status,
+    // which is not "complete", so nothing downstream reads the empty result
+    // as every workload being clean.
+    vulnerabilitySummaries.mockRejectedValue(new Error('[unreachable] gone'))
+
+    ensureVulnerabilities('dev', 'shop')
+    await settle()
+
+    expect(vulnerabilityReadFor('dev', 'shop')?.complete).toBe(false)
+  })
+
+  it('carries the ceiling and what was left, for the sentence the list shows', async () => {
+    vulnerabilitySummaries.mockResolvedValue({
+      summaries: [],
+      status: 'truncated',
+      read: 5000,
+      remaining: 1200,
+      cap: 5000,
+    })
+
+    ensureVulnerabilities('dev', 'shop')
+    await settle()
+
+    const read = vulnerabilityReadFor('dev', 'shop')
+    expect(read).toMatchObject({ truncated: true, read: 5000, remaining: 1200, cap: 5000 })
   })
 })

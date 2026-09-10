@@ -121,10 +121,7 @@ export function mergeFleet<T>(
       missing: read.missing,
     }
 
-    if (read.status === 'ok' || read.status === 'partial') {
-      return { ...head, rows: read.items, rowsAt: now, stale: false }
-    }
-    if (read.status === 'slow' && read.items.length > 0) {
+    if (replacesRows(read)) {
       return { ...head, rows: read.items, rowsAt: now, stale: false }
     }
     if (read.status === 'slow' || read.status === 'unreachable') {
@@ -132,6 +129,22 @@ export function mergeFleet<T>(
     }
     return { ...head, rows: [], rowsAt: null, stale: false }
   })
+}
+
+/**
+ * Whether this read replaces the cluster's rows, or leaves the kept ones up.
+ *
+ * EXPORTED SO NOTHING HAS TO RE-DERIVE IT. Anything stored per cluster
+ * BESIDE the rows — the columns they are positioned against, whether the read
+ * stopped at its cap — has to change on exactly the ticks the rows do, or the
+ * caveat and the rows it qualifies come apart: a cluster's kept rows sitting
+ * under a cap that was cleared by somebody else's answer, or a fresh complete
+ * answer still carrying the previous tick's warning. One predicate, used by
+ * mergeFleet and by whatever else travels with a cluster's share.
+ */
+export function replacesRows<T>(read: ClusterRead<T>): boolean {
+  if (read.status === 'ok' || read.status === 'partial') return true
+  return read.status === 'slow' && read.items.length > 0
 }
 
 /** Every cluster's rows in one list, each stamped with its cluster, in the

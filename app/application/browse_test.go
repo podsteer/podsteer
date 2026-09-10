@@ -33,10 +33,11 @@ type fakeResources struct {
 	chain      domain.CertificateChain
 	inspectErr error
 
-	// summaries and summariesErr shape what ListVulnerabilitySummaries
-	// answers. Empty is the ordinary case — most clusters run no scanner —
-	// so the zero value is already the realistic one.
-	summaries    []domain.VulnerabilitySummary
+	// listing and summariesErr shape what ListVulnerabilitySummaries
+	// answers. Most clusters run no scanner, so the realistic zero value is a
+	// listing that SAYS so rather than an empty slice standing for four
+	// different outcomes at once.
+	listing      domain.VulnerabilityListing
 	summariesErr error
 	// graphInput and graphErr shape what ObjectGraphSources answers, and
 	// graphRef records the reference it was asked for — which is the half of
@@ -116,8 +117,8 @@ func (f *fakeResources) InspectTLSSecret(context.Context, domain.ClusterID, doma
 	return f.chain, nil
 }
 
-func (f *fakeResources) ListVulnerabilitySummaries(context.Context, domain.ClusterID, domain.NamespaceName) ([]domain.VulnerabilitySummary, error) {
-	return f.summaries, f.summariesErr
+func (f *fakeResources) ListVulnerabilitySummaries(context.Context, domain.ClusterID, domain.NamespaceName) (domain.VulnerabilityListing, error) {
+	return f.listing, f.summariesErr
 }
 
 // Compile-time proof the fake still matches the port it stands in for.

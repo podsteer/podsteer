@@ -882,6 +882,20 @@ export interface ClusterTable {
      */
     "columns": TableColumn[] | null;
     "rows": TableRow[] | null;
+
+    /**
+     * Truncated reports that THIS cluster's read stopped at Cap with objects
+     * left unread. Per cluster, because the cap is per read: in a merged
+     * table one cluster can be complete and the next a prefix, and a single
+     * flag for the whole table could only be a lie in one direction or the
+     * other.
+     */
+    "truncated": boolean;
+
+    /**
+     * Cap is the limit that stopped it, zero when nothing did.
+     */
+    "cap": number;
 }
 
 /**
@@ -3369,6 +3383,21 @@ export interface ResourceTable {
     "namespaced": boolean;
     "columns": TableColumn[] | null;
     "rows": TableRow[] | null;
+
+    /**
+     * Truncated reports that the read stopped at Cap with objects left
+     * unread, so Rows is a PREFIX of the kind and not all of it. The
+     * interface has to say so: a capped list is indistinguishable from a
+     * complete one, and the search, the sort and the count are all wrong in
+     * the same silent direction without it.
+     */
+    "truncated": boolean;
+
+    /**
+     * Cap is the limit that stopped the read, so the sentence can name it.
+     * Zero when nothing did.
+     */
+    "cap": number;
 }
 
 /**
@@ -4163,6 +4192,41 @@ export interface VendorProvider {
 export interface VersionCount {
     "version": string;
     "nodes": number;
+}
+
+/**
+ * VulnerabilityListing is one namespace's scanner read, and what it did not
+ * read.
+ * 
+ * STATUS IS NOT DECORATION. The four ordinary outcomes — no scanner, no
+ * permission, nothing found, and stopped at the ceiling — all leave rows
+ * undecorated, and only one of them means the workloads are clean. The
+ * interface has to tell them apart or an absent mark becomes a claim nobody
+ * made. See ports.ResourcePort.ListVulnerabilitySummaries.
+ */
+export interface VulnerabilityListing {
+    "summaries": VulnerabilitySummary[] | null;
+
+    /**
+     * Status is "complete", "truncated", "not-installed" or "forbidden".
+     */
+    "status": string;
+
+    /**
+     * Read is how many reports were consumed.
+     */
+    "read": number;
+
+    /**
+     * Remaining is what the server said it withheld, or 0 when it did not
+     * say — so 0 means unknown, not none.
+     */
+    "remaining": number;
+
+    /**
+     * Cap is the ceiling that stopped a truncated read, 0 otherwise.
+     */
+    "cap": number;
 }
 
 /**

@@ -546,6 +546,15 @@ type ResourceTable struct {
 	Namespaced bool          `json:"namespaced"`
 	Columns    []TableColumn `json:"columns"`
 	Rows       []TableRow    `json:"rows"`
+	// Truncated reports that the read stopped at Cap with objects left
+	// unread, so Rows is a PREFIX of the kind and not all of it. The
+	// interface has to say so: a capped list is indistinguishable from a
+	// complete one, and the search, the sort and the count are all wrong in
+	// the same silent direction without it.
+	Truncated bool `json:"truncated"`
+	// Cap is the limit that stopped the read, so the sentence can name it.
+	// Zero when nothing did.
+	Cap int `json:"cap"`
 }
 
 // TableColumn describes one column of a generic table.
@@ -609,6 +618,8 @@ func toResourceTable(table domain.ResourceTable) ResourceTable {
 		Namespaced: kind.Namespaced,
 		Columns:    columns,
 		Rows:       rows,
+		Truncated:  table.Truncated(),
+		Cap:        table.Cap(),
 	}
 }
 

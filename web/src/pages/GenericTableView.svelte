@@ -76,6 +76,29 @@
 
   const table = $derived(session.table)
 
+  /** The cap that stopped the read, grouped for reading. */
+  const cap = $derived((table?.cap ?? 0).toLocaleString())
+
+  /** This kind in the plural, lowercased, for a sentence. */
+  const kindLabel = $derived(session.selectedKind?.title.toLowerCase() ?? 'objects')
+
+  /**
+   * Why the table is empty, in words that say which of the reasons.
+   *
+   * A TRUNCATED LIST CHANGES WHAT "nothing matches" MEANS. The search runs
+   * over the rows that arrived, so on a capped read a match sitting past the
+   * cut is reported as an absence — the one case where the honest answer is
+   * that PodSteer does not know.
+   */
+  function emptyDescription(): string {
+    if (session.search) {
+      return table?.truncated
+        ? `Nothing in the first ${cap} ${kindLabel} matches "${session.search}" — there are more that were not read.`
+        : `Nothing matches "${session.search}".`
+    }
+    return `No ${kindLabel} in this namespace.`
+  }
+
   /** A row's selection key: namespace-qualified only for a namespaced kind. */
   function keyOf(row: TableRow): string {
     return rowKey(session.selectedKind?.namespaced ? row.namespace : '', row.name)
@@ -180,12 +203,32 @@
     ontoggle: () => session.selection.toggleAllVisible(),
   }}
 >
+  {#snippet notice()}
+    {#if table?.truncated}
+      <!--
+        THE ONE THING THIS LIST CANNOT LEAVE UNSAID. A capped read comes back
+        looking exactly like a complete one, so every question answered below
+        it is wrong in the same silent direction: the search misses a match
+        past the cut, the sort names the wrong newest, and the count is a
+        floor shown as a total. Outside the scrolling region — see DataTable's
+        `notice` — because a caveat that scrolls away from the rows it
+        qualifies is not a caveat.
+      -->
+      <p
+        class="border-b border-outline-variant/60 px-3 py-2 text-body-medium text-gauge-warn"
+        role="status"
+      >
+        More than {cap} {kindLabel}. PodSteer listed the first {cap} and stopped, so the
+        search, the sort and the count below describe those {cap} only. Narrow the namespace,
+        or use a terminal for the whole set.
+      </p>
+    {/if}
+  {/snippet}
+
   {#snippet empty()}
     <EmptyState
       title="Nothing here"
-      description={session.search
-        ? `Nothing matches "${session.search}".`
-        : `No ${session.selectedKind?.title.toLowerCase() ?? 'objects'} in this namespace.`}
+      description={emptyDescription()}
     />
   {/snippet}
 

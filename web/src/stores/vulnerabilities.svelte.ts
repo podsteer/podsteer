@@ -21,13 +21,35 @@
  * written into a VulnerabilityReport before this read it.
  */
 
-import { vulnerabilitySummaries, type VulnerabilitySummary } from '$lib/api/client'
+import {
+  vulnerabilitySummaries,
+  type VulnerabilityListing,
+  type VulnerabilitySummary,
+} from '$lib/api/client'
 
 /** One cluster-and-namespace's answer, keyed by the subject's "Kind/name". */
 type Summaries = Record<string, VulnerabilitySummary>
 
+/**
+ * One namespace's read: what it found, and how much of the truth it is.
+ *
+ * THE STATUS IS NOT A DETAIL. Four ordinary outcomes leave rows undecorated —
+ * no scanner, no permission, nothing found, and a read that stopped at its
+ * ceiling — and only ONE of them means the workloads are clean. Holding the
+ * summaries without the status is what made an absent mark mean all four at
+ * once, on a security signal.
+ */
+interface Reading {
+  bySubject: Summaries
+  /** '' when the read never produced one; never treated as complete. */
+  status: string
+  read: number
+  remaining: number
+  cap: number
+}
+
 /** What has been read, and what is being read right now. */
-const loaded = $state<Record<string, Summaries>>({})
+const loaded = $state<Record<string, Reading>>({})
 const inFlight = new Set<string>()
 
 function keyOf(clusterId: string, namespace: string): string {
@@ -52,15 +74,23 @@ export function ensureVulnerabilities(clusterId: string, namespace: string): voi
 
   inFlight.add(key)
   void vulnerabilitySummaries(clusterId, namespace)
-    .then((summaries) => {
+    .then((listing: VulnerabilityListing) => {
       const bySubject: Summaries = {}
-      for (const summary of summaries) bySubject[summary.subject] = summary
-      loaded[key] = bySubject
+      for (const summary of listing.summaries ?? []) bySubject[summary.subject] = summary
+      loaded[key] = {
+        bySubject,
+        status: listing.status,
+        read: listing.read,
+        remaining: listing.remaining,
+        cap: listing.cap,
+      }
     })
     .catch(() => {
-      // Recorded as "asked, nothing to show" rather than left unasked, so a
-      // refused read does not turn into one request per render.
-      loaded[key] = {}
+      // Recorded as "asked, and it did not answer" rather than left unasked,
+      // so a failed read does not turn into one request per render. The
+      // status stays empty, which is not 'complete' — so nothing downstream
+      // reads an absent mark here as a clean workload.
+      loaded[key] = { bySubject: {}, status: '', read: 0, remaining: 0, cap: 0 }
     })
     .finally(() => {
       inFlight.delete(key)
@@ -82,9 +112,33 @@ export function vulnerabilitiesFor(
   namespace: string,
   pod: { name: string; controlledBy: string },
 ): VulnerabilitySummary | undefined {
-  const summaries = loaded[keyOf(clusterId, namespace)]
-  if (!summaries) return undefined
-  return summaries[pod.controlledBy || `Pod/${pod.name}`]
+  const reading = loaded[keyOf(clusterId, namespace)]
+  if (!reading) return undefined
+  return reading.bySubject[pod.controlledBy || `Pod/${pod.name}`]
+}
+
+/**
+ * Whether a row WITHOUT a mark has been shown to have nothing, or merely not
+ * been looked at.
+ *
+ * The one question the pod list has to ask before letting an absence stand
+ * unqualified. Only a completed read answers it: a truncated one has reports
+ * it never saw, a refused one saw nothing, and 'not-installed' means no
+ * scanner ever wrote anything to see.
+ */
+export function vulnerabilityReadFor(
+  clusterId: string,
+  namespace: string,
+): { complete: boolean; truncated: boolean; read: number; remaining: number; cap: number } | undefined {
+  const reading = loaded[keyOf(clusterId, namespace)]
+  if (!reading) return undefined
+  return {
+    complete: reading.status === 'complete',
+    truncated: reading.status === 'truncated',
+    read: reading.read,
+    remaining: reading.remaining,
+    cap: reading.cap,
+  }
 }
 
 /**

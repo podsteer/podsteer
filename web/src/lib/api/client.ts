@@ -342,6 +342,7 @@ export type CertificateInsight = wails.CertificateInsight
 export type CertificateRenewalRef = wails.CertificateRenewalRef
 /** What a scanner already running in the cluster recorded about one workload. */
 export type VulnerabilitySummary = wails.VulnerabilitySummary
+export type VulnerabilityListing = wails.VulnerabilityListing
 /** A TLS Secret's parsed certificate material — the leaf, its issuers, and
  * what is worth knowing about them. Never fetched except by inspectTLSSecret. */
 export type CertificateChain = wails.CertificateChainDTO
@@ -734,15 +735,24 @@ export function assessCertificateRenewal(
  *
  * ON ITS OWN, NEVER FROM A LIST, and never on a refresh tick. The pod list is
  * drawn without it and the counts fill in when this answers; a cluster with
- * no scanner returns an empty array and the list is exactly what it was
- * before this existed. The read is bounded and cached in Go — see
- * `app/adapters/k8s/trivy.go`.
+ * no scanner still gets its list exactly as it was before this existed. The
+ * read is bounded and cached in Go — see `app/adapters/k8s/trivy.go`.
+ *
+ * IT RETURNS A LISTING, NOT AN ARRAY. Four ordinary outcomes leave rows
+ * undecorated — no scanner, no permission, nothing found, and a read that
+ * stopped at its ceiling — and only one of them means the workloads are
+ * clean. `status` is which.
  */
-export function vulnerabilitySummaries(
+export async function vulnerabilitySummaries(
   clusterId: string,
   namespace: string,
-): Promise<VulnerabilitySummary[]> {
-  return callList(() => bindVulnerabilitySummaries(clusterId, namespace))
+): Promise<VulnerabilityListing> {
+  const listing = await call(() => bindVulnerabilitySummaries(clusterId, namespace))
+  // The fallback's status is deliberately NOT "complete". Every reader's rule
+  // is that only "complete" licenses treating an absent summary as a clean
+  // workload, so a listing that arrived as nothing says nothing — which is
+  // the truthful answer and the safe one.
+  return listing ?? { summaries: [], status: '', read: 0, remaining: 0, cap: 0 }
 }
 
 /**

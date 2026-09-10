@@ -171,11 +171,12 @@ export function RevealSecretKey(clusterID: string, $namespace: string, name: str
  * in the cluster has recorded about one namespace's workloads.
  * 
  * CALLED ON ITS OWN, NEVER FROM A LIST. The pod list is drawn without it and
- * the chips fill in when this answers; a cluster with no scanner returns an
- * empty slice and the list is exactly what it was before this existed. See
- * ports.ResourcePort.ListVulnerabilitySummaries and the adapter's cache for
- * why this must never ride the refresh tick.
+ * the chips fill in when this answers; a cluster with no scanner returns a
+ * listing saying so and the list is exactly what it was before this existed.
+ * See ports.ResourcePort.ListVulnerabilitySummaries and the adapter's cache
+ * for why this must never ride the refresh tick, and why the STATUS travels
+ * with the summaries rather than an absence standing for all four outcomes.
  */
-export function VulnerabilitySummaries(clusterID: string, $namespace: string): $CancellablePromise<$models.VulnerabilitySummary[] | null> {
+export function VulnerabilitySummaries(clusterID: string, $namespace: string): $CancellablePromise<$models.VulnerabilityListing> {
     return $Call.ByID(119269035, clusterID, $namespace);
 }

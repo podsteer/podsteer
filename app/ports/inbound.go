@@ -395,7 +395,7 @@ type ResourceService interface {
 	// An empty answer is the ordinary one — most clusters run no scanner —
 	// and is never an error. See ports.ResourcePort for why this is not part
 	// of any list call.
-	VulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.VulnerabilitySummary, error)
+	VulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.VulnerabilityListing, error)
 }
 
 // SettingsService is the use-case surface for the backend-owned settings.

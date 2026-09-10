@@ -65,6 +65,14 @@ type ClusterTable struct {
 	// which is `unserved` rather than a failure.
 	Columns []TableColumn `json:"columns"`
 	Rows    []TableRow    `json:"rows"`
+	// Truncated reports that THIS cluster's read stopped at Cap with objects
+	// left unread. Per cluster, because the cap is per read: in a merged
+	// table one cluster can be complete and the next a prefix, and a single
+	// flag for the whole table could only be a lie in one direction or the
+	// other.
+	Truncated bool `json:"truncated"`
+	// Cap is the limit that stopped it, zero when nothing did.
+	Cap int `json:"cap"`
 }
 
 // toClusterTables projects one table per cluster, keeping each cluster's
@@ -92,6 +100,8 @@ func toClusterTables(reads []domain.ClusterRead[domain.ResourceTable]) []Cluster
 			if table.Rows != nil {
 				entry.Rows = table.Rows
 			}
+			entry.Truncated = table.Truncated
+			entry.Cap = table.Cap
 		}
 		out[i] = entry
 	}

@@ -424,18 +424,24 @@ func (s *BrowseService) InspectTLSSecret(ctx context.Context, id domain.ClusterI
 // NOTHING ABOUT THE POD LIST DEPENDS ON THIS. It is called once when the pods
 // view opens, on its own, and whatever it returns is merged onto rows that
 // were already drawn — so a slow answer costs a late chip rather than a late
-// list, and no answer costs nothing at all. That is also why an empty result
-// is not distinguished from "no scanner": both mean there is nothing to show,
-// and the adapter caches them identically.
-func (s *BrowseService) VulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.VulnerabilitySummary, error) {
+// list, and no answer costs nothing at all.
+//
+// AN EMPTY RESULT IS NO LONGER THE SAME ANSWER AS "no scanner", and this
+// comment used to say it was. Both leave the rows undecorated, so the
+// distinction looked academic — until the read gained a ceiling it can
+// actually hit, at which point a third meaning arrived ("not read") that a
+// bare empty slice could not express. On a security signal an absent mark
+// must never be readable as a clean bill of health, so the listing carries
+// which of the four it is and the interface says so.
+func (s *BrowseService) VulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.VulnerabilityListing, error) {
 	if _, err := s.registry.Get(id); err != nil {
-		return nil, fmt.Errorf("reading vulnerability reports: %w", err)
+		return domain.VulnerabilityListing{}, fmt.Errorf("reading vulnerability reports: %w", err)
 	}
 
-	summaries, err := s.resources.ListVulnerabilitySummaries(ctx, id, namespace)
+	listing, err := s.resources.ListVulnerabilitySummaries(ctx, id, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("reading vulnerability reports in %q: %w", namespace, err)
+		return domain.VulnerabilityListing{}, fmt.Errorf("reading vulnerability reports in %q: %w", namespace, err)
 	}
 
-	return summaries, nil
+	return listing, nil
 }

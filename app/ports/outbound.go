@@ -376,15 +376,24 @@ type ResourcePort interface {
 	// in one namespace, keyed by "Kind/name".
 	//
 	// A DISCOVERED ADD-ON, QUOTED AND NEVER QUERIED — the same relationship
-	// DiscoverMetricsBackend has with a monitoring stack, and it fails the
-	// same way: no scanner installed, an account that may not read its
-	// reports, and a namespace nothing has been scanned in all return an
-	// EMPTY slice and no error. PodSteer scans nothing itself.
+	// DiscoverMetricsBackend has with a monitoring stack. No scanner
+	// installed, an account that may not read its reports, and a namespace
+	// nothing has been scanned in are all ordinary answers and none is an
+	// error. PodSteer scans nothing itself.
+	//
+	// IT RETURNS A LISTING RATHER THAN A SLICE, AND THAT IS THE CONTRACT.
+	// Those ordinary answers used to be one empty slice between them, which
+	// made an absent summary mean four different things at once — no scanner,
+	// no permission, nothing found, or not read. On a SECURITY signal that is
+	// the one ambiguity that cannot stand: a workload with no chip must not be
+	// readable as clean when nobody looked. The listing says which it is, and
+	// Complete() is the question a caller has to ask before treating an
+	// absence as an answer.
 	//
 	// It is deliberately not part of any list call. The pod list must never
 	// wait on it, must never be short of a row because of it, and must never
 	// ask for it on a refresh tick — see the adapter's own cache.
-	ListVulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.VulnerabilitySummary, error)
+	ListVulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.VulnerabilityListing, error)
 
 	// InspectTLSSecret parses one Secret's certificate material, on explicit
 	// request.
