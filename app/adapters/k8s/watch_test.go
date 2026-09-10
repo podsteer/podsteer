@@ -615,3 +615,73 @@ func TestASupervisorLeavesACondemnedStoreCondemned(t *testing.T) {
 		t.Fatalf("a condemned store was promoted: %v", store.get())
 	}
 }
+
+// TestAStalledStoreNeverPublishesAnOlderVersion pins the ordering inside
+// kindWatch.stall.
+//
+// `supervise` reads the state and then the version, and promotes as soon as
+// the reflector has moved past what it reads. If the flip to `starting`
+// happened before the version were recorded, a reader landing between the two
+// would see whatever the version was BEFORE this stall — and on a second
+// stall that is a version the reflector has long since passed, so supervise
+// promotes a store that is still stalled. Nothing demotes it again, because
+// supervise skips a serving store.
+//
+// EACH ROUND USES A FRESH STORE THAT STALLS EXACTLY ONCE, and that is what
+// makes this sound rather than merely suggestive. `stalled` goes sentinel →
+// "100" and never moves again, and the state goes serving → starting and
+// never moves again, so a reader that sees `starting` and then reads the
+// SENTINEL can only have done so because the flip was published before the
+// version. There is no interleaving of resets for it to straddle.
+//
+// A FIRST ATTEMPT AT THIS FAILED ON CI WITH THE FIX IN PLACE, and the reason
+// is worth keeping: it stalled and promoted ONE store in a loop, so the
+// reader's own two-step read could straddle a promotion — see `starting` from
+// one round and the version from the next — and report a violation that had
+// not happened. It could not distinguish the two orders it was meant to
+// judge, which makes a test worse than none.
+func TestAStalledStoreNeverPublishesAnOlderVersion(t *testing.T) {
+	const sentinel = "before-any-stall"
+	const rounds = 3000
+
+	caught := 0
+	for range rounds {
+		store := &kindWatch{}
+		store.stalled.Store(ptrTo(sentinel))
+		store.set(watchServing)
+
+		var stale atomic.Bool
+		ready := make(chan struct{})
+		done := make(chan struct{})
+
+		go func() {
+			defer close(done)
+			close(ready)
+			// What supervise does: read the state, then the version. The
+			// state flips once, so the first observation of `starting` is the
+			// only one that can say anything.
+			for range 4096 {
+				if watchState(store.state.Load()) != watchStarting {
+					continue
+				}
+				if version := store.stalled.Load(); version != nil && *version == sentinel {
+					stale.Store(true)
+				}
+				return
+			}
+		}()
+
+		<-ready
+		store.stall("100")
+		<-done
+
+		if stale.Load() {
+			caught++
+		}
+	}
+
+	if caught != 0 {
+		t.Fatalf("a starting store published the version from before its own stall in %d of %d rounds — "+
+			"supervise would promote it while it is still behind", caught, rounds)
+	}
+}
