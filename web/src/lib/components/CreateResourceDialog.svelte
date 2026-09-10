@@ -20,7 +20,7 @@
   import YamlPane from './YamlPane.svelte'
   import type { EditorApi } from './YamlEditor.svelte'
   import HelpButton from './HelpButton.svelte'
-  import { apply as kubectlApply } from '$lib/kubectl'
+  import { applyServerSide } from '$lib/kubectl'
   import { applyResource, type FieldConflict } from '$lib/api/client'
   import { nameConfirmed } from '$lib/confirm'
   import { toApiError } from '$lib/api/errors'
@@ -121,6 +121,11 @@
 
   /** Whether any conflicting owner will simply put its value back. */
   const revertsAnyway = $derived(conflicts.some((conflict) => conflict.kind === 'gitops'))
+
+  /** Whether EVERY one will — which changes "some of these" to "these". */
+  const revertsAll = $derived(
+    conflicts.length > 0 && conflicts.every((conflict) => conflict.kind === 'gitops'),
+  )
   let submitting = $state(false)
 
   $effect(() => {
@@ -134,7 +139,7 @@
   /** The kubectl equivalent of Apply — same reasoning as DetailDrawer's own
       `applyCommand`: what PodSteer sends is the manifest itself, so the only
       thing worth showing is the invocation that would read it from stdin. */
-  const applyCommand = $derived(kubectlApply(clusterId, namespace))
+  const applyCommand = $derived(applyServerSide(clusterId, namespace, conflicts.length > 0))
 
   /**
    * Where the empty `name: ""` sits in a freshly seeded document, as a
@@ -367,8 +372,13 @@
               the only honest label.
             -->
             <p class="text-body-medium text-gauge-warn">
-              A reconciler owns some of these. Overriding changes the cluster now and is undone on
-              its next sync — change it where it is declared instead.
+              {conflicts.length === 1
+                ? 'A reconciler owns this field.'
+                : revertsAll
+                  ? 'A reconciler owns these fields.'
+                  : 'A reconciler owns some of these.'}
+              Overriding changes the cluster now and is undone on its next sync — change it where it
+              is declared instead.
             </p>
           {/if}
 

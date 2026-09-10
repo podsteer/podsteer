@@ -77,6 +77,31 @@ describe('a refused apply', () => {
     expect(getByText('Take ownership')).toBeTruthy()
   })
 
+  it('shows the server-side flags the dialog actually sends', async () => {
+    // A plain `kubectl apply` is a client-side apply and would neither merge
+    // the same way nor produce this conflict. The hint has to say what was
+    // sent, and gain --force-conflicts once there is something to override.
+    applyResource.mockResolvedValue(refusal(conflict('kubectl', 'kubectl')))
+
+    const { container, getByText } = render(CreateResourceDialog, props())
+    expect(words(container)).toContain('--server-side --field-manager=podsteer')
+    expect(words(container)).not.toContain('--force-conflicts')
+
+    await fireEvent.click(getByText('Apply'))
+
+    expect(words(container)).toContain('--force-conflicts')
+  })
+
+  it('does not say "some of these" about one field', async () => {
+    applyResource.mockResolvedValue(refusal(conflict('argocd-controller', 'gitops')))
+
+    const { container, getByText } = render(CreateResourceDialog, props())
+    await fireEvent.click(getByText('Apply'))
+
+    expect(words(container)).toContain('A reconciler owns this field.')
+    expect(words(container)).not.toContain('some of these')
+  })
+
   it('refuses to call it ownership when a reconciler will take it back', async () => {
     // THE LABEL IS THE POINT. Argo CD reverts on its next sync, so "Take
     // ownership" would be a claim this cannot keep.

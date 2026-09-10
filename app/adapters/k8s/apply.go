@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -162,22 +163,123 @@ func decodeManifest(manifest string) (*unstructured.Unstructured, error) {
 			domain.ErrInvalidManifest, len(docs))
 	}
 
+	// NEITHER DECODE ERROR IS PASSED THROUGH, AND THAT IS A SECRETS RULE.
+	//
+	// Both libraries quote the document in their message. `UnmarshalJSON` on
+	// a manifest with no `kind` reports
+	//
+	//   Object 'Kind' is missing in '{"apiVersion":"v1","data":{"password":"…"}}'
+	//
+	// — the WHOLE object, base64 Secret data and all. That error is rendered
+	// in the dialog and passed through apiError, which logs it, so one
+	// mistyped Secret manifest writes its contents to the log. PodSteer reads
+	// Secrets only on request and never writes their values anywhere; an
+	// error path that does it by accident is the same breach as doing it on
+	// purpose.
+	//
+	// So the manifest is decoded into a plain map — which never calls
+	// UnmarshalJSON — and every failure gets a sentence written here. The
+	// operator has the manifest open in an editor in front of them; the byte
+	// offset a library would quote back is not what they are short of.
 	jsonBytes, err := sigsyaml.YAMLToJSON(docs[0])
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", domain.ErrInvalidManifest, err)
+		return nil, fmt.Errorf("%w: this is not valid YAML", domain.ErrInvalidManifest)
 	}
 
+	// UnmarshalJSON, NOT json.Unmarshal INTO THE MAP DIRECTLY. The two are not
+	// interchangeable: encoding/json decodes every number as float64, and
+	// unstructured requires int64 — so `replicas: 5` becomes a float nothing
+	// downstream can read, NestedInt64 returns zero, and the object is quietly
+	// wrong in a way only a test that reads a number back catches. It did.
 	obj := &unstructured.Unstructured{}
 	if err := obj.UnmarshalJSON(jsonBytes); err != nil {
-		return nil, fmt.Errorf("%w: %v", domain.ErrInvalidManifest, err)
+		// Its message quotes the whole document, so it is never surfaced.
+		// The document is decoded a second time — as a plain map, where the
+		// float problem does not matter because nothing but the three
+		// identity strings is read — purely to say WHICH field is missing.
+		return nil, identityError(jsonBytes)
 	}
 
-	if obj.GetAPIVersion() == "" || obj.GetKind() == "" || obj.GetName() == "" {
-		return nil, fmt.Errorf("%w: apiVersion, kind and metadata.name are required",
-			domain.ErrInvalidManifest)
+	// NAMES WHAT IS ACTUALLY MISSING, not the whole requirement.
+	//
+	// This used to report "apiVersion, kind and metadata.name are required"
+	// whichever one was absent — so a manifest with a perfectly good
+	// apiVersion and kind and an empty name told the operator that three
+	// things were wrong and left them to work out which. The Duplicate dialog
+	// seeds exactly that manifest, deliberately: a duplicate needs a new name,
+	// so it clears the field and marks it. Answering "all three" to the one
+	// case the product itself produces is the message being wrong in the
+	// place it is read most.
+	if err := requireIdentity(obj.GetAPIVersion(), obj.GetKind(), obj.GetName()); err != nil {
+		return nil, err
 	}
 
 	return obj, nil
+}
+
+// identityError says which identifying field a manifest the decoder refused
+// is missing, without quoting the manifest.
+//
+// The decoder rejects an object with no `kind` before any of PodSteer's own
+// checks run, and its message embeds the entire document — Secret data
+// included. This re-reads the same bytes as a plain map, which is safe here
+// because only three strings are read out of it, and produces the sentence
+// the operator needs. A document that will not decode at all is not a
+// Kubernetes object, and says so.
+func identityError(jsonBytes []byte) error {
+	var body map[string]any
+	if err := json.Unmarshal(jsonBytes, &body); err != nil {
+		return fmt.Errorf("%w: a manifest must be a single Kubernetes object",
+			domain.ErrInvalidManifest)
+	}
+
+	text := func(key string) string {
+		value, _ := body[key].(string)
+		return value
+	}
+	name := ""
+	if metadata, ok := body["metadata"].(map[string]any); ok {
+		name, _ = metadata["name"].(string)
+	}
+
+	if err := requireIdentity(text("apiVersion"), text("kind"), name); err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: a manifest must be a single Kubernetes object",
+		domain.ErrInvalidManifest)
+}
+
+// requireIdentity names the identifying fields that are missing, and only
+// those.
+//
+// This used to report "apiVersion, kind and metadata.name are required"
+// whichever one was absent — so a manifest with a perfectly good apiVersion
+// and kind and an empty name told the operator three things were wrong and
+// left them to work out which. The Duplicate dialog seeds exactly that
+// manifest, deliberately: a duplicate needs a new name, so it clears the
+// field and marks it. Answering "all three" to the one case the product
+// itself produces is the message being wrong where it is read most.
+func requireIdentity(apiVersion, kind, name string) error {
+	var missing []string
+	if apiVersion == "" {
+		missing = append(missing, "apiVersion")
+	}
+	if kind == "" {
+		missing = append(missing, "kind")
+	}
+	if name == "" {
+		missing = append(missing, "metadata.name")
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+
+	verb := "are"
+	if len(missing) == 1 {
+		verb = "is"
+	}
+	return fmt.Errorf("%w: %s %s required",
+		domain.ErrInvalidManifest, strings.Join(missing, ", "), verb)
 }
 
 // restMappingFor resolves gvk to its REST mapping (GVR and scope), rebuilding

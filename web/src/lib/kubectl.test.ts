@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   apply,
+  applyServerSide,
   attach,
   applyDryRun,
   debug,
@@ -628,6 +629,31 @@ describe('helmHistory', () => {
   it('quotes a context containing a space', () => {
     expect(helmHistory('my cluster', 'web', 'shop')).toBe(
       "helm history web -n shop --kube-context 'my cluster'",
+    )
+  })
+})
+
+describe('the command the Create dialog shows', () => {
+  it('names the server-side flags, because a plain apply is a different act', () => {
+    // A plain `kubectl apply` is a CLIENT-side apply: it merges through the
+    // last-applied-configuration annotation and records itself as
+    // `kubectl-client-side-apply`. Handed to an operator as "the equivalent"
+    // of what the dialog just did, it would produce a different result and no
+    // ownership conflict — a hint claiming an equivalence it does not have.
+    const command = applyServerSide('dev', 'shop')
+
+    expect(command).toContain('--server-side')
+    expect(command).toContain('--field-manager=podsteer')
+    expect(command).not.toContain('--force-conflicts')
+  })
+
+  it('adds --force-conflicts when the operator is overriding', () => {
+    expect(applyServerSide('dev', 'shop', true)).toContain('--force-conflicts')
+  })
+
+  it('keeps the context and namespace the rest of the hints use', () => {
+    expect(applyServerSide('dev', 'shop')).toBe(
+      'kubectl --context dev -n shop apply --server-side --field-manager=podsteer -f -',
     )
   })
 })
