@@ -39,6 +39,12 @@ func TestTheShippedTableIsUsable(t *testing.T) {
 // leaks back into the code. This is the mechanical check that keeps it true;
 // without it the rule survives only as long as everyone remembers it.
 //
+// TESTS ARE EXEMPT TOO, AND FOR A SHARPER REASON THAN COMMENTS: a fixture is
+// a real-world string or it is not a fixture. The version this package parses
+// really is "v1.32.7-eks-1234567", and a test asserting so has to write it
+// down. The rule is about provider-specific facts in LOGIC, and logic is what
+// this reads.
+//
 // COMMENTS ARE EXEMPT, AND THAT IS NOT A LOOPHOLE. This package legitimately
 // explains Kubernetes itself — that a managed distribution decorates its
 // version string, that `--event-ttl` is not configurable on the hosted ones —
@@ -60,18 +66,14 @@ func TestNoProviderIsNamedInGoSource(t *testing.T) {
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
-			continue
-		}
-		// This file names them, because it is the file that checks they are
-		// not named anywhere else.
-		if entry.Name() == "vendorcli_test.go" {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
 
-		body, err := os.ReadFile(filepath.Join(".", entry.Name()))
+		body, err := os.ReadFile(filepath.Join(".", name))
 		if err != nil {
-			t.Fatalf("reading %s: %v", entry.Name(), err)
+			t.Fatalf("reading %s: %v", name, err)
 		}
 		text := withoutComments(string(body))
 
@@ -86,7 +88,7 @@ func TestNoProviderIsNamedInGoSource(t *testing.T) {
 				// gets deleted rather than obeyed.
 				word := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(needle) + `\b`)
 				if word.MatchString(text) {
-					t.Errorf("%s names %q; every provider-specific fact belongs in vendorclis.json", entry.Name(), needle)
+					t.Errorf("%s names %q; every provider-specific fact belongs in vendorclis.json", name, needle)
 				}
 			}
 		}

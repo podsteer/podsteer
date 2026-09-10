@@ -77,6 +77,16 @@ export function Disconnect(clusterID: string): $CancellablePromise<void> {
 }
 
 /**
+ * Distributions returns every mark PodSteer can identify a cluster as.
+ * 
+ * READ ONCE AND CACHED BY THE CALLER. It touches no cluster and no file: the
+ * table is compiled into the binary.
+ */
+export function Distributions(): $CancellablePromise<$models.Distribution[] | null> {
+    return $Call.ByID(3426124194);
+}
+
+/**
  * ListClusters returns every cluster in the local kubeconfig.
  * 
  * This is the one call that works before anything is connected, so it is what

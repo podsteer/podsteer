@@ -18,6 +18,7 @@ import {
   Connect as bindConnect,
   Connections as bindConnections,
   Disconnect as bindDisconnect,
+  Distributions as bindDistributions,
   Ping as bindPing,
   ListClusters as bindListClusters,
   ListNamespaces as bindListNamespaces,
@@ -174,6 +175,7 @@ export type Cluster = wails.Cluster
 export type TextFile = wails.TextFile
 /** What adding a kubeconfig would change, or did. */
 export type KubeconfigMerge = wails.KubeconfigMerge
+export type Distribution = wails.Distribution
 export type VendorProvider = wails.VendorProvider
 export type VendorCluster = wails.VendorCluster
 export type VendorClusterList = wails.VendorClusterList
@@ -640,6 +642,18 @@ export function vendorKubeconfigFor(provider: string, selection: string): Promis
 /** Stops a listing that is still running. */
 export function vendorCancel(provider: string): Promise<void> {
   return call(() => bindVendorCancel(provider))
+}
+
+/**
+ * Every mark PodSteer can identify a cluster as, for resolving one remembered
+ * against a context on a previous run.
+ *
+ * The table is compiled into the binary and touches nothing, so this is read
+ * once and kept. It lives on the Go side so there is ONE table rather than two
+ * that drift — see app/domain/distributions.json.
+ */
+export function distributions(): Promise<Distribution[]> {
+  return call(() => bindDistributions()).then((rows) => rows ?? [])
 }
 
 /** Closes a cluster, for when its tab is closed. */

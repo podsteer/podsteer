@@ -47,6 +47,13 @@
   import { groupBgClass } from '$lib/groupColour'
   import { visibleClusters } from '$lib/clusterPins'
   import { preferences } from '$stores/preferences.svelte'
+  import { distributions } from '$lib/api/client'
+  import {
+    loadDistributionTable,
+    markFor,
+    rememberedMark,
+    type ClusterMark,
+  } from '$lib/clusterDistribution'
   import { workspace } from '$stores/workspace.svelte'
   import {
     Server,
@@ -96,6 +103,27 @@
     const clock = setInterval(() => (now = Date.now()), 1000)
     return () => clearInterval(clock)
   })
+
+  /**
+   * The label table, read once. See $lib/clusterDistribution.
+   */
+  let tableLoaded = $state(false)
+  $effect(() => {
+    void loadDistributionTable(distributions).then(() => (tableLoaded = true))
+  })
+
+  /**
+   * What was learned about a context on a previous run.
+   *
+   * The backend answers for a cluster it can identify NOW — from a version
+   * string when it is open, from an address when it is not — and this fills
+   * the gap for everything else. Reading `tableLoaded` is what redraws the
+   * list once the labels arrive.
+   */
+  function remembered(clusterId: string) {
+    void tableLoaded
+    return rememberedMark(preferences.rememberedDistribution(clusterId))
+  }
 
   /** The cluster currently being dragged, if any. */
   let draggingId = $state<string | null>(null)
@@ -322,6 +350,28 @@
   information, and letting the grid grow with the window turns three cards
   into three very wide cards with the same content strung across them.
 -->
+<!--
+  What a cluster turned out to be. Nothing at all when nothing identified it:
+  a hedge in that space — "Unknown", "Other" — reads as information.
+
+  Hosted and self-hosted are told apart by weight rather than by a second word:
+  a managed control plane gets a filled chip, one somebody here runs gets an
+  outline. It is the distinction being drawn, and it costs no width.
+-->
+{#snippet distributionMark(mark: ClusterMark | null)}
+  {#if mark}
+    <span
+      title={`${mark.label} — ${mark.evidence}`}
+      class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium
+             {mark.hosted
+        ? 'bg-surface-container-high text-on-surface-variant'
+        : 'border border-outline-variant/60 text-on-surface-variant/80'}"
+    >
+      {mark.label}
+    </span>
+  {/if}
+{/snippet}
+
 <div class="mx-auto w-full max-w-6xl px-8 py-10">
   <!-- Header -->
   <div class="mb-8 flex items-start justify-between gap-4">
@@ -633,6 +683,15 @@
                                     open
                                   </span>
                                 {/if}
+                                <!-- WHAT THIS CLUSTER IS: EKS, k3s, whichever.
+                                     The distinction a list of near-identical
+                                     context names least often carries and an
+                                     operator most often wants — which of these
+                                     is managed, and which is the one somebody
+                                     here runs. Absent entirely when nothing
+                                     identified it, because a hedge in that
+                                     space reads as information. -->
+                                {@render distributionMark(markFor(cluster, remembered))}
                                 {#if group.settings.environment}
                                   <span
                                     class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium

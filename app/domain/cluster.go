@@ -134,6 +134,7 @@ type Cluster struct {
 	isCurrent        bool
 	source           KubeconfigLocation
 	version          ServerVersion
+	distribution     Distribution
 }
 
 // NewCluster validates spec and returns the corresponding Cluster.
@@ -202,6 +203,40 @@ func (c Cluster) IsReachable() bool { return !c.version.IsZero() }
 func (c Cluster) WithVersion(version ServerVersion) Cluster {
 	c.version = version
 	return c
+}
+
+// Distribution reports what this cluster turned out to be, or the zero value
+// when nothing identified it. See distribution.go.
+func (c Cluster) Distribution() Distribution { return c.distribution }
+
+// WithDistribution returns a copy carrying a mark.
+//
+// A VALUE RATHER THAN A MUTATION, like WithVersion above and for the same
+// reason: a Cluster already handed to another goroutine must not change under
+// it.
+func (c Cluster) WithDistribution(distribution Distribution) Cluster {
+	c.distribution = distribution
+	return c
+}
+
+// Identify works out what this cluster is from what is known about it now.
+//
+// CALLED WHEREVER MORE BECOMES KNOWN, and safe to call repeatedly: the ranking
+// in IdentifyDistribution is fixed rather than last-write-wins, so a second
+// call with more evidence can only improve the answer. A call that identifies
+// nothing leaves whatever was there — a mark from the kubeconfig is better
+// than no mark, and a mark stored from a previous run is better still.
+func (c Cluster) Identify(nodeLabels map[string]string, providerID string) Cluster {
+	found := IdentifyDistribution(DistributionInput{
+		Host:       c.server.Host(),
+		GitVersion: c.version.GitVersion,
+		NodeLabels: nodeLabels,
+		ProviderID: providerID,
+	})
+	if found.IsZero() {
+		return c
+	}
+	return c.WithDistribution(found)
 }
 
 // IsZero reports whether the cluster is unset.

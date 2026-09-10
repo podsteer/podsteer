@@ -674,6 +674,33 @@ export interface Cluster {
     "platform": string;
 
     /**
+     * Distribution is what this cluster turned out to be — "EKS", "k3s" — or
+     * empty when nothing identified it. EMPTY IS A REAL ANSWER and must render
+     * as no mark rather than as "unknown": a guess here would be a label
+     * somebody trusts and nothing checked. See domain/distribution.go.
+     */
+    "distribution": string;
+
+    /**
+     * DistributionID is the stable key behind that label, for remembering the
+     * answer against this context between runs.
+     */
+    "distributionId": string;
+
+    /**
+     * DistributionHosted reports a managed control plane — somebody else runs
+     * it — which is the distinction an operator scanning a list of contexts
+     * most often wants.
+     */
+    "distributionHosted": boolean;
+
+    /**
+     * DistributionEvidence says WHY the mark is there, for its tooltip. An
+     * operator who disagrees with a label deserves to know what produced it.
+     */
+    "distributionEvidence": string;
+
+    /**
      * Source is the kubeconfig FILE this context was read from, as client-go
      * reports it. A path on this machine, never a file's contents, and empty
      * when the configuration did not come from a file.
@@ -1188,6 +1215,20 @@ export interface DiskSummary {
      * Filling counts nodes past the warning threshold.
      */
     "filling": number;
+}
+
+/**
+ * Distribution is one mark the table can produce, so the frontend can resolve
+ * an id it remembered against a context on a previous run.
+ */
+export interface Distribution {
+    "id": string;
+    "label": string;
+
+    /**
+     * Hosted reports a managed control plane — somebody else runs it.
+     */
+    "hosted": boolean;
 }
 
 /**

@@ -28,6 +28,7 @@ import { clusterActivity } from './activity.svelte'
 import { fleet } from './fleet.svelte'
 import { notifications } from './notifications.svelte'
 import { organisation } from './organisation.svelte'
+import { preferences } from './preferences.svelte'
 import {
   ClusterSession,
   RICH_KIND_IDS,
@@ -187,6 +188,14 @@ class Workspace {
     try {
       const cluster = await connect(clusterId)
       this.error = null
+
+      // WHAT IT TURNED OUT TO BE, KEPT. A connected cluster identifies itself
+      // from its version string, which is the strongest evidence there is and
+      // exists only while it is open. Remembering it against the context name
+      // is what makes the Home list right on the next launch, before anything
+      // is connected. Nothing is stored when nothing was identified — see
+      // preferences.rememberDistribution.
+      preferences.rememberDistribution(clusterId, cluster.distributionId)
 
       const session = this.#adopt(cluster)
       // Not focused when the picker asked for a connection rather than for a

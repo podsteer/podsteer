@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "distributions": [
+    {
+      "id": "gke",
+      "label": "GKE",
+      "hosted": true,
+      "versionFragments": ["-gke."],
+      "nodeLabels": ["cloud.google.com/gke-nodepool"],
+      "hostSuffixes": [".gke.goog"]
+    },
+    {
+      "id": "eks",
+      "label": "EKS",
+      "hosted": true,
+      "versionFragments": ["-eks-"],
+      "nodeLabels": ["eks.amazonaws.com/nodegroup"],
+      "hostSuffixes": [".eks.amazonaws.com"]
+    },
+    {
+      "id": "aks",
+      "label": "AKS",
+      "hosted": true,
+      "versionFragments": [],
+      "nodeLabels": ["kubernetes.azure.com/cluster"],
+      "hostSuffixes": [".azmk8s.io"]
+    },
+    {
+      "id": "doks",
+      "label": "DigitalOcean",
+      "hosted": true,
+      "versionFragments": ["-do."],
+      "nodeLabels": ["doks.digitalocean.com/node-pool"],
+      "hostSuffixes": [".k8s.ondigitalocean.com"]
+    },
+    {
+      "id": "openshift",
+      "label": "OpenShift",
+      "hosted": false,
+      "versionFragments": ["+openshift"],
+      "nodeLabels": ["node.openshift.io/os_id"],
+      "hostSuffixes": []
+    },
+    {
+      "id": "k3s",
+      "label": "k3s",
+      "hosted": false,
+      "versionFragments": ["+k3s"],
+      "nodeLabels": ["k3s.io/hostname"],
+      "hostSuffixes": []
+    },
+    {
+      "id": "rke2",
+      "label": "RKE2",
+      "hosted": false,
+      "versionFragments": ["+rke2"],
+      "nodeLabels": ["rke2.io/hostname"],
+      "hostSuffixes": []
+    },
+    {
+      "id": "microk8s",
+      "label": "MicroK8s",
+      "hosted": false,
+      "versionFragments": [],
+      "nodeLabels": ["microk8s.io/cluster"],
+      "hostSuffixes": []
+    },
+    {
+      "id": "kind",
+      "label": "kind",
+      "hosted": false,
+      "versionFragments": [],
+      "nodeLabels": [],
+      "providerPrefixes": ["kind://"],
+      "hostSuffixes": []
+    },
+    {
+      "id": "minikube",
+      "label": "minikube",
+      "hosted": false,
+      "versionFragments": [],
+      "nodeLabels": ["minikube.k8s.io/primary"],
+      "hostSuffixes": []
+    },
+    {
+      "id": "talos",
+      "label": "Talos",
+      "hosted": false,
+      "versionFragments": [],
+      "nodeLabels": ["node.cloudprovider.kubernetes.io/platform"],
+      "hostSuffixes": []
+    }
+  ],
+  "infrastructure": [
+    { "id": "aws", "label": "AWS", "providerPrefixes": ["aws://"] },
+    { "id": "azure", "label": "Azure", "providerPrefixes": ["azure://"] },
+    { "id": "gcp", "label": "Google Cloud", "providerPrefixes": ["gce://"] },
+    { "id": "digitalocean", "label": "DigitalOcean", "providerPrefixes": ["digitalocean://"] },
+    { "id": "hetzner", "label": "Hetzner", "providerPrefixes": ["hcloud://"] },
+    { "id": "linode", "label": "Akamai", "providerPrefixes": ["linode://"] },
+    { "id": "scaleway", "label": "Scaleway", "providerPrefixes": ["scaleway://"] },
+    { "id": "openstack", "label": "OpenStack", "providerPrefixes": ["openstack://"] },
+    { "id": "vsphere", "label": "vSphere", "providerPrefixes": ["vsphere://"] },
+    { "id": "equinix", "label": "Equinix Metal", "providerPrefixes": ["equinixmetal://", "packet://"] }
+  ]
+}

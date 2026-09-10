@@ -78,6 +78,7 @@ export type {
     Credit,
     CustomExpression,
     DiskSummary,
+    Distribution,
     DrainFailure,
     DrainPlanDTO,
     DrainReportDTO,
