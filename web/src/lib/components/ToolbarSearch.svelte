@@ -139,7 +139,7 @@
     data-1p-ignore
     data-lpignore="true"
     style:border-color={invalid ? 'var(--color-error)' : undefined}
-    class="field h-7 w-full min-w-0 py-0 pr-16 pl-7 text-body-small"
+    class="field h-7 w-full min-w-0 py-0 pr-16 pl-7 text-body-medium"
   />
 
   {#if value}

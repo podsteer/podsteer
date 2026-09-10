@@ -16,6 +16,7 @@
   import { toApiError } from '$lib/api/errors'
   import { AlertTriangle, Activity } from '@lucide/svelte'
   import { timeline } from '$stores/timeline.svelte'
+  import StatusIndicator from './StatusIndicator.svelte'
 
   interface Props {
     clusterId: string
@@ -88,12 +89,19 @@
     <ul class="divide-y divide-outline-variant/40">
       {#each events as event (event.namespace + '/' + event.name)}
         <li class="flex gap-3 px-4 py-3">
-          <span
-            class="mt-1.5 size-2 shrink-0 rounded-full {event.isWarning
-              ? 'bg-warning'
-              : 'bg-outline-variant'}"
-            aria-hidden="true"
-          ></span>
+          <!--
+            WHETHER THIS IS A WARNING WAS A COLOUR AND NOTHING ELSE. The dot
+            carried aria-hidden, and no other part of the row said "Warning" —
+            so a red/green colour-blind operator and a screen reader both got
+            a list in which every event looked alike. The events PAGE has done
+            this correctly all along, one directory away, by passing the
+            event's own type as the indicator's label; this is that.
+          -->
+          <StatusIndicator
+            class="mt-1.5 shrink-0"
+            tone={event.isWarning ? 'warning' : 'neutral'}
+            label={event.type}
+          />
 
           <div class="min-w-0 flex-1">
             <div class="flex items-baseline justify-between gap-3">

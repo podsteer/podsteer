@@ -690,7 +690,7 @@
       {#if (overview.unavailable ?? []).length > 0}
         <p
           class="flex items-center gap-2 rounded-sm border border-outline-variant/40 bg-surface-container-low
-                 px-3 py-2 text-body-small text-on-surface-variant"
+                 px-3 py-2 text-body-medium text-on-surface-variant"
         >
           <CircleSlash class="size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
           Assessed without {(overview.unavailable ?? []).join(', ')} — those figures are missing rather than zero.
@@ -713,7 +713,7 @@
       {#if metricsNotice}
         <p
           class="flex items-start gap-2 rounded-sm border border-outline-variant/30 bg-surface-container-low
-                 px-3 py-2 text-body-small text-on-surface-variant"
+                 px-3 py-2 text-body-medium text-on-surface-variant"
         >
           <Gauge class="mt-0.5 size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
           <span>{metricsNotice}</span>
@@ -1271,7 +1271,7 @@
                     >
                       {load.name}
                     </button>
-                    <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant/70">
+                    <span class="shrink-0 text-body-medium tabular-nums text-on-surface-variant/70">
                       {load.pods} pod{load.pods === 1 ? '' : 's'}{load.notReady > 0
                         ? `, ${load.notReady} down`
                         : ''}
@@ -1359,7 +1359,7 @@
                     {/if}
 
                     {#if hotspot.reason}
-                      <span class="shrink-0 truncate text-body-small text-on-surface-variant/70">
+                      <span class="shrink-0 truncate text-body-medium text-on-surface-variant/70">
                         {hotspot.reason}
                       </span>
                     {/if}

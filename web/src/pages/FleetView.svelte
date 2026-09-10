@@ -744,7 +744,7 @@
             </td>
             {#if isVisible('namespace')}
               <td class="truncate px-3 py-1.5">
-                <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-small text-on-surface-variant">
+                <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-medium text-on-surface-variant">
                   {pod.namespace}
                 </span>
               </td>
@@ -866,7 +866,7 @@
             </td>
             {#if isVisible('namespace')}
               <td class="truncate px-3 py-1.5">
-                <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-small text-on-surface-variant">
+                <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-medium text-on-surface-variant">
                   {workload.namespace}
                 </span>
               </td>

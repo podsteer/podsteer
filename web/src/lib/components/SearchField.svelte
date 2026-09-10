@@ -149,9 +149,9 @@
       {#if isMac}
         <Command class="size-2.5" strokeWidth={2} />
       {:else}
-        <span class="text-[10px]">Ctrl</span>
+        <span class="text-label-small">Ctrl</span>
       {/if}
-      <span class="text-[10px]">K</span>
+      <span class="text-label-small">K</span>
     </span>
   {/if}
 </label>

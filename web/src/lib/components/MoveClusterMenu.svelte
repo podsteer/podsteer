@@ -179,14 +179,22 @@
       {#each destinations as project (project.id)}
         <!-- A heading, not an option: a project is only ever chosen by way of
              one of its groups, so making it clickable would offer a
-             destination that does not exist. -->
+             destination that does not exist.
+             AND THEREFORE NOT A CHILD OF THE MENU EITHER. A menu exposes only
+             its items, so this heading was read by nothing — leaving two
+             groups both called "prod", in different projects, announced
+             identically. Each project is its own labelled group inside the
+             menu, which is the same lesson ColumnMenu records for a list of
+             checkboxes. -->
         <p
-          class="truncate px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider
+          id="move-project-{project.id}"
+          class="truncate px-3 pb-0.5 pt-2 text-label-small font-semibold uppercase tracking-wider
                  text-on-surface-variant/60"
         >
           {project.name}
         </p>
 
+        <div role="group" aria-labelledby="move-project-{project.id}">
         {#each project.groups as group (group.id)}
           {@const current = placement.project === project.id && placement.group === group.id}
           <button
@@ -208,6 +216,7 @@
             <span class="truncate">{group.name}</span>
           </button>
         {/each}
+        </div>
       {/each}
     </div>
   {/if}

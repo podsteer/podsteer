@@ -1355,7 +1355,7 @@
     bind:this={logContainer}
     onscroll={onScroll}
     data-selectable
-    class="relative h-full overflow-auto bg-surface-container-lowest p-3 font-mono text-xs leading-relaxed"
+    class="relative h-full overflow-auto bg-surface-container-lowest p-3 font-mono text-body-small leading-relaxed"
   >
     {#if logs.length === 0}
       <div class="flex h-full items-center justify-center text-on-surface-variant">
@@ -1456,8 +1456,12 @@
             {/if}
 
             {#if memberCount}
+              <!-- aria-expanded, like every other disclosure here: without
+                   it the state is carried by the label text and a rotated
+                   chevron, and the chevron is decorative. -->
               <button
                 type="button"
+                aria-expanded={expandedGroups.has(log.seq)}
                 class="ml-2 inline-flex items-center gap-0.5 rounded border border-outline-variant/50
                        px-1.5 py-px align-middle text-label-small text-on-surface-variant
                        hover:bg-surface-container hover:text-on-surface"
@@ -1494,7 +1498,7 @@
   </div>
 
   <!-- Status bar -->
-  <div class="flex items-center justify-between border-t border-outline-variant bg-surface-container-low px-3 py-1 text-xs text-on-surface-variant">
+  <div class="flex items-center justify-between border-t border-outline-variant bg-surface-container-low px-3 py-1 text-body-small text-on-surface-variant">
     <!-- A flex row, so the dot and the words are set apart by a real gap
          rather than by whatever whitespace the markup happened to leave. -->
     <span class="flex min-w-0 items-center gap-2">

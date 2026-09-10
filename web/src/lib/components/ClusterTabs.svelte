@@ -161,8 +161,16 @@
       {@const active = session.cluster.id === workspace.activeClusterId}
       {@const placement = organisation.placementOf(session.cluster.id)}
       {@const settings = organisation.settingsFor(placement.project, placement.group)}
+      {@const group = organisation.groupNameOf(session.cluster.id)}
 
       <div class="group relative flex items-center" role="presentation">
+        <!-- THE GROUP IS IN THE ACCESSIBLE NAME BECAUSE ITS DOT IS NOT
+             READABLE. The coloured dot below stands for the group, is
+             aria-hidden, and had no textual equivalent anywhere on the tab
+             bar — so which group a tab belongs to was recoverable only by
+             opening the picker. The environment word was already carried
+             there for exactly this reason, which is what made the omission
+             visible. -->
         <button
           type="button"
           onclick={() => workspace.focus(session.cluster.id)}
@@ -171,9 +179,11 @@
           )}{settings.environment ? ` — ${settings.environment}` : ''}{settings.readOnly
             ? ' — read-only'
             : ''}"
-          aria-label="{session.cluster.id}, {healthWord(session)}{settings.environment
-            ? `, ${settings.environment}`
-            : ''}{settings.readOnly ? ', read-only' : ''}"
+          aria-label="{session.cluster.id}, {healthWord(session)}{group
+            ? `, ${group}`
+            : ''}{settings.environment ? `, ${settings.environment}` : ''}{settings.readOnly
+            ? ', read-only'
+            : ''}"
           aria-current={active ? 'page' : undefined}
           class="no-drag flex h-full max-w-52 items-center gap-2 pl-3 pr-7
                  text-label-medium transition-all duration-150 ease-standard
@@ -216,7 +226,7 @@
                operator must be able to read without opening the picker. -->
           {#if settings.environment === 'production'}
             <span
-              class="shrink-0 rounded-full bg-error/15 px-1 py-px text-[9px] font-semibold
+              class="shrink-0 rounded-full bg-error/15 px-1 py-px text-label-small font-semibold
                      tracking-wide text-error uppercase"
             >
               prod

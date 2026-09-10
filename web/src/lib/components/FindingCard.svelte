@@ -172,8 +172,13 @@
 
       <p class="mt-0.5 text-body-medium text-on-surface-variant">{finding.summary}</p>
 
+      <!-- THE ADVICE IS THE PRODUCT. Every other client in this category
+           shows the fields and leaves the conclusion to the reader; this is
+           the conclusion, and it was set one step SMALLER than the summary
+           above it — the caption size, which this application reserves for a
+           line under a figure. -->
       {#if finding.advice}
-        <p class="mt-1.5 text-body-small leading-relaxed text-on-surface-variant/75">
+        <p class="mt-1.5 text-body-medium leading-relaxed text-on-surface-variant/75">
           {finding.advice}
         </p>
       {/if}
@@ -251,13 +256,13 @@
                    duration-100 enabled:cursor-pointer enabled:hover:bg-surface-container-high
                    disabled:cursor-default {until > 0 ? 'opacity-55' : ''}"
           >
-            <span class="min-w-0 flex-1 truncate text-body-small text-on-surface" title={subject.name}>
+            <span class="min-w-0 flex-1 truncate text-body-medium text-on-surface" title={subject.name}>
               {#if subject.namespace}<span class="text-on-surface-variant/60">{subject.namespace}/</span
                 >{/if}{subject.name}
             </span>
             {#if subject.detail}
               <span
-                class="max-w-[55%] shrink-0 truncate text-body-small text-on-surface-variant/70"
+                class="max-w-[55%] shrink-0 truncate text-body-medium text-on-surface-variant/70"
                 title={subject.detail}
               >
                 {subject.detail}
