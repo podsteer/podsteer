@@ -56,6 +56,13 @@ const (
 	// because the cluster was never contacted and offering Retry would repeat
 	// a failure nothing about the cluster can fix.
 	CodeCredentialPlugin ErrorCode = "credential_plugin_missing"
+	// CodeShellMissing means the container has no shell, so a directory
+	// cannot be listed in it. Its own code rather than internal, for the
+	// reason CodeTarMissing has one: nothing is wrong.
+	CodeShellMissing ErrorCode = "shell_missing"
+	// CodeListingUnreadable means the container printed something that is not
+	// a directory listing.
+	CodeListingUnreadable ErrorCode = "listing_unreadable"
 	// CodeVendorCLIMissing means a cloud CLI PodSteer offers to drive is not
 	// on PATH. Its own code rather than internal: nothing failed, a program is
 	// absent, and Retry cannot help — the same shape as CodeCredentialPlugin.
@@ -380,6 +387,15 @@ func classifyError(err error) (ErrorCode, string) {
 	// BEFORE THE TRANSPORT CASES TOO: a runtime that cannot start tar
 	// answers the exec with an internal error, which classify wraps as
 	// unreachable — and the cluster was reached perfectly well.
+	// BESIDE ErrTarMissing AND BEFORE THE TRANSPORT CASES, for the same
+	// reason: the exec reached the container perfectly well and the image
+	// simply has no shell in it.
+	case errors.Is(err, ports.ErrShellMissing):
+		return CodeShellMissing, "This container has no shell, so there is nothing in it to list a directory with. That is ordinary for a distroless or scratch image, and says nothing about the cluster or your credentials. Copying still works if the image has tar — type a path into Download."
+
+	case errors.Is(err, domain.ErrListingUnreadable):
+		return CodeListingUnreadable, "The container printed something PodSteer could not read as a directory listing. Nothing was assumed from it."
+
 	case errors.Is(err, ports.ErrTarMissing):
 		return CodeTarMissing, "The container has no tar binary, and copying files runs tar inside it — the same way kubectl cp does. Add tar to the image, or copy through a container that has it."
 

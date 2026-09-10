@@ -1191,6 +1191,68 @@ export interface CustomExpression {
 }
 
 /**
+ * Cancel stops a running transfer. Whatever had already landed stays; the
+ * "done" event that follows says it was cancelled. Unknown ids are a no-op,
+ * so cancelling twice is safe.
+ * DirectoryEntry is one row of a container's directory.
+ * 
+ * Size and SizeKnown travel separately, and the interface must render the
+ * absence as a dash rather than a nought: an image with no `stat` has no size
+ * to report, and a nought there reads as an empty file.
+ */
+export interface DirectoryEntry {
+    "name": string;
+
+    /**
+     * Kind is "file", "dir", "symlink" or "other".
+     */
+    "kind": string;
+    "size": number;
+    "sizeKnown": boolean;
+    "modifiedUnix": number;
+    "timeKnown": boolean;
+    "linkTarget": string;
+
+    /**
+     * ResolvesToDir says following this symlink reaches a directory, which is
+     * what lets the interface OFFER to follow it. Following is always the
+     * operator's own click: a link can leave the tree they think they are in.
+     */
+    "resolvesToDir": boolean;
+
+    /**
+     * NameReadable is false when the name is not valid text. Such a row is
+     * shown and must not be acted on — JSON would replace the bytes and the
+     * download would fetch a different file.
+     */
+    "nameReadable": boolean;
+}
+
+/**
+ * DirectoryListing is one directory as the container reported it.
+ */
+export interface DirectoryListing {
+    "path": string;
+    "entries": DirectoryEntry[] | null;
+
+    /**
+     * Truncated says the listing STOPPED rather than ended, and Cap is where.
+     */
+    "truncated": boolean;
+    "cap": number;
+
+    /**
+     * SizeSource names what produced the sizes, or "" when nothing did.
+     */
+    "sizeSource": string;
+
+    /**
+     * Notes name what was not listed and why. Never a silent drop.
+     */
+    "notes": string[] | null;
+}
+
+/**
  * DiskSummary is what the kubelets said about node filesystems.
  */
 export interface DiskSummary {

@@ -86,6 +86,16 @@ var (
 	// absent. PodSteer never obtains one — the local shell's rule, "never
 	// installed, only found" — so the answer is a sentence naming what was
 	// looked for, not an offer to fetch it.
+	// ErrShellMissing means the container has no shell to list a directory
+	// with.
+	//
+	// THE THIRD SIBLING OF ErrTarMissing, and the same argument a third time:
+	// a distroless or scratch image carries no /bin/sh, that is the ordinary
+	// shape of such an image rather than a fault in the cluster, the
+	// credentials or PodSteer, and the answer is a sentence saying so beside
+	// the control that still works. Copying a file needs only tar.
+	ErrShellMissing = errors.New("the container has no shell")
+
 	ErrVendorCLIMissing = errors.New("that cloud CLI is not on PATH")
 
 	// ErrVendorCLIDeclined means the CLI ran and would not answer: not signed

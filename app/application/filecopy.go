@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 
@@ -27,6 +28,71 @@ var errFileCopyUnavailable = errors.New("file copy is not available: no archive 
 // errTransferStopped is what this side of the pipe is closed with once the
 // other side has finished or failed, so a goroutine still moving bytes sees
 // a distinctive error rather than a generic closed pipe — and so
+// ListDirectory lists one directory inside a container.
+//
+// GUARDED BY READ-ONLY, AND THE DOWNLOAD BESIDE IT IS NOT. That looks
+// inconsistent and is the deliberate reading of what the mark means: the
+// guard tracks whether an ARBITRARY SHELL RUNS, not whether bytes move. A
+// download is `tar cf -`, a fixed argv this application composed; a listing
+// is `sh -c`, which is the same subresource a terminal uses and appears in
+// the cluster's audit log as one. An operator who marked a cluster read-only
+// did not mean "except to run a shell in the containers" — the same sentence
+// ProbeFromPod's guard is written with, and for the same act.
+//
+// The visible consequence is accepted rather than hidden: on a read-only
+// cluster a path can be downloaded but not browsed to, so the interface
+// disables Browse with the reason rather than failing it on a press.
+func (s *ManagementService) ListDirectory(
+	ctx context.Context,
+	id domain.ClusterID,
+	namespace domain.NamespaceName,
+	podName, containerName, remoteDir string,
+) (domain.DirectoryListing, error) {
+	if err := s.refuseIfReadOnly(id); err != nil {
+		return domain.DirectoryListing{}, err
+	}
+
+	// Vetted before an exec is opened, so a bad path costs no round trip —
+	// the rule DownloadFromPod follows above.
+	dir, err := domain.CleanListPath(remoteDir)
+	if err != nil {
+		return domain.DirectoryListing{}, fmt.Errorf("listing a directory: %w", err)
+	}
+
+	listing, err := s.management.ListDirectory(ctx, id, namespace, podName, containerName, dir)
+	if err != nil {
+		return domain.DirectoryListing{}, err
+	}
+
+	s.auditListing(ctx, id, namespace, podName, containerName, listing)
+	return listing, nil
+}
+
+// auditListing records that a directory was read, and what it was NOT.
+//
+// THE PATH AND THE COUNT, NEVER A NAME. The path is what auditTransfer
+// already logs for a copy, so it discloses nothing new; the names inside a
+// container are object-adjacent data that this application does not write
+// down — not here, not in history, not in the timeline, and not in the
+// settings file. A count and a truncation flag are enough to answer "what did
+// PodSteer do", which is what an audit line is for.
+func (s *ManagementService) auditListing(
+	ctx context.Context,
+	id domain.ClusterID,
+	namespace domain.NamespaceName,
+	podName, containerName string,
+	listing domain.DirectoryListing,
+) {
+	s.logger.InfoContext(ctx, "container directory listed",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.String("pod", podName),
+		slog.String("container", containerName),
+		slog.String("path", listing.Path),
+		slog.Int("entries", len(listing.Entries)),
+		slog.Bool("truncated", listing.Truncated))
+}
+
 // transferOutcome can tell a failure from its consequence.
 var errTransferStopped = errors.New("transfer stopped")
 

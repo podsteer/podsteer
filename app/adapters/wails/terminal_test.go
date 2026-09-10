@@ -224,6 +224,10 @@ func (s *stubLocalShellPort) starts() []domain.LocalShellSpec {
 	defer s.mu.Unlock()
 	return append([]domain.LocalShellSpec(nil), s.started...)
 }
+func (stubManagementPort) ListDirectory(context.Context, domain.ClusterID, domain.NamespaceName, string, string, string) (domain.DirectoryListing, error) {
+	return domain.DirectoryListing{}, nil
+}
+
 func (stubManagementPort) CopyFromPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, string, io.Writer) error {
 	return nil
 }

@@ -208,6 +208,91 @@ func (f *FileCopyAPI) StartUpload(clusterID, namespace, podName, containerName, 
 // Cancel stops a running transfer. Whatever had already landed stays; the
 // "done" event that follows says it was cancelled. Unknown ids are a no-op,
 // so cancelling twice is safe.
+// DirectoryEntry is one row of a container's directory.
+//
+// Size and SizeKnown travel separately, and the interface must render the
+// absence as a dash rather than a nought: an image with no `stat` has no size
+// to report, and a nought there reads as an empty file.
+type DirectoryEntry struct {
+	Name string `json:"name"`
+	// Kind is "file", "dir", "symlink" or "other".
+	Kind         string `json:"kind"`
+	Size         int64  `json:"size"`
+	SizeKnown    bool   `json:"sizeKnown"`
+	ModifiedUnix int64  `json:"modifiedUnix"`
+	TimeKnown    bool   `json:"timeKnown"`
+	LinkTarget   string `json:"linkTarget"`
+	// ResolvesToDir says following this symlink reaches a directory, which is
+	// what lets the interface OFFER to follow it. Following is always the
+	// operator's own click: a link can leave the tree they think they are in.
+	ResolvesToDir bool `json:"resolvesToDir"`
+	// NameReadable is false when the name is not valid text. Such a row is
+	// shown and must not be acted on — JSON would replace the bytes and the
+	// download would fetch a different file.
+	NameReadable bool `json:"nameReadable"`
+}
+
+// DirectoryListing is one directory as the container reported it.
+type DirectoryListing struct {
+	Path    string           `json:"path"`
+	Entries []DirectoryEntry `json:"entries"`
+	// Truncated says the listing STOPPED rather than ended, and Cap is where.
+	Truncated bool `json:"truncated"`
+	Cap       int  `json:"cap"`
+	// SizeSource names what produced the sizes, or "" when nothing did.
+	SizeSource string `json:"sizeSource"`
+	// Notes name what was not listed and why. Never a silent drop.
+	Notes []string `json:"notes"`
+}
+
+// ListDirectory lists one directory inside a container.
+//
+// A READ THAT RUNS A SHELL, which is why it is refused on a cluster marked
+// read-only while the download beside it is not — see
+// ManagementService.ListDirectory for that reasoning.
+func (f *FileCopyAPI) ListDirectory(clusterID, namespace, podName, containerName, remoteDir string) (DirectoryListing, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return DirectoryListing{}, apiError(f.logger, "ListDirectory", err)
+	}
+	space, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return DirectoryListing{}, apiError(f.logger, "ListDirectory", err)
+	}
+
+	listing, err := f.management.ListDirectory(ctx, id, space, podName, containerName, remoteDir)
+	if err != nil {
+		return DirectoryListing{}, apiError(f.logger, "ListDirectory", err)
+	}
+
+	entries := make([]DirectoryEntry, 0, len(listing.Entries))
+	for _, entry := range listing.Entries {
+		entries = append(entries, DirectoryEntry{
+			Name:          entry.Name,
+			Kind:          string(entry.Kind),
+			Size:          entry.Size,
+			SizeKnown:     entry.SizeKnown,
+			ModifiedUnix:  entry.ModifiedUnix,
+			TimeKnown:     entry.TimeKnown,
+			LinkTarget:    entry.LinkTarget,
+			ResolvesToDir: entry.ResolvesToDir,
+			NameReadable:  entry.NameReadable,
+		})
+	}
+
+	return DirectoryListing{
+		Path:       listing.Path,
+		Entries:    entries,
+		Truncated:  listing.Truncated,
+		Cap:        listing.Cap,
+		SizeSource: listing.SizeSource,
+		Notes:      listing.Notes,
+	}, nil
+}
+
 func (f *FileCopyAPI) Cancel(transferID string) error {
 	f.mu.Lock()
 	cancel, ok := f.transfers[transferID]
