@@ -183,3 +183,71 @@ data:
     expect(stripForDuplicate(broken)).toBe(broken)
   })
 })
+
+describe('a duplicate of a GitOps-managed object', () => {
+  /** An Argo CD-managed Deployment, as the cluster hands it over. */
+  const MANAGED = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    argocd.argoproj.io/tracking-id: auth-service:apps/Deployment:development/auth-service
+    deployment.kubernetes.io/revision: "48"
+  labels:
+    app.kubernetes.io/instance: parlitrack-platform
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/name: auth-service
+  name: auth-service
+  namespace: development
+spec:
+  replicas: 2
+`
+
+  it('does not carry the controller’s ownership marks onto the copy', () => {
+    // THE DANGEROUS ONE. Argo CD decides what it owns from these marks. A
+    // resource carrying them that is not in the Application's manifests is an
+    // extra — and an Application with automated pruning DELETES it. So
+    // duplicating a managed workload produced a copy the controller might
+    // quietly remove.
+    const stripped = stripForDuplicate(MANAGED)
+
+    expect(stripped).not.toContain('argocd.argoproj.io/tracking-id')
+    expect(stripped).not.toContain('managed-by: argocd')
+  })
+
+  it('keeps the labels that are the operator’s own', () => {
+    // app.kubernetes.io/instance names a parent application and has uses of
+    // its own — gitops.ts refuses to read it as an ownership signal for that
+    // reason, and stripping a label somebody meant to keep is its own kind of
+    // wrong.
+    const stripped = stripForDuplicate(MANAGED)
+
+    expect(stripped).toContain('app.kubernetes.io/instance: parlitrack-platform')
+    expect(stripped).toContain('app.kubernetes.io/name: auth-service')
+  })
+
+  it('keeps managed-by when it names something that is not a reconciler', () => {
+    // The key is shared. `managed-by: Helm` on a copy is a fact about how the
+    // original was installed and worth keeping; `managed-by: argocd` is a
+    // claim about a controller that has never seen the copy.
+    const helm = MANAGED.replace('managed-by: argocd', 'managed-by: Helm')
+
+    expect(stripForDuplicate(helm)).toContain('managed-by: Helm')
+  })
+
+  it('strips Flux’s marks too', () => {
+    const flux = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: apps
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+    app.kubernetes.io/name: auth-service
+  name: auth-service
+`
+    const stripped = stripForDuplicate(flux)
+
+    expect(stripped).not.toContain('kustomize.toolkit.fluxcd.io/name')
+    expect(stripped).not.toContain('kustomize.toolkit.fluxcd.io/namespace')
+    expect(stripped).toContain('app.kubernetes.io/name: auth-service')
+  })
+})

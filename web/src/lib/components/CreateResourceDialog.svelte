@@ -139,7 +139,15 @@
   /** The kubectl equivalent of Apply — same reasoning as DetailDrawer's own
       `applyCommand`: what PodSteer sends is the manifest itself, so the only
       thing worth showing is the invocation that would read it from stdin. */
-  const applyCommand = $derived(applyServerSide(clusterId, namespace, conflicts.length > 0))
+  // WHAT THE APPLY BUTTON SENDS, WHICH NEVER FORCES. This carried
+  // --force-conflicts as soon as a conflict existed — before the operator had
+  // chosen anything — so the hint beside Apply described a command Apply does
+  // not send. The forced one belongs beside the button that forces, and is
+  // rendered there.
+  const applyCommand = $derived(applyServerSide(clusterId, namespace, false))
+
+  /** What Override sends, shown beside Override. */
+  const overrideCommand = $derived(applyServerSide(clusterId, namespace, true))
 
   /**
    * Where the empty `name: ""` sits in a freshly seeded document, as a
@@ -400,7 +408,7 @@
             </label>
           {/if}
 
-          <div>
+          <div class="flex flex-col gap-2">
             <Button
               variant="outlined"
               disabled={isReadOnly || submitting || !overrideAllowed}
@@ -408,6 +416,7 @@
             >
               {revertsAnyway ? 'Override anyway' : 'Take ownership'}
             </Button>
+            <KubectlHint command={overrideCommand} />
           </div>
         </div>
       {/if}
