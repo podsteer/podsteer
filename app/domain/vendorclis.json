@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "eks",
+      "label": "Amazon EKS",
+      "binary": { "default": "aws" },
+      "env": { "AWS_PAGER": "" },
+      "list": {
+        "args": ["eks", "list-clusters", "--output", "json"],
+        "items": "clusters",
+        "fields": { "name": ["$self"] }
+      },
+      "add": {
+        "args": ["eks", "update-kubeconfig", "--name", "{name}"],
+        "target": { "kind": "flag", "name": "--kubeconfig" }
+      },
+      "signInHint": "Sign in the way you normally do for this account — often `aws sso login`.",
+      "declinedHeadings": ["ExpiredToken", "credentials", "sso session"]
+    },
+    {
+      "id": "aks",
+      "label": "Azure AKS",
+      "binary": { "default": "az", "windows": "az.cmd" },
+      "env": { "AZURE_CORE_ONLY_SHOW_ERRORS": "true", "AZURE_CORE_NO_COLOR": "true" },
+      "list": {
+        "args": ["aks", "list", "--output", "json"],
+        "items": "",
+        "fields": {
+          "name": ["name"],
+          "params.resourceGroup": ["resourceGroup"],
+          "params.location": ["location"]
+        }
+      },
+      "add": {
+        "args": [
+          "aks",
+          "get-credentials",
+          "--name",
+          "{name}",
+          "--resource-group",
+          "{params.resourceGroup}",
+          "--overwrite-existing"
+        ],
+        "target": { "kind": "flag", "name": "--file" }
+      },
+      "signInHint": "Sign in the way you normally do — usually `az login`.",
+      "declinedHeadings": ["Please run 'az login'", "AADSTS", "not logged in"]
+    }
+  ]
+}
