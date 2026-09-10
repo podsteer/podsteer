@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/podsteer/podsteer/app/domain"
@@ -323,8 +324,7 @@ func (a *Adapter) ListEvents(ctx context.Context, id domain.ClusterID, namespace
 
 	// A busy cluster holds tens of thousands of events and they expire after
 	// an hour anyway. Capping the request keeps a namespace-wide event view
-	// from pulling megabytes the operator will never scroll through; the
-	// service sorts warnings to the top so the cap does not hide them.
+	// from pulling megabytes the operator will never scroll through.
 	list, err := client.CoreV1().Events(namespace.String()).List(ctx, metav1.ListOptions{
 		Limit: eventListLimit,
 	})
@@ -333,6 +333,7 @@ func (a *Adapter) ListEvents(ctx context.Context, id domain.ClusterID, namespace
 	}
 
 	events := make([]domain.Event, 0, len(list.Items))
+	seen := make(map[types.UID]bool, len(list.Items))
 	for i := range list.Items {
 		event, err := mapEvent(id, &list.Items[i], projection)
 		if err != nil {
@@ -340,6 +341,49 @@ func (a *Adapter) ListEvents(ctx context.Context, id domain.ClusterID, namespace
 				slog.String("cluster", id.String()),
 				slog.String("name", list.Items[i].Name),
 				slog.String("error", err.Error()))
+			continue
+		}
+		seen[list.Items[i].UID] = true
+		events = append(events, event)
+	}
+
+	// THE CAP CAN HIDE A WARNING, AND THIS IS WHY THAT MATTERS. A limited
+	// list is paged in etcd KEY order — namespace and name — not by time and
+	// not by type, so the thousand the server returns is an arbitrary
+	// thousand. The comment here used to say the service "sorts warnings to
+	// the top so the cap does not hide them"; that sort runs on whatever
+	// arrived, so a Warning whose key sorts after the cut was simply absent —
+	// and the assessment's event findings are computed from this list. A
+	// cluster busy enough to hold a thousand events could be told it had no
+	// problems while warnings existed.
+	//
+	// So when the read was cut short, ask again for the warnings alone. One
+	// extra list, only on a cluster that exceeded the cap, and the findings
+	// then see every warning up to the same bound.
+	if list.Continue == "" {
+		return events, nil
+	}
+
+	warnings, err := client.CoreV1().Events(namespace.String()).List(ctx, metav1.ListOptions{
+		Limit:         eventListLimit,
+		FieldSelector: "type=Warning",
+	})
+	if err != nil {
+		// The first list succeeded, so this is a degraded answer rather than
+		// a failed one: return what was read rather than losing it.
+		a.logger.WarnContext(ctx, "event list was capped and the warning re-read failed",
+			slog.String("cluster", id.String()),
+			slog.String("namespace", namespace.String()),
+			slog.String("error", err.Error()))
+		return events, nil
+	}
+
+	for i := range warnings.Items {
+		if seen[warnings.Items[i].UID] {
+			continue
+		}
+		event, err := mapEvent(id, &warnings.Items[i], projection)
+		if err != nil {
 			continue
 		}
 		events = append(events, event)
