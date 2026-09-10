@@ -48,6 +48,16 @@
     workingDir?: string
     /** Set when this cluster is marked read-only, with the reason. */
     readOnlyReason?: string | null
+    /**
+     * Called with the id of a download this dialog started.
+     *
+     * THE DIALOG DOES NOT WATCH ITS OWN TRANSFER, and must not: the progress
+     * and done events are one stream for the whole application, the pane
+     * behind this one already renders them, and a second renderer would be a
+     * second state machine free to disagree with the first about whether a
+     * copy finished. So it hands the id back and closes.
+     */
+    onstarted: (transferId: string) => void
     onclose: () => void
   }
 
@@ -59,6 +69,7 @@
     containerName,
     workingDir = '',
     readOnlyReason = null,
+    onstarted,
     onclose,
   }: Props = $props()
 
@@ -144,8 +155,18 @@
     try {
       // The SAME call the typed-path field makes, so a download from a row
       // and a download from the field are one implementation with one set of
-      // limits and one progress stream.
-      await startDownload(clusterId, namespace, podName, containerName, childOf(path, entry.name), localDir)
+      // limits and one progress stream — and the id goes back to the pane
+      // that renders that stream, or this would copy a file while the
+      // interface said nothing and swallowed any failure with it.
+      const transferId = await startDownload(
+        clusterId,
+        namespace,
+        podName,
+        containerName,
+        childOf(path, entry.name),
+        localDir,
+      )
+      onstarted(transferId)
       close()
     } catch (cause) {
       failure = toApiError(cause)

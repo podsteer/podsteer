@@ -174,6 +174,22 @@
     }
   }
 
+  /**
+   * Takes over a download the browser dialog started.
+   *
+   * ONE STATE MACHINE FOR BOTH ROUTES. The progress and done events are a
+   * single stream for the whole application and this pane is what renders
+   * them; without this, a download begun from a row would run to completion
+   * with nothing on screen and its failure would be swallowed entirely.
+   */
+  function adoptTransfer(transferId: string): void {
+    startError = ''
+    direction = 'download'
+    transfer = starting()
+    listen()
+    transfer = started(transfer, transferId)
+  }
+
   async function start(): Promise<void> {
     if (!startable || direction === null) return
     startError = ''
@@ -265,6 +281,7 @@
 
 <FileBrowserDialog
   open={browsing}
+  onstarted={adoptTransfer}
   {clusterId}
   {namespace}
   {podName}
