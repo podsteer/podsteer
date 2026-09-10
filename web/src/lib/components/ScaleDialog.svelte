@@ -196,6 +196,80 @@
       Set the number of replicas for this workload.
     </p>
 
+    <!--
+      Scaling by hand while an autoscaler targets this workload is undone
+      within its next sync period — silently, unless something here says so.
+      Aptakube warns; this is that warning. IT DOES NOT BLOCK THE ACTION: the
+      operator may be doing this on purpose, e.g. to force an immediate
+      change ahead of the autoscaler's next reconcile.
+    -->
+    {#if autoscalers?.status === 'known' && autoscalers.autoscalers.length > 0}
+      <div class="mt-4 flex flex-col gap-2">
+        {#each autoscalers.autoscalers as ref (ref.kind + '/' + ref.name)}
+          {@const opener = follow(ref.kind, ref.name, namespace)}
+          <div class="flex items-start gap-2 rounded-sm border border-gauge-warn/40 bg-gauge-warn/10 p-3">
+            <TriangleAlert class="mt-0.5 size-4 shrink-0 text-gauge-warn" strokeWidth={2} />
+            <p class="text-body-medium text-on-surface">
+              An autoscaler manages this replica count —
+              {#if opener}
+                <button
+                  type="button"
+                  class="resource-link font-medium"
+                  onclick={() => {
+                    // Closed first: what the click opens is a different
+                    // object, not this workload, and leaving the dialog open
+                    // over it would scale whatever was here when it was
+                    // clicked rather than what is now on screen.
+                    onclose()
+                    opener()
+                  }}
+                >{ref.name}</button>
+              {:else}
+                <span class="font-medium" data-selectable>{ref.name}</span>
+              {/if}
+              ({describeAutoscaler(ref)}). It will override whatever you set here within its sync period.
+            </p>
+          </div>
+        {/each}
+      </div>
+    {:else if autoscalers?.status === 'unknown'}
+      <p class="mt-4 text-body-medium text-on-surface-variant">
+        Could not check for an autoscaler: {autoscalers.reason}
+      </p>
+    {/if}
+
+    <label class="mt-4 block">
+      <span class="text-body-medium text-on-surface-variant">Replicas</span>
+      <input
+        type="number"
+        bind:value={replicas}
+        min="0"
+        class="field mt-1 w-full px-3 py-2 text-body-medium"
+      />
+    </label>
+
+    {#if requiresTypedName}
+      <label class="mt-4 block">
+        <span class="text-body-medium text-on-surface-variant">
+          Scaling to zero takes this workload off the air. Type
+          <strong class="text-on-surface" data-selectable>{name}</strong> to confirm
+        </span>
+        <input
+          type="text"
+          bind:value={typed}
+          autocomplete="off"
+          spellcheck="false"
+          aria-describedby="scale-confirm-hint"
+          class="field mt-1 w-full px-3 py-2 text-body-medium"
+        />
+      </label>
+      <p id="scale-confirm-hint" class="mt-1.5 text-body-medium text-on-surface-variant">
+        {confirmed
+          ? 'Name confirmed.'
+          : `Scale stays disabled until the name above matches exactly.`}
+      </p>
+    {/if}
+
     <DialogFooter command={scale(ctx, kind, name, namespace, replicas)}>
       <Button variant="outlined" onclick={onclose}>Cancel</Button>
       <Button
