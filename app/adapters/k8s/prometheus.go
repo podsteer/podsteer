@@ -464,6 +464,29 @@ func (c *backendCache) get(id domain.ClusterID) ([]domain.MetricsBackend, bool) 
 	return slices.Clone(entry.results), true
 }
 
+// forget drops one cluster's discovery result, for a disconnect.
+//
+// THE LAST PER-CLUSTER CACHE THAT DID NOT DO THIS, and it holds the answer
+// with the longest life of any of them: thirty minutes, because a monitoring
+// stack is installed once. That is exactly what made it wrong to keep. A tab
+// is routinely reconnected because its kubeconfig context now points at a
+// DIFFERENT cluster, and the discovery result is a Service coordinate —
+// namespace, name, port. Carried across, PodSteer went on proxying PromQL to
+// a service address it had never looked for in the cluster it was now talking
+// to: a graph either empty for half an hour with no explanation, or, where a
+// stack of the same shape happens to exist, one drawn from a Prometheus this
+// connection never discovered.
+//
+// The refusal cache beside it (queryRefusals) was already dropped here. This
+// is the other half of the same question: whether monitoring is reachable,
+// and where it is.
+func (c *backendCache) forget(id domain.ClusterID) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	delete(c.entries, id)
+}
+
 func (c *backendCache) put(id domain.ClusterID, results []domain.MetricsBackend) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

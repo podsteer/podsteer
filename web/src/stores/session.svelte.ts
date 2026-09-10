@@ -56,6 +56,7 @@ import {
   WORKLOAD_CHIPS,
   includesCluster,
   matchesChips,
+  liveClusterSelection,
   toggleClusterSelection,
   type FleetChipTab,
   type FleetRow,
@@ -582,6 +583,16 @@ export class ClusterSession {
   fleetClusters = $state<string[]>([])
 
   /**
+   * That selection as it applies right now — see liveClusterSelection.
+   *
+   * EVERYTHING READS THIS, not the field above. The stored list can name a
+   * cluster whose tab has since closed, and a selection nothing on screen can
+   * show or release is how the merged table went empty with no chip pressed
+   * to explain it.
+   */
+  readonly selectedFleetClusters = $derived(liveClusterSelection(this.fleetClusters, fleet.openClusters()))
+
+  /**
    * Rows for whichever view is active. Only one is populated at a time.
    *
    * `$state.raw`, not `$state`, and the difference is the cost of a refresh.
@@ -636,6 +647,16 @@ export class ClusterSession {
    * would win.
    */
   #usageGeneration = 0
+
+  /**
+   * Which assessment read is the current one.
+   *
+   * Incremented by both paths that produce an assessment — the side-channel
+   * refresh that runs under every other view, and the overview view's own
+   * fetch — so only the newest may be adopted. See #refreshAssessment for
+   * what an older one landing last did to the alerting baseline.
+   */
+  #assessmentGeneration = 0
   table = $state.raw<ResourceTable | null>(null)
 
   /**
@@ -997,8 +1018,9 @@ export class ClusterSession {
    * whole reason the chips could not select two. See $lib/fleet.
    */
   #onSelectedClusters<T extends { cluster: string }>(rows: readonly T[]): T[] {
-    if (this.fleetClusters.length === 0) return rows as T[]
-    return rows.filter((row) => includesCluster(this.fleetClusters, row.cluster))
+    const selected = this.selectedFleetClusters
+    if (selected.length === 0) return rows as T[]
+    return rows.filter((row) => includesCluster(selected, row.cluster))
   }
 
   readonly searchedFleetPods = $derived(
@@ -1900,8 +1922,25 @@ export class ClusterSession {
    * operator is looking at, which is fetched separately and has its own.
    */
   async #refreshAssessment(): Promise<void> {
+    // GUARDED BY A GENERATION, for the same reason the workload meters are —
+    // and with more at stake. This runs on every tick alongside the rows, so
+    // a slow assessment overlaps the next one, and there is nothing in the
+    // response that says which tick asked for it. An older answer landing
+    // last did three things, all of them silent: the navigator badge went
+    // back to an earlier count, the timeline recorded an assessment out of
+    // order, and #adopt REWOUND the baseline it diffs against — so the next
+    // tick found findings "new" that had already been announced, and the
+    // alert sounded a second time for a problem nobody had fixed.
+    //
+    // The overview view bumps the same counter when it adopts its own fetch
+    // (see #assign), so a side-channel read issued before a view switch
+    // cannot overwrite the fresher assessment that switch produced.
+    const generation = ++this.#assessmentGeneration
+
     try {
-      this.#adopt(await getOverview(this.cluster.id))
+      const overview = await getOverview(this.cluster.id)
+      if (generation !== this.#assessmentGeneration) return
+      this.#adopt(overview)
       // THE ONE READ THAT ALWAYS TOUCHES THE NETWORK. A pod list on a watched
       // cluster is served from the in-memory store and cannot tell anybody
       // whether the API server is still there; this runs on every tick
@@ -1910,6 +1949,10 @@ export class ClusterSession {
       // assessment itself — see OverviewService.assess.
       this.#recordAnswered()
     } catch (cause) {
+      // A superseded failure is not evidence either: reporting it would mark
+      // the tab unreachable moments after a newer read proved otherwise, and
+      // would clear the baseline a newer assessment had just established.
+      if (generation !== this.#assessmentGeneration) return
       this.#recordFailure(toApiError(cause))
       // The next cycle tries again. A missed assessment is a stale badge for
       // one interval, not something to interrupt anyone over.
@@ -2179,6 +2222,11 @@ export class ClusterSession {
 
     switch (this.viewMode) {
       case 'overview':
+        // Bumped so that an assessment issued by a previous tick — while
+        // another view was on screen — cannot land afterwards and undo this
+        // one. This path has its own guard against staleness already, in
+        // refresh()'s #request; the counter is what makes the two agree.
+        this.#assessmentGeneration++
         this.#adopt(rows as Overview)
         break
       case 'timeline':

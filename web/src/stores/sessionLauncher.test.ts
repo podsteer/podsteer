@@ -176,6 +176,20 @@ describe('the in-cluster shell launcher', () => {
     })
   })
 
+  it('leaving the workspace drops both phases', () => {
+    // The launcher is a singleton and the overlay that renders it is not: it
+    // is rebuilt on every tab switch. Anything still held here would be shown
+    // under — and confirmed against — the NEXT cluster's tab.
+    sessionLauncher.requestClusterShell({ clusterId: 'prod-eu', namespace: 'shop' })
+    sessionLauncher.startClusterShell('registry.internal/shell:1.0.0', 'shop')
+    sessionLauncher.requestLocal({ clusterId: 'prod-eu', agents: [CLAUDE], subject: SUBJECT })
+
+    sessionLauncher.leave()
+
+    expect(sessionLauncher.pending).toBeNull()
+    expect(sessionLauncher.running).toBeNull()
+  })
+
   it('neither confirmation fires without its own dialog pending', () => {
     sessionLauncher.requestLocal({ clusterId: 'prod-eu', agents: [CLAUDE], subject: SUBJECT })
 

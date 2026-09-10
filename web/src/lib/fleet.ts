@@ -366,9 +366,29 @@ export function toggleClusterSelection(
     ? selection.filter((id) => id !== cluster)
     : [...selection, cluster]
 
-  // Only clusters still open can be selected: a tab closed while its chip was
-  // pressed must not go on filtering a table it has no rows in.
-  const live = next.filter((id) => open.includes(id))
+  return liveClusterSelection(next, open)
+}
+
+/**
+ * The selection as it applies RIGHT NOW: only clusters still open, and
+ * nothing at all when that is all of them.
+ *
+ * WHY THIS IS SEPARATE FROM THE TOGGLE. The rule above — a tab closed while
+ * its chip was pressed must not go on filtering a table it has no rows in —
+ * was applied only when somebody pressed a chip, so between closing that tab
+ * and the next press it was simply not true. The table narrowed to a cluster
+ * with no rows in it and emptied, the strip showed no chip pressed because
+ * the chip's cluster was gone, and the empty state read "No pods across the
+ * 1 selected cluster" — naming a selection nothing on screen could show or
+ * release. Read through this, the selection is a function of what is open,
+ * so it cannot describe a tab that is not there.
+ *
+ * The stored selection is left as it is rather than pruned: reopening that
+ * cluster brings its chip back pressed, which is at least a state the strip
+ * can display and the operator can undo.
+ */
+export function liveClusterSelection(selection: readonly string[], open: readonly string[]): string[] {
+  const live = selection.filter((id) => open.includes(id))
   return live.length === open.length ? [] : live
 }
 

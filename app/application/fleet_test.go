@@ -751,6 +751,60 @@ func TestFleetNeverHandsALateAnswerToAnotherNamespace(t *testing.T) {
 	}
 }
 
+// TestFleetNeverHandsALateAnswerAcrossAReconnect is the same rule as the
+// namespace test above, applied to the other thing that changes which cluster
+// an answer describes.
+//
+// A tab is routinely reconnected because its kubeconfig context now points
+// somewhere else, and the settings path reconnects every open cluster at once
+// without closing a single tab. Rows read before that would be rendered by
+// the merged table as this connection's, labelled with the tab's cluster and
+// marked "slow" — neither of which says where they came from.
+func TestFleetNeverHandsALateAnswerAcrossAReconnect(t *testing.T) {
+	t.Parallel()
+
+	const namespace = domain.NamespaceName("shop")
+
+	first := make(chan struct{})
+	source := &fakeFleetSource{
+		pods:  map[domain.ClusterID][]domain.Pod{"slow": {clusterPod(t, "slow", "web-0")}},
+		gates: map[domain.ClusterID]chan struct{}{"slow": first},
+	}
+	service := newFleetService(t, source, 30*time.Millisecond, "slow")
+
+	// Over budget: slow and empty, with the read still running.
+	reads, err := service.ListPods(context.Background(), ids("slow"), namespace)
+	if err != nil {
+		t.Fatalf("ListPods() error = %v", err)
+	}
+	if reads[0].Status != domain.ClusterReadSlow || len(reads[0].Items) != 0 {
+		t.Fatalf("first read = %s with %d items, want slow and empty", reads[0].Status, len(reads[0].Items))
+	}
+
+	// Let it answer late, and hold everything after it so the next read is
+	// over budget too — the only condition under which a late answer is used.
+	rest := make(chan struct{})
+	t.Cleanup(func() { close(rest) })
+	source.hold("slow", rest)
+	close(first)
+	waitFor(t, func() bool { return source.finished() >= 1 })
+	time.Sleep(20 * time.Millisecond)
+
+	// The connection those rows were read from is gone.
+	service.Invalidate("slow")
+
+	reads, err = service.ListPods(context.Background(), ids("slow"), namespace)
+	if err != nil {
+		t.Fatalf("ListPods() after Invalidate error = %v", err)
+	}
+	if reads[0].Status != domain.ClusterReadSlow {
+		t.Errorf("status after Invalidate = %s, want slow", reads[0].Status)
+	}
+	if len(reads[0].Items) != 0 {
+		t.Errorf("read after Invalidate carried %d items, want none — they were read from the previous connection", len(reads[0].Items))
+	}
+}
+
 // waitFor polls condition until it holds or the test's patience runs out.
 func waitFor(t *testing.T, condition func() bool) {
 	t.Helper()

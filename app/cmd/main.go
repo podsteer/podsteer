@@ -315,44 +315,6 @@ func run() error {
 		return fmt.Errorf("wiring metrics query service: %w", err)
 	}
 
-	clusterService, err := application.NewClusterService(application.ClusterServiceDeps{
-		Kubeconfig: kubernetes,
-		Cluster:    kubernetes,
-		Workloads:  kubernetes,
-		Metrics:    kubernetes,
-		Events:     desktop,
-		Registry:   registry,
-		Catalog:    catalog,
-		Logger:     logger,
-		// What a disconnect releases, in one list, composed here for the
-		// reason Invalidate is not a port: it exists to serve caching and
-		// goroutine ownership, not the domain. The adapter releases its
-		// clients, its watch, its per-cluster caches and its port-forwards;
-		// the overview releases the assessment it is holding, which would
-		// otherwise be served to a reconnect of the same context name inside
-		// the freshness window — and that context may now point at an
-		// entirely different cluster.
-		// entirely different cluster; and the metrics-query service releases
-		// the node-set verification it made about that context's monitoring
-		// backend, which would otherwise license an aggregate checked against
-		// nodes this connection has never seen.
-		Invalidator: application.Invalidators{kubernetes, overviewService, metricsQueryService},
-	})
-
-	// Every open cluster's client, released. This is the same set of holders
-	// the disconnect path releases, for the same reason: a client outlives
-	// the settings it was built from, so a transport change means rebuilding
-	// rather than notifying.
-	reconnectClusters = func() {
-		invalidators := application.Invalidators{kubernetes, overviewService, metricsQueryService}
-		for _, cluster := range registry.All() {
-			invalidators.Invalidate(cluster.ID())
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("wiring cluster service: %w", err)
-	}
-
 	workloadService, err := application.NewWorkloadService(application.WorkloadServiceDeps{
 		Workloads: kubernetes,
 		Metrics:   kubernetes,
@@ -387,6 +349,51 @@ func run() error {
 	})
 	if err != nil {
 		return fmt.Errorf("wiring fleet service: %w", err)
+	}
+
+	// WIRED AFTER THE SERVICES IT RELEASES, for the reason given at
+	// metricsQueryService above: everything in the Invalidators list has to
+	// exist before the list is composed, and the fleet service is the last of
+	// them because it reads through workloadService and browseService.
+	clusterService, err := application.NewClusterService(application.ClusterServiceDeps{
+		Kubeconfig: kubernetes,
+		Cluster:    kubernetes,
+		Workloads:  kubernetes,
+		Metrics:    kubernetes,
+		Events:     desktop,
+		Registry:   registry,
+		Catalog:    catalog,
+		Logger:     logger,
+		// What a disconnect releases, in one list, composed here for the
+		// reason Invalidate is not a port: it exists to serve caching and
+		// goroutine ownership, not the domain. The adapter releases its
+		// clients, its watch, its per-cluster caches and its port-forwards;
+		// the overview releases the assessment it is holding, which would
+		// otherwise be served to a reconnect of the same context name inside
+		// the freshness window — and that context may now point at an
+		// entirely different cluster; the metrics-query service releases the
+		// node-set verification it made about that context's monitoring
+		// backend, which would otherwise license an aggregate checked against
+		// nodes this connection has never seen; and the fleet service
+		// releases the late answers it is holding, which would otherwise be
+		// rendered as the new connection's rows in the merged table.
+		Invalidator: application.Invalidators{kubernetes, overviewService, metricsQueryService, fleetService},
+	})
+
+	// Every open cluster's client, released. This is the same set of holders
+	// the disconnect path releases, for the same reason: a client outlives
+	// the settings it was built from, so a transport change means rebuilding
+	// rather than notifying. Note that this path reconnects clusters WITHOUT
+	// closing their tabs, which is why every holder of per-connection state
+	// has to be in it and not only in Disconnect's.
+	reconnectClusters = func() {
+		invalidators := application.Invalidators{kubernetes, overviewService, metricsQueryService, fleetService}
+		for _, cluster := range registry.All() {
+			invalidators.Invalidate(cluster.ID())
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("wiring cluster service: %w", err)
 	}
 
 	// The RBAC explorer. Every call it makes is a read, and every one of

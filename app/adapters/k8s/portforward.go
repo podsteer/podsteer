@@ -247,17 +247,30 @@ func (a *Adapter) reconnect(entry *forwarder, forward domain.Forward, portName s
 	return attempt{}, false
 }
 
-// findReplacementPod returns a running pod matching the forward's selector.
+// findReplacementPod returns a pod this forward may rebind to.
 //
-// Matched on the pod's OWN labels, which for a ReplicaSet's pods include
-// pod-template-hash — so a replacement is a sibling of the same revision, not
-// a pod of whatever rolled out since. Silently moving a forward onto
-// different code would be worse than not reconnecting at all.
+// THE ORIGINAL POD FIRST, AND IT IS THE COMMON CASE. A forward drops for two
+// reasons and only one of them is a dead pod: the SPDY connection also goes
+// when an idle timeout on a load balancer fires, when the API server restarts
+// or rolls, and when the operator's VPN re-keys. This function used to skip
+// forward.Pod outright, so for a single-replica workload — one Deployment
+// replica, a StatefulSet member, a bare pod — there was no sibling to find and
+// the perfectly healthy pod on the other side was the one candidate excluded.
+// The forward then showed "Reconnecting" for two minutes and vanished, which
+// is precisely the failure this file's header claims to fix.
+//
+// A SIBLING SECOND, matched on the pod's OWN labels — which for a ReplicaSet's
+// pods include pod-template-hash — so a replacement is of the same revision,
+// not a pod of whatever rolled out since. Silently moving a forward onto
+// different code would be worse than not reconnecting at all. The original is
+// held to that same test when a selector exists: a StatefulSet member keeps
+// its name across a re-creation, so a name match alone would let `db-0` come
+// back at a new revision under a forward that was pointed at the old one.
+//
+// TERMINATING PODS ARE NOT CANDIDATES, either. A pod keeps its Ready
+// condition through its grace period, so a rollout offered one that was
+// already shutting down — a forward that establishes and dies seconds later.
 func (a *Adapter) findReplacementPod(entry *forwarder, forward domain.Forward) (string, error) {
-	if len(forward.Selector) == 0 {
-		return "", nil
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), findReplacementTimeout)
 	defer cancel()
 
@@ -295,15 +308,25 @@ func (a *Adapter) findReplacementPod(entry *forwarder, forward domain.Forward) (
 		return "", err
 	}
 
+	sibling := ""
 	for _, pod := range pods {
-		if pod.Name() == forward.Pod || !pod.IsReady() || !pod.OccupiesNode() {
+		if pod.Terminating() || !pod.IsReady() || !pod.OccupiesNode() {
 			continue
 		}
-		if matchesSelector(pod.Labels(), forward.Selector) {
-			return pod.Name(), nil
+		sameRevision := len(forward.Selector) == 0 || matchesSelector(pod.Labels(), forward.Selector)
+		if pod.Name() == forward.Pod {
+			if sameRevision {
+				return pod.Name(), nil
+			}
+			continue
+		}
+		// Kept, not returned: the scan carries on in case the original pod is
+		// further down the list, and it is the better answer.
+		if sibling == "" && len(forward.Selector) > 0 && sameRevision {
+			sibling = pod.Name()
 		}
 	}
-	return "", nil
+	return sibling, nil
 }
 
 // matchesSelector reports whether labels carry every pair the selector names.
