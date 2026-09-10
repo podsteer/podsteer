@@ -251,6 +251,12 @@ func (a *Adapter) Invalidate(id domain.ClusterID) {
 	// client set the factory just dropped, which is what keeps it from
 	// outliving the config it was built from.
 	a.queryRefusals.forget(id)
+	// And WHERE monitoring is, not only whether it may be reached. This is
+	// the longest-lived answer the adapter holds — half an hour, because a
+	// monitoring stack is installed once — and it is a Service coordinate, so
+	// carrying it across a reconnect pointed PromQL at an address discovered
+	// in the cluster this tab used to be. See backendCache.forget.
+	a.backends.forget(id)
 	// AND THE GENERATION IS BUMPED LAST, after every forget above. A query
 	// that read the old client set is still running and will try to cache
 	// what it finds; from here its captured generation no longer matches, so

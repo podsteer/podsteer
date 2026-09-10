@@ -15,6 +15,13 @@
  * confirmation. `running` is the terminal, opened once the dialog is
  * confirmed. Only one of each exists at a time: these are deliberate, attended
  * actions, not something to have several of open at once.
+ *
+ * ONE CLUSTER AT A TIME, and `leave` is what keeps that true. This module is a
+ * singleton, but SessionOverlay — the only thing that renders it — is mounted
+ * inside the per-cluster workspace, which App.svelte destroys and rebuilds on
+ * every tab switch. Nothing here may outlive that: both phases name a cluster,
+ * and a phase shown under a tab it does not name is a lie about where the
+ * operator is working.
  */
 
 import { localShellRequest, localShellTitle, type CodingAgent } from '$lib/localShell'
@@ -63,7 +70,7 @@ export interface PendingNodeShell {
  */
 export interface PendingLocal {
   kind: 'local'
-  /** The kubeconfig context of the tab in front, or '' when none is. */
+  /** The kubeconfig context of the tab this was opened from. */
   clusterId: string
   /** The coding agents detected on this machine, possibly none. */
   agents: CodingAgent[]
@@ -244,6 +251,31 @@ class SessionLauncher {
    * session — which, for a node shell and an in-cluster shell, deletes its
    * pod, and for a local shell ends the process on this machine. */
   close(): void {
+    this.running = null
+  }
+
+  /**
+   * Drops both phases because the workspace that was rendering them has gone.
+   *
+   * SessionOverlay calls this when it is destroyed — on a tab switch, and when
+   * the last tab closes. Without it the singleton kept its state across that
+   * remount and two things followed, both of which name the WRONG CLUSTER:
+   *
+   *   - A dialog opened on production reappeared under the next tab, and
+   *     confirming it created a privileged pod on production while the
+   *     operator was looking at staging.
+   *   - A terminal was torn down by the unmount — which for a node shell and
+   *     an in-cluster shell DELETES its pod — and then silently started again,
+   *     on its original cluster, the moment a workspace mounted. Re-opening
+   *     that tab created a second privileged pod with no dialog in between.
+   *
+   * Dropping rather than restoring, because both are attended actions. A
+   * dialog whose context has gone should be re-opened deliberately, and a
+   * session whose pod has already been deleted cannot be resumed — only
+   * replaced, which is a decision for the operator and not for a remount.
+   */
+  leave(): void {
+    this.pending = null
     this.running = null
   }
 }

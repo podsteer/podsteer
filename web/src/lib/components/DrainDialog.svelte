@@ -92,6 +92,36 @@
     }
   }
 
+  // Fresh state every time the dialog opens, and every time it is pointed at
+  // a different node, so nothing from the node before stands under this one's
+  // name.
+  //
+  // THE PREVIEW IS RESET WITH THE REST, which it was not. This block used to
+  // explain itself in terms of a previous node's report or error and quietly
+  // leave `plan` alone — so opening the dialog on a second node showed the
+  // FIRST node's pod counts, under the second node's name, until its own
+  // preview came back. That is the one number the confirm button is about.
+  //
+  // DECLARED BEFORE THE EFFECT THAT LOADS THE PREVIEW, and the order is
+  // load-bearing: effects run in declaration order, so the two checkboxes are
+  // back at their defaults before the preview below is requested, and it is
+  // requested once. Declared after, it reset them underneath a request
+  // already in flight and fired a second one for the same node.
+  //
+  // `nodeName` is read before the guard so a change of node re-runs this even
+  // when the dialog was already open.
+  $effect(() => {
+    void nodeName
+    if (!open) return
+    plan = null
+    planError = null
+    report = null
+    running = false
+    force = false
+    deleteEmptyDirData = false
+    gracePeriodInput = ''
+  })
+
   // Re-fetches the preview whenever the dialog opens, or either option
   // changes while it is open. force and deleteEmptyDirData are read directly
   // here (not inside loadPlan) so Svelte tracks them as dependencies.
@@ -102,17 +132,6 @@
     const forceValue = force
     const deleteValue = deleteEmptyDirData
     void loadPlan(cluster, node, forceValue, deleteValue)
-  })
-
-  // Fresh state every time the dialog opens, so a previous node's report or
-  // error does not flash under this one's name for a moment.
-  $effect(() => {
-    if (!open) return
-    report = null
-    running = false
-    force = false
-    deleteEmptyDirData = false
-    gracePeriodInput = ''
   })
 
   const evictCount = $derived(plan?.evict?.length ?? 0)

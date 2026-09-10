@@ -86,6 +86,14 @@ type vulnerabilityCache struct {
 type vulnerabilityEntry struct {
 	at      time.Time
 	summary []domain.VulnerabilitySummary
+	// generation is the connection this answer was computed against. A read
+	// that passed Invalidate and writes afterwards lands under a generation
+	// nothing will match, so it teaches the new connection nothing — the
+	// same guard promquery.go applies to a cached refusal, and needed here
+	// for a sharper version of the same reason: what this caches on a
+	// refusal is "nothing to show", so a stale one is not a wrong number but
+	// a namespace that is never asked about again for ten minutes.
+	generation uint64
 }
 
 // ListVulnerabilitySummaries returns the severity counts the Trivy Operator
@@ -101,7 +109,12 @@ type vulnerabilityEntry struct {
 // that was merely unreachable comes back, and should be asked again when it
 // does.
 func (a *Adapter) ListVulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.VulnerabilitySummary, error) {
-	if cached, ok := a.vulnerabilities.get(id, namespace); ok {
+	// CAPTURED BEFORE ANYTHING ELSE, and carried through to both writes
+	// below. Invalidate drops this cache, but a list already in flight when
+	// it runs writes afterwards; ordering alone cannot close that window.
+	generation := a.generations.at(id)
+
+	if cached, ok := a.vulnerabilities.get(id, namespace, generation); ok {
 		return cached, nil
 	}
 
@@ -131,14 +144,14 @@ func (a *Adapter) ListVulnerabilitySummaries(ctx context.Context, id domain.Clus
 		if errors.Is(wrapped, ports.ErrNotFound) ||
 			errors.Is(wrapped, ports.ErrForbidden) ||
 			errors.Is(wrapped, ports.ErrUnauthenticated) {
-			a.vulnerabilities.put(id, namespace, nil)
+			a.vulnerabilities.put(id, namespace, generation, nil)
 			return nil, nil
 		}
 		return nil, wrapped
 	}
 
 	summaries := summariseVulnerabilityReports(reports.Items)
-	a.vulnerabilities.put(id, namespace, summaries)
+	a.vulnerabilities.put(id, namespace, generation, summaries)
 	return summaries, nil
 }
 
@@ -215,25 +228,29 @@ func vulnerabilityCacheKey(id domain.ClusterID, namespace domain.NamespaceName) 
 	return id.String() + "\x00" + namespace.String()
 }
 
-func (c *vulnerabilityCache) get(id domain.ClusterID, namespace domain.NamespaceName) ([]domain.VulnerabilitySummary, bool) {
+func (c *vulnerabilityCache) get(id domain.ClusterID, namespace domain.NamespaceName, generation uint64) ([]domain.VulnerabilitySummary, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	entry, ok := c.entries[vulnerabilityCacheKey(id, namespace)]
-	if !ok || time.Since(entry.at) > vulnerabilityCacheTTL {
+	if !ok || entry.generation != generation || time.Since(entry.at) > vulnerabilityCacheTTL {
 		return nil, false
 	}
 	return entry.summary, true
 }
 
-func (c *vulnerabilityCache) put(id domain.ClusterID, namespace domain.NamespaceName, summary []domain.VulnerabilitySummary) {
+func (c *vulnerabilityCache) put(id domain.ClusterID, namespace domain.NamespaceName, generation uint64, summary []domain.VulnerabilitySummary) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.entries == nil {
 		c.entries = make(map[string]vulnerabilityEntry)
 	}
-	c.entries[vulnerabilityCacheKey(id, namespace)] = vulnerabilityEntry{at: time.Now(), summary: summary}
+	c.entries[vulnerabilityCacheKey(id, namespace)] = vulnerabilityEntry{
+		at:         time.Now(),
+		summary:    summary,
+		generation: generation,
+	}
 }
 
 // forget drops one cluster's cached summaries, for a tab being closed or a

@@ -264,18 +264,44 @@ func TestVulnerabilityCacheIsDroppedWhenAClusterIsInvalidated(t *testing.T) {
 	}
 }
 
+// A LIST IN FLIGHT CAN PASS Invalidate AND THEN WRITE, and what it writes is
+// most often "nothing to show" — the CRD is not installed, or this account
+// may not read the reports. Inherited by the next connection that would be a
+// namespace nobody asks about again for the whole of vulnerabilityCacheTTL,
+// with no request ever made to earn the silence.
+func TestAVulnerabilityAnswerWrittenAgainstAReplacedConnectionIsInert(t *testing.T) {
+	adapter := &Adapter{}
+
+	// The generation a list captured before the disconnect.
+	stale := adapter.generations.at("dev")
+	adapter.generations.bump("dev")
+	fresh := adapter.generations.at("dev")
+
+	if stale == fresh {
+		t.Fatal("the generation did not advance")
+	}
+
+	// The late write lands — a cached "no reports here" — and the new
+	// connection does not see it.
+	adapter.vulnerabilities.put("dev", "shop", stale, nil)
+
+	if _, ok := adapter.vulnerabilities.get("dev", "shop", fresh); ok {
+		t.Fatal("the replaced connection's answer was served to its successor")
+	}
+}
+
 func TestVulnerabilityCacheForgetsOnlyTheClusterNamed(t *testing.T) {
 	// Closing one tab must not cost every other tab its answers.
 	cache := &vulnerabilityCache{}
-	cache.put("dev", "shop", []domain.VulnerabilitySummary{{Subject: "ReplicaSet/web", Reports: 1}})
-	cache.put("prod", "shop", []domain.VulnerabilitySummary{{Subject: "ReplicaSet/web", Reports: 1}})
+	cache.put("dev", "shop", 0, []domain.VulnerabilitySummary{{Subject: "ReplicaSet/web", Reports: 1}})
+	cache.put("prod", "shop", 0, []domain.VulnerabilitySummary{{Subject: "ReplicaSet/web", Reports: 1}})
 
 	cache.forget("dev")
 
-	if _, ok := cache.get("dev", "shop"); ok {
+	if _, ok := cache.get("dev", "shop", 0); ok {
 		t.Error("dev is still cached after being forgotten")
 	}
-	if _, ok := cache.get("prod", "shop"); !ok {
+	if _, ok := cache.get("prod", "shop", 0); !ok {
 		t.Error("prod lost its cached summaries when dev was forgotten")
 	}
 }

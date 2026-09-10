@@ -339,10 +339,9 @@
     if (fleet.degraded > 0) return 'Some clusters did not answer — the strip above says which, and why.'
     // A NARROWED TABLE IS NOT AN EMPTY FLEET. Saying "across your 6 open
     // clusters" while five of them are deselected names a search nobody made.
-    if (session.fleetClusters.length > 0) {
-      const chosen = `${session.fleetClusters.length} selected cluster${
-        session.fleetClusters.length === 1 ? '' : 's'
-      }`
+    const selected = session.selectedFleetClusters
+    if (selected.length > 0) {
+      const chosen = `${selected.length} selected cluster${selected.length === 1 ? '' : 's'}`
       return `No ${noun} in this namespace across the ${chosen}.`
     }
     const clusters = `${openCount} open cluster${openCount === 1 ? '' : 's'}`
@@ -579,7 +578,7 @@
                [&::-webkit-scrollbar]:hidden"
       >
         {#each fleet.strip as entry (entry.cluster)}
-          {@const pressed = session.fleetClusters.includes(entry.cluster)}
+          {@const pressed = session.selectedFleetClusters.includes(entry.cluster)}
           <button
             type="button"
             onclick={() => toggleCluster(entry.cluster)}

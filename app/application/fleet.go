@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -97,14 +98,77 @@ type FleetService struct {
 	logger    *slog.Logger
 
 	// late holds what a read that outlived its budget eventually came back
-	// with, keyed by cluster and read, until the next read of the same thing
-	// picks it up. One entry per key at most, so it is bounded by three
-	// reads times however many clusters have ever been open. See readOne.
+	// with, keyed by cluster, read and namespace, until the next read of the
+	// same thing picks it up. See readOne, and sweepLate for what keeps the
+	// map from being every question anyone has ever asked.
 	late sync.Map
 }
 
-// Compile-time proof that the service satisfies its inbound port.
-var _ ports.FleetService = (*FleetService)(nil)
+// lateAnswerTTL is how old a late answer may be and still be shown.
+//
+// A late answer exists to make a SLOW cluster show its rows one tick behind
+// instead of never. Nothing about it was ever meant to bridge a gap of
+// minutes, and it easily could: the key names a namespace and, for a table,
+// a kind, so an operator who narrows the filter, opens a different kind, or
+// simply leaves the merged view and comes back is asking a question whose
+// last answer may be arbitrarily old. Handed that, the table would present
+// rows from before lunch as this tick's, marked only "slow".
+//
+// Two minutes, which is longer than the slowest refresh the application
+// offers and therefore never discards an answer a steadily slow cluster is
+// about to be asked for again, and short enough that nothing here can pass
+// off yesterday's rows as today's.
+const lateAnswerTTL = 2 * time.Minute
+
+// Compile-time proof that the service satisfies its inbound port, and that a
+// disconnect can reach it.
+var (
+	_ ports.FleetService = (*FleetService)(nil)
+	_ ClusterInvalidator = (*FleetService)(nil)
+)
+
+// Invalidate drops what this service holds for one cluster, for a disconnect.
+//
+// IT JOINS THE Invalidators LIST FOR THE OVERVIEW'S REASON, sharpened by what
+// a late answer is. A tab is routinely reconnected because its kubeconfig
+// context now points at a different cluster — and the settings path
+// reconnects every open cluster at once, without closing a single tab. A late
+// answer stored under the old connection would then be handed to the first
+// read of the new one and rendered as that cluster's rows. Nothing on screen
+// would say otherwise: the row is labelled with the cluster and marked
+// "slow", both of which are about the tab, not about which cluster the rows
+// were read from.
+func (s *FleetService) Invalidate(id domain.ClusterID) {
+	prefix := string(id) + "|"
+	s.late.Range(func(key, _ any) bool {
+		if name, ok := key.(string); ok && strings.HasPrefix(name, prefix) {
+			s.late.Delete(name)
+		}
+		return true
+	})
+}
+
+// sweepLate drops late answers nothing is going to ask for again.
+//
+// THE BOUND THE FIELD'S OWN DOC CLAIMED AND DID NOT KEEP. `late` was
+// described as bounded by three reads times the clusters ever opened, but the
+// key also names a NAMESPACE and, for a table, a KIND — so it grew by one
+// entry for every distinct question ever asked, and an answer nobody came
+// back for was never removed at all. An operator moving between namespaces on
+// an intermittently slow cluster accumulated them for the life of the
+// process.
+//
+// Once per fan-out rather than on a timer: a fan-out is the only thing that
+// writes the map, so there is no moment it can grow unobserved, and a map
+// this size costs less to walk than a goroutine costs to own.
+func (s *FleetService) sweepLate() {
+	s.late.Range(func(key, value any) bool {
+		if answer, ok := value.(lateAnswer); ok && time.Since(answer.at) > lateAnswerTTL {
+			s.late.Delete(key)
+		}
+		return true
+	})
+}
 
 // NewFleetService validates deps and returns the service.
 func NewFleetService(deps FleetServiceDeps) (*FleetService, error) {
@@ -284,6 +348,8 @@ func fanOut[T any](ctx context.Context, s *FleetService, name string, namespace 
 		return nil, err
 	}
 
+	s.sweepLate()
+
 	results := make([]domain.ClusterRead[T], len(targets))
 
 	// Bounded, not one goroutine per cluster outright: see fleetConcurrency.
@@ -344,6 +410,9 @@ type lateAnswer struct {
 	items   any
 	missing []string
 	err     error
+	// at is when the read finally answered, which is what decides whether it
+	// is still worth showing. See lateAnswerTTL.
+	at time.Time
 }
 
 // lateKey names the question a late answer belongs to: which cluster, which
@@ -407,19 +476,27 @@ func readOne[T any](ctx context.Context, s *FleetService, name string, namespace
 	// Over budget. Whatever this read comes back with goes to the next one.
 	go func() {
 		a := <-done
-		s.late.Store(key, lateAnswer{items: a.items, missing: a.missing, err: a.err})
+		s.late.Store(key, lateAnswer{items: a.items, missing: a.missing, err: a.err, at: time.Now()})
 	}()
 
 	// And this one answers with whatever the read before it left, if
 	// anything: a late success is still a slow cluster's, and says so.
+	//
+	// UNLESS IT HAS GONE OFF. The key names a namespace and, for a table, a
+	// kind, so the previous answer to this exact question may be from before
+	// the operator changed the filter and went to lunch. Presented here it
+	// would be this tick's rows in every respect the interface shows — see
+	// lateAnswerTTL.
 	if previous, found := s.late.LoadAndDelete(key); found {
 		late := previous.(lateAnswer)
-		items, _ := late.items.([]T)
-		verdict := settle(s, id, name, items, late.missing, late.err)
-		if verdict.Status == domain.ClusterReadOK {
-			verdict.Status = domain.ClusterReadSlow
+		if time.Since(late.at) <= lateAnswerTTL {
+			items, _ := late.items.([]T)
+			verdict := settle(s, id, name, items, late.missing, late.err)
+			if verdict.Status == domain.ClusterReadOK {
+				verdict.Status = domain.ClusterReadSlow
+			}
+			return verdict
 		}
-		return verdict
 	}
 
 	s.logger.Debug("fleet read over budget",

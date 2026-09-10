@@ -8,8 +8,16 @@
   See $stores/sessionLauncher: `pending` is the dialog phase, `running` is the
   terminal phase. The terminal is the same component the pod terminal uses,
   in its 'debug' / 'nodeshell' / 'local' variant.
+
+  ONE CLUSTER, TWICE OVER. The launcher is a module singleton and this is not:
+  App.svelte keys the workspace on the cluster id, so this component is
+  destroyed and rebuilt on every tab switch. Both halves of that are enforced
+  below — nothing belonging to another cluster is rendered, and the launcher is
+  emptied when this overlay goes away. See sessionLauncher.leave for what went
+  wrong without it.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte'
   import { sessionLauncher } from '$stores/sessionLauncher.svelte'
   import { nodeShells } from '$stores/nodeShells.svelte'
   import DebugDialog from './DebugDialog.svelte'
@@ -21,8 +29,29 @@
   import { clusterShells } from '$stores/clusterShells.svelte'
   import { Bug, SquareTerminal, Laptop, Container } from '@lucide/svelte'
 
-  const pending = $derived(sessionLauncher.pending)
-  const running = $derived(sessionLauncher.running)
+  interface Props {
+    /** The cluster whose workspace this overlay is mounted in. */
+    clusterId: string
+  }
+
+  const { clusterId }: Props = $props()
+
+  const pending = $derived(
+    sessionLauncher.pending?.clusterId === clusterId ? sessionLauncher.pending : null,
+  )
+  const running = $derived(
+    sessionLauncher.running?.clusterId === clusterId ? sessionLauncher.running : null,
+  )
+
+  // The teardown is the point. `clusterId` never changes for a given instance
+  // — the workspace is keyed on it — so this runs once, and its cleanup runs
+  // when the tab switches or the last tab closes, taking the launcher's state
+  // with it. untrack keeps the effect from re-running on the launcher's own
+  // writes; it depends on the mount, not on what is being launched.
+  $effect(() => {
+    void clusterId
+    return () => untrack(() => sessionLauncher.leave())
+  })
 </script>
 
 {#if pending?.kind === 'debug'}

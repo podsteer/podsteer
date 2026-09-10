@@ -610,8 +610,9 @@ import TimelineView from './TimelineView.svelte'
 
 <!-- The debug-container and node-shell dialogs and their terminals, mounted
      once here so they can be launched from the drawer or the node row menu and
-     outlive whichever surface launched them. -->
-<SessionOverlay />
+     outlive whichever surface launched them — but not this tab, which is what
+     the cluster id enforces. -->
+<SessionOverlay clusterId={session.cluster.id} />
 
 {#if session.selectedKind}
   <CreateResourceDialog

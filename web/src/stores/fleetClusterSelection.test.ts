@@ -29,7 +29,12 @@ describe('the merged table, narrowed by the strip chips', () => {
   let open: ClusterSession
 
   beforeEach(() => {
-    fleet.openClusters = () => ['alpha', 'beta', 'gamma']
+    // READ OUT OF REACTIVE STATE, exactly as the real one is: $stores/workspace
+    // assigns `openClusters` a closure over `workspace.sessions`, so a derived
+    // that calls it tracks the tabs closing. A stub returning a frozen literal
+    // would be read once and cached, and this file's whole subject is what
+    // happens to the selection when the open set changes.
+    fleet.openClusters = () => fleet.pods.map((entry) => entry.cluster)
     fleet.pods = [answer('alpha', 'api'), answer('beta', 'worker'), answer('gamma', 'cache')]
     open = new ClusterSession(cluster)
     open.selectedKindId = 'podsteer/fleet'
@@ -72,6 +77,35 @@ describe('the merged table, narrowed by the strip chips', () => {
 
     expect(open.fleetClusters).toEqual([])
     expect(names(open)).toEqual(['api', 'cache', 'worker'])
+  })
+
+  it('stops narrowing to a cluster whose tab has closed', () => {
+    // THE BUG. The "only clusters still open may be selected" rule lived in
+    // the toggle, so between closing that tab and the next press it was not
+    // true at all: the table filtered to a cluster with no rows in it and
+    // went empty, no chip anywhere rendered pressed — the chip's cluster was
+    // gone — and the empty state read "across the 1 selected cluster",
+    // naming a selection nothing on screen could show or release.
+    open.toggleFleetCluster('beta')
+    expect(names(open)).toEqual(['worker'])
+
+    fleet.pods = [answer('alpha', 'api'), answer('gamma', 'cache')]
+
+    expect(open.selectedFleetClusters).toEqual([])
+    expect(names(open)).toEqual(['api', 'cache'])
+  })
+
+  it('brings the selection back with the tab, which the strip can show', () => {
+    // The stored selection is not pruned, so reopening the cluster restores a
+    // state the chip strip renders and the operator can release.
+    open.toggleFleetCluster('beta')
+    fleet.pods = [answer('alpha', 'api'), answer('gamma', 'cache')]
+    expect(open.selectedFleetClusters).toEqual([])
+
+    fleet.pods = [answer('alpha', 'api'), answer('beta', 'worker'), answer('gamma', 'cache')]
+
+    expect(open.selectedFleetClusters).toEqual(['beta'])
+    expect(names(open)).toEqual(['worker'])
   })
 
   it('returns to the first page, because page 4 may no longer exist', () => {
