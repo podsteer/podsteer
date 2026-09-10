@@ -142,6 +142,32 @@ func (r *Runner) ListClusters(ctx context.Context, provider string) (domain.Vend
 // back as a string and is merged by the one code path that has ever written
 // that file, keeping the backup, the atomic write and the conflict refusal.
 func (r *Runner) WriteKubeconfig(ctx context.Context, provider string, cluster domain.VendorCluster) (string, error) {
+	// THE BEST CASE IS NO FILE AT ALL. Some of these CLIs print the kubeconfig
+	// rather than writing one, and for those the cost decision 12 names and
+	// accepts — a temporary file that can briefly hold credential material —
+	// is simply not paid: nothing reaches disk on the way through.
+	prints, err := domain.VendorPrintsKubeconfig(provider)
+	if err != nil {
+		return "", err
+	}
+	if prints {
+		plan, err := domain.PlanVendorAdd(provider, cluster, "")
+		if err != nil {
+			return "", err
+		}
+		printed, stderr, err := r.execute(ctx, provider, plan, "")
+		if err != nil {
+			if errors.Is(err, ports.ErrVendorCLIDeclined) {
+				return "", fmt.Errorf("%w: %s", ports.ErrVendorCLIDeclined, stderr)
+			}
+			return "", err
+		}
+		if len(bytes.TrimSpace(printed)) == 0 {
+			return "", fmt.Errorf("%w: it exited cleanly and printed no kubeconfig", ports.ErrVendorCLIUnreadable)
+		}
+		return string(printed), nil
+	}
+
 	dir, err := os.MkdirTemp("", "podsteer-kubeconfig-")
 	if err != nil {
 		return "", fmt.Errorf("making a directory for the CLI to write into: %w", err)

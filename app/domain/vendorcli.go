@@ -146,10 +146,12 @@ type VendorPlan struct {
 	Env     map[string]string
 	Timeout time.Duration
 	// KubeconfigFlag names the flag that points the CLI at a file to write,
-	// and KubeconfigEnv names the variable that does the same. Exactly one is
-	// set on an add plan; both are empty on a list plan.
-	KubeconfigFlag string
-	KubeconfigEnv  string
+	// KubeconfigEnv names the variable that does the same, and
+	// KubeconfigOnStdout says it prints the document instead. Exactly one is
+	// set on an add plan; none is on a list plan.
+	KubeconfigFlag     string
+	KubeconfigEnv      string
+	KubeconfigOnStdout bool
 }
 
 // --- the table -----------------------------------------------------------
@@ -195,8 +197,16 @@ type vendorAddSpec struct {
 }
 
 type vendorAddTarget struct {
-	// Kind is "flag" or "env": some CLIs take a file to write, others only
-	// honour KUBECONFIG.
+	// Kind is how the CLI is told where the kubeconfig should go:
+	//
+	//   "flag"   — it takes a path as an argument.
+	//   "env"    — it honours KUBECONFIG and nothing else.
+	//   "stdout" — it PRINTS the kubeconfig and writes no file at all.
+	//
+	// The third is the best of them and is not a fallback: nothing reaches
+	// disk, so the one cost decision 12 names and accepts — a temporary file
+	// that for some subcommands can hold credential material — is not paid at
+	// all. Where a CLI offers both, its row should print.
 	Kind string `json:"kind"`
 	Name string `json:"name"`
 }
@@ -246,9 +256,9 @@ func validateVendorRow(row vendorCLIDefinition) error {
 		return fmt.Errorf("cloud CLI %q has no add command", row.ID)
 	case len(row.List.Fields["name"]) == 0:
 		return fmt.Errorf("cloud CLI %q does not say how to read a cluster name", row.ID)
-	case row.Add.Target.Kind != "flag" && row.Add.Target.Kind != "env":
+	case row.Add.Target.Kind != "flag" && row.Add.Target.Kind != "env" && row.Add.Target.Kind != "stdout":
 		return fmt.Errorf("cloud CLI %q has no way to be pointed at a kubeconfig", row.ID)
-	case row.Add.Target.Name == "":
+	case row.Add.Target.Kind != "stdout" && row.Add.Target.Name == "":
 		return fmt.Errorf("cloud CLI %q names no kubeconfig target", row.ID)
 	}
 
@@ -331,6 +341,16 @@ func PlanVendorList(provider string) (VendorPlan, error) {
 	}, nil
 }
 
+// VendorPrintsKubeconfig reports whether a row's CLI prints the kubeconfig
+// rather than writing a file, so the runner knows not to make one.
+func VendorPrintsKubeconfig(provider string) (bool, error) {
+	row, err := vendorRow(provider)
+	if err != nil {
+		return false, err
+	}
+	return row.Add.Target.Kind == "stdout", nil
+}
+
 // PlanVendorAdd is the command that writes a kubeconfig entry for one cluster.
 //
 // The values bound into it are values the CLI ITSELF printed a moment ago —
@@ -342,7 +362,7 @@ func PlanVendorAdd(provider string, cluster VendorCluster, kubeconfigPath string
 	if err != nil {
 		return VendorPlan{}, err
 	}
-	if kubeconfigPath == "" {
+	if kubeconfigPath == "" && row.Add.Target.Kind != "stdout" {
 		return VendorPlan{}, errors.New("no kubeconfig path for the CLI to write")
 	}
 
@@ -367,6 +387,9 @@ func PlanVendorAdd(provider string, cluster VendorCluster, kubeconfigPath string
 		args = append(args, row.Add.Target.Name, kubeconfigPath)
 	case "env":
 		plan.KubeconfigEnv = row.Add.Target.Name
+	case "stdout":
+		// Nothing to point anywhere: what it prints IS the kubeconfig.
+		plan.KubeconfigOnStdout = true
 	}
 
 	plan.Args = args

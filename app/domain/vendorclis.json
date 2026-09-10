@@ -4,32 +4,74 @@
     {
       "id": "eks",
       "label": "Amazon EKS",
-      "binary": { "default": "aws" },
-      "env": { "AWS_PAGER": "" },
+      "binary": {
+        "default": "aws"
+      },
+      "env": {
+        "AWS_PAGER": ""
+      },
       "list": {
-        "args": ["eks", "list-clusters", "--output", "json"],
+        "args": [
+          "eks",
+          "list-clusters",
+          "--output",
+          "json"
+        ],
         "items": "clusters",
-        "fields": { "name": ["$self"] }
+        "fields": {
+          "name": [
+            "$self"
+          ]
+        }
       },
       "add": {
-        "args": ["eks", "update-kubeconfig", "--name", "{name}"],
-        "target": { "kind": "flag", "name": "--kubeconfig" }
+        "args": [
+          "eks",
+          "update-kubeconfig",
+          "--name",
+          "{name}"
+        ],
+        "target": {
+          "kind": "flag",
+          "name": "--kubeconfig"
+        }
       },
-      "signInHint": "Sign in the way you normally do for this account — often `aws sso login`.",
-      "declinedHeadings": ["ExpiredToken", "credentials", "sso session"]
+      "signInHint": "Sign in the way you normally do for this account \u2014 often `aws sso login`.",
+      "declinedHeadings": [
+        "ExpiredToken",
+        "credentials",
+        "sso session"
+      ]
     },
     {
       "id": "aks",
       "label": "Azure AKS",
-      "binary": { "default": "az", "windows": "az.cmd" },
-      "env": { "AZURE_CORE_ONLY_SHOW_ERRORS": "true", "AZURE_CORE_NO_COLOR": "true" },
+      "binary": {
+        "default": "az",
+        "windows": "az.cmd"
+      },
+      "env": {
+        "AZURE_CORE_ONLY_SHOW_ERRORS": "true",
+        "AZURE_CORE_NO_COLOR": "true"
+      },
       "list": {
-        "args": ["aks", "list", "--output", "json"],
+        "args": [
+          "aks",
+          "list",
+          "--output",
+          "json"
+        ],
         "items": "",
         "fields": {
-          "name": ["name"],
-          "params.resourceGroup": ["resourceGroup"],
-          "params.location": ["location"]
+          "name": [
+            "name"
+          ],
+          "params.resourceGroup": [
+            "resourceGroup"
+          ],
+          "params.location": [
+            "location"
+          ]
         }
       },
       "add": {
@@ -42,10 +84,111 @@
           "{params.resourceGroup}",
           "--overwrite-existing"
         ],
-        "target": { "kind": "flag", "name": "--file" }
+        "target": {
+          "kind": "flag",
+          "name": "--file"
+        }
       },
-      "signInHint": "Sign in the way you normally do — usually `az login`.",
-      "declinedHeadings": ["Please run 'az login'", "AADSTS", "not logged in"]
+      "signInHint": "Sign in the way you normally do \u2014 usually `az login`.",
+      "declinedHeadings": [
+        "Please run 'az login'",
+        "AADSTS",
+        "not logged in"
+      ]
+    },
+    {
+      "id": "gke",
+      "label": "Google GKE",
+      "binary": {
+        "default": "gcloud",
+        "windows": "gcloud.cmd"
+      },
+      "env": {
+        "CLOUDSDK_CORE_DISABLE_PROMPTS": "1"
+      },
+      "list": {
+        "args": [
+          "container",
+          "clusters",
+          "list",
+          "--format=json"
+        ],
+        "items": "",
+        "fields": {
+          "name": [
+            "name"
+          ],
+          "params.location": [
+            "location",
+            "zone"
+          ]
+        }
+      },
+      "add": {
+        "args": [
+          "container",
+          "clusters",
+          "get-credentials",
+          "{name}",
+          "--location",
+          "{params.location}"
+        ],
+        "target": {
+          "kind": "env",
+          "name": "KUBECONFIG"
+        }
+      },
+      "signInHint": "Sign in the way you normally do \u2014 usually `gcloud auth login`.",
+      "declinedHeadings": [
+        "gcloud auth login",
+        "credentials were not found",
+        "reauthentication"
+      ]
+    },
+    {
+      "id": "doks",
+      "label": "DigitalOcean Kubernetes",
+      "binary": {
+        "default": "doctl"
+      },
+      "env": {},
+      "list": {
+        "args": [
+          "kubernetes",
+          "cluster",
+          "list",
+          "--output",
+          "json"
+        ],
+        "items": "",
+        "fields": {
+          "name": [
+            "name"
+          ],
+          "params.region": [
+            "region"
+          ]
+        }
+      },
+      "add": {
+        "args": [
+          "kubernetes",
+          "cluster",
+          "kubeconfig",
+          "show",
+          "{name}"
+        ],
+        "target": {
+          "kind": "stdout",
+          "name": ""
+        }
+      },
+      "signInHint": "Sign in the way you normally do \u2014 usually `doctl auth init`.",
+      "declinedHeadings": [
+        "unable to initialize",
+        "access token",
+        "401"
+      ]
     }
   ]
 }

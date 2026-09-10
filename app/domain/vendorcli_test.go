@@ -146,11 +146,14 @@ func TestThePlanCarriesItsTimeout(t *testing.T) {
 	}
 }
 
-// Every add plan must point the CLI at a file PodSteer owns. A plan that did
-// not would let the CLI write the operator's real kubeconfig — and both of
-// these CLIs set current-context when they do, which would move the target of
-// every kubectl in every other terminal on the machine.
-func TestEveryAddPlanPointsAtAFilePodSteerNamed(t *testing.T) {
+// EVERY ADD PLAN MUST KEEP THE CLI AWAY FROM THE OPERATOR'S KUBECONFIG. These
+// CLIs set current-context when they write one, which would move the target of
+// every kubectl in every other terminal on the machine. There are two ways to
+// keep them off it: point them at a file PodSteer named, or use a subcommand
+// that prints the document and writes nothing. A row that does neither would
+// let the CLI write wherever it likes, which is the one thing this feature may
+// not do.
+func TestNoAddPlanLetsTheCLIChooseWhereToWrite(t *testing.T) {
 	t.Parallel()
 
 	clis, _ := VendorCLIs()
@@ -170,8 +173,14 @@ func TestEveryAddPlanPointsAtAFilePodSteerNamed(t *testing.T) {
 			}
 		case plan.KubeconfigEnv != "":
 			// The adapter sets the variable; nothing to assert in the argv.
+		case plan.KubeconfigOnStdout:
+			// It prints and writes nothing, which is better than either: no
+			// file exists to hold a credential even for a moment.
+			if plan.KubeconfigFlag != "" || plan.KubeconfigEnv != "" {
+				t.Errorf("%s: a printing row also points at a file", cli.ID)
+			}
 		default:
-			t.Errorf("%s: the plan points the CLI at nothing", cli.ID)
+			t.Errorf("%s: the plan lets the CLI write wherever it likes", cli.ID)
 		}
 	}
 }

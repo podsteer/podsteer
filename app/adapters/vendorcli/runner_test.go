@@ -330,3 +330,78 @@ func TestProvidersStartsNoProcess(t *testing.T) {
 		t.Error("Providers() ran the binary; it must only look for it")
 	}
 }
+
+// A row whose CLI PRINTS the kubeconfig writes nothing to disk at all, which
+// is better than a temporary file however carefully that file is handled: the
+// cost decision 12 names and accepts is simply not paid.
+func TestAPrintedKubeconfigNeverReachesDisk(t *testing.T) {
+	printer := printingRow(t)
+	fakeCLI(t, printer, "echo 'apiVersion: v1'\necho 'kind: Config'")
+
+	before := tempKubeconfigDirs(t)
+
+	text, err := New(nil).WriteKubeconfig(context.Background(), printer, domain.VendorCluster{
+		Name:   "alpha",
+		Params: map[string]string{"resourceGroup": "rg", "location": "eu", "region": "lon1"},
+	})
+	if err != nil {
+		t.Fatalf("WriteKubeconfig() = %v", err)
+	}
+
+	if !strings.Contains(text, "kind: Config") {
+		t.Errorf("text = %q, want what the CLI printed", text)
+	}
+	if after := tempKubeconfigDirs(t); after != before {
+		t.Errorf("temporary kubeconfig directories went from %d to %d; a printing row must make none", before, after)
+	}
+}
+
+// A printing row that prints nothing is the CLI's contract broken, and must
+// not read as "your cluster could not be added".
+func TestAPrintingCLIThatPrintsNothingIsUnreadable(t *testing.T) {
+	printer := printingRow(t)
+	fakeCLI(t, printer, `exit 0`)
+
+	_, err := New(nil).WriteKubeconfig(context.Background(), printer, domain.VendorCluster{
+		Name:   "alpha",
+		Params: map[string]string{"region": "lon1", "location": "eu", "resourceGroup": "rg"},
+	})
+	if !errors.Is(err, ports.ErrVendorCLIUnreadable) {
+		t.Fatalf("error = %v, want ErrVendorCLIUnreadable", err)
+	}
+}
+
+// printingRow finds a row whose CLI prints the kubeconfig, or skips.
+func printingRow(t *testing.T) string {
+	t.Helper()
+
+	clis, err := domain.VendorCLIs()
+	if err != nil {
+		t.Fatalf("VendorCLIs() = %v", err)
+	}
+	for _, cli := range clis {
+		prints, err := domain.VendorPrintsKubeconfig(cli.ID)
+		if err == nil && prints {
+			return cli.ID
+		}
+	}
+	t.Skip("no shipped row prints its kubeconfig")
+	return ""
+}
+
+// tempKubeconfigDirs counts the directories this package would have made.
+func tempKubeconfigDirs(t *testing.T) int {
+	t.Helper()
+
+	entries, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		t.Fatalf("reading the temporary directory: %v", err)
+	}
+	count := 0
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "podsteer-kubeconfig-") {
+			count++
+		}
+	}
+	return count
+}
