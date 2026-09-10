@@ -121,14 +121,29 @@ and `ApplyOutcome.Conflicts` names the fields and their owners.
 not that it was declined. `fieldConflictsFrom` reads `Details.Causes` BEFORE
 `classify`, which would fold a 409 into `ErrConflict` and lose the list — and
 a stale-resourceVersion 409 carries no such causes, which is what keeps the two
-apart. **Nothing forces ownership** yet: taking a field is a decision an
-operator makes with the owner's name in front of them.
+apart. **Forcing is a PRECONDITION, never a retry.** `ApplyOptions.Confirmed` carries
+the conflicts the operator was shown and agreed to, `ErrForceUnconfirmed`
+refuses a force carrying none before anything leaves, and the adapter re-reads
+the LIVE set one round trip before the forced write — so a manager who took a
+field while the dialog was open refuses the write instead of being overridden
+unseen, and the new set comes back to be read. `CoveredBy` matches on field AND
+manager: agreeing to take `.spec.replicas` from `argocd-controller` is not
+consent to take it from whoever holds it now. Locking on `resourceVersion`
+instead was rejected — a rolling workload's status bumps it constantly, so that
+force would be a button that never works.
 
 `domain.ClassifyManager` decides what KIND of owner it is, because the sentence
 differs — overriding Argo CD is not durable (it reverts on the next sync),
 overriding kubectl takes a field from a person. The table is hand-compiled and
 stale by construction, like the deprecation and release tables; an unrecognised
 manager is `ManagerUnknown` and gets the server's own words, never a guess.
+
+That distinction reaches the button: where a reconciler owns the field the
+label is **"Override anyway"** with the sentence that it is undone on the next
+sync, never "Take ownership", which would be a claim the code cannot keep. On a
+production cluster the override needs the object's name typed, the same gate
+Delete uses — and the gate checks the name is non-empty first, because
+`nameConfirmed` compares two strings and two empty ones are equal.
 
 `fieldManager` is EXPLICIT rather than derived. client-go falls back to the
 user agent, and `Config.UserAgent` is operator-settable — so an override

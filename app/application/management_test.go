@@ -1351,3 +1351,59 @@ func TestResizeContainerRefusesLocallyWithoutWriting(t *testing.T) {
 		t.Error("a no-op resize reached the cluster")
 	}
 }
+
+// TestManagementServiceApplyResourceRefusesForceWithoutAConfirmedSet is the
+// half of the force precondition that is enforced BEFORE anything leaves.
+//
+// The adapter re-reads the live conflicts and checks them against what the
+// operator agreed to; this stops a caller skipping the agreement entirely. A
+// force carrying nothing is a retry that wins — an interface turning "the
+// server declined" into "press again" with nobody having read who owns what.
+func TestManagementServiceApplyResourceRefusesForceWithoutAConfirmedSet(t *testing.T) {
+	t.Parallel()
+
+	const id domain.ClusterID = "dev"
+
+	registry := application.NewRegistry()
+	port := &fakeManagementPort{}
+	service := newManagementService(t, port, registry)
+
+	_, err := service.ApplyResource(context.Background(), id, "kind: Pod",
+		domain.ApplyOptions{Force: true})
+
+	if !errors.Is(err, domain.ErrForceUnconfirmed) {
+		t.Fatalf("error = %v, want ErrForceUnconfirmed", err)
+	}
+	if calls := port.recordedCalls(); len(calls) != 0 {
+		t.Fatalf("port recorded %v, want nothing — the refusal happens before the request leaves", calls)
+	}
+}
+
+// TestManagementServiceApplyResourceAllowsDryRunOnAReadOnlyCluster mirrors
+// UpdateResource's exception, and for the same reason: asking the server what
+// WOULD happen is a read.
+func TestManagementServiceApplyResourceAllowsDryRunOnAReadOnlyCluster(t *testing.T) {
+	t.Parallel()
+
+	const id domain.ClusterID = "prod"
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly(id, true)
+
+	port := &fakeManagementPort{}
+	service := newManagementService(t, port, registry)
+	ctx := context.Background()
+
+	if _, err := service.ApplyResource(ctx, id, "kind: Pod", domain.ApplyOptions{DryRun: true}); err != nil {
+		t.Fatalf("ApplyResource(dryRun) on a read-only cluster error = %v, want nil", err)
+	}
+	if calls := port.recordedCalls(); len(calls) != 1 || calls[0] != "ApplyResource" {
+		t.Fatalf("port recorded %v, want one ApplyResource", calls)
+	}
+
+	// And a real apply on the same cluster is still refused, so the exception
+	// cannot regress into "dry run skips the check for everyone".
+	if _, err := service.ApplyResource(ctx, id, "kind: Pod", domain.ApplyOptions{}); err == nil {
+		t.Fatal("ApplyResource on a read-only cluster was allowed")
+	}
+}

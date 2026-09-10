@@ -110,6 +110,16 @@ var (
 	// same way ErrInvalidKey is checked before SetSecretKey ever dials out.
 	ErrInvalidManifest = errors.New("invalid manifest")
 
+	// ErrForceUnconfirmed reports that a forced apply arrived with nothing
+	// confirmed.
+	//
+	// FORCE IS A PRECONDITION, NEVER A RETRY. Taking a field from another
+	// manager is only a decision if somebody read who holds it; a force with
+	// an empty confirmed set is an interface turning "the server declined"
+	// into "press again", which is the one thing this must not become.
+	// Refused in the application service, before any request leaves.
+	ErrForceUnconfirmed = errors.New("a forced apply must carry the conflicts that were confirmed")
+
 	// ErrInvalidRevision reports that RollbackWorkload was asked for a
 	// revision number that is not positive, or — checked in the adapter,
 	// which is the only layer that knows which revision is presently live —

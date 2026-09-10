@@ -169,14 +169,42 @@ func (a *Adapter) ApplyResource(
 		dryRunOpt = []string{metav1.DryRunAll}
 	}
 
+	// THE CLAIM THE DIALOG MADE IS CHECKED AGAINST THE CLUSTER, one round
+	// trip before the write that acts on it.
+	//
+	// A conflict dialog naming three managers is a statement about the
+	// cluster at the moment it was drawn. Between the operator reading it and
+	// pressing the button, a fourth manager can take a field — and forcing
+	// then would override somebody they were never shown. So a forced apply
+	// re-reads the live set first and refuses if it grew.
+	//
+	// Locking on resourceVersion instead was considered and rejected: a
+	// rolling workload's status bumps it constantly, so a force that failed
+	// on every status write would be a button that never works. This checks
+	// the thing the operator actually agreed to.
+	if options.Force && !options.DryRun {
+		live, err := a.liveConflicts(ctx, prepared)
+		if err != nil {
+			return domain.ApplyOutcome{}, err
+		}
+		if !live.CoveredBy(options.Confirmed) {
+			return domain.ApplyOutcome{
+				Kind:      prepared.gvk.Kind,
+				Name:      prepared.object.GetName(),
+				Namespace: domain.NamespaceName(prepared.object.GetNamespace()),
+				Conflicts: live,
+				Warnings:  prepared.collector.collected(),
+			}, nil
+		}
+	}
+
 	result, err := prepared.client.Apply(ctx, prepared.object.GetName(), prepared.object, metav1.ApplyOptions{
 		FieldManager: fieldManager,
 		DryRun:       dryRunOpt,
-		// NEVER Force IN THIS INCREMENT. Taking a field from another manager
-		// is a decision an operator makes with the owner's name in front of
-		// them, and there is nowhere yet to show them that. Until there is, a
-		// conflict is reported rather than won.
-		Force: false,
+		// Only ever true for a set the operator was shown and the cluster
+		// still agrees with — see above, and ErrForceUnconfirmed for the
+		// half enforced before the request leaves.
+		Force: options.Force,
 	})
 	if err != nil {
 		// READ BEFORE classify, which would fold this into ErrConflict and
@@ -198,6 +226,28 @@ func (a *Adapter) ApplyResource(
 	outcome := outcomeFrom(prepared.gvk, result, created, options.DryRun)
 	outcome.Warnings = prepared.collector.collected()
 	return outcome, nil
+}
+
+// liveConflicts asks the server what this apply would conflict with right
+// now, writing nothing.
+//
+// A dry-run apply WITHOUT force: the server reports the same conflicts it
+// would refuse a real write over, and persists nothing. Any other error is
+// returned — a cluster that has become unreachable between the dialog and the
+// button must not be read as "no conflicts, go ahead".
+func (a *Adapter) liveConflicts(ctx context.Context, prepared *preparedWrite) (domain.FieldConflicts, error) {
+	_, err := prepared.client.Apply(ctx, prepared.object.GetName(), prepared.object, metav1.ApplyOptions{
+		FieldManager: fieldManager,
+		DryRun:       []string{metav1.DryRunAll},
+		Force:        false,
+	})
+	if err == nil {
+		return nil, nil
+	}
+	if conflicts := fieldConflictsFrom(err); len(conflicts) > 0 {
+		return conflicts, nil
+	}
+	return nil, classify("checking field ownership before forcing", err)
 }
 
 // fieldConflictsFrom reads the fields and owners out of a 409, or returns

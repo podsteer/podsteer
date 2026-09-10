@@ -165,8 +165,49 @@ func (c FieldConflicts) Managers() []string {
 	return names
 }
 
+// CoveredBy reports whether every conflict here was one the operator was
+// shown and agreed to.
+//
+// THE PRECONDITION FOR FORCING, and the reason force is not a retry. A
+// dialog naming three managers is a claim about the cluster at the moment it
+// was drawn; between reading it and pressing the button a fourth manager can
+// take a field, and forcing then would override somebody the operator was
+// never shown. So the live set is re-read and checked against what they
+// confirmed: anything new, and the write does not happen.
+//
+// Matched on FIELD AND MANAGER together. The same field changing hands is a
+// different fact from the same manager holding it, and confirming "take
+// .spec.replicas from argocd-controller" is not consent to take it from
+// whoever holds it now.
+func (c FieldConflicts) CoveredBy(confirmed FieldConflicts) bool {
+	for _, live := range c {
+		found := false
+		for _, agreed := range confirmed {
+			if live.Field == agreed.Field && live.Manager == agreed.Manager {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 // ApplyOptions are the choices an apply is made with.
 type ApplyOptions struct {
 	// DryRun asks the server what it would do and store nothing.
 	DryRun bool
+	// Force takes ownership of every field in Confirmed.
+	//
+	// NEVER SET WITHOUT Confirmed. A force with nothing confirmed is a retry
+	// that wins, which is the shape this refuses to have: it would let an
+	// interface turn "the server declined" into "press again" without anybody
+	// reading who owns what.
+	Force bool
+	// Confirmed is the conflict set the operator was shown and agreed to
+	// override. Checked against the cluster before the forced write — see
+	// CoveredBy.
+	Confirmed FieldConflicts
 }

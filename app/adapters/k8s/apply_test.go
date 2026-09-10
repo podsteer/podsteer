@@ -683,3 +683,138 @@ func TestApplyResourceSendsTheFieldManager(t *testing.T) {
 		t.Errorf("fieldManager = %q, want %q", sawManager, fieldManager)
 	}
 }
+
+// seedOtherManager gives argocd-controller ownership of spec.replicas.
+func seedOtherManager(t *testing.T, dynClient dynamic.Interface, replicas int64, manager string) {
+	t.Helper()
+
+	theirs := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata":   map[string]any{"name": "web", "namespace": "default"},
+		"spec":       map[string]any{"replicas": replicas},
+	}}
+	if _, err := dynClient.Resource(deploymentGVR).Namespace("default").
+		Apply(context.Background(), "web", theirs, metav1.ApplyOptions{FieldManager: manager}); err != nil {
+		t.Fatalf("seeding %s ownership: %v", manager, err)
+	}
+}
+
+const replicaManifest = "apiVersion: apps/v1\n" +
+	"kind: Deployment\n" +
+	"metadata:\n" +
+	"  name: web\n" +
+	"  namespace: default\n" +
+	"spec:\n" +
+	"  replicas: 3\n"
+
+// TestApplyResourceForcedTakesOwnershipOfWhatWasConfirmed is the happy path:
+// the operator was shown the owner, agreed, and the cluster still agrees.
+func TestApplyResourceForcedTakesOwnershipOfWhatWasConfirmed(t *testing.T) {
+	existing := newSeedObject("apps/v1", "Deployment", "default", "web", "10")
+	dynClient := applyFakeClient(t, existing)
+	seedOtherManager(t, dynClient, 10, "argocd-controller")
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
+
+	// What the dialog showed, and what the operator agreed to.
+	confirmed := domain.FieldConflicts{
+		{Field: ".spec.replicas", Manager: "argocd-controller", Kind: domain.ManagerGitOps},
+	}
+
+	outcome, err := adapter.ApplyResource(context.Background(), "dev", replicaManifest,
+		domain.ApplyOptions{Force: true, Confirmed: confirmed})
+	if err != nil {
+		t.Fatalf("ApplyResource(force) error = %v", err)
+	}
+	if outcome.Refused() {
+		t.Fatalf("outcome refused with %+v, want the forced write to go through", outcome.Conflicts)
+	}
+
+	stored, err := dynClient.Resource(deploymentGVR).Namespace("default").
+		Get(context.Background(), "web", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting the object back: %v", err)
+	}
+	replicas, _, _ := unstructured.NestedInt64(stored.Object, "spec", "replicas")
+	if replicas != 3 {
+		t.Errorf("spec.replicas = %d, want 3 — the forced apply did not take the field", replicas)
+	}
+}
+
+// TestApplyResourceForceIsRefusedWhenOwnershipChangedUnderneath is the whole
+// reason force is a precondition rather than a retry.
+//
+// The dialog named one manager. Between the operator reading it and pressing
+// the button, a second took a field. Forcing then would override somebody
+// they were never shown, so the write does not happen and the NEW set comes
+// back for them to read.
+func TestApplyResourceForceIsRefusedWhenOwnershipChangedUnderneath(t *testing.T) {
+	existing := newSeedObject("apps/v1", "Deployment", "default", "web", "10")
+	dynClient := applyFakeClient(t, existing)
+	seedOtherManager(t, dynClient, 10, "argocd-controller")
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
+
+	// The operator confirmed a set naming a DIFFERENT manager — which is what
+	// a dialog drawn before argocd-controller took the field would have said.
+	stale := domain.FieldConflicts{
+		{Field: ".spec.replicas", Manager: "kubectl", Kind: domain.ManagerKubectl},
+	}
+
+	outcome, err := adapter.ApplyResource(context.Background(), "dev", replicaManifest,
+		domain.ApplyOptions{Force: true, Confirmed: stale})
+	if err != nil {
+		t.Fatalf("ApplyResource(force) error = %v", err)
+	}
+	if !outcome.Refused() {
+		t.Fatal("the forced apply went through against a manager the operator never confirmed")
+	}
+	if len(outcome.Conflicts) != 1 || outcome.Conflicts[0].Manager != "argocd-controller" {
+		t.Fatalf("conflicts = %+v, want the manager who actually holds it now", outcome.Conflicts)
+	}
+
+	stored, err := dynClient.Resource(deploymentGVR).Namespace("default").
+		Get(context.Background(), "web", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting the object back: %v", err)
+	}
+	replicas, _, _ := unstructured.NestedInt64(stored.Object, "spec", "replicas")
+	if replicas != 10 {
+		t.Errorf("spec.replicas = %d, want 10 — a refused force must not have written", replicas)
+	}
+}
+
+// TestApplyResourceForceChecksTheClusterRatherThanTrustingTheDialog pins the
+// extra round trip, because without it the two tests above would both pass
+// while the check did nothing.
+func TestApplyResourceForceChecksTheClusterRatherThanTrustingTheDialog(t *testing.T) {
+	existing := newSeedObject("apps/v1", "Deployment", "default", "web", "10")
+	dynClient := applyFakeClient(t, existing)
+	seedOtherManager(t, dynClient, 10, "argocd-controller")
+
+	var dryRuns, writes int
+	dynClient.PrependReactor("patch", "deployments", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		patch := action.(clientgotesting.PatchActionImpl)
+		if len(patch.PatchOptions.DryRun) > 0 {
+			dryRuns++
+		} else if patch.PatchOptions.FieldManager == fieldManager {
+			writes++
+		}
+		return false, nil, nil
+	})
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
+
+	confirmed := domain.FieldConflicts{
+		{Field: ".spec.replicas", Manager: "argocd-controller", Kind: domain.ManagerGitOps},
+	}
+	if _, err := adapter.ApplyResource(context.Background(), "dev", replicaManifest,
+		domain.ApplyOptions{Force: true, Confirmed: confirmed}); err != nil {
+		t.Fatalf("ApplyResource(force) error = %v", err)
+	}
+
+	if dryRuns != 1 {
+		t.Errorf("dry-run applies = %d, want exactly 1 — the live set must be re-read before forcing", dryRuns)
+	}
+	if writes != 1 {
+		t.Errorf("real writes = %d, want exactly 1", writes)
+	}
+}
