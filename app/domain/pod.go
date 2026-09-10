@@ -122,6 +122,9 @@ type Container struct {
 	// somebody wrote. Two pods can name the same tag and hold different
 	// digests, and this is the only field that says so.
 	ImageID string
+	// Security quotes the container's own securityContext — the fields a
+	// posture check reads, and nothing else. See ContainerSecurity.
+	Security ContainerSecurity
 	// Usage is what this container is measuring right now, when anything
 	// measured it. The pod's total is the sum of these, and this is the half
 	// that says which container the total came from.
@@ -262,6 +265,9 @@ type PodSpec struct {
 	NodeName string
 	// PodIP is the pod's cluster IP, empty before it is assigned.
 	PodIP string
+	// Security is the pod-level securityContext a posture check reads — the
+	// namespaces it shares with its node. See PodSecurity.
+	Security PodSecurity
 	// Containers are the pod's containers.
 	Containers []Container
 	// Labels are the pod's labels.
@@ -336,6 +342,7 @@ type Pod struct {
 	phase       PodPhase
 	nodeName    string
 	podIP       string
+	security    PodSecurity
 	containers  []Container
 	labels      map[string]string
 	annotations map[string]string
@@ -390,6 +397,7 @@ func NewPod(spec PodSpec) (Pod, error) {
 		phase:       phase,
 		nodeName:    spec.NodeName,
 		podIP:       spec.PodIP,
+		security:    spec.Security,
 		containers:  containers,
 		labels:      maps.Clone(spec.Labels),
 		annotations: maps.Clone(spec.Annotations),
@@ -426,6 +434,9 @@ func (p Pod) NodeName() string { return p.nodeName }
 
 // PodIP returns the pod's cluster IP, empty before it is assigned.
 func (p Pod) PodIP() string { return p.podIP }
+
+// Security quotes the pod-level namespaces it shares with its node.
+func (p Pod) Security() PodSecurity { return p.security }
 
 // Containers returns a copy of the pod's containers, preserving immutability.
 func (p Pod) Containers() []Container {

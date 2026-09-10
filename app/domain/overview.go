@@ -127,6 +127,19 @@ const (
 	// CategoryFindingUpgrade covers API versions the cluster serves today
 	// that a future Kubernetes minor removes — see deprecations.go.
 	CategoryFindingUpgrade FindingCategory = "Upgrade"
+	// CategoryFindingSecurity covers privileges a workload's own spec takes.
+	//
+	// SEPARATE FROM Configuration, ON PURPOSE. A missing resource limit and a
+	// privileged container are both "a declaration that will hurt later", and
+	// grouping them would be defensible — but an operator triaging one is not
+	// triaging the other, and somebody scanning the overview for the thing
+	// that matters at 2am should not have to read past six rightsizing rows
+	// to find that a pod shares the node's PID namespace.
+	//
+	// It covers ONLY what a manifest states. Vulnerability counts come from a
+	// scanner PodSteer does not run and are not findings here — see
+	// vulnerability.go.
+	CategoryFindingSecurity FindingCategory = "Security"
 )
 
 // Thresholds for the rules below. They are named constants rather than magic
@@ -1064,6 +1077,7 @@ func NewOverview(input OverviewInput) Overview {
 	findings = append(findings, memoryLimitFindings(input.Pods, input.MetricsMeasured)...)
 	findings = append(findings, sizingFindings(input.Pods, owners, input.MetricsMeasured, now)...)
 	findings = append(findings, imageDriftFindings(input.Pods)...)
+	findings = append(findings, securityFindings(input.Pods)...)
 	findings = append(findings, eventFindings(input.Events, findings, now)...)
 	findings = append(findings, upgradeFindings...)
 	rankFindings(findings)

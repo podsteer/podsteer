@@ -49,7 +49,14 @@ func richPod(name string) *corev1.Pod {
 			Finalizers:        []string{"kubernetes"},
 		},
 		Spec: corev1.PodSpec{
-			NodeName:     "node-1",
+			NodeName: "node-1",
+			// The host namespaces and the securityContext below are read by
+			// mapPod for the posture findings, so they belong in this fixture:
+			// the contract test is only as good as the fields it carries, and
+			// a stripper that nils one of these would otherwise pass.
+			HostNetwork:  true,
+			HostPID:      true,
+			HostIPC:      true,
 			NodeSelector: map[string]string{"disk": "ssd"},
 			Tolerations:  []corev1.Toleration{{Key: "spot"}},
 			Volumes:      []corev1.Volume{{Name: "config"}},
@@ -67,6 +74,15 @@ func richPod(name string) *corev1.Pod {
 				},
 				VolumeMounts:  []corev1.VolumeMount{{Name: "config", MountPath: "/etc"}},
 				LivenessProbe: &corev1.Probe{InitialDelaySeconds: 10},
+				SecurityContext: &corev1.SecurityContext{
+					Privileged:               boolPtr(true),
+					AllowPrivilegeEscalation: boolPtr(true),
+					RunAsNonRoot:             boolPtr(false),
+					RunAsUser:                ptrTo(int64(0)),
+					Capabilities: &corev1.Capabilities{
+						Add: []corev1.Capability{"SYS_ADMIN", "NET_BIND_SERVICE"},
+					},
+				},
 			}},
 		},
 		Status: corev1.PodStatus{

@@ -2715,6 +2715,31 @@ the pod's own name as the fallback for a bare pod, which is the one case the
 pod IS the subject. The mark is not a column: a column exists on every cluster
 whether or not anything fills it, and on the great majority nothing would.
 
+**The overview reports the privileges a spec takes, and every one is INFO.**
+`securityFindings` (`app/domain/security_findings.go`) reads five things an
+operator WROTE — privileged mode, a shared host namespace, a written
+`allowPrivilegeEscalation`, a dangerous added capability, a UID pinned to 0 —
+and reports nothing about an unstated field, because "the operator did not say"
+is not "the operator chose the unsafe thing". `SeverityWarning` would mark the
+cluster DEGRADED (see `grade`), and every real cluster runs privileged CNI, CSI
+and monitoring agents that share host namespaces; a warning would therefore
+paint every cluster permanently yellow for having a network plugin.
+`TestSecurityFindingsNeverDegradeTheClusterVerdict` is what holds that.
+
+Pods carrying `podsteer.io/purpose` are skipped: a node shell IS a privileged
+pod sharing the host's namespaces, and reporting it would fire every time
+somebody opened one. The exclusion is that label and nothing else — kube-system
+is not an exemption.
+
+**NOTHING IN THIS CATEGORY READS `pod.Spec.Volumes`.** hostPath and a mounted
+docker.sock belong here and cannot be computed correctly today: `stripPod`
+nils volumes, so the rule would be right on some clusters and silently blank on
+whichever ones the watch happened to be serving.
+`TestStrippingAPodChangesNothingThisApplicationReads` now carries a
+securityContext and the three host namespaces in its fixture, so it fails if
+anyone strips what these rules read — and it fails too if anyone adds a volume
+read to `mapPod`.
+
 **The image is what gets fixed, so each summary carries it.** `Repository` and
 `Tag` are printer columns like the counts, so the read already had them; a
 summary now names the artefacts it summed (`Images`, deduplicated, sorted,
