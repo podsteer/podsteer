@@ -78,14 +78,6 @@ var (
 	// somebody to check a VPN.
 	ErrCredentialPluginMissing = errors.New("credential plugin not found")
 
-	// ErrVendorCLIMissing means a cloud CLI PodSteer offers to drive is not on
-	// PATH.
-	//
-	// THE SIBLING OF THE SENTINEL ABOVE, and for the same reason: nothing was
-	// contacted, nothing is wrong with anybody's credentials, and a program is
-	// absent. PodSteer never obtains one — the local shell's rule, "never
-	// installed, only found" — so the answer is a sentence naming what was
-	// looked for, not an offer to fetch it.
 	// ErrShellMissing means the container has no shell to list a directory
 	// with.
 	//
@@ -96,6 +88,14 @@ var (
 	// the control that still works. Copying a file needs only tar.
 	ErrShellMissing = errors.New("the container has no shell")
 
+	// ErrVendorCLIMissing means a cloud CLI PodSteer offers to drive is not on
+	// PATH.
+	//
+	// THE SIBLING OF ErrCredentialPluginMissing, and for the same reason:
+	// nothing was contacted, nothing is wrong with anybody's credentials, and
+	// a program is absent. PodSteer never obtains one — the local shell's
+	// rule, "never installed, only found" — so the answer is a sentence naming
+	// what was looked for, not an offer to fetch it.
 	ErrVendorCLIMissing = errors.New("that cloud CLI is not on PATH")
 
 	// ErrVendorCLIDeclined means the CLI ran and would not answer: not signed

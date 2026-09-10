@@ -56,6 +56,10 @@ const (
 	// because the cluster was never contacted and offering Retry would repeat
 	// a failure nothing about the cluster can fix.
 	CodeCredentialPlugin ErrorCode = "credential_plugin_missing"
+	// CodeDrainRefused means PodSteer would not perform a drain as asked,
+	// because at least one pod cannot be evicted the way the plan requires.
+	// Not retryable: the answer is to change what was asked for.
+	CodeDrainRefused ErrorCode = "drain_refused"
 	// CodeShellMissing means the container has no shell, so a directory
 	// cannot be listed in it. Its own code rather than internal, for the
 	// reason CodeTarMissing has one: nothing is wrong.
@@ -387,6 +391,24 @@ func classifyError(err error) (ErrorCode, string) {
 	// BEFORE THE TRANSPORT CASES TOO: a runtime that cannot start tar
 	// answers the exec with an internal error, which classify wraps as
 	// unreachable — and the cluster was reached perfectly well.
+	// A KUBECONFIG THAT IS NOT ONE, AND ONE THAT WOULD REPLACE A CONTEXT.
+	// Both are answers about the text the operator just pasted, and both were
+	// falling through to "An unexpected error occurred" — on every keystroke,
+	// because PreviewKubeconfig runs while they type. Nothing is retryable
+	// about either: the same text will be refused the same way.
+	case errors.Is(err, ports.ErrKubeconfigInvalid):
+		return CodeInvalidInput, "That is not a usable kubeconfig. Paste the file your provider gave you, or pick it with Choose file."
+
+	case errors.Is(err, ports.ErrKubeconfigConflict):
+		return CodeInvalidInput, "Your kubeconfig already has a context with that name, and PodSteer will not replace one that works. Rename the incoming context and try again."
+
+	// A REFUSAL, NOT A FAILURE. The drain report's own list of refused pods is
+	// deliberately not carried in the error — the note on DrainNode says "the
+	// error message alone is enough to explain it" — which was true of this
+	// sentence and not of the generic one it was reaching.
+	case errors.Is(err, ports.ErrDrainRefused):
+		return CodeDrainRefused, err.Error()
+
 	// BESIDE ErrTarMissing AND BEFORE THE TRANSPORT CASES, for the same
 	// reason: the exec reached the container perfectly well and the image
 	// simply has no shell in it.

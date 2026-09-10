@@ -311,7 +311,15 @@ func waitPodRunning(ctx context.Context, client kubernetes.Interface, ns, podNam
 		case corev1.PodRunning:
 			return true, nil
 		case corev1.PodFailed, corev1.PodSucceeded:
-			return false, fmt.Errorf("%s: it reached %s before running", op, pod.Status.Phase)
+			// THE SAME SENTINEL AS THE TWO BELOW. A pod that ran and died and
+			// a pod that never started are the same fact to the operator —
+			// there is no shell — and this branch was the one that carried no
+			// sentinel, so it alone reached them as "An unexpected error
+			// occurred" while the stuck and the timed-out cases each got the
+			// kubelet's own diagnosis. Which of three adjacent branches the
+			// phase landed in decided the quality of the answer.
+			return false, fmt.Errorf("%s: %w: it reached %s before running",
+				op, ports.ErrPodDidNotStart, pod.Status.Phase)
 		}
 		// Pending covers two situations that need opposite responses: a pod
 		// on its way up, and a pod that will never come up. Waiting out the

@@ -45,20 +45,45 @@ export const API_ERROR_CODES = [
   // `forbidden`: the account was allowed and the object was refused, and the
   // message is the API server's own words, which name the field to change.
   'pod_rejected',
-  // A cloud CLI PodSteer offers to drive — see decision 12. None of these is
-  // a fault in a cluster, in credentials or in the network, and none is
-  // retryable in the sense the transport codes are: a missing binary needs
-  // installing, a declined one needs signing in to, and both are answered by
-  // the CLI's own words rather than by anything PodSteer knows.
   // The container has no shell to list a directory with, and the container
   // printed something that is not a listing. Neither is a fault in the
   // cluster or the credentials — the first is what a distroless image IS.
   'shell_missing',
   'listing_unreadable',
+  // A cloud CLI PodSteer offers to drive — see decision 12. None of these is
+  // a fault in a cluster, in credentials or in the network, and none is
+  // retryable in the sense the transport codes are: a missing binary needs
+  // installing, a declined one needs signing in to, and both are answered by
+  // the CLI's own words rather than by anything PodSteer knows.
   'vendor_cli_missing',
   'vendor_cli_declined',
   'vendor_cli_timed_out',
   'vendor_cli_unreadable',
+  // EIGHT CODES THAT WERE MISSING FROM THIS LIST, and the gap was not
+  // cosmetic: an unlisted code narrows to `unknown`, `unknown` is retryable,
+  // so ErrorBanner printed the literal word "unknown" beneath an otherwise
+  // precise message and offered a Retry. Every one of these is a refusal a
+  // second press cannot change, and three say exactly that in their own Go
+  // doc comments. errorCodes.node.test.ts now reads the Go source and fails
+  // when the two drift, because "the two must be changed together" at the top
+  // of this file was true and enforced by nothing.
+  //
+  // A cluster older than the pods/resize subresource; a container with no nc,
+  // curl or wget; a Service whose shape cannot be probed at all.
+  'resize_unsupported',
+  'probe_tool_missing',
+  'probe_unavailable',
+  // A drain PodSteer will not perform as asked.
+  'drain_refused',
+  // A node-shell or debug pod that will never run. The code exists because
+  // the answer used to be "an unexpected error occurred".
+  'pod_did_not_start',
+  // The settings file: not writable, written by a newer PodSteer, or
+  // unreadable. Retrying a refusal that is working as designed is not a
+  // remedy.
+  'settings_read_only',
+  'settings_from_future',
+  'settings_unavailable',
   'internal',
 ] as const
 

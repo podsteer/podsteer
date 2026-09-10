@@ -643,8 +643,15 @@ func (f *clientFactory) clientsFor(id domain.ClusterID) (*clients, error) {
 	// first-connects to *different* clusters. That is intentional: it costs a
 	// few hundred milliseconds once, and it stops a UI that opens several
 	// tabs at once from spawning duplicate credential plugin processes.
-	// CLASSIFIED, NOT MERELY WRAPPED, and the difference is a whole error
-	// message. Two of the failures this package explains — a kubeconfig
+	// CLASSIFIED, NOT MERELY WRAPPED — every construction below as well as
+	// this one. The rule was applied to the two constructors that had been
+	// SEEN to fail rather than to the rule the paragraph below states, which
+	// left four more one screen further down returning the same errors raw.
+	// In practice the typed client fails first for the auth-provider and TLS
+	// cases, so those four were defensive; a defence that reads as "An
+	// unexpected error occurred" is not one.
+	//
+	// The difference is a whole error message. Two of the failures this package explains — a kubeconfig
 	// naming an auth-provider this binary does not register, and one naming a
 	// credential plugin that is not on PATH — are raised HERE, while the
 	// client is built, rather than by any request made through it. Returned
@@ -671,24 +678,24 @@ func (f *clientFactory) clientsFor(id domain.ClusterID) (*clients, error) {
 
 	disco, err := discovery.NewDiscoveryClientForConfig(dynamicConfig)
 	if err != nil {
-		return nil, fmt.Errorf("creating discovery client for %q: %w", id, err)
+		return nil, classify(fmt.Sprintf("creating discovery client for %q", id), err)
 	}
 
 	metrics, err := metricsclient.NewForConfig(dynamicConfig)
 	if err != nil {
-		return nil, fmt.Errorf("creating metrics client for %q: %w", id, err)
+		return nil, classify(fmt.Sprintf("creating metrics client for %q", id), err)
 	}
 
 	meta, err := metadata.NewForConfig(rest.CopyConfig(cfg))
 	if err != nil {
-		return nil, fmt.Errorf("creating metadata client for %q: %w", id, err)
+		return nil, classify(fmt.Sprintf("creating metadata client for %q", id), err)
 	}
 
 	// Built from the same config as the clients above and stored beside them,
 	// so it is discarded with them. See clients.queryHTTP.
 	queryHTTP, err := rest.HTTPClientFor(dynamicConfig)
 	if err != nil {
-		return nil, fmt.Errorf("creating query client for %q: %w", id, err)
+		return nil, classify(fmt.Sprintf("creating query client for %q", id), err)
 	}
 
 	built := &clients{

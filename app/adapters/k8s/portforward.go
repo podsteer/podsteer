@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -175,7 +176,21 @@ func (a *Adapter) superviseForward(entry *forwarder, current attempt, portName s
 			// The attempt ended on its own: the pod went away. Not an error
 			// to report — it is the case this exists for.
 		case err := <-current.failed:
-			_ = err
+			// RECORDED, NOT DISCARDED. This channel exists to carry the reason
+			// a forward died and the value was being thrown away one screen
+			// below a comment arguing that silent forward death is the flaw in
+			// every other client. A pod that rolled, a `pods/portforward`
+			// permission withdrawn and a cluster that went away all produced
+			// an identical vanishing row and an empty log.
+			//
+			// A log line rather than a raised error, deliberately: the
+			// reconnect below is the response, and interrupting somebody
+			// reading another cluster because a forward is re-establishing
+			// itself would be worse than the silence this replaces.
+			a.logger.Info("port-forward dropped; reconnecting",
+				slog.String("cluster", string(entry.snapshot().ClusterID)),
+				slog.String("forward", entry.snapshot().ID),
+				slog.String("error", err.Error()))
 			<-current.done
 		}
 
