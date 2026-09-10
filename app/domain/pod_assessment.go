@@ -140,17 +140,30 @@ func probeFindings(pod Pod, now time.Time) []PodFinding {
 
 		budget := probe.KillsAfter()
 
-		// The observed startup: how long this container has been running.
-		// Only meaningful once, at the start of a life — a container up for
-		// three days tells us nothing about how long it took to boot.
-		if !container.StartedAt.IsZero() && container.Startup.IsZero() {
+		// HOW LONG IT HAS BEEN COMING UP — and only while it still is.
+		//
+		// StartedAt to now is UPTIME, not startup time, and reading one as the
+		// other made this fire on every healthy container in the last fifth of
+		// its budget: with the default 60s, every container between 48 and 60
+		// seconds old, on every rollout, saying "this container took 52s to
+		// come up" when it had been ready for fifty of them. It then cleared
+		// itself, so each rollout wrote a burst of appeared-and-cleared
+		// entries into the timeline and flickered the findings column.
+		//
+		// The pod records whether a container is Ready but not WHEN it became
+		// ready, so a container that is already up cannot be asked how long it
+		// took — and the honest answer to a question with no evidence is to
+		// say nothing. While it is NOT ready the same arithmetic is a fact
+		// about the present: it has been trying for this long, and the probe
+		// starts killing at that budget.
+		if !container.StartedAt.IsZero() && container.Startup.IsZero() && !container.Ready {
 			startup := now.Sub(container.StartedAt)
 			if startup > 0 && startup < budget && float64(startup) > 0.8*float64(budget) {
 				findings = append(findings, PodFinding{
 					Severity: SeverityWarning,
 					Title:    "Liveness probe is close to killing " + container.Name,
 					Detail: fmt.Sprintf(
-						"It starts killing %s after startup, and this container took %s to come up.",
+						"It starts killing %s after startup, and this container has not become ready after %s.",
 						budget.Round(time.Second), startup.Round(time.Second)),
 					Advice: "Add a startupProbe. It gates the liveness probe until the container is " +
 						"actually up, which is what initialDelaySeconds is usually being used to " +

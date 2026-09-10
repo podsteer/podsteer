@@ -2528,10 +2528,26 @@ func eventFindings(events []Event, existing []Finding, now time.Time) []Finding 
 		// seen deduplicates the rows: a pod that logs the same message twice
 		// is one line saying so, not the same line twice. The event count
 		// above it is what states how often it happened.
-		seen    map[string]bool
-		count   int
-		newest  time.Time
+		seen   map[string]bool
+		count  int
+		newest time.Time
+		// oldest is the earliest FirstSeen in the group, which is what the
+		// finding's age reports. Kept beside newest rather than replacing it:
+		// newest still chooses which message to quote, because the latest
+		// wording of a recurring event is the useful one.
+		oldest  time.Time
 		message string
+	}
+
+	// oldestOrNewest falls back when nothing carried a first-seen time — an
+	// event from a source that only records lastTimestamp. Reporting the
+	// newest then is the old behaviour, which is wrong by a known amount
+	// rather than by an unknown one.
+	oldestOrNewest := func(g *group) time.Time {
+		if g.oldest.IsZero() {
+			return g.newest
+		}
+		return g.oldest
 	}
 
 	groups := make(map[string]*group)
@@ -2556,6 +2572,15 @@ func eventFindings(events []Event, existing []Finding, now time.Time) []Finding 
 		if event.LastSeen().After(current.newest) {
 			current.newest = event.LastSeen()
 			current.message = event.Message()
+		}
+		// THE OLDEST OCCURRENCE, WHICH IS THE ONE THE AGE IS ABOUT. This
+		// grouping tracked only the newest, and then reported `now - newest`
+		// as OldestSeconds — so a warning that had been recurring for half an
+		// hour said it was seconds old, which is the exact distinction the
+		// field exists to draw and inverted.
+		if first := event.FirstSeen(); !first.IsZero() &&
+			(current.oldest.IsZero() || first.Before(current.oldest)) {
+			current.oldest = first
 		}
 		row := string(event.Namespace()) + "/" + event.InvolvedName() + "\x00" + event.Message()
 		if len(current.subjects) < maxSubjects && !current.seen[row] {
@@ -2583,7 +2608,7 @@ func eventFindings(events []Event, existing []Finding, now time.Time) []Finding 
 			Subjects:      current.subjects,
 			Count:         current.count,
 			KindID:        eventKindID,
-			OldestSeconds: int64(now.Sub(current.newest).Seconds()),
+			OldestSeconds: int64(now.Sub(oldestOrNewest(current)).Seconds()),
 		})
 	}
 	return findings

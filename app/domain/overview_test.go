@@ -1993,3 +1993,57 @@ func TestPressureFindingIsSilentWhereNothingReportsIt(t *testing.T) {
 		t.Error("a node that reports no pressure at all produced a pressure finding")
 	}
 }
+
+// THE AGE IS THE OLDEST OCCURRENCE, NOT THE NEWEST.
+//
+// The field's own contract is that it "separates 'started during this
+// rollout' from 'broken since Tuesday'". It was computed as now minus the
+// NEWEST occurrence, so a warning recurring every few seconds for half an
+// hour reported itself as seconds old — the distinction inverted on exactly
+// the events that have one worth drawing.
+func TestAnEventFindingsAgeIsItsOldestOccurrence(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	recurring := func(name string, first, last time.Time) domain.Event {
+		event, err := domain.NewEvent(domain.EventSpec{
+			Name:         name,
+			Namespace:    domain.NamespaceName("web"),
+			ClusterID:    domain.ClusterID("dev"),
+			Reason:       "BackOff",
+			Message:      "Back-off restarting failed container",
+			Type:         domain.EventWarning,
+			InvolvedKind: "Pod",
+			InvolvedName: name,
+			FirstSeen:    first,
+			LastSeen:     last,
+			Count:        12,
+		})
+		if err != nil {
+			t.Fatalf("NewEvent() error = %v", err)
+		}
+		return event
+	}
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: domain.ClusterID("dev"),
+		Events: []domain.Event{
+			recurring("api-1", now.Add(-30*time.Minute), now.Add(-5*time.Second)),
+			recurring("api-2", now.Add(-12*time.Minute), now.Add(-2*time.Second)),
+		},
+	})
+
+	var found *domain.Finding
+	for i := range overview.Findings {
+		if overview.Findings[i].ID == "event:BackOff" {
+			found = &overview.Findings[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("no finding was raised for a recurring warning event")
+	}
+	if found.OldestSeconds < 1700 {
+		t.Errorf("OldestSeconds = %d, want about 1800 — the first occurrence, not the last",
+			found.OldestSeconds)
+	}
+}
