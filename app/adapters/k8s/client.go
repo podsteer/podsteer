@@ -643,9 +643,18 @@ func (f *clientFactory) clientsFor(id domain.ClusterID) (*clients, error) {
 	// first-connects to *different* clusters. That is intentional: it costs a
 	// few hundred milliseconds once, and it stops a UI that opens several
 	// tabs at once from spawning duplicate credential plugin processes.
+	// CLASSIFIED, NOT MERELY WRAPPED, and the difference is a whole error
+	// message. Two of the failures this package explains — a kubeconfig
+	// naming an auth-provider this binary does not register, and one naming a
+	// credential plugin that is not on PATH — are raised HERE, while the
+	// client is built, rather than by any request made through it. Returned
+	// raw they reached the frontend with no sentinel on them and fell through
+	// to "An unexpected error occurred", so the sentence written for exactly
+	// this case (see legacyAuthProviderMessage) was unreachable on the only
+	// path that produces it.
 	typed, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("creating client for %q: %w", id, err)
+		return nil, classify(fmt.Sprintf("creating client for %q", id), err)
 	}
 
 	// The dynamic client speaks JSON only — protobuf has no representation for
@@ -657,7 +666,7 @@ func (f *clientFactory) clientsFor(id domain.ClusterID) (*clients, error) {
 
 	dyn, err := dynamic.NewForConfig(dynamicConfig)
 	if err != nil {
-		return nil, fmt.Errorf("creating dynamic client for %q: %w", id, err)
+		return nil, classify(fmt.Sprintf("creating dynamic client for %q", id), err)
 	}
 
 	disco, err := discovery.NewDiscoveryClientForConfig(dynamicConfig)

@@ -48,11 +48,19 @@ func classify(op string, err error) error {
 			op, ports.ErrCredentialPluginMissing, binary, err)
 	}
 
-	// BESIDE IT, AND FOR THE SAME REASON. client-go raises this while building
-	// the request too — the kubeconfig names an `auth-provider` this binary
-	// never registered — so it also never reaches the API server, and left to
-	// the default branch it reads as a bug in PodSteer rather than as a
-	// kubeconfig that needs converting. See ports.ErrLegacyAuthProvider.
+	// BESIDE IT, AND FOR A NEARBY REASON. The kubeconfig names an
+	// `auth-provider` this binary never registered, so nothing is ever
+	// dialled and, left to the default branch, it reads as a bug in PodSteer
+	// rather than as a kubeconfig that needs converting.
+	//
+	// IT IS RAISED WHILE BUILDING THE CLIENT, NOT THE REQUEST — client-go
+	// resolves the provider in rest.TransportConfig, which runs inside
+	// kubernetes.NewForConfig — which is why clientsFor now classifies its
+	// own construction error. It did not, and this branch was therefore
+	// unreachable on the only path that produces the failure. The credential
+	// plugin above is genuinely request-time by comparison: the binary is
+	// resolved when a credential is first fetched.
+	// See ports.ErrLegacyAuthProvider.
 	if provider := legacyAuthProvider(err); provider != "" {
 		return fmt.Errorf("%s: %w: %q: %w", op, ports.ErrLegacyAuthProvider, provider, err)
 	}
@@ -147,7 +155,7 @@ func missingCredentialPlugin(err error) string {
 //
 // MATCHED ON THE MESSAGE, because client-go offers nothing else: the failure
 // is `fmt.Errorf("no Auth Provider found for name %q", name)` in
-// client-go/tools/clientcmd, with no typed error and no sentinel to compare
+// client-go/rest/plugin.go, with no typed error and no sentinel to compare
 // against. The prefix is stable across every release since the mechanism was
 // deprecated in 1.22 and is what the provider name follows.
 func legacyAuthProvider(err error) string {
