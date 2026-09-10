@@ -615,3 +615,60 @@ func TestASupervisorLeavesACondemnedStoreCondemned(t *testing.T) {
 		t.Fatalf("a condemned store was promoted: %v", store.get())
 	}
 }
+
+// TestAStalledStoreNeverPublishesAnOlderVersion pins the ordering inside
+// kindWatch.stall.
+//
+// `supervise` reads the state and then the version, and promotes as soon as
+// the reflector has moved past what it reads. If the flip to `starting`
+// happened before the version were recorded, a reader landing between the two
+// on a SECOND stall would see the PREVIOUS stall's version — long since
+// passed — and promote a store that is still stalled back to serving. Nothing
+// would demote it again, because supervise skips a serving store.
+//
+// A CONCURRENT TEST FOR A MEMORY-ORDERING BUG, so it can only ever fail when
+// the bug is present: it cannot manufacture the interleaving, only look for
+// it. Against the previous order it catches one within a few thousand
+// iterations; the value is that it can never fail spuriously.
+func TestAStalledStoreNeverPublishesAnOlderVersion(t *testing.T) {
+	store := &kindWatch{}
+
+	const rounds = 20000
+	done := make(chan struct{})
+	var observed atomic.Int64
+
+	go func() {
+		defer close(done)
+		for range rounds {
+			// What supervise does: read the state, then the version.
+			if watchState(store.state.Load()) != watchStarting {
+				continue
+			}
+			stalled := store.stalled.Load()
+			if stalled == nil {
+				continue
+			}
+			// The version recorded must be the one this stall reached, not an
+			// earlier stall's.
+			if *stalled == "stale" {
+				observed.Add(1)
+			}
+		}
+	}()
+
+	// Alternates: stall at a fresh version, promote, stall again. The first
+	// write leaves "stale" behind for the second stall to overwrite.
+	store.stalled.Store(ptrTo("stale"))
+	for range rounds {
+		store.state.Store(int32(watchServing))
+		store.stall("fresh")
+		store.state.Store(int32(watchServing))
+		store.stalled.Store(ptrTo("stale"))
+	}
+	<-done
+
+	if got := observed.Load(); got != 0 {
+		t.Fatalf("a starting store published a previous stall's version %d times — "+
+			"supervise would promote it while it is still behind", got)
+	}
+}
