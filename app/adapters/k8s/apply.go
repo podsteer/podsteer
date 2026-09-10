@@ -96,7 +96,20 @@ func (a *Adapter) UpdateResource(ctx context.Context, id domain.ClusterID, manif
 	// handling that differs by API server version.
 	unstructured.RemoveNestedField(obj.Object, "metadata", "managedFields")
 
-	namespaceable := set.dynamic.Resource(mapping.Resource)
+	// A CLIENT OF THIS APPLY'S OWN, so the API server's warnings can be
+	// attributed to it. They are attached as response headers to a write the
+	// server ACCEPTED — a deprecated apiVersion, a webhook that warned rather
+	// than rejected — and client-go hangs the handler off the REST config
+	// rather than the request, so the shared set.dynamic cannot carry one
+	// without misattributing warnings between concurrent applies. See
+	// warningCollector for why the copy is affordable here and would not be
+	// on a poll.
+	warned, collector, err := applyClient(set)
+	if err != nil {
+		return domain.ApplyOutcome{}, classify(fmt.Sprintf("preparing apply for %q", id), err)
+	}
+
+	namespaceable := warned.Resource(mapping.Resource)
 	var client dynamic.ResourceInterface = namespaceable
 	if namespaced {
 		client = namespaceable.Namespace(namespace)
@@ -107,14 +120,28 @@ func (a *Adapter) UpdateResource(ctx context.Context, id domain.ClusterID, manif
 		dryRunOpt = []string{metav1.DryRunAll}
 	}
 
-	// Warnings are not captured here. The API server attaches them as a
-	// response header, and client-go's WarningHandler is configured once per
-	// REST config — set.config is shared by every dynamic-client call this
-	// cluster ever makes — rather than per request, so wiring it without
-	// misattributing one apply's warnings to a concurrent one on the same
-	// cluster (two tabs open on the same context, say) would need a
-	// context-keyed collector this method does not build. Left empty rather
-	// than wired unsafely; ApplyOutcome.Warnings is ready for it.
+	outcome, err := a.writeResource(ctx, client, gvk, obj, dryRun, dryRunOpt)
+	if err != nil {
+		return domain.ApplyOutcome{}, err
+	}
+	// COLLECTED AFTER THE WRITE RETURNS, which is what makes this correct
+	// rather than merely wired: client-go calls the handler synchronously
+	// while the response is being read, so by the time the call has returned
+	// every warning it produced is in.
+	outcome.Warnings = collector.collected()
+	return outcome, nil
+}
+
+// writeResource sends the object, as an Update when the manifest carries a
+// resourceVersion and a Create when it does not.
+func (a *Adapter) writeResource(
+	ctx context.Context,
+	client dynamic.ResourceInterface,
+	gvk schema.GroupVersionKind,
+	obj *unstructured.Unstructured,
+	dryRun bool,
+	dryRunOpt []string,
+) (domain.ApplyOutcome, error) {
 	if obj.GetResourceVersion() != "" {
 		return a.putResource(ctx, client, gvk, obj, dryRun, dryRunOpt)
 	}
