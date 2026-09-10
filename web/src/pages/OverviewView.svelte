@@ -509,9 +509,25 @@
           </p>
         </div>
 
-        <dl class="flex shrink-0 flex-wrap gap-x-6 gap-y-1 text-body-small">
+        <!--
+          THE FIGURES BESIDE THE VERDICT, at the size the rest of this page
+          uses. They were 12px — the caption size, for a line under a chart —
+          which is what this application's own rule reserves it for: "the size
+          for a caption under a figure, not for the labels, values and
+          paragraphs somebody is reading in order to decide something", and
+          DialogChrome.node.test.ts already enforces that for every dialog
+          while naming the overview as the page they should agree with. This
+          card was the page disagreeing with itself.
+
+          The LABEL carries the weight and the value does not, which is the
+          other way round from most dashboards. It is deliberate: these five
+          are read as a set — you scan the labels to find the one you want and
+          then read across — so the labels are the thing being scanned, and a
+          bold number beside a faint word makes the word the harder half.
+        -->
+        <dl class="flex shrink-0 flex-wrap gap-x-6 gap-y-1 text-body-medium">
           <div class="flex flex-col">
-            <dt class="opacity-70">Version</dt>
+            <dt class="font-semibold">Version</dt>
             <dd class="flex items-center gap-1.5 tabular-nums">
               {overview.version || '—'}
               <!-- Said where the version already is. A control plane past end
@@ -547,7 +563,7 @@
           </div>
           {#if upgradeTargetOptions.length > 0}
             <div class="flex flex-col">
-              <dt class="opacity-70">Check against</dt>
+              <dt class="font-semibold">Check against</dt>
               <dd class="flex items-center gap-1.5">
                 <Select
                   label="Check against"
@@ -557,6 +573,20 @@
                   compact
                   onchange={(minor) => void session.setUpgradeTarget(minor)}
                 />
+                <!--
+                  ALL THREE ANSWERS, because the control is otherwise a
+                  control with no visible effect. Choosing a version re-runs
+                  the assessment against it — see ClusterSession.setUpgradeTarget
+                  — and until now only ONE outcome was drawn: something to
+                  migrate. A cluster with nothing to migrate and a cluster
+                  whose APIs could not be read both rendered as blank space,
+                  so the honest reading of the selector was "this does
+                  nothing", and the two facts were indistinguishable.
+
+                  The domain already tells them apart and says so in as many
+                  words: an empty TargetMinor is "not assessed", never
+                  "assessed and clean".
+                -->
                 {#if overview.upgrade.count > 0}
                   <span
                     class="rounded-full bg-warning-container px-1.5 py-0.5 text-label-small text-on-warning-container"
@@ -564,20 +594,35 @@
                   >
                     {overview.upgrade.count} to migrate
                   </span>
+                {:else if overview.upgrade.targetMinor}
+                  <span
+                    class="rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small text-on-surface-variant"
+                    title="Nothing this cluster serves is removed in {overview.upgrade.targetMinor}, and nothing was seen writing through a version that is"
+                  >
+                    nothing to migrate
+                  </span>
+                {:else}
+                  <!-- NOT THE SAME AS CLEAN, and it must not read as it. -->
+                  <span
+                    class="rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small text-on-surface-variant/70"
+                    title="PodSteer could not read what this cluster's API server serves, so it has nothing to compare against a target. This says nothing about whether an upgrade is safe."
+                  >
+                    not checked
+                  </span>
                 {/if}
               </dd>
             </div>
           {/if}
           <div class="flex flex-col">
-            <dt class="opacity-70">Nodes</dt>
+            <dt class="font-semibold">Nodes</dt>
             <dd class="tabular-nums">{overview.nodes.total}</dd>
           </div>
           <div class="flex flex-col">
-            <dt class="opacity-70">Pods</dt>
+            <dt class="font-semibold">Pods</dt>
             <dd class="tabular-nums">{overview.pods.total}</dd>
           </div>
           <div class="flex flex-col">
-            <dt class="opacity-70">Age</dt>
+            <dt class="font-semibold">Age</dt>
             <dd class="tabular-nums">{formatAge(overview.nodes.oldestSeconds)}</dd>
           </div>
         </dl>
