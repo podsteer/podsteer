@@ -240,9 +240,15 @@ It is the same act as revealing a Secret's key and carries the same treatment:
 PodSteer still does not perform a Helm rollback or uninstall: it shows you the
 `helm` command and you run it.
 
-The webview still has no network access at all: a content security
-policy in `web/index.html` forbids every remote origin, and all cluster traffic
-goes through the Go process rather than the page. Three things are written to
+The webview still has no network access at all: a content security policy on
+the shipped page forbids every remote origin, and all cluster traffic goes
+through the Go process rather than the page. **Read that policy from the built
+artefact, not from `web/index.html`** — the source page carries
+`connect-src 'self' ws: wss:`, which development needs for hot reload and
+which a bare scheme would let reach any host. A Vite plugin strips those two
+sources at build time, and `app/adapters/assets/csp_test.go` asserts the result
+on the embedded bundle, so the check is the test rather than the file an
+auditor would otherwise open. Three things are written to
 your own machine and transmitted nowhere: sampled capacity history; a settings
 file PodSteer itself acts on, described below; both under the per-user
 application directory at mode 0600 (`~/Library/Application Support/PodSteer` on

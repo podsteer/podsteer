@@ -132,8 +132,11 @@ var (
 	//
 	// It is not registered by decision rather than by omission (ADR 10):
 	// refreshing a token through the legacy oidc provider WRITES the
-	// operator's kubeconfig, and SECURITY.md's account of what PodSteer puts
-	// on disk does not include somebody's kubeconfig. The supported path is
+	// operator's kubeconfig in the background, at a moment nobody chose. The
+	// objection is to THAT, not to writing the file at all — PodSteer does
+	// write it, exactly once, when somebody presses Add cluster, and
+	// SECURITY.md enumerates that write with its backup and its untouched
+	// current-context. A refresh has none of those properties. The supported path is
 	// the same one every managed provider already uses — an exec credential
 	// plugin, `kubelogin` for OIDC — which PodSteer runs, with the login-shell
 	// PATH resolution that makes it work from a Dock launch.
