@@ -35,13 +35,18 @@ func mapPod(clusterID domain.ClusterID, pod *corev1.Pod, projection domain.Proje
 	}
 
 	return domain.NewPod(domain.PodSpec{
-		UID:         string(pod.UID),
-		Name:        pod.Name,
-		Namespace:   namespace,
-		ClusterID:   clusterID,
-		Phase:       mapPodPhase(pod),
-		NodeName:    pod.Spec.NodeName,
-		PodIP:       pod.Status.PodIP,
+		UID:       string(pod.UID),
+		Name:      pod.Name,
+		Namespace: namespace,
+		ClusterID: clusterID,
+		Phase:     mapPodPhase(pod),
+		NodeName:  pod.Spec.NodeName,
+		PodIP:     pod.Status.PodIP,
+		Security: domain.PodSecurity{
+			HostNetwork: pod.Spec.HostNetwork,
+			HostPID:     pod.Spec.HostPID,
+			HostIPC:     pod.Spec.HostIPC,
+		},
 		Containers:  mapContainers(pod),
 		Labels:      pod.Labels,
 		Annotations: projection.Annotations(pod.Annotations),
@@ -119,6 +124,39 @@ func mapPodPhase(pod *corev1.Pod) domain.PodPhase {
 // requests for all of it, so omitting them would understate what every pod
 // with an injected proxy reserves. Ordinary init containers are left out: they
 // have exited by the time anyone is looking at a running pod.
+// mapContainerSecurity quotes the securityContext fields a posture check
+// reads, and no others.
+//
+// THE POINTERS SURVIVE, and that is the whole reason this is a function rather
+// than four assignments. Kubernetes distinguishes false from unstated, and the
+// checks depend on it: an absent allowPrivilegeEscalation is the operator not
+// having said, which is not the act of writing true. Flattening either to a
+// bool here would move the judgement out of the domain and into a mapper.
+//
+// NOTHING HERE READS pod.Spec.Volumes, and that is deliberate: the watch store
+// strips them (see stripPod), so a hostPath or docker.sock check would read
+// blank on exactly the clusters the watch happens to be serving and correct
+// everywhere else. TestStrippingAPodChangesNothingThisApplicationReads is what
+// holds that line — adding a volume read here fails it.
+func mapContainerSecurity(context *corev1.SecurityContext) domain.ContainerSecurity {
+	if context == nil {
+		return domain.ContainerSecurity{}
+	}
+
+	security := domain.ContainerSecurity{
+		Privileged:               context.Privileged,
+		AllowPrivilegeEscalation: context.AllowPrivilegeEscalation,
+		RunAsUser:                context.RunAsUser,
+		RunAsNonRoot:             context.RunAsNonRoot,
+	}
+	if context.Capabilities != nil {
+		for _, added := range context.Capabilities.Add {
+			security.AddedCapabilities = append(security.AddedCapabilities, string(added))
+		}
+	}
+	return security
+}
+
 func mapContainers(pod *corev1.Pod) []domain.Container {
 	statuses := make(map[string]corev1.ContainerStatus, len(pod.Status.ContainerStatuses))
 	for _, status := range pod.Status.ContainerStatuses {
@@ -149,6 +187,7 @@ func mapContainers(pod *corev1.Pod) []domain.Container {
 			Startup:   mapProbe(spec.StartupProbe),
 			TTY:       spec.TTY,
 			Stdin:     spec.Stdin,
+			Security:  mapContainerSecurity(spec.SecurityContext),
 		}
 
 		if status, ok := statuses[spec.Name]; ok {
