@@ -142,6 +142,35 @@ export function vulnerabilityReadFor(
 }
 
 /**
+ * How many workloads in this namespace run the same image.
+ *
+ * THE QUESTION AN OPERATOR IS ACTUALLY ASKING. The scanner writes one report
+ * per container, so an image running in twelve Deployments produces twelve
+ * summaries with identical counts — and a list of workloads presents that as
+ * twelve problems when it is one. Bump the tag once and all twelve change.
+ *
+ * Counts SUBJECTS, not reports: a workload running the image in two
+ * containers is still one workload to fix. Zero when the namespace has not
+ * been read, which the caller must not render as "only this one" — see
+ * vulnerabilityReadFor.
+ */
+export function workloadsRunningImage(
+  clusterId: string,
+  namespace: string,
+  image: string,
+): number {
+  if (!image) return 0
+  const reading = loaded[keyOf(clusterId, namespace)]
+  if (!reading) return 0
+
+  let count = 0
+  for (const summary of Object.values(reading.bySubject)) {
+    if ((summary.images ?? []).includes(image)) count += 1
+  }
+  return count
+}
+
+/**
  * Forgets one cluster's reads, for a tab being closed.
  *
  * Per-cluster rather than wholesale, exactly as `forgetConfigMaps` is and for

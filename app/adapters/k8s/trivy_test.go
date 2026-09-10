@@ -39,6 +39,7 @@ type reportRow struct {
 	namespace, name          string
 	subjectKind, subjectName string
 	critical, high, med, low int
+	repository, tag          string
 	// labelled false drops the operator's labels, which is a report nothing
 	// can attribute.
 	unlabelled bool
@@ -99,6 +100,10 @@ func severityTableWithColumns(t *testing.T, continueToken string, columns []stri
 				cells = append(cells, float64(row.low))
 			case "Unknown":
 				cells = append(cells, float64(0))
+			case "Repository":
+				cells = append(cells, row.repository)
+			case "Tag":
+				cells = append(cells, row.tag)
 			default:
 				cells = append(cells, "x")
 			}
@@ -498,5 +503,80 @@ func TestVulnerabilityCacheForgetsOnlyTheClusterNamed(t *testing.T) {
 	}
 	if _, ok := cache.get("prod", "shop", 0); !ok {
 		t.Error("prod lost its cached summaries when dev was forgotten")
+	}
+}
+
+func TestListVulnerabilitySummariesCarriesTheImageEachReportScanned(t *testing.T) {
+	// THE IMAGE IS WHAT GETS FIXED, NOT THE WORKLOAD. One report per
+	// container means the same image in twelve Deployments produces twelve
+	// summaries with identical counts — twelve rows for one bump. Nothing
+	// else in the read can group them, because the workload names have
+	// nothing in common.
+	adapter, _ := trivyAdapter(t, "dev", jsonResponse(http.StatusOK, severityTable(t, "",
+		reportRow{namespace: "shop", name: "a", subjectKind: "ReplicaSet", subjectName: "web",
+			repository: "library/nginx", tag: "1.27", critical: 1},
+		reportRow{namespace: "shop", name: "b", subjectKind: "ReplicaSet", subjectName: "web",
+			repository: "acme/sidecar", tag: "2.0", high: 1},
+		// The same container scanned again — one image, not two.
+		reportRow{namespace: "shop", name: "c", subjectKind: "ReplicaSet", subjectName: "api",
+			repository: "library/nginx", tag: "1.27", critical: 1},
+		// Pinned by digest, so no tag: the repository stands alone rather
+		// than carrying a dangling colon.
+		reportRow{namespace: "shop", name: "d", subjectKind: "ReplicaSet", subjectName: "worker",
+			repository: "acme/worker", high: 2},
+	)))
+
+	listing, err := adapter.ListVulnerabilitySummaries(context.Background(), "dev", "shop")
+	if err != nil {
+		t.Fatalf("ListVulnerabilitySummaries() error = %v", err)
+	}
+
+	bySubject := map[string][]string{}
+	for _, summary := range listing.Summaries {
+		bySubject[summary.Subject] = summary.Images
+	}
+
+	want := map[string][]string{
+		"ReplicaSet/api":    {"library/nginx:1.27"},
+		"ReplicaSet/web":    {"acme/sidecar:2.0", "library/nginx:1.27"},
+		"ReplicaSet/worker": {"acme/worker"},
+	}
+	for subject, images := range want {
+		got := bySubject[subject]
+		if len(got) != len(images) {
+			t.Fatalf("%s images = %v, want %v", subject, got, images)
+		}
+		for at := range images {
+			if got[at] != images[at] {
+				t.Errorf("%s images = %v, want %v (sorted)", subject, got, images)
+				break
+			}
+		}
+	}
+}
+
+func TestListVulnerabilitySummariesDeduplicatesAnImageAcrossReports(t *testing.T) {
+	// A workload whose two containers run the SAME image has one image, not
+	// two — otherwise "used by N workloads" counts the same fix twice.
+	adapter, _ := trivyAdapter(t, "dev", jsonResponse(http.StatusOK, severityTable(t, "",
+		reportRow{namespace: "shop", name: "a", subjectKind: "ReplicaSet", subjectName: "web",
+			repository: "library/nginx", tag: "1.27", critical: 1},
+		reportRow{namespace: "shop", name: "b", subjectKind: "ReplicaSet", subjectName: "web",
+			repository: "library/nginx", tag: "1.27", critical: 1},
+	)))
+
+	listing, err := adapter.ListVulnerabilitySummaries(context.Background(), "dev", "shop")
+	if err != nil {
+		t.Fatalf("ListVulnerabilitySummaries() error = %v", err)
+	}
+
+	if len(listing.Summaries) != 1 {
+		t.Fatalf("got %d summaries, want 1", len(listing.Summaries))
+	}
+	if images := listing.Summaries[0].Images; len(images) != 1 || images[0] != "library/nginx:1.27" {
+		t.Errorf("images = %v, want one library/nginx:1.27", images)
+	}
+	if reports := listing.Summaries[0].Reports; reports != 2 {
+		t.Errorf("Reports = %d, want 2 — deduplicating images must not lose a report", reports)
 	}
 }

@@ -350,6 +350,16 @@ func emptyIfNil(values map[string]string) map[string]string {
 	return values
 }
 
+// emptyIfNilSlice hands the frontend [] rather than null for an absent list,
+// for the same reason emptyIfNil does for a map: every call site can iterate
+// without a guard, and one that forgets is a crash rather than an empty row.
+func emptyIfNilSlice(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
 // toPod converts a domain pod, using now as the age reference.
 func toPod(pod domain.Pod, now time.Time) Pod {
 	domainContainers := pod.Containers()

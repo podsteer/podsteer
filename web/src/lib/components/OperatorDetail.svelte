@@ -39,7 +39,14 @@
   import { karpenterNodeClaim, karpenterNodePool } from '$lib/operators/karpenter'
   import { externalSecret } from '$lib/operators/externalsecrets'
   import { argoRollout, rolloutTone } from '$lib/operators/rollouts'
-  import { advisoryLink, severityTone, trivyVulnerabilityReport } from '$lib/operators/trivy'
+  import {
+    advisoryLink,
+    fixableCount,
+    hasFix,
+    severityTone,
+    trivyVulnerabilityReport,
+  } from '$lib/operators/trivy'
+  import { ensureVulnerabilities, workloadsRunningImage } from '$stores/vulnerabilities.svelte'
   import {
     abortRollout,
     assessCertificateRenewal,
@@ -740,6 +747,15 @@
     if (!trivy) return []
 
     const rows: DetailRow[] = [{ label: 'Image', value: trivy.artifact || '—' }]
+    if (sharingImage > 1) {
+      // THE FACT THAT COLLAPSES THE LIST. The scanner writes a report per
+      // container, so this image's findings appear once per workload running
+      // it — and they are one problem with one fix, not N.
+      rows.push({
+        label: 'Also running this image',
+        value: `${sharingImage - 1} other workload${sharingImage === 2 ? '' : 's'} in this namespace`,
+      })
+    }
     if (trivy.subject.name) {
       rows.push({
         label: trivy.subject.kind || 'Workload',
@@ -766,7 +782,52 @@
     ]
   })
 
-  const vulnerabilities = $derived(report?.vulnerabilities ?? [])
+  /**
+   * Show only what can be closed by upgrading.
+   *
+   * OFF BY DEFAULT, because the panel is a quotation and the report's own
+   * order is part of it. Turning it on is the operator saying which question
+   * they are asking — "what can I do today" rather than "what is in this
+   * image" — and the heading keeps saying how many were set aside.
+   */
+  let fixableOnly = $state(false)
+
+  // Reset when the drawer moves to another report: a filter left on from the
+  // previous object would hide findings under a heading that does not mention
+  // it, and the count beside it would be about a different image.
+  $effect(() => {
+    void report
+    fixableOnly = false
+  })
+
+  const fixable = $derived(report ? fixableCount(report) : { fixable: 0, total: 0 })
+
+  const vulnerabilities = $derived.by(() => {
+    const all = report?.vulnerabilities ?? []
+    return fixableOnly ? all.filter(hasFix) : all
+  })
+
+  // The namespace listing this panel counts against, asked for HERE rather
+  // than assumed. It is the same read the pod list makes, idempotent and
+  // cached ten minutes in Go, so arriving at a report from the CRD list costs
+  // one read and arriving from the pod list costs none. Without this the
+  // "also running this image" row appeared only if somebody had happened to
+  // open Pods first — a fact that is either true or not, showing up
+  // depending on where the operator had been.
+  $effect(() => {
+    if (report && clusterId) ensureVulnerabilities(clusterId, namespace)
+  })
+
+  /**
+   * How many workloads in this namespace run the image this report is about.
+   *
+   * Counted from that listing — no request of its own beyond the one above.
+   * One is the ordinary answer and says nothing worth saying; more than one is
+   * the fact that turns a per-workload list into a single bump.
+   */
+  const sharingImage = $derived(
+    report ? workloadsRunningImage(clusterId, namespace, report.artifact) : 0,
+  )
 </script>
 
 {#if certificate}
@@ -1128,11 +1189,33 @@
     level="h3"
     id="operator-vulnerabilities"
     title="Vulnerabilities"
-    hint={String(vulnerabilities.length)}
+    hint={fixableOnly ? `${vulnerabilities.length} of ${fixable.total}` : String(fixable.total)}
   >
+    {#if fixable.total > 0}
+      <!--
+        HOW MUCH OF THIS CAN BE ACTED ON, which is a different question from
+        how bad it is. A report on a real image routinely carries hundreds of
+        findings, most with no published fix — a severity count says the image
+        is bad, this says how much of it can be dealt with this afternoon.
+      -->
+      <div class="mb-3 flex flex-wrap items-center gap-3">
+        <p class="text-body-small text-on-surface-variant">
+          {fixable.fixable} of {fixable.total} can be closed by upgrading
+        </p>
+        {#if fixable.fixable > 0 && fixable.fixable < fixable.total}
+          <label class="flex items-center gap-1.5 text-body-small text-on-surface-variant">
+            <input type="checkbox" bind:checked={fixableOnly} class="accent-primary" />
+            Only those with a fix
+          </label>
+        {/if}
+      </div>
+    {/if}
+
     {#if vulnerabilities.length === 0}
       <p class="text-body-small text-on-surface-variant/70">
-        This report lists no vulnerabilities.
+        {fixableOnly
+          ? 'None of this report’s findings have a published fix yet.'
+          : 'This report lists no vulnerabilities.'}
       </p>
     {:else}
       <div class="relative">

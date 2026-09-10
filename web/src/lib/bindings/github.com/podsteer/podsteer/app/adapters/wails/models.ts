@@ -4256,6 +4256,14 @@ export interface VulnerabilitySummary {
     "unknown": number;
 
     /**
+     * Images are the artefacts scanned for this workload, "repository:tag" as
+     * the server printed them. The image is what an operator actually fixes:
+     * one bump closes every workload running it, and nothing else in the read
+     * can group those workloads together. See domain.VulnerabilitySummary.
+     */
+    "images": string[] | null;
+
+    /**
      * Reports is how many reports were summed — one per container. It is what
      * keeps "scanned, and clean" distinguishable from "not scanned", which a
      * row of five zeroes cannot say on its own.
