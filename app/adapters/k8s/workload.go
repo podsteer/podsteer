@@ -480,9 +480,16 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 	// pods rather than the namespace's. An empty selector (an unsupported
 	// kind, or a workload without one) falls back to the previous behaviour
 	// rather than failing.
+	// CLASSIFIED LIKE THE JOB AND CRONJOB BRANCHES BELOW, which is the whole
+	// point: these four kinds were the only ones returning client-go's error
+	// raw, so a permission this account lacks, a workload since deleted and a
+	// cluster that has gone away all arrived at the frontend with no sentinel
+	// and read as "An unexpected error occurred" — on the Pods tab of every
+	// Deployment, which is the most-opened tab there is. Which of two adjacent
+	// cases you landed in decided whether you were told what happened.
 	selector, err := selectorForWorkload(ctx, client, namespace, kind, name)
 	if err != nil {
-		return nil, fmt.Errorf("reading selector for %s %q: %w", kind, name, err)
+		return nil, classify(fmt.Sprintf("reading selector for %s %q", kind, name), err)
 	}
 	podOptions := metav1.ListOptions{
 		LabelSelector:   selector,
@@ -497,7 +504,7 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 		// then find all pods owned by those ReplicaSets.
 		rsList, err := client.AppsV1().ReplicaSets(namespace.String()).List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
 		if err != nil {
-			return nil, fmt.Errorf("listing replicasets: %w", err)
+			return nil, classify(fmt.Sprintf("listing replicasets for deployment %q", name), err)
 		}
 
 		// Find ReplicaSets owned by this deployment
@@ -514,7 +521,7 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 		// Get all pods in the namespace
 		podList, err = client.CoreV1().Pods(namespace.String()).List(ctx, podOptions)
 		if err != nil {
-			return nil, fmt.Errorf("listing pods: %w", err)
+			return nil, classify(fmt.Sprintf("listing pods for %s %q", kind, name), err)
 		}
 
 		// Filter pods owned by the deployment's ReplicaSets
@@ -534,7 +541,7 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 		// For these workloads, pods are directly owned by the workload
 		podList, err = client.CoreV1().Pods(namespace.String()).List(ctx, podOptions)
 		if err != nil {
-			return nil, fmt.Errorf("listing pods: %w", err)
+			return nil, classify(fmt.Sprintf("listing pods for %s %q", kind, name), err)
 		}
 
 		// Filter pods owned by this workload
