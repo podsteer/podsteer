@@ -50,6 +50,11 @@ export const API_ERROR_CODES = [
   // retryable in the sense the transport codes are: a missing binary needs
   // installing, a declined one needs signing in to, and both are answered by
   // the CLI's own words rather than by anything PodSteer knows.
+  // The container has no shell to list a directory with, and the container
+  // printed something that is not a listing. Neither is a fault in the
+  // cluster or the credentials — the first is what a distroless image IS.
+  'shell_missing',
+  'listing_unreadable',
   'vendor_cli_missing',
   'vendor_cli_declined',
   'vendor_cli_timed_out',

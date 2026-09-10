@@ -467,6 +467,17 @@ the background, at a moment nobody chose — see decision 10 in
 podsteer/business-docs. A kubeconfig using it is refused, and the refusal says
 so and names the replacement.
 
+**One capability that writes nothing: listing a directory in a container.**
+Files → Browse runs a short shell script inside the container you are looking
+at and reads what it printed. It creates no file on your machine and no file
+in the container, follows no symlink, and never reads any file's CONTENTS —
+reading a file is Download, which is a separate, deliberate act with a native
+save dialog behind it. The names it finds are held in the window and nowhere
+else: they are not written to settings, to history or to any exported file,
+and PodSteer's own log records the path and how many entries there were,
+never an entry's name. It is refused on a cluster you marked read-only,
+because listing runs a shell in the container even though it changes nothing.
+
 A seventh kind of write is a **desktop notification**, and it is counted as a
 write on purpose: your operating system keeps the notifications it has shown
 you — on macOS in Notification Centre, which is a database on disk, and on

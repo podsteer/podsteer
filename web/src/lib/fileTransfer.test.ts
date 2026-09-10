@@ -173,3 +173,41 @@ describe('formatting', () => {
     ).toBe('1 file, 840 B in 90 ms')
   })
 })
+
+describe('a download begun from the file browser', () => {
+  it('is adopted by the same state machine as a typed one', () => {
+    // THE GAP THIS CLOSES. The progress and done events are one stream for
+    // the whole application, and the pane behind the browser is what renders
+    // them. A dialog that started a transfer and only closed left a copy
+    // running with nothing on screen, and swallowed its failure entirely.
+    const adopted = started(starting(), 'copy_from_a_row')
+
+    expect(adopted.phase).toBe('running')
+    expect(adopted.transferId).toBe('copy_from_a_row')
+  })
+
+  it('shows its progress, because the id is what the events name', () => {
+    const running = started(starting(), 'copy_from_a_row')
+    const moved = progressed(running, { transferId: 'copy_from_a_row', bytes: 2048 })
+
+    expect(moved.bytes).toBe(2048)
+  })
+
+  it('reports its failure rather than ending quietly', () => {
+    const running = started(starting(), 'copy_from_a_row')
+    const ended = finished(running, {
+      transferId: 'copy_from_a_row',
+      direction: 'download',
+      files: 0,
+      entries: 0,
+      bytes: 0,
+      durationMs: 12,
+      notes: [],
+      localPath: '',
+      cancelled: false,
+      error: '[command_failed] tar: /etc/shadow: Permission denied',
+    } as never)
+
+    expect(ended.phase).toBe('failed')
+  })
+})

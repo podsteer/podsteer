@@ -17,13 +17,23 @@
 // @ts-ignore: Unused imports
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
-/**
- * Cancel stops a running transfer. Whatever had already landed stays; the
- * "done" event that follows says it was cancelled. Unknown ids are a no-op,
- * so cancelling twice is safe.
- */
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
 export function Cancel(transferID: string): $CancellablePromise<void> {
     return $Call.ByID(1306114370, transferID);
+}
+
+/**
+ * ListDirectory lists one directory inside a container.
+ * 
+ * A READ THAT RUNS A SHELL, which is why it is refused on a cluster marked
+ * read-only while the download beside it is not — see
+ * ManagementService.ListDirectory for that reasoning.
+ */
+export function ListDirectory(clusterID: string, $namespace: string, podName: string, containerName: string, remoteDir: string): $CancellablePromise<$models.DirectoryListing> {
+    return $Call.ByID(4207437331, clusterID, $namespace, podName, containerName, remoteDir);
 }
 
 /**

@@ -203,6 +203,13 @@ func (b *cappedBuffer) String() string {
 	return string(b.data)
 }
 
+// Len is how much was KEPT, not how much was written.
+//
+// Which is exactly what a caller that DECODES its output needs: at the cap it
+// means the far end wrote at least this much and the rest is gone, so what is
+// held is a prefix rather than an answer. See ListDirectory.
+func (b *cappedBuffer) Len() int { return len(b.data) }
+
 // excerpt truncates text to at most n bytes, marking the cut.
 func excerpt(text string, n int) string {
 	if len(text) <= n {

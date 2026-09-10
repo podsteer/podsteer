@@ -152,6 +152,7 @@ import {
 } from '$bindings/systemapi'
 import {
   Cancel as bindCancelFileCopy,
+  ListDirectory as bindListDirectory,
   StartDownload as bindStartDownload,
   StartUpload as bindStartUpload,
 } from '$bindings/filecopyapi'
@@ -175,6 +176,8 @@ export type Cluster = wails.Cluster
 export type TextFile = wails.TextFile
 /** What adding a kubeconfig would change, or did. */
 export type KubeconfigMerge = wails.KubeconfigMerge
+export type DirectoryListing = wails.DirectoryListing
+export type DirectoryEntry = wails.DirectoryEntry
 export type Distribution = wails.Distribution
 export type VendorProvider = wails.VendorProvider
 export type VendorCluster = wails.VendorCluster
@@ -1731,6 +1734,28 @@ export function startUpload(
 }
 
 /** Stops a running transfer. A no-op for one that has already finished. */
+/**
+ * Lists one directory inside a container.
+ *
+ * RUNS A SHORT SHELL SCRIPT IN THE CONTAINER and reads what it printed —
+ * nothing is written, nothing is followed, and no file's contents are read.
+ * The format is one PodSteer defines rather than `ls` output, because no two
+ * images agree on that; see app/domain/filebrowse.go.
+ *
+ * Refused on a cluster marked read-only, unlike the download beside it: this
+ * one runs a shell, and an operator who marked a cluster read-only did not
+ * mean "except to run things in the containers".
+ */
+export function listContainerDirectory(
+  clusterId: string,
+  namespace: string,
+  podName: string,
+  containerName: string,
+  remoteDir: string,
+): Promise<DirectoryListing> {
+  return call(() => bindListDirectory(clusterId, namespace, podName, containerName, remoteDir))
+}
+
 export function cancelFileCopy(transferId: string): Promise<void> {
   return call(() => bindCancelFileCopy(transferId))
 }

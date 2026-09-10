@@ -77,6 +77,8 @@ export type {
     Container,
     Credit,
     CustomExpression,
+    DirectoryEntry,
+    DirectoryListing,
     DiskSummary,
     Distribution,
     DrainFailure,

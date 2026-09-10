@@ -957,6 +957,19 @@ type ManagementPort interface {
 	// Failures are reported exactly as CopyFromPod's are.
 	CopyToPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName, remoteDir string, in io.Reader) error
 
+	// ListDirectory lists one directory inside a container.
+	//
+	// THE BROWSER HALF OF FILE COPY, and it sits here rather than on an
+	// inspection port because it is the same act with the same tooling
+	// requirements as the two above: one exec, one container, one path. It
+	// RECURSES INTO NOTHING and FOLLOWS NOTHING — a symlink is reported as a
+	// symlink, and following it is a navigation the operator performs.
+	//
+	// A container with no shell is ports.ErrShellMissing, which is the third
+	// sibling of ErrTarMissing and means the same kind of thing: the image
+	// has no tool, and nothing is wrong.
+	ListDirectory(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName, remoteDir string) (domain.DirectoryListing, error)
+
 	// CordonNode marks a node schedulable or unschedulable, without touching
 	// anything already running on it — cordoning removes the node from
 	// consideration for NEW pods only. A merge patch of spec.unschedulable,

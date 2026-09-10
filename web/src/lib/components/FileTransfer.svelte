@@ -20,7 +20,8 @@
 -->
 <script lang="ts">
   import { onDestroy } from 'svelte'
-  import { Download, FolderOpen, File, Upload, X } from '@lucide/svelte'
+  import { Download, FolderOpen, File, Upload, X, FolderTree } from '@lucide/svelte'
+  import FileBrowserDialog, { type BrowsedTransfer } from './FileBrowserDialog.svelte'
   import {
     cancelFileCopy,
     chooseDirectory,
@@ -79,6 +80,9 @@
 
   /** Which form is open, if any. */
   let direction = $state<Direction | null>(null)
+  /** Whether the browser dialog is open. */
+  let browsing = $state(false)
+
   let remoteTyped = $state('')
   let localPath = $state('')
   let transfer = $state<TransferState>(IDLE)
@@ -170,6 +174,29 @@
     }
   }
 
+  /**
+   * Takes over a download the browser dialog started.
+   *
+   * ONE STATE MACHINE FOR BOTH ROUTES. The progress and done events are a
+   * single stream for the whole application and this pane is what renders
+   * them; without this, a download begun from a row would run to completion
+   * with nothing on screen and its failure would be swallowed entirely.
+   */
+  function adoptTransfer(begun: BrowsedTransfer): void {
+    startError = ''
+    // The fields are filled from what the browser actually started, so the
+    // pane shows a transfer it can DESCRIBE: the direction decides whether a
+    // finished copy names where it landed, and the two paths are what the
+    // kubectl line beneath it is made of.
+    direction = begun.direction
+    remoteTyped = begun.remotePath
+    localPath = begun.localPath
+
+    transfer = starting()
+    listen()
+    transfer = started(transfer, begun.id)
+  }
+
   async function start(): Promise<void> {
     if (!startable || direction === null) return
     startError = ''
@@ -233,7 +260,43 @@
     <Upload class="size-3.5" strokeWidth={1.8} />
     Upload…
   </button>
+
+  <!--
+    THE HALF THAT LETS SOMEBODY LOOK. The two controls above require knowing
+    the path already, which is fine for a config file whose location you
+    remember and useless for finding out what is in there.
+
+    DISABLED ON A READ-ONLY CLUSTER, which reads oddly beside a Download that
+    is not, and is the deliberate line: listing runs a shell in the container
+    — the same subresource a terminal uses — while a download runs a fixed
+    tar. See ManagementService.ListDirectory.
+  -->
+  <button
+    type="button"
+    disabled={busy || isReadOnly}
+    title={isReadOnly ? READ_ONLY_REASON : 'List a directory inside this container'}
+    onclick={() => (browsing = true)}
+    class="state-layer inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm border
+           border-outline-variant px-2 text-label-large text-on-surface-variant
+           transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
+           disabled:opacity-50"
+  >
+    <FolderTree class="size-3.5" strokeWidth={1.8} />
+    Browse…
+  </button>
 </div>
+
+<FileBrowserDialog
+  open={browsing}
+  onstarted={adoptTransfer}
+  {clusterId}
+  {namespace}
+  {podName}
+  {containerName}
+  {workingDir}
+  readOnlyReason={isReadOnly ? READ_ONLY_REASON : null}
+  onclose={() => (browsing = false)}
+/>
 
 {#if direction}
   <div class="mt-2 flex flex-col gap-2 rounded-sm border border-outline-variant/40 p-3">

@@ -1187,6 +1187,66 @@ while the real archive is tested on a temp directory. A container without
 and code (`tar_missing`); tar's stderr is never discarded — carried verbatim in
 `ports.ErrCommandFailed` on failure, logged on success.
 
+## Listing a directory emits PodSteer's own format, never `ls` output
+
+The browser half of file copy (`FileCopyAPI.ListDirectory`) runs a POSIX `sh`
+script the domain composes and reads a format the domain defines —
+`domain.ListCommand` beside `domain.ParseListOutput`, the arrangement
+`ProbeCommand`/`ParseProbeOutput` already uses because the command and the
+parser are one protocol and drift the moment they are separated.
+
+**Three obvious mechanisms were considered and rejected, and the reasons are
+worth keeping** because each is what a reviewer will ask for. `ls -l` has no
+pinnable format: busybox and GNU disagree on columns and on the date field,
+GNU escapes a space in a name only behind a flag busybox lacks, a name
+containing a newline splits into two rows that both look valid, and nothing
+tells you which `ls` you got until after you have parsed it. `find -printf`
+would be pinnable and is a GNU extension busybox does not build, so the shape
+of the result would depend on the image. Tar headers are correct on names —
+a binary format with length-delimited byte strings — and too expensive: `tar
+cf -` recurses and streams file bodies, and skipping a body over a network
+stream still reads it, so listing a directory of large files would pull
+gigabytes to learn a dozen names.
+
+So the script uses only what is guaranteed. Types come from the shell's own
+`test`, with **`-L` asked before `-d`** — `test -d` follows a symlink, so a
+link to a directory is reported as a directory unless you ask the other way
+first, and the interface would then navigate into it as one. Names are printed
+with `printf` and **never `echo`**, because dash's `echo` interprets backslash
+escapes and would rename a file called `a\tb` by the act of listing it. Sizes
+come from `stat -c '%s %Y'` and only after the exact invocation has been
+probed, because a `stat` on PATH is not a `stat` that takes `-c`; where it is
+absent the listing reports **no size at all** rather than a nought, which
+would read as an empty file.
+
+A container with no shell is `ports.ErrShellMissing` — the third sibling of
+`ErrTarMissing`, and the same kind of fact: a distroless image has no `sh`,
+nothing is wrong, and copying still works because it needs only `tar`.
+
+**The listing is never persisted and its entries are never logged.** Names
+inside somebody's container are object-adjacent data: `auditListing` records
+the cluster, namespace, pod, container, path and entry COUNT, and no name;
+nothing reaches `settings.json`, history or the timeline. The browser also
+runs nothing on open and nothing on a tick — every listing is one press, the
+rule the Helm page and the reachability probe already follow.
+
+The one write it offers is the upload that already existed, aimed at the
+directory on screen rather than at a path somebody typed — which is the whole
+reason to offer it there, since not knowing the path is why anybody opened the
+browser. It is the same call with the same limits and the same refusals; the
+browser adds a destination and nothing else. A transfer begun from the dialog
+is handed back to the pane behind it, direction and both paths included, so
+ONE state machine renders every copy: a second renderer in the dialog would be
+free to disagree with the first about whether a copy had finished, and a
+dialog that started a transfer and only closed left one running with nothing
+on screen and swallowed its failure.
+
+**It is refused on a read-only cluster while the download beside it is not**,
+and that asymmetry is the deliberate reading of what the mark means: the guard
+tracks whether an arbitrary shell RUNS, not whether bytes move. A download is
+a fixed `tar` argv; a listing is `sh -c`, which is the subresource a terminal
+uses and appears in the audit log as one.
+
 ## Escape belongs to one layer, and the layers say which
 
 Seventeen components listen for Escape on the window, so `stopPropagation`

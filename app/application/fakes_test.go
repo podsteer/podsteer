@@ -751,6 +751,10 @@ func (f *fakeManagementPort) CopyToPod(_ context.Context, id domain.ClusterID, n
 	return err
 }
 
+func (f *fakeManagementPort) ListDirectory(context.Context, domain.ClusterID, domain.NamespaceName, string, string, string) (domain.DirectoryListing, error) {
+	return domain.DirectoryListing{}, nil
+}
+
 func (f *fakeManagementPort) TriggerCronJob(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
