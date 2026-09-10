@@ -2,8 +2,10 @@ package k8s
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -12,6 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/util/managedfields"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
@@ -66,6 +70,51 @@ func newTestAdapterApply(id domain.ClusterID, dynClient dynamic.Interface, mappe
 	return &Adapter{factory: factory, logger: slog.New(slog.DiscardHandler)}
 }
 
+// newApplyTestAdapter returns an Adapter whose dynamic client runs the REAL
+// field manager, for the tests that exercise ApplyResource.
+//
+// THE SIMPLE FAKE CANNOT SERVE AN APPLY. NewSimpleDynamicClientWithCustomListKinds
+// uses the plain object tracker, whose Apply is a naive merge with no notion
+// of ownership — it cannot create an object that does not exist, and it can
+// never produce a conflict, so a test written against it would pass while
+// proving nothing about the verb under test. NewFieldManagedObjectTracker runs
+// apimachinery's own field manager: it creates, it merges, and it returns real
+// NewApplyConflict errors with real causes.
+//
+// The deduced type converter is the limitation to know about: with no schema
+// it treats every list as atomic and every map as granular, so keyed-list
+// conflicts (containers[name=web]) cannot be exercised offline. That needs a
+// real API server.
+func newApplyTestAdapter(id domain.ClusterID, dynClient dynamic.Interface, mapper meta.RESTMapper) *Adapter {
+	return newTestAdapterApply(id, dynClient, mapper)
+}
+
+// applyFakeClient builds a dynamic fake whose tracker manages fields.
+func applyFakeClient(t *testing.T, objects ...runtime.Object) *dynamicfake.FakeDynamicClient {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	for gvr, kind := range gvrToListKind {
+		single := gvr.GroupVersion().WithKind(strings.TrimSuffix(kind, "List"))
+		scheme.AddKnownTypeWithName(single, &unstructured.Unstructured{})
+		scheme.AddKnownTypeWithName(gvr.GroupVersion().WithKind(kind), &unstructured.UnstructuredList{})
+	}
+
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, gvrToListKind, objects...)
+	tracker := clientgotesting.NewFieldManagedObjectTracker(
+		scheme,
+		serializer.NewCodecFactory(scheme).UniversalDecoder(),
+		managedfields.NewDeducedTypeConverter(),
+	)
+	for _, object := range objects {
+		if err := tracker.Add(object); err != nil {
+			t.Fatalf("seeding the field-managed tracker: %v", err)
+		}
+	}
+	client.PrependReactor("*", "*", clientgotesting.ObjectReaction(tracker))
+	return client
+}
+
 // newSeedObject builds an unstructured object for pre-populating the fake
 // dynamic client, the way an existing cluster object would look before an
 // apply reaches it.
@@ -83,9 +132,9 @@ func newSeedObject(apiVersion, kind, namespace, name, resourceVersion string) *u
 	return obj
 }
 
-func TestUpdateResourceCreatesWhenAbsent(t *testing.T) {
-	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind)
-	adapter := newTestAdapterApply("dev", dynClient, testRESTMapper())
+func TestApplyResourceCreatesWhenAbsent(t *testing.T) {
+	dynClient := applyFakeClient(t)
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
 
 	manifest := "apiVersion: apps/v1\n" +
 		"kind: Deployment\n" +
@@ -95,9 +144,9 @@ func TestUpdateResourceCreatesWhenAbsent(t *testing.T) {
 		"spec:\n" +
 		"  replicas: 3\n"
 
-	outcome, err := adapter.UpdateResource(context.Background(), "dev", manifest, false)
+	outcome, err := adapter.ApplyResource(context.Background(), "dev", manifest, domain.ApplyOptions{DryRun: false})
 	if err != nil {
-		t.Fatalf("UpdateResource() error = %v", err)
+		t.Fatalf("ApplyResource() error = %v", err)
 	}
 	if !outcome.Created {
 		t.Error("outcome.Created = false, want true — the object did not exist")
@@ -190,7 +239,20 @@ func TestUpdateResourceOnAStaleResourceVersionIsAConflict(t *testing.T) {
 	}
 }
 
-func TestUpdateResourceWithoutAResourceVersionReplacesAnExistingObject(t *testing.T) {
+// TestUpdateResourceRefusesAManifestWithNoResourceVersion replaces a test
+// that pinned a data-loss bug.
+//
+// WHAT IT USED TO ASSERT. A manifest with no resourceVersion fell back to
+// Create, and on AlreadyExists the adapter fetched the live object solely to
+// steal its resourceVersion and then REPLACED it. The old test seeded a
+// Deployment at replicas 1, applied a manifest saying 9, and asserted the
+// object became 9 — which is true, and is also how pasting a manifest that
+// omits spec.replicas over an HPA-scaled Deployment silently reset the replica
+// count and deleted every field the paste did not mention.
+//
+// The editor's verb now refuses it. Declared intent goes to ApplyResource,
+// which merges and names the owner of anything it cannot change.
+func TestUpdateResourceRefusesAManifestWithNoResourceVersion(t *testing.T) {
 	existing := newSeedObject("apps/v1", "Deployment", "default", "web", "10")
 	if err := unstructured.SetNestedField(existing.Object, int64(1), "spec", "replicas"); err != nil {
 		t.Fatalf("seeding existing object: %v", err)
@@ -198,9 +260,6 @@ func TestUpdateResourceWithoutAResourceVersionReplacesAnExistingObject(t *testin
 	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind, existing)
 	adapter := newTestAdapterApply("dev", dynClient, testRESTMapper())
 
-	// A pasted manifest with NO resourceVersion at all — the shape an
-	// operator gets from `kubectl get -o yaml --export`-style copy/paste, or
-	// from writing one by hand.
 	manifest := "apiVersion: apps/v1\n" +
 		"kind: Deployment\n" +
 		"metadata:\n" +
@@ -209,27 +268,79 @@ func TestUpdateResourceWithoutAResourceVersionReplacesAnExistingObject(t *testin
 		"spec:\n" +
 		"  replicas: 9\n"
 
-	outcome, err := adapter.UpdateResource(context.Background(), "dev", manifest, false)
+	_, err := adapter.UpdateResource(context.Background(), "dev", manifest, false)
+	if err == nil {
+		t.Fatal("UpdateResource() accepted a manifest with no resourceVersion — it would replace the object whole")
+	}
+	if !errors.Is(err, domain.ErrInvalidManifest) {
+		t.Errorf("error = %v, want ErrInvalidManifest", err)
+	}
+
+	stored, getErr := dynClient.Resource(deploymentGVR).Namespace("default").Get(context.Background(), "web", metav1.GetOptions{})
+	if getErr != nil {
+		t.Fatalf("getting the object back: %v", getErr)
+	}
+	replicas, _, _ := unstructured.NestedInt64(stored.Object, "spec", "replicas")
+	if replicas != 1 {
+		t.Errorf("spec.replicas = %d, want 1 — the refused edit must not have written anything", replicas)
+	}
+}
+
+// TestApplyResourceMergesRatherThanReplaces is the other half, and the reason
+// the refusal above is safe: the paste path still works, and now it works the
+// way `kubectl apply` does.
+//
+// A manifest that names the image and nothing else must leave the replica
+// count and the labels somebody else set exactly as they were. Under the old
+// create-then-replace fallback, all of it was deleted.
+func TestApplyResourceMergesRatherThanReplaces(t *testing.T) {
+	existing := newSeedObject("apps/v1", "Deployment", "default", "web", "10")
+	existing.SetLabels(map[string]string{"team": "payments"})
+	if err := unstructured.SetNestedField(existing.Object, int64(10), "spec", "replicas"); err != nil {
+		t.Fatalf("seeding existing object: %v", err)
+	}
+
+	dynClient := applyFakeClient(t, existing)
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
+
+	// Names the image. Says nothing about replicas or labels.
+	manifest := "apiVersion: apps/v1\n" +
+		"kind: Deployment\n" +
+		"metadata:\n" +
+		"  name: web\n" +
+		"  namespace: default\n" +
+		"spec:\n" +
+		"  template:\n" +
+		"    spec:\n" +
+		"      containers:\n" +
+		"      - name: app\n" +
+		"        image: nginx:1.27\n"
+
+	outcome, err := adapter.ApplyResource(context.Background(), "dev", manifest, domain.ApplyOptions{})
 	if err != nil {
-		t.Fatalf("UpdateResource() error = %v", err)
+		t.Fatalf("ApplyResource() error = %v", err)
 	}
 	if outcome.Created {
-		t.Error("outcome.Created = true, want false — an existing object was replaced, not created")
+		t.Error("outcome.Created = true for an object that already existed")
 	}
 
 	stored, err := dynClient.Resource(deploymentGVR).Namespace("default").Get(context.Background(), "web", metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("getting replaced object: %v", err)
+		t.Fatalf("getting the applied object: %v", err)
 	}
-	replicas, _, _ := unstructured.NestedInt64(stored.Object, "spec", "replicas")
-	if replicas != 9 {
-		t.Errorf("stored spec.replicas = %d, want 9 — the paste must have replaced the object", replicas)
+
+	replicas, found, _ := unstructured.NestedInt64(stored.Object, "spec", "replicas")
+	if !found || replicas != 10 {
+		t.Errorf("spec.replicas = %d (found %v), want 10 — the manifest said nothing about it", replicas, found)
+	}
+	if team := stored.GetLabels()["team"]; team != "payments" {
+		t.Errorf("labels[team] = %q, want payments — the manifest said nothing about it", team)
 	}
 }
 
-func TestUpdateResourceAppliesACustomResource(t *testing.T) {
-	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind)
-	adapter := newTestAdapterApply("dev", dynClient, testRESTMapper())
+func TestApplyResourceAppliesACustomResource(t *testing.T) {
+	dynClient := applyFakeClient(t)
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
 
 	manifest := "apiVersion: example.com/v1\n" +
 		"kind: Widget\n" +
@@ -239,9 +350,9 @@ func TestUpdateResourceAppliesACustomResource(t *testing.T) {
 		"spec:\n" +
 		"  color: blue\n"
 
-	outcome, err := adapter.UpdateResource(context.Background(), "dev", manifest, false)
+	outcome, err := adapter.ApplyResource(context.Background(), "dev", manifest, domain.ApplyOptions{DryRun: false})
 	if err != nil {
-		t.Fatalf("UpdateResource() error = %v, want a CRD kind to apply through the generic dynamic path", err)
+		t.Fatalf("ApplyResource() error = %v, want a CRD kind to apply through the generic dynamic path", err)
 	}
 	if !outcome.Created || outcome.Kind != "Widget" {
 		t.Errorf("outcome = %+v, want Created=true Kind=Widget", outcome)
@@ -252,7 +363,7 @@ func TestUpdateResourceAppliesACustomResource(t *testing.T) {
 	}
 }
 
-func TestUpdateResourceOnAnUnknownKindRefusesAfterOneMapperRefresh(t *testing.T) {
+func TestApplyResourceOnAnUnknownKindRefusesAfterOneMapperRefresh(t *testing.T) {
 	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), nil)
 
 	factory := newClientFactory(Config{})
@@ -275,17 +386,17 @@ func TestUpdateResourceOnAnUnknownKindRefusesAfterOneMapperRefresh(t *testing.T)
 		"  name: spooky\n" +
 		"  namespace: default\n"
 
-	_, err := adapter.UpdateResource(context.Background(), "dev", manifest, false)
+	_, err := adapter.ApplyResource(context.Background(), "dev", manifest, domain.ApplyOptions{DryRun: false})
 	if !errors.Is(err, domain.ErrInvalidManifest) {
-		t.Fatalf("UpdateResource() error = %v, want wrapping domain.ErrInvalidManifest", err)
+		t.Fatalf("ApplyResource() error = %v, want wrapping domain.ErrInvalidManifest", err)
 	}
 	if calls != 2 {
 		t.Fatalf("mapperBuilder called %d times, want exactly 2 (the initial build plus one refresh)", calls)
 	}
 }
 
-func TestUpdateResourceOnACRDInstalledAfterTheMapperWasCachedAppliesAfterOneRefresh(t *testing.T) {
-	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind)
+func TestApplyResourceOnACRDInstalledAfterTheMapperWasCachedAppliesAfterOneRefresh(t *testing.T) {
+	dynClient := applyFakeClient(t)
 
 	factory := newClientFactory(Config{})
 	calls := 0
@@ -308,9 +419,9 @@ func TestUpdateResourceOnACRDInstalledAfterTheMapperWasCachedAppliesAfterOneRefr
 		"  name: gizmo\n" +
 		"  namespace: default\n"
 
-	outcome, err := adapter.UpdateResource(context.Background(), "dev", manifest, false)
+	outcome, err := adapter.ApplyResource(context.Background(), "dev", manifest, domain.ApplyOptions{DryRun: false})
 	if err != nil {
-		t.Fatalf("UpdateResource() error = %v, want the CRD to apply after one refresh", err)
+		t.Fatalf("ApplyResource() error = %v, want the CRD to apply after one refresh", err)
 	}
 	if !outcome.Created {
 		t.Error("outcome.Created = false, want true")
@@ -320,9 +431,33 @@ func TestUpdateResourceOnACRDInstalledAfterTheMapperWasCachedAppliesAfterOneRefr
 	}
 }
 
-func TestUpdateResourceStripsManagedFieldsBeforeWriting(t *testing.T) {
-	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind)
-	adapter := newTestAdapterApply("dev", dynClient, testRESTMapper())
+// TestApplyResourceStripsManagedFieldsBeforeWriting asserts on the REQUEST,
+// not on the stored object.
+//
+// Under apply the server writes managedFields itself — that is the whole
+// mechanism — so a stored object legitimately carries them and their presence
+// proves nothing. What must not happen is the manifest's OWN managedFields
+// travelling: an operator with the managed-fields toggle on copies a block
+// claiming kubectl owns everything, and sending it would be PodSteer asserting
+// somebody else's ownership on their behalf.
+func TestApplyResourceStripsManagedFieldsBeforeWriting(t *testing.T) {
+	dynClient := applyFakeClient(t)
+
+	var sent []any
+	dynClient.PrependReactor("patch", "deployments", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		patch := action.(clientgotesting.PatchActionImpl)
+		var body map[string]any
+		if err := json.Unmarshal(patch.GetPatch(), &body); err != nil {
+			t.Fatalf("decoding the apply body: %v", err)
+		}
+		if metadata, ok := body["metadata"].(map[string]any); ok {
+			if fields, found := metadata["managedFields"]; found {
+				sent = append(sent, fields)
+			}
+		}
+		return false, nil, nil
+	})
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
 
 	manifest := "apiVersion: apps/v1\n" +
 		"kind: Deployment\n" +
@@ -335,35 +470,32 @@ func TestUpdateResourceStripsManagedFieldsBeforeWriting(t *testing.T) {
 		"spec:\n" +
 		"  replicas: 1\n"
 
-	if _, err := adapter.UpdateResource(context.Background(), "dev", manifest, false); err != nil {
-		t.Fatalf("UpdateResource() error = %v", err)
+	if _, err := adapter.ApplyResource(context.Background(), "dev", manifest, domain.ApplyOptions{DryRun: false}); err != nil {
+		t.Fatalf("ApplyResource() error = %v", err)
 	}
 
-	stored, err := dynClient.Resource(deploymentGVR).Namespace("default").Get(context.Background(), "web", metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("getting created object: %v", err)
-	}
-	if _, found, _ := unstructured.NestedFieldNoCopy(stored.Object, "metadata", "managedFields"); found {
-		t.Error("stored object still carries metadata.managedFields, want it stripped before writing")
+	if len(sent) != 0 {
+		t.Errorf("the apply body carried metadata.managedFields %v — the manifest's own block was sent", sent)
 	}
 }
 
-func TestUpdateResourceDryRunSendsTheOptionAndStoresNothing(t *testing.T) {
-	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind)
+// TestApplyResourceDryRunSendsTheOption asserts what left the client.
+//
+// NOT "AND STORES NOTHING", which is what this used to claim. The fake
+// tracker has no notion of a dry run — it persists whatever the reactor hands
+// back — so asserting that nothing was stored would be asserting a property of
+// the fake rather than of PodSteer. Whether the server honours DryRun=All is
+// the server's contract; whether PodSteer asks for it is ours, and that is
+// what is checked here.
+func TestApplyResourceDryRunSendsTheOption(t *testing.T) {
+	dynClient := applyFakeClient(t)
 
 	var sawDryRun []string
-	// The fake tracker has no notion of dry run — unlike a real API server
-	// it persists whatever a Create/Update reactor hands back — so the
-	// reactor here does what the API server's admission chain does for a
-	// dry-run request: report the options it received, then hand back the
-	// object WITHOUT letting the default reactor (which would call the
-	// tracker) run.
-	dynClient.PrependReactor("create", "deployments", func(action clientgotesting.Action) (bool, runtime.Object, error) {
-		create := action.(clientgotesting.CreateActionImpl)
-		sawDryRun = create.GetCreateOptions().DryRun
-		return true, create.GetObject(), nil
+	dynClient.PrependReactor("patch", "deployments", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		sawDryRun = action.(clientgotesting.PatchActionImpl).PatchOptions.DryRun
+		return false, nil, nil
 	})
-	adapter := newTestAdapterApply("dev", dynClient, testRESTMapper())
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
 
 	manifest := "apiVersion: apps/v1\n" +
 		"kind: Deployment\n" +
@@ -373,19 +505,15 @@ func TestUpdateResourceDryRunSendsTheOptionAndStoresNothing(t *testing.T) {
 		"spec:\n" +
 		"  replicas: 1\n"
 
-	outcome, err := adapter.UpdateResource(context.Background(), "dev", manifest, true)
+	outcome, err := adapter.ApplyResource(context.Background(), "dev", manifest, domain.ApplyOptions{DryRun: true})
 	if err != nil {
-		t.Fatalf("UpdateResource(dryRun=true) error = %v", err)
+		t.Fatalf("ApplyResource(dryRun) error = %v", err)
 	}
 	if !outcome.DryRun {
 		t.Error("outcome.DryRun = false, want true")
 	}
 	if len(sawDryRun) != 1 || sawDryRun[0] != metav1.DryRunAll {
-		t.Errorf("create options DryRun = %v, want [%q]", sawDryRun, metav1.DryRunAll)
-	}
-
-	if _, err := dynClient.Resource(deploymentGVR).Namespace("default").Get(context.Background(), "web", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
-		t.Errorf("Get() after a dry run error = %v, want NotFound — a dry run must persist nothing", err)
+		t.Errorf("apply options DryRun = %v, want [%q]", sawDryRun, metav1.DryRunAll)
 	}
 }
 
@@ -432,9 +560,9 @@ func TestUpdateResourceRefusesANamespacedKindWithNoNamespace(t *testing.T) {
 	}
 }
 
-func TestUpdateResourceOnAClusterScopedKindIgnoresANamespace(t *testing.T) {
-	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind)
-	adapter := newTestAdapterApply("dev", dynClient, testRESTMapper())
+func TestApplyResourceOnAClusterScopedKindIgnoresANamespace(t *testing.T) {
+	dynClient := applyFakeClient(t)
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
 
 	// A cluster-scoped kind carrying a namespace anyway — copy/paste from a
 	// namespaced object, or a stale field left over from an edit.
@@ -445,9 +573,9 @@ func TestUpdateResourceOnAClusterScopedKindIgnoresANamespace(t *testing.T) {
 		"  namespace: default\n" +
 		"rules: []\n"
 
-	outcome, err := adapter.UpdateResource(context.Background(), "dev", manifest, false)
+	outcome, err := adapter.ApplyResource(context.Background(), "dev", manifest, domain.ApplyOptions{DryRun: false})
 	if err != nil {
-		t.Fatalf("UpdateResource() error = %v, want a cluster-scoped kind to ignore a stray namespace rather than refuse", err)
+		t.Fatalf("ApplyResource() error = %v, want a cluster-scoped kind to ignore a stray namespace rather than refuse", err)
 	}
 	if outcome.Namespace != "" {
 		t.Errorf("outcome.Namespace = %q, want empty for a cluster-scoped kind", outcome.Namespace)
@@ -459,5 +587,99 @@ func TestUpdateResourceOnAClusterScopedKindIgnoresANamespace(t *testing.T) {
 	}
 	if stored.GetNamespace() != "" {
 		t.Errorf("stored object namespace = %q, want empty", stored.GetNamespace())
+	}
+}
+
+// TestApplyResourceReportsWhoOwnsAConflictingFieldAndWritesNothing is what
+// this verb exists for.
+//
+// The old create-then-replace fallback would have taken the field and told
+// nobody. Server-side apply refuses, names the manager, and leaves the object
+// alone — and that refusal comes back as an OUTCOME rather than an error,
+// because a list of fields and owners cannot travel in one sentence.
+func TestApplyResourceReportsWhoOwnsAConflictingFieldAndWritesNothing(t *testing.T) {
+	existing := newSeedObject("apps/v1", "Deployment", "default", "web", "10")
+	dynClient := applyFakeClient(t, existing)
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
+
+	// Somebody else takes ownership of spec.replicas first.
+	theirs := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata":   map[string]any{"name": "web", "namespace": "default"},
+		"spec":       map[string]any{"replicas": int64(10)},
+	}}
+	if _, err := dynClient.Resource(deploymentGVR).Namespace("default").
+		Apply(context.Background(), "web", theirs, metav1.ApplyOptions{FieldManager: "argocd-controller"}); err != nil {
+		t.Fatalf("seeding the other manager's ownership: %v", err)
+	}
+
+	manifest := "apiVersion: apps/v1\n" +
+		"kind: Deployment\n" +
+		"metadata:\n" +
+		"  name: web\n" +
+		"  namespace: default\n" +
+		"spec:\n" +
+		"  replicas: 3\n"
+
+	outcome, err := adapter.ApplyResource(context.Background(), "dev", manifest, domain.ApplyOptions{})
+	if err != nil {
+		t.Fatalf("ApplyResource() error = %v — a conflict is an outcome, not an error", err)
+	}
+	if !outcome.Refused() {
+		t.Fatal("outcome.Refused() = false, want the apply turned away over ownership")
+	}
+	if len(outcome.Conflicts) != 1 {
+		t.Fatalf("conflicts = %+v, want exactly one", outcome.Conflicts)
+	}
+
+	conflict := outcome.Conflicts[0]
+	if conflict.Manager != "argocd-controller" {
+		t.Errorf("manager = %q, want argocd-controller", conflict.Manager)
+	}
+	if conflict.Kind != domain.ManagerGitOps {
+		t.Errorf("kind = %q, want gitops — the sentence for a reconciler differs from kubectl's", conflict.Kind)
+	}
+	if !strings.Contains(conflict.Field, "replicas") {
+		t.Errorf("field = %q, want it to name replicas", conflict.Field)
+	}
+
+	// AND NOTHING WAS WRITTEN. This is the half that distinguishes a refusal
+	// from a failed write: the object must be exactly as it was.
+	stored, err := dynClient.Resource(deploymentGVR).Namespace("default").
+		Get(context.Background(), "web", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting the object back: %v", err)
+	}
+	replicas, _, _ := unstructured.NestedInt64(stored.Object, "spec", "replicas")
+	if replicas != 10 {
+		t.Errorf("spec.replicas = %d, want 10 — a refused apply must not have written", replicas)
+	}
+}
+
+// TestApplyResourceSendsTheFieldManager pins the name written into every
+// object PodSteer touches.
+//
+// It used to be derived from the user agent, which Config.UserAgent can
+// override — so an operator changing a diagnostic string silently renamed the
+// manager on every object. The name is a durable mark on somebody's cluster
+// that outlives the uninstall.
+func TestApplyResourceSendsTheFieldManager(t *testing.T) {
+	dynClient := applyFakeClient(t)
+
+	var sawManager string
+	dynClient.PrependReactor("patch", "deployments", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		sawManager = action.(clientgotesting.PatchActionImpl).PatchOptions.FieldManager
+		return false, nil, nil
+	})
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
+
+	manifest := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  namespace: default\n"
+
+	if _, err := adapter.ApplyResource(context.Background(), "dev", manifest, domain.ApplyOptions{}); err != nil {
+		t.Fatalf("ApplyResource() error = %v", err)
+	}
+	if sawManager != fieldManager {
+		t.Errorf("fieldManager = %q, want %q", sawManager, fieldManager)
 	}
 }

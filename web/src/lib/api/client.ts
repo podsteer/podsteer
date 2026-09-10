@@ -77,6 +77,7 @@ import {
 } from '$bindings/helmapi'
 import {
   ScaleWorkload as bindScaleWorkload,
+  ApplyResource as bindApplyResource,
   UpdateResource as bindUpdateResource,
   ValidateResource as bindValidateResource,
   DeleteResource as bindDeleteResource,
@@ -385,6 +386,7 @@ export type BulkResult = wails.BulkResultDTO
 export type DrainReport = wails.DrainReportDTO
 /** What an apply — real or a dry-run Validate — actually did. */
 export type ApplyOutcome = wails.ApplyOutcomeDTO
+export type FieldConflict = wails.FieldConflictDTO
 /** One recorded revision of a Deployment, StatefulSet or DaemonSet's pod
  * template — what the History tab lists and a rollback picks a target
  * from. */
@@ -1813,6 +1815,44 @@ export function updateResource(clusterId: string, manifest: string): Promise<App
       action: outcome === undefined ? 'Apply' : outcome.created ? 'Created' : 'Applied',
       target: at(outcome?.kind ?? '', outcome?.namespace ?? '', outcome?.name ?? ''),
       detail: '',
+    }),
+  )
+}
+
+/**
+ * Applies a manifest as DECLARED INTENT, through server-side apply.
+ *
+ * THE OTHER WRITE VERB. `updateResource` is the YAML editor's: a draft of a
+ * live object, replaced whole under an optimistic lock. This one is for a
+ * manifest somebody wrote or pasted — the Create dialog, Duplicate, a dropped
+ * file. It names the fields it cares about and says nothing about the rest,
+ * and the rest is left alone.
+ *
+ * A REFUSAL IS A RESOLVED PROMISE, NOT A REJECTION. Where another field
+ * manager owns something the manifest would change, the server declines,
+ * nothing is written, and the outcome comes back with `refused` set and
+ * `conflicts` naming the fields and their owners. Callers must check
+ * `refused` before reporting success.
+ */
+export function applyResource(
+  clusterId: string,
+  manifest: string,
+  dryRun = false,
+): Promise<ApplyOutcome> {
+  return writing(
+    clusterId,
+    () => bindApplyResource(clusterId, manifest, dryRun),
+    (outcome) => ({
+      action:
+        outcome === undefined
+          ? 'Apply'
+          : outcome.refused
+            ? 'Apply refused'
+            : outcome.created
+              ? 'Created'
+              : 'Applied',
+      target: at(outcome?.kind ?? '', outcome?.namespace ?? '', outcome?.name ?? ''),
+      detail: outcome?.refused ? `${outcome.conflicts?.length ?? 0} fields owned elsewhere` : '',
     }),
   )
 }

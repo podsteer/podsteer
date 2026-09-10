@@ -138,6 +138,10 @@ func (stubManagementPort) ScaleWorkload(context.Context, domain.ClusterID, domai
 func (stubManagementPort) RestartRollout(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string) error {
 	return nil
 }
+func (stubManagementPort) ApplyResource(context.Context, domain.ClusterID, string, domain.ApplyOptions) (domain.ApplyOutcome, error) {
+	return domain.ApplyOutcome{}, nil
+}
+
 func (stubManagementPort) UpdateResource(context.Context, domain.ClusterID, string, bool) (domain.ApplyOutcome, error) {
 	return domain.ApplyOutcome{}, nil
 }

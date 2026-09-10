@@ -182,7 +182,24 @@ type ApplyOutcome struct {
 	// (client-go's warning handler). Empty when the server sent none, which
 	// is the common case and not itself worth reporting as an absence.
 	Warnings []string
+	// Conflicts are the fields an apply could not change because another
+	// manager owns them, and who owns each.
+	//
+	// A REFUSAL IS AN OUTCOME, NOT AN ERROR, and that is why these travel
+	// here rather than in one. The bridge carries an error as a single
+	// sentence (see the error classification), and a conflict is a structured
+	// list an operator has to read field by field before deciding anything.
+	// Non-empty means NOTHING WAS WRITTEN — see Refused.
+	Conflicts FieldConflicts
 }
+
+// Refused reports whether the apply was turned away over field ownership,
+// leaving the object untouched.
+//
+// Distinct from an error: the request was well formed, the server understood
+// it, and it declined. The caller shows who owns what rather than "something
+// went wrong".
+func (o ApplyOutcome) Refused() bool { return len(o.Conflicts) > 0 }
 
 // OwnerReference records what created an object.
 //

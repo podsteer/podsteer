@@ -667,6 +667,12 @@ type ApplyOutcomeDTO struct {
 	// ValidateResource always sets it; UpdateResource never does. Nothing
 	// was persisted when it is true.
 	DryRun bool `json:"dryRun"`
+	// Conflicts are the fields an apply could not change because another
+	// manager owns them. Non-empty means NOTHING WAS WRITTEN.
+	Conflicts []FieldConflictDTO `json:"conflicts"`
+	// Refused is Conflicts being non-empty, carried explicitly so a caller
+	// reads an intention rather than inferring one from a length.
+	Refused bool `json:"refused"`
 	// Warnings carries any warning the API server attached to the request.
 	// Always empty today — see Adapter.UpdateResource's own comment on why —
 	// but present on the wire so the frontend does not need a second shape
@@ -684,6 +690,16 @@ func toApplyOutcome(outcome domain.ApplyOutcome) ApplyOutcomeDTO {
 		warnings = []string{}
 	}
 
+	conflicts := make([]FieldConflictDTO, 0, len(outcome.Conflicts))
+	for _, conflict := range outcome.Conflicts {
+		conflicts = append(conflicts, FieldConflictDTO{
+			Field:   conflict.Field,
+			Manager: conflict.Manager,
+			Message: conflict.Message,
+			Kind:    string(conflict.Kind),
+		})
+	}
+
 	return ApplyOutcomeDTO{
 		Created:   outcome.Created,
 		Kind:      outcome.Kind,
@@ -691,7 +707,24 @@ func toApplyOutcome(outcome domain.ApplyOutcome) ApplyOutcomeDTO {
 		Namespace: outcome.Namespace.String(),
 		DryRun:    outcome.DryRun,
 		Warnings:  warnings,
+		Conflicts: conflicts,
+		Refused:   outcome.Refused(),
 	}
+}
+
+// FieldConflictDTO is one field an apply could not change, and who holds it.
+type FieldConflictDTO struct {
+	// Field is the path as the API server wrote it, e.g. ".spec.replicas".
+	Field string `json:"field"`
+	// Manager is the owner's name.
+	Manager string `json:"manager"`
+	// Message is the server's own cause, verbatim.
+	Message string `json:"message"`
+	// Kind is what sort of owner it is — "gitops", "kubectl",
+	// "control-plane", "podsteer" or "unknown" — which decides what the
+	// interface can honestly offer. Overriding a reconciler is not durable;
+	// overriding kubectl takes a field from a person.
+	Kind string `json:"kind"`
 }
 
 // ClusterConnectedEvent is the payload of the "cluster:connected" event.

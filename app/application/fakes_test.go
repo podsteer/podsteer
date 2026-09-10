@@ -663,6 +663,11 @@ func (f *fakeManagementPort) UpdateResource(context.Context, domain.ClusterID, s
 	return domain.ApplyOutcome{}, f.err
 }
 
+func (f *fakeManagementPort) ApplyResource(context.Context, domain.ClusterID, string, domain.ApplyOptions) (domain.ApplyOutcome, error) {
+	f.record("ApplyResource")
+	return domain.ApplyOutcome{}, f.err
+}
+
 func (f *fakeManagementPort) ExecInPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, bool) error {
 	f.record("ExecInPod")
 	return f.err

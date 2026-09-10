@@ -21,7 +21,7 @@
   import type { EditorApi } from './YamlEditor.svelte'
   import HelpButton from './HelpButton.svelte'
   import { apply as kubectlApply } from '$lib/kubectl'
-  import { updateResource } from '$lib/api/client'
+  import { applyResource, type FieldConflict } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import { TriangleAlert, X } from '@lucide/svelte'
 
@@ -75,6 +75,17 @@
       INITIAL value, and this dialog stays mounted between openings. */
   let draft = $state('')
   let error = $state<string | null>(null)
+
+  /**
+   * The fields another manager owns, when the server refused this apply.
+   *
+   * NOT AN ERROR, AND RENDERED AS ONE WOULD BE WRONG. The request was well
+   * formed, the server understood it, and it declined — nothing was written
+   * and nothing is broken. What the operator needs is who owns what, so they
+   * can decide whether to change the manifest, go and talk to whoever runs
+   * that controller, or leave it alone.
+   */
+  let conflicts = $state<FieldConflict[]>([])
   let submitting = $state(false)
 
   $effect(() => {
@@ -118,8 +129,23 @@
     if (isReadOnly) return
     submitting = true
     error = null
+    conflicts = []
     try {
-      await updateResource(clusterId, draft)
+      // THE APPLY VERB, NOT THE EDITOR'S. This dialog's manifest is declared
+      // intent — it names what it cares about and says nothing about the
+      // rest — so applying it must MERGE. Sending it through updateResource
+      // replaced the object whole, which is how pasting a Deployment without
+      // spec.replicas over one an HPA had scaled reset the replica count.
+      const outcome = await applyResource(clusterId, draft)
+
+      // A refusal resolves rather than throws: the server understood the
+      // request and declined it because somebody else owns a field. Nothing
+      // was written, so the dialog stays open with the owners named.
+      if (outcome.refused) {
+        conflicts = outcome.conflicts ?? []
+        submitting = false
+        return
+      }
 
       // Best-effort: the write already succeeded, so a manifest this
       // dialog's own re-parse trips on (unlikely — it is the exact text
@@ -231,6 +257,39 @@
 
       {#if error}
         <p class="text-body-medium text-error" role="alert">{error}</p>
+      {/if}
+
+      <!--
+        THE SERVER DECLINED, AND NOTHING WAS WRITTEN. Rendered in the warning
+        tone rather than the error one: an operator who reads this as a
+        failure goes looking for a problem that is not there. The sentence per
+        owner differs because what overriding one would MEAN differs — taking
+        a field from a reconciler is not durable, taking one from kubectl
+        takes it from a person.
+      -->
+      {#if conflicts.length > 0}
+        <div class="flex flex-col gap-2 rounded-sm border border-gauge-warn/30 bg-gauge-warn/10 p-3" role="status">
+          <p class="text-body-medium text-on-surface">
+            Not applied — {conflicts.length === 1 ? 'a field is' : 'these fields are'} owned by
+            another manager, so nothing was changed.
+          </p>
+          <ul class="flex flex-col gap-1">
+            {#each conflicts as conflict (conflict.field + conflict.manager)}
+              <li class="text-body-medium text-on-surface-variant" data-selectable>
+                <span class="font-medium text-on-surface">{conflict.field}</span>
+                — {conflict.manager}{conflict.kind === 'gitops'
+                  ? ' (a reconciler: it would put its value back on the next sync)'
+                  : conflict.kind === 'control-plane'
+                    ? ' (Kubernetes itself: the controller will keep rewriting it)'
+                    : ''}
+              </li>
+            {/each}
+          </ul>
+          <p class="text-body-medium text-on-surface-variant/80">
+            Remove {conflicts.length === 1 ? 'that field' : 'those fields'} from the manifest to apply
+            the rest.
+          </p>
+        </div>
       {/if}
 
       <div class="flex items-center gap-3">

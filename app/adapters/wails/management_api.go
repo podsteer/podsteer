@@ -627,6 +627,29 @@ func (m *ManagementAPI) UpdateResource(clusterID, manifest string) (ApplyOutcome
 	return toApplyOutcome(outcome), nil
 }
 
+// ApplyResource applies a manifest as declared intent, through server-side
+// apply — the Create dialog's verb, and Duplicate's.
+//
+// A REFUSAL COMES BACK AS AN OUTCOME WITH A 200. The frontend reads
+// `conflicts` and shows who owns what; an error return here means the request
+// failed, not that the server declined it. See
+// ports.ManagementPort.ApplyResource.
+func (m *ManagementAPI) ApplyResource(clusterID, manifest string, dryRun bool) (ApplyOutcomeDTO, error) {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return ApplyOutcomeDTO{}, apiError(m.logger, "ApplyResource", err)
+	}
+
+	outcome, err := m.management.ApplyResource(ctx, id, manifest, domain.ApplyOptions{DryRun: dryRun})
+	if err != nil {
+		return ApplyOutcomeDTO{}, apiError(m.logger, "ApplyResource", err)
+	}
+	return toApplyOutcome(outcome), nil
+}
+
 // ValidateResource is UpdateResource's dry run: the manifest is sent through
 // the same generic apply path with DryRun=All, so the API server runs every
 // admission check (schema validation, webhooks) without persisting anything.

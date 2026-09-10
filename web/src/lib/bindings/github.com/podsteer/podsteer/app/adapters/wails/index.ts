@@ -86,6 +86,7 @@ export type {
     DrainReportDTO,
     DrainSkip,
     Event,
+    FieldConflictDTO,
     Finding,
     GraphEdge,
     GraphNode,

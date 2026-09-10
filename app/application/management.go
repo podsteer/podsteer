@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
@@ -370,6 +371,61 @@ func (s *ManagementService) UpdateResource(ctx context.Context, id domain.Cluste
 			slog.Bool("dryRun", dryRun),
 			slog.String("error", err.Error()))
 		return domain.ApplyOutcome{}, err
+	}
+
+	return outcome, nil
+}
+
+// ApplyResource applies a manifest as declared intent, through server-side
+// apply. See ports.ManagementPort.ApplyResource for the contract.
+//
+// A REFUSAL IS NOT A FAILURE, and the logging says so. An apply turned away
+// over field ownership is logged at info with the managers named — it is an
+// ordinary answer that an operator will act on — where a genuine error stays
+// at error level. Logging a refusal as an error would put an operator's
+// routine "Argo CD owns this" in the same bucket as a cluster that fell over.
+func (s *ManagementService) ApplyResource(
+	ctx context.Context,
+	id domain.ClusterID,
+	manifest string,
+	options domain.ApplyOptions,
+) (domain.ApplyOutcome, error) {
+	// A dry run persists nothing, so it is allowed on a read-only cluster for
+	// the same reason UpdateResource's is: asking the server what WOULD happen
+	// is a read, and refusing it would take away the one control that answers
+	// "may I" without doing anything.
+	if !options.DryRun {
+		if err := s.refuseIfReadOnly(id); err != nil {
+			return domain.ApplyOutcome{}, err
+		}
+	}
+
+	if manifest == "" {
+		return domain.ApplyOutcome{}, errors.New("manifest cannot be empty")
+	}
+
+	s.logger.InfoContext(ctx, "applying resource",
+		slog.String("cluster", id.String()),
+		slog.Int("manifestLength", len(manifest)),
+		slog.Bool("dryRun", options.DryRun))
+
+	outcome, err := s.management.ApplyResource(ctx, id, manifest, options)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to apply resource",
+			slog.String("cluster", id.String()),
+			slog.Bool("dryRun", options.DryRun),
+			slog.String("error", err.Error()))
+		return domain.ApplyOutcome{}, err
+	}
+
+	if outcome.Refused() {
+		// The MANAGERS are logged and the object is not: a field manager's
+		// name is not an object name, and the no-object-names rule that
+		// governs what reaches disk is about the latter.
+		s.logger.InfoContext(ctx, "apply refused over field ownership",
+			slog.String("cluster", id.String()),
+			slog.Int("fields", len(outcome.Conflicts)),
+			slog.String("managers", strings.Join(outcome.Conflicts.Managers(), ", ")))
 	}
 
 	return outcome, nil
