@@ -22,6 +22,7 @@
   import HelpButton from './HelpButton.svelte'
   import { apply as kubectlApply } from '$lib/kubectl'
   import { applyResource, type FieldConflict } from '$lib/api/client'
+  import { nameConfirmed } from '$lib/confirm'
   import { toApiError } from '$lib/api/errors'
   import { TriangleAlert, X } from '@lucide/svelte'
 
@@ -86,6 +87,40 @@
    * that controller, or leave it alone.
    */
   let conflicts = $state<FieldConflict[]>([])
+
+  /**
+   * What the operator has typed to confirm a forced override.
+   *
+   * THE SAME GATE DELETE USES, on a production cluster, because taking a
+   * field from another manager is at least as consequential: it changes a
+   * live object in a way whoever owns that field did not ask for. Off a
+   * production cluster the button alone is the confirmation — the conflict
+   * list above it is already the thing being agreed to.
+   */
+  let overrideTyped = $state('')
+
+  /** The object's own name, for the production confirmation gate. */
+  const objectName = $derived.by(() => {
+    try {
+      const parsed = parse(draft) as { metadata?: { name?: string } } | null
+      return parsed?.metadata?.name ?? ''
+    } catch {
+      return ''
+    }
+  })
+
+  const overrideAllowed = $derived.by(() => {
+    if (conflicts.length === 0) return false
+    if (!productionGroup) return true
+    // AN EMPTY NAME MUST NOT OPEN THE GATE. nameConfirmed compares the typed
+    // text to the expected one, and two empty strings are equal — so a draft
+    // this dialog cannot parse a name out of would let an override through on
+    // a production cluster with nothing typed at all.
+    return objectName !== '' && nameConfirmed(overrideTyped, objectName)
+  })
+
+  /** Whether any conflicting owner will simply put its value back. */
+  const revertsAnyway = $derived(conflicts.some((conflict) => conflict.kind === 'gitops'))
   let submitting = $state(false)
 
   $effect(() => {
@@ -123,6 +158,40 @@
   function onEditorReady(api: EditorApi): void {
     const caret = nameCaret(draft)
     if (caret) api.select(caret[0], caret[1])
+  }
+
+  /**
+   * Applies again, taking the fields the operator just read and agreed to.
+   *
+   * The confirmed set travels to the server, which re-reads the live
+   * ownership one round trip before writing — so a manager who took a field
+   * while this dialog was open refuses the write rather than being
+   * overridden unseen, and the new set comes back here to be read.
+   */
+  async function handleOverride(): Promise<void> {
+    if (isReadOnly || !overrideAllowed) return
+    submitting = true
+    error = null
+    const agreed = conflicts
+    try {
+      const outcome = await applyResource(clusterId, draft, false, agreed)
+      if (outcome.refused) {
+        // Ownership moved underneath the dialog. The new set replaces the
+        // old one and the typed confirmation is cleared: it was agreement to
+        // a claim that is no longer true.
+        conflicts = outcome.conflicts ?? []
+        overrideTyped = ''
+        submitting = false
+        return
+      }
+      conflicts = []
+      onclose()
+      oncreated(objectName, '')
+    } catch (cause) {
+      error = String(cause)
+    } finally {
+      submitting = false
+    }
   }
 
   async function handleApply(): Promise<void> {
@@ -287,8 +356,49 @@
           </ul>
           <p class="text-body-medium text-on-surface-variant/80">
             Remove {conflicts.length === 1 ? 'that field' : 'those fields'} from the manifest to apply
-            the rest.
+            the rest — or take {conflicts.length === 1 ? 'it' : 'them'} over.
           </p>
+
+          {#if revertsAnyway}
+            <!--
+              THE BUTTON MUST NOT SAY "Take ownership" HERE. A reconciler
+              takes the field straight back on its next sync, so ownership is
+              a claim this cannot keep. Saying what will actually happen is
+              the only honest label.
+            -->
+            <p class="text-body-medium text-gauge-warn">
+              A reconciler owns some of these. Overriding changes the cluster now and is undone on
+              its next sync — change it where it is declared instead.
+            </p>
+          {/if}
+
+          {#if productionGroup}
+            <!-- The same gate Delete uses, because taking a field from
+                 another manager changes a live object in a way whoever owns
+                 it did not ask for. -->
+            <label class="flex flex-col gap-1 text-body-medium text-on-surface-variant">
+              Type <span class="font-medium text-on-surface">{objectName}</span> to override on this
+              production cluster
+              <input
+                type="text"
+                data-testid="override-confirm"
+                bind:value={overrideTyped}
+                autocomplete="off"
+                spellcheck="false"
+                class="rounded-sm border border-outline-variant bg-surface px-2 py-1 text-body-medium text-on-surface"
+              />
+            </label>
+          {/if}
+
+          <div>
+            <Button
+              variant="outlined"
+              disabled={isReadOnly || submitting || !overrideAllowed}
+              onclick={handleOverride}
+            >
+              {revertsAnyway ? 'Override anyway' : 'Take ownership'}
+            </Button>
+          </div>
         </div>
       {/if}
 

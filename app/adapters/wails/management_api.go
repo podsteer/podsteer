@@ -634,7 +634,11 @@ func (m *ManagementAPI) UpdateResource(clusterID, manifest string) (ApplyOutcome
 // `conflicts` and shows who owns what; an error return here means the request
 // failed, not that the server declined it. See
 // ports.ManagementPort.ApplyResource.
-func (m *ManagementAPI) ApplyResource(clusterID, manifest string, dryRun bool) (ApplyOutcomeDTO, error) {
+func (m *ManagementAPI) ApplyResource(
+	clusterID, manifest string,
+	dryRun bool,
+	confirmed []FieldConflictDTO,
+) (ApplyOutcomeDTO, error) {
 	ctx, cancel := m.app.requestContext()
 	defer cancel()
 
@@ -643,7 +647,21 @@ func (m *ManagementAPI) ApplyResource(clusterID, manifest string, dryRun bool) (
 		return ApplyOutcomeDTO{}, apiError(m.logger, "ApplyResource", err)
 	}
 
-	outcome, err := m.management.ApplyResource(ctx, id, manifest, domain.ApplyOptions{DryRun: dryRun})
+	// CONFIRMED IS WHAT MAKES FORCE A FORCE. An empty set with force asked
+	// for is refused by the service; a non-empty one is the operator saying
+	// which owners they read and agreed to override, and the adapter checks
+	// it against the cluster before writing.
+	options := domain.ApplyOptions{DryRun: dryRun, Force: len(confirmed) > 0}
+	for _, conflict := range confirmed {
+		options.Confirmed = append(options.Confirmed, domain.FieldConflict{
+			Field:   conflict.Field,
+			Manager: conflict.Manager,
+			Message: conflict.Message,
+			Kind:    domain.ManagerKind(conflict.Kind),
+		})
+	}
+
+	outcome, err := m.management.ApplyResource(ctx, id, manifest, options)
 	if err != nil {
 		return ApplyOutcomeDTO{}, apiError(m.logger, "ApplyResource", err)
 	}

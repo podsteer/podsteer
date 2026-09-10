@@ -31,8 +31,8 @@ export function AbortRollout(clusterID: string, $namespace: string, name: string
  * failed, not that the server declined it. See
  * ports.ManagementPort.ApplyResource.
  */
-export function ApplyResource(clusterID: string, manifest: string, dryRun: boolean): $CancellablePromise<$models.ApplyOutcomeDTO> {
-    return $Call.ByID(603287988, clusterID, manifest, dryRun);
+export function ApplyResource(clusterID: string, manifest: string, dryRun: boolean, confirmed: $models.FieldConflictDTO[] | null): $CancellablePromise<$models.ApplyOutcomeDTO> {
+    return $Call.ByID(603287988, clusterID, manifest, dryRun, confirmed);
 }
 
 /**

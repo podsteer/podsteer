@@ -1,0 +1,131 @@
+/**
+ * What the dialog offers when the server refuses over field ownership.
+ *
+ * The sentence and the button label differ by WHO owns the field, because
+ * what overriding would mean differs: a reconciler takes the field straight
+ * back on its next sync, so "Take ownership" would be a claim the code cannot
+ * keep.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, cleanup, fireEvent } from '@testing-library/svelte'
+
+const applyResource = vi.fn()
+vi.mock('$lib/api/client', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('$lib/api/client')
+  return { ...actual, applyResource: (...args: unknown[]) => applyResource(...args) }
+})
+
+import CreateResourceDialog from './CreateResourceDialog.svelte'
+
+/** The rendered text with its line breaks collapsed, so an assertion about a
+    sentence is not defeated by where the markup happened to wrap. */
+const words = (element: HTMLElement) => (element.textContent ?? '').replace(/\s+/g, ' ')
+
+const MANIFEST = 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  namespace: shop\n'
+
+function conflict(manager: string, kind: string) {
+  return {
+    field: '.spec.replicas',
+    manager,
+    message: `conflict with "${manager}" using apps/v1`,
+    kind,
+  }
+}
+
+function refusal(...conflicts: ReturnType<typeof conflict>[]) {
+  return { created: false, kind: 'Deployment', name: 'web', namespace: 'shop', dryRun: false, warnings: [], conflicts, refused: true }
+}
+
+function props(overrides: Record<string, unknown> = {}) {
+  return {
+    open: true,
+    clusterId: 'dev',
+    kindLabel: 'Deployment',
+    verb: 'New' as const,
+    seed: MANIFEST,
+    isReadOnly: false,
+    readOnlyReason: '',
+    onclose: () => {},
+    oncreated: () => {},
+    ...overrides,
+  }
+}
+
+beforeEach(() => applyResource.mockReset())
+afterEach(cleanup)
+
+describe('a refused apply', () => {
+  it('names the owner and does not read as a failure', async () => {
+    applyResource.mockResolvedValue(refusal(conflict('kubectl', 'kubectl')))
+
+    const { container, getByText } = render(CreateResourceDialog, props())
+    await fireEvent.click(getByText('Apply'))
+
+    expect(words(container)).toContain('.spec.replicas')
+    expect(words(container)).toContain('kubectl')
+    expect(words(container)).toContain('nothing was changed')
+    // The dialog stays open: there is a decision to make.
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('offers to take a field from a person', async () => {
+    applyResource.mockResolvedValue(refusal(conflict('kubectl', 'kubectl')))
+
+    const { getByText } = render(CreateResourceDialog, props())
+    await fireEvent.click(getByText('Apply'))
+
+    expect(getByText('Take ownership')).toBeTruthy()
+  })
+
+  it('refuses to call it ownership when a reconciler will take it back', async () => {
+    // THE LABEL IS THE POINT. Argo CD reverts on its next sync, so "Take
+    // ownership" would be a claim this cannot keep.
+    applyResource.mockResolvedValue(refusal(conflict('argocd-controller', 'gitops')))
+
+    const { container, getByText } = render(CreateResourceDialog, props())
+    await fireEvent.click(getByText('Apply'))
+
+    expect(getByText('Override anyway')).toBeTruthy()
+    expect(words(container)).toContain('undone on its next sync')
+  })
+
+  it('sends the confirmed set back when the operator overrides', async () => {
+    const owned = conflict('kubectl', 'kubectl')
+    applyResource
+      .mockResolvedValueOnce(refusal(owned))
+      .mockResolvedValueOnce({ created: false, kind: 'Deployment', name: 'web', namespace: 'shop', dryRun: false, warnings: [], conflicts: [], refused: false })
+
+    const { getByText } = render(CreateResourceDialog, props())
+    await fireEvent.click(getByText('Apply'))
+    await fireEvent.click(getByText('Take ownership'))
+
+    // The plain apply carries no confirmed set — it defaults — and the
+    // override carries exactly what was shown.
+    expect(applyResource.mock.calls[0][3] ?? []).toEqual([])
+    expect(applyResource.mock.calls[1][3]).toEqual([owned])
+  })
+
+  it('gates the override behind the object name on a production cluster', async () => {
+    applyResource.mockResolvedValue(refusal(conflict('kubectl', 'kubectl')))
+
+    const { getByText, container } = render(
+      CreateResourceDialog,
+      props({ productionGroup: 'Production' }),
+    )
+    await fireEvent.click(getByText('Apply'))
+
+    const button = getByText('Take ownership').closest('button')
+    expect(button?.disabled).toBe(true)
+
+    // The label names the object, which is what must be typed.
+    expect(words(container)).toContain('Type web to override')
+
+    // BY TEST ID, because the dialog has more than one text input and the
+    // first one is not this. Selecting positionally typed into the wrong
+    // field and made the gate look broken when it was not.
+    const input = container.querySelector('[data-testid="override-confirm"]') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'web' } })
+
+    expect(getByText('Take ownership').closest('button')?.disabled).toBe(false)
+  })
+})

@@ -404,6 +404,14 @@ func (s *ManagementService) ApplyResource(
 		return domain.ApplyOutcome{}, errors.New("manifest cannot be empty")
 	}
 
+	// FORCE WITHOUT A CONFIRMED SET IS REFUSED BEFORE ANYTHING LEAVES. A
+	// force that carries nothing is a retry that wins — an interface turning
+	// "the server declined" into "press again" with nobody having read who
+	// owns what. See domain.ErrForceUnconfirmed.
+	if options.Force && len(options.Confirmed) == 0 {
+		return domain.ApplyOutcome{}, domain.ErrForceUnconfirmed
+	}
+
 	s.logger.InfoContext(ctx, "applying resource",
 		slog.String("cluster", id.String()),
 		slog.Int("manifestLength", len(manifest)),
@@ -416,6 +424,19 @@ func (s *ManagementService) ApplyResource(
 			slog.Bool("dryRun", options.DryRun),
 			slog.String("error", err.Error()))
 		return domain.ApplyOutcome{}, err
+	}
+
+	if options.Force && !outcome.Refused() && !options.DryRun {
+		// AUDITED, because taking a field from another manager is a
+		// consequential act somebody should be able to find afterwards. The
+		// MANAGERS are named and the object is not beyond its kind: a field
+		// manager's name is not an object name, and the no-object-names rule
+		// governs the latter.
+		s.logger.InfoContext(ctx, "apply forced ownership away from other managers",
+			slog.String("cluster", id.String()),
+			slog.String("kind", outcome.Kind),
+			slog.Int("fields", len(options.Confirmed)),
+			slog.String("managers", strings.Join(options.Confirmed.Managers(), ", ")))
 	}
 
 	if outcome.Refused() {

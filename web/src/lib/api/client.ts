@@ -1833,15 +1833,22 @@ export function updateResource(clusterId: string, manifest: string): Promise<App
  * nothing is written, and the outcome comes back with `refused` set and
  * `conflicts` naming the fields and their owners. Callers must check
  * `refused` before reporting success.
+ *
+ * `confirmed` TURNS THIS INTO A FORCE. Passing the conflicts an operator was
+ * shown and agreed to override asks the server to take those fields — and the
+ * Go side re-reads the live set one round trip before writing, so a manager
+ * who took a field while the dialog was open refuses the write rather than
+ * being overridden unseen. An empty set is an ordinary apply.
  */
 export function applyResource(
   clusterId: string,
   manifest: string,
   dryRun = false,
+  confirmed: FieldConflict[] = [],
 ): Promise<ApplyOutcome> {
   return writing(
     clusterId,
-    () => bindApplyResource(clusterId, manifest, dryRun),
+    () => bindApplyResource(clusterId, manifest, dryRun, confirmed),
     (outcome) => ({
       action:
         outcome === undefined
