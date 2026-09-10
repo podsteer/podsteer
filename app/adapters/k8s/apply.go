@@ -9,7 +9,6 @@ import (
 	"io"
 	"strings"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -51,68 +50,30 @@ func (a *Adapter) UpdateResource(ctx context.Context, id domain.ClusterID, manif
 		defer a.forgetReads(id)
 	}
 
-	obj, err := decodeManifest(manifest)
+	prepared, err := a.prepareWrite(id, manifest)
 	if err != nil {
 		return domain.ApplyOutcome{}, err
 	}
 
-	set, err := a.factory.clientsFor(id)
-	if err != nil {
-		return domain.ApplyOutcome{}, err
-	}
-
-	gvk := obj.GroupVersionKind()
-	mapping, err := a.factory.restMappingFor(id, set, gvk)
-	if err != nil {
-		if meta.IsNoMatchError(err) {
-			return domain.ApplyOutcome{}, fmt.Errorf("%w: the cluster does not serve kind %q (%s)",
-				domain.ErrInvalidManifest, gvk.Kind, gvk.GroupVersion())
-		}
-		return domain.ApplyOutcome{}, err
-	}
-
-	namespaced := mapping.Scope.Name() == meta.RESTScopeNameNamespace
-	namespace := obj.GetNamespace()
-	switch {
-	case namespaced && namespace == "":
-		// There is no separate namespace parameter to fall back to — see
-		// ManagementPort's doc comment — so a namespaced kind with nothing in
-		// metadata.namespace is refused rather than guessed at (`default`,
-		// say, would silently apply somewhere the operator did not ask for).
-		return domain.ApplyOutcome{}, fmt.Errorf("%w: %s %q is namespaced and the manifest has no metadata.namespace",
-			domain.ErrInvalidManifest, gvk.Kind, obj.GetName())
-	case !namespaced && namespace != "":
-		// A cluster-scoped kind has no namespace to apply into. The API
-		// server ignores one on a cluster-scoped object anyway, so this is
-		// dropped rather than treated as a reason to refuse.
-		obj.SetNamespace("")
-		namespace = ""
-	}
-
-	// The server rejects or ignores managedFields on a write, and the
-	// editor's YAML tab can include them when the managed-fields toggle is
-	// on (see ManagedFieldsToggle) — stripped here so create, update and dry
-	// run all see the same object rather than depending on server-side
-	// handling that differs by API server version.
-	unstructured.RemoveNestedField(obj.Object, "metadata", "managedFields")
-
-	// A CLIENT OF THIS APPLY'S OWN, so the API server's warnings can be
-	// attributed to it. They are attached as response headers to a write the
-	// server ACCEPTED — a deprecated apiVersion, a webhook that warned rather
-	// than rejected — and client-go hangs the handler off the REST config
-	// rather than the request, so the shared set.dynamic cannot carry one
-	// without misattributing warnings between concurrent applies. See
-	// warningCollector for why the copy is affordable here and would not be
-	// on a poll.
-	warned, collector, err := applyClient(set)
-	if err != nil {
-		return domain.ApplyOutcome{}, classify(fmt.Sprintf("preparing apply for %q", id), err)
-	}
-
-	namespaceable := warned.Resource(mapping.Resource)
-	var client dynamic.ResourceInterface = namespaceable
-	if namespaced {
-		client = namespaceable.Namespace(namespace)
+	// AN EDIT MUST CARRY THE VERSION IT WAS READ AT, and a manifest without
+	// one is refused rather than quietly turned into something else.
+	//
+	// This path used to fall back to Create, and on AlreadyExists it fetched
+	// the object solely to steal its resourceVersion and then REPLACED it
+	// with the manifest. Pasting a Deployment that omits spec.replicas over
+	// one an HPA had scaled to ten set replicas back to whatever the manifest
+	// said; every label, annotation and field the paste did not mention was
+	// deleted. That is not what `kubectl apply` does — it three-way merges
+	// precisely to avoid it — and it was the one place in this write path
+	// that could damage a cluster silently.
+	//
+	// Declared intent belongs to ApplyResource, which merges and names the
+	// owner of anything it cannot change. This method is the EDITOR's verb:
+	// a draft of the live object, replaced whole, under an optimistic lock.
+	if prepared.object.GetResourceVersion() == "" {
+		return domain.ApplyOutcome{}, fmt.Errorf(
+			"%w: this manifest carries no metadata.resourceVersion, so it cannot be edited safely — "+
+				"apply it as a new manifest instead", domain.ErrInvalidManifest)
 	}
 
 	var dryRunOpt []string
@@ -120,7 +81,7 @@ func (a *Adapter) UpdateResource(ctx context.Context, id domain.ClusterID, manif
 		dryRunOpt = []string{metav1.DryRunAll}
 	}
 
-	outcome, err := a.writeResource(ctx, client, gvk, obj, dryRun, dryRunOpt)
+	outcome, err := a.putResource(ctx, prepared.client, prepared.gvk, prepared.object, dryRun, dryRunOpt)
 	if err != nil {
 		return domain.ApplyOutcome{}, err
 	}
@@ -128,24 +89,8 @@ func (a *Adapter) UpdateResource(ctx context.Context, id domain.ClusterID, manif
 	// rather than merely wired: client-go calls the handler synchronously
 	// while the response is being read, so by the time the call has returned
 	// every warning it produced is in.
-	outcome.Warnings = collector.collected()
+	outcome.Warnings = prepared.collector.collected()
 	return outcome, nil
-}
-
-// writeResource sends the object, as an Update when the manifest carries a
-// resourceVersion and a Create when it does not.
-func (a *Adapter) writeResource(
-	ctx context.Context,
-	client dynamic.ResourceInterface,
-	gvk schema.GroupVersionKind,
-	obj *unstructured.Unstructured,
-	dryRun bool,
-	dryRunOpt []string,
-) (domain.ApplyOutcome, error) {
-	if obj.GetResourceVersion() != "" {
-		return a.putResource(ctx, client, gvk, obj, dryRun, dryRunOpt)
-	}
-	return a.createResource(ctx, client, gvk, obj, dryRun, dryRunOpt)
 }
 
 // putResource sends obj as an Update, carrying whatever resourceVersion the
@@ -154,33 +99,6 @@ func (a *Adapter) writeResource(
 // HTTP 409, which classify maps onto ports.ErrConflict.
 func (a *Adapter) putResource(ctx context.Context, client dynamic.ResourceInterface, gvk schema.GroupVersionKind, obj *unstructured.Unstructured, dryRun bool, dryRunOpt []string) (domain.ApplyOutcome, error) {
 	result, err := client.Update(ctx, obj, metav1.UpdateOptions{DryRun: dryRunOpt})
-	if err != nil {
-		return domain.ApplyOutcome{}, classify("applying resource", err)
-	}
-	return outcomeFrom(gvk, result, false, dryRun), nil
-}
-
-// createResource sends obj as a Create — the manifest carried no
-// resourceVersion, so there is nothing to lock against yet. An AlreadyExists
-// means the object exists despite that: an operator pasting a whole manifest
-// over an existing object, treated as a replace by fetching the live
-// resourceVersion and sending the pasted manifest as an Update with it.
-func (a *Adapter) createResource(ctx context.Context, client dynamic.ResourceInterface, gvk schema.GroupVersionKind, obj *unstructured.Unstructured, dryRun bool, dryRunOpt []string) (domain.ApplyOutcome, error) {
-	result, err := client.Create(ctx, obj, metav1.CreateOptions{DryRun: dryRunOpt})
-	if err == nil {
-		return outcomeFrom(gvk, result, true, dryRun), nil
-	}
-	if !apierrors.IsAlreadyExists(err) {
-		return domain.ApplyOutcome{}, classify("applying resource", err)
-	}
-
-	existing, err := client.Get(ctx, obj.GetName(), metav1.GetOptions{})
-	if err != nil {
-		return domain.ApplyOutcome{}, classify("applying resource", err)
-	}
-	obj.SetResourceVersion(existing.GetResourceVersion())
-
-	result, err = client.Update(ctx, obj, metav1.UpdateOptions{DryRun: dryRunOpt})
 	if err != nil {
 		return domain.ApplyOutcome{}, classify("applying resource", err)
 	}

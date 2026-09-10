@@ -788,13 +788,19 @@ type ManagementPort interface {
 	// separate namespace parameter to fall back to. Returns
 	// domain.ErrInvalidManifest, wrapped, for any of those.
 	//
-	// The write itself is optimistic-locked by the manifest's OWN
-	// resourceVersion: present, it is sent as a PUT and the server enforces
-	// the lock, reporting a stale one as ports.ErrConflict (HTTP 409); absent,
-	// the object is created, and an AlreadyExists on that create falls back
-	// to fetching the live resourceVersion and replacing the object with it —
-	// full replace semantics, matching what an operator pasting a manifest
-	// over an existing object means by Apply.
+	// THIS IS THE EDITOR'S VERB. The manifest is a draft of a LIVE object and
+	// must carry the resourceVersion it was read at; the write is a PUT under
+	// that optimistic lock, and a stale version comes back as
+	// ports.ErrConflict (HTTP 409). Replacing the object whole is the point:
+	// deleting a line in a full-object editor has to delete the field, which
+	// is the one thing an editor can honestly promise.
+	//
+	// A MANIFEST WITH NO resourceVersion IS REFUSED, with ErrInvalidManifest.
+	// It used to fall back to Create, and on AlreadyExists it fetched the live
+	// object solely to steal its resourceVersion and then replaced it — so
+	// pasting a Deployment that omitted spec.replicas over one an HPA had
+	// scaled reset the replica count and deleted every field the paste did not
+	// mention. Declared intent belongs to ApplyResource.
 	//
 	// dryRun asks the API server to validate the request (admission, schema,
 	// webhooks) without persisting anything, via the DryRun=All option —
@@ -802,6 +808,25 @@ type ManagementPort interface {
 	// reports what happened: whether the object was created, and any warning
 	// the API server attached to the request.
 	UpdateResource(ctx context.Context, id domain.ClusterID, manifest string, dryRun bool) (domain.ApplyOutcome, error)
+
+	// ApplyResource applies a manifest as DECLARED INTENT, through server-side
+	// apply.
+	//
+	// THE OTHER WRITE VERB, for a manifest somebody wrote or pasted rather
+	// than a draft of a live object: the Create dialog, Duplicate, a dropped
+	// file. Those name the fields they care about and say nothing about the
+	// rest, and the rest is LEFT ALONE — which is what `kubectl apply` does
+	// and what a full replace does not.
+	//
+	// A CONFLICT IS AN OUTCOME, NOT AN ERROR. Where another field manager owns
+	// something this manifest would change, the server refuses, nothing is
+	// written, and ApplyOutcome.Conflicts names the fields and their owners
+	// for the interface to render. ApplyOutcome.Refused reports it. An error
+	// return means the request failed, not that it was declined.
+	//
+	// Nothing here forces ownership away from another manager. Taking a field
+	// is a decision an operator makes with the owner's name in front of them.
+	ApplyResource(ctx context.Context, id domain.ClusterID, manifest string, options domain.ApplyOptions) (domain.ApplyOutcome, error)
 
 	// SetImage sets one container's image on a Deployment, StatefulSet or
 	// DaemonSet — the three controller kinds whose pod template sits at

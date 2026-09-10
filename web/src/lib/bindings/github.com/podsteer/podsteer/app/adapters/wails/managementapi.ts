@@ -23,6 +23,19 @@ export function AbortRollout(clusterID: string, $namespace: string, name: string
 }
 
 /**
+ * ApplyResource applies a manifest as declared intent, through server-side
+ * apply — the Create dialog's verb, and Duplicate's.
+ * 
+ * A REFUSAL COMES BACK AS AN OUTCOME WITH A 200. The frontend reads
+ * `conflicts` and shows who owns what; an error return here means the request
+ * failed, not that the server declined it. See
+ * ports.ManagementPort.ApplyResource.
+ */
+export function ApplyResource(clusterID: string, manifest: string, dryRun: boolean): $CancellablePromise<$models.ApplyOutcomeDTO> {
+    return $Call.ByID(603287988, clusterID, manifest, dryRun);
+}
+
+/**
  * BulkCordon marks every selected node unschedulable (cordon true) or
  * schedulable again (cordon false), and reports each outcome.
  */

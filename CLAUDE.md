@@ -88,14 +88,53 @@ like a Deployment. The kind is resolved to its REST resource and scope by a
 EXACTLY ONCE when a lookup reports `meta.NoKindMatchError` — a CRD installed
 a minute ago must apply without reconnecting the cluster, but re-querying
 discovery on every apply of an ordinary built-in kind would erase the whole
-point of caching it. The write is optimistic-locked by the manifest's OWN
-`resourceVersion`: present, it is sent as a PUT the API server enforces the
-lock on, and a stale one comes back as `ports.ErrConflict` — reload the
-object and re-apply the edit, never retry the same request; absent, the
-object is created, and an `AlreadyExists` on that create falls back to
-fetching the live `resourceVersion` and replacing the object with it (full
-replace semantics, matching what pasting a whole manifest over an existing
-object means by Apply). Validation is a SERVER-SIDE dry run
+point of caching it. 
+
+**THERE ARE TWO WRITE VERBS AND THE DISTINCTION IS LOAD-BEARING.**
+
+`UpdateResource` is the EDITOR's. The manifest is a draft of a LIVE object and
+must carry the `resourceVersion` it was read at; it is a PUT under that
+optimistic lock, and a stale version comes back as `ports.ErrConflict` — reload
+the object and re-apply the edit, never retry the same request. Replacing the
+object whole is the point: deleting a line in a full-object editor has to
+delete the field, which is the only thing an editor can honestly promise. **A
+manifest with no `resourceVersion` is REFUSED.**
+
+`ApplyResource` is for DECLARED INTENT — the Create dialog, Duplicate, a pasted
+or dropped file. Server-side apply, `fieldManager` the explicit constant
+`podsteer`. A manifest names the fields it cares about and says nothing about
+the rest, and the rest is LEFT ALONE.
+
+**What this replaced could destroy data.** `UpdateResource` used to fall back
+to Create when there was no `resourceVersion`, and on `AlreadyExists` it fetched
+the live object solely to steal that version and then REPLACED it. Pasting a
+Deployment manifest without `spec.replicas` over one an HPA had scaled to ten
+reset the replica count, and deleted every label, annotation and field the
+paste did not mention. A test pinned the behaviour, so it was chosen rather
+than overlooked. It is not what `kubectl apply` does — it three-way merges
+precisely to avoid this.
+
+**A CONFLICT IS AN OUTCOME, NOT AN ERROR.** Where another field manager owns
+something the manifest would change, the server refuses, nothing is written,
+and `ApplyOutcome.Conflicts` names the fields and their owners.
+`ApplyOutcome.Refused()` reports it; an error return means the request failed,
+not that it was declined. `fieldConflictsFrom` reads `Details.Causes` BEFORE
+`classify`, which would fold a 409 into `ErrConflict` and lose the list — and
+a stale-resourceVersion 409 carries no such causes, which is what keeps the two
+apart. **Nothing forces ownership** yet: taking a field is a decision an
+operator makes with the owner's name in front of them.
+
+`domain.ClassifyManager` decides what KIND of owner it is, because the sentence
+differs — overriding Argo CD is not durable (it reverts on the next sync),
+overriding kubectl takes a field from a person. The table is hand-compiled and
+stale by construction, like the deprecation and release tables; an unrecognised
+manager is `ManagerUnknown` and gets the server's own words, never a guess.
+
+`fieldManager` is EXPLICIT rather than derived. client-go falls back to the
+user agent, and `Config.UserAgent` is operator-settable — so an override
+silently renamed the manager on every object PodSteer had written. The name is
+a durable mark on somebody's cluster that outlives the uninstall, and it is not
+per-user: it lands in `metadata.managedFields`, readable by anyone with `get`. Validation is a SERVER-SIDE dry run
 (`metav1.DryRunAll`), not a client-side diff: `ManagementAPI.ValidateResource`
 sends the same manifest through the same path with nothing persisted, so the
 API server's own admission chain — schema validation, webhooks — is what

@@ -295,6 +295,18 @@ export interface ApplyOutcomeDTO {
     "dryRun": boolean;
 
     /**
+     * Conflicts are the fields an apply could not change because another
+     * manager owns them. Non-empty means NOTHING WAS WRITTEN.
+     */
+    "conflicts": FieldConflictDTO[] | null;
+
+    /**
+     * Refused is Conflicts being non-empty, carried explicitly so a caller
+     * reads an intention rather than inferring one from a length.
+     */
+    "refused": boolean;
+
+    /**
      * Warnings carries any warning the API server attached to the request.
      * Always empty today — see Adapter.UpdateResource's own comment on why —
      * but present on the wire so the frontend does not need a second shape
@@ -1437,6 +1449,34 @@ export interface Event {
      * this list was asked for one — see domain.Projection.
      */
     "custom": { [_ in string]?: string } | null;
+}
+
+/**
+ * FieldConflictDTO is one field an apply could not change, and who holds it.
+ */
+export interface FieldConflictDTO {
+    /**
+     * Field is the path as the API server wrote it, e.g. ".spec.replicas".
+     */
+    "field": string;
+
+    /**
+     * Manager is the owner's name.
+     */
+    "manager": string;
+
+    /**
+     * Message is the server's own cause, verbatim.
+     */
+    "message": string;
+
+    /**
+     * Kind is what sort of owner it is — "gitops", "kubectl",
+     * "control-plane", "podsteer" or "unknown" — which decides what the
+     * interface can honestly offer. Overriding a reconciler is not durable;
+     * overriding kubectl takes a field from a person.
+     */
+    "kind": string;
 }
 
 /**
