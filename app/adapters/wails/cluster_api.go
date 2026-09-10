@@ -201,6 +201,28 @@ func (c *ClusterAPI) Ping(clusterID string) error {
 	return nil
 }
 
+// Distribution is one mark the table can produce, so the frontend can resolve
+// an id it remembered against a context on a previous run.
+type Distribution struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	// Hosted reports a managed control plane — somebody else runs it.
+	Hosted bool `json:"hosted"`
+}
+
+// Distributions returns every mark PodSteer can identify a cluster as.
+//
+// READ ONCE AND CACHED BY THE CALLER. It touches no cluster and no file: the
+// table is compiled into the binary.
+func (c *ClusterAPI) Distributions() ([]Distribution, error) {
+	found := domain.Distributions()
+	out := make([]Distribution, 0, len(found))
+	for _, mark := range found {
+		out = append(out, Distribution{ID: mark.ID, Label: mark.Label, Hosted: mark.Hosted})
+	}
+	return out, nil
+}
+
 // Connections returns the open clusters, in the order they were opened.
 //
 // The frontend rebuilds its tab bar from this, which is why the order must be

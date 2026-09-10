@@ -500,6 +500,21 @@ interface PersistedShape {
    */
   pinnedClusters: string[]
   /**
+   * What each context turned out to be, by context name — "eks", "k3s".
+   *
+   * REMEMBERED SO THE HOME LIST IS RIGHT BEFORE ANYTHING IS OPENED. A cluster
+   * that has been connected identified itself from its version string, which
+   * is the strongest evidence there is; a cluster that has not can only be
+   * guessed at from its API server's address, and most self-hosted ones
+   * cannot be guessed at at all. Keeping the better answer means the second
+   * launch shows what the first one learned.
+   *
+   * THE SAME SHAPE OF FACT as pinnedKinds and pinnedClusters, and no more: a
+   * context name the whole application already keys by, and a word describing
+   * the cluster's own software. Nothing about what is inside it.
+   */
+  clusterDistributions: Record<string, string>
+  /**
    * Views the operator named and kept. See $lib/savedViews for what one holds
    * and, more to the point, what it deliberately does not.
    */
@@ -646,6 +661,7 @@ const DEFAULTS: PersistedShape = {
   namespaceByCluster: {},
   pinnedKinds: {},
   pinnedClusters: [],
+  clusterDistributions: {},
   savedViews: [],
   shortcutBindings: {},
   localPortByRemotePort: {},
@@ -748,6 +764,7 @@ export interface ExportedPreferences {
    * file in git on the strength of. See $lib/savedViews.
    */
   pinnedClusters: string[]
+  clusterDistributions: Record<string, string>
   localPortByRemotePort: Record<string, number>
   localPortByPortName: Record<string, number>
   debugImage: string
@@ -830,6 +847,8 @@ class Preferences {
   pinnedKinds = $state<Record<string, string[]>>({})
   /** Starred context names, in the order they were pinned. */
   pinnedClusters = $state<string[]>([])
+  /** What each context turned out to be, by context name. See the shape above. */
+  clusterDistributions = $state<Record<string, string>>({})
   /** Named views, in the order they were saved. */
   savedViews = $state<SavedView[]>([])
   /** Rebound keyboard shortcuts, by shortcut id. Only the overrides. */
@@ -1150,6 +1169,28 @@ class Preferences {
     }
     this.#save()
   }
+
+  // --- What each cluster turned out to be -------------------------------------
+
+  /**
+   * Remembers a cluster's distribution, when it is worth remembering.
+   *
+   * ONLY WHEN THE BACKEND FOUND ONE. A blank is not an answer to store: it
+   * means nothing identified this cluster, and writing that down would turn
+   * "not yet known" into a remembered "unknown" that the next launch has no
+   * reason to revisit.
+   */
+  rememberDistribution = (clusterId: string, distributionId: string): void => {
+    if (!clusterId || !distributionId) return
+    if (this.clusterDistributions[clusterId] === distributionId) return
+
+    this.clusterDistributions = { ...this.clusterDistributions, [clusterId]: distributionId }
+    this.#save()
+  }
+
+  /** What was remembered about this context, if anything. */
+  rememberedDistribution = (clusterId: string): string | undefined =>
+    this.clusterDistributions[clusterId]
 
   // --- Pinned clusters --------------------------------------------------------
 
@@ -1631,6 +1672,7 @@ class Preferences {
     wrapLines: this.wrapLines,
     showManagedFields: this.showManagedFields,
     pinnedKinds: plainCopy(this.pinnedKinds),
+    clusterDistributions: plainCopy(this.clusterDistributions),
     pinnedClusters: [...this.pinnedClusters],
     shortcutBindings: plainCopy(this.shortcutBindings),
     localPortByRemotePort: { ...this.localPortByRemotePort },
@@ -1676,6 +1718,7 @@ class Preferences {
     this.wrapLines = next.wrapLines
     this.showManagedFields = next.showManagedFields
     this.pinnedKinds = plainCopy(next.pinnedKinds)
+    this.clusterDistributions = plainCopy(next.clusterDistributions)
     this.pinnedClusters = [...next.pinnedClusters]
     this.shortcutBindings = plainCopy(next.shortcutBindings)
     this.localPortByRemotePort = { ...next.localPortByRemotePort }
@@ -1944,6 +1987,7 @@ class Preferences {
         showManagedFields: this.showManagedFields,
         namespaceByCluster: this.namespaceByCluster,
         pinnedKinds: this.pinnedKinds,
+        clusterDistributions: this.clusterDistributions,
         pinnedClusters: this.pinnedClusters,
         savedViews: this.savedViews,
         shortcutBindings: this.shortcutBindings,
@@ -2044,6 +2088,7 @@ export const EXPORTED_PREFERENCE_FIELDS = [
   'wrapLines',
   'showManagedFields',
   'pinnedKinds',
+  'clusterDistributions',
   'pinnedClusters',
   'shortcutBindings',
   'localPortByRemotePort',
@@ -2197,6 +2242,7 @@ const PREFERENCE_READERS: {
   wrapLines: asBoolean,
   showManagedFields: asBoolean,
   pinnedKinds: asRecordOf(asStringArray),
+  clusterDistributions: asRecordOf(asNonEmptyString),
   pinnedClusters: asStringArray,
   // Read one at a time by the same function storage goes through, so an
   // imported file cannot install a binding this build would refuse.
@@ -2371,6 +2417,7 @@ const PREFERENCE_LABELS: Record<keyof ExportedPreferences, { label: string; unit
   wrapLines: { label: 'Wrap long lines' },
   showManagedFields: { label: 'Show managed fields' },
   pinnedKinds: { label: 'Pinned kinds', unit: 'clusters' },
+  clusterDistributions: { label: 'What each cluster is', unit: 'clusters' },
   pinnedClusters: { label: 'Pinned clusters', unit: 'clusters' },
   shortcutBindings: { label: 'Rebound keyboard shortcuts', unit: 'shortcuts' },
   localPortByRemotePort: { label: 'Remembered ports, by remote port', unit: 'ports' },

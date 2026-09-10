@@ -160,10 +160,20 @@ func (s *ClusterService) ListClusters(ctx context.Context) ([]domain.Cluster, er
 
 	// Report clusters already open as reachable, carrying the version they
 	// reported, so the picker distinguishes open from merely configured.
+	//
+	// AND IDENTIFY THE REST FROM THEIR ADDRESS ALONE. Most contexts in a
+	// kubeconfig are not open, and the list is exactly where an operator wants
+	// to know which of a dozen near-identical names is the managed one — so a
+	// mark is worked out from what a kubeconfig can offer, which is the API
+	// server's host. It is the weakest rung of the ladder in
+	// domain/distribution.go and it is free: no cluster is contacted, and one
+	// that is open keeps the better answer its version gave it.
 	for i, cluster := range clusters {
 		if open, err := s.registry.Get(cluster.ID()); err == nil {
 			clusters[i] = open
+			continue
 		}
+		clusters[i] = cluster.Identify(nil, "")
 	}
 
 	s.logger.DebugContext(ctx, "listed clusters",
@@ -212,7 +222,13 @@ func (s *ClusterService) Connect(ctx context.Context, id domain.ClusterID) (doma
 		return domain.Cluster{}, fmt.Errorf("connecting to %q: %w", id, err)
 	}
 
-	connected := cluster.WithVersion(version)
+	// IDENTIFIED HERE BECAUSE THE VERSION IS HERE AND COSTS NOTHING MORE. A
+	// managed control plane decorates its version string, so most clusters
+	// are identified by a read that has already happened; the rest fall back
+	// to the API server's address, which the kubeconfig gave us. Node
+	// evidence refines it later, from a list something else was making
+	// anyway — see OverviewService.
+	connected := cluster.WithVersion(version).Identify(nil, "")
 	s.registry.Open(connected)
 
 	// Discovery is best-effort. A cluster whose CRDs cannot be listed — RBAC

@@ -33,6 +33,21 @@ type Cluster struct {
 	Version string `json:"version"`
 	// Platform is the API server's os/arch, empty until reached.
 	Platform string `json:"platform"`
+	// Distribution is what this cluster turned out to be — "EKS", "k3s" — or
+	// empty when nothing identified it. EMPTY IS A REAL ANSWER and must render
+	// as no mark rather than as "unknown": a guess here would be a label
+	// somebody trusts and nothing checked. See domain/distribution.go.
+	Distribution string `json:"distribution"`
+	// DistributionID is the stable key behind that label, for remembering the
+	// answer against this context between runs.
+	DistributionID string `json:"distributionId"`
+	// DistributionHosted reports a managed control plane — somebody else runs
+	// it — which is the distinction an operator scanning a list of contexts
+	// most often wants.
+	DistributionHosted bool `json:"distributionHosted"`
+	// DistributionEvidence says WHY the mark is there, for its tooltip. An
+	// operator who disagrees with a label deserves to know what produced it.
+	DistributionEvidence string `json:"distributionEvidence"`
 	// Source is the kubeconfig FILE this context was read from, as client-go
 	// reports it. A path on this machine, never a file's contents, and empty
 	// when the configuration did not come from a file.
@@ -48,6 +63,7 @@ type Cluster struct {
 // toCluster converts a domain cluster into its wire representation.
 func toCluster(cluster domain.Cluster) Cluster {
 	version := cluster.Version()
+	distribution := cluster.Distribution()
 	return Cluster{
 		ID:               cluster.ID().String(),
 		Server:           cluster.Server().String(),
@@ -59,6 +75,11 @@ func toCluster(cluster domain.Cluster) Cluster {
 		Version:          version.GitVersion,
 		Platform:         version.Platform,
 		Source:           cluster.Source().String(),
+
+		Distribution:         distribution.Label,
+		DistributionID:       distribution.ID,
+		DistributionHosted:   distribution.Hosted,
+		DistributionEvidence: distribution.Evidence,
 	}
 }
 

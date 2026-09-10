@@ -2205,6 +2205,24 @@ plus, since v0.2.0, `api.github.com` for the update check, and nothing else.
 No telemetry, no account, and still no network access from the webview (see
 the CSP in `web/index.html`).
 
+**A CLOUD CLI PODSTEER DRIVES IS A FOURTH KIND OF DESTINATION, and the honest
+statement is not the literal one.** Since decision 12, the Add cluster dialog
+can run a cloud CLI the operator already has — to list the clusters it can see
+and to have it write a kubeconfig entry. PodSteer's own process still contacts
+nothing new: it starts a program, reads its stdout, and never speaks to a
+provider. But that program contacts `eks.<region>.amazonaws.com`, or
+`management.azure.com`, BECAUSE A BUTTON IN PODSTEER SAID SO, and defending
+"PodSteer contacts nothing new" on that technicality is how a list like this
+stops being trusted. It is stated here rather than argued.
+
+What keeps it bounded is in `app/adapters/vendorcli`: nothing runs without a
+press, the binary comes from PATH and from no setting, PodSteer passes no
+region, subscription or project of its own, and the CLI writes to a temporary
+kubeconfig PodSteer owns and deletes rather than to the operator's. The
+provider table is `app/domain/vendorclis.json`, embedded at build time and
+deliberately NOT operator-editable: a table naming programs to run must not be
+a file anything can rewrite.
+
 **`podsteer mcp` adds nothing to that list**, and the section above says why:
 it speaks to its parent process over stdio and to the same API servers this
 one does. A change that gave it a listener, or any other transport, would be a

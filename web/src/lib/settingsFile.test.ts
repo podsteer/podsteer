@@ -199,6 +199,16 @@ describe('what a settings file must never carry', () => {
     // entry through the same function storage goes through, so an imported
     // file cannot install a binding this build would refuse.
     //
+    // `clusterDistributions` was argued for on 2026-09-10 and admitted. Its
+    // KEYS are kubeconfig context names, which `pinnedKinds` and
+    // `pinnedClusters` already carry and this file's header already
+    // discloses. Its VALUES are a word for the cluster's own software —
+    // "eks", "k3s" — which is a fact about the software somebody runs, not
+    // about anything running IN it: no namespace, no workload, no address.
+    // It travels because it is what makes the cluster list on a second
+    // machine as informative as on the first, and because the alternative to
+    // carrying it is re-learning it by connecting to every cluster.
+    //
     // `savedViews` was argued for on 2026-09-08 and REFUSED. A view holds a
     // namespace and whatever was typed into the search box, and this file's
     // header promises that no pod, node, namespace or workload appears in it.
@@ -214,6 +224,7 @@ describe('what a settings file must never carry', () => {
         // an object name. There is deliberately no clusterShellNamespace
         // beside it — that one follows the tab and is not persisted at all,
         // which is why it cannot reach this document either.
+        'clusterDistributions',
         'clusterShellImage',
         'collapsedSections',
         'columns',

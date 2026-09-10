@@ -17,6 +17,7 @@ import * as SettingsAPI from "./settingsapi.js";
 import * as SystemAPI from "./systemapi.js";
 import * as TerminalAPI from "./terminalapi.js";
 import * as UpdateAPI from "./updateapi.js";
+import * as VendorCLIAPI from "./vendorcliapi.js";
 import * as WorkloadAPI from "./workloadapi.js";
 export {
     BrowseAPI,
@@ -35,6 +36,7 @@ export {
     SystemAPI,
     TerminalAPI,
     UpdateAPI,
+    VendorCLIAPI,
     WorkloadAPI
 };
 
@@ -76,6 +78,7 @@ export type {
     Credit,
     CustomExpression,
     DiskSummary,
+    Distribution,
     DrainFailure,
     DrainPlanDTO,
     DrainReportDTO,
@@ -148,6 +151,9 @@ export type {
     TopConsumers,
     UpdateStatus,
     UpgradeSummary,
+    VendorCluster,
+    VendorClusterList,
+    VendorProvider,
     VersionCount,
     VulnerabilitySummary,
     Workload,

@@ -37,6 +37,7 @@ import (
 	"github.com/podsteer/podsteer/app/adapters/macwindow"
 	"github.com/podsteer/podsteer/app/adapters/shellpath"
 	"github.com/podsteer/podsteer/app/adapters/updates"
+	"github.com/podsteer/podsteer/app/adapters/vendorcli"
 	wailsadapter "github.com/podsteer/podsteer/app/adapters/wails"
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/config"
@@ -204,6 +205,13 @@ func run() error {
 		KubeconfigFiles: kubernetes.KubeconfigFiles,
 		Shell:           shellpath.LoginShell,
 	}, logger)
+
+	// The cloud CLIs an operator may already have, driven rather than
+	// replaced — see decision 12. Beside the local shell for the same reason
+	// it is: it starts programs the operator installed, reaches no cluster,
+	// and inherits the PATH the goroutine above adopts, which is what makes a
+	// Homebrew cloud CLI findable from a Dock launch.
+	vendorCLIs := vendorcli.New(logger)
 
 	// The Wails lifecycle handler doubles as the outbound event publisher, so
 	// it is constructed before the use cases that publish through it.
@@ -481,6 +489,19 @@ func run() error {
 	// These depend on the inbound ports, not on the concrete services: the
 	// bindings would work just as well against a fake implementation.
 
+	vendorCLIService, err := application.NewVendorCLIService(application.VendorCLIServiceDeps{
+		CLIs:   vendorCLIs,
+		Logger: logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring cloud CLI service: %w", err)
+	}
+
+	vendorCLIAPI, err := wailsadapter.NewVendorCLIAPI(vendorCLIService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring cloud CLI API: %w", err)
+	}
+
 	clusterAPI, err := wailsadapter.NewClusterAPI(clusterService, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring cluster API: %w", err)
@@ -624,6 +645,7 @@ func run() error {
 		// wails.App.StartNotifications.
 		Services: []wailsapp.Service{
 			wailsapp.NewService(clusterAPI),
+			wailsapp.NewService(vendorCLIAPI),
 			wailsapp.NewService(workloadAPI),
 			wailsapp.NewService(browseAPI),
 			wailsapp.NewService(overviewAPI),

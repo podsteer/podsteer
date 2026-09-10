@@ -674,6 +674,33 @@ export interface Cluster {
     "platform": string;
 
     /**
+     * Distribution is what this cluster turned out to be — "EKS", "k3s" — or
+     * empty when nothing identified it. EMPTY IS A REAL ANSWER and must render
+     * as no mark rather than as "unknown": a guess here would be a label
+     * somebody trusts and nothing checked. See domain/distribution.go.
+     */
+    "distribution": string;
+
+    /**
+     * DistributionID is the stable key behind that label, for remembering the
+     * answer against this context between runs.
+     */
+    "distributionId": string;
+
+    /**
+     * DistributionHosted reports a managed control plane — somebody else runs
+     * it — which is the distinction an operator scanning a list of contexts
+     * most often wants.
+     */
+    "distributionHosted": boolean;
+
+    /**
+     * DistributionEvidence says WHY the mark is there, for its tooltip. An
+     * operator who disagrees with a label deserves to know what produced it.
+     */
+    "distributionEvidence": string;
+
+    /**
      * Source is the kubeconfig FILE this context was read from, as client-go
      * reports it. A path on this machine, never a file's contents, and empty
      * when the configuration did not come from a file.
@@ -1188,6 +1215,20 @@ export interface DiskSummary {
      * Filling counts nodes past the warning threshold.
      */
     "filling": number;
+}
+
+/**
+ * Distribution is one mark the table can produce, so the frontend can resolve
+ * an id it remembered against a context on a previous run.
+ */
+export interface Distribution {
+    "id": string;
+    "label": string;
+
+    /**
+     * Hosted reports a managed control plane — somebody else runs it.
+     */
+    "hosted": boolean;
 }
 
 /**
@@ -3982,6 +4023,72 @@ export interface UpgradeSummary {
      * severity.
      */
     "count": number;
+}
+
+/**
+ * VendorCluster is one cluster a CLI reported.
+ */
+export interface VendorCluster {
+    "name": string;
+
+    /**
+     * Params are whatever else that provider needs to name it again — a
+     * resource group, a location — shown as a second line so an operator can
+     * tell two clusters of the same name apart.
+     */
+    "params": { [_ in string]?: string } | null;
+
+    /**
+     * Selection is the id to send back to choose this one.
+     */
+    "selection": string;
+}
+
+/**
+ * VendorClusterList is one CLI's answer.
+ */
+export interface VendorClusterList {
+    "provider": string;
+
+    /**
+     * Status is "listed" or "declined". LISTED WITH NOTHING IN IT IS NOT
+     * DECLINED: an account with no clusters and a CLI that would not answer
+     * need opposite sentences.
+     */
+    "status": string;
+    "clusters": VendorCluster[] | null;
+
+    /**
+     * Reason is the CLI's own words when it declined, verbatim.
+     */
+    "reason": string;
+}
+
+/**
+ * VendorProvider is one cloud CLI and whether it is on this machine.
+ */
+export interface VendorProvider {
+    "id": string;
+    "label": string;
+
+    /**
+     * Binary is what was looked for, so a pane can say which program is
+     * missing rather than only that one is.
+     */
+    "binary": string;
+
+    /**
+     * Path is where it was found — shown so an operator can see WHICH one
+     * PodSteer would run when several are installed.
+     */
+    "path": string;
+    "installed": boolean;
+
+    /**
+     * SignInHint is one sentence shown beside the CLI's own words, never
+     * instead of them.
+     */
+    "signInHint": string;
 }
 
 /**
