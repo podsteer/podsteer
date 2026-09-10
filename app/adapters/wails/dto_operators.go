@@ -36,6 +36,11 @@ type VulnerabilitySummary struct {
 	// Unknown is the scanner's own bucket for a finding whose severity its
 	// sources do not state. Carried rather than folded into Low.
 	Unknown int `json:"unknown"`
+	// Images are the artefacts scanned for this workload, "repository:tag" as
+	// the server printed them. The image is what an operator actually fixes:
+	// one bump closes every workload running it, and nothing else in the read
+	// can group those workloads together. See domain.VulnerabilitySummary.
+	Images []string `json:"images"`
 	// Reports is how many reports were summed — one per container. It is what
 	// keeps "scanned, and clean" distinguishable from "not scanned", which a
 	// row of five zeroes cannot say on its own.
@@ -85,6 +90,7 @@ func toVulnerabilitySummaries(summaries []domain.VulnerabilitySummary) []Vulnera
 			Medium:   summary.Counts.Medium,
 			Low:      summary.Counts.Low,
 			Unknown:  summary.Counts.Unknown,
+			Images:   emptyIfNilSlice(summary.Images),
 			Reports:  summary.Reports,
 		})
 	}

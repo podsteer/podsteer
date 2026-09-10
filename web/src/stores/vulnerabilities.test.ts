@@ -10,11 +10,21 @@ import {
   forgetVulnerabilities,
   vulnerabilitiesFor,
   vulnerabilityReadFor,
+  workloadsRunningImage,
 } from './vulnerabilities.svelte'
 
 /** One summary shaped the way the Go side hands them over. */
 function summary(subject: string, critical: number, high: number) {
-  return { subject, critical, high, medium: 0, low: 0, unknown: 0, reports: 1 }
+  return {
+    subject,
+    critical,
+    high,
+    medium: 0,
+    low: 0,
+    unknown: 0,
+    images: [] as string[],
+    reports: 1,
+  }
 }
 
 /** A completed read carrying those summaries — the ordinary answer. */
@@ -195,5 +205,54 @@ describe('whether an unmarked row has been shown to be clean', () => {
 
     const read = vulnerabilityReadFor('dev', 'shop')
     expect(read).toMatchObject({ truncated: true, read: 5000, remaining: 1200, cap: 5000 })
+  })
+})
+
+describe('how many workloads run the same image', () => {
+  beforeEach(() => {
+    forgetVulnerabilities('dev')
+    vulnerabilitySummaries.mockReset()
+  })
+
+  /** A summary carrying the images its reports scanned. */
+  function withImages(subject: string, images: string[]) {
+    return { ...summary(subject, 1, 0), images }
+  }
+
+  it('counts workloads, not reports', () => {
+    // THE FACT THAT COLLAPSES THE LIST. One report per container means an
+    // image in three Deployments produces three summaries with identical
+    // counts — three rows for one bump. A workload running it in two
+    // containers is still one workload to fix.
+    vulnerabilitySummaries.mockResolvedValue(
+      listing([
+        withImages('ReplicaSet/web', ['library/nginx:1.27', 'acme/sidecar:2.0']),
+        withImages('ReplicaSet/api', ['library/nginx:1.27']),
+        withImages('ReplicaSet/worker', ['acme/worker:9']),
+      ]),
+    )
+
+    ensureVulnerabilities('dev', 'shop')
+    return settle().then(() => {
+      expect(workloadsRunningImage('dev', 'shop', 'library/nginx:1.27')).toBe(2)
+      expect(workloadsRunningImage('dev', 'shop', 'acme/sidecar:2.0')).toBe(1)
+      expect(workloadsRunningImage('dev', 'shop', 'acme/worker:9')).toBe(1)
+    })
+  })
+
+  it('answers zero for an unread namespace rather than claiming one', async () => {
+    // Nothing has been read, so nothing is known — the caller must not render
+    // this as "only this workload".
+    expect(workloadsRunningImage('dev', 'never-read', 'library/nginx:1.27')).toBe(0)
+  })
+
+  it('answers zero for an image nothing named', async () => {
+    vulnerabilitySummaries.mockResolvedValue(listing([withImages('ReplicaSet/web', [])]))
+
+    ensureVulnerabilities('dev', 'shop')
+    await settle()
+
+    expect(workloadsRunningImage('dev', 'shop', '')).toBe(0)
+    expect(workloadsRunningImage('dev', 'shop', 'library/nginx:1.27')).toBe(0)
   })
 })

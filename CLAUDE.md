@@ -2715,6 +2715,25 @@ the pod's own name as the fallback for a bare pod, which is the one case the
 pod IS the subject. The mark is not a column: a column exists on every cluster
 whether or not anything fills it, and on the great majority nothing would.
 
+**The image is what gets fixed, so each summary carries it.** `Repository` and
+`Tag` are printer columns like the counts, so the read already had them; a
+summary now names the artefacts it summed (`Images`, deduplicated, sorted,
+"repository:tag" — NOT a digest, which is not printed). That is what
+`workloadsRunningImage` (`$stores/vulnerabilities`) answers from, and the
+report panel says "N other workloads in this namespace" when it is more than
+one. Without it the same image in twelve Deployments is twelve rows with
+identical counts, presented as twelve problems when it is one bump.
+
+**And the panel says how much of a report can be acted on.** `fixableCount`
+(`web/src/lib/operators/trivy.ts`) counts findings whose `fixedVersion` is
+non-empty — a REQUIRED CRD field, so empty is Trivy's own statement that no fix
+exists rather than a field the operator skipped — and a checkbox filters to
+them. Counted from the vulnerability LIST rather than `report.summary`, which
+is a deliberate departure from the rest of that file: there is no fixable count
+in the summary to read, so the list is the only source, and counting it against
+the same list the panel renders is what keeps the sentence and the rows in
+agreement on a report the operator's config has capped.
+
 ## Kubernetes' own newer APIs get typed panels too, and three things bite
 
 `web/src/lib/standardapis/` is a third family beside `gitops/` and `operators/`,

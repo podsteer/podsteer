@@ -183,6 +183,42 @@ function artifactOf(artifact: RawArtifact | undefined): string {
 }
 
 /**
+ * Whether a finding can be closed by upgrading, rather than only recorded.
+ *
+ * `fixedVersion` is a REQUIRED field of the CRD, so its emptiness is Trivy's
+ * own statement that no fix has been published — not a field the operator
+ * declined to write. That makes this a fact being read, not a verdict being
+ * formed, which is why it belongs beside the parser rather than in the Go
+ * domain where the gradings live.
+ */
+export function hasFix(vulnerability: Vulnerability): boolean {
+  return vulnerability.fixedVersion.trim() !== ''
+}
+
+/**
+ * How much of a report is actionable today.
+ *
+ * THE NUMBER PRACTITIONERS ACTUALLY ASK FOR, and the reason is worth stating:
+ * a report on a real image routinely carries hundreds of findings, most of
+ * which cannot be closed by any action available — no fix exists yet. A
+ * severity count says how bad the image is; this says how much of it can be
+ * dealt with this afternoon, which is a different question and the one that
+ * decides whether somebody opens a ticket.
+ *
+ * Counted from the vulnerability LIST rather than the summary, and that is a
+ * departure worth flagging: everywhere else this file reads `report.summary`
+ * because the list can be capped by the operator's own configuration. There
+ * is no fixable count in the summary to read, so this is the only source —
+ * and on a capped report it is a count of what is shown. `total` is the
+ * length of the same list for exactly that reason, so the two always agree
+ * with each other and with what the panel renders.
+ */
+export function fixableCount(report: TrivyVulnerabilityReport): { fixable: number; total: number } {
+  const total = report.vulnerabilities.length
+  return { fixable: report.vulnerabilities.filter(hasFix).length, total }
+}
+
+/**
  * Trivy's severity word as a DetailList tone. CRITICAL and HIGH only.
  *
  * THIS IS TRIVY'S GRADING, NOT OURS. The words come from the advisory the

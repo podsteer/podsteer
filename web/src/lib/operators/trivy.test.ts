@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { advisoryLink, severityTone, trivyVulnerabilityReport } from './trivy'
+import {
+  advisoryLink,
+  fixableCount,
+  hasFix,
+  severityTone,
+  trivyVulnerabilityReport,
+} from './trivy'
 import type { Vulnerability } from './trivy'
 
 /** A report on a clean-enough image — everything populated, nothing critical. */
@@ -247,5 +253,77 @@ describe('linking to an advisory', () => {
     expect(advisoryLink(vulnerability('CVE-2024-309'))).toBe('')
     expect(advisoryLink(vulnerability('GHSA-9wx4-h78v'))).toBe('')
     expect(advisoryLink(vulnerability(''))).toBe('')
+  })
+})
+
+/** One finding, with only the fields these rules read. */
+function finding(id: string, fixedVersion: string): Vulnerability {
+  return {
+    id,
+    severity: 'HIGH',
+    resource: 'openssl',
+    installedVersion: '1.1.1',
+    fixedVersion,
+    title: '',
+    primaryLink: '',
+    target: '',
+    score: null,
+  }
+}
+
+describe('whether a finding can be closed by upgrading', () => {
+  it('reads an empty fixedVersion as no fix published', () => {
+    // `fixedVersion` is a REQUIRED field of the CRD, so empty is Trivy's own
+    // statement that nothing has been released — not a field the operator
+    // declined to write.
+    expect(hasFix(finding('CVE-2024-0001', ''))).toBe(false)
+    expect(hasFix(finding('CVE-2024-0002', '1.1.1w'))).toBe(true)
+  })
+
+  it('treats whitespace as no fix, not as a version', () => {
+    expect(hasFix(finding('CVE-2024-0003', '   '))).toBe(false)
+  })
+})
+
+describe('how much of a report is actionable today', () => {
+  it('counts the findings with a published fix, against the list shown', () => {
+    // THE NUMBER PRACTITIONERS ASK FOR. A severity count says how bad the
+    // image is; this says how much of it can be dealt with this afternoon,
+    // which is the question that decides whether anybody opens a ticket.
+    const report = trivyVulnerabilityReport({
+      report: {
+        summary: { criticalCount: 2, highCount: 1 },
+        vulnerabilities: [
+          { vulnerabilityID: 'CVE-1', severity: 'CRITICAL', fixedVersion: '2.0' },
+          { vulnerabilityID: 'CVE-2', severity: 'CRITICAL' },
+          { vulnerabilityID: 'CVE-3', severity: 'HIGH', fixedVersion: '3.1' },
+        ],
+      },
+    })!
+
+    expect(fixableCount(report)).toEqual({ fixable: 2, total: 3 })
+  })
+
+  it('says none of nothing rather than dividing by zero', () => {
+    const report = trivyVulnerabilityReport({ report: { summary: {} } })!
+
+    expect(fixableCount(report)).toEqual({ fixable: 0, total: 0 })
+  })
+
+  it('counts the list, not the summary, and says so where the two differ', () => {
+    // Everywhere else this file reads report.summary, because the LIST can be
+    // capped by the operator's own configuration. There is no fixable count
+    // in the summary to read, so this is the only source — and it must be
+    // counted against the same list the panel renders, or the panel would
+    // show three rows under a sentence claiming forty.
+    const report = trivyVulnerabilityReport({
+      report: {
+        summary: { criticalCount: 40 },
+        vulnerabilities: [{ vulnerabilityID: 'CVE-1', severity: 'CRITICAL', fixedVersion: '2.0' }],
+      },
+    })!
+
+    expect(report.summary.critical).toBe(40)
+    expect(fixableCount(report)).toEqual({ fixable: 1, total: 1 })
   })
 })

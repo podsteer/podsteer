@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -258,6 +259,9 @@ func (a *Adapter) readVulnerabilityRows(
 			held.Subject = subject
 			held.Counts = held.Counts.Add(columns.counts(row.Cells))
 			held.Reports++
+			if image := columns.image(row.Cells); image != "" && !slices.Contains(held.Images, image) {
+				held.Images = append(held.Images, image)
+			}
 			bySubject[subject] = held
 		}
 
@@ -285,6 +289,12 @@ func (a *Adapter) readVulnerabilityRows(
 	sort.Slice(listing.Summaries, func(i, j int) bool {
 		return listing.Summaries[i].Subject < listing.Summaries[j].Subject
 	})
+	// Sorted so two reads of the same cluster state produce the same slice,
+	// which is what makes the cache comparable and the tests deterministic —
+	// the same reason the summaries themselves are sorted.
+	for at := range listing.Summaries {
+		slices.Sort(listing.Summaries[at].Images)
+	}
 
 	return listing, nil
 }
@@ -305,10 +315,17 @@ func ptrValue(value *int64) int64 {
 // the realistic skew, and it is reported rather than guessed around.
 type severityColumnIndex struct {
 	critical, high, medium, low, unknown int
+	// repository and tag name the artefact scanned. Printer columns like the
+	// rest — see VulnerabilitySummary.Images for why the image is worth
+	// carrying.
+	repository, tag int
 }
 
 func severityColumns(definitions []metav1.TableColumnDefinition) severityColumnIndex {
-	index := severityColumnIndex{critical: -1, high: -1, medium: -1, low: -1, unknown: -1}
+	index := severityColumnIndex{
+		critical: -1, high: -1, medium: -1, low: -1, unknown: -1,
+		repository: -1, tag: -1,
+	}
 	for at, definition := range definitions {
 		switch strings.ToLower(definition.Name) {
 		case "critical":
@@ -321,9 +338,39 @@ func severityColumns(definitions []metav1.TableColumnDefinition) severityColumnI
 			index.low = at
 		case "unknown":
 			index.unknown = at
+		case "repository":
+			index.repository = at
+		case "tag":
+			index.tag = at
 		}
 	}
 	return index
+}
+
+// image reads one row's artefact as "repository:tag".
+//
+// A repository with no tag is returned bare rather than with a dangling
+// colon: an image pinned by digest carries no tag, and the digest is not a
+// printer column, so the honest rendering is the repository alone. An empty
+// repository yields an empty string, which groups nothing.
+func (i severityColumnIndex) image(cells []any) string {
+	repository := cellText(cells, i.repository)
+	if repository == "" {
+		return ""
+	}
+	if tag := cellText(cells, i.tag); tag != "" {
+		return repository + ":" + tag
+	}
+	return repository
+}
+
+// cellText reads one string cell, or "" for anything else.
+func cellText(cells []any, at int) string {
+	if at < 0 || at >= len(cells) {
+		return ""
+	}
+	text, _ := cells[at].(string)
+	return strings.TrimSpace(text)
 }
 
 // usable reports whether the two columns anybody acts on were found.
