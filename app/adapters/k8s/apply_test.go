@@ -818,3 +818,140 @@ func TestApplyResourceForceChecksTheClusterRatherThanTrustingTheDialog(t *testin
 		t.Errorf("real writes = %d, want exactly 1", writes)
 	}
 }
+
+// TestAnInvalidManifestNamesTheFieldThatIsMissing.
+//
+// The message used to be "apiVersion, kind and metadata.name are required"
+// whichever one was absent. The Duplicate dialog seeds a manifest with a good
+// apiVersion, a good kind and an empty name — deliberately, because a
+// duplicate needs a new one — so the product's own most common invalid
+// manifest was answered with a sentence naming two fields that were fine.
+func TestAnInvalidManifestNamesTheFieldThatIsMissing(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		manifest string
+		want     string
+		notWant  []string
+	}{
+		{
+			name:     "the Duplicate dialog's own seed, unnamed",
+			manifest: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: \"\"\n  namespace: shop\n",
+			want:     "metadata.name is required",
+			notWant:  []string{"apiVersion", "kind,"},
+		},
+		{
+			name:     "no kind",
+			manifest: "apiVersion: apps/v1\nmetadata:\n  name: web\n",
+			want:     "kind is required",
+			notWant:  []string{"metadata.name is", "apiVersion,"},
+		},
+		{
+			name:     "genuinely nothing",
+			manifest: "metadata:\n  namespace: shop\n",
+			want:     "apiVersion, kind, metadata.name are required",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := decodeManifest(test.manifest)
+			if err == nil {
+				t.Fatal("decodeManifest() accepted an invalid manifest")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %q, want it to contain %q", err, test.want)
+			}
+			for _, absent := range test.notWant {
+				if strings.Contains(err.Error(), absent) {
+					t.Errorf("error = %q, names %q which the manifest supplies", err, absent)
+				}
+			}
+		})
+	}
+}
+
+// TestAnInvalidManifestNeverQuotesTheManifestBack is a Secrets rule with a
+// test, not a comment.
+//
+// Both decode libraries quote the whole document in their error message.
+// `UnmarshalJSON` on a manifest with no `kind` reports "Object 'Kind' is
+// missing in '{...}'" — the entire object, base64 Secret data included — and
+// that error is rendered in the dialog AND passed through apiError, which
+// logs it. One mistyped Secret manifest wrote its contents to the log.
+//
+// PodSteer reads Secrets only on request and never writes their values
+// anywhere. An error path that does it by accident is the same breach as
+// doing it on purpose, so every decode failure now gets a sentence written
+// here rather than the library's.
+func TestAnInvalidManifestNeverQuotesTheManifestBack(t *testing.T) {
+	t.Parallel()
+
+	const secret = "c3VwZXItc2VjcmV0"
+
+	tests := []struct {
+		name     string
+		manifest string
+	}{
+		{
+			name:     "no kind",
+			manifest: "apiVersion: v1\nmetadata:\n  name: db\ndata:\n  password: " + secret + "\n",
+		},
+		{
+			name:     "not an object at all",
+			manifest: "- apiVersion: v1\n  data:\n    password: " + secret + "\n",
+		},
+		{
+			name:     "broken YAML",
+			manifest: "apiVersion: v1\nkind: Secret\ndata:\n  password: \"" + secret + "\n",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := decodeManifest(test.manifest)
+			if err == nil {
+				t.Fatal("decodeManifest() accepted an invalid manifest")
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("the error carries the Secret's data: %q", err)
+			}
+			// And it is still a manifest problem, not something generic.
+			if !errors.Is(err, domain.ErrInvalidManifest) {
+				t.Errorf("error = %v, want ErrInvalidManifest", err)
+			}
+		})
+	}
+}
+
+// TestDecodeManifestKeepsIntegersAsIntegers is the guard on a mistake I made
+// while closing the Secrets leak above.
+//
+// Replacing UnmarshalJSON with json.Unmarshal into a plain map looks
+// equivalent and is not: encoding/json decodes every number as float64, and
+// unstructured requires int64. `replicas: 5` became a float nothing
+// downstream could read — NestedInt64 returned zero, and the object went to
+// the cluster quietly wrong. Only a test that reads a NUMBER back catches it,
+// which is why this one exists rather than a comment.
+func TestDecodeManifestKeepsIntegersAsIntegers(t *testing.T) {
+	t.Parallel()
+
+	obj, err := decodeManifest("apiVersion: apps/v1\nkind: Deployment\n" +
+		"metadata:\n  name: web\n  namespace: shop\nspec:\n  replicas: 5\n")
+	if err != nil {
+		t.Fatalf("decodeManifest() error = %v", err)
+	}
+
+	replicas, found, err := unstructured.NestedInt64(obj.Object, "spec", "replicas")
+	if err != nil || !found {
+		t.Fatalf("NestedInt64() = %d, found %v, err %v — the number is not an int64", replicas, found, err)
+	}
+	if replicas != 5 {
+		t.Errorf("spec.replicas = %d, want 5", replicas)
+	}
+}
