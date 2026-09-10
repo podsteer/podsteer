@@ -882,6 +882,20 @@ export interface ClusterTable {
      */
     "columns": TableColumn[] | null;
     "rows": TableRow[] | null;
+
+    /**
+     * Truncated reports that THIS cluster's read stopped at Cap with objects
+     * left unread. Per cluster, because the cap is per read: in a merged
+     * table one cluster can be complete and the next a prefix, and a single
+     * flag for the whole table could only be a lie in one direction or the
+     * other.
+     */
+    "truncated": boolean;
+
+    /**
+     * Cap is the limit that stopped it, zero when nothing did.
+     */
+    "cap": number;
 }
 
 /**
@@ -3369,6 +3383,21 @@ export interface ResourceTable {
     "namespaced": boolean;
     "columns": TableColumn[] | null;
     "rows": TableRow[] | null;
+
+    /**
+     * Truncated reports that the read stopped at Cap with objects left
+     * unread, so Rows is a PREFIX of the kind and not all of it. The
+     * interface has to say so: a capped list is indistinguishable from a
+     * complete one, and the search, the sort and the count are all wrong in
+     * the same silent direction without it.
+     */
+    "truncated": boolean;
+
+    /**
+     * Cap is the limit that stopped the read, so the sentence can name it.
+     * Zero when nothing did.
+     */
+    "cap": number;
 }
 
 /**

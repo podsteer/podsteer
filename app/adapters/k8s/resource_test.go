@@ -3,6 +3,7 @@ package k8s
 import (
 	"encoding/json"
 	"reflect"
+	"strconv"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -136,5 +137,118 @@ func TestMapTableSurvivesARowWithoutMetadata(t *testing.T) {
 		if row.Name != "" || row.Labels != nil || row.Annotations != nil {
 			t.Errorf("row without metadata = %+v, want no identity and no metadata", row)
 		}
+	}
+}
+
+// TestMapTableSaysWhenTheReadStoppedAtItsCap is the sentence a capped list
+// has to carry.
+//
+// THE BUG. A generic list is capped at tableListLimit so a CRD holding a
+// hundred thousand objects cannot stall the window, and what came back was
+// indistinguishable from a complete answer — same columns, same shape, a
+// plausible count. Every question the interface then answered was wrong in
+// the same silent direction: the search found nothing because the match was
+// past the cut, the sort named the wrong newest, and the navigator's count
+// was a floor presented as a total.
+func TestMapTableSaysWhenTheReadStoppedAtItsCap(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		continueToken string
+		rows          int
+		want          bool
+	}{
+		{
+			name:          "the server says there is more",
+			continueToken: "eyJ2IjoibWV0YS5rOHMuaW8vdjEi",
+			rows:          1,
+			want:          true,
+		},
+		{
+			name: "the collection ended",
+			rows: 1,
+			want: false,
+		},
+		{
+			// The belt-and-braces half, and the only reason this is
+			// observable against a client that honours neither limit nor
+			// continue: it hands back everything in one page. The same guard
+			// the deprecation scan carries.
+			name: "more rows came back than were asked for",
+			rows: tableListLimit + 1,
+			want: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			rows := make([]metav1.TableRow, 0, test.rows)
+			for i := range test.rows {
+				rows = append(rows, tableRowWithMetadata(t,
+					metav1.ObjectMeta{Name: "cm-" + strconv.Itoa(i), Namespace: "platform"},
+					"cm-"+strconv.Itoa(i)))
+			}
+
+			table := &metav1.Table{
+				ListMeta:          metav1.ListMeta{Continue: test.continueToken},
+				ColumnDefinitions: []metav1.TableColumnDefinition{{Name: "Name", Type: "string"}},
+				Rows:              rows,
+			}
+
+			mapped, err := mapTable(configMapKind, table, domain.Projection{})
+			if err != nil {
+				t.Fatalf("mapTable() error = %v", err)
+			}
+
+			if mapped.Truncated() != test.want {
+				t.Fatalf("Truncated() = %v, want %v", mapped.Truncated(), test.want)
+			}
+			if test.want && mapped.Cap() != tableListLimit {
+				t.Errorf("Cap() = %d, want %d — the sentence has to be able to name the limit",
+					mapped.Cap(), tableListLimit)
+			}
+		})
+	}
+}
+
+// TestMapTableCarriesCustomColumnsThroughTheConstructor pins a field that was
+// being dropped on the threshold of the domain.
+//
+// NewResourceTable rebuilds every row field by field, and Custom was added to
+// TableRow without being added there. So an operator's JSONPath column
+// appeared, correctly named, with every cell in it empty on every generic
+// table — while the read had already paid for the whole object to compute it.
+func TestMapTableCarriesCustomColumnsThroughTheConstructor(t *testing.T) {
+	t.Parallel()
+
+	table := &metav1.Table{
+		ColumnDefinitions: []metav1.TableColumnDefinition{{Name: "Name", Type: "string"}},
+		Rows: []metav1.TableRow{
+			tableRowWithMetadata(t, metav1.ObjectMeta{
+				Name:      "app-config",
+				Namespace: "platform",
+				Labels:    map[string]string{"tier": "gold"},
+			}, "app-config"),
+		},
+	}
+
+	projection := domain.Projection{}.WithExpressions([]domain.CustomExpression{
+		{ID: "tier", Path: "{.metadata.labels.tier}"},
+	})
+
+	mapped, err := mapTable(configMapKind, table, projection)
+	if err != nil {
+		t.Fatalf("mapTable() error = %v", err)
+	}
+
+	rows := mapped.Rows()
+	if len(rows) != 1 {
+		t.Fatalf("Rows() = %d, want 1", len(rows))
+	}
+	if got := rows[0].Custom["tier"]; got != "gold" {
+		t.Fatalf("Custom[tier] = %q, want gold — the column would render empty on every row", got)
 	}
 }

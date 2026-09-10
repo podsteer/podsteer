@@ -200,7 +200,23 @@ func mapTable(kind domain.ResourceKind, table *metav1.Table, projection domain.P
 		})
 	}
 
-	return domain.NewResourceTable(kind, columns, rows), nil
+	mapped := domain.NewResourceTable(kind, columns, rows)
+
+	// TRUNCATION IS SAID, NOT LEFT TO BE INFERRED. A capped list comes back
+	// looking exactly like a complete one, so every question the interface
+	// answers from it is wrong in the same silent direction — the search
+	// misses a match past the cut, the sort names the wrong newest, the count
+	// is a floor shown as a total.
+	//
+	// Continue is the API server's own answer: it is set when a limit stopped
+	// the read and empty when the collection ended. The row count is checked
+	// as well because a fake client that honours neither returns everything
+	// in one page — the same belt-and-braces the deprecation scan uses, and
+	// the reason truncation is observable in a test at all.
+	if table.Continue != "" || len(table.Rows) > tableListLimit {
+		mapped = mapped.WithTruncation(tableListLimit)
+	}
+	return mapped, nil
 }
 
 // tableRowMetadata is what a row's attached PartialObjectMetadata yields.
