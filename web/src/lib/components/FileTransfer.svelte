@@ -21,7 +21,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
   import { Download, FolderOpen, File, Upload, X, FolderTree } from '@lucide/svelte'
-  import FileBrowserDialog from './FileBrowserDialog.svelte'
+  import FileBrowserDialog, { type BrowsedTransfer } from './FileBrowserDialog.svelte'
   import {
     cancelFileCopy,
     chooseDirectory,
@@ -182,12 +182,19 @@
    * them; without this, a download begun from a row would run to completion
    * with nothing on screen and its failure would be swallowed entirely.
    */
-  function adoptTransfer(transferId: string): void {
+  function adoptTransfer(begun: BrowsedTransfer): void {
     startError = ''
-    direction = 'download'
+    // The fields are filled from what the browser actually started, so the
+    // pane shows a transfer it can DESCRIBE: the direction decides whether a
+    // finished copy names where it landed, and the two paths are what the
+    // kubectl line beneath it is made of.
+    direction = begun.direction
+    remoteTyped = begun.remotePath
+    localPath = begun.localPath
+
     transfer = starting()
     listen()
-    transfer = started(transfer, transferId)
+    transfer = started(transfer, begun.id)
   }
 
   async function start(): Promise<void> {

@@ -25,8 +25,10 @@
   import { modal } from '$lib/modal'
   import {
     chooseDirectory,
+    chooseFile,
     listContainerDirectory,
     startDownload,
+    startUpload,
     type DirectoryEntry,
     type DirectoryListing,
   } from '$lib/api/client'
@@ -36,7 +38,24 @@
   import { formatClockTime } from '$lib/format'
   import Button from './Button.svelte'
   import DialogHeader from './DialogHeader.svelte'
-  import { ChevronUp, File, FileQuestion, Folder, Link2, RefreshCw, Search } from '@lucide/svelte'
+  import {
+    ChevronUp,
+    File,
+    FileQuestion,
+    Folder,
+    Link2,
+    RefreshCw,
+    Search,
+    Upload,
+  } from '@lucide/svelte'
+
+  /** A transfer this dialog began, for the pane that renders it. */
+  export interface BrowsedTransfer {
+    id: string
+    direction: 'download' | 'upload'
+    remotePath: string
+    localPath: string
+  }
 
   interface Props {
     open: boolean
@@ -55,9 +74,14 @@
      * and done events are one stream for the whole application, the pane
      * behind this one already renders them, and a second renderer would be a
      * second state machine free to disagree with the first about whether a
-     * copy finished. So it hands the id back and closes.
+     * copy finished. So it hands the whole transfer back and closes.
+     *
+     * The paths travel with the id because the pane SHOWS them — the
+     * direction decides whether a finished copy names where it landed, and
+     * the two paths are what its kubectl line is made of. An id alone would
+     * have the pane render a transfer it could not describe.
      */
-    onstarted: (transferId: string) => void
+    onstarted: (transfer: BrowsedTransfer) => void
     onclose: () => void
   }
 
@@ -158,15 +182,43 @@
       // limits and one progress stream — and the id goes back to the pane
       // that renders that stream, or this would copy a file while the
       // interface said nothing and swallowed any failure with it.
-      const transferId = await startDownload(
+      const remotePath = childOf(path, entry.name)
+      const id = await startDownload(
         clusterId,
         namespace,
         podName,
         containerName,
-        childOf(path, entry.name),
+        remotePath,
         localDir,
       )
-      onstarted(transferId)
+      onstarted({ id, direction: 'download', remotePath, localPath: localDir })
+      close()
+    } catch (cause) {
+      failure = toApiError(cause)
+    }
+  }
+
+  /**
+   * Copies something from this machine INTO the directory on screen.
+   *
+   * THE ONE WRITE THIS DIALOG OFFERS, and it is the upload that already
+   * existed rather than a new one: the same call, the same limits, the same
+   * refusal on a read-only cluster. What the browser adds is the destination
+   * — the pane behind it can only aim at a path somebody typed, which is the
+   * thing you come here because you do not know.
+   *
+   * It hands the transfer back and closes, exactly as a download does: the
+   * pane renders the one progress stream, and a second renderer here would be
+   * free to disagree with it about whether the copy finished.
+   */
+  async function upload(kind: 'file' | 'folder'): Promise<void> {
+    const localPath =
+      kind === 'file' ? await chooseFile('Upload a file') : await chooseDirectory('Upload a folder')
+    if (!localPath) return
+
+    try {
+      const id = await startUpload(clusterId, namespace, podName, containerName, localPath, path)
+      onstarted({ id, direction: 'upload', remotePath: path, localPath })
       close()
     } catch (cause) {
       failure = toApiError(cause)
@@ -323,7 +375,25 @@
         {/if}
       {/if}
 
-      <div class="mt-4 flex justify-end">
+      <div class="mt-4 flex flex-wrap items-center justify-end gap-2">
+        {#if !readOnlyReason}
+          <!-- INTO THE DIRECTORY ON SCREEN, which is the whole point of
+               offering it here: the pane behind can only aim at a path
+               somebody typed, and finding out what the path is is why anybody
+               opened this. File and folder are separate buttons rather than
+               one that guesses, because the native dialogs are different and a
+               chooser that silently accepted either would be picking for
+               somebody. -->
+          <span class="mr-auto flex items-center gap-2">
+            <Button variant="text" disabled={busy} onclick={() => void upload('file')}>
+              <Upload class="size-4" strokeWidth={1.8} />
+              Upload file here
+            </Button>
+            <Button variant="text" disabled={busy} onclick={() => void upload('folder')}>
+              Upload folder here
+            </Button>
+          </span>
+        {/if}
         <Button variant="outlined" onclick={close}>Close</Button>
       </div>
     </div>

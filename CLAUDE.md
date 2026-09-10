@@ -1230,6 +1230,17 @@ nothing reaches `settings.json`, history or the timeline. The browser also
 runs nothing on open and nothing on a tick — every listing is one press, the
 rule the Helm page and the reachability probe already follow.
 
+The one write it offers is the upload that already existed, aimed at the
+directory on screen rather than at a path somebody typed — which is the whole
+reason to offer it there, since not knowing the path is why anybody opened the
+browser. It is the same call with the same limits and the same refusals; the
+browser adds a destination and nothing else. A transfer begun from the dialog
+is handed back to the pane behind it, direction and both paths included, so
+ONE state machine renders every copy: a second renderer in the dialog would be
+free to disagree with the first about whether a copy had finished, and a
+dialog that started a transfer and only closed left one running with nothing
+on screen and swallowed its failure.
+
 **It is refused on a read-only cluster while the download beside it is not**,
 and that asymmetry is the deliberate reading of what the mark means: the guard
 tracks whether an arbitrary shell RUNS, not whether bytes move. A download is
