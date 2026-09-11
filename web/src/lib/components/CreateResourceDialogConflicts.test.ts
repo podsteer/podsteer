@@ -68,6 +68,19 @@ describe('a refused apply', () => {
     expect(container.querySelector('[role="alert"]')).toBeNull()
   })
 
+  it('keeps the override button at its own width', async () => {
+    // A flex column stretches its children, which turned this into a
+    // full-width bar reading "Take ownership" — an action styled like a page
+    // control. The container has to opt out.
+    applyResource.mockResolvedValue(refusal(conflict('kubectl', 'kubectl')))
+
+    const { getByText } = render(CreateResourceDialog, props())
+    await fireEvent.click(getByText('Apply'))
+
+    const row = getByText('Take ownership').closest('div')
+    expect(row?.className).toContain('items-start')
+  })
+
   it('offers to take a field from a person', async () => {
     applyResource.mockResolvedValue(refusal(conflict('kubectl', 'kubectl')))
 

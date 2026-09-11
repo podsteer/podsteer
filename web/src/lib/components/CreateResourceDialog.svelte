@@ -408,7 +408,11 @@
             </label>
           {/if}
 
-          <div class="flex flex-col gap-2">
+          <!-- items-start so the button keeps its own width. A flex column
+               stretches its children, which turned this into a full-width bar
+               reading "Take ownership" — a destructive-ish action styled like
+               a page control. -->
+          <div class="flex flex-col items-start gap-2">
             <Button
               variant="outlined"
               disabled={isReadOnly || submitting || !overrideAllowed}
