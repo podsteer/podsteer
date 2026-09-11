@@ -211,6 +211,39 @@ func (a *Adapter) ApplyResource(
 		// lose the causes — the list of fields and owners is the entire
 		// answer here, and a single sentence cannot carry it.
 		if conflicts := fieldConflictsFrom(err); len(conflicts) > 0 {
+			// A CONFLICT WITH OURSELVES IS NOT A DECISION FOR ANYBODY.
+			//
+			// PodSteer writes under one field manager name but two OPERATIONS:
+			// the editor PUTs as `podsteer`/Update, this verb applies as
+			// `podsteer`/Apply, and the server treats those as two managers —
+			// the same split kubectl has between `kubectl-client-side-apply`
+			// and `kubectl`, and the reason its `csaupgrade` exists. So
+			// editing an object and then applying a manifest over it asked
+			// the operator to take a field from PodSteer, which is a question
+			// about our own bookkeeping wearing the clothes of a real one.
+			//
+			// ONLY when EVERY conflict is ours. One foreign manager in the
+			// set and the whole thing surfaces exactly as before: an operator
+			// must never have a field taken from Argo CD because PodSteer
+			// happened to own something else in the same apply.
+			//
+			// No re-check before forcing, unlike the operator's own override.
+			// That precondition exists because a human read a dialog and time
+			// passed; these conflicts came back from the request one line
+			// above, and there is nobody to have misled.
+			if !options.DryRun && !options.Force && conflicts.AllOwnedBy(domain.ManagerPodSteer) {
+				result, err = prepared.client.Apply(ctx, prepared.object.GetName(), prepared.object,
+					metav1.ApplyOptions{FieldManager: fieldManager, Force: true})
+				if err == nil {
+					outcome := outcomeFrom(prepared.gvk, result, created, false)
+					outcome.Warnings = prepared.collector.collected()
+					return outcome, nil
+				}
+				// It failed for some other reason now. Report what the first
+				// attempt found rather than the second attempt's error: the
+				// conflicts are what an operator can act on.
+			}
+
 			return domain.ApplyOutcome{
 				Kind:      prepared.gvk.Kind,
 				Name:      prepared.object.GetName(),
