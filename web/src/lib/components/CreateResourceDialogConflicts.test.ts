@@ -68,6 +68,19 @@ describe('a refused apply', () => {
     expect(container.querySelector('[role="alert"]')).toBeNull()
   })
 
+  it('keeps the override button at its own width', async () => {
+    // A flex column stretches its children, which turned this into a
+    // full-width bar reading "Take ownership" — an action styled like a page
+    // control. The container has to opt out.
+    applyResource.mockResolvedValue(refusal(conflict('kubectl', 'kubectl')))
+
+    const { getByText } = render(CreateResourceDialog, props())
+    await fireEvent.click(getByText('Apply'))
+
+    const row = getByText('Take ownership').closest('div')
+    expect(row?.className).toContain('items-start')
+  })
+
   it('offers to take a field from a person', async () => {
     applyResource.mockResolvedValue(refusal(conflict('kubectl', 'kubectl')))
 
@@ -142,6 +155,40 @@ describe('a refused apply', () => {
     // override carries exactly what was shown.
     expect(applyResource.mock.calls[0][3] ?? []).toEqual([])
     expect(applyResource.mock.calls[1][3]).toEqual([owned])
+  })
+
+  it('reports the object with its namespace after a forced apply', async () => {
+    // THE BUG THIS GUARDS. handleOverride called oncreated(name, '') — the
+    // right name and NO namespace — so after a successful override the drawer
+    // opened on an object it could not fetch: "No manifest available", and a
+    // red "The requested resource no longer exists" over a list where the
+    // object was plainly still running. handleApply had always passed both.
+    const created = vi.fn()
+    applyResource
+      .mockResolvedValueOnce(refusal(conflict('kubectl', 'kubectl')))
+      .mockResolvedValueOnce({
+        created: false, kind: 'Deployment', name: 'web', namespace: 'shop',
+        dryRun: false, warnings: [], conflicts: [], refused: false,
+      })
+
+    const { getByText } = render(CreateResourceDialog, props({ oncreated: created }))
+    await fireEvent.click(getByText('Apply'))
+    await fireEvent.click(getByText('Take ownership'))
+
+    expect(created).toHaveBeenCalledWith('web', 'shop')
+  })
+
+  it('reports the namespace on an ordinary apply too', async () => {
+    const created = vi.fn()
+    applyResource.mockResolvedValue({
+      created: true, kind: 'Deployment', name: 'web', namespace: 'shop',
+      dryRun: false, warnings: [], conflicts: [], refused: false,
+    })
+
+    const { getByText } = render(CreateResourceDialog, props({ oncreated: created }))
+    await fireEvent.click(getByText('Apply'))
+
+    expect(created).toHaveBeenCalledWith('web', 'shop')
   })
 
   it('gates the override behind the object name on a production cluster', async () => {

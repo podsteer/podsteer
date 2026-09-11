@@ -99,15 +99,28 @@
    */
   let overrideTyped = $state('')
 
-  /** The object's own name, for the production confirmation gate. */
-  const objectName = $derived.by(() => {
+  /**
+   * The object's own name and namespace, read from the draft.
+   *
+   * BOTH HALVES TOGETHER, because they were not. handleOverride reported a
+   * successful forced apply with `oncreated(objectName, '')` — the right name
+   * and NO namespace — so the drawer opened on an object it then could not
+   * fetch: "No manifest available", and a red "The requested resource no
+   * longer exists" over a list where the object was plainly still running.
+   * handleApply had always parsed both. Two call sites, one of them wrong,
+   * and nothing to keep them in step.
+   */
+  const objectIdentity = $derived.by(() => {
     try {
-      const parsed = parse(draft) as { metadata?: { name?: string } } | null
-      return parsed?.metadata?.name ?? ''
+      const parsed = parse(draft) as { metadata?: { name?: string; namespace?: string } } | null
+      return { name: parsed?.metadata?.name ?? '', namespace: parsed?.metadata?.namespace ?? '' }
     } catch {
-      return ''
+      return { name: '', namespace: '' }
     }
   })
+
+  /** The object's own name, for the production confirmation gate. */
+  const objectName = $derived(objectIdentity.name)
 
   const overrideAllowed = $derived.by(() => {
     if (conflicts.length === 0) return false
@@ -199,7 +212,7 @@
       }
       conflicts = []
       onclose()
-      oncreated(objectName, '')
+      oncreated(objectIdentity.name, objectIdentity.namespace)
     } catch (cause) {
       error = String(cause)
     } finally {
@@ -229,22 +242,11 @@
         return
       }
 
-      // Best-effort: the write already succeeded, so a manifest this
-      // dialog's own re-parse trips on (unlikely — it is the exact text
-      // that was just accepted) should not be reported as a failure. It
-      // just means nothing is auto-opened.
-      let name = ''
-      let objectNamespace = ''
-      try {
-        const parsed = parse(draft) as { metadata?: { name?: string; namespace?: string } } | null
-        name = parsed?.metadata?.name ?? ''
-        objectNamespace = parsed?.metadata?.namespace ?? ''
-      } catch {
-        // See above.
-      }
-
+      // From objectIdentity, which handleOverride also reads — so the two
+      // cannot report the object differently. They did: one passed a
+      // namespace and the other passed nothing.
       onclose()
-      oncreated(name, objectNamespace)
+      oncreated(objectIdentity.name, objectIdentity.namespace)
     } catch (cause) {
       error = `Failed to create: ${toApiError(cause).message}`
     } finally {
@@ -408,7 +410,11 @@
             </label>
           {/if}
 
-          <div class="flex flex-col gap-2">
+          <!-- items-start so the button keeps its own width. A flex column
+               stretches its children, which turned this into a full-width bar
+               reading "Take ownership" — a destructive-ish action styled like
+               a page control. -->
+          <div class="flex flex-col items-start gap-2">
             <Button
               variant="outlined"
               disabled={isReadOnly || submitting || !overrideAllowed}
