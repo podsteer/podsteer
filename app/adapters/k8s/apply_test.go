@@ -83,8 +83,15 @@ func newTestAdapterApply(id domain.ClusterID, dynClient dynamic.Interface, mappe
 //
 // The deduced type converter is the limitation to know about: with no schema
 // it treats every list as atomic and every map as granular, so keyed-list
-// conflicts (containers[name=web]) cannot be exercised offline. That needs a
-// real API server.
+// conflicts cannot be exercised offline. That needs a real API server — and
+// one was asked, on 2026-09-11, with a server-side dry run against a live
+// Deployment. It answers per container and per field:
+//
+//	.spec.template.spec.containers[name="authentication-identity-service"].image
+//
+// so a conflict over one container's image names that container rather than
+// the whole list. Recorded here because the shape of that path is what the
+// conflict dialog renders, and nothing offline can show it.
 func newApplyTestAdapter(id domain.ClusterID, dynClient dynamic.Interface, mapper meta.RESTMapper) *Adapter {
 	return newTestAdapterApply(id, dynClient, mapper)
 }
