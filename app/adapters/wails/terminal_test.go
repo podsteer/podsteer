@@ -142,6 +142,10 @@ func (stubManagementPort) ApplyResource(context.Context, domain.ClusterID, strin
 	return domain.ApplyOutcome{}, nil
 }
 
+func (stubManagementPort) FieldOwnership(string) (domain.FieldOwnership, error) {
+	return nil, nil
+}
+
 func (stubManagementPort) UpdateResource(context.Context, domain.ClusterID, string, bool) (domain.ApplyOutcome, error) {
 	return domain.ApplyOutcome{}, nil
 }

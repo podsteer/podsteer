@@ -463,6 +463,8 @@ type fakeManagementPort struct {
 	calls []string
 	// err, when set, is returned by every tracked write.
 	err error
+	// ownership is what FieldOwnership hands back.
+	ownership domain.FieldOwnership
 
 	triggerJobName string
 	triggerErr     error
@@ -666,6 +668,11 @@ func (f *fakeManagementPort) UpdateResource(context.Context, domain.ClusterID, s
 func (f *fakeManagementPort) ApplyResource(context.Context, domain.ClusterID, string, domain.ApplyOptions) (domain.ApplyOutcome, error) {
 	f.record("ApplyResource")
 	return domain.ApplyOutcome{}, f.err
+}
+
+func (f *fakeManagementPort) FieldOwnership(string) (domain.FieldOwnership, error) {
+	f.record("FieldOwnership")
+	return f.ownership, f.err
 }
 
 func (f *fakeManagementPort) ExecInPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, bool) error {

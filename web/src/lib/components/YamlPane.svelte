@@ -34,6 +34,9 @@
     managedFieldsDisabledReason?: string
     /** The actions for this pane — edit, copy — at the trailing edge. */
     actions?: Snippet
+    /** Rendered between the toolbar and the editor, when there is something
+        to say about the document rather than something to do to it. */
+    banner?: Snippet
     /** Hands the caller the editor's own controls — see YamlEditor's
         `EditorApi`. Only a fresh document being seeded needs this; the
         drawer's own tab has never used it. */
@@ -48,6 +51,7 @@
     managedFieldsDisabled = false,
     managedFieldsDisabledReason,
     actions,
+    banner,
     onready,
   }: Props = $props()
 
@@ -99,6 +103,10 @@
       {/if}
     {/snippet}
   </PaneToolbar>
+
+  {#if banner}
+    {@render banner()}
+  {/if}
 
   <div class="min-h-0 flex-1">
     <YamlEditor
