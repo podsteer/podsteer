@@ -129,12 +129,27 @@ export function vulnerabilitiesFor(
 export function vulnerabilityReadFor(
   clusterId: string,
   namespace: string,
-): { complete: boolean; truncated: boolean; read: number; remaining: number; cap: number } | undefined {
+): {
+  complete: boolean
+  truncated: boolean
+  status: string
+  read: number
+  remaining: number
+  cap: number
+} | undefined {
   const reading = loaded[keyOf(clusterId, namespace)]
   if (!reading) return undefined
   return {
     complete: reading.status === 'complete',
     truncated: reading.status === 'truncated',
+    // THE RAW WORD, for a caller that has to tell the four ordinary outcomes
+    // apart rather than merely refuse to over-claim. A pod list only needs to
+    // know whether an absence means anything; a page whose whole subject is
+    // security has to SAY which — 'no scanner installed' and 'you may not
+    // read its reports' are different sentences, and rendering either as a
+    // blank section would be the absent-mark problem at page scale. '' is a
+    // read that failed, and is not one of the four.
+    status: reading.status,
     read: reading.read,
     remaining: reading.remaining,
     cap: reading.cap,
@@ -168,6 +183,25 @@ export function workloadsRunningImage(
     if ((summary.images ?? []).includes(image)) count += 1
   }
   return count
+}
+
+/**
+ * Every summary of one read, for a view that groups them itself.
+ *
+ * THE WHOLE ANSWER RATHER THAN ONE ROW'S. `vulnerabilitiesFor` exists to
+ * answer "what about this pod", which is what a list needs; the security page
+ * asks "what did the scanner find here", which is a different question and
+ * cannot be assembled from the first without knowing every subject's name in
+ * advance.
+ *
+ * Empty when the namespace has not been read — which the caller must not
+ * render as "nothing found". See vulnerabilityReadFor: only a completed read
+ * lets an absence stand for anything.
+ */
+export function summariesFor(clusterId: string, namespace: string): VulnerabilitySummary[] {
+  const reading = loaded[keyOf(clusterId, namespace)]
+  if (!reading) return []
+  return Object.values(reading.bySubject)
 }
 
 /**

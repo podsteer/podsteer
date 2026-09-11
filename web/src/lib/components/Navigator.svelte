@@ -23,6 +23,7 @@
     FLEET_KIND_ID,
     HELM_KIND_ID,
     COMBINED_KIND_ID,
+    SECURITY_KIND_ID,
     OVERVIEW_KIND_ID,
     RBAC_KIND_ID,
     TIMELINE_KIND_ID,
@@ -38,6 +39,7 @@
   import {
     Blocks,
     ChevronDown,
+    ShieldCheck,
     KeyRound,
     Clock,
     Layers,
@@ -97,6 +99,7 @@
   const timelineCount = $derived(timeline.forCluster(session.cluster.id).length)
   const onHelm = $derived(session.selectedKindId === HELM_KIND_ID)
   const onCombined = $derived(session.selectedKindId === COMBINED_KIND_ID)
+  const onSecurity = $derived(session.selectedKindId === SECURITY_KIND_ID)
   /** How many tabs the merged view would merge — the badge on its row. */
   const openClusters = $derived(workspace.sessions.length)
 
@@ -837,6 +840,36 @@
           strokeWidth={1.8}
         />
         <span class="flex-1 truncate text-body-medium font-medium">Combined</span>
+      </button>
+    </div>
+
+    <!-- Security posture, directly under Helm and above the rule: like Helm
+         it is a READING of things already here rather than a list of them —
+         the privileges workloads take, and whatever a scanner the operator
+         installed has written down. A pseudo-entry for the same reason: there
+         is no object to GET called "posture".
+
+         Named "Security", which is a promise a page reading one optional
+         operator cannot keep on its own — so the page's first job is to say
+         what it does and does not cover, in words, rather than to render
+         empty and let the absence make the claim. See SecurityView. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(SECURITY_KIND_ID)}
+        aria-current={onSecurity ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onSecurity
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <ShieldCheck
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onSecurity ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">Security</span>
       </button>
     </div>
 

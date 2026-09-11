@@ -47,6 +47,7 @@ import TimelineView from './TimelineView.svelte'
   import GenericTableView from './GenericTableView.svelte'
   import OverviewView from './OverviewView.svelte'
   import CombinedView from './CombinedView.svelte'
+  import SecurityView from './SecurityView.svelte'
   import NodesView from './NodesView.svelte'
   import PodsView from './PodsView.svelte'
   import WorkloadsView from './WorkloadsView.svelte'
@@ -373,9 +374,11 @@ import TimelineView from './TimelineView.svelte'
                   ? 'Helm'
                   : session.viewMode === 'combined'
                     ? 'Combined'
-                    : session.isList
-                  ? (session.selectedKind?.title ?? 'Resources')
-                  : session.cluster.id}
+                    : session.viewMode === 'security'
+                      ? 'Security'
+                      : session.isList
+                        ? (session.selectedKind?.title ?? 'Resources')
+                        : session.cluster.id}
           </h2>
           {#if session.isList}
             <span class="rounded-full bg-surface-container-high px-2 py-0.5 text-label-small
@@ -553,6 +556,8 @@ import TimelineView from './TimelineView.svelte'
       <HelmView {session} />
     {:else if session.viewMode === 'combined'}
       <CombinedView {session} />
+    {:else if session.viewMode === 'security'}
+      <SecurityView {session} />
     {:else if session.viewMode === 'pods'}
       <PodsView {session} />
     {:else if session.viewMode === 'nodes'}

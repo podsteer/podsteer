@@ -1484,6 +1484,46 @@ is typed into the panel and shown, and it is never written to disk — the same
 no-object-names commitment SECURITY.md makes, which is why recent subjects, if
 they are ever offered, belong in memory beside the navigator's Recent section.
 
+## The Security page assembles, and says what it is not
+
+`podsteer/security` is the seventh pinned pseudo-entry, beside the overview,
+Applications, All clusters, the RBAC explorer, the timeline and Helm, and it
+is one for the sharpest version of the usual reason: there is no object to GET
+called "posture", and there is no scanner to ask either.
+
+**It computes nothing new.** Two halves, with different warranties, kept
+visibly apart on the page itself:
+
+- **Posture** is `domain/security_findings.go` — privileged, host namespaces,
+  `allowPrivilegeEscalation`, dangerous capabilities, UID 0 — read off the
+  assessment that already runs under every view. The page filters
+  `CategoryFindingSecurity` out of `session.overview.findings` and renders it
+  with the SAME `FindingCard` the overview uses, so a snooze set in one place
+  is honoured in the other. Two presentations with two quietening switches for
+  one alarm is the bug that avoids.
+- **Vulnerabilities** are QUOTED from whatever scanner the operator installed,
+  through `$stores/vulnerabilities` with `ALL_NAMESPACES`. PodSteer scans
+  nothing — see `domain/vulnerability.go`, and
+  `business-docs/product/security-posture-positioning-2026-09.md` for the
+  evidence that owning CVE data is a business to stay out of.
+
+**The name is a promise the page cannot keep on its own, so it says so.** A
+page called "Security" that renders a blank section on a cluster with no
+scanner has made a claim nobody made: *nothing found* where the truth is
+*nothing looked*. Four ordinary outcomes leave the section without rows — no
+scanner, no permission, nothing scanned yet, and a read that failed — and only
+one of them is good news, so `vulnerabilityReadFor` carries the RAW status
+alongside its booleans and the page renders a different sentence for each. A
+closing section names what is deliberately absent (volumes, anything through
+time, RBAC, and a compliance score that will never exist) rather than letting
+the gaps be inferred.
+
+**It fetches nothing on the tick.** The posture findings ride an assessment
+the tab already has; the scanner read is one bounded cluster-wide call, cached
+in the store and in `app/adapters/k8s/trivy.go` behind it. A cluster-wide LIST
+of VulnerabilityReports every ten seconds is the Helm page's audit problem
+over a larger collection.
+
 ## The Helm page is built from labels, and reads a payload only when asked
 
 `podsteer/helm` is the sixth pinned pseudo-entry, beside the overview,
