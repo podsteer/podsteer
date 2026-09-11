@@ -89,7 +89,21 @@ describe('a refused apply', () => {
 
     await fireEvent.click(getByText('Apply'))
 
-    expect(words(container)).toContain('--force-conflicts')
+    // THE FORCED COMMAND BELONGS BESIDE THE BUTTON THAT FORCES. This used to
+    // put --force-conflicts into the hint next to Apply the moment a conflict
+    // existed — describing a command Apply does not send, before the operator
+    // had chosen anything.
+    // KubectlHint renders the command into a monospaced paragraph.
+    const commands = [...container.querySelectorAll('p.font-mono')].map((node) =>
+      (node.textContent ?? '').replace(/\s+/g, ' '),
+    )
+    const forced = commands.filter((command) => command.includes('--force-conflicts'))
+    const plain = commands.filter(
+      (command) => command.includes('--server-side') && !command.includes('--force-conflicts'),
+    )
+
+    expect(plain.length, 'a non-forcing command for Apply').toBeGreaterThan(0)
+    expect(forced.length, 'a forcing command for Override').toBeGreaterThan(0)
   })
 
   it('does not say "some of these" about one field', async () => {
