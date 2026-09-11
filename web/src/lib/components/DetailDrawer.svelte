@@ -27,6 +27,7 @@
   import { forwards } from '$stores/forwards.svelte'
   import { sessionLauncher } from '$stores/sessionLauncher.svelte'
   import YamlPane from './YamlPane.svelte'
+  import FieldOwnershipPanel from './FieldOwnershipPanel.svelte'
   import Button from './Button.svelte'
   import ToolbarButton from './ToolbarButton.svelte'
   import ToolbarToggle from './ToolbarToggle.svelte'
@@ -1406,6 +1407,25 @@
     managedFieldsDisabled={editing && dirty}
     managedFieldsDisabledReason="Can’t change while there are unsaved edits"
   >
+    {#snippet banner()}
+      <!--
+        THE TOGGLE'S CLAIM, KEPT. Its tooltip says it shows which controller
+        owns which field; on its own it showed the API server's storage format
+        for a field set, which is not that. The decoded ledger sits above the
+        raw record rather than replacing it — see FieldOwnershipPanel.
+
+        Read from `session.manifest`, never from `shownManifest`: the latter
+        is the trimmed view, and trimming managedFields out is precisely what
+        it does.
+
+        Not while editing. The panel describes what the cluster holds, and a
+        draft is not that yet.
+      -->
+      {#if preferences.showManagedFields && !editing}
+        <FieldOwnershipPanel manifest={session.manifest} />
+      {/if}
+    {/snippet}
+
     {#snippet actions()}
       <!--
         Reveal, for a Secret whose values are hidden. Its own control rather

@@ -727,6 +727,52 @@ type FieldConflictDTO struct {
 	Kind string `json:"kind"`
 }
 
+// FieldOwnerDTO is one manager's entry in an object's ownership ledger.
+//
+// THE SAME VOCABULARY AS FieldConflictDTO, deliberately: the same Kind
+// strings, and field paths spelled the same way because both are produced by
+// the library the API server itself writes conflict messages with. An
+// operator reading "argocd-controller owns .spec.replicas" in the panel and
+// "conflict with argocd-controller over .spec.replicas" in a dialog is being
+// told the same thing twice, and it should look like it.
+type FieldOwnerDTO struct {
+	// Manager is the field manager's name, as the server recorded it.
+	Manager string `json:"manager"`
+	// Kind is what sort of owner it is — the same set FieldConflictDTO uses.
+	Kind string `json:"kind"`
+	// Operation is "Apply" or "Update". One name can be two managers: the
+	// server keys an entry on name AND operation.
+	Operation string `json:"operation"`
+	// Subresource is "status", "scale", or empty for the object itself.
+	Subresource string `json:"subresource"`
+	// UpdatedAt is when this manager last wrote, RFC 3339, or empty.
+	UpdatedAt string `json:"updatedAt"`
+	// Fields are the decoded paths this entry owns, sorted.
+	Fields []string `json:"fields"`
+}
+
+// toFieldOwnership converts a decoded ledger for the wire.
+func toFieldOwnership(ownership domain.FieldOwnership) []FieldOwnerDTO {
+	owners := make([]FieldOwnerDTO, 0, len(ownership))
+	for _, owner := range ownership {
+		fields := owner.Fields
+		if fields == nil {
+			// An entry whose contribution was removed owns nothing. `[]`
+			// rather than `null` so the frontend never has to check.
+			fields = []string{}
+		}
+		owners = append(owners, FieldOwnerDTO{
+			Manager:     owner.Manager,
+			Kind:        string(owner.Kind),
+			Operation:   owner.Operation,
+			Subresource: owner.Subresource,
+			UpdatedAt:   owner.UpdatedAt,
+			Fields:      fields,
+		})
+	}
+	return owners
+}
+
 // ClusterConnectedEvent is the payload of the "cluster:connected" event.
 type ClusterConnectedEvent struct {
 	// Cluster is the cluster that was reached.
