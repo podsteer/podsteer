@@ -72,7 +72,20 @@
       width: index === 0 ? 280 : column.type === 'date' ? 100 : 160,
       numeric: column.type === 'integer' || column.type === 'number',
       pinned: index === 0,
-      defaultHidden: column.wide,
+      // HIDDEN BY DEFAULT WHEN ONLY ONE OF THESE KINDS FILLS IT, and the
+      // arithmetic is why. Deployments, Pods, Ingresses and Services merge to
+      // SIXTEEN columns, twelve printed by exactly one kind — so the table
+      // arrives mostly blank, and a Pod's STATUS sits seventh, behind a
+      // horizontal scroll, while two Deployment-only columns that are empty on
+      // every other row take the space in front of it.
+      //
+      // What survives is what the combination is actually about: the name, the
+      // kind, and whatever the kinds agree on (READY across Deployments and
+      // Pods, AGE across all four). Every hidden column is one click away in
+      // the column menu, and choosing a single kind shows all of its columns
+      // exactly as its own list does — the rule only fires where there is a
+      // majority to be in a minority of.
+      defaultHidden: column.wide || (chosen.length > 1 && session.combinedColumnSources(column.name) < 2),
     })),
   )
 
