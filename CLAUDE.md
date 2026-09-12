@@ -4,10 +4,18 @@ A desktop Kubernetes client built on Wails v3 (Go backend + the OS's native
 webview) rather than Electron, so that it starts fast and stays small in
 memory.
 
-Wails v3 is a BETA (`v3.0.0-beta.16`, pinned exactly in `go.mod` and in
-`.github/workflows/ci-cd.yaml`). It is pinned rather than floated because a
-beta renames things between releases, and `@latest` in CI would break a build
-nobody changed.
+Wails v3 is a BETA (`v3.0.0-beta.18`, pinned exactly in `go.mod`, in
+`.github/workflows/ci-cd.yaml` and in README's CLI install line). It is pinned
+rather than floated because a beta renames things between releases, and
+`@latest` in CI would break a build nobody changed.
+
+**Do not float past beta.18 without reading what beta.19 does.** It moves the
+private macOS APIs behind `-tags private_mac_apis`, so upgrading without that
+tag turns webview transparency opaque. beta.18 itself was taken from beta.16
+for one reason: on Windows, `WebResourceRequested` called `log.Fatal` when COM
+failed to set the request out-pointer under load, which killed the process
+rather than dropping one request — and that risk scales with the number of
+webviews.
 
 ## Layout
 
@@ -88,7 +96,7 @@ like a Deployment. The kind is resolved to its REST resource and scope by a
 EXACTLY ONCE when a lookup reports `meta.NoKindMatchError` — a CRD installed
 a minute ago must apply without reconnecting the cluster, but re-querying
 discovery on every apply of an ordinary built-in kind would erase the whole
-point of caching it. 
+point of caching it.
 
 **THERE ARE TWO WRITE VERBS AND THE DISTINCTION IS LOAD-BEARING.**
 
