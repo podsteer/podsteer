@@ -62,6 +62,7 @@
     Monitor,
     Settings,
     Lock,
+    LockOpen,
     Search,
   } from '@lucide/svelte'
 
@@ -177,12 +178,16 @@
           title="{session.cluster.id} — {session.cluster.host} — {healthWord(
             session,
           )}{settings.environment ? ` — ${settings.environment}` : ''}{settings.readOnly
-            ? ' — read-only'
+            ? workspace.readOnlyEnforced(session.cluster.id)
+              ? ' — read-only'
+              : ' — read-only, but PodSteer could not tell the backend: write controls are still disabled here, the second guard is not in force'
             : ''}"
           aria-label="{session.cluster.id}, {healthWord(session)}{group
             ? `, ${group}`
             : ''}{settings.environment ? `, ${settings.environment}` : ''}{settings.readOnly
-            ? ', read-only'
+            ? workspace.readOnlyEnforced(session.cluster.id)
+              ? ', read-only'
+              : ', read-only but not enforced by the backend'
             : ''}"
           aria-current={active ? 'page' : undefined}
           class="no-drag flex h-full max-w-52 items-center gap-2 pl-3 pr-7
@@ -232,12 +237,30 @@
               prod
             </span>
           {/if}
+          <!--
+            AN OPEN PADLOCK WHEN THE GUARD DID NOT GET INSTALLED. The mark
+            says "PodSteer will refuse writes here"; pushing that to the
+            backend can fail, and its failure is deliberately swallowed
+            (see workspace.syncReadOnly). The frontend's own disabling of
+            write controls is unaffected and still holds — what is missing is
+            the second line — so the icon changes rather than disappearing,
+            and the title says which of the two it means.
+          -->
           {#if settings.readOnly}
-            <Lock
-              class="size-3 shrink-0 {active ? 'text-on-surface-variant' : 'text-on-surface-variant/60'}"
-              strokeWidth={2}
-              aria-hidden="true"
-            />
+            {@const enforced = workspace.readOnlyEnforced(session.cluster.id)}
+            {#if enforced}
+              <Lock
+                class="size-3 shrink-0 {active ? 'text-on-surface-variant' : 'text-on-surface-variant/60'}"
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+            {:else}
+              <LockOpen
+                class="size-3 shrink-0 text-gauge-warn"
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+            {/if}
           {/if}
         </button>
 
