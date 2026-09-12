@@ -3166,16 +3166,18 @@ after its shell has gone is the same class of leak as a goroutine nobody stops
 them. Ending one signals its whole process GROUP — a shell's
 children go with it — and waits, so "stopped" means gone rather than asked.
 
-**Windows has no local terminal**, and says so instead of half-working. The
-pseudo-terminal dependency (`github.com/creack/pty`, MIT) reports unsupported
-on Windows for both allocation and resize; ConPTY is a different API and would
-be a second, Windows-only implementation of start, resize and teardown. The
-dependency sits behind a build tag so it is not linked into the Windows binary
-at all, `LocalShellSupported` reports false with one sentence, and the control
-is absent rather than present and failing. Nothing about a Windows build is
-worse for it: kubectl in the operator's own terminal was always the answer
-there, and needs nothing PodSteer provides, since Windows hands a GUI process
-the same PATH it hands a console one.
+**Windows opens a local terminal through ConPTY** (`pty_windows.go`, landed
+2026-09-08 in `beda12a`). This paragraph used to say the opposite, and the
+reasoning it gave was sound at the time: `github.com/creack/pty` reports
+unsupported on Windows for both allocation and resize, and ConPTY is a
+different API needing a second implementation of start, resize and teardown.
+What changed is the premise underneath it — CI packages windows-amd64 on every
+pull request and the release publishes it, so Windows is a platform this
+project ships, and telling somebody who downloaded that build that their
+terminal is missing because of a library's Windows story is not an answer they
+can act on. The Unix PTY still sits behind `//go:build !windows` and is not
+linked into the Windows binary; `LocalShellSupported` is still the gate, and
+still reports false with one sentence on any platform that genuinely cannot.
 
 Nothing is sent anywhere by PodSteer. Launching an agent is a local process
 start with an argument; whatever the agent then does with its own provider is
