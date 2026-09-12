@@ -30,6 +30,8 @@ const connect = vi.fn(
       pending.set(clusterId, { resolve, reject })
     }),
 )
+/** Hoisted, so a test can make the read-only push fail. */
+const setReadOnlyMock = vi.fn().mockResolvedValue(undefined)
 const cancelConnect = vi.fn((clusterId: string) => {
   pending.get(clusterId)?.reject(new Error('[cancelled] The request was cancelled or timed out'))
   return Promise.resolve()
@@ -43,7 +45,7 @@ vi.mock('$lib/api/client', async () => {
     connections: vi.fn().mockResolvedValue([
       { id: 'dev', name: 'dev', defaultNamespace: 'default' },
     ]),
-    setReadOnly: vi.fn().mockResolvedValue(undefined),
+    setReadOnly: (...args: unknown[]) => setReadOnlyMock(...args),
     onClusterUnreachable: vi.fn(() => () => {}),
     onKubeconfigChanged: (handler: () => void) => {
       kubeconfigHandlers.push(handler)
@@ -57,6 +59,7 @@ vi.mock('$lib/api/client', async () => {
 })
 
 import { workspace } from './workspace.svelte'
+import { organisation } from './organisation.svelte'
 
 describe('starting up', () => {
   it('does not wait for the cluster the last session had open', async () => {
@@ -175,5 +178,56 @@ describe('the kubeconfig changing on disk', () => {
     await vi.waitFor(() => expect(listClustersMock).toHaveBeenCalled())
 
     expect(workspace.sessions.map((session) => session.cluster.id)).toEqual(openBefore)
+  })
+})
+
+/**
+ * The padlock on a tab is a claim, and `syncReadOnly` can fail to keep it.
+ *
+ * The failure is logged and swallowed on purpose — the frontend's own
+ * disabling of write controls does not depend on that call — but that leaves
+ * the SECOND guard missing in silence while the mark still says it is there.
+ */
+describe('read-only that did not reach the backend', () => {
+  beforeEach(async () => {
+    setReadOnlyMock.mockClear()
+    setReadOnlyMock.mockResolvedValue(undefined)
+    await workspace.initialise()
+  })
+
+  it('reports the guard as enforced when the push succeeded', async () => {
+    await workspace.syncReadOnly('dev')
+    expect(workspace.readOnlyEnforced('dev')).toBe(true)
+  })
+
+  it('remembers that the guard is not in force when the push failed', async () => {
+    vi.spyOn(organisation, 'settingsFor').mockReturnValue({ readOnly: true } as never)
+    setReadOnlyMock.mockRejectedValueOnce(new Error('[unavailable] no'))
+
+    await workspace.syncReadOnly('dev')
+
+    expect(workspace.readOnlyEnforced('dev')).toBe(false)
+  })
+
+  it('clears the mark once a later push gets through', async () => {
+    vi.spyOn(organisation, 'settingsFor').mockReturnValue({ readOnly: true } as never)
+    setReadOnlyMock.mockRejectedValueOnce(new Error('[unavailable] no'))
+    await workspace.syncReadOnly('dev')
+    expect(workspace.readOnlyEnforced('dev')).toBe(false)
+
+    await workspace.syncReadOnly('dev')
+    expect(workspace.readOnlyEnforced('dev')).toBe(true)
+  })
+
+  it('does not mark a cluster whose failed push was carrying false', async () => {
+    // A failed call carrying `false` leaves the backend refusing writes it
+    // need not refuse. That is conservative, and no claim on screen depends
+    // on it, so warning about it would be noise.
+    vi.spyOn(organisation, 'settingsFor').mockReturnValue({ readOnly: false } as never)
+    setReadOnlyMock.mockRejectedValueOnce(new Error('[unavailable] no'))
+
+    await workspace.syncReadOnly('dev')
+
+    expect(workspace.readOnlyEnforced('dev')).toBe(true)
   })
 })

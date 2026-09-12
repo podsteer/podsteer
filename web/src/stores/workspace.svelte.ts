@@ -256,6 +256,14 @@ class Workspace {
     // interrupted forty seconds ago" would only mute the first real change
     // after a reconnect.
     notifications.forget(clusterId)
+    // So does the unenforced mark: reopening pushes the policy again, and
+    // carrying "this failed once" across a close would keep warning about a
+    // call that has since been made.
+    if (this.#unenforced[clusterId]) {
+      const next = { ...this.#unenforced }
+      delete next[clusterId]
+      this.#unenforced = next
+    }
 
     const index = this.sessions.findIndex((entry) => entry.cluster.id === clusterId)
     this.sessions = this.sessions.filter((entry) => entry.cluster.id !== clusterId)
@@ -329,10 +337,48 @@ class Workspace {
 
     try {
       await setReadOnly(clusterId, readOnly)
+      if (this.#unenforced[clusterId]) {
+        const next = { ...this.#unenforced }
+        delete next[clusterId]
+        this.#unenforced = next
+      }
     } catch (cause) {
       console.error(`podsteer: could not sync the read-only policy for ${clusterId}`, cause)
+      // RECORDED, NOT JUST LOGGED — see readOnlyEnforced. Only when the
+      // operator asked for read-only: a failed call that was carrying `false`
+      // leaves the backend refusing writes it need not refuse, which is
+      // conservative and not a claim anybody is relying on.
+      if (readOnly) this.#unenforced = { ...this.#unenforced, [clusterId]: true }
     }
   }
+
+  /**
+   * Whether the backend is actually enforcing the read-only mark this cluster
+   * is showing.
+   *
+   * THE LOCK ON THE TAB IS A CLAIM, AND IT COULD BE FALSE. `syncReadOnly`
+   * pushes the client's own guard to the backend and its failure is logged and
+   * swallowed by a deliberate decision — the frontend's own disabling of write
+   * controls does not depend on that call, and that is what protects an
+   * operator in the moment. But it is the SECOND line that goes missing, in
+   * silence, while the padlock keeps saying it is there.
+   *
+   * So the failure is remembered and the padlock says which of the two it
+   * means. Nothing here re-enables a control: the frontend guard is unchanged
+   * and still holds. What changes is that the interface stops asserting a
+   * protection it knows did not get installed.
+   */
+  readOnlyEnforced = (clusterId: string): boolean => !this.#unenforced[clusterId]
+
+  /**
+   * Clusters whose last read-only push failed, by id.
+   *
+   * Kept out of `error`: that banner lives on the cluster picker, which is
+   * exactly where an operator is NOT looking when this happens — the failure
+   * is raised while a cluster is open. The mark belongs on the thing making
+   * the claim.
+   */
+  #unenforced = $state.raw<Record<string, true>>({})
 
   /**
    * Re-syncs every open cluster's read-only setting.
