@@ -89,6 +89,7 @@ import { diffFindings } from '$lib/timeline'
 import { sourcesAreComparable } from '$lib/notify'
 import { usageHistory, usageKey } from './usageHistory.svelte'
 import { preferences } from './preferences.svelte'
+import { mergeTables, type SourcedRow } from '$lib/mergeTables'
 import { fleet } from './fleet.svelte'
 
 /** Lifecycle of an asynchronous read. */
@@ -332,6 +333,28 @@ export const EVENTS_SOURCE = 'events'
  */
 export const HELM_KIND_ID = 'podsteer/helm'
 
+/**
+ * The combined view, the SEVENTH pinned pseudo-entry.
+ *
+ * NOT A KIND, and here for the plainest version of the reason: it is SEVERAL
+ * kinds. Kubernetes has no multi-kind list call — `kubectl get pod,deploy,svc`
+ * is three requests — so there is nothing to GET called "pods and deployments
+ * and services", and a catalogue entry would offer one to every consumer that
+ * expects to be able to fetch what it names.
+ *
+ * WHAT IT ANSWERS is the most-upvoted request measured anywhere in this
+ * category: k9s #771, "show multiple resource types without switching", 141
+ * reactions, shipped there in 2024. An operator asking "what does this
+ * application consist of" is asking about Deployments AND Services AND
+ * ConfigMaps at once, and a navigator that selects one kind at a time makes
+ * that three visits and three joins done in somebody's head.
+ *
+ * THE KINDS ARE THE OPERATOR'S and live in `preferences.combinedKinds`, per
+ * cluster — see MAX_COMBINED_KINDS, whose cap is about a request rate rather
+ * than about taste.
+ */
+export const COMBINED_KIND_ID = 'podsteer/combined'
+
 export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
 
 /** Kind ids PodSteer renders with purpose-built columns rather than generically. */
@@ -387,6 +410,7 @@ export type ViewMode =
   | 'rbac'
   | 'timeline'
   | 'helm'
+  | 'combined'
   | 'pods'
   | 'nodes'
   | 'events'
@@ -812,6 +836,7 @@ export class ClusterSession {
     if (id === RBAC_KIND_ID) return 'rbac'
     if (id === TIMELINE_KIND_ID) return 'timeline'
     if (id === HELM_KIND_ID) return 'helm'
+    if (id === COMBINED_KIND_ID) return 'combined'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
     if (id === RICH_KIND_IDS.events) return 'events'
@@ -993,6 +1018,60 @@ export class ClusterSession {
       () => this.cluster.id,
     ),
   )
+  /**
+   * One answer per kind the combined view is showing, in the operator's order.
+   *
+   * `$state.raw` like every other row buffer here: replaced wholesale on each
+   * tick, never mutated, and deep-proxying several thousand printed cells buys
+   * nothing.
+   */
+  combinedTables = $state.raw<ResourceTable[]>([])
+
+  /**
+   * Those answers as ONE table.
+   *
+   * Different kinds print different columns — a Deployment prints
+   * READY/UP-TO-DATE/AVAILABLE where a Service prints TYPE/CLUSTER-IP — so
+   * the merge matches columns by NAME and leaves a cell empty where a kind
+   * prints no such column. See $lib/mergeTables, which the All-clusters view
+   * uses for the same problem on the other axis.
+   */
+  readonly combinedTable = $derived(
+    mergeTables(
+      this.combinedTables.map((table) => ({
+        key: table.kindId,
+        columns: table.columns ?? [],
+        rows: table.rows ?? [],
+      })),
+    ),
+  )
+
+  /** Whether any kind's read stopped at its cap — see the view's notice. */
+  readonly combinedTruncated = $derived(this.combinedTables.some((table) => table.truncated))
+
+  /**
+   * The merged rows, filtered the same way every other list is.
+   *
+   * THE KIND IS PART OF THE SEARCHABLE TEXT, which is what makes one search
+   * box enough for a table holding several kinds: typing `service` narrows to
+   * Services without a separate control, and `kind:` needs no new syntax.
+   */
+  readonly visibleCombinedRows = $derived(
+    filterRows(
+      this.combinedTable.rows,
+      this.query,
+      (row) => [
+        row.name,
+        row.namespace,
+        this.#combinedKindLabel(row.source),
+        ...(row.cells ?? []),
+        ...this.#customText(row),
+      ],
+      (row) => row.labels,
+      () => this.cluster.id,
+    ),
+  )
+
   readonly visibleTableRows = $derived(
     filterRows(
       this.table?.rows ?? [],
@@ -1122,6 +1201,8 @@ export class ClusterSession {
         return this.visibleNamespaces.length
       case 'applications':
         return this.visibleApplications.length
+      case 'combined':
+        return this.visibleCombinedRows.length
       case 'fleet':
         return this.visibleFleetCount
       default:
@@ -1211,6 +1292,64 @@ export class ClusterSession {
     }
     return sortRows(this.visibleTableRows, state, { [state.columnId]: accessor })
   })
+
+  /**
+   * The merged rows in sort order.
+   *
+   * The Kind column sorts on the kind's own display name rather than on its
+   * id, because the id carries a group and version an operator did not ask to
+   * order by — `apps/v1/deployments` would sort under "a".
+   */
+  readonly sortedCombinedRows = $derived.by(() => {
+    const state = this.sort
+    if (!state) return this.visibleCombinedRows
+
+    if (state.columnId === 'kind') {
+      return sortRows(this.visibleCombinedRows, state, {
+        kind: (row: SourcedRow) => this.#combinedKindLabel(row.source),
+      })
+    }
+
+    const custom = customSortAccessor<SourcedRow>(state.columnId)
+    if (custom) return sortRows(this.visibleCombinedRows, state, { [state.columnId]: custom })
+
+    const index = /^c(\d+)$/.exec(state.columnId)?.[1]
+    if (index === undefined) return this.visibleCombinedRows
+
+    const column = this.combinedTable.columns[Number(index)]
+    if (!column) return this.visibleCombinedRows
+
+    const cell = (row: SourcedRow): string => row.cells?.[Number(index)] ?? ''
+    let accessor: (row: SourcedRow) => string | number | null
+    if (column.type === 'integer' || column.type === 'number') {
+      accessor = (row) => {
+        const parsed = Number.parseFloat(cell(row))
+        return Number.isNaN(parsed) ? null : parsed
+      }
+    } else if (column.type === 'date') {
+      accessor = (row) => parseAgeSeconds(cell(row))
+    } else {
+      accessor = cell
+    }
+    return sortRows(this.visibleCombinedRows, state, { [state.columnId]: accessor })
+  })
+
+  readonly pagedCombinedRows = $derived(this.#slice(this.sortedCombinedRows))
+
+  /** A combined row's kind, as the navigator names it. Falls back to the raw
+      id for a kind the catalogue no longer serves, which is honest. */
+  #combinedKindLabel = (kindId: string): string =>
+    this.kinds.find((kind) => kind.id === kindId)?.title ?? kindId
+
+  /** Whether a combined row's kind carries namespaces — for its row key and
+      for opening it. Absent from the catalogue is treated as namespaced,
+      which is the safe guess: a wrong `false` drops the namespace and opens
+      the wrong object. */
+  combinedKindNamespaced = (kindId: string): boolean =>
+    this.kinds.find((kind) => kind.id === kindId)?.namespaced ?? true
+
+  /** A combined row's kind title, for the Kind column. */
+  combinedKindTitle = (kindId: string): string => this.#combinedKindLabel(kindId)
 
   /** Rows of the current page, per view. */
   readonly pagedPods = $derived(this.#slice(this.sortedPods))
@@ -2123,6 +2262,29 @@ export class ClusterSession {
         // assessment above still runs, so the navigator badge stays current
         // while this view is open.
         return Promise.resolve(null)
+      case 'combined': {
+        // ONE REQUEST PER KIND, in parallel, because Kubernetes has no
+        // multi-kind list call — `kubectl get pod,deploy,svc` is three
+        // requests and so is this. Parallel rather than sequential: the kinds
+        // are independent, and a slow CRD must not hold the rest of the table
+        // behind it.
+        //
+        // A kind that fails takes the whole tick with it, deliberately. A
+        // combined table quietly missing one of the kinds its own header
+        // names would be answering a question nobody asked — and the count,
+        // the search and the sort would all be wrong in the same silent
+        // direction, which is the failure the truncation notice exists for.
+        //
+        // The cap on how many kinds can be here is MAX_COMBINED_KINDS, and it
+        // is a cap on THIS: the multiplier on every refresh tick.
+        const kinds = preferences.combinedKindsFor(id)
+        if (kinds.length === 0) return Promise.resolve([])
+        return Promise.all(
+          kinds.map((kindId) =>
+            listTable(id, kindId, namespace, this.annotationKeys, this.columnExpressions),
+          ),
+        )
+      }
       case 'helm':
         // NOTHING EITHER, and for a reason of its own rather than the RBAC
         // one. A Helm listing is a metadata LIST OF SECRETS, and issuing one
@@ -2245,6 +2407,9 @@ export class ClusterSession {
       case 'helm':
         // Nothing to hold, for the same reason as RBAC: the page owns the one
         // listing it asked for, and this tick never asked for anything.
+        break
+      case 'combined':
+        this.combinedTables = rows as ResourceTable[]
         break
       case 'pods':
         this.pods = rows as Pod[]

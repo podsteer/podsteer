@@ -46,6 +46,7 @@ import TimelineView from './TimelineView.svelte'
   import EventsView from './EventsView.svelte'
   import GenericTableView from './GenericTableView.svelte'
   import OverviewView from './OverviewView.svelte'
+  import CombinedView from './CombinedView.svelte'
   import NodesView from './NodesView.svelte'
   import PodsView from './PodsView.svelte'
   import WorkloadsView from './WorkloadsView.svelte'
@@ -370,7 +371,9 @@ import TimelineView from './TimelineView.svelte'
                 ? 'Timeline'
                 : session.viewMode === 'helm'
                   ? 'Helm'
-                  : session.isList
+                  : session.viewMode === 'combined'
+                    ? 'Combined'
+                    : session.isList
                   ? (session.selectedKind?.title ?? 'Resources')
                   : session.cluster.id}
           </h2>
@@ -548,6 +551,8 @@ import TimelineView from './TimelineView.svelte'
       <TimelineView {session} />
     {:else if session.viewMode === 'helm'}
       <HelmView {session} />
+    {:else if session.viewMode === 'combined'}
+      <CombinedView {session} />
     {:else if session.viewMode === 'pods'}
       <PodsView {session} />
     {:else if session.viewMode === 'nodes'}
