@@ -1,20 +1,20 @@
 /**
- * What the combined view shows, and what it refuses to imply.
+ * What the multi-kind view shows, and what it refuses to imply.
  *
  * The claims worth pinning are the ones an operator would act on wrongly if
  * they were false: that a cell belongs to the kind its row names, that a
  * capped read says so, and that the request multiplier has a ceiling.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, cleanup, screen } from '@testing-library/svelte'
+import { render, cleanup, screen, fireEvent } from '@testing-library/svelte'
 
 vi.mock('$lib/api/client', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('$lib/api/client')
   return { ...actual, listTable: vi.fn() }
 })
 
-import CombinedView from './CombinedView.svelte'
-import { preferences, MAX_COMBINED_KINDS } from '$stores/preferences.svelte'
+import MultiKindView from './MultiKindView.svelte'
+import { preferences, MAX_MULTI_KINDS } from '$stores/preferences.svelte'
 
 const words = () => (document.body.textContent ?? '').replace(/\s+/g, ' ')
 
@@ -31,28 +31,28 @@ function session(overrides: Record<string, unknown> = {}) {
     customColumns: [],
     sort: null,
     toggleSort: () => {},
-    combinedTable: { columns: [], rows: [] },
-    combinedTables: [],
-    combinedColumnSources: () => 1,
-    combinedTruncated: false,
-    pagedCombinedRows: [],
-    sortedCombinedRows: [],
-    combinedKindTitle: (id: string) => KINDS.find((k) => k.id === id)?.title ?? id,
-    combinedKindNamespaced: () => true,
+    multiKindTable: { columns: [], rows: [] },
+    multiKindTables: [],
+    multiKindColumnSources: () => 1,
+    multiKindTruncated: false,
+    pagedMultiKindRows: [],
+    sortedMultiKindRows: [],
+    multiKindTitle: (id: string) => KINDS.find((k) => k.id === id)?.title ?? id,
+    multiKindNamespaced: () => true,
     openObject: async () => {},
     ...overrides,
   } as never
 }
 
 beforeEach(() => {
-  preferences.combinedKinds = {}
+  preferences.multiKindSelection = {}
 })
 
 afterEach(() => cleanup())
 
-describe('CombinedView', () => {
+describe('MultiKindView', () => {
   it('explains itself before any kind is chosen, rather than showing an empty table', () => {
-    render(CombinedView, { session: session() })
+    render(MultiKindView, { session: session() })
 
     const text = words()
     expect(text).toContain('Pick the kinds to show together')
@@ -62,8 +62,8 @@ describe('CombinedView', () => {
   })
 
   it('names each chosen kind with a way to remove it', () => {
-    preferences.combinedKinds = { dev: ['apps/v1/deployments', 'core/v1/services'] }
-    render(CombinedView, { session: session() })
+    preferences.multiKindSelection = { dev: ['apps/v1/deployments', 'core/v1/services'] }
+    render(MultiKindView, { session: session() })
 
     expect(screen.getByLabelText('Stop showing Deployments')).toBeTruthy()
     expect(screen.getByLabelText('Stop showing Services')).toBeTruthy()
@@ -72,10 +72,10 @@ describe('CombinedView', () => {
   it('stops offering more kinds at the cap, and says why', () => {
     // The limit is about the request rate this view costs on every tick, so
     // the sentence has to say that rather than state a bare number.
-    preferences.combinedKinds = {
-      dev: Array.from({ length: MAX_COMBINED_KINDS }, (_, i) => `k${i}`),
+    preferences.multiKindSelection = {
+      dev: Array.from({ length: MAX_MULTI_KINDS }, (_, i) => `k${i}`),
     }
-    render(CombinedView, { session: session() })
+    render(MultiKindView, { session: session() })
 
     expect(words()).toContain('another request on every refresh')
     expect(screen.queryByLabelText('Add a kind')).toBeNull()
@@ -84,14 +84,14 @@ describe('CombinedView', () => {
   it('puts each row under the kind it came from', () => {
     // The failure this prevents: a Service's row reading as a Deployment,
     // which would send an operator to the wrong object.
-    preferences.combinedKinds = { dev: ['apps/v1/deployments', 'core/v1/services'] }
-    render(CombinedView, {
+    preferences.multiKindSelection = { dev: ['apps/v1/deployments', 'core/v1/services'] }
+    render(MultiKindView, {
       session: session({
-        combinedTable: {
+        multiKindTable: {
           columns: [{ name: 'Name' }, { name: 'Age' }],
           rows: [],
         },
-        pagedCombinedRows: [
+        pagedMultiKindRows: [
           { name: 'web', namespace: 'shop', cells: ['web', '5d'], source: 'apps/v1/deployments' },
           { name: 'web', namespace: 'shop', cells: ['web', '5d'], source: 'core/v1/services' },
         ],
@@ -114,12 +114,12 @@ describe('CombinedView', () => {
   })
 
   it('says when a read was capped, because everything below it is then a prefix', () => {
-    preferences.combinedKinds = { dev: ['apps/v1/deployments'] }
-    render(CombinedView, {
+    preferences.multiKindSelection = { dev: ['apps/v1/deployments'] }
+    render(MultiKindView, {
       session: session({
-        combinedTruncated: true,
-        combinedTable: { columns: [{ name: 'Name' }], rows: [] },
-        pagedCombinedRows: [
+        multiKindTruncated: true,
+        multiKindTable: { columns: [{ name: 'Name' }], rows: [] },
+        pagedMultiKindRows: [
           { name: 'web', namespace: 'shop', cells: ['web'], source: 'apps/v1/deployments' },
         ],
       }),
@@ -130,11 +130,11 @@ describe('CombinedView', () => {
   })
 
   it('does not claim a capped read when none was capped', () => {
-    preferences.combinedKinds = { dev: ['apps/v1/deployments'] }
-    render(CombinedView, {
+    preferences.multiKindSelection = { dev: ['apps/v1/deployments'] }
+    render(MultiKindView, {
       session: session({
-        combinedTable: { columns: [{ name: 'Name' }], rows: [] },
-        pagedCombinedRows: [
+        multiKindTable: { columns: [{ name: 'Name' }], rows: [] },
+        pagedMultiKindRows: [
           { name: 'web', namespace: 'shop', cells: ['web'], source: 'apps/v1/deployments' },
         ],
       }),
@@ -144,9 +144,9 @@ describe('CombinedView', () => {
   })
 })
 
-describe('CombinedView — the merged column set', () => {
+describe('MultiKindView — the merged column set', () => {
   beforeEach(() => {
-    preferences.combinedKinds = { dev: ['apps/v1/deployments', 'core/v1/services'] }
+    preferences.multiKindSelection = { dev: ['apps/v1/deployments', 'core/v1/services'] }
   })
 
   /**
@@ -157,20 +157,20 @@ describe('CombinedView — the merged column set', () => {
    */
   it('hides a column only one kind fills, and keeps the ones they share', () => {
     const columns = (names: string[]) => names.map((name) => ({ name }))
-    render(CombinedView, {
+    render(MultiKindView, {
       session: session({
         // What the API server really prints for these two.
-        combinedTables: [
+        multiKindTables: [
           { kindId: 'apps/v1/deployments', columns: columns(['Name', 'Ready', 'Up-to-date', 'Age']) },
           { kindId: 'core/v1/services', columns: columns(['Name', 'Type', 'Cluster-IP', 'Age']) },
         ],
-        combinedTable: {
+        multiKindTable: {
           columns: columns(['Name', 'Ready', 'Up-to-date', 'Age', 'Type', 'Cluster-IP']),
           rows: [],
         },
-        combinedColumnSources: (name: string) =>
+        multiKindColumnSources: (name: string) =>
           name === 'Name' || name === 'Age' ? 2 : 1,
-        pagedCombinedRows: [
+        pagedMultiKindRows: [
           { name: 'web', namespace: 'shop', cells: ['web', '3/3', '3', '5d', '', ''], source: 'apps/v1/deployments' },
         ],
       }),
@@ -188,13 +188,13 @@ describe('CombinedView — the merged column set', () => {
   it('hides nothing when a single kind is chosen', () => {
     // With one kind there is no majority to be in a minority of, and the view
     // must behave exactly as that kind's own list does.
-    preferences.combinedKinds = { dev: ['apps/v1/deployments'] }
+    preferences.multiKindSelection = { dev: ['apps/v1/deployments'] }
     const columns = (names: string[]) => names.map((name) => ({ name }))
-    render(CombinedView, {
+    render(MultiKindView, {
       session: session({
-        combinedTable: { columns: columns(['Name', 'Ready', 'Up-to-date', 'Age']), rows: [] },
-        combinedColumnSources: () => 1,
-        pagedCombinedRows: [
+        multiKindTable: { columns: columns(['Name', 'Ready', 'Up-to-date', 'Age']), rows: [] },
+        multiKindColumnSources: () => 1,
+        pagedMultiKindRows: [
           { name: 'web', namespace: 'shop', cells: ['web', '3/3', '3', '5d'], source: 'apps/v1/deployments' },
         ],
       }),
@@ -202,5 +202,56 @@ describe('CombinedView — the merged column set', () => {
 
     const headers = [...document.querySelectorAll('thead th')].map((th) => th.textContent?.trim())
     expect(headers).toContain('Up-to-date')
+  })
+})
+
+describe('MultiKindView — keeping a set', () => {
+  beforeEach(() => {
+    preferences.pinnedKindSets = []
+  })
+
+  it('offers to keep a set once there is a combination to keep', () => {
+    preferences.multiKindSelection = { dev: ['apps/v1/deployments', 'core/v1/services'] }
+    render(MultiKindView, { session: session() })
+
+    expect(screen.getByText('Keep this set')).toBeTruthy()
+  })
+
+  it('does not offer it for a single kind', () => {
+    // One kind is not a combination, and offering to name it would teach the
+    // wrong idea about what the shelf is for.
+    preferences.multiKindSelection = { dev: ['apps/v1/deployments'] }
+    render(MultiKindView, { session: session() })
+
+    expect(screen.queryByText('Keep this set')).toBeNull()
+  })
+
+  it('keeps the chosen kinds under the typed name', async () => {
+    preferences.multiKindSelection = { dev: ['apps/v1/deployments', 'core/v1/services'] }
+    render(MultiKindView, { session: session() })
+
+    await fireEvent.click(screen.getByText('Keep this set'))
+    await fireEvent.input(screen.getByTestId('kind-set-name'), {
+      target: { value: 'Notification stack' },
+    })
+    await fireEvent.click(screen.getByLabelText('Keep this set'))
+
+    expect(preferences.pinnedKindSets).toHaveLength(1)
+    expect(preferences.pinnedKindSets[0].name).toBe('Notification stack')
+    expect(preferences.pinnedKindSets[0].kinds).toEqual([
+      'apps/v1/deployments',
+      'core/v1/services',
+    ])
+  })
+
+  it('stops offering once this set is already kept', () => {
+    // Regardless of the order the kinds were added in — see kindSetMatches.
+    preferences.multiKindSelection = { dev: ['core/v1/services', 'apps/v1/deployments'] }
+    preferences.pinnedKindSets = [
+      { id: 'x', name: 'Stack', kinds: ['apps/v1/deployments', 'core/v1/services'] },
+    ]
+    render(MultiKindView, { session: session() })
+
+    expect(screen.queryByText('Keep this set')).toBeNull()
   })
 })

@@ -22,7 +22,7 @@
     APPLICATIONS_KIND_ID,
     FLEET_KIND_ID,
     HELM_KIND_ID,
-    COMBINED_KIND_ID,
+    MULTI_KIND_ID,
     SECURITY_KIND_ID,
     OVERVIEW_KIND_ID,
     RBAC_KIND_ID,
@@ -34,6 +34,7 @@
   import { timeline } from '$stores/timeline.svelte'
   import { workspace } from '$stores/workspace.svelte'
   import { formatBadgeCount } from '$lib/format'
+  import { kindSetMatches } from '$lib/kindSets'
   import { categoryMeta, iconForKind } from '$lib/kindIcons'
   import Select from './Select.svelte'
   import {
@@ -44,6 +45,7 @@
     Clock,
     Layers,
     Rows3,
+    Bookmark,
     LayoutDashboard,
     AlertTriangle,
     Package,
@@ -98,7 +100,17 @@
   /** How much this tab has recorded, for the badge beside Timeline. */
   const timelineCount = $derived(timeline.forCluster(session.cluster.id).length)
   const onHelm = $derived(session.selectedKindId === HELM_KIND_ID)
-  const onCombined = $derived(session.selectedKindId === COMBINED_KIND_ID)
+  const onMultiKind = $derived(session.selectedKindId === MULTI_KIND_ID)
+
+  /**
+   * The kind sets the operator kept, and which one is on screen.
+   *
+   * Applied against THIS cluster's catalogue, so a set naming a kind this
+   * cluster does not serve shows what it can rather than refusing — see
+   * preferences.applyKindSet.
+   */
+  const keptSets = $derived(preferences.pinnedKindSets)
+  const chosenKinds = $derived(preferences.multiKindSelectionFor(session.cluster.id))
   const onSecurity = $derived(session.selectedKindId === SECURITY_KIND_ID)
   /** How many tabs the merged view would merge — the badge on its row. */
   const openClusters = $derived(workspace.sessions.length)
@@ -822,25 +834,72 @@
          It answers the largest measured request in this category (k9s #771,
          141 reactions): "what does this application consist of" is a question
          about Deployments AND Services AND ConfigMaps at once. See
-         COMBINED_KIND_ID. -->
+         MULTI_KIND_ID. -->
     <div class="px-1.5 pb-1">
       <button
         type="button"
-        onclick={() => session.selectKind(COMBINED_KIND_ID)}
-        aria-current={onCombined ? 'page' : undefined}
+        onclick={() => session.selectKind(MULTI_KIND_ID)}
+        aria-current={onMultiKind ? 'page' : undefined}
         class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
                transition-all duration-100 ease-standard
-               {onCombined
+               {onMultiKind
                  ? 'bg-primary/12 text-primary'
                  : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
       >
         <Rows3
           class="size-4 shrink-0 transition-colors duration-100
-                 {onCombined ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+                 {onMultiKind ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
           strokeWidth={1.8}
         />
-        <span class="flex-1 truncate text-body-medium font-medium">Combined</span>
+        <span class="flex-1 truncate text-body-medium font-medium">Multi-kind</span>
       </button>
+
+      <!--
+        THE SETS SOMEBODY KEPT, indented under the view they open. This is the
+        half that answers "what does this application consist of" — the set is
+        named once and reached in one click, instead of rebuilding the chip row
+        on every visit. OpenShift's Search page calls the same idea "Add to
+        navigation"; the shelf is capped so the navigator cannot become a list
+        of them.
+
+        A set is NOT keyed by cluster (see $lib/kindSets), so the same entry
+        appears on every tab and applies what this cluster actually serves.
+      -->
+      {#each keptSets as set (set.id)}
+        {@const current = onMultiKind && kindSetMatches(set, chosenKinds)}
+        <div class="group/set flex items-center">
+          <button
+            type="button"
+            onclick={() => {
+              preferences.applyKindSet(
+                session.cluster.id,
+                set.kinds,
+                session.kinds.map((kind) => kind.id),
+              )
+              void session.selectKind(MULTI_KIND_ID)
+            }}
+            aria-current={current ? 'page' : undefined}
+            class="flex min-w-0 flex-1 items-center gap-2 rounded-sm py-1 pr-1 pl-8 text-left
+                   transition-colors duration-100
+                   {current
+                     ? 'text-primary'
+                     : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+          >
+            <Bookmark class="size-3 shrink-0 opacity-70" strokeWidth={2} />
+            <span class="flex-1 truncate text-body-small">{set.name}</span>
+          </button>
+          <button
+            type="button"
+            class="state-layer mr-2 grid size-5 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant/60 opacity-0 transition-opacity
+                   group-hover/set:opacity-100 hover:bg-on-surface/10 hover:text-on-surface"
+            aria-label="Forget the set {set.name}"
+            onclick={() => preferences.deleteKindSet(set.id)}
+          >
+            <X class="size-3" strokeWidth={2.5} />
+          </button>
+        </div>
+      {/each}
     </div>
 
     <!-- Security posture, directly under Helm and above the rule: like Helm

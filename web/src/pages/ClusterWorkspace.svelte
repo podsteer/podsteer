@@ -46,7 +46,7 @@ import TimelineView from './TimelineView.svelte'
   import EventsView from './EventsView.svelte'
   import GenericTableView from './GenericTableView.svelte'
   import OverviewView from './OverviewView.svelte'
-  import CombinedView from './CombinedView.svelte'
+  import MultiKindView from './MultiKindView.svelte'
   import SecurityView from './SecurityView.svelte'
   import NodesView from './NodesView.svelte'
   import PodsView from './PodsView.svelte'
@@ -372,8 +372,8 @@ import TimelineView from './TimelineView.svelte'
                 ? 'Timeline'
                 : session.viewMode === 'helm'
                   ? 'Helm'
-                  : session.viewMode === 'combined'
-                    ? 'Combined'
+                  : session.viewMode === 'multi-kind'
+                    ? 'Multi-kind'
                     : session.viewMode === 'security'
                       ? 'Security'
                       : session.isList
@@ -554,8 +554,8 @@ import TimelineView from './TimelineView.svelte'
       <TimelineView {session} />
     {:else if session.viewMode === 'helm'}
       <HelmView {session} />
-    {:else if session.viewMode === 'combined'}
-      <CombinedView {session} />
+    {:else if session.viewMode === 'multi-kind'}
+      <MultiKindView {session} />
     {:else if session.viewMode === 'security'}
       <SecurityView {session} />
     {:else if session.viewMode === 'pods'}
