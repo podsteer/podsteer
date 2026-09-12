@@ -1370,10 +1370,33 @@ export class ClusterSession {
 
   readonly pagedCombinedRows = $derived(this.#slice(this.sortedCombinedRows))
 
-  /** A combined row's kind, as the navigator names it. Falls back to the raw
-      id for a kind the catalogue no longer serves, which is honest. */
-  #combinedKindLabel = (kindId: string): string =>
-    this.kinds.find((kind) => kind.id === kindId)?.title ?? kindId
+  /**
+   * A combined row's kind, SINGULAR — a row is one Deployment, not
+   * "Deployments". The navigator names the kind in the plural because it
+   * names a list; this names an object.
+   *
+   * Falls back to the plural, then to the raw id, for a kind the catalogue no
+   * longer serves. A raw id is ugly and honest; a blank cell would imply the
+   * row has no kind.
+   */
+  #combinedKindLabel = (kindId: string): string => {
+    const kind = this.kinds.find((entry) => entry.id === kindId)
+    return kind?.singular || kind?.title || kindId
+  }
+
+  /**
+   * How many of the chosen kinds print a column of this name.
+   *
+   * WHAT IT DECIDES is whether the column is worth a default position. With
+   * four kinds on screen the merged set runs to sixteen columns, twelve of
+   * which exactly one kind fills — so a Pod's STATUS ends up behind a
+   * horizontal scroll while two Deployment-only columns sit in front of it,
+   * blank on every row that is not a Deployment.
+   */
+  combinedColumnSources = (name: string): number =>
+    this.combinedTables.filter((table) =>
+      (table.columns ?? []).some((column) => column.name === name),
+    ).length
 
   /** Whether a combined row's kind carries namespaces — for its row key and
       for opening it. Absent from the catalogue is treated as namespaced,

@@ -32,6 +32,8 @@ function session(overrides: Record<string, unknown> = {}) {
     sort: null,
     toggleSort: () => {},
     combinedTable: { columns: [], rows: [] },
+    combinedTables: [],
+    combinedColumnSources: () => 1,
     combinedTruncated: false,
     pagedCombinedRows: [],
     sortedCombinedRows: [],
@@ -139,5 +141,66 @@ describe('CombinedView', () => {
     })
 
     expect(words()).not.toContain('a part of the picture')
+  })
+})
+
+describe('CombinedView — the merged column set', () => {
+  beforeEach(() => {
+    preferences.combinedKinds = { dev: ['apps/v1/deployments', 'core/v1/services'] }
+  })
+
+  /**
+   * The four kinds an operator actually picks together — Deployments, Pods,
+   * Ingresses, Services — merge to SIXTEEN columns, twelve of which exactly
+   * one kind prints. Left alone, the table arrives mostly blank and a Pod's
+   * STATUS lands seventh, behind a horizontal scroll.
+   */
+  it('hides a column only one kind fills, and keeps the ones they share', () => {
+    const columns = (names: string[]) => names.map((name) => ({ name }))
+    render(CombinedView, {
+      session: session({
+        // What the API server really prints for these two.
+        combinedTables: [
+          { kindId: 'apps/v1/deployments', columns: columns(['Name', 'Ready', 'Up-to-date', 'Age']) },
+          { kindId: 'core/v1/services', columns: columns(['Name', 'Type', 'Cluster-IP', 'Age']) },
+        ],
+        combinedTable: {
+          columns: columns(['Name', 'Ready', 'Up-to-date', 'Age', 'Type', 'Cluster-IP']),
+          rows: [],
+        },
+        combinedColumnSources: (name: string) =>
+          name === 'Name' || name === 'Age' ? 2 : 1,
+        pagedCombinedRows: [
+          { name: 'web', namespace: 'shop', cells: ['web', '3/3', '3', '5d', '', ''], source: 'apps/v1/deployments' },
+        ],
+      }),
+    })
+
+    const headers = [...document.querySelectorAll('thead th')].map((th) => th.textContent?.trim())
+    // Shared by both kinds — kept.
+    expect(headers).toContain('Name')
+    expect(headers).toContain('Age')
+    // Filled by one kind only — hidden, and one click away in the column menu.
+    expect(headers).not.toContain('Up-to-date')
+    expect(headers).not.toContain('Cluster-IP')
+  })
+
+  it('hides nothing when a single kind is chosen', () => {
+    // With one kind there is no majority to be in a minority of, and the view
+    // must behave exactly as that kind's own list does.
+    preferences.combinedKinds = { dev: ['apps/v1/deployments'] }
+    const columns = (names: string[]) => names.map((name) => ({ name }))
+    render(CombinedView, {
+      session: session({
+        combinedTable: { columns: columns(['Name', 'Ready', 'Up-to-date', 'Age']), rows: [] },
+        combinedColumnSources: () => 1,
+        pagedCombinedRows: [
+          { name: 'web', namespace: 'shop', cells: ['web', '3/3', '3', '5d'], source: 'apps/v1/deployments' },
+        ],
+      }),
+    })
+
+    const headers = [...document.querySelectorAll('thead th')].map((th) => th.textContent?.trim())
+    expect(headers).toContain('Up-to-date')
   })
 })
