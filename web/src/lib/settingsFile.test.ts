@@ -209,6 +209,16 @@ describe('what a settings file must never carry', () => {
     // machine as informative as on the first, and because the alternative to
     // carrying it is re-learning it by connecting to every cluster.
     //
+    // `combinedKinds` was argued for on 2026-09-12 and admitted. It is the
+    // same shape of fact as `pinnedKinds` in every respect: its KEYS are
+    // kubeconfig context names this file's header already discloses, and its
+    // VALUES are catalogue kind ids — "apps/v1/deployments", never the name
+    // of any object of that kind. It says which kinds an operator watches
+    // together, which is a statement about how somebody works, and it is
+    // exactly the arrangement they would want on a second machine. The reader
+    // sanitises every entry and re-applies the cap, so an imported file
+    // cannot install a set this build would refuse to ask for.
+    //
     // `savedViews` was argued for on 2026-09-08 and REFUSED. A view holds a
     // namespace and whatever was typed into the search box, and this file's
     // header promises that no pod, node, namespace or workload appears in it.
@@ -228,6 +238,7 @@ describe('what a settings file must never carry', () => {
         'clusterShellImage',
         'collapsedSections',
         'columns',
+        'combinedKinds',
         'customColumns',
         'debugImage',
         'desktopNotificationsEnabled',

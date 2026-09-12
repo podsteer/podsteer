@@ -45,6 +45,18 @@ import {
 /** Page sizes offered. 25 is the default; 100 is the ceiling. */
 export const PAGE_SIZES = [10, 25, 50, 100] as const
 
+/**
+ * How many kinds the combined view will show at once.
+ *
+ * Kubernetes has no multi-kind list call — `kubectl get pod,deploy,svc` is
+ * three requests, and so is this — so every kind here is one more request on
+ * every refresh tick. Six answers "what does this application consist of" and
+ * keeps a ten-second tick a reasonable thing to point at somebody's API
+ * server. It is a cap on a REQUEST RATE rather than a taste judgement, which
+ * is why it is enforced on read as well as on add.
+ */
+export const MAX_COMBINED_KINDS = 6
+
 /** How many rows a page holds. */
 export type PageSize = (typeof PAGE_SIZES)[number]
 
@@ -490,6 +502,17 @@ interface PersistedShape {
    */
   pinnedKinds: Record<string, string[]>
   /**
+   * The kinds the combined view shows together, per cluster, in the order
+   * the operator added them.
+   *
+   * THE SAME SHAPE OF FACT as pinnedKinds directly above — a kind id and a
+   * context name, never an object name — and it lives in the webview's own
+   * storage for the same reason. What it says is "this operator watches
+   * Deployments and Services together here", which is a statement about how
+   * somebody works rather than about what their cluster holds.
+   */
+  combinedKinds: Record<string, string[]>
+  /**
    * Context names the operator pinned on the home page, in the order they
    * pinned them.
    *
@@ -660,6 +683,7 @@ const DEFAULTS: PersistedShape = {
   showManagedFields: false,
   namespaceByCluster: {},
   pinnedKinds: {},
+  combinedKinds: {},
   pinnedClusters: [],
   clusterDistributions: {},
   savedViews: [],
@@ -746,6 +770,9 @@ export interface ExportedPreferences {
   showManagedFields: boolean
   /** clusterId -> pinned kind ids. A CONTEXT NAME and catalogue ids only. */
   pinnedKinds: Record<string, string[]>
+  /** clusterId -> the kinds shown together in the combined view. Same shape
+      of fact as pinnedKinds, and subject to the same rule: no object names. */
+  combinedKinds: Record<string, string[]>
   /**
    * Keyboard shortcuts the operator rebound, by shortcut id.
    *
@@ -845,6 +872,7 @@ class Preferences {
 
   /** clusterId -> pinned kind ids, in the order pinned. See the shape above. */
   pinnedKinds = $state<Record<string, string[]>>({})
+  combinedKinds = $state<Record<string, string[]>>({})
   /** Starred context names, in the order they were pinned. */
   pinnedClusters = $state<string[]>([])
   /** What each context turned out to be, by context name. See the shape above. */
@@ -1169,6 +1197,47 @@ class Preferences {
     }
     this.#save()
   }
+
+  /**
+   * The kinds the combined view is showing for one cluster.
+   *
+   * ORDER IS THE OPERATOR'S. It decides which kind's columns claim a position
+   * in the merged table first — see mergeTables — so reordering it is a
+   * visible act and nothing here reorders it behind their back.
+   */
+  combinedKindsFor = (clusterId: string): string[] => this.combinedKinds[clusterId] ?? []
+
+  /**
+   * Adds a kind to the combined view, appended after the ones already there.
+   *
+   * CAPPED, AND THE CAP IS THE POINT. Kubernetes has no multi-kind list call,
+   * so each kind here is one more request on every refresh tick — the same
+   * arithmetic `kubectl get pod,deploy,svc` does, made visible because this
+   * one repeats. Six is enough to answer "what does this app consist of" and
+   * few enough that a ten-second tick stays a reasonable thing to point at
+   * somebody's API server.
+   */
+  addCombinedKind = (clusterId: string, kindId: string): void => {
+    const existing = this.combinedKindsFor(clusterId)
+    if (existing.includes(kindId) || existing.length >= MAX_COMBINED_KINDS) return
+    this.combinedKinds = { ...this.combinedKinds, [clusterId]: [...existing, kindId] }
+    this.#save()
+  }
+
+  /** Removes a kind. Not present is not an error — removing is idempotent. */
+  removeCombinedKind = (clusterId: string, kindId: string): void => {
+    const existing = this.combinedKindsFor(clusterId)
+    if (!existing.includes(kindId)) return
+    this.combinedKinds = {
+      ...this.combinedKinds,
+      [clusterId]: existing.filter((id) => id !== kindId),
+    }
+    this.#save()
+  }
+
+  /** Whether another kind can still be added — see addCombinedKind's cap. */
+  canAddCombinedKind = (clusterId: string): boolean =>
+    this.combinedKindsFor(clusterId).length < MAX_COMBINED_KINDS
 
   // --- What each cluster turned out to be -------------------------------------
 
@@ -1672,6 +1741,7 @@ class Preferences {
     wrapLines: this.wrapLines,
     showManagedFields: this.showManagedFields,
     pinnedKinds: plainCopy(this.pinnedKinds),
+    combinedKinds: plainCopy(this.combinedKinds),
     clusterDistributions: plainCopy(this.clusterDistributions),
     pinnedClusters: [...this.pinnedClusters],
     shortcutBindings: plainCopy(this.shortcutBindings),
@@ -1718,6 +1788,7 @@ class Preferences {
     this.wrapLines = next.wrapLines
     this.showManagedFields = next.showManagedFields
     this.pinnedKinds = plainCopy(next.pinnedKinds)
+    this.combinedKinds = plainCopy(next.combinedKinds ?? {})
     this.clusterDistributions = plainCopy(next.clusterDistributions)
     this.pinnedClusters = [...next.pinnedClusters]
     this.shortcutBindings = plainCopy(next.shortcutBindings)
@@ -1827,6 +1898,22 @@ class Preferences {
           }
         }
         this.pinnedKinds = cleaned
+      }
+      // Same sanitising as pinnedKinds directly above, and for the same
+      // reason: a hand-edited entry must not put anything other than a kind
+      // id into a list this application then asks the API server for. The cap
+      // is re-applied on READ as well as on add, so a file naming twenty
+      // kinds does not become twenty requests a tick.
+      if (stored.combinedKinds && typeof stored.combinedKinds === 'object') {
+        const cleaned: Record<string, string[]> = {}
+        for (const [clusterId, ids] of Object.entries(stored.combinedKinds)) {
+          if (Array.isArray(ids)) {
+            cleaned[clusterId] = ids
+              .filter((id): id is string => typeof id === 'string')
+              .slice(0, MAX_COMBINED_KINDS)
+          }
+        }
+        this.combinedKinds = cleaned
       }
       if (Array.isArray(stored.pinnedClusters)) {
         this.pinnedClusters = stored.pinnedClusters.filter(
@@ -1987,6 +2074,7 @@ class Preferences {
         showManagedFields: this.showManagedFields,
         namespaceByCluster: this.namespaceByCluster,
         pinnedKinds: this.pinnedKinds,
+        combinedKinds: this.combinedKinds,
         clusterDistributions: this.clusterDistributions,
         pinnedClusters: this.pinnedClusters,
         savedViews: this.savedViews,
@@ -2088,6 +2176,7 @@ export const EXPORTED_PREFERENCE_FIELDS = [
   'wrapLines',
   'showManagedFields',
   'pinnedKinds',
+  'combinedKinds',
   'clusterDistributions',
   'pinnedClusters',
   'shortcutBindings',
@@ -2242,6 +2331,7 @@ const PREFERENCE_READERS: {
   wrapLines: asBoolean,
   showManagedFields: asBoolean,
   pinnedKinds: asRecordOf(asStringArray),
+  combinedKinds: asRecordOf(asStringArray),
   clusterDistributions: asRecordOf(asNonEmptyString),
   pinnedClusters: asStringArray,
   // Read one at a time by the same function storage goes through, so an
@@ -2417,6 +2507,7 @@ const PREFERENCE_LABELS: Record<keyof ExportedPreferences, { label: string; unit
   wrapLines: { label: 'Wrap long lines' },
   showManagedFields: { label: 'Show managed fields' },
   pinnedKinds: { label: 'Pinned kinds', unit: 'clusters' },
+  combinedKinds: { label: 'Combined kinds', unit: 'clusters' },
   clusterDistributions: { label: 'What each cluster is', unit: 'clusters' },
   pinnedClusters: { label: 'Pinned clusters', unit: 'clusters' },
   shortcutBindings: { label: 'Rebound keyboard shortcuts', unit: 'shortcuts' },
