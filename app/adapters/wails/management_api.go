@@ -668,6 +668,26 @@ func (m *ManagementAPI) ApplyResource(
 	return toApplyOutcome(outcome), nil
 }
 
+// FieldOwnership decodes an object's metadata.managedFields into a readable
+// ledger — who owns which field, with the paths spelled the way a conflict
+// spells them.
+//
+// NO CLUSTER ID AND NO ROUND TRIP TO ANYTHING. The frontend already holds the
+// manifest; this hands it back decoded. It is bound rather than done in
+// TypeScript so that ClassifyManager's table stays the one table — a second
+// copy in the frontend would be a second thing to keep current — and so that
+// the field paths come from the same library that writes them.
+//
+// Allowed on a read-only cluster, because it is not a write and not even a
+// read of one.
+func (m *ManagementAPI) FieldOwnership(manifest string) ([]FieldOwnerDTO, error) {
+	ownership, err := m.management.FieldOwnership(manifest)
+	if err != nil {
+		return nil, apiError(m.logger, "FieldOwnership", err)
+	}
+	return toFieldOwnership(ownership), nil
+}
+
 // ValidateResource is UpdateResource's dry run: the manifest is sent through
 // the same generic apply path with DryRun=All, so the API server runs every
 // admission check (schema validation, webhooks) without persisting anything.

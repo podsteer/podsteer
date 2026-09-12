@@ -462,6 +462,21 @@ func (s *ManagementService) ApplyResource(
 // SetSecretKey checks domain.ValidDataKey: a malformed value becomes a local,
 // immediate refusal instead of a 422 from the API server naming a field the
 // operator cannot see.
+
+// FieldOwnership decodes an object's metadata.managedFields into a readable
+// ledger. See ports.ManagementPort.FieldOwnership.
+//
+// NOT GUARDED BY THE READ-ONLY CHECK, and not logged. It reaches no cluster
+// and changes nothing — it reads bytes the caller already has — so guarding
+// it would refuse a read, and logging it would write a line every time
+// somebody flips a toggle.
+func (s *ManagementService) FieldOwnership(manifest string) (domain.FieldOwnership, error) {
+	if manifest == "" {
+		return nil, nil
+	}
+	return s.management.FieldOwnership(manifest)
+}
+
 func (s *ManagementService) SetImage(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name, container, image string, initContainer bool) error {
 	if err := s.refuseIfReadOnly(id); err != nil {
 		return err

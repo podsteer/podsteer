@@ -1480,6 +1480,49 @@ export interface FieldConflictDTO {
 }
 
 /**
+ * FieldOwnerDTO is one manager's entry in an object's ownership ledger.
+ * 
+ * THE SAME VOCABULARY AS FieldConflictDTO, deliberately: the same Kind
+ * strings, and field paths spelled the same way because both are produced by
+ * the library the API server itself writes conflict messages with. An
+ * operator reading "argocd-controller owns .spec.replicas" in the panel and
+ * "conflict with argocd-controller over .spec.replicas" in a dialog is being
+ * told the same thing twice, and it should look like it.
+ */
+export interface FieldOwnerDTO {
+    /**
+     * Manager is the field manager's name, as the server recorded it.
+     */
+    "manager": string;
+
+    /**
+     * Kind is what sort of owner it is — the same set FieldConflictDTO uses.
+     */
+    "kind": string;
+
+    /**
+     * Operation is "Apply" or "Update". One name can be two managers: the
+     * server keys an entry on name AND operation.
+     */
+    "operation": string;
+
+    /**
+     * Subresource is "status", "scale", or empty for the object itself.
+     */
+    "subresource": string;
+
+    /**
+     * UpdatedAt is when this manager last wrote, RFC 3339, or empty.
+     */
+    "updatedAt": string;
+
+    /**
+     * Fields are the decoded paths this entry owns, sorted.
+     */
+    "fields": string[] | null;
+}
+
+/**
  * Finding is one problem, aggregated across the objects it affects.
  */
 export interface Finding {

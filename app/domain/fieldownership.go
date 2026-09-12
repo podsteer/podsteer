@@ -211,3 +211,64 @@ type ApplyOptions struct {
 	// CoveredBy.
 	Confirmed FieldConflicts
 }
+
+// FieldOwner is one manager's entry in an object's ownership ledger.
+//
+// THE LEDGER IS ALREADY THERE, in metadata.managedFields, and it is already
+// shown — as `f:spec: {f:template: {f:spec: {f:containers: {k:{"name":"web"}`,
+// which is the API server's storage format and not a sentence anybody reads.
+// This is the same record with the paths decoded and the manager classified,
+// so the question it answers — who put this here — can be answered by looking
+// rather than by parsing.
+//
+// SEPARATE FROM FieldConflict on purpose. A conflict is one field an apply
+// was refused over: a live event, with a decision attached. This is the
+// standing state of an object nobody is writing to. They share ManagerKind
+// because the classification is the same question, and they share the path
+// format because both come out of the same library the API server itself
+// uses — see the adapter.
+type FieldOwner struct {
+	// Manager is the field manager's name, exactly as the server recorded it.
+	Manager string
+	// Kind is what ClassifyManager made of Manager.
+	Kind ManagerKind
+	// Operation is "Apply" or "Update".
+	//
+	// CARRIED BECAUSE ONE NAME CAN BE TWO MANAGERS. The server keys an entry
+	// on name AND operation, so `podsteer`/Update and `podsteer`/Apply are
+	// two rows that can hold different fields and conflict with each other —
+	// which is exactly the trap ApplyResource resolves. Collapsing the two
+	// here would hide the reason a conflict exists.
+	Operation string
+	// Subresource is "status", "scale" or empty for the object itself. An
+	// entry against a subresource owns fields nobody writing the object can
+	// set.
+	Subresource string
+	// UpdatedAt is when this manager last wrote, RFC3339, or empty when the
+	// server recorded no time.
+	UpdatedAt string
+	// Fields are the decoded paths this entry owns, sorted, in the same
+	// notation a conflict uses: `.spec.template.spec.containers[name="web"].image`.
+	Fields []string
+}
+
+// FieldOwnership is an object's whole ledger, one entry per manager entry.
+type FieldOwnership []FieldOwner
+
+// Managers returns the distinct manager names, in the order first seen.
+//
+// Distinct by NAME, so the two operations of one manager count once: this
+// answers "who has written to this object", which is a question about people
+// and controllers rather than about the server's bookkeeping.
+func (o FieldOwnership) Managers() []string {
+	seen := make(map[string]bool, len(o))
+	names := make([]string, 0, len(o))
+	for _, owner := range o {
+		if seen[owner.Manager] {
+			continue
+		}
+		seen[owner.Manager] = true
+		names = append(names, owner.Manager)
+	}
+	return names
+}
