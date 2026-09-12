@@ -102,7 +102,7 @@ downloads with a little more context.
 - Node.js 20+
 - The [Wails v3 CLI](https://v3.wails.io), pinned to the beta this repository
   builds against:
-  `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16`
+  `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.18`
 - A kubeconfig at `$KUBECONFIG` or `~/.kube/config`
 
 &nbsp;
@@ -316,7 +316,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 [Website](https://podsteer.com) &nbsp;|&nbsp; [LinkedIn](https://www.linkedin.com/company/podsteer) &nbsp;|&nbsp; [BlueSky](https://bsky.app/profile/podsteer.com) &nbsp;|&nbsp; [GitHub](https://github.com/podsteer)
 
-A [Cloudresty](https://cloudresty.com/) project
+<sub>A [Cloudresty](https://cloudresty.com/) project</sub>
 
 <sub>&copy; PodSteer</sub>
 
