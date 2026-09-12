@@ -316,8 +316,6 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 [Website](https://podsteer.com) &nbsp;|&nbsp; [LinkedIn](https://www.linkedin.com/company/podsteer) &nbsp;|&nbsp; [BlueSky](https://bsky.app/profile/podsteer.com) &nbsp;|&nbsp; [GitHub](https://github.com/podsteer)
 
-<sub>A [Cloudresty](https://cloudresty.com/) project</sub>
-
-<sub>&copy; PodSteer</sub>
+<sub>&copy; PodSteer - A [Cloudresty](https://cloudresty.com/) project</sub>
 
 &nbsp;
