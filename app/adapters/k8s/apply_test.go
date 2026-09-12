@@ -707,6 +707,28 @@ func seedOtherManager(t *testing.T, dynClient dynamic.Interface, replicas int64,
 	}
 }
 
+// seedEditorWrite is PodSteer's OWN earlier write, made the way the editor
+// makes it: a PUT under the podsteer manager.
+//
+// The operation is the whole point. Seeding this with Apply would record
+// podsteer/Apply, which is the same manager entry the apply verb writes
+// under, so nothing would conflict and a test built on it would pass with the
+// resolution removed. The split only exists between operations.
+func seedEditorWrite(t *testing.T, dynClient dynamic.Interface, replicas int64) {
+	t.Helper()
+
+	ours := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata":   map[string]any{"name": "web", "namespace": "default"},
+		"spec":       map[string]any{"replicas": replicas},
+	}}
+	if _, err := dynClient.Resource(deploymentGVR).Namespace("default").
+		Update(context.Background(), ours, metav1.UpdateOptions{FieldManager: fieldManager}); err != nil {
+		t.Fatalf("seeding podsteer's editor write: %v", err)
+	}
+}
+
 const replicaManifest = "apiVersion: apps/v1\n" +
 	"kind: Deployment\n" +
 	"metadata:\n" +
@@ -960,5 +982,102 @@ func TestDecodeManifestKeepsIntegersAsIntegers(t *testing.T) {
 	}
 	if replicas != 5 {
 		t.Errorf("spec.replicas = %d, want 5", replicas)
+	}
+}
+
+// TestApplyResourceResolvesAConflictWithItsOwnEarlierEdit is increment 3, and
+// it is not hypothetical: a live cluster showed `podsteer` co-owning a
+// container image beside argocd-controller, because a forced apply had run.
+//
+// PodSteer writes under one manager NAME but two OPERATIONS — the editor PUTs
+// as podsteer/Update, the apply verb applies as podsteer/Apply — and the
+// server treats those as two managers. So editing an object and then applying
+// a manifest over it asked the operator to take a field from PodSteer.
+func TestApplyResourceResolvesAConflictWithItsOwnEarlierEdit(t *testing.T) {
+	existing := newSeedObject("apps/v1", "Deployment", "default", "web", "10")
+	dynClient := applyFakeClient(t, existing)
+	// PodSteer's own earlier write, as the EDITOR makes it: a PUT.
+	seedEditorWrite(t, dynClient, 10)
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
+
+	outcome, err := adapter.ApplyResource(context.Background(), "dev", replicaManifest, domain.ApplyOptions{})
+	if err != nil {
+		t.Fatalf("ApplyResource() error = %v", err)
+	}
+	if outcome.Refused() {
+		t.Fatalf("asked the operator to take a field from PodSteer: %+v", outcome.Conflicts)
+	}
+
+	stored, err := dynClient.Resource(deploymentGVR).Namespace("default").
+		Get(context.Background(), "web", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting the object back: %v", err)
+	}
+	replicas, _, _ := unstructured.NestedInt64(stored.Object, "spec", "replicas")
+	if replicas != 3 {
+		t.Errorf("spec.replicas = %d, want 3 — the self-conflict was not resolved", replicas)
+	}
+}
+
+// TestApplyResourceStillAsksWhenOneForeignManagerIsInTheSet is the other half,
+// and the more important one.
+//
+// A live cluster produced exactly this shape: .image owned by BOTH
+// argocd-controller and podsteer. An operator must never have a field taken
+// from Argo CD because PodSteer happened to own something else in the same
+// apply.
+func TestApplyResourceStillAsksWhenOneForeignManagerIsInTheSet(t *testing.T) {
+	existing := newSeedObject("apps/v1", "Deployment", "default", "web", "10")
+	dynClient := applyFakeClient(t, existing)
+	seedOtherManager(t, dynClient, 10, "argocd-controller")
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
+
+	outcome, err := adapter.ApplyResource(context.Background(), "dev", replicaManifest, domain.ApplyOptions{})
+	if err != nil {
+		t.Fatalf("ApplyResource() error = %v", err)
+	}
+	if !outcome.Refused() {
+		t.Fatal("a field owned by argocd-controller was taken without asking")
+	}
+	if !outcome.Conflicts.AllOwnedBy(domain.ManagerGitOps) {
+		t.Errorf("Conflicts = %+v, want the GitOps owner named", outcome.Conflicts)
+	}
+
+	stored, err := dynClient.Resource(deploymentGVR).Namespace("default").
+		Get(context.Background(), "web", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting the object back: %v", err)
+	}
+	replicas, _, _ := unstructured.NestedInt64(stored.Object, "spec", "replicas")
+	if replicas != 10 {
+		t.Errorf("spec.replicas = %d, want 10 — a refused apply must not have written", replicas)
+	}
+}
+
+// TestApplyResourceDryRunNeverResolvesASelfConflict — a dry run's promise is
+// that nothing is written, and a self-conflict resolution is a write.
+func TestApplyResourceDryRunNeverResolvesASelfConflict(t *testing.T) {
+	existing := newSeedObject("apps/v1", "Deployment", "default", "web", "10")
+	dynClient := applyFakeClient(t, existing)
+	seedEditorWrite(t, dynClient, 10)
+	adapter := newApplyTestAdapter("dev", dynClient, testRESTMapper())
+
+	outcome, err := adapter.ApplyResource(context.Background(), "dev", replicaManifest,
+		domain.ApplyOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("ApplyResource(dryRun) error = %v", err)
+	}
+	if !outcome.Refused() {
+		t.Fatal("a dry run resolved a self-conflict — it must report, not act")
+	}
+
+	stored, err := dynClient.Resource(deploymentGVR).Namespace("default").
+		Get(context.Background(), "web", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting the object back: %v", err)
+	}
+	replicas, _, _ := unstructured.NestedInt64(stored.Object, "spec", "replicas")
+	if replicas != 10 {
+		t.Errorf("spec.replicas = %d, want 10 — a dry run wrote", replicas)
 	}
 }
