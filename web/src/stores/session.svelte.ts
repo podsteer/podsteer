@@ -355,6 +355,29 @@ export const HELM_KIND_ID = 'podsteer/helm'
  */
 export const COMBINED_KIND_ID = 'podsteer/combined'
 
+/**
+ * The security posture page, the EIGHTH pinned pseudo-entry.
+ *
+ * NOT A KIND, and here the reason is sharper than it is for the seven before
+ * it: there is no object to GET called "posture", and there is no scanner to
+ * ask either. The page is an ASSEMBLY of facts PodSteer already holds — the
+ * privileges a workload's own spec takes (domain/security_findings.go) and
+ * whatever a scanner the operator installed has already written into its own
+ * CRDs — so a catalogue entry would offer it to every consumer that expects
+ * to be able to fetch what it names, and none of them could.
+ *
+ * PODSTEER SCANS NOTHING, and the page says so in its own words rather than
+ * relying on this comment. See SecurityView, and vulnerability.go for why
+ * owning CVE data is a business this project stays out of.
+ *
+ * IT FETCHES NOTHING ON THE TICK. The static findings ride the assessment
+ * that runs under every view anyway; the scanner read is one bounded call
+ * per cluster, cached in $stores/vulnerabilities and in Go behind it. A
+ * cluster-wide LIST of VulnerabilityReports every ten seconds would be the
+ * Helm page's audit problem with a bigger list.
+ */
+export const SECURITY_KIND_ID = 'podsteer/security'
+
 export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
 
 /** Kind ids PodSteer renders with purpose-built columns rather than generically. */
@@ -411,6 +434,7 @@ export type ViewMode =
   | 'timeline'
   | 'helm'
   | 'combined'
+  | 'security'
   | 'pods'
   | 'nodes'
   | 'events'
@@ -837,6 +861,7 @@ export class ClusterSession {
     if (id === TIMELINE_KIND_ID) return 'timeline'
     if (id === HELM_KIND_ID) return 'helm'
     if (id === COMBINED_KIND_ID) return 'combined'
+    if (id === SECURITY_KIND_ID) return 'security'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
     if (id === RICH_KIND_IDS.events) return 'events'
@@ -847,7 +872,9 @@ export class ClusterSession {
 
   /** Whether the selected kind carries namespaces. */
   readonly isNamespaced = $derived(
-    this.viewMode === 'overview' || this.viewMode === 'timeline'
+    this.viewMode === 'overview' ||
+    this.viewMode === 'timeline' ||
+    this.viewMode === 'security'
       ? false
       : (this.selectedKind?.namespaced ?? true),
   )
@@ -864,12 +891,18 @@ export class ClusterSession {
    * owns its own refresh (the toolbar's would poll `list secrets`), and there
    * is nothing on it a bulk action could act on — no release is an object the
    * management port can delete.
+   *
+   * The security page is a fourth: it is an assembly of findings and of what
+   * a scanner already wrote, which is an assessment in the overview's sense
+   * rather than a list of objects — and the objects it names live in the
+   * lists it links to, where a bulk action can honestly reach them.
    */
   readonly isList = $derived(
     this.viewMode !== 'overview' &&
       this.viewMode !== 'rbac' &&
       this.viewMode !== 'timeline' &&
-      this.viewMode !== 'helm',
+      this.viewMode !== 'helm' &&
+      this.viewMode !== 'security',
   )
 
   /**
@@ -1188,6 +1221,7 @@ export class ClusterSession {
       case 'rbac':
       case 'timeline':
       case 'helm':
+      case 'security':
         return 0
       case 'pods':
         return this.visiblePods.length
@@ -2298,6 +2332,16 @@ export class ClusterSession {
         // without anything here asking. See decision 6 in
         // podsteer/business-docs.
         return Promise.resolve(null)
+      case 'security':
+        // NOTHING, and for both of the reasons above at once. The static
+        // posture findings ride the assessment that runs under every view
+        // anyway — this tick would be asking a second time for something the
+        // tab already has — and the scanner half is a CLUSTER-WIDE list of
+        // VulnerabilityReports, which on a timer is the Helm page's audit
+        // problem over a bigger collection. The page reads once when it
+        // opens; $stores/vulnerabilities holds it, and the Go adapter holds
+        // it behind that.
+        return Promise.resolve(null)
       // Every list carries the kind's annotation projection — the keys on
       // its custom columns — and nothing else of the annotation map. See
       // $lib/customColumns and the client's listNamespaceSummaries note.
@@ -2410,6 +2454,11 @@ export class ClusterSession {
         break
       case 'combined':
         this.combinedTables = rows as ResourceTable[]
+        break
+      case 'security':
+        // Nothing to hold: the findings live on the assessment, which the
+        // overview's own case adopts, and the scanner read lives in
+        // $stores/vulnerabilities where the page put it.
         break
       case 'pods':
         this.pods = rows as Pod[]
