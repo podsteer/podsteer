@@ -209,7 +209,7 @@ describe('what a settings file must never carry', () => {
     // machine as informative as on the first, and because the alternative to
     // carrying it is re-learning it by connecting to every cluster.
     //
-    // `combinedKinds` was argued for on 2026-09-12 and admitted. It is the
+    // `multiKindSelection` was argued for on 2026-09-12 and admitted. It is the
     // same shape of fact as `pinnedKinds` in every respect: its KEYS are
     // kubeconfig context names this file's header already discloses, and its
     // VALUES are catalogue kind ids — "apps/v1/deployments", never the name
@@ -238,7 +238,7 @@ describe('what a settings file must never carry', () => {
         'clusterShellImage',
         'collapsedSections',
         'columns',
-        'combinedKinds',
+        'multiKindSelection',
         'customColumns',
         'debugImage',
         'desktopNotificationsEnabled',

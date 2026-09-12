@@ -29,6 +29,7 @@ import {
   type SavedView,
   type ViewState,
 } from '$lib/savedViews'
+import { kindSetId, cleanKindSetName, MAX_KIND_SETS, type KindSet } from '$lib/kindSets'
 import { readBinding, type Binding } from '$lib/shortcutBinding'
 import { customColumnId, normaliseSpecs, type CustomColumnSpec } from '$lib/customColumns'
 import { EDGE_COLUMNS, type EdgeColumn } from '$lib/fixedColumns'
@@ -46,7 +47,7 @@ import {
 export const PAGE_SIZES = [10, 25, 50, 100] as const
 
 /**
- * How many kinds the combined view will show at once.
+ * How many kinds the multi-kind view will show at once.
  *
  * Kubernetes has no multi-kind list call — `kubectl get pod,deploy,svc` is
  * three requests, and so is this — so every kind here is one more request on
@@ -55,7 +56,7 @@ export const PAGE_SIZES = [10, 25, 50, 100] as const
  * server. It is a cap on a REQUEST RATE rather than a taste judgement, which
  * is why it is enforced on read as well as on add.
  */
-export const MAX_COMBINED_KINDS = 6
+export const MAX_MULTI_KINDS = 6
 
 /** How many rows a page holds. */
 export type PageSize = (typeof PAGE_SIZES)[number]
@@ -502,7 +503,7 @@ interface PersistedShape {
    */
   pinnedKinds: Record<string, string[]>
   /**
-   * The kinds the combined view shows together, per cluster, in the order
+   * The kinds the multi-kind view shows together, per cluster, in the order
    * the operator added them.
    *
    * THE SAME SHAPE OF FACT as pinnedKinds directly above — a kind id and a
@@ -511,7 +512,7 @@ interface PersistedShape {
    * Deployments and Services together here", which is a statement about how
    * somebody works rather than about what their cluster holds.
    */
-  combinedKinds: Record<string, string[]>
+  multiKindSelection: Record<string, string[]>
   /**
    * Context names the operator pinned on the home page, in the order they
    * pinned them.
@@ -542,6 +543,12 @@ interface PersistedShape {
    * and, more to the point, what it deliberately does not.
    */
   savedViews: SavedView[]
+  /**
+   * Kind sets the operator named and kept, for the multi-kind view. See
+   * $lib/kindSets — and note it is excluded from the settings export for the
+   * same reason savedViews is: the kind ids are safe, the NAME is not.
+   */
+  pinnedKindSets: KindSet[]
   /**
    * Keyboard shortcuts the operator rebound, by shortcut id.
    *
@@ -683,10 +690,11 @@ const DEFAULTS: PersistedShape = {
   showManagedFields: false,
   namespaceByCluster: {},
   pinnedKinds: {},
-  combinedKinds: {},
+  multiKindSelection: {},
   pinnedClusters: [],
   clusterDistributions: {},
   savedViews: [],
+  pinnedKindSets: [],
   shortcutBindings: {},
   localPortByRemotePort: {},
   localPortByPortName: {},
@@ -770,9 +778,9 @@ export interface ExportedPreferences {
   showManagedFields: boolean
   /** clusterId -> pinned kind ids. A CONTEXT NAME and catalogue ids only. */
   pinnedKinds: Record<string, string[]>
-  /** clusterId -> the kinds shown together in the combined view. Same shape
+  /** clusterId -> the kinds shown together in the multi-kind view. Same shape
       of fact as pinnedKinds, and subject to the same rule: no object names. */
-  combinedKinds: Record<string, string[]>
+  multiKindSelection: Record<string, string[]>
   /**
    * Keyboard shortcuts the operator rebound, by shortcut id.
    *
@@ -872,13 +880,14 @@ class Preferences {
 
   /** clusterId -> pinned kind ids, in the order pinned. See the shape above. */
   pinnedKinds = $state<Record<string, string[]>>({})
-  combinedKinds = $state<Record<string, string[]>>({})
+  multiKindSelection = $state<Record<string, string[]>>({})
   /** Starred context names, in the order they were pinned. */
   pinnedClusters = $state<string[]>([])
   /** What each context turned out to be, by context name. See the shape above. */
   clusterDistributions = $state<Record<string, string>>({})
   /** Named views, in the order they were saved. */
   savedViews = $state<SavedView[]>([])
+  pinnedKindSets = $state<KindSet[]>([])
   /** Rebound keyboard shortcuts, by shortcut id. Only the overrides. */
   shortcutBindings = $state<Record<string, Binding>>({})
 
@@ -1199,16 +1208,16 @@ class Preferences {
   }
 
   /**
-   * The kinds the combined view is showing for one cluster.
+   * The kinds the multi-kind view is showing for one cluster.
    *
    * ORDER IS THE OPERATOR'S. It decides which kind's columns claim a position
    * in the merged table first — see mergeTables — so reordering it is a
    * visible act and nothing here reorders it behind their back.
    */
-  combinedKindsFor = (clusterId: string): string[] => this.combinedKinds[clusterId] ?? []
+  multiKindSelectionFor = (clusterId: string): string[] => this.multiKindSelection[clusterId] ?? []
 
   /**
-   * Adds a kind to the combined view, appended after the ones already there.
+   * Adds a kind to the multi-kind view, appended after the ones already there.
    *
    * CAPPED, AND THE CAP IS THE POINT. Kubernetes has no multi-kind list call,
    * so each kind here is one more request on every refresh tick — the same
@@ -1217,27 +1226,27 @@ class Preferences {
    * few enough that a ten-second tick stays a reasonable thing to point at
    * somebody's API server.
    */
-  addCombinedKind = (clusterId: string, kindId: string): void => {
-    const existing = this.combinedKindsFor(clusterId)
-    if (existing.includes(kindId) || existing.length >= MAX_COMBINED_KINDS) return
-    this.combinedKinds = { ...this.combinedKinds, [clusterId]: [...existing, kindId] }
+  addMultiKind = (clusterId: string, kindId: string): void => {
+    const existing = this.multiKindSelectionFor(clusterId)
+    if (existing.includes(kindId) || existing.length >= MAX_MULTI_KINDS) return
+    this.multiKindSelection = { ...this.multiKindSelection, [clusterId]: [...existing, kindId] }
     this.#save()
   }
 
   /** Removes a kind. Not present is not an error — removing is idempotent. */
-  removeCombinedKind = (clusterId: string, kindId: string): void => {
-    const existing = this.combinedKindsFor(clusterId)
+  removeMultiKind = (clusterId: string, kindId: string): void => {
+    const existing = this.multiKindSelectionFor(clusterId)
     if (!existing.includes(kindId)) return
-    this.combinedKinds = {
-      ...this.combinedKinds,
+    this.multiKindSelection = {
+      ...this.multiKindSelection,
       [clusterId]: existing.filter((id) => id !== kindId),
     }
     this.#save()
   }
 
-  /** Whether another kind can still be added — see addCombinedKind's cap. */
-  canAddCombinedKind = (clusterId: string): boolean =>
-    this.combinedKindsFor(clusterId).length < MAX_COMBINED_KINDS
+  /** Whether another kind can still be added — see addMultiKind's cap. */
+  canAddMultiKind = (clusterId: string): boolean =>
+    this.multiKindSelectionFor(clusterId).length < MAX_MULTI_KINDS
 
   // --- What each cluster turned out to be -------------------------------------
 
@@ -1328,6 +1337,70 @@ class Preferences {
   deleteView = (id: string): void => {
     if (!this.savedViews.some((view) => view.id === id)) return
     this.savedViews = this.savedViews.filter((view) => view.id !== id)
+    this.#save()
+  }
+
+  // --- Kind sets for the multi-kind view -------------------------------------
+
+  /**
+   * Keeps the kinds currently chosen under a name, or renames the set already
+   * called that.
+   *
+   * SAME NAME MEANS SAME SET, as it does for a saved view: an operator typing
+   * a name they have used before is correcting that set, not making a second
+   * one they will then have to tell apart.
+   *
+   * Returns null when the name is empty or the shelf is full, so the caller
+   * can say which — a control that silently does nothing is the shape this
+   * codebase refuses.
+   */
+  saveKindSet = (name: string, kinds: readonly string[]): KindSet | null => {
+    const cleaned = cleanKindSetName(name)
+    if (!cleaned || kinds.length === 0) return null
+
+    const existing = this.pinnedKindSets.find(
+      (set) => set.name.toLowerCase() === cleaned.toLowerCase(),
+    )
+    if (existing) {
+      const updated = { ...existing, name: cleaned, kinds: [...kinds] }
+      this.pinnedKindSets = this.pinnedKindSets.map((set) =>
+        set.id === existing.id ? updated : set,
+      )
+      this.#save()
+      return updated
+    }
+
+    if (this.pinnedKindSets.length >= MAX_KIND_SETS) return null
+
+    const set: KindSet = {
+      id: kindSetId(cleaned, this.pinnedKindSets.map((entry) => entry.id)),
+      name: cleaned,
+      kinds: [...kinds],
+    }
+    this.pinnedKindSets = [...this.pinnedKindSets, set]
+    this.#save()
+    return set
+  }
+
+  /** Forgets a set. Not present is not an error. */
+  deleteKindSet = (id: string): void => {
+    if (!this.pinnedKindSets.some((set) => set.id === id)) return
+    this.pinnedKindSets = this.pinnedKindSets.filter((set) => set.id !== id)
+    this.#save()
+  }
+
+  /**
+   * Applies a set to one cluster, dropping kinds it does not serve.
+   *
+   * SKIPPED, NOT REFUSED. A set saved against a cluster running cert-manager
+   * applied to one that does not should show what it can, the way the
+   * navigator skips a pinned kind whose operator was uninstalled. The cap is
+   * re-applied because a set saved before the cap changed must not become
+   * more requests a tick than the cap allows.
+   */
+  applyKindSet = (clusterId: string, kinds: readonly string[], served: readonly string[]): void => {
+    const usable = kinds.filter((kind) => served.includes(kind)).slice(0, MAX_MULTI_KINDS)
+    this.multiKindSelection = { ...this.multiKindSelection, [clusterId]: usable }
     this.#save()
   }
 
@@ -1741,7 +1814,7 @@ class Preferences {
     wrapLines: this.wrapLines,
     showManagedFields: this.showManagedFields,
     pinnedKinds: plainCopy(this.pinnedKinds),
-    combinedKinds: plainCopy(this.combinedKinds),
+    multiKindSelection: plainCopy(this.multiKindSelection),
     clusterDistributions: plainCopy(this.clusterDistributions),
     pinnedClusters: [...this.pinnedClusters],
     shortcutBindings: plainCopy(this.shortcutBindings),
@@ -1788,7 +1861,7 @@ class Preferences {
     this.wrapLines = next.wrapLines
     this.showManagedFields = next.showManagedFields
     this.pinnedKinds = plainCopy(next.pinnedKinds)
-    this.combinedKinds = plainCopy(next.combinedKinds ?? {})
+    this.multiKindSelection = plainCopy(next.multiKindSelection ?? {})
     this.clusterDistributions = plainCopy(next.clusterDistributions)
     this.pinnedClusters = [...next.pinnedClusters]
     this.shortcutBindings = plainCopy(next.shortcutBindings)
@@ -1904,16 +1977,16 @@ class Preferences {
       // id into a list this application then asks the API server for. The cap
       // is re-applied on READ as well as on add, so a file naming twenty
       // kinds does not become twenty requests a tick.
-      if (stored.combinedKinds && typeof stored.combinedKinds === 'object') {
+      if (stored.multiKindSelection && typeof stored.multiKindSelection === 'object') {
         const cleaned: Record<string, string[]> = {}
-        for (const [clusterId, ids] of Object.entries(stored.combinedKinds)) {
+        for (const [clusterId, ids] of Object.entries(stored.multiKindSelection)) {
           if (Array.isArray(ids)) {
             cleaned[clusterId] = ids
               .filter((id): id is string => typeof id === 'string')
-              .slice(0, MAX_COMBINED_KINDS)
+              .slice(0, MAX_MULTI_KINDS)
           }
         }
-        this.combinedKinds = cleaned
+        this.multiKindSelection = cleaned
       }
       if (Array.isArray(stored.pinnedClusters)) {
         this.pinnedClusters = stored.pinnedClusters.filter(
@@ -1925,6 +1998,29 @@ class Preferences {
       // is not this one. See $lib/savedViews.
       if (stored.savedViews !== undefined) {
         this.savedViews = sanitiseViews(stored.savedViews)
+      }
+      // Sanitised the same way and for the same reason: a list written by a
+      // build that is not this one. Every entry must be a name and a list of
+      // catalogue kind ids, and the cap is re-applied on read so a hand-edited
+      // file cannot turn one click into thirty requests a tick.
+      if (Array.isArray(stored.pinnedKindSets)) {
+        this.pinnedKindSets = stored.pinnedKindSets
+          .filter((set): set is KindSet =>
+            !!set &&
+            typeof set === 'object' &&
+            typeof (set as KindSet).id === 'string' &&
+            typeof (set as KindSet).name === 'string' &&
+            Array.isArray((set as KindSet).kinds),
+          )
+          .map((set) => ({
+            id: set.id,
+            name: cleanKindSetName(set.name),
+            kinds: set.kinds
+              .filter((kind): kind is string => typeof kind === 'string')
+              .slice(0, MAX_MULTI_KINDS),
+          }))
+          .filter((set) => set.name !== '' && set.kinds.length > 0)
+          .slice(0, MAX_KIND_SETS)
       }
       // Checked one entry at a time rather than adopted whole: a corrupt
       // override falls back to that shortcut's default, which is the one
@@ -2074,10 +2170,11 @@ class Preferences {
         showManagedFields: this.showManagedFields,
         namespaceByCluster: this.namespaceByCluster,
         pinnedKinds: this.pinnedKinds,
-        combinedKinds: this.combinedKinds,
+        multiKindSelection: this.multiKindSelection,
         clusterDistributions: this.clusterDistributions,
         pinnedClusters: this.pinnedClusters,
         savedViews: this.savedViews,
+        pinnedKindSets: this.pinnedKindSets,
         shortcutBindings: this.shortcutBindings,
         localPortByRemotePort: this.localPortByRemotePort,
         localPortByPortName: this.localPortByPortName,
@@ -2176,7 +2273,7 @@ export const EXPORTED_PREFERENCE_FIELDS = [
   'wrapLines',
   'showManagedFields',
   'pinnedKinds',
-  'combinedKinds',
+  'multiKindSelection',
   'clusterDistributions',
   'pinnedClusters',
   'shortcutBindings',
@@ -2331,7 +2428,7 @@ const PREFERENCE_READERS: {
   wrapLines: asBoolean,
   showManagedFields: asBoolean,
   pinnedKinds: asRecordOf(asStringArray),
-  combinedKinds: asRecordOf(asStringArray),
+  multiKindSelection: asRecordOf(asStringArray),
   clusterDistributions: asRecordOf(asNonEmptyString),
   pinnedClusters: asStringArray,
   // Read one at a time by the same function storage goes through, so an
@@ -2507,7 +2604,7 @@ const PREFERENCE_LABELS: Record<keyof ExportedPreferences, { label: string; unit
   wrapLines: { label: 'Wrap long lines' },
   showManagedFields: { label: 'Show managed fields' },
   pinnedKinds: { label: 'Pinned kinds', unit: 'clusters' },
-  combinedKinds: { label: 'Combined kinds', unit: 'clusters' },
+  multiKindSelection: { label: 'Multi-kind selection', unit: 'clusters' },
   clusterDistributions: { label: 'What each cluster is', unit: 'clusters' },
   pinnedClusters: { label: 'Pinned clusters', unit: 'clusters' },
   shortcutBindings: { label: 'Rebound keyboard shortcuts', unit: 'shortcuts' },

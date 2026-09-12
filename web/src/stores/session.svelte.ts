@@ -334,7 +334,7 @@ export const EVENTS_SOURCE = 'events'
 export const HELM_KIND_ID = 'podsteer/helm'
 
 /**
- * The combined view, the SEVENTH pinned pseudo-entry.
+ * The multi-kind view, the SEVENTH pinned pseudo-entry.
  *
  * NOT A KIND, and here for the plainest version of the reason: it is SEVERAL
  * kinds. Kubernetes has no multi-kind list call — `kubectl get pod,deploy,svc`
@@ -349,11 +349,11 @@ export const HELM_KIND_ID = 'podsteer/helm'
  * ConfigMaps at once, and a navigator that selects one kind at a time makes
  * that three visits and three joins done in somebody's head.
  *
- * THE KINDS ARE THE OPERATOR'S and live in `preferences.combinedKinds`, per
- * cluster — see MAX_COMBINED_KINDS, whose cap is about a request rate rather
+ * THE KINDS ARE THE OPERATOR'S and live in `preferences.multiKindSelection`, per
+ * cluster — see MAX_MULTI_KINDS, whose cap is about a request rate rather
  * than about taste.
  */
-export const COMBINED_KIND_ID = 'podsteer/combined'
+export const MULTI_KIND_ID = 'podsteer/multi-kind'
 
 /**
  * The security posture page, the EIGHTH pinned pseudo-entry.
@@ -433,7 +433,7 @@ export type ViewMode =
   | 'rbac'
   | 'timeline'
   | 'helm'
-  | 'combined'
+  | 'multi-kind'
   | 'security'
   | 'pods'
   | 'nodes'
@@ -860,7 +860,7 @@ export class ClusterSession {
     if (id === RBAC_KIND_ID) return 'rbac'
     if (id === TIMELINE_KIND_ID) return 'timeline'
     if (id === HELM_KIND_ID) return 'helm'
-    if (id === COMBINED_KIND_ID) return 'combined'
+    if (id === MULTI_KIND_ID) return 'multi-kind'
     if (id === SECURITY_KIND_ID) return 'security'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
@@ -1052,13 +1052,13 @@ export class ClusterSession {
     ),
   )
   /**
-   * One answer per kind the combined view is showing, in the operator's order.
+   * One answer per kind the multi-kind view is showing, in the operator's order.
    *
    * `$state.raw` like every other row buffer here: replaced wholesale on each
    * tick, never mutated, and deep-proxying several thousand printed cells buys
    * nothing.
    */
-  combinedTables = $state.raw<ResourceTable[]>([])
+  multiKindTables = $state.raw<ResourceTable[]>([])
 
   /**
    * Those answers as ONE table.
@@ -1069,9 +1069,9 @@ export class ClusterSession {
    * prints no such column. See $lib/mergeTables, which the All-clusters view
    * uses for the same problem on the other axis.
    */
-  readonly combinedTable = $derived(
+  readonly multiKindTable = $derived(
     mergeTables(
-      this.combinedTables.map((table) => ({
+      this.multiKindTables.map((table) => ({
         key: table.kindId,
         columns: table.columns ?? [],
         rows: table.rows ?? [],
@@ -1080,7 +1080,7 @@ export class ClusterSession {
   )
 
   /** Whether any kind's read stopped at its cap — see the view's notice. */
-  readonly combinedTruncated = $derived(this.combinedTables.some((table) => table.truncated))
+  readonly multiKindTruncated = $derived(this.multiKindTables.some((table) => table.truncated))
 
   /**
    * The merged rows, filtered the same way every other list is.
@@ -1089,14 +1089,14 @@ export class ClusterSession {
    * box enough for a table holding several kinds: typing `service` narrows to
    * Services without a separate control, and `kind:` needs no new syntax.
    */
-  readonly visibleCombinedRows = $derived(
+  readonly visibleMultiKindRows = $derived(
     filterRows(
-      this.combinedTable.rows,
+      this.multiKindTable.rows,
       this.query,
       (row) => [
         row.name,
         row.namespace,
-        this.#combinedKindLabel(row.source),
+        this.#multiKindLabel(row.source),
         ...(row.cells ?? []),
         ...this.#customText(row),
       ],
@@ -1235,8 +1235,8 @@ export class ClusterSession {
         return this.visibleNamespaces.length
       case 'applications':
         return this.visibleApplications.length
-      case 'combined':
-        return this.visibleCombinedRows.length
+      case 'multi-kind':
+        return this.visibleMultiKindRows.length
       case 'fleet':
         return this.visibleFleetCount
       default:
@@ -1334,24 +1334,24 @@ export class ClusterSession {
    * id, because the id carries a group and version an operator did not ask to
    * order by — `apps/v1/deployments` would sort under "a".
    */
-  readonly sortedCombinedRows = $derived.by(() => {
+  readonly sortedMultiKindRows = $derived.by(() => {
     const state = this.sort
-    if (!state) return this.visibleCombinedRows
+    if (!state) return this.visibleMultiKindRows
 
     if (state.columnId === 'kind') {
-      return sortRows(this.visibleCombinedRows, state, {
-        kind: (row: SourcedRow) => this.#combinedKindLabel(row.source),
+      return sortRows(this.visibleMultiKindRows, state, {
+        kind: (row: SourcedRow) => this.#multiKindLabel(row.source),
       })
     }
 
     const custom = customSortAccessor<SourcedRow>(state.columnId)
-    if (custom) return sortRows(this.visibleCombinedRows, state, { [state.columnId]: custom })
+    if (custom) return sortRows(this.visibleMultiKindRows, state, { [state.columnId]: custom })
 
     const index = /^c(\d+)$/.exec(state.columnId)?.[1]
-    if (index === undefined) return this.visibleCombinedRows
+    if (index === undefined) return this.visibleMultiKindRows
 
-    const column = this.combinedTable.columns[Number(index)]
-    if (!column) return this.visibleCombinedRows
+    const column = this.multiKindTable.columns[Number(index)]
+    if (!column) return this.visibleMultiKindRows
 
     const cell = (row: SourcedRow): string => row.cells?.[Number(index)] ?? ''
     let accessor: (row: SourcedRow) => string | number | null
@@ -1365,13 +1365,13 @@ export class ClusterSession {
     } else {
       accessor = cell
     }
-    return sortRows(this.visibleCombinedRows, state, { [state.columnId]: accessor })
+    return sortRows(this.visibleMultiKindRows, state, { [state.columnId]: accessor })
   })
 
-  readonly pagedCombinedRows = $derived(this.#slice(this.sortedCombinedRows))
+  readonly pagedMultiKindRows = $derived(this.#slice(this.sortedMultiKindRows))
 
   /**
-   * A combined row's kind, SINGULAR — a row is one Deployment, not
+   * A multi-kind row's kind, SINGULAR — a row is one Deployment, not
    * "Deployments". The navigator names the kind in the plural because it
    * names a list; this names an object.
    *
@@ -1379,7 +1379,7 @@ export class ClusterSession {
    * longer serves. A raw id is ugly and honest; a blank cell would imply the
    * row has no kind.
    */
-  #combinedKindLabel = (kindId: string): string => {
+  #multiKindLabel = (kindId: string): string => {
     const kind = this.kinds.find((entry) => entry.id === kindId)
     return kind?.singular || kind?.title || kindId
   }
@@ -1393,20 +1393,20 @@ export class ClusterSession {
    * horizontal scroll while two Deployment-only columns sit in front of it,
    * blank on every row that is not a Deployment.
    */
-  combinedColumnSources = (name: string): number =>
-    this.combinedTables.filter((table) =>
+  multiKindColumnSources = (name: string): number =>
+    this.multiKindTables.filter((table) =>
       (table.columns ?? []).some((column) => column.name === name),
     ).length
 
-  /** Whether a combined row's kind carries namespaces — for its row key and
+  /** Whether a multi-kind row's kind carries namespaces — for its row key and
       for opening it. Absent from the catalogue is treated as namespaced,
       which is the safe guess: a wrong `false` drops the namespace and opens
       the wrong object. */
-  combinedKindNamespaced = (kindId: string): boolean =>
+  multiKindNamespaced = (kindId: string): boolean =>
     this.kinds.find((kind) => kind.id === kindId)?.namespaced ?? true
 
-  /** A combined row's kind title, for the Kind column. */
-  combinedKindTitle = (kindId: string): string => this.#combinedKindLabel(kindId)
+  /** A multi-kind row's kind title, for the Kind column. */
+  multiKindTitle = (kindId: string): string => this.#multiKindLabel(kindId)
 
   /** Rows of the current page, per view. */
   readonly pagedPods = $derived(this.#slice(this.sortedPods))
@@ -2319,7 +2319,7 @@ export class ClusterSession {
         // assessment above still runs, so the navigator badge stays current
         // while this view is open.
         return Promise.resolve(null)
-      case 'combined': {
+      case 'multi-kind': {
         // ONE REQUEST PER KIND, in parallel, because Kubernetes has no
         // multi-kind list call — `kubectl get pod,deploy,svc` is three
         // requests and so is this. Parallel rather than sequential: the kinds
@@ -2327,14 +2327,14 @@ export class ClusterSession {
         // behind it.
         //
         // A kind that fails takes the whole tick with it, deliberately. A
-        // combined table quietly missing one of the kinds its own header
+        // multi-kind table quietly missing one of the kinds its own header
         // names would be answering a question nobody asked — and the count,
         // the search and the sort would all be wrong in the same silent
         // direction, which is the failure the truncation notice exists for.
         //
-        // The cap on how many kinds can be here is MAX_COMBINED_KINDS, and it
+        // The cap on how many kinds can be here is MAX_MULTI_KINDS, and it
         // is a cap on THIS: the multiplier on every refresh tick.
-        const kinds = preferences.combinedKindsFor(id)
+        const kinds = preferences.multiKindSelectionFor(id)
         if (kinds.length === 0) return Promise.resolve([])
         return Promise.all(
           kinds.map((kindId) =>
@@ -2475,8 +2475,8 @@ export class ClusterSession {
         // Nothing to hold, for the same reason as RBAC: the page owns the one
         // listing it asked for, and this tick never asked for anything.
         break
-      case 'combined':
-        this.combinedTables = rows as ResourceTable[]
+      case 'multi-kind':
+        this.multiKindTables = rows as ResourceTable[]
         break
       case 'security':
         // Nothing to hold: the findings live on the assessment, which the

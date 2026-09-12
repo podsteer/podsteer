@@ -20,7 +20,7 @@
   did.
 
   ONE REQUEST PER KIND ON EVERY TICK, because Kubernetes has no multi-kind list
-  call. That is the whole reason for the cap — see MAX_COMBINED_KINDS.
+  call. That is the whole reason for the cap — see MAX_MULTI_KINDS.
 -->
 <script lang="ts">
   import DataTable, { ROW_MENU_COLUMN, type Column } from '$lib/components/DataTable.svelte'
@@ -30,12 +30,13 @@
   import { organisation } from '$stores/organisation.svelte'
   import CustomCells from '$lib/components/CustomCells.svelte'
   import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
-  import { preferences, MAX_COMBINED_KINDS } from '$stores/preferences.svelte'
-  import { Layers, X } from '@lucide/svelte'
+  import { preferences, MAX_MULTI_KINDS } from '$stores/preferences.svelte'
+  import { Layers, X, Bookmark, Check } from '@lucide/svelte'
   import type { ClusterSession } from '$stores/session.svelte'
-  import { COMBINED_KIND_ID } from '$stores/session.svelte'
+  import { MULTI_KIND_ID } from '$stores/session.svelte'
   import type { SourcedRow } from '$lib/mergeTables'
   import Select from '$lib/components/Select.svelte'
+  import { kindSetMatches, MAX_KIND_SETS } from '$lib/kindSets'
 
   interface Props {
     session: ClusterSession
@@ -43,8 +44,8 @@
 
   let { session }: Props = $props()
 
-  const chosen = $derived(preferences.combinedKindsFor(session.cluster.id))
-  const canAdd = $derived(preferences.canAddCombinedKind(session.cluster.id))
+  const chosen = $derived(preferences.multiKindSelectionFor(session.cluster.id))
+  const canAdd = $derived(preferences.canAddMultiKind(session.cluster.id))
 
   /** Kinds still available to add, as the navigator names them. */
   const addable = $derived(
@@ -52,6 +53,26 @@
       .filter((kind) => !chosen.includes(kind.id))
       .map((kind) => ({ value: kind.id, label: kind.title })),
   )
+
+  /**
+   * Keeping the current set under a name.
+   *
+   * IN THE ROW IT CAPTURES, for the reason SavedViewsMenu gives: the set IS
+   * the chips beside this control, and a save button a page away from the
+   * thing it saves is one nobody presses.
+   */
+  let naming = $state(false)
+  let setName = $state('')
+
+  const saved = $derived(preferences.pinnedKindSets)
+  const alreadyPinned = $derived(saved.some((set) => kindSetMatches(set, chosen)))
+
+  function keep(): void {
+    if (preferences.saveKindSet(setName, chosen)) {
+      naming = false
+      setName = ''
+    }
+  }
 
   /** See PodsView: read fresh so a change in Organise applies at once. */
   const placement = $derived(organisation.placementOf(session.cluster.id))
@@ -66,7 +87,7 @@
    * belong to the combination rather than to any one of them.
    */
   const printed = $derived<Column[]>(
-    session.combinedTable.columns.map((column, index) => ({
+    session.multiKindTable.columns.map((column, index) => ({
       id: `c${index}`,
       label: column.name,
       width: index === 0 ? 280 : column.type === 'date' ? 100 : 160,
@@ -85,7 +106,7 @@
       // the column menu, and choosing a single kind shows all of its columns
       // exactly as its own list does — the rule only fires where there is a
       // majority to be in a minority of.
-      defaultHidden: column.wide || (chosen.length > 1 && session.combinedColumnSources(column.name) < 2),
+      defaultHidden: column.wide || (chosen.length > 1 && session.multiKindColumnSources(column.name) < 2),
     })),
   )
 
@@ -102,7 +123,7 @@
   ])
 
   function isColumnVisible(column: Column): boolean {
-    const stored = preferences.columns[COMBINED_KIND_ID]?.[column.id]?.hidden
+    const stored = preferences.columns[MULTI_KIND_ID]?.[column.id]?.hidden
     return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
   }
 
@@ -112,7 +133,7 @@
     )
 
     function cell(row: SourcedRow, id: string): string {
-      if (id === 'kind') return session.combinedKindTitle(row.source)
+      if (id === 'kind') return session.multiKindTitle(row.source)
       const spec = parseCustomColumnId(id)
       if (spec) return customCell(row, spec)
       return row.cells?.[Number(id.slice(1))] ?? ''
@@ -120,7 +141,7 @@
 
     return {
       columns: visible.map((column) => column.label),
-      rows: session.sortedCombinedRows.map((row) => visible.map((column) => cell(row, column.id))),
+      rows: session.sortedMultiKindRows.map((row) => visible.map((column) => cell(row, column.id))),
     }
   }
 
@@ -132,7 +153,7 @@
    * ONE kind — its pod, its workload, its node — so rendering an object of
    * another kind there would give a drawer whose panels are silently about
    * nothing. Navigating is the honest version of "show me this", and the
-   * combined view is one click away again.
+   * multi-kind view is one click away again.
    */
   async function open(row: SourcedRow): Promise<void> {
     if (!row.name) return
@@ -140,7 +161,7 @@
       row.source,
       row.name,
       row.namespace,
-      session.combinedKindNamespaced(row.source),
+      session.multiKindNamespaced(row.source),
     )
   }
 </script>
@@ -162,12 +183,12 @@
       class="flex items-center gap-1 rounded-full bg-primary/12 py-0.5 pr-1 pl-2.5
              text-label-medium text-primary"
     >
-      {session.combinedKindTitle(kindId)}
+      {session.multiKindTitle(kindId)}
       <button
         type="button"
         class="state-layer grid size-4 place-items-center rounded-full hover:bg-on-surface/10"
-        aria-label="Stop showing {session.combinedKindTitle(kindId)}"
-        onclick={() => preferences.removeCombinedKind(session.cluster.id, kindId)}
+        aria-label="Stop showing {session.multiKindTitle(kindId)}"
+        onclick={() => preferences.removeMultiKind(session.cluster.id, kindId)}
       >
         <X class="size-3" strokeWidth={2.5} />
       </button>
@@ -180,15 +201,57 @@
       options={[{ value: '', label: 'Add a kind…' }, ...addable]}
       label="Add a kind"
       compact
-      onchange={(value) => value && preferences.addCombinedKind(session.cluster.id, value)}
+      onchange={(value) => value && preferences.addMultiKind(session.cluster.id, value)}
     />
+    <!--
+      KEEP THIS SET, once there is a set to keep. Two kinds is the threshold:
+      one kind is not a combination, and offering to name it would teach the
+      wrong idea about what this shelf is for.
+    -->
+    {#if chosen.length > 1 && !alreadyPinned && saved.length < MAX_KIND_SETS}
+      {#if naming}
+        <input
+          class="w-44 rounded-sm border border-outline-variant bg-surface px-2 py-0.5
+                 text-body-medium text-on-surface outline-none focus:border-primary"
+          placeholder="Name this set"
+          maxlength="60"
+          bind:value={setName}
+          onkeydown={(event) => {
+            if (event.key === 'Enter') keep()
+            if (event.key === 'Escape') { naming = false; setName = '' }
+          }}
+          data-testid="kind-set-name"
+        />
+        <button
+          type="button"
+          class="state-layer grid size-6 place-items-center rounded-full text-primary
+                 hover:bg-primary/12 disabled:opacity-40"
+          aria-label="Keep this set"
+          disabled={setName.trim() === ''}
+          onclick={keep}
+        >
+          <Check class="size-3.5" strokeWidth={2.5} />
+        </button>
+      {:else}
+        <button
+          type="button"
+          class="state-layer flex items-center gap-1 rounded-full px-2 py-0.5 text-label-medium
+                 text-on-surface-variant hover:bg-on-surface/8 hover:text-on-surface"
+          onclick={() => (naming = true)}
+        >
+          <Bookmark class="size-3.5" strokeWidth={2} />
+          Keep this set
+        </button>
+      {/if}
+    {/if}
+
   {:else if !canAdd}
     <!--
       SAYS WHY, rather than offering a control that does nothing. The limit is
       about the request rate this view costs, so the sentence names that.
     -->
     <span class="text-body-small text-on-surface-variant">
-      {MAX_COMBINED_KINDS} kinds is the limit — each one is another request on every refresh.
+      {MAX_MULTI_KINDS} kinds is the limit — each one is another request on every refresh.
     </span>
   {/if}
 </div>
@@ -196,19 +259,19 @@
 {#if chosen.length === 0}
   <EmptyState
     title="Pick the kinds to show together"
-    description="Kubernetes has no way to list several kinds at once, so PodSteer asks for each one and merges the answers. Add up to {MAX_COMBINED_KINDS}."
+    description="Kubernetes has no way to list several kinds at once, so PodSteer asks for each one and merges the answers. Add up to {MAX_MULTI_KINDS}."
   />
 {:else}
   <DataTable
-    kindId={COMBINED_KIND_ID}
+    kindId={MULTI_KIND_ID}
     {columns}
-    isEmpty={session.pagedCombinedRows.length === 0}
+    isEmpty={session.pagedMultiKindRows.length === 0}
     sort={session.sort}
     onsort={session.toggleSort}
     exportRows={exportCSV}
   >
     {#snippet notice()}
-      {#if session.combinedTruncated}
+      {#if session.multiKindTruncated}
         <!--
           ONE KIND HITTING ITS CAP MAKES THE WHOLE TABLE A PREFIX, and the
           count, the search and the sort below are then all wrong in the same
@@ -234,7 +297,7 @@
     {/snippet}
 
     {#snippet rows(isVisible)}
-      {#each session.pagedCombinedRows as row, rowIndex (row.source + '/' + row.namespace + '/' + row.name + rowIndex)}
+      {#each session.pagedMultiKindRows as row, rowIndex (row.source + '/' + row.namespace + '/' + row.name + rowIndex)}
         <tr
           class="group/row border-t border-outline-variant/40 bg-surface transition-colors
                  duration-100 hover:bg-surface-container-low {row.name ? 'cursor-pointer' : ''}"
@@ -247,7 +310,7 @@
           {/if}
           {#if isVisible('kind')}
             <td class="truncate px-3 py-1.5 text-body-medium text-on-surface-variant">
-              {session.combinedKindTitle(row.source)}
+              {session.multiKindTitle(row.source)}
             </td>
           {/if}
           {#each printed.slice(1) as column, index (column.id)}
