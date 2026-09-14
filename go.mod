@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/UserExistsError/conpty v0.1.4
 	github.com/creack/pty v1.1.24
-	github.com/wailsapp/wails/v3 v3.0.0-beta.18
+	github.com/wailsapp/wails/v3 v3.0.0-beta.20
 	golang.org/x/net v0.58.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
@@ -44,7 +44,6 @@ require (
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
-	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
