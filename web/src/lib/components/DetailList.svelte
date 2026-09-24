@@ -85,6 +85,15 @@
      */
     info?: string
     /**
+     * A muted word after the value that is not part of it — "(resolved)" on
+     * an environment variable the panel worked out rather than read.
+     *
+     * NOT concatenated into `value`, because the value is what Copy takes and
+     * what an edit starts from: `development (resolved)` pasted into a shell
+     * is a bug this field exists to avoid.
+     */
+    suffix?: string
+    /**
      * The resource this row refers to, reachable from its menu.
      *
      * Distinct from `onclick`, which makes the VALUE a link and is right when
@@ -566,6 +575,9 @@
           </button>
         {:else}
           {row.value}
+        {/if}
+        {#if row.suffix}
+          <span class="ml-1 text-on-surface-variant/70" data-row-suffix>{row.suffix}</span>
         {/if}
       </span>
       {/if}

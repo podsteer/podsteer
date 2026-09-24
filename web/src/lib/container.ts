@@ -130,29 +130,14 @@ export function formatProbe(probe: Probe | undefined): string {
  * process has never seen. Showing it labelled as the pod's environment is
  * wrong, not merely risky.
  */
-export function formatEnvValue(variable: EnvVar, pod?: PodManifest): string {
+export function formatEnvValue(variable: EnvVar, pod?: PodManifest, container?: string): string {
   if (variable.value !== undefined) return variable.value
 
   const from = variable.valueFrom
   if (!from) return ''
 
-  // The downward API is not a mystery: every path it can carry is a field of
-  // the pod this pane is already showing, so it is RESOLVED rather than
-  // printed as the path. `<metadata.name>` is what kubectl prints because
-  // kubectl is describing a template; this is describing a running pod, and
-  // the running pod knows its own name.
-  //
-  // Still a quotation, not a conclusion — the value is lifted verbatim out of
-  // the manifest on screen. Anything that will not resolve keeps the path, so
-  // an unfamiliar field degrades to what kubectl would have said.
-  if (from.fieldRef?.fieldPath) {
-    const resolved = resolveFieldPath(pod, from.fieldRef.fieldPath)
-    if (resolved !== null) return resolved
-  }
-  if (from.resourceFieldRef?.resource) {
-    const resolved = resolveResourceField(pod, from.resourceFieldRef)
-    if (resolved !== null) return resolved
-  }
+  const resolved = resolveEnvReference(variable, pod, container)
+  if (resolved !== null) return resolved
 
   if (from.secretKeyRef) {
     // kubectl's exact wording, including the asymmetry with config maps
@@ -172,6 +157,47 @@ export function formatEnvValue(variable: EnvVar, pod?: PodManifest): string {
     }>`
   }
   return ''
+}
+
+/**
+ * A downward-API reference's value, or null where it cannot be known here.
+ *
+ * Separate from `formatEnvValue` so a caller can tell a value that was
+ * RESOLVED from one that was written — the panel marks the first
+ * "(resolved)", because `development` read off an annotation and
+ * `development` typed into the manifest are not the same statement.
+ *
+ * `pod` may be a pod or a POD TEMPLATE shaped like one. For a template the
+ * labels, annotations and namespace are exactly what the next pod will carry,
+ * so they resolve; its name, uid, node and addresses do not exist until it
+ * does, so those stay as the path. `container` is the container being
+ * rendered, which an unnamed resourceFieldRef means.
+ */
+export function resolveEnvReference(
+  variable: EnvVar,
+  pod?: PodManifest,
+  container?: string,
+): string | null {
+  const from = variable.valueFrom
+  if (!from) return null
+
+  // The downward API is not a mystery: every path it can carry is a field of
+  // the pod this pane is already showing, so it is RESOLVED rather than
+  // printed as the path. `<metadata.name>` is what kubectl prints because
+  // kubectl is describing a template; this is describing a running pod, and
+  // the running pod knows its own name.
+  //
+  // Still a quotation, not a conclusion — the value is lifted verbatim out of
+  // the manifest on screen. Anything that will not resolve keeps the path, so
+  // an unfamiliar field degrades to what kubectl would have said.
+  if (from.fieldRef?.fieldPath) return resolveFieldPath(pod, from.fieldRef.fieldPath)
+  if (from.resourceFieldRef?.resource) {
+    return resolveResourceField(pod, {
+      ...from.resourceFieldRef,
+      containerName: from.resourceFieldRef.containerName || container,
+    })
+  }
+  return null
 }
 
 /** The parts of a pod manifest the downward API can name. */
@@ -239,9 +265,9 @@ function resolveFieldPath(pod: PodManifest | undefined, path: string): string | 
 /**
  * The value behind a resourceFieldRef — a container's own request or limit.
  *
- * The container name is optional in the spec and means "this one", but this
- * has no way to know which one is being rendered, so an unnamed reference is
- * left as the path rather than guessed at.
+ * The container name is optional in the spec and means "this one"; the
+ * caller passes the container being rendered for that case, and without it
+ * an unnamed reference is left as the path rather than guessed at.
  */
 function resolveResourceField(
   pod: PodManifest | undefined,

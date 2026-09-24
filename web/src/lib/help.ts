@@ -526,6 +526,52 @@ export const HELP_TOPICS = {
     ],
   },
 
+  'object-details': {
+    title: 'The details panel',
+    lede: 'What an object is, in the order its manifest is written — and what the panel works out rather than reads.',
+    sections: [
+      {
+        heading: 'The order of the sections',
+        body: [
+          'Worth knowing and Usage come first: neither is a field of the object, and each is usually why the panel was opened. From there it follows the manifest — metadata (name, labels, annotations), then what the object was told to be (spec), then what it reports back (status) — so it reads in the same order as the YAML tab beside it.',
+          'After that come things the manifest does not hold: the pods on a node, what a namespace contains, and the probes that go and find something out when you ask.',
+        ],
+      },
+      {
+        heading: 'The version beside the name',
+        body: [
+          "The object's app.kubernetes.io/version label, one of Kubernetes' recommended labels, quoted as written. It is not read from an image tag, which is a different claim — nothing checks that the two agree.",
+        ],
+      },
+      {
+        heading: 'A pod template is not a running pod',
+        body: [
+          'A controller has no containers of its own, only a template: what the next pod will be given. A running pod may differ — it may be from an older revision, or an admission webhook may have added to it on the way in, a sidecar most often. Open a pod to see what one actually runs.',
+        ],
+      },
+      {
+        heading: 'Values marked (resolved)',
+        body: [
+          "An environment variable taken from the pod's own fields — its namespace, a label, an annotation, a container's own request or limit — is shown as the value it gives the container, marked (resolved) so it is not mistaken for text written in the manifest. Hover it to see the path it was read from.",
+          "On a template, only what the next pod will certainly carry resolves: its labels, annotations and namespace. Its name, node and IP addresses do not exist until it is scheduled, so they stay as the path. A value read out of a ConfigMap is marked the same way.",
+        ],
+      },
+      {
+        heading: 'Secret values in the environment',
+        body: [
+          'A variable taken from a Secret is never read when the panel opens. It is read when you ask, for that one key, and hidden again shortly after.',
+          'What a Secret holds now is not necessarily what a running container was started with: environment is injected once, when the container starts, and never updated. On a template it is what the next pod will be given.',
+        ],
+      },
+      {
+        heading: "An Ingress's TLS",
+        body: [
+          'The TLS section says which Secret terminates which hosts. What the certificate itself says — who issued it, when it expires — is inside that Secret, and is read only when you open the Secret and ask.',
+        ],
+      },
+    ],
+  },
+
   'object-data': {
     title: 'Secret and ConfigMap keys',
     lede: 'The keys an object holds, edited one at a time rather than through its YAML.',

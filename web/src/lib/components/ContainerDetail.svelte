@@ -28,10 +28,9 @@
   import DetailList, { type DetailRow } from './DetailList.svelte'
   import {
     formatEnvValue,
+    resolveEnvReference,
     formatMount,
     formatProbe,
-    isFromSecret,
-    looksSensitive,
     sensitivity,
     type PodManifest,
   } from '$lib/container'
@@ -46,7 +45,7 @@
   import PortForwardStart from './PortForwardStart.svelte'
   import FileTransfer from './FileTransfer.svelte'
   import ResizeDialog from './ResizeDialog.svelte'
-  import { EyeOff, Loader, Scaling, Unplug } from '@lucide/svelte'
+  import { Loader, Scaling, Unplug } from '@lucide/svelte'
 
   interface Props {
     /** The GitOps controller holding this container's spec, when one does. */
@@ -372,18 +371,30 @@
       const resolved =
         configMap?.name && configMap?.key ? configMaps[configMap.name]?.[configMap.key] : undefined
 
-      const field = (variable.valueFrom as { fieldRef?: { fieldPath?: string } })?.fieldRef
+      const from = variable.valueFrom as
+        | { fieldRef?: { fieldPath?: string }; resourceFieldRef?: { resource?: string } }
+        | undefined
+      const downward = resolveEnvReference(variable as never, pod ?? undefined, spec.name)
+      const source = from?.fieldRef?.fieldPath ?? from?.resourceFieldRef?.resource
 
       return {
         label: variable.name,
-        value: resolved ?? formatEnvValue(variable as never, pod ?? undefined),
+        value: resolved ?? downward ?? formatEnvValue(variable as never, pod ?? undefined, spec.name),
+        // MARKED, because it was worked out rather than written: `development`
+        // read off the template's annotations is not the same statement as
+        // `development` typed into the manifest, and the difference matters
+        // the moment somebody edits the annotation expecting nothing else to
+        // move. The path stays one hover away.
+        suffix: resolved !== undefined || downward !== null ? '(resolved)' : undefined,
         // Said behind the info button once a value replaces the reference to
         // it, because a resolved value no longer names where it came from —
         // and following it still goes there.
         info: configMap?.name
           ? `From the '${configMap.name}' config map, key '${configMap.key}'`
-          : field?.fieldPath
-            ? `From this pod's own ${field.fieldPath}`
+          : source
+            ? isTemplate
+              ? `From the pod template's ${source} — what the next pod will be given`
+              : `From this pod's own ${source}`
             : undefined,
         // A REFERENCE, NOT A LINK ON THE VALUE. Once the value is the config
         // map's contents it no longer names the config map, so making the
@@ -619,22 +630,8 @@
     -->
     <DetailList rows={envRows} />
 
-    {#if env.some((variable) => isFromSecret(variable as never)) || env.some((variable) => looksSensitive(variable as never))}
-      <!-- Set well clear of the last row. Tucked against it, a note about how
-           the pane behaves read as another variable's value. -->
-      <p class="mt-5 flex items-start gap-1.5 text-body-small text-on-surface-variant/70">
-        <EyeOff class="mt-0.5 size-3.5 shrink-0" strokeWidth={1.8} />
-        <span>
-          Secret values are read only when you ask, and hide again shortly after.
-          {#if isTemplate}
-            What a Secret holds now is what the next pod will be given — environment is
-            injected once, at start, so pods already running may hold something older.
-          {:else}
-            What a Secret holds now is not necessarily what this container was started with —
-            environment is injected once, at start, and never updated.
-          {/if}
-        </span>
-      </p>
-    {/if}
+    <!-- How Secret values behave here — read on request, hidden again, and
+         not necessarily what the process started with — lives in the drawer's
+         help (object-details), not under every environment list. -->
   {/if}
 </div>

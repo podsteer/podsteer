@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   formatEnvValue,
+  resolveEnvReference,
   formatMount,
   formatPorts,
   formatProbe,
@@ -279,5 +280,43 @@ describe('sensitivity', () => {
     ).toBeNull()
     expect(sensitivity({ name: 'TOKEN_FILE_PATH', value: '/var/run/secrets/token' })).toBeNull()
     expect(sensitivity({ name: 'SECRET_HOSTS', value: 'vault-0.vault, vault-1.vault' })).toBeNull()
+  })
+})
+
+describe('resolveEnvReference — a pod template shaped like a pod', () => {
+  // What ResourceOverview passes for a controller: the template's labels and
+  // annotations, the controller's namespace, and no name, node or address.
+  const template = {
+    metadata: {
+      namespace: 'development',
+      labels: { app: 'web' },
+      annotations: { 'app.kubernetes.io/environment': 'development' },
+    },
+    spec: { containers: [{ name: 'app', resources: { limits: { memory: '512Mi' } } }] },
+  }
+  const field = (fieldPath: string) => ({ name: 'X', valueFrom: { fieldRef: { fieldPath } } })
+
+  it('resolves what the next pod will certainly carry', () => {
+    expect(resolveEnvReference(field("metadata.annotations['app.kubernetes.io/environment']"), template)).toBe(
+      'development',
+    )
+    expect(resolveEnvReference(field('metadata.namespace'), template)).toBe('development')
+    expect(resolveEnvReference(field("metadata.labels['app']"), template)).toBe('web')
+  })
+
+  it('leaves what only a scheduled pod has as the path', () => {
+    expect(resolveEnvReference(field('metadata.name'), template)).toBeNull()
+    expect(resolveEnvReference(field('spec.nodeName'), template)).toBeNull()
+    expect(formatEnvValue(field('metadata.name'), template)).toBe('<metadata.name>')
+  })
+
+  it('reads an unnamed resourceFieldRef as the container being rendered', () => {
+    const variable = { name: 'MEM', valueFrom: { resourceFieldRef: { resource: 'limits.memory', divisor: '1Mi' } } }
+    expect(resolveEnvReference(variable, template)).toBeNull()
+    expect(resolveEnvReference(variable, template, 'app')).toBe('512')
+  })
+
+  it('never calls a literal resolved', () => {
+    expect(resolveEnvReference({ name: 'X', value: 'development' }, template)).toBeNull()
   })
 })

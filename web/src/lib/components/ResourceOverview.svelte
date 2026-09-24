@@ -585,6 +585,26 @@
   const podTemplate = $derived(isWorkload ? podTemplateOf(parsedManifest, kind) : null)
 
   const templateContainers = $derived(podTemplate?.spec?.containers ?? [])
+
+  /**
+   * The template, shaped like the pod it describes — for the downward API.
+   *
+   * The labels, annotations and namespace are exactly what the next pod will
+   * carry, so an env var reading them resolves; the name, uid, node and
+   * addresses do not exist until the pod does, and stay as the path.
+   */
+  const templatePod = $derived(
+    podTemplate
+      ? {
+          metadata: {
+            namespace: metadata.namespace,
+            labels: podTemplate.metadata?.labels,
+            annotations: podTemplate.metadata?.annotations,
+          },
+          spec: podTemplate.spec,
+        }
+      : null,
+  )
   const templateInitContainers = $derived(podTemplate?.spec?.initContainers ?? [])
   const templateVolumes = $derived(podTemplate?.spec?.volumes ?? [])
 
@@ -1534,6 +1554,7 @@
               {management}
               spec={container}
               context="template"
+              pod={templatePod}
               clusterId={clusterId ?? ''}
               namespace={metadata.namespace ?? ''}
               {canOpen}
@@ -1542,15 +1563,8 @@
           {/each}
         </div>
 
-        <!--
-          Said once, under the containers rather than beside every value: what
-          a pod ends up with is not always what its controller asked for, and
-          the difference is invisible from here.
-        -->
-        <p class="mt-4 text-body-small text-on-surface-variant/60">
-          What the next pod will be given. A running pod may differ — from an
-          older revision, or from a webhook that adds to the spec on the way in.
-        </p>
+        <!-- That a running pod may differ from its template is said in the
+             drawer's help (object-details) rather than under every template. -->
       </DetailSection>
 
       {#if templateInitContainers.length > 0}
@@ -1567,6 +1581,7 @@
                 {management}
                 spec={container}
                 context="template"
+                pod={templatePod}
                 clusterId={clusterId ?? ''}
                 namespace={metadata.namespace ?? ''}
                 {canOpen}
@@ -1683,10 +1698,6 @@
         hint={String(certificateRows.length)}
       >
         <DetailList rows={certificateRows} />
-        <p class="mt-3 text-body-small text-on-surface-variant/60">
-          Which Secret terminates which hosts. What the certificate itself says — who
-          issued it, when it expires — is inside that Secret and is not read here.
-        </p>
       </DetailSection>
     {/if}
 
