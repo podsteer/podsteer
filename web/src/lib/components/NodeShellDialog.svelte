@@ -100,7 +100,7 @@
     <DialogHeader
       title="Node shell on {node}"
       icon={TriangleAlert}
-      iconClass="text-gauge-warn"
+      iconClass="text-gauge-warn-ink"
       help="node-shell"
       {onclose}
     />
@@ -117,7 +117,7 @@
         <input
           type="text"
           bind:value={image}
-          placeholder="docker.io/cloudresty/dockydeb:v1.2.28"
+          placeholder="docker.io/cloudresty/dockydeb:v1.2.31"
           class="field mt-1 w-full px-3 py-2 text-body-medium"
         />
       </label>
@@ -133,7 +133,7 @@
       </label>
     </div>
 
-    <p class="mt-4 rounded-sm border border-gauge-warn/40 bg-gauge-warn/10 px-3 py-2 text-body-medium text-on-surface-variant">
+    <p class="mt-4 rounded-sm border border-gauge-warn/40 bg-notice-warn px-3 py-2 text-body-medium text-on-surface-variant">
       The pod is deleted when you close its terminal, and self-destructs after one hour as a
       backstop. While it runs it appears in the activity list, where it can also be stopped.
     </p>

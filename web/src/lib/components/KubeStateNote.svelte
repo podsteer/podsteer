@@ -13,6 +13,13 @@
   that nothing on PodSteer's screens comes from it: the figures here are read
   from the metrics API and from the samples PodSteer takes while it is open.
 
+  IT IS BEHIND AN ICON BESIDE THE TREND HEADING, not printed under the chart.
+  It is provenance — true of the whole screen, asked for once, and then known.
+  Three paragraphs standing permanently under a chart pushed the sections
+  below it off the fold and read as a warning about the chart, which it is
+  not. The icon keeps both halves a hover or a click away and costs the page
+  nothing while nobody is asking.
+
   IT IS ADVICE AND NOT A SOURCE. Discovery listed Services by label and name;
   that establishes that an object called kube-state-metrics exists here, not
   that it is running, not that anything scrapes it, and not that a single
@@ -21,28 +28,31 @@
   nothing a service listing cannot support.
 -->
 <script lang="ts">
-  import { Boxes } from '@lucide/svelte'
   import type { KubeStateMetrics } from '$lib/api/client'
+  import InfoHint from './InfoHint.svelte'
 
   interface Props {
     kubeState: KubeStateMetrics | null | undefined
   }
 
   let { kubeState }: Props = $props()
+
+  /**
+   * Plain text rather than markup, because the panel takes a string. The
+   * service's own name led the sentence when it was a paragraph and still
+   * leads it here, so the reader is told what was found before being told
+   * what PodSteer does with it.
+   */
+  const text = $derived(
+    kubeState?.found
+      ? `${kubeState.label} is running in this cluster, which is where object gauges ` +
+        'like replica counts and Job results in a Grafana dashboard usually come from. ' +
+        'PodSteer does not read it: every figure on this screen comes from the metrics ' +
+        'API and from the samples PodSteer takes while it is open.'
+      : '',
+  )
 </script>
 
-{#if kubeState?.found}
-  <p
-    class="flex items-start gap-2 rounded-md bg-surface-container-low px-3 py-2
-           text-body-small text-on-surface-variant"
-  >
-    <Boxes class="mt-0.5 size-3.5 shrink-0 opacity-60" strokeWidth={2} />
-    <span>
-      <strong class="font-medium text-on-surface">{kubeState.label}</strong>
-      is running in this cluster, which is where object gauges like replica counts and Job
-      results in a Grafana dashboard usually come from. PodSteer does not read it: every figure
-      on this screen comes from the metrics API and from the samples PodSteer takes while it is
-      open.
-    </span>
-  </p>
+{#if text}
+  <InfoHint {text} label="Where these figures come from" />
 {/if}

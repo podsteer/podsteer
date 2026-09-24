@@ -215,7 +215,7 @@
         qualifies is not a caveat.
       -->
       <p
-        class="border-b border-outline-variant/60 px-3 py-2 text-body-medium text-gauge-warn"
+        class="border-b border-outline-variant/60 px-3 py-2 text-body-medium text-gauge-warn-ink"
         role="status"
       >
         More than {cap} {kindLabel}. PodSteer listed the first {cap} and stopped, so the

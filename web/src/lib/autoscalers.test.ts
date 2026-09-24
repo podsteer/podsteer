@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findAutoscalers } from './autoscalers'
+import { findAutoscalers, foldKedaAutoscalers, describeAutoscaler } from './autoscalers'
 import type { ResourceTable } from './api/client'
 
 /** Builds a table with the given column headers and cell rows, in order. */
@@ -156,5 +156,33 @@ describe('findAutoscalers — an empty table', () => {
     const empty = table(['NAME', 'REFERENCE', 'MINPODS', 'MAXPODS'], [])
 
     expect(findAutoscalers(empty, 'hpa', { kind: 'Deployment', name: 'web' })).toEqual([])
+  })
+})
+
+describe('foldKedaAutoscalers — one warning per autoscaler', () => {
+  const so = { name: 'auth-scaler', kind: 'ScaledObject' as const, minReplicas: '3', maxReplicas: '9' }
+
+  it('folds the HPA KEDA made into its ScaledObject, by KEDA\'s own label', () => {
+    const hpa = { name: 'custom-name', kind: 'HorizontalPodAutoscaler' as const, keda: 'auth-scaler' }
+    const folded = foldKedaAutoscalers([hpa, so])
+
+    expect(folded).toHaveLength(1)
+    expect(folded[0].kind).toBe('ScaledObject')
+    expect(describeAutoscaler(folded[0])).toBe('ScaledObject, min 3, max 9, through the custom-name HPA')
+  })
+
+  it('falls back to KEDA\'s default name when the row carried no labels', () => {
+    const hpa = { name: 'keda-hpa-auth-scaler', kind: 'HorizontalPodAutoscaler' as const }
+    expect(foldKedaAutoscalers([hpa, so])).toHaveLength(1)
+  })
+
+  it('leaves an HPA nobody made alone — two autoscalers are two warnings', () => {
+    const hpa = { name: 'web', kind: 'HorizontalPodAutoscaler' as const }
+    expect(foldKedaAutoscalers([hpa, so])).toHaveLength(2)
+  })
+
+  it('keeps a KEDA HPA whose ScaledObject was not found, rather than hiding it', () => {
+    const hpa = { name: 'keda-hpa-gone', kind: 'HorizontalPodAutoscaler' as const, keda: 'gone' }
+    expect(foldKedaAutoscalers([hpa, so])).toHaveLength(2)
   })
 })

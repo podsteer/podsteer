@@ -254,3 +254,25 @@ describe('the dropdown keyboard', () => {
     expect(panel.dataset.placement).toBe('below')
   })
 })
+
+describe('a one-shot menu drawn as an icon', () => {
+  it('shows the icon instead of the placeholder, and still names itself', async () => {
+    const { Download } = await import('@lucide/svelte')
+    const { container } = render(Select, {
+      compact: true,
+      label: 'Download logs',
+      placeholder: 'Download',
+      icon: Download,
+      value: '',
+      options: [{ value: 'full', label: 'Full stream' }],
+    })
+
+    const trigger = container.querySelector<HTMLButtonElement>('[data-select-trigger]')!
+    // The word is gone from the toolbar; the icon and the chevron remain.
+    expect(trigger.querySelectorAll('svg')).toHaveLength(2)
+    expect(trigger.querySelector('.truncate')).toBeNull()
+    // Named for anybody who cannot see the icon, and for the pointer.
+    expect(trigger.textContent).toContain('Download logs')
+    expect(trigger.title).toBe('Download logs')
+  })
+})

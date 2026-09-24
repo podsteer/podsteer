@@ -268,7 +268,7 @@
             list is what was read rather than what exists, and an operator
             comparing two clusters has to know which they are looking at.
           -->
-          <p class="rounded-sm border border-gauge-warn/30 bg-gauge-warn/10 p-3 text-body-medium text-on-surface">
+          <p class="rounded-sm border border-gauge-warn/30 bg-notice-warn p-3 text-body-medium text-on-surface">
             Stopped at {read.cap.toLocaleString()} reports. {read.read.toLocaleString()} were read{read.remaining
               ? `, and the server said ${read.remaining.toLocaleString()} more were withheld`
               : ''}. What follows is that much of the picture, not all of it.
@@ -317,10 +317,10 @@
                       {row.image}
                     </td>
                     <td class="px-3 py-2 text-right tabular-nums text-on-surface-variant">{row.workloads}</td>
-                    <td class="px-3 py-2 text-right tabular-nums {row.critical > 0 ? 'font-semibold text-gauge-critical' : 'text-on-surface-variant/50'}">
+                    <td class="px-3 py-2 text-right tabular-nums {row.critical > 0 ? 'font-semibold text-gauge-critical-ink' : 'text-on-surface-variant/50'}">
                       {row.critical}
                     </td>
-                    <td class="px-3 py-2 text-right tabular-nums {row.high > 0 ? 'font-semibold text-gauge-warn' : 'text-on-surface-variant/50'}">
+                    <td class="px-3 py-2 text-right tabular-nums {row.high > 0 ? 'font-semibold text-gauge-warn-ink' : 'text-on-surface-variant/50'}">
                       {row.high}
                     </td>
                     <td class="px-3 py-2 text-right tabular-nums text-on-surface-variant">{row.medium}</td>

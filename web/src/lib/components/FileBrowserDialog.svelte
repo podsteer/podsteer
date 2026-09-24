@@ -309,7 +309,7 @@
           <p class="mt-4 text-body-medium text-on-surface" role="status">{failure.message}</p>
         {:else if listing}
           {#if listing.truncated}
-            <p class="mt-3 text-body-medium text-gauge-warn">
+            <p class="mt-3 text-body-medium text-gauge-warn-ink">
               More than {listing.cap} entries. PodSteer listed the first {listing.cap} and stopped —
               a listing that long is not something to read. Narrow the path, or use a terminal.
             </p>

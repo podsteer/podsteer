@@ -51,7 +51,7 @@
     type TransferState,
   } from '$lib/fileTransfer'
   import { organisation } from '$stores/organisation.svelte'
-  import KubectlHint from './KubectlHint.svelte'
+  import DialogFooter from './DialogFooter.svelte'
 
   interface Props {
     clusterId: string
@@ -447,7 +447,9 @@
       </p>
     {/if}
 
-    <KubectlHint {command} />
+    <!-- Collapsed until asked for, like every other kubectl equivalent. No
+         buttons beside it: this panel's actions are the row above. -->
+    <DialogFooter class="" {command} />
   </div>
 {/if}
 

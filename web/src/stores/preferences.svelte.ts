@@ -62,6 +62,24 @@ export const MAX_MULTI_KINDS = 6
 export type PageSize = (typeof PAGE_SIZES)[number]
 
 /**
+ * How many session-timeline entries one cluster may hold, and how many of
+ * those one object may take.
+ *
+ * Presets rather than a number box, for the reason the thresholds are: a
+ * free-text field invites a value nobody chose deliberately, and this one is
+ * memory held for as long as the tab is open. 2000 and 200 are the defaults
+ * the timeline shipped with — roughly a quarter of a megabyte and a few hours
+ * of a busy cluster — so 10,000 is about a megabyte and a quarter per tab.
+ * Every per-object option is below every per-cluster one, so no pairing the
+ * dialog offers can make the object cap the larger of the two.
+ */
+export const TIMELINE_CLUSTER_LIMITS = [500, 1000, 2000, 5000, 10_000] as const
+export const TIMELINE_OBJECT_LIMITS = [50, 100, 200, 500] as const
+
+export type TimelineClusterLimit = (typeof TIMELINE_CLUSTER_LIMITS)[number]
+export type TimelineObjectLimit = (typeof TIMELINE_OBJECT_LIMITS)[number]
+
+/**
  * The image an ephemeral debug container proposes before the operator edits it.
  *
  * NONROOT, AND THAT IS THE WHOLE REASON THE TWO DEFAULTS BELOW DIFFER. A debug
@@ -80,7 +98,7 @@ export type PageSize = (typeof PAGE_SIZES)[number]
  * reference here would be ImagePullBackOff on every cluster that has no
  * credential for it — which is all of them.
  */
-export const DEFAULT_DEBUG_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.28-nonroot'
+export const DEFAULT_DEBUG_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.31-nonroot'
 
 /**
  * The image a node shell runs.
@@ -95,7 +113,7 @@ export const DEFAULT_DEBUG_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.28-nonroo
  * Same registry and the same pinning rule as the debug image, for the same
  * reasons.
  */
-export const DEFAULT_NODE_SHELL_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.28'
+export const DEFAULT_NODE_SHELL_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.31'
 
 /** The namespace a node-shell pod is created in, matching kubectl node-shell. */
 export const DEFAULT_NODE_SHELL_NAMESPACE = 'kube-system'
@@ -120,7 +138,31 @@ export const DEFAULT_NODE_SHELL_NAMESPACE = 'kube-system'
  * Same registry and the same pinning rule as the other two, for the same
  * reasons.
  */
-export const DEFAULT_CLUSTER_SHELL_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.28-nonroot'
+export const DEFAULT_CLUSTER_SHELL_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.31-nonroot'
+
+/**
+ * Defaults an earlier build shipped, which it also WROTE into storage.
+ *
+ * `#save` persists every field, so a machine that ever ran the busybox/alpine
+ * build carries those values as though somebody had typed them — and a stored
+ * value always wins over the default. One that is EXACTLY a retired default is
+ * read as never chosen and given the current one; anything else, a mirror an
+ * air-gapped operator pointed it at included, is theirs and is kept.
+ */
+const RETIRED_IMAGE_DEFAULTS: Record<'debugImage' | 'nodeShellImage' | 'clusterShellImage', readonly string[]> = {
+  debugImage: ['busybox:1.37', 'docker.io/cloudresty/dockydeb:v1.2.28-nonroot'],
+  nodeShellImage: ['docker.io/library/alpine:3.20', 'docker.io/cloudresty/dockydeb:v1.2.28'],
+  clusterShellImage: ['docker.io/cloudresty/dockydeb:v1.2.28-nonroot'],
+}
+
+/** A stored image, with a retired default replaced by the current one. */
+export function adoptImage(
+  field: keyof typeof RETIRED_IMAGE_DEFAULTS,
+  stored: string,
+  current: string,
+): string {
+  return RETIRED_IMAGE_DEFAULTS[field].includes(stored.trim()) ? current : stored
+}
 
 /** The colour schemes PodSteer can render in. */
 export const THEMES = ['dark', 'light'] as const
@@ -471,6 +513,10 @@ interface PersistedShape {
   collapsedSections: string[]
   /** Whether the overview's verdict card shows its findings. */
   findingsExpanded: boolean
+  /** Whether the overview's Worth knowing section shows its notes. */
+  notesExpanded: boolean
+  timelineClusterLimit: TimelineClusterLimit
+  timelineObjectLimit: TimelineObjectLimit
   /**
    * Whether monospaced panes wrap long lines instead of scrolling sideways.
    *
@@ -686,6 +732,9 @@ const DEFAULTS: PersistedShape = {
   expandedCategories: [],
   collapsedSections: [],
   findingsExpanded: false,
+  notesExpanded: false,
+  timelineClusterLimit: 2000,
+  timelineObjectLimit: 200,
   wrapLines: true,
   showManagedFields: false,
   namespaceByCluster: {},
@@ -774,6 +823,9 @@ export interface ExportedPreferences {
   expandedCategories: string[]
   collapsedSections: string[]
   findingsExpanded: boolean
+  notesExpanded: boolean
+  timelineClusterLimit: TimelineClusterLimit
+  timelineObjectLimit: TimelineObjectLimit
   wrapLines: boolean
   showManagedFields: boolean
   /** clusterId -> pinned kind ids. A CONTEXT NAME and catalogue ids only. */
@@ -868,6 +920,20 @@ class Preferences {
    * either.
    */
   findingsExpanded = $state<boolean>(DEFAULTS.findingsExpanded)
+
+  /**
+   * Collapsed by default, and for a sharper reason than the findings are.
+   *
+   * A note is by definition not a fault — the section is what a cluster has
+   * to say for itself once nothing is wrong — and on a busy cluster it runs
+   * to a dozen cards and several screenfuls below the fold. Open by default
+   * it buried the sections above it under material nobody had asked to read.
+   */
+  notesExpanded = $state<boolean>(DEFAULTS.notesExpanded)
+
+  /** The session timeline's caps; see TIMELINE_CLUSTER_LIMITS. */
+  timelineClusterLimit = $state<TimelineClusterLimit>(DEFAULTS.timelineClusterLimit)
+  timelineObjectLimit = $state<TimelineObjectLimit>(DEFAULTS.timelineObjectLimit)
 
   /** Whether monospaced panes wrap long lines. See the shape above. */
   wrapLines = $state<boolean>(DEFAULTS.wrapLines)
@@ -1135,6 +1201,27 @@ class Preferences {
    */
   toggleFindings = (): void => {
     this.findingsExpanded = !this.findingsExpanded
+    this.#save()
+  }
+
+  /**
+   * Whether the overview's Worth knowing section shows its notes. Persisted
+   * for the same reason toggleFindings is: the workspace remounts on every
+   * tab switch, so a choice held in the view would be forgotten each time
+   * somebody looked at another cluster and came back.
+   */
+  toggleNotes = (): void => {
+    this.notesExpanded = !this.notesExpanded
+    this.#save()
+  }
+
+  setTimelineClusterLimit = (limit: TimelineClusterLimit): void => {
+    this.timelineClusterLimit = limit
+    this.#save()
+  }
+
+  setTimelineObjectLimit = (limit: TimelineObjectLimit): void => {
+    this.timelineObjectLimit = limit
     this.#save()
   }
 
@@ -1811,6 +1898,9 @@ class Preferences {
     expandedCategories: [...this.expandedCategories],
     collapsedSections: [...this.collapsedSections],
     findingsExpanded: this.findingsExpanded,
+    notesExpanded: this.notesExpanded,
+    timelineClusterLimit: this.timelineClusterLimit,
+    timelineObjectLimit: this.timelineObjectLimit,
     wrapLines: this.wrapLines,
     showManagedFields: this.showManagedFields,
     pinnedKinds: plainCopy(this.pinnedKinds),
@@ -1858,6 +1948,9 @@ class Preferences {
     this.expandedCategories = [...next.expandedCategories]
     this.collapsedSections = [...next.collapsedSections]
     this.findingsExpanded = next.findingsExpanded
+    this.notesExpanded = next.notesExpanded
+    this.timelineClusterLimit = next.timelineClusterLimit
+    this.timelineObjectLimit = next.timelineObjectLimit
     this.wrapLines = next.wrapLines
     this.showManagedFields = next.showManagedFields
     this.pinnedKinds = plainCopy(next.pinnedKinds)
@@ -1919,6 +2012,15 @@ class Preferences {
 
       if (typeof stored.findingsExpanded === 'boolean') {
         this.findingsExpanded = stored.findingsExpanded
+      }
+      if (typeof stored.notesExpanded === 'boolean') {
+        this.notesExpanded = stored.notesExpanded
+      }
+      if ((TIMELINE_CLUSTER_LIMITS as readonly unknown[]).includes(stored.timelineClusterLimit)) {
+        this.timelineClusterLimit = stored.timelineClusterLimit as TimelineClusterLimit
+      }
+      if ((TIMELINE_OBJECT_LIMITS as readonly unknown[]).includes(stored.timelineObjectLimit)) {
+        this.timelineObjectLimit = stored.timelineObjectLimit as TimelineObjectLimit
       }
       if (typeof stored.wrapLines === 'boolean') {
         this.wrapLines = stored.wrapLines
@@ -2044,16 +2146,20 @@ class Preferences {
       // the backend an image or namespace it will reject, so the default
       // stands until the operator sets a real one.
       if (typeof stored.debugImage === 'string' && stored.debugImage.trim() !== '') {
-        this.debugImage = stored.debugImage
+        this.debugImage = adoptImage('debugImage', stored.debugImage, DEFAULT_DEBUG_IMAGE)
       }
       if (typeof stored.nodeShellImage === 'string' && stored.nodeShellImage.trim() !== '') {
-        this.nodeShellImage = stored.nodeShellImage
+        this.nodeShellImage = adoptImage('nodeShellImage', stored.nodeShellImage, DEFAULT_NODE_SHELL_IMAGE)
       }
       if (typeof stored.nodeShellNamespace === 'string' && stored.nodeShellNamespace.trim() !== '') {
         this.nodeShellNamespace = stored.nodeShellNamespace
       }
       if (typeof stored.clusterShellImage === 'string' && stored.clusterShellImage.trim() !== '') {
-        this.clusterShellImage = stored.clusterShellImage
+        this.clusterShellImage = adoptImage(
+          'clusterShellImage',
+          stored.clusterShellImage,
+          DEFAULT_CLUSTER_SHELL_IMAGE,
+        )
       }
       if (stored.snoozes && typeof stored.snoozes === 'object') {
         this.snoozes = stored.snoozes
@@ -2166,6 +2272,9 @@ class Preferences {
         expandedCategories: this.expandedCategories,
         collapsedSections: this.collapsedSections,
         findingsExpanded: this.findingsExpanded,
+        notesExpanded: this.notesExpanded,
+        timelineClusterLimit: this.timelineClusterLimit,
+        timelineObjectLimit: this.timelineObjectLimit,
         wrapLines: this.wrapLines,
         showManagedFields: this.showManagedFields,
         namespaceByCluster: this.namespaceByCluster,
@@ -2270,6 +2379,9 @@ export const EXPORTED_PREFERENCE_FIELDS = [
   'expandedCategories',
   'collapsedSections',
   'findingsExpanded',
+  'notesExpanded',
+  'timelineClusterLimit',
+  'timelineObjectLimit',
   'wrapLines',
   'showManagedFields',
   'pinnedKinds',
@@ -2425,6 +2537,9 @@ const PREFERENCE_READERS: {
   expandedCategories: asStringArray,
   collapsedSections: asStringArray,
   findingsExpanded: asBoolean,
+  notesExpanded: asBoolean,
+  timelineClusterLimit: asOneOf(TIMELINE_CLUSTER_LIMITS),
+  timelineObjectLimit: asOneOf(TIMELINE_OBJECT_LIMITS),
   wrapLines: asBoolean,
   showManagedFields: asBoolean,
   pinnedKinds: asRecordOf(asStringArray),
@@ -2439,8 +2554,16 @@ const PREFERENCE_READERS: {
   },
   localPortByRemotePort: asRecordOf(asNumberIn(1, 65535)),
   localPortByPortName: asRecordOf(asNumberIn(1, 65535)),
-  debugImage: asNonEmptyString,
-  nodeShellImage: asNonEmptyString,
+  // Through adoptImage, like storage: a file exported by the busybox/alpine
+  // build carries its defaults as if chosen.
+  debugImage: (raw) => {
+    const image = asNonEmptyString(raw)
+    return image === undefined ? image : adoptImage('debugImage', image, DEFAULT_DEBUG_IMAGE)
+  },
+  nodeShellImage: (raw) => {
+    const image = asNonEmptyString(raw)
+    return image === undefined ? image : adoptImage('nodeShellImage', image, DEFAULT_NODE_SHELL_IMAGE)
+  },
   nodeShellNamespace: asNonEmptyString,
   clusterShellImage: asNonEmptyString,
   thresholds: asThresholds,
@@ -2601,6 +2724,9 @@ const PREFERENCE_LABELS: Record<keyof ExportedPreferences, { label: string; unit
   expandedCategories: { label: 'Expanded navigator categories', unit: 'categories' },
   collapsedSections: { label: 'Collapsed navigator sections', unit: 'sections' },
   findingsExpanded: { label: 'Findings expanded' },
+  notesExpanded: { label: 'Worth knowing expanded' },
+  timelineClusterLimit: { label: 'Timeline entries per cluster' },
+  timelineObjectLimit: { label: 'Timeline entries per object' },
   wrapLines: { label: 'Wrap long lines' },
   showManagedFields: { label: 'Show managed fields' },
   pinnedKinds: { label: 'Pinned kinds', unit: 'clusters' },

@@ -2114,10 +2114,13 @@ Four rules there are load-bearing, each with a test in
   entries into one row carrying the summed count and the span. Every entry is
   in exactly one group and the count is on the row — the completeness rule
   `graphFold.ts` already holds the folded dependency map to.
-- **It is bounded at both ends.** `MAX_ENTRIES_PER_OBJECT` (200) so one pod in
-  CrashLoopBackOff cannot crowd out every other object, and
-  `MAX_ENTRIES_PER_CLUSTER` (2000) so a session left open over a weekend
-  cannot grow without limit. Oldest first, and an evicted event's observation
+- **It is bounded at both ends.** A per-object cap (default 200) so one pod in
+  CrashLoopBackOff cannot crowd out every other object, and a per-cluster cap
+  (default 2000) so a session left open over a weekend cannot grow without
+  limit. Both are preferences chosen from PRESETS in Settings → Data
+  (`TIMELINE_CLUSTER_LIMITS`, `TIMELINE_OBJECT_LIMITS`) — raisable, never
+  removable — read at append time, and `timeline.enforceLimits()` trims at
+  once when one is lowered. Oldest first, and an evicted event's observation
   identity is dropped with it or it could never be recorded again.
 - **Every write is recorded in one place.** `writing` in
   `web/src/lib/api/client.ts` wraps each `ManagementAPI` call, so a dialog
@@ -2267,6 +2270,23 @@ and licence text disagree resolves to `UNKNOWN` too.
 every release. `app/adapters/notices/notices_test.go` re-asserts the important
 properties from Go, so `go test ./...` catches a hand-edited inventory on a
 machine with no Node.
+
+## Colour: a gauge is a fill, text is ink, and light is measured
+
+The three gauge colours (`--gauge-normal/warn/critical`) are deliberately NOT
+themed — a bar means the same thing in both schemes. They are mid-tones, and
+as TEXT on white amber is 2.3:1. So words and icons carrying those meanings use
+`text-gauge-*-ink` (themed: the gauge colour on dark, darkened on light), and a
+notice box's ground is `bg-notice-warn`, never `bg-gauge-warn/10`, which over
+the light theme's blue-grey dialogs composited to beige.
+
+The light scheme is Google's own M3 neutrals (Gmail/Drive), not the MD3
+BASELINE, whose neutrals come from a purple seed and tinted every light
+surface lavender. `--on-surface-variant` is darker than Google's because this
+interface fades secondary text with `/60` and `/70` modifiers, which lose
+contrast far faster over white than over near-black.
+`src/lib/ThemeContrast.node.test.ts` reads `app.css` and fails if a light text
+token drops under 4.5:1 — retune against it, not by eye.
 
 ## Commands
 
@@ -2957,6 +2977,12 @@ Settings → Terminal images (`TerminalImagesPane.svelte`), which is where an
 air-gapped operator points them at their own mirror; they were persisted
 preferences reachable only from the dialogs that used them until that pane
 existed, so the operator who most needed them met them as a stuck pod.
+**A retired default in storage is not a choice.** `#save` persists every
+field, so a machine that ran the busybox/alpine build carries those values as
+if typed; `adoptImage` (`preferences.svelte.ts`) reads a stored or imported
+value that is EXACTLY a retired default as the current one. Retiring a default
+means adding the old value to `RETIRED_IMAGE_DEFAULTS`, or nobody who ran the
+old build ever sees the new one.
 
 ## The in-cluster shell is an ORDINARY pod, and its admissibility is the feature
 

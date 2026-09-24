@@ -35,7 +35,7 @@ function token(styles: CSSStyleDeclaration, name: string, fallback: string): str
  * palette that works on a near-black surface is unreadable on a near-white
  * one.
  */
-const ANSI_DARK = {
+export const ANSI_DARK = {
   black: '#3c3a41',
   red: '#f2837f',
   green: '#7dc98a',
@@ -54,12 +54,12 @@ const ANSI_DARK = {
   brightWhite: '#f5f0f7',
 } as const
 
-const ANSI_LIGHT = {
+export const ANSI_LIGHT = {
   black: '#1f1d24',
   red: '#c5372f',
   green: '#1f7a3f',
   yellow: '#8a5a00',
-  blue: '#1a73e8',
+  blue: '#0b57d0',
   magenta: '#8b3fb8',
   cyan: '#0b6b7d',
   white: '#5f5a67',
@@ -91,8 +91,8 @@ export function terminalTheme(): Record<string, string> {
   const light = isLightTheme()
 
   const background = token(styles, '--surface-container-lowest', light ? '#ffffff' : '#0f0d13')
-  const foreground = token(styles, '--on-surface', light ? '#1d1b20' : '#e6e0e9')
-  const primary = token(styles, '--primary', light ? '#1a73e8' : '#8ab4f8')
+  const foreground = token(styles, '--on-surface', light ? '#1f1f1f' : '#e6e0e9')
+  const primary = token(styles, '--primary', light ? '#0b57d0' : '#8ab4f8')
 
   return {
     background,
@@ -104,7 +104,7 @@ export function terminalTheme(): Record<string, string> {
     // The selection is a TRANSLUCENT wash, not a solid fill: xterm draws it
     // over the glyphs, and a solid primary would hide the text somebody is
     // selecting in order to read.
-    selectionBackground: light ? 'rgba(26, 115, 232, 0.22)' : 'rgba(138, 180, 248, 0.30)',
+    selectionBackground: light ? 'rgba(11, 87, 208, 0.2)' : 'rgba(138, 180, 248, 0.30)',
     ...(light ? ANSI_LIGHT : ANSI_DARK),
   }
 }

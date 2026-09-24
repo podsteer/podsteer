@@ -17,6 +17,13 @@ vi.mock('$lib/api/client', async () => {
 
 import CreateResourceDialog from './CreateResourceDialog.svelte'
 
+/** Opens every collapsed kubectl-equivalent link, which start closed. */
+async function expandCommands(container: HTMLElement): Promise<void> {
+  for (const link of container.querySelectorAll<HTMLButtonElement>('button[aria-expanded="false"]')) {
+    if ((link.textContent ?? '').includes('kubectl equivalent')) await fireEvent.click(link)
+  }
+}
+
 /** The rendered text with its line breaks collapsed, so an assertion about a
     sentence is not defeated by where the markup happened to wrap. */
 const words = (element: HTMLElement) => (element.textContent ?? '').replace(/\s+/g, ' ')
@@ -71,14 +78,29 @@ describe('a refused apply', () => {
   it('keeps the override button at its own width', async () => {
     // A flex column stretches its children, which turned this into a
     // full-width bar reading "Take ownership" — an action styled like a page
-    // control. The container has to opt out.
+    // control. It now sits in DialogFooter's button group, which does not
+    // stretch and does not shrink.
     applyResource.mockResolvedValue(refusal(conflict('kubectl', 'kubectl')))
 
     const { getByText } = render(CreateResourceDialog, props())
     await fireEvent.click(getByText('Apply'))
 
     const row = getByText('Take ownership').closest('div')
-    expect(row?.className).toContain('items-start')
+    expect(row?.className).toContain('shrink-0')
+    expect(row?.className).not.toContain('w-full')
+  })
+
+  it('keeps every command collapsed until asked for', async () => {
+    applyResource.mockResolvedValue(refusal(conflict('kubectl', 'kubectl')))
+
+    const { container, getByText } = render(CreateResourceDialog, props())
+    expect(words(container)).not.toContain('--server-side')
+
+    await fireEvent.click(getByText('Apply'))
+    expect(words(container)).not.toContain('--server-side')
+
+    await expandCommands(container)
+    expect(words(container)).toContain('--server-side')
   })
 
   it('offers to take a field from a person', async () => {
@@ -97,10 +119,12 @@ describe('a refused apply', () => {
     applyResource.mockResolvedValue(refusal(conflict('kubectl', 'kubectl')))
 
     const { container, getByText } = render(CreateResourceDialog, props())
+    await expandCommands(container)
     expect(words(container)).toContain('--server-side --field-manager=podsteer')
     expect(words(container)).not.toContain('--force-conflicts')
 
     await fireEvent.click(getByText('Apply'))
+    await expandCommands(container)
 
     // THE FORCED COMMAND BELONGS BESIDE THE BUTTON THAT FORCES. This used to
     // put --force-conflicts into the hint next to Apply the moment a conflict

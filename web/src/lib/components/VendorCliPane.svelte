@@ -158,7 +158,7 @@
       {#if failure}
         <!-- A failure to RUN it — missing, timed out, unreadable. The CLI
              declining is not this: that arrives as a listing, below. -->
-        <p class="flex items-start gap-2 text-body-small text-gauge-warn">
+        <p class="flex items-start gap-2 text-body-small text-gauge-warn-ink">
           <CloudOff class="mt-0.5 size-4 shrink-0" strokeWidth={2} />
           <span>{failure.message}</span>
         </p>

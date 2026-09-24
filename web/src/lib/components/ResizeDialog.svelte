@@ -212,7 +212,7 @@
       <div class="mt-4 rounded-sm border border-outline-variant/60 bg-surface-container-lowest p-3">
         <p class="text-body-medium text-on-surface">The change has been sent to the API server.</p>
         {#if applied.restarts}
-          <p class="mt-1 flex items-start gap-2 text-body-medium text-gauge-warn">
+          <p class="mt-1 flex items-start gap-2 text-body-medium text-gauge-warn-ink">
             <RotateCw class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
             This container's resizePolicy restarts it for {applied.restartReason}, so it is being
             restarted to apply the change.

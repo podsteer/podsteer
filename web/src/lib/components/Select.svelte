@@ -23,7 +23,7 @@
 -->
 <script lang="ts">
   import { Check, ChevronDown } from '@lucide/svelte'
-  import { tick, untrack } from 'svelte'
+  import { tick, untrack, type Component } from 'svelte'
 
   interface Option {
     value: string
@@ -65,6 +65,15 @@
      * hour, a day — where there is no standing value to display afterwards.
      */
     placeholder?: string
+    /**
+     * Drawn on the trigger IN PLACE OF the placeholder text, for a one-shot
+     * menu in a crowded toolbar — Download beside a filter field that needs
+     * the room more. The chevron stays, because it is what says this opens a
+     * menu rather than acting on the click; the placeholder still names it,
+     * as the tooltip and the accessible name. Ignored once something is
+     * selected, since a standing value has to be shown as itself.
+     */
+    icon?: Component
     /** Called with the newly chosen value. */
     onchange?: (value: string) => void
     /**
@@ -92,6 +101,7 @@
     disabled = false,
     compact = false,
     placeholder = '',
+    icon: Icon,
     onchange,
     onopen,
     class: className = '',
@@ -357,7 +367,7 @@
     aria-haspopup="listbox"
     aria-expanded={open}
     aria-controls={open ? listboxId : undefined}
-    title={compact ? (accessibleName ?? label) : undefined}
+    title={compact || Icon ? (accessibleName ?? label) : undefined}
     onclick={() => (open ? hide() : show())}
     onkeydown={onTriggerKeydown}
     class="flex w-full items-center justify-between gap-2 text-left text-body-medium
@@ -383,14 +393,18 @@
       it is not sitting over the field.
     -->
     <span class="sr-only">{accessibleName ?? label}</span>
-    <span class="truncate {selected ? '' : 'text-on-surface-variant'}">
-      {selected ? selected.label : placeholder}
-      {#if selected?.hint}
-        <span class="text-on-surface-variant/70">— {selected.hint}</span>
-      {/if}
-    </span>
+    {#if Icon && !selected}
+      <Icon class="size-4 shrink-0 text-on-surface-variant" strokeWidth={2} aria-hidden="true" />
+    {:else}
+      <span class="truncate {selected ? '' : 'text-on-surface-variant'}">
+        {selected ? selected.label : placeholder}
+        {#if selected?.hint}
+          <span class="text-on-surface-variant/70">— {selected.hint}</span>
+        {/if}
+      </span>
+    {/if}
     <ChevronDown
-      class="size-4 shrink-0 text-on-surface-variant/70 transition-transform duration-150
+      class="{Icon && !selected ? 'size-3.5 -ml-1' : 'size-4'} shrink-0 text-on-surface-variant/70 transition-transform duration-150
              {open ? 'rotate-180' : ''}"
       strokeWidth={2}
     />

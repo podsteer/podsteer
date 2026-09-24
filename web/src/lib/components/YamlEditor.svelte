@@ -60,6 +60,7 @@
   import { tags } from '@lezer/highlight'
   import { preferences } from '$stores/preferences.svelte'
   import { findMatches } from '$lib/textSearch'
+  import Minimap from './Minimap.svelte'
 
   interface Props {
     content: string
@@ -79,6 +80,11 @@
     surface?: string
     /** Hands the parent the controls it cannot reach from outside. */
     onready?: (api: EditorApi) => void
+    /**
+     * Draws a minimap down the right edge, in place of the match ruler — for
+     * the maximized pane, which has the width for it.
+     */
+    minimap?: boolean
   }
 
   export interface EditorApi {
@@ -99,6 +105,7 @@
     query = '',
     surface = 'var(--surface-container-lowest)',
     onready,
+    minimap = false,
   }: Props = $props()
 
   let editorContainer: HTMLDivElement
@@ -217,6 +224,51 @@
    * paints a solid bar that says nothing about where they are.
    */
   let markers = $state<number[]>([])
+
+  /*
+   * What the minimap draws, kept only while it is shown. Line INDEXES rather
+   * than the ruler's pixel fractions: the minimap draws by line, and folding
+   * or wrapping must not slide a match off the line it is on.
+   */
+  let mapLines = $state<string[]>([])
+  let mapMarks = $state<number[]>([])
+  let mapCurrent = $state(-1)
+  let mapViewport = $state({ first: 0, last: 0 })
+
+  function updateMap(view: EditorView): void {
+    if (!minimap) return
+    const { doc } = view.state
+    mapLines = doc.toString().split('\n')
+
+    const needle = view.state.field(queryField)
+    const lines = new Set<number>()
+    if (needle) for (const [start] of findMatches(doc.toString(), needle)) lines.add(doc.lineAt(start).number - 1)
+    mapMarks = [...lines]
+
+    const caret = doc.lineAt(view.state.selection.main.from).number - 1
+    mapCurrent = lines.has(caret) ? caret : -1
+    updateMapViewport(view)
+  }
+
+  /** Called on every scroll, which CodeMirror's update listener does not see. */
+  function updateMapViewport(view: EditorView): void {
+    if (!minimap) return
+    const { doc } = view.state
+    const top = view.scrollDOM.scrollTop - view.documentPadding.top
+    const first = view.lineBlockAtHeight(Math.max(0, top))
+    const last = view.lineBlockAtHeight(Math.max(0, top + view.scrollDOM.clientHeight))
+    mapViewport = {
+      first: doc.lineAt(first.from).number - 1,
+      last: doc.lineAt(last.from).number - 1,
+    }
+  }
+
+  /** Brings a line to the middle of the view without moving the caret. */
+  function revealLine(index: number): void {
+    if (!editor) return
+    const line = editor.state.doc.line(Math.min(index + 1, editor.state.doc.lines))
+    editor.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'center' }) })
+  }
 
   function updateMarkers(): void {
     if (!editor) {
@@ -419,6 +471,7 @@
         if (update.docChanged || update.geometryChanged || update.viewportChanged) {
           updateMarkers()
         }
+        if (update.docChanged || update.selectionSet || update.geometryChanged) updateMap(update.view)
       }),
     )
 
@@ -426,6 +479,9 @@
       state: EditorState.create({ doc: content, extensions }),
       parent: editorContainer,
     })
+    const view = editor
+    view.scrollDOM.addEventListener('scroll', () => updateMapViewport(view), { passive: true })
+    updateMap(view)
 
     onready?.({
       findNext: () => step(1),
@@ -464,6 +520,7 @@
 
     if (!needle) {
       updateMarkers()
+      updateMap(editor)
       return
     }
 
@@ -477,6 +534,7 @@
       })
     }
     updateMarkers()
+    updateMap(editor)
   })
 
   $effect(() => {
@@ -510,15 +568,25 @@
   })
 </script>
 
-<div class="relative h-full w-full overflow-hidden">
-  <div bind:this={editorContainer} class="h-full w-full"></div>
+<div class="relative flex h-full w-full overflow-hidden">
+  <div bind:this={editorContainer} class="h-full min-w-0 flex-1"></div>
+
+  {#if minimap}
+    <Minimap
+      lines={mapLines}
+      marks={mapMarks}
+      current={mapCurrent}
+      viewport={mapViewport}
+      onjump={revealLine}
+    />
+  {/if}
 
   <!-- An overview ruler down the right edge, showing where the matches are.
        Not interactive: it answers "how many, and roughly where" at a glance,
        and clicking it would be a second, worse way of doing what Enter
        already does. `pointer-events-none` keeps it clear of the scrollbar
        underneath, which is the thing somebody actually reaches for. -->
-  {#if markers.length > 0}
+  {#if markers.length > 0 && !minimap}
     <div class="pointer-events-none absolute inset-y-0 right-0 w-2.5" aria-hidden="true">
       {#each markers as fraction (fraction)}
         <span

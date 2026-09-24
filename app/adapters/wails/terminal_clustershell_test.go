@@ -70,7 +70,7 @@ func TestStartClusterShellSessionRefusesOnReadOnlyClusterBeforeThePortIsTouched(
 	registry.SetReadOnly("prod", true)
 	terminal := newClusterShellTerminal(t, registry)
 
-	sessionID, err := terminal.StartClusterShellSession("prod", "shop", "docker.io/cloudresty/dockydeb:v1.2.28-nonroot", 80, 24)
+	sessionID, err := terminal.StartClusterShellSession("prod", "shop", "docker.io/cloudresty/dockydeb:v1.2.31-nonroot", 80, 24)
 	if err == nil {
 		t.Fatal("StartClusterShellSession() error = nil, want a read-only refusal")
 	}
@@ -216,7 +216,7 @@ func TestClusterShellSessionRefusesAllNamespacesRatherThanGuessing(t *testing.T)
 
 	terminal := newClusterShellTerminal(t, application.NewRegistry())
 
-	_, err := terminal.StartClusterShellSession("dev", "", "docker.io/cloudresty/dockydeb:v1.2.28-nonroot", 80, 24)
+	_, err := terminal.StartClusterShellSession("dev", "", "docker.io/cloudresty/dockydeb:v1.2.31-nonroot", 80, 24)
 	if err == nil {
 		t.Fatal("StartClusterShellSession() error = nil, want a refusal for \"all namespaces\"")
 	}

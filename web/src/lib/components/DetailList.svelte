@@ -472,7 +472,7 @@
       class="group/row flex min-w-0 items-start gap-1 text-body-medium {row.tone === 'critical'
         ? 'text-error'
         : row.tone === 'warn'
-          ? 'text-gauge-warn'
+          ? 'text-gauge-warn-ink'
           : 'text-on-surface-variant'}"
     >
       {#if editingIndex === index}

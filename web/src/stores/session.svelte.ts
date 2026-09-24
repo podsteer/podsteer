@@ -45,7 +45,7 @@ import {
   type Workload,
 } from '$lib/api/client'
 import { ApiError, toApiError } from '$lib/api/errors'
-import { findAutoscalers, type AutoscalerCheck } from '$lib/autoscalers'
+import { findAutoscalers, foldKedaAutoscalers, type AutoscalerCheck } from '$lib/autoscalers'
 import { RowSelection } from '$lib/selection.svelte'
 import { nodeItem, podItem, rowKey, tableRowItem, workloadItem, type BulkItem } from '$lib/bulk'
 import { podStatusLabel } from '$lib/format'
@@ -3116,7 +3116,7 @@ export class ClusterSession {
 
     return {
       status: 'known',
-      autoscalers: reads.flatMap((read) => (read.ok ? read.autoscalers : [])),
+      autoscalers: foldKedaAutoscalers(reads.flatMap((read) => (read.ok ? read.autoscalers : []))),
     }
   }
 

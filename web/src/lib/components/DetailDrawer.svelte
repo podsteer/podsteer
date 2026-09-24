@@ -52,7 +52,7 @@
   import DeleteDialog from './DeleteDialog.svelte'
   import ScaleDialog from './ScaleDialog.svelte'
   import RestartDialog from './RestartDialog.svelte'
-  import KubectlHint from './KubectlHint.svelte'
+  import DialogFooter from './DialogFooter.svelte'
   import { apply as kubectlApply, applyDryRun as kubectlApplyDryRun, resourceArgForKind } from '$lib/kubectl'
   import { ApiError } from '$lib/api/errors'
   import TriggerDialog from './TriggerDialog.svelte'
@@ -1225,10 +1225,28 @@
   A chip in the header says WHO owns it; this says what happens if you press
   Apply anyway, which is a different question and only arises here.
 -->
+<!--
+  The edit footer's last row, shared by the drawer and the maximized pane so
+  the two cannot drift: the kubectl equivalent behind a link on the left,
+  collapsed until asked for, and the three buttons on the right.
+-->
+{#snippet editActions()}
+  <DialogFooter class="" command={validating ? applyDryRunCommand : applyCommand}>
+    <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
+    <Button variant="outlined" disabled={validating} onclick={validateManifest}>
+      {validating ? 'Validating…' : 'Validate'}
+    </Button>
+    <Button variant="filled" disabled={isReadOnly} onclick={applyEdit}>Apply</Button>
+  </DialogFooter>
+{/snippet}
+
 {#snippet revertNotice()}
   {#if managedBy}
+    <!-- The hairline under it sets the warning apart from the row of buttons
+         it is warning about, rather than letting it read as their caption. -->
     <p
-      class="flex min-w-0 flex-1 items-start gap-2 text-body-small text-gauge-warn"
+      class="flex min-w-0 flex-1 items-start gap-2 border-b border-outline-variant/60 pb-3
+             text-body-small text-gauge-warn-ink"
       role="status"
     >
       <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={2} />
@@ -1319,6 +1337,7 @@
       podName={selectedPod.name}
       containers={selectedPod.containers?.map((c) => c.name) ?? []}
       onmaximize={maximized === 'logs' ? undefined : () => (maximized = 'logs')}
+      minimap={maximized === 'logs'}
     />
     {:else if isWorkloadWithLogs && workloadPods.length > 0}
     <LogViewer
@@ -1329,6 +1348,7 @@
         containers: p.containers?.map((c: any) => c.name) ?? [],
       }))}
       onmaximize={maximized === 'logs' ? undefined : () => (maximized = 'logs')}
+      minimap={maximized === 'logs'}
     />
     {/if}
   {/key}
@@ -1406,6 +1426,7 @@
     onchange={(value) => (draft = value)}
     managedFieldsDisabled={editing && dirty}
     managedFieldsDisabledReason="Can’t change while there are unsaved edits"
+    minimap={maximized === 'yaml'}
   >
     {#snippet banner()}
       <!--
@@ -1934,8 +1955,8 @@
       re-words it nor decides which ones matter.
     -->
     {#each applyWarnings as warning (warning)}
-      <div class="flex items-start gap-2 border-b border-gauge-warn/20 bg-gauge-warn/10 px-4 py-2 text-body-small text-on-surface">
-        <TriangleAlert class="mt-0.5 size-3.5 shrink-0 text-gauge-warn" strokeWidth={2} />
+      <div class="flex items-start gap-2 border-b border-gauge-warn/20 bg-notice-warn px-4 py-2 text-body-small text-on-surface">
+        <TriangleAlert class="mt-0.5 size-3.5 shrink-0 text-gauge-warn-ink" strokeWidth={2} />
         <span data-selectable>{warning}</span>
       </div>
     {/each}
@@ -2170,14 +2191,7 @@
         {@render revertNotice()}
         {@render conflictBanner()}
         {@render applyResultNotice()}
-        <KubectlHint command={validating ? applyDryRunCommand : applyCommand} />
-        <div class="flex items-center justify-end gap-3">
-          <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
-          <Button variant="outlined" disabled={validating} onclick={validateManifest}>
-            {validating ? 'Validating…' : 'Validate'}
-          </Button>
-          <Button variant="filled" disabled={isReadOnly} onclick={applyEdit}>Apply</Button>
-        </div>
+        {@render editActions()}
       </div>
     {/if}
   </div>
@@ -2264,21 +2278,16 @@
 
     {#snippet footer()}
       {#if editing}
-        {@render productionBanner()}
-        {@render revertNotice()}
-        {@render conflictBanner()}
-        {@render applyResultNotice()}
-        <!-- flex-1, the same as revertNotice: this row is justify-end, so
-             whatever is not a button has to claim the leading space itself
-             or the row centres on nothing. -->
-        <div class="min-w-0 flex-1">
-          <KubectlHint command={validating ? applyDryRunCommand : applyCommand} />
+        <!-- A column claiming the whole of PaneDialog's justify-end row, so
+             this footer stacks exactly as the drawer's does and the link sits
+             at the left edge rather than beside the buttons. -->
+        <div class="flex w-full min-w-0 flex-col gap-3">
+          {@render productionBanner()}
+          {@render revertNotice()}
+          {@render conflictBanner()}
+          {@render applyResultNotice()}
+          {@render editActions()}
         </div>
-        <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
-        <Button variant="outlined" disabled={validating} onclick={validateManifest}>
-          {validating ? 'Validating…' : 'Validate'}
-        </Button>
-        <Button variant="filled" disabled={isReadOnly} onclick={applyEdit}>Apply</Button>
       {/if}
     {/snippet}
   </PaneDialog>

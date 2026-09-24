@@ -16,6 +16,8 @@ import {
   DEFAULT_DEBUG_IMAGE,
   DEFAULT_NODE_SHELL_IMAGE,
   DEFAULT_NODE_SHELL_NAMESPACE,
+  DEFAULT_CLUSTER_SHELL_IMAGE,
+  adoptImage,
   defaultExportedPreferences,
   mergeExportedPreferences,
 } from './preferences.svelte'
@@ -285,6 +287,31 @@ async function reimportPreferences(): Promise<typeof import('./preferences.svelt
 }
 
 describe('the images PodSteer puts into a cluster', () => {
+  it('are all DockyDEB, nonroot wherever Pod Security judges the pod', () => {
+    for (const image of [DEFAULT_DEBUG_IMAGE, DEFAULT_NODE_SHELL_IMAGE, DEFAULT_CLUSTER_SHELL_IMAGE]) {
+      expect(image.startsWith('docker.io/cloudresty/dockydeb:')).toBe(true)
+    }
+    expect(DEFAULT_CLUSTER_SHELL_IMAGE).toContain('-nonroot')
+  })
+
+  it('replaces a retired default an older build wrote, and keeps a real choice', () => {
+    // #save persists every field, so the busybox/alpine build left its
+    // defaults in storage looking exactly like a choice somebody made.
+    expect(adoptImage('debugImage', 'busybox:1.37', DEFAULT_DEBUG_IMAGE)).toBe(DEFAULT_DEBUG_IMAGE)
+    expect(adoptImage('nodeShellImage', 'docker.io/library/alpine:3.20', DEFAULT_NODE_SHELL_IMAGE)).toBe(
+      DEFAULT_NODE_SHELL_IMAGE,
+    )
+    // And an earlier DockyDEB pin, which the same persistence froze in place.
+    expect(adoptImage('nodeShellImage', 'docker.io/cloudresty/dockydeb:v1.2.28', DEFAULT_NODE_SHELL_IMAGE)).toBe(
+      DEFAULT_NODE_SHELL_IMAGE,
+    )
+    expect(DEFAULT_NODE_SHELL_IMAGE).toBe('docker.io/cloudresty/dockydeb:v1.2.31')
+    // A mirror an air-gapped operator typed in is theirs.
+    expect(adoptImage('debugImage', 'registry.internal/busybox:1.37', DEFAULT_DEBUG_IMAGE)).toBe(
+      'registry.internal/busybox:1.37',
+    )
+  })
+
   it('defaults the debug container to a NONROOT image', () => {
     // A debug container is injected into somebody else's pod, in their
     // namespace, so Pod Security admission judges it — and `restricted`

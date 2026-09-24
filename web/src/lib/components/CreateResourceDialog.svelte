@@ -16,7 +16,7 @@
   import { parse } from 'yaml'
   import type { Component } from 'svelte'
   import Button from './Button.svelte'
-  import KubectlHint from './KubectlHint.svelte'
+  import DialogFooter from './DialogFooter.svelte'
   import YamlPane from './YamlPane.svelte'
   import type { EditorApi } from './YamlEditor.svelte'
   import HelpButton from './HelpButton.svelte'
@@ -352,7 +352,7 @@
         takes it from a person.
       -->
       {#if conflicts.length > 0}
-        <div class="flex flex-col gap-2 rounded-sm border border-gauge-warn/30 bg-gauge-warn/10 p-3" role="status">
+        <div class="flex flex-col gap-2 rounded-sm border border-gauge-warn/30 bg-notice-warn p-3" role="status">
           <p class="text-body-medium text-on-surface">
             Not applied — {conflicts.length === 1 ? 'a field is' : 'these fields are'} owned by
             another manager, so nothing was changed.
@@ -381,7 +381,7 @@
               a claim this cannot keep. Saying what will actually happen is
               the only honest label.
             -->
-            <p class="text-body-medium text-gauge-warn">
+            <p class="text-body-medium text-gauge-warn-ink">
               {conflicts.length === 1
                 ? 'A reconciler owns this field.'
                 : revertsAll
@@ -410,11 +410,10 @@
             </label>
           {/if}
 
-          <!-- items-start so the button keeps its own width. A flex column
-               stretches its children, which turned this into a full-width bar
-               reading "Take ownership" — a destructive-ish action styled like
-               a page control. -->
-          <div class="flex flex-col items-start gap-2">
+          <!-- The same footer shape as the dialog's own last row: the command
+               behind a collapsed link on the left, the button on the right at
+               its own width rather than stretched into a page-wide bar. -->
+          <DialogFooter class="" command={overrideCommand}>
             <Button
               variant="outlined"
               disabled={isReadOnly || submitting || !overrideAllowed}
@@ -422,20 +421,16 @@
             >
               {revertsAnyway ? 'Override anyway' : 'Take ownership'}
             </Button>
-            <KubectlHint command={overrideCommand} />
-          </div>
+          </DialogFooter>
         </div>
       {/if}
 
-      <div class="flex items-center gap-3">
-        <div class="min-w-0 flex-1">
-          <KubectlHint command={applyCommand} />
-        </div>
+      <DialogFooter class="" command={applyCommand}>
         <Button variant="outlined" onclick={onclose}>Cancel</Button>
         <Button variant="filled" disabled={isReadOnly || submitting} loading={submitting} onclick={handleApply}>
           Apply
         </Button>
-      </div>
+      </DialogFooter>
     </div>
   </div>
 {/if}

@@ -21,7 +21,15 @@
 </script>
 
 {#if management}
-  <p class="flex min-w-0 items-start gap-2 text-body-small text-gauge-warn" role="status">
+  <!-- mt-3: it follows the dialog's title, and flush against it the warning
+       read as a subtitle. A hairline under it, as in the drawer's edit footer: the sentence is
+       about everything below it, and the rule keeps it from reading as a
+       caption to whatever happens to come next. -->
+  <p
+    class="mt-3 flex min-w-0 items-start gap-2 border-b border-outline-variant/60 pb-3
+           text-body-small text-gauge-warn-ink"
+    role="status"
+  >
     <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={2} />
     <span class="min-w-0">{managementWarning(management)}</span>
   </p>

@@ -326,7 +326,7 @@
         aria-label="Copy unified diff"
         title={copied.on ? 'Copied' : 'Copy unified diff'}
         class="state-layer grid size-7 shrink-0 place-items-center rounded-sm transition-colors duration-100
-               {copied.on ? 'text-gauge-normal' : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}
+               {copied.on ? 'text-gauge-normal-ink' : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}
                disabled:pointer-events-none disabled:opacity-30"
       >
         {#if copied.on}

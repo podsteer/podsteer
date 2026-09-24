@@ -12,8 +12,15 @@
  * after it.
  */
 
-/** The GitOps controllers PodSteer can recognise. */
-export type GitOpsTool = 'argocd' | 'flux'
+/**
+ * The controllers PodSteer can recognise as owning an object.
+ *
+ * External Secrets is not GitOps — it reconciles a Secret against an external
+ * store, not against Git — but for the operator in front of an editor the
+ * consequence is identical: a hand-made change is overwritten. So it rides the
+ * same warning, the same badge and the same sentence slot, with its own words.
+ */
+export type GitOpsTool = 'argocd' | 'flux' | 'external-secrets'
 
 export interface GitOpsOwner {
   tool: GitOpsTool
@@ -49,7 +56,15 @@ export interface GitOpsOwner {
 interface Metadata {
   labels?: Record<string, string>
   annotations?: Record<string, string>
+  ownerReferences?: { apiVersion?: string; kind?: string; name?: string }[]
 }
+
+/**
+ * The annotation ESO writes on every Secret it manages, holding a hash of the
+ * data it last wrote — its own drift check. Present under every creation
+ * policy, including `Merge`, which writes no ownerReference.
+ */
+const ESO_DATA_HASH = 'reconcile.external-secrets.io/data-hash'
 
 /**
  * Identifies the controller managing an object, or null.
@@ -70,6 +85,20 @@ export function gitOpsOwner(manifest: unknown): GitOpsOwner | null {
 
   const labels = metadata.labels ?? {}
   const annotations = metadata.annotations ?? {}
+
+  // --- External Secrets --------------------------------------------------
+  //
+  // FIRST, because it is the most specific answer for the one kind it
+  // applies to. Argo CD tracks the ExternalSecret, not the Secret it
+  // produces; if the template copied a tracking id onto the Secret, what
+  // actually overwrites an edit is still ESO. The ownerReference (the default
+  // `creationPolicy: Owner`) names the ExternalSecret; the data-hash
+  // annotation alone says ESO without saying which.
+  const externalSecret = (metadata.ownerReferences ?? []).find(
+    (ref) => ref.kind === 'ExternalSecret' && (ref.apiVersion ?? '').startsWith('external-secrets.io/'),
+  )
+  if (externalSecret) return eso(externalSecret.name ?? '')
+  if (annotations[ESO_DATA_HASH]) return eso('')
 
   // --- Argo CD ------------------------------------------------------------
   //
@@ -111,6 +140,16 @@ function flux(source: string, sourceKind: string): GitOpsOwner {
   return { tool: 'flux', label: 'Flux', source, sourceKind, target: null }
 }
 
+function eso(externalSecret: string): GitOpsOwner {
+  return {
+    tool: 'external-secrets',
+    label: 'External Secrets',
+    source: externalSecret,
+    sourceKind: 'ExternalSecret',
+    target: null,
+  }
+}
+
 /**
  * Reads the object out of a tracking id.
  *
@@ -141,6 +180,12 @@ export function revertWarning(owner: GitOpsOwner): string {
   const by = owner.source
     ? `${owner.label} — the ${owner.source} ${owner.sourceKind}`
     : owner.label
+
+  // Not "against Git": ESO's source of truth is the external store, and its
+  // clock is the ExternalSecret's refreshInterval.
+  if (owner.tool === 'external-secrets') {
+    return `This Secret is written by ${by}. Changes made here are overwritten the next time it refreshes from the external secret store.`
+  }
 
   return `This object is managed by ${by}. Changes made here are reverted the next time it reconciles against Git.`
 }

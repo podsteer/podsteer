@@ -126,12 +126,20 @@
         </Radio>
 
         {#each agents as agent (agent.id)}
-          <Radio name="local-shell-start" bind:group={agentId} value={agent.id} dense>
-            <span class="flex items-center gap-2">
-              <Bot class="size-4 text-on-surface-variant" strokeWidth={1.8} aria-hidden="true" />
-              {agent.label}
-              <span class="truncate font-mono text-body-medium text-on-surface-variant"
-                >{agent.path}</span
+          <!-- The path goes UNDER the name, not beside it: side by side the
+               two fought for one line, so the name wrapped and the path
+               truncated to "/Users/…/c…" — the part that says which binary
+               is the part that got cut. On its own line it breaks anywhere
+               and is shown whole. -->
+          <Radio name="local-shell-start" bind:group={agentId} value={agent.id} dense align="start">
+            <span class="flex min-w-0 flex-col">
+              <span class="flex items-center gap-2">
+                <Bot class="size-4 shrink-0 text-on-surface-variant" strokeWidth={1.8} aria-hidden="true" />
+                {agent.label}
+              </span>
+              <span
+                class="font-mono text-body-small break-all text-on-surface-variant"
+                data-selectable>{agent.path}</span
               >
             </span>
           </Radio>

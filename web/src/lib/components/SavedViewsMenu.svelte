@@ -123,7 +123,7 @@
     title={applied ? `Saved view: ${applied.name}` : 'Saved views'}
     class="state-layer grid size-8 shrink-0 place-items-center rounded-full
            transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
-           {applied ? 'text-gauge-normal' : 'text-on-surface-variant'}
+           {applied ? 'text-gauge-normal-ink' : 'text-on-surface-variant'}
            {open ? 'bg-surface-container' : ''}"
   >
     {#if applied}
@@ -191,7 +191,7 @@
               >
                 <span class="grid size-4 shrink-0 place-items-center">
                   {#if applied?.id === view.id}
-                    <Check class="size-3.5 text-gauge-normal" strokeWidth={2} />
+                    <Check class="size-3.5 text-gauge-normal-ink" strokeWidth={2} />
                   {/if}
                 </span>
                 <span class="min-w-0">

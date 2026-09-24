@@ -20,18 +20,28 @@
   import type { ResourceUsage } from '$lib/api/client'
   import GaugeTrack from './GaugeTrack.svelte'
   import CapacityFigures, { type Figure } from './CapacityFigures.svelte'
+  import InfoHint from './InfoHint.svelte'
 
   interface Props {
     label: string
     usage: ResourceUsage
     /**
-     * A line beneath the figures, for a dimension whose numbers need one.
+     * What qualifies this track's numbers, behind an icon beside the label.
      *
      * Ephemeral storage is the case: almost nobody declares it, so its track
      * is honestly empty, and an empty track with no explanation reads as a
      * failure to measure rather than as the finding it is.
+     *
+     * BEHIND AN ICON RATHER THAN PRINTED UNDER THE FIGURES, for the reason
+     * SlotsBar's reserved note is: inline it made one track in a grid of four
+     * taller than its neighbours, so the row below it sat against a ragged
+     * edge, and the sentence competed with the figures it was qualifying.
+     * Nothing is lost — the icon is a peer of the one beside Pod slots, and
+     * opens on hover, click or focus.
      */
     note?: string
+    /** Names what `note` is about, for anyone who cannot see the icon. */
+    noteLabel?: string
     /**
      * Replaces the Efficiency figure for a track that cannot have one.
      *
@@ -43,7 +53,7 @@
     fourth?: Figure
   }
 
-  let { label, usage, note = '', fourth }: Props = $props()
+  let { label, usage, note = '', noteLabel = '', fourth }: Props = $props()
 
   const usageWidth = $derived(usage.measured ? Math.max(0, Math.min(100, usage.usagePercent)) : 0)
 
@@ -94,7 +104,7 @@
         ? {
             label: 'Efficiency',
             percent: usage.efficiencyLabel,
-            tone: efficiency < 25 ? 'text-gauge-warn' : undefined,
+            tone: efficiency < 25 ? 'text-gauge-warn-ink' : undefined,
             title: 'Measured usage as a share of what was requested',
           }
         : { label: 'Efficiency', value: '—', muted: true }),
@@ -104,7 +114,12 @@
 
 <div class="flex min-w-0 flex-col gap-2">
   <div class="flex items-baseline justify-between gap-3">
-    <span class="text-label-large text-on-surface">{label}</span>
+    <span class="flex items-center gap-1.5 text-label-large text-on-surface">
+      {label}
+      {#if note}
+        <InfoHint text={note} label={noteLabel || `About ${label}`} />
+      {/if}
+    </span>
     <span class="text-body-medium tabular-nums text-on-surface-variant">
       {usage.requests} / {usage.allocatable}
     </span>
@@ -145,8 +160,4 @@
   </GaugeTrack>
 
   <CapacityFigures {figures} />
-
-  {#if note}
-    <p class="text-body-small leading-relaxed text-on-surface-variant/60">{note}</p>
-  {/if}
 </div>

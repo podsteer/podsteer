@@ -28,6 +28,46 @@ export interface AutoscalerRef {
   minReplicas?: string
   /** From the table's MAXPODS (HPA) or MAX (KEDA) column, when the server printed one. */
   maxReplicas?: string
+  /**
+   * An HPA's: the ScaledObject KEDA created it for, from the
+   * `scaledobject.keda.sh/name` label KEDA puts on it. A ScaledObject's: the
+   * HPA it drives, once `foldKedaAutoscalers` has paired them.
+   */
+  keda?: string
+}
+
+/** The label KEDA writes on every HPA it creates, naming its ScaledObject. */
+const KEDA_OWNER_LABEL = 'scaledobject.keda.sh/name'
+
+/**
+ * One warning per AUTOSCALER, not per object.
+ *
+ * KEDA does not scale anything itself: a ScaledObject makes an HPA
+ * (`keda-hpa-<name>` by default) and the HPA does the scaling. Both target the
+ * workload, so both were found, and the dialog said "an autoscaler manages
+ * this" twice — about one autoscaler, under two names, one of them a
+ * generated one nobody wrote. The ScaledObject is what an operator edits, so
+ * it stays, and the HPA it drives is folded into it by name.
+ *
+ * Paired by KEDA's own label first; by the default name only when a row
+ * carried no labels, since a custom `horizontalPodAutoscalerConfig.name` is
+ * what the label exists to survive. An HPA that pairs with nothing is left
+ * alone: it is a separate autoscaler, and two warnings are then the truth.
+ */
+export function foldKedaAutoscalers(refs: AutoscalerRef[]): AutoscalerRef[] {
+  const scaledObjects = new Set(refs.filter((ref) => ref.kind === 'ScaledObject').map((ref) => ref.name))
+  const driven = new Map<string, string>()
+  for (const ref of refs) {
+    if (ref.kind !== 'HorizontalPodAutoscaler') continue
+    const owner =
+      ref.keda ?? (ref.name.startsWith('keda-hpa-') ? ref.name.slice('keda-hpa-'.length) : undefined)
+    if (owner && scaledObjects.has(owner)) driven.set(owner, ref.name)
+  }
+
+  const folded = new Set(driven.values())
+  return refs
+    .filter((ref) => !(ref.kind === 'HorizontalPodAutoscaler' && folded.has(ref.name)))
+    .map((ref) => (ref.kind === 'ScaledObject' && driven.has(ref.name) ? { ...ref, keda: driven.get(ref.name) } : ref))
 }
 
 /**
@@ -54,7 +94,10 @@ export function describeAutoscaler(ref: AutoscalerRef): string {
     ref.minReplicas ? `min ${ref.minReplicas}` : null,
     ref.maxReplicas ? `max ${ref.maxReplicas}` : null,
   ].filter((part): part is string => part !== null)
-  return bounds.length ? `${ref.kind}, ${bounds.join(', ')}` : ref.kind
+  const described = bounds.length ? `${ref.kind}, ${bounds.join(', ')}` : ref.kind
+  // The HPA it drives is named, because that is the object whose events say
+  // what the scaler actually did.
+  return ref.kind === 'ScaledObject' && ref.keda ? `${described}, through the ${ref.keda} HPA` : described
 }
 
 /** Finds a column by its header, case-insensitively. -1 when the server did not print it. */
@@ -115,6 +158,7 @@ function findHorizontalPodAutoscalers(
       kind: 'HorizontalPodAutoscaler',
       minReplicas: minIdx === -1 ? undefined : row.cells?.[minIdx],
       maxReplicas: maxIdx === -1 ? undefined : row.cells?.[maxIdx],
+      keda: row.labels?.[KEDA_OWNER_LABEL] || undefined,
     })
   }
   return found

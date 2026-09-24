@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { Finding, K8sEvent, Pod } from '$lib/api/client'
 import type { RecordedEvent } from '$lib/timeline'
+import { preferences } from './preferences.svelte'
 import { timeline } from './timeline.svelte'
 
 // Only the fields the store reads. Cast through unknown because each DTO is
@@ -48,6 +49,8 @@ describe('the session timeline', () => {
   beforeEach(() => {
     timeline.forget('dev')
     timeline.forget('prod')
+    preferences.setTimelineClusterLimit(2000)
+    preferences.setTimelineObjectLimit(200)
   })
 
   describe('Kubernetes events', () => {
@@ -373,6 +376,48 @@ describe('the session timeline', () => {
       expect(entries).toHaveLength(2_000)
       expect(entries[0].detail).toBe('attempt 2099')
       expect(entries[entries.length - 1].detail).toBe('attempt 100')
+    })
+
+    it('honours the caps chosen in Settings', () => {
+      preferences.setTimelineClusterLimit(500)
+      preferences.setTimelineObjectLimit(50)
+
+      for (let i = 0; i < 80; i++) {
+        timeline.recordEvents('dev', [event({ name: `web-1.${i}`, message: `attempt ${i}` })])
+      }
+      expect(timeline.forObject('dev', 'Pod', 'shop', 'web-1')).toHaveLength(50)
+
+      for (let i = 0; i < 600; i++) {
+        timeline.recordEvents('dev', [
+          event({ name: `e.${i}`, involvedName: `api-${i}`, message: `other ${i}` }),
+        ])
+      }
+      expect(timeline.forCluster('dev')).toHaveLength(500)
+    })
+
+    it('trims at once when a cap is lowered, without waiting for the next event', () => {
+      // A quiet cluster may not record anything for hours, and a limit the
+      // operator just chose should not wait for it.
+      for (let i = 0; i < 900; i++) {
+        timeline.recordEvents('dev', [
+          event({ name: `e.${i}`, involvedName: `web-${i}`, message: `attempt ${i}` }),
+        ])
+      }
+      expect(timeline.forCluster('dev')).toHaveLength(900)
+
+      preferences.setTimelineClusterLimit(500)
+      timeline.enforceLimits()
+
+      const entries = timeline.forCluster('dev')
+      expect(entries).toHaveLength(500)
+      // The newest were kept.
+      expect(entries[0].detail).toBe('attempt 899')
+      expect(entries[entries.length - 1].detail).toBe('attempt 400')
+
+      // Raising it again brings nothing back — what was dropped is gone.
+      preferences.setTimelineClusterLimit(2000)
+      timeline.enforceLimits()
+      expect(timeline.forCluster('dev')).toHaveLength(500)
     })
 
     it('lets an evicted event be recorded again', () => {

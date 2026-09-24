@@ -279,7 +279,7 @@
           may be capped; the sentence says what it means for the table.
         -->
         <p
-          class="border-b border-outline-variant/60 px-3 py-2 text-body-medium text-gauge-warn"
+          class="border-b border-outline-variant/60 px-3 py-2 text-body-medium text-gauge-warn-ink"
           role="status"
         >
           At least one of these kinds has more objects than PodSteer listed, so the rows below

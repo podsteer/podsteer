@@ -14,7 +14,7 @@
   third-party asset — not to trace something logo-shaped.
 -->
 <script lang="ts">
-  import { GitBranch } from '@lucide/svelte'
+  import { GitBranch, KeyRound } from '@lucide/svelte'
   import type { GitOpsOwner } from '$lib/gitops'
   import { revertWarning } from '$lib/gitops'
 
@@ -45,7 +45,13 @@
          px-2 py-0.5 text-body-small text-on-surface-variant"
   title={title ?? revertWarning(owner)}
 >
-  <GitBranch class="size-3.5 shrink-0 text-on-surface-variant/70" strokeWidth={1.8} />
+  <!-- A key for External Secrets: it is not GitOps, and a branch glyph beside
+       its name would say it was. -->
+  {#if owner.tool === 'external-secrets'}
+    <KeyRound class="size-3.5 shrink-0 text-on-surface-variant/70" strokeWidth={1.8} />
+  {:else}
+    <GitBranch class="size-3.5 shrink-0 text-on-surface-variant/70" strokeWidth={1.8} />
+  {/if}
   <span class="shrink-0">{owner.label}</span>
   {#if !compact && owner.source}
     <span class="text-on-surface-variant/40" aria-hidden="true">/</span>

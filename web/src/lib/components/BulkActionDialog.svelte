@@ -406,7 +406,7 @@
                   next sync period. It does not block the action.
                 -->
                 {#if line.act && check?.status === 'known' && check.autoscalers.length > 0}
-                  <p class="mt-0.5 flex items-start gap-1.5 text-gauge-warn">
+                  <p class="mt-0.5 flex items-start gap-1.5 text-gauge-warn-ink">
                     <TriangleAlert class="mt-0.5 size-3.5 shrink-0" strokeWidth={2} />
                     <span>
                       An autoscaler manages this replica count —

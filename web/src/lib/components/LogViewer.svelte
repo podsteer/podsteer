@@ -36,6 +36,7 @@
   } from '$lib/logStreams'
   import { preferences } from '$stores/preferences.svelte'
   import { saveTextFile } from '$lib/api/client'
+  import Minimap from './Minimap.svelte'
   import PaneToolbar from './PaneToolbar.svelte'
   import Select from './Select.svelte'
   import ToolbarSearch from './ToolbarSearch.svelte'
@@ -46,7 +47,8 @@
   import { matches, parseQuery, type Query } from '$lib/query'
   import { formatLogTimestamp, parseLogTimestamp, type TimestampMode } from '$lib/logTimestamps'
   import { detectSeverity, parseStructuredLine, type Severity, type StructuredLine } from '$lib/logFormat'
-  import { ansiToSpans, type AnsiColor, type AnsiSpan } from '$lib/ansi'
+  import { ansiToSpans, type AnsiSpan } from '$lib/ansi'
+  import { ANSI_DARK, ANSI_LIGHT, isLightTheme, onThemeChange } from '$lib/terminalTheme'
   import { groupLogLines } from '$lib/logGroups'
   import { buildLogFilename } from '$lib/exportFilename'
   import {
@@ -98,9 +100,24 @@
      * column beside a table wraps or truncates most of them.
      */
     onmaximize?: () => void
+    /**
+     * Draws a minimap down the right edge, in place of the match ruler.
+     *
+     * For the maximized pane only: in the drawer's column a 96px strip would
+     * take the width the lines are already short of.
+     */
+    minimap?: boolean
   }
 
-  let { clusterId, namespace, podName, containers = [], pods = [], onmaximize }: Props = $props()
+  let {
+    clusterId,
+    namespace,
+    podName,
+    containers = [],
+    pods = [],
+    onmaximize,
+    minimap = false,
+  }: Props = $props()
 
   /** How many lines to ask the API server for. */
   const TAIL_SIZES = [100, 500, 1000, 5000] as const
@@ -131,40 +148,30 @@
       for "bad/caution/fine", plus a neutral tone for debug, which is none of
       those. */
   const SEVERITY_ACTIVE_CLASS: Record<Severity, string> = {
-    error: 'bg-gauge-critical/16 text-gauge-critical',
-    warn: 'bg-gauge-warn/16 text-gauge-warn',
-    info: 'bg-gauge-normal/16 text-gauge-normal',
+    error: 'bg-gauge-critical/16 text-gauge-critical-ink',
+    warn: 'bg-gauge-warn/16 text-gauge-warn-ink',
+    info: 'bg-gauge-normal/16 text-gauge-normal-ink',
     debug: 'bg-surface-container-high text-on-surface',
   }
 
-  /** Tailwind text-colour classes for the 16 ANSI colours. Literal palette
-      colours rather than the application's semantic tokens (primary, gauge-*)
-      on purpose: an ANSI colour code is the PROCESS choosing red, not this
-      application assigning a meaning to it, so it should read as an actual
-      red rather than borrow a token that already means something else here
-      (gauge-normal is blue, not green — see CLAUDE.md). */
-  const ANSI_COLOR_CLASS: Record<AnsiColor, string> = {
-    black: 'text-neutral-500',
-    red: 'text-red-500',
-    green: 'text-emerald-500',
-    yellow: 'text-amber-500',
-    blue: 'text-blue-500',
-    magenta: 'text-fuchsia-500',
-    cyan: 'text-cyan-500',
-    white: 'text-neutral-300',
-    'bright-black': 'text-neutral-400',
-    'bright-red': 'text-red-400',
-    'bright-green': 'text-emerald-400',
-    'bright-yellow': 'text-amber-400',
-    'bright-blue': 'text-blue-400',
-    'bright-magenta': 'text-fuchsia-400',
-    'bright-cyan': 'text-cyan-400',
-    'bright-white': 'text-neutral-100',
-  }
+  /**
+   * The 16 ANSI colours, from the TERMINAL's palette rather than a second
+   * table of our own. An ANSI code is the process choosing red, not this
+   * application assigning a meaning, so it reads as an actual red rather than
+   * borrowing a semantic token (gauge-normal is blue, not green). They were
+   * fixed Tailwind shades tuned for a dark ground — bright-white was
+   * neutral-100, which on the light theme drew text in white on white — and
+   * the terminal already carried a light set measured against its surface.
+   * One table means a log line and the same line in a shell cannot disagree.
+   */
+  let lightTheme = $state(isLightTheme())
+  $effect(() => onThemeChange(() => (lightTheme = isLightTheme())))
 
-  function ansiSpanClass(span: AnsiSpan): string {
-    const color = span.color ? ANSI_COLOR_CLASS[span.color] : ''
-    return `${color} ${span.bold ? 'font-semibold' : ''}`
+  function ansiSpanStyle(span: AnsiSpan): string {
+    if (!span.color) return ''
+    // 'bright-red' in the parser's vocabulary is xterm's 'brightRed'.
+    const key = span.color.replace(/-(\w)/, (_, letter: string) => letter.toUpperCase()) as keyof typeof ANSI_DARK
+    return `color: ${(lightTheme ? ANSI_LIGHT : ANSI_DARK)[key]}`
   }
 
   // Determine if we're in single pod or multi-pod mode
@@ -778,6 +785,15 @@
     return out
   })
 
+  /** The rows as the minimap draws them — only built while it is shown. */
+  const minimapLines = $derived(minimap ? rows.map((row) => row.log.line) : [])
+
+  /** Which rows are on screen, by position, for the minimap's lens. */
+  const minimapViewport = $derived({
+    first: rowAt(scrollTop),
+    last: rowAt(scrollTop + viewportHeight),
+  })
+
   /** A new query starts from the first match rather than from wherever it left off. */
   $effect(() => {
     const needle = searchQuery
@@ -1276,6 +1292,7 @@
         label="Download logs"
         accessibleName="Download logs"
         placeholder="Download"
+        icon={Download}
         value=""
         disabled={filteredLogs.length === 0}
         options={[
@@ -1338,7 +1355,7 @@
   {/if}
 
   <!-- Log output -->
-  <div class="relative min-h-0 flex-1">
+  <div class="relative flex min-h-0 flex-1">
   <!--
     data-selectable, because the application sets `user-select: none` on the
     body: it is desktop chrome, not a web page, and dragging across a toolbar
@@ -1355,7 +1372,7 @@
     bind:this={logContainer}
     onscroll={onScroll}
     data-selectable
-    class="relative h-full overflow-auto bg-surface-container-lowest p-3 font-mono text-body-small leading-relaxed"
+    class="relative h-full min-w-0 flex-1 overflow-auto bg-surface-container-lowest p-3 font-mono text-body-small leading-relaxed"
   >
     {#if logs.length === 0}
       <div class="flex h-full items-center justify-center text-on-surface-variant">
@@ -1413,13 +1430,13 @@
                 {/if}
                 {#if structured.message}
                   <span class="text-on-surface"
-                    >{#each ansiToSpans(structured.message) as span, i (i)}<span class={ansiSpanClass(span)}
+                    >{#each ansiToSpans(structured.message) as span, i (i)}<span class={span.bold ? 'font-semibold' : ''} style={ansiSpanStyle(span)}
                         >{span.text}</span
                       >{/each}</span
                   >
                 {/if}
                 {#if structured.error}
-                  <span class="ml-1 text-gauge-critical">{structured.error}</span>
+                  <span class="ml-1 text-gauge-critical-ink">{structured.error}</span>
                 {/if}
                 {#if structured.timestamp}
                   <span class="ml-1 text-on-surface-variant/60">{structured.timestamp}</span>
@@ -1438,7 +1455,7 @@
                    would mean splitting one run of text by two independent
                    partitions at once. -->
               <span class="text-on-surface"
-                >{#each ansiToSpans(row.text) as span, i (i)}<span class={ansiSpanClass(span)}
+                >{#each ansiToSpans(row.text) as span, i (i)}<span class={span.bold ? 'font-semibold' : ''} style={ansiSpanStyle(span)}
                     >{span.text}</span
                   >{/each}</span
               >
@@ -1485,7 +1502,7 @@
   <!-- Where the matches fall in the whole stream. Only when the rest of the
        lines are still there: against a filtered list every visible line
        matches, and the track would be one unbroken bar. -->
-  {#if markers.length > 0}
+  {#if markers.length > 0 && !minimap}
     <div class="pointer-events-none absolute inset-y-0 right-0 w-2.5" aria-hidden="true">
       {#each markers as fraction (fraction)}
         <span
@@ -1494,6 +1511,20 @@
         ></span>
       {/each}
     </div>
+  {/if}
+
+  <!-- The minimap replaces the ruler rather than sitting beside it: it marks
+       the same matches, in place, over the shape of the text around them.
+       Matches are only marked while the rest of the lines are present — the
+       ruler's rule, for the ruler's reason. -->
+  {#if minimap && logs.length > 0}
+    <Minimap
+      lines={minimapLines}
+      marks={filterMode ? [] : matchPositions}
+      current={currentMatch >= 0 ? (matchPositions[currentMatch] ?? -1) : -1}
+      viewport={minimapViewport}
+      onjump={revealRow}
+    />
   {/if}
   </div>
 
@@ -1541,12 +1572,12 @@
              forbidden", "container y is not valid for pod z" — which say far
              more than any wording invented here would. -->
         <span class="inline-block size-2 shrink-0 rounded-full bg-gauge-critical"></span>
-        <span class="min-w-0 truncate text-gauge-critical" title={failureDetail}
+        <span class="min-w-0 truncate text-gauge-critical-ink" title={failureDetail}
           >{failureSummary}</span
         >
       {/if}
       {#if planNotes.truncated > 0}
-        <span class="shrink-0 text-gauge-warn"
+        <span class="shrink-0 text-gauge-warn-ink"
           >· {planNotes.truncated} more not opened (limit {MAX_LOG_STREAMS})</span
         >
       {/if}

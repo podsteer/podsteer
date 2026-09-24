@@ -124,7 +124,7 @@
                that may not list Secrets holds an unknown number of them, and
                a zero there would report an empty namespace as fact. -->
           {#if count.unreadable}
-            <span class="text-body-small text-gauge-warn">{count.unreadable}</span>
+            <span class="text-body-small text-gauge-warn-ink">{count.unreadable}</span>
           {:else}
             {count.count}
           {/if}

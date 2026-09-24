@@ -128,7 +128,7 @@
                     stays bound, but nothing should be told this is fine while
                     a replacement pod is still being sought.
                   -->
-                  <span class="flex min-w-0 items-center gap-1.5 text-body-small text-gauge-warn">
+                  <span class="flex min-w-0 items-center gap-1.5 text-body-small text-gauge-warn-ink">
                     <Loader class="size-3.5 shrink-0 animate-spin" strokeWidth={2} />
                     Waiting for a replacement pod
                   </span>

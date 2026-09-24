@@ -918,7 +918,7 @@
     </p>
   {:else if variant === 'nodeshell'}
     <p
-      class="shrink-0 border-b border-gauge-warn/40 bg-gauge-warn/10 px-3 py-1
+      class="shrink-0 border-b border-gauge-warn/40 bg-notice-warn px-3 py-1
              text-body-small text-on-surface-variant"
     >
       {NODE_SHELL_NOTE}
@@ -983,7 +983,7 @@
                py-0.5 text-label-small text-on-surface shadow-sm"
         style="left: {selection.x}px; top: {selection.y}px"
       >
-        <Check class="size-3 text-gauge-normal" strokeWidth={2.5} />
+        <Check class="size-3 text-gauge-normal-ink" strokeWidth={2.5} />
         Copied
       </div>
     {/if}

@@ -207,14 +207,14 @@
       <div class="mt-4 flex flex-col gap-2">
         {#each autoscalers.autoscalers as ref (ref.kind + '/' + ref.name)}
           {@const opener = follow(ref.kind, ref.name, namespace)}
-          <div class="flex items-start gap-2 rounded-sm border border-gauge-warn/40 bg-gauge-warn/10 p-3">
-            <TriangleAlert class="mt-0.5 size-4 shrink-0 text-gauge-warn" strokeWidth={2} />
+          <div class="flex items-start gap-2 rounded-sm border border-gauge-warn/40 bg-notice-warn p-3">
+            <TriangleAlert class="mt-0.5 size-4 shrink-0 text-gauge-warn-ink" strokeWidth={2} />
             <p class="text-body-medium text-on-surface">
               An autoscaler manages this replica count —
               {#if opener}
                 <button
                   type="button"
-                  class="resource-link font-medium"
+                  class="resource-link inline text-left font-medium [overflow-wrap:anywhere]"
                   onclick={() => {
                     // Closed first: what the click opens is a different
                     // object, not this workload, and leaving the dialog open

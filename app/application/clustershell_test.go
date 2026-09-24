@@ -124,7 +124,7 @@ func TestStartClusterShellRefusesAReadOnlyClusterBeforeThePortIsTouched(t *testi
 	shells := &fakeClusterShellPort{}
 	service := newShellService(t, shells, registry, nil)
 
-	_, err := service.StartClusterShell(context.Background(), "prod", "shop", "docker.io/cloudresty/dockydeb:v1.2.28-nonroot")
+	_, err := service.StartClusterShell(context.Background(), "prod", "shop", "docker.io/cloudresty/dockydeb:v1.2.31-nonroot")
 	if !errors.Is(err, ports.ErrReadOnly) {
 		t.Fatalf("StartClusterShell() error = %v, want ErrReadOnly", err)
 	}
@@ -196,7 +196,7 @@ func TestStartClusterShellRefusesAllNamespacesRatherThanGuessing(t *testing.T) {
 	shells := &fakeClusterShellPort{}
 	service := newShellService(t, shells, application.NewRegistry(), nil)
 
-	_, err := service.StartClusterShell(context.Background(), "dev", domain.NamespaceAll, "docker.io/cloudresty/dockydeb:v1.2.28-nonroot")
+	_, err := service.StartClusterShell(context.Background(), "dev", domain.NamespaceAll, "docker.io/cloudresty/dockydeb:v1.2.31-nonroot")
 	if !errors.Is(err, domain.ErrShellNamespaceRequired) {
 		t.Fatalf("StartClusterShell() error = %v, want ErrShellNamespaceRequired", err)
 	}
@@ -219,7 +219,7 @@ func TestStartClusterShellLeavesOneAuditLineNamingClusterNamespaceAndPod(t *test
 	shells := &fakeClusterShellPort{started: domain.ClusterShell{ID: "1", PodName: "podsteer-shell-aaaaa"}}
 	service := newShellService(t, shells, application.NewRegistry(), logger)
 
-	if _, err := service.StartClusterShell(context.Background(), "dev", "shop", "docker.io/cloudresty/dockydeb:v1.2.28-nonroot"); err != nil {
+	if _, err := service.StartClusterShell(context.Background(), "dev", "shop", "docker.io/cloudresty/dockydeb:v1.2.31-nonroot"); err != nil {
 		t.Fatalf("StartClusterShell() error = %v", err)
 	}
 

@@ -32,7 +32,6 @@ import TimelineView from './TimelineView.svelte'
   import SearchField from '$lib/components/SearchField.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import { organisation } from '$stores/organisation.svelte'
-  import { formatClockTime } from '$lib/format'
   import { shortcut } from '$stores/shortcuts.svelte'
   import { toCSV } from '$lib/csv'
   import { buildExportFilename } from '$lib/exportFilename'
@@ -384,10 +383,6 @@ import TimelineView from './TimelineView.svelte'
             <span class="rounded-full bg-surface-container-high px-2 py-0.5 text-label-small
                          tabular-nums text-on-surface-variant">
               {session.visibleCount}
-            </span>
-          {:else if session.lastRefreshedAt}
-            <span class="text-body-small text-on-surface-variant/60">
-              assessed {formatClockTime(session.lastRefreshedAt)}
             </span>
           {/if}
           {#if session.viewMode === 'pods' && session.podSummary.unhealthy > 0}

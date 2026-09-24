@@ -20,7 +20,7 @@ import (
 	"github.com/podsteer/podsteer/app/ports"
 )
 
-const testShellImage = "docker.io/cloudresty/dockydeb:v1.2.28-nonroot"
+const testShellImage = "docker.io/cloudresty/dockydeb:v1.2.31-nonroot"
 
 // newClusterShellAdapter is newTestAdapter with the in-cluster shell registry
 // initialised — that registry is not part of the zero value, and a nil map

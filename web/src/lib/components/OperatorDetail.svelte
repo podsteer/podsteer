@@ -219,7 +219,7 @@
 
   const SEVERITY_STYLE = {
     critical: { icon: AlertOctagon, card: 'border-error/40 bg-error-container/20', iconClass: 'text-error' },
-    warning: { icon: AlertTriangle, card: 'border-gauge-warn/40 bg-gauge-warn/10', iconClass: 'text-gauge-warn' },
+    warning: { icon: AlertTriangle, card: 'border-gauge-warn/40 bg-notice-warn', iconClass: 'text-gauge-warn-ink' },
     info: {
       icon: Info,
       card: 'border-outline-variant bg-surface-container-low',

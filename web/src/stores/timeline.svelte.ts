@@ -30,6 +30,8 @@
  * record a cluster produced was a function of which pages somebody visited.
  */
 
+import { untrack } from 'svelte'
+
 import type { Finding, Pod } from '$lib/api/client'
 import {
   diffFindings,
@@ -41,27 +43,25 @@ import {
   type TimelineTarget,
   type WriteRecord,
 } from '$lib/timeline'
+import { preferences } from './preferences.svelte'
 
-/**
- * The most entries kept about one object.
+/*
+ * THE TWO CAPS are preferences (Settings → Data), read when entries are
+ * appended rather than captured at start-up, so a change applies to the next
+ * refresh without a restart.
  *
- * A ceiling on what one noisy object can crowd out. A pod stuck in
- * CrashLoopBackOff produces a new event every few seconds for as long as
- * nobody fixes it, and without this it would fill the cluster's whole budget
- * on its own — so the two hundredth entry about that pod evicts its own
- * oldest rather than somebody else's.
- */
-const MAX_ENTRIES_PER_OBJECT = 200
-
-/**
- * The most entries kept for one cluster, across every object.
+ * The per-object cap (default 200) is a ceiling on what one noisy object can
+ * crowd out. A pod stuck in CrashLoopBackOff produces a new event every few
+ * seconds for as long as nobody fixes it, and without this it would fill the
+ * cluster's whole budget on its own — so the two hundredth entry about that
+ * pod evicts its own oldest rather than somebody else's.
  *
- * Two thousand is a few hours of a busy cluster and roughly a quarter of a
- * megabyte. The bound exists because a session is open-ended: an application
- * left running over a weekend must not accumulate without limit, and a cap
- * measured in entries is one that holds whatever the cluster is doing.
+ * The per-cluster cap (default 2000) is a few hours of a busy cluster and
+ * roughly a quarter of a megabyte. The bound exists because a session is
+ * open-ended: an application left running over a weekend must not accumulate
+ * without limit, and a cap measured in entries is one that holds whatever the
+ * cluster is doing. The operator may raise it; nobody may remove it.
  */
-const MAX_ENTRIES_PER_CLUSTER = 2000
 
 /** One cluster's timeline, oldest entry first. */
 interface ClusterTimeline {
@@ -490,17 +490,52 @@ class SessionTimeline {
   }
 
   /**
-   * Appends entries and enforces both caps, oldest dropped first.
-   *
-   * The per-object cap runs before the cluster one so a single noisy object
-   * cannot evict every other object's history before its own.
+   * Appends entries and enforces both caps — see `#capped`.
    */
   #append(clusterId: string, entries: TimelineEntry[]): void {
     if (entries.length === 0) return
 
     const held = this.#timelines[clusterId]
     const startedAt = held?.startedAt ?? entries[0].at
-    let next = held ? [...held.entries, ...entries] : [...entries]
+    const next = held ? [...held.entries, ...entries] : [...entries]
+
+    this.#timelines = {
+      ...this.#timelines,
+      [clusterId]: { entries: this.#capped(clusterId, next), startedAt },
+    }
+  }
+
+  /**
+   * Re-applies the caps to every cluster's timeline as it stands.
+   *
+   * For a cap LOWERED in Settings: appending enforces the caps too, but a
+   * quiet cluster may not append anything for a long time, and a limit the
+   * operator just chose should hold at once rather than at the next event.
+   */
+  enforceLimits = (): void => {
+    let changed = false
+    const next = { ...this.#timelines }
+    for (const [clusterId, held] of Object.entries(this.#timelines)) {
+      const entries = this.#capped(clusterId, held.entries)
+      if (entries.length === held.entries.length) continue
+      next[clusterId] = { entries, startedAt: held.startedAt }
+      changed = true
+    }
+    if (changed) this.#timelines = next
+  }
+
+  /**
+   * Enforces both caps on one cluster's entries, oldest dropped first.
+   *
+   * The per-object cap runs before the cluster one so a single noisy object
+   * cannot evict every other object's history before its own.
+   */
+  #capped(clusterId: string, entries: TimelineEntry[]): TimelineEntry[] {
+    // Untracked: a recording made inside somebody's effect must not make that
+    // effect re-run whenever the operator changes a cap.
+    const perObject = untrack(() => preferences.timelineObjectLimit)
+    const perCluster = untrack(() => preferences.timelineClusterLimit)
+    let next = entries
 
     const overfull = new Set<string>()
     const counts = new Map<string, number>()
@@ -508,14 +543,14 @@ class SessionTimeline {
       const key = targetKey(entry.target)
       const count = (counts.get(key) ?? 0) + 1
       counts.set(key, count)
-      if (count > MAX_ENTRIES_PER_OBJECT) overfull.add(key)
+      if (count > perObject) overfull.add(key)
     }
 
     for (const key of overfull) {
       // Oldest first, which is what a forward scan drops: the array is in
       // observation order, so the first entries matching are the ones that
       // have been on screen longest.
-      let excess = (counts.get(key) ?? 0) - MAX_ENTRIES_PER_OBJECT
+      let excess = (counts.get(key) ?? 0) - perObject
       next = next.filter((entry) => {
         if (excess === 0 || targetKey(entry.target) !== key) return true
         excess--
@@ -524,14 +559,14 @@ class SessionTimeline {
       })
     }
 
-    if (next.length > MAX_ENTRIES_PER_CLUSTER) {
-      for (const entry of next.slice(0, next.length - MAX_ENTRIES_PER_CLUSTER)) {
+    if (next.length > perCluster) {
+      for (const entry of next.slice(0, next.length - perCluster)) {
         this.#drop(clusterId, entry)
       }
-      next = next.slice(next.length - MAX_ENTRIES_PER_CLUSTER)
+      next = next.slice(next.length - perCluster)
     }
 
-    this.#timelines = { ...this.#timelines, [clusterId]: { entries: next, startedAt } }
+    return next
   }
 
   /**

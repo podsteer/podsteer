@@ -208,7 +208,7 @@
         <input
           type="text"
           bind:value={image}
-          placeholder="docker.io/cloudresty/dockydeb:v1.2.28-nonroot"
+          placeholder="docker.io/cloudresty/dockydeb:v1.2.31-nonroot"
           class="field mt-1 w-full px-3 py-2 text-body-medium"
         />
       </label>

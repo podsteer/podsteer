@@ -756,6 +756,7 @@
               label="Ephemeral storage"
               usage={overview.capacity.ephemeral}
               note={ephemeralNote}
+              noteLabel="Why nothing is reserved"
               fourth={fullestDisk}
             />
           {/if}
@@ -771,9 +772,21 @@
            would have. -->
       <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
-            <TrendingUp class="size-4 text-on-surface-variant" strokeWidth={1.8} />
+          <h3 class="flex items-center gap-1.5 text-title-medium font-semibold text-on-surface">
+            <TrendingUp class="mr-0.5 size-4 text-on-surface-variant" strokeWidth={1.8} />
             Trend
+            <!--
+              Beside the heading and not folded into MetricsBackendNote below:
+              a cluster commonly has one and not the other, and the two answer
+              different questions — where a longer history is kept, and where
+              the object gauges in a dashboard come from. One line saying
+              "monitoring is installed" would answer neither properly.
+
+              It sits here rather than under the chart because it is
+              provenance for everything on this screen, not a caveat about
+              this chart: asked for once, then known.
+            -->
+            <KubeStateNote kubeState={overview.kubeState} />
           </h3>
 
           <div class="flex items-center gap-3">
@@ -860,15 +873,6 @@
           backend={overview.backend}
           windowLabel={history.hasTrend ? `the last ${formatAge(history.spanSeconds)}` : undefined}
         />
-
-        <!--
-          Beside it and not folded into it: a cluster commonly has one and not
-          the other, and the two answer different questions — where a longer
-          history is kept, and where the object gauges in a dashboard come
-          from. One line saying "monitoring is installed" would answer
-          neither properly.
-        -->
-        <KubeStateNote kubeState={overview.kubeState} />
       </section>
 
       <div class="grid gap-4 lg:grid-cols-2">
@@ -1382,12 +1386,38 @@
            compete with the findings above. -->
       {#if notes.length > 0}
         <section class="flex flex-col gap-2">
-          <h3 class="text-label-large uppercase tracking-wider text-on-surface-variant">
-            Worth knowing
+          <!-- The heading IS the toggle, like the verdict card's own. A note
+               is not a fault, and on a busy cluster this section runs to a
+               dozen cards — read once and then in the way. Collapsed it
+               still says how many there are, so nothing is hidden that the
+               operator did not already know was there. -->
+          <h3>
+            <button
+              type="button"
+              onclick={preferences.toggleNotes}
+              aria-expanded={preferences.notesExpanded}
+              aria-controls="overview-notes"
+              class="state-layer flex w-full items-center gap-1.5 rounded-sm py-1.5 text-left
+                     text-label-large uppercase tracking-wider text-on-surface-variant
+                     transition-colors duration-100 hover:text-on-surface"
+            >
+              <ChevronRight
+                class="size-4 shrink-0 transition-transform duration-150
+                       {preferences.notesExpanded ? 'rotate-90' : ''}"
+                strokeWidth={2}
+              />
+              Worth knowing
+              <span class="tabular-nums opacity-70">{notes.length}</span>
+            </button>
           </h3>
-          {#each notes as finding (finding.id)}
-            <FindingCard {finding} onopen={openList} onselect={openObject} />
-          {/each}
+
+          {#if preferences.notesExpanded}
+            <div id="overview-notes" class="flex flex-col gap-2">
+              {#each notes as finding (finding.id)}
+                <FindingCard {finding} onopen={openList} onselect={openObject} />
+              {/each}
+            </div>
+          {/if}
         </section>
       {/if}
     </div>

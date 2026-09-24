@@ -388,7 +388,7 @@
           class="rounded-sm px-3 py-2 text-body-small
                  {view.tone === 'error'
                    ? 'bg-error-container/40 text-on-error-container'
-                   : 'bg-surface-container text-gauge-warn'}"
+                   : 'bg-surface-container text-gauge-warn-ink'}"
         >
           {view.message}
         </p>

@@ -27,11 +27,16 @@
     THEME_PREFERENCES,
     THEME_LABELS,
     THRESHOLD_SCOPES,
+    TIMELINE_CLUSTER_LIMITS,
+    TIMELINE_OBJECT_LIMITS,
     USAGE_WINDOWS,
     type PageSize,
     type PodMeasure,
     type ThresholdScope,
+    type TimelineClusterLimit,
+    type TimelineObjectLimit,
   } from '$stores/preferences.svelte'
+  import { timeline } from '$stores/timeline.svelte'
 
   /**
    * What each scope governs, in the operator's terms.
@@ -131,6 +136,15 @@
       hint: sound.describe,
     })),
   ]
+
+  const TIMELINE_CLUSTER_OPTIONS = TIMELINE_CLUSTER_LIMITS.map((limit) => ({
+    value: String(limit),
+    label: `${limit.toLocaleString()} entries`,
+  }))
+  const TIMELINE_OBJECT_OPTIONS = TIMELINE_OBJECT_LIMITS.map((limit) => ({
+    value: String(limit),
+    label: `${limit.toLocaleString()} entries`,
+  }))
 
   interface Props {
     open: boolean
@@ -705,14 +719,19 @@
                   type="button"
                   disabled={!preferences.updateChecksEnabled || !updates.permitted || updates.checking}
                   onclick={() => void updates.refresh(true)}
-                  class="state-layer h-8 rounded-xs border border-outline px-3 text-label-large
-                         text-on-surface-variant transition-colors duration-150
+                  class="state-layer h-8 min-w-24 shrink-0 whitespace-nowrap rounded-xs border
+                         border-outline px-3 text-label-large text-on-surface-variant
+                         transition-colors duration-150
                          disabled:pointer-events-none disabled:opacity-40"
                 >
+                  <!-- nowrap + shrink-0 + a minimum width: the sentence beside
+                       it is what wraps, never the label, and swapping to
+                       "Checking…" must not resize the button under the
+                       pointer. -->
                   {updates.checking ? 'Checking…' : 'Check now'}
                 </button>
 
-                <span class="text-body-medium text-on-surface-variant/80">
+                <span class="min-w-0 flex-1 text-body-medium text-on-surface-variant/80">
                   {#if !preferences.updateChecksEnabled}
                     Nothing is sent while this is off.
                   {:else if updates.status?.state === 'available'}
@@ -937,6 +956,57 @@
               written to your own configuration directory and are never sent anywhere. Choosing
               <span class="text-on-surface">Don't record</span> erases what has already been kept.
             </p>
+          </section>
+
+          <!-- The timeline's two caps. Lowering one trims what is held at
+               once rather than at the next event, which on a quiet cluster
+               could be a long time coming. -->
+          <section class="mt-8">
+            <h3 class="text-title-medium text-on-surface">Session timeline</h3>
+            <p class="mt-0.5 text-body-medium leading-relaxed text-on-surface-variant">
+              What happened while a cluster's tab was open: its events, findings appearing and
+              clearing, and the changes PodSteer made. It is held in memory only and goes when the
+              tab closes. Past these limits the oldest entries make room for new ones.
+            </p>
+
+            <div class="mt-4 grid gap-4 sm:grid-cols-2">
+              <div>
+                <h4 class="text-label-large uppercase tracking-wider text-on-surface-variant">
+                  Per cluster
+                </h4>
+                <Select
+                  label="Timeline entries per cluster"
+                  value={String(preferences.timelineClusterLimit)}
+                  options={TIMELINE_CLUSTER_OPTIONS}
+                  class="mt-2 w-full"
+                  onchange={(value) => {
+                    preferences.setTimelineClusterLimit(Number(value) as TimelineClusterLimit)
+                    timeline.enforceLimits()
+                  }}
+                />
+                <p class="mt-1 text-body-medium text-on-surface-variant">
+                  Default 2,000 — a few hours of a busy cluster, about a quarter of a megabyte.
+                </p>
+              </div>
+              <div>
+                <h4 class="text-label-large uppercase tracking-wider text-on-surface-variant">
+                  Per object
+                </h4>
+                <Select
+                  label="Timeline entries per object"
+                  value={String(preferences.timelineObjectLimit)}
+                  options={TIMELINE_OBJECT_OPTIONS}
+                  class="mt-2 w-full"
+                  onchange={(value) => {
+                    preferences.setTimelineObjectLimit(Number(value) as TimelineObjectLimit)
+                    timeline.enforceLimits()
+                  }}
+                />
+                <p class="mt-1 text-body-medium text-on-surface-variant">
+                  Default 200 — so one crash-looping pod cannot crowd out everything else.
+                </p>
+              </div>
+            </div>
           </section>
         {:else if section === 'kubeconfig'}
           <KubeconfigSources />

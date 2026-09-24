@@ -1060,7 +1060,7 @@
               class="rounded-sm border p-3 {finding.severity === 'critical'
                 ? 'border-error/40 bg-error-container/20'
                 : finding.severity === 'warning'
-                  ? 'border-gauge-warn/40 bg-gauge-warn/10'
+                  ? 'border-gauge-warn/40 bg-notice-warn'
                   : 'border-outline-variant bg-surface-container-low'}"
             >
               <p class="text-body-medium font-medium text-on-surface">{finding.title}</p>
@@ -1195,7 +1195,7 @@
                      every node is one nobody reads by the third node. -->
                 <p
                   class="text-body-small leading-relaxed {note.tone === 'warn'
-                    ? 'text-gauge-warn'
+                    ? 'text-gauge-warn-ink'
                     : 'text-on-surface-variant/70'}"
                 >
                   {note.text}
@@ -1269,7 +1269,7 @@
 
           <!-- Against the pods that could be measured. See WorkloadUsage. -->
           {#if selectedNamespaceRow.measuredPods < selectedNamespaceRow.measurablePods}
-            <p class="text-body-small text-gauge-warn">
+            <p class="text-body-small text-gauge-warn-ink">
               Summed over {selectedNamespaceRow.measuredPods} of {selectedNamespaceRow.measurablePods}
               running pods — the rest reported no usage, so this is less than the whole.
             </p>

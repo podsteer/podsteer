@@ -43,6 +43,30 @@
   --gauge-critical: #d8453c;
 }
 
+/*
+ * THE SAME THREE, AS INK — for words and icons rather than for a bar.
+ *
+ * A fill is read by its hue against the track beside it; a letter is read by
+ * its contrast against the page. The mid-tones above pass on dark and fail on
+ * light — amber on white is 2.3:1 against the 4.5:1 body text needs, which is
+ * why every "this object is managed by Argo CD" sentence was unreadable in
+ * the light theme. So a bar stays the fixed colour it must be, and TEXT in the
+ * same meaning goes through these, which are the gauge colours on dark and
+ * darkened on light until they pass. `text-gauge-*-ink`, never
+ * `text-gauge-*`, for anything that is read.
+ */
+:root {
+  --gauge-normal-ink: var(--gauge-normal);
+  --gauge-warn-ink: var(--gauge-warn);
+  --gauge-critical-ink: var(--gauge-critical);
+
+  /* The ground of a "this will be overridden" notice box. A tenth of the
+     amber on dark, where that reads as a warm glow; on light the same tenth
+     over a blue-grey dialog composited to a muddy beige, so the light block
+     replaces it with an opaque pale amber. */
+  --notice-warn: color-mix(in srgb, var(--gauge-warn) 10%, transparent);
+}
+
 /* ---- Google Blue scheme, dark (the default theme) ------------------------ */
 :root {
   color-scheme: dark;
@@ -106,6 +130,12 @@
      quoted strings are both `content` to the parser, so colouring them would
      be inventing a distinction the language does not make, and the reason to
      read YAML is the keys anyway. */
+  /* A text field's edge. Outline-variant on dark, where it already reads;
+     the light block raises it to --outline, because a field boundary is
+     something somebody has to FIND and needs 3:1 (WCAG 1.4.11), and
+     outline-variant on white is 1.7. */
+  --field-border: var(--outline-variant);
+
   --code-key: #8ab4f8;
   --code-comment: #8f8a97;
   --code-punctuation: #6f6a77;
@@ -128,61 +158,102 @@
   --group-purple: #d7aefb;
 }
 
-/* ---- Google Blue scheme, light ------------------------------------------- */
+/* ---- Google Blue scheme, light ------------------------------------------
+ *
+ * GOOGLE'S OWN MATERIAL 3 LIGHT NEUTRALS, not MD3's baseline, and the
+ * difference is the whole of what was wrong with this theme.
+ *
+ * The block this replaced took its neutrals from the MD3 BASELINE, which is
+ * generated from a PURPLE seed (#6750a4): every surface carried a lavender
+ * tint (#fef7ff, #f3edf7), a warning box over it composited to pink, and the
+ * blue primary sat on a ground that was not its own. The dark block gets away
+ * with the same baseline neutrals because a slight tint at 8% lightness is
+ * invisible; at 97% lightness it is the dominant colour on screen.
+ *
+ * These are the values Google ships in its own M3 products (Gmail, Drive,
+ * Calendar), generated from the same blue as the primary: white and
+ * blue-grey surfaces (#f8fafd → #dde3ea), neutral grey text. Measured, not
+ * eyeballed — each figure is WCAG contrast against white:
+ *
+ *   primary #0b57d0 ............ 6.4:1  (was #1a73e8, 4.3 — failed as text)
+ *   on-surface-variant #35383b . 11.8:1, and 4.7 at /70, 3.6 at /60
+ *
+ * ON-SURFACE-VARIANT IS DARKER THAN GOOGLE'S #444746, deliberately. This
+ * interface fades secondary text with an opacity modifier — 280 uses of /60
+ * and /70 — and an alpha over white loses contrast far faster than one over
+ * near-black: the old #49454f at /70 was 4.0 on light while the dark theme's
+ * /70 is 5.9. At #35383b, /70 passes 4.5 and /60 lands where the dark
+ * theme's /50 already sits, so a fade means the same thing in both themes.
+ *
+ * TERTIARY KEEPS ITS ROSE FAMILY, where Google's scheme would make it green:
+ * it colours chart series, and a line must not change hue with the theme.
+ *
+ * Borders stay #c4c7c5 — hairlines and dividers are decoration and should
+ * recede — except a text field's, which is a boundary somebody has to find
+ * and needs 3:1; see --field-border.
+ */
 :root[data-theme='light'] {
   color-scheme: light;
 
-  --primary: #1a73e8;
+  --primary: #0b57d0;
   --on-primary: #ffffff;
   --primary-container: #d3e3fd;
   --on-primary-container: #041e49;
 
-  --secondary: #625b71;
+  --secondary: #00639b;
   --on-secondary: #ffffff;
-  --secondary-container: #e8def8;
-  --on-secondary-container: #1d192b;
+  --secondary-container: #c2e7ff;
+  --on-secondary-container: #001d35;
 
   --tertiary: #7d5260;
   --on-tertiary: #ffffff;
   --tertiary-container: #ffd8e4;
   --on-tertiary-container: #31111d;
 
-  --error: #ba1a1a;
+  --error: #b3261e;
   --on-error: #ffffff;
   --error-container: #f9dedc;
   --on-error-container: #410e0b;
 
-  --success: #2c6e33;
+  --success: #146c2e;
   --on-success: #ffffff;
-  --success-container: #b0efb1;
-  --on-success-container: #002204;
+  --success-container: #c4eed0;
+  --on-success-container: #072711;
 
-  --warning: #795900;
+  --warning: #7a5900;
   --on-warning: #ffffff;
-  --warning-container: #ffdf9e;
-  --on-warning-container: #261900;
+  --warning-container: #ffdf99;
+  --on-warning-container: #261a00;
 
-  --surface: #fef7ff;
-  --on-surface: #1d1b20;
-  --surface-variant: #e7e0ec;
-  --on-surface-variant: #49454f;
+  --surface: #ffffff;
+  --on-surface: #1f1f1f;
+  --surface-variant: #e1e3e1;
+  --on-surface-variant: #35383b;
 
   --surface-container-lowest: #ffffff;
-  --surface-container-low: #f7f2fa;
-  --surface-container: #f3edf7;
-  --surface-container-high: #ece6f0;
-  --surface-container-highest: #e6e0e9;
+  --surface-container-low: #f8fafd;
+  --surface-container: #f0f4f9;
+  --surface-container-high: #e9eef6;
+  --surface-container-highest: #dde3ea;
 
-  --outline: #79747e;
-  --outline-variant: #cac4d0;
+  --outline: #747775;
+  --outline-variant: #c4c7c5;
 
-  --inverse-surface: #322f35;
-  --inverse-on-surface: #f5eff7;
-  --inverse-primary: #8ab4f8;
+  --inverse-surface: #303030;
+  --inverse-on-surface: #f2f2f2;
+  --inverse-primary: #a8c7fa;
 
-  --code-key: #1a73e8;
-  --code-comment: #6b6773;
-  --code-punctuation: #8c8794;
+  /* The status inks, darkened until they read as text on white. */
+  --gauge-normal-ink: #0b57d0;
+  --gauge-warn-ink: #8a5a00;
+  --gauge-critical-ink: #b3261e;
+  --notice-warn: #fef7e0;
+
+  --field-border: var(--outline);
+
+  --code-key: #0b57d0;
+  --code-comment: #5f6368;
+  --code-punctuation: #80868b;
   --code-meta: #7d5260;
 
   /* Same six names, retuned for a pale surface — see the dark block above
@@ -253,6 +324,10 @@
   --color-gauge-normal: var(--gauge-normal);
   --color-gauge-warn: var(--gauge-warn);
   --color-gauge-critical: var(--gauge-critical);
+  --color-gauge-normal-ink: var(--gauge-normal-ink);
+  --color-gauge-warn-ink: var(--gauge-warn-ink);
+  --color-gauge-critical-ink: var(--gauge-critical-ink);
+  --color-notice-warn: var(--notice-warn);
 
   --color-primary: var(--primary);
   --color-on-primary: var(--on-primary);
@@ -452,7 +527,7 @@
 @utility field {
   --wails-draggable: no-drag;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-outline-variant);
+  border: 1px solid var(--field-border);
   background-color: var(--color-surface-container-lowest);
   color: var(--color-on-surface);
   transition:

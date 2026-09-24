@@ -668,8 +668,8 @@
         onclick={scrollToDegraded}
         title="Show the clusters that did not answer in full"
         class="flex shrink-0 items-center gap-1.5 rounded-full border border-gauge-warn/40
-               px-2.5 py-1 text-label-small text-gauge-warn transition-colors duration-100
-               hover:bg-gauge-warn/10"
+               px-2.5 py-1 text-label-small text-gauge-warn-ink transition-colors duration-100
+               hover:bg-notice-warn"
       >
         <TriangleAlert class="size-3.5 shrink-0" strokeWidth={2} />
         {fleet.degraded} not answering
@@ -763,7 +763,7 @@
                 <span class="truncate font-medium text-on-surface">{pod.name}</span>
                 {#if alarming(pod).length > 0}
                   <TriangleAlert
-                    class="size-3.5 shrink-0 text-gauge-warn"
+                    class="size-3.5 shrink-0 text-gauge-warn-ink"
                     strokeWidth={2.2}
                     aria-label="{alarming(pod).length} findings"
                   />
@@ -939,7 +939,7 @@
             leaves the operator unable to tell which cluster to go and look at.
           -->
           <p
-            class="border-b border-outline-variant/60 px-3 py-2 text-body-medium text-gauge-warn"
+            class="border-b border-outline-variant/60 px-3 py-2 text-body-medium text-gauge-warn-ink"
             role="status"
           >
             {truncatedSentence} The search, the sort and the count below describe what was

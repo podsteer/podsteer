@@ -17,7 +17,11 @@
   them scrollable.
 
   Closed on every open, deliberately: a dialog opens on its question, not on
-  its footnote.
+  its footnote. EVERY kubectl-equivalent strip in the application goes
+  through this, not through KubectlHint directly — a panel with no buttons
+  beside the link (the file transfer) passes no children and gets the link
+  alone, and one that is not a dialog's last row (the drawer's edit footer)
+  passes its own spacing.
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
@@ -30,16 +34,26 @@
     command?: string
     /** The link's wording, matching KubectlHint's own label. */
     label?: string
-    /** The buttons, in reading order. */
-    children: Snippet
+    /** The buttons, in reading order. Omit for the link alone. */
+    children?: Snippet
+    /**
+     * The row's spacing from what is above it. A dialog's last row sits
+     * `mt-6` below its body; a footer that manages its own gaps passes ''.
+     */
+    class?: string
   }
 
-  let { command = '', label = 'kubectl equivalent', children }: Props = $props()
+  let {
+    command = '',
+    label = 'kubectl equivalent',
+    children,
+    class: className = 'mt-6',
+  }: Props = $props()
 
   let shown = $state(false)
 </script>
 
-<div class="mt-6 flex flex-col gap-3">
+<div class="flex flex-col gap-3 {className}">
   {#if command && shown}
     <KubectlHint {command} {label} />
   {/if}
@@ -63,8 +77,10 @@
       </button>
     {/if}
 
-    <div class="ml-auto flex shrink-0 items-center gap-3">
-      {@render children()}
-    </div>
+    {#if children}
+      <div class="ml-auto flex shrink-0 items-center gap-3">
+        {@render children()}
+      </div>
+    {/if}
   </div>
 </div>

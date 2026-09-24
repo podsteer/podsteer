@@ -488,7 +488,7 @@
                 somebody than "the forward is fine".
 
               -->
-              <span class="flex min-w-0 items-center gap-1.5 text-gauge-warn">
+              <span class="flex min-w-0 items-center gap-1.5 text-gauge-warn-ink">
                 <Loader class="size-3.5 shrink-0 animate-spin" strokeWidth={2} />
                 <span class="truncate">holding {open.address} — finding a replacement pod</span>
               </span>

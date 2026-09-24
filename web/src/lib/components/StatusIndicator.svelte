@@ -67,10 +67,10 @@
    * so a mark means the same thing in light and dark. See app.css.
    */
   const COLOUR: Record<Tone, string> = {
-    success: 'text-gauge-normal',
-    warning: 'text-gauge-warn',
-    error: 'text-gauge-critical',
-    info: 'text-gauge-normal',
+    success: 'text-gauge-normal-ink',
+    warning: 'text-gauge-warn-ink',
+    error: 'text-gauge-critical-ink',
+    info: 'text-gauge-normal-ink',
     // Nothing to report, and not a claim that anything is well: a Normal
     // event is a record, not a verdict.
     neutral: 'text-on-surface-variant/40',

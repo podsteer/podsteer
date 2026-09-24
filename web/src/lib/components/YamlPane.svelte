@@ -41,6 +41,8 @@
         `EditorApi`. Only a fresh document being seeded needs this; the
         drawer's own tab has never used it. */
     onready?: (api: EditorApi) => void
+    /** Passed to the editor — see YamlEditor's `minimap`. */
+    minimap?: boolean
   }
 
   let {
@@ -53,6 +55,7 @@
     actions,
     banner,
     onready,
+    minimap = false,
   }: Props = $props()
 
   let query = $state('')
@@ -114,6 +117,7 @@
       {readonly}
       {onchange}
       {query}
+      {minimap}
       onready={(a) => {
         api = a
         onready?.(a)

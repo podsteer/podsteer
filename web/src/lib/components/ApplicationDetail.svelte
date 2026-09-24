@@ -157,7 +157,7 @@
         {/each}
 
         {#if application.measuredPods < application.measurablePods}
-          <p class="text-body-small text-gauge-warn">
+          <p class="text-body-small text-gauge-warn-ink">
             Summed over {application.measuredPods} of {application.measurablePods} running pods —
             the rest reported no usage, so this is less than the whole.
           </p>

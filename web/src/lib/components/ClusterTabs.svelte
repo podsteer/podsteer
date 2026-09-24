@@ -256,7 +256,7 @@
               />
             {:else}
               <LockOpen
-                class="size-3 shrink-0 text-gauge-warn"
+                class="size-3 shrink-0 text-gauge-warn-ink"
                 strokeWidth={2}
                 aria-hidden="true"
               />
