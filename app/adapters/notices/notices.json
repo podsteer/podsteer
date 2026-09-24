@@ -294,7 +294,7 @@
   },
   {
    "name": "github.com/wailsapp/wails/v3",
-   "version": "v3.0.0-beta.18",
+   "version": "v3.0.0-beta.25",
    "ecosystem": "go",
    "licence": "MIT",
    "copyright": "Copyright (c) 2018-Present Lea Anthony",
@@ -593,7 +593,7 @@
   },
   {
    "name": "@jridgewell/sourcemap-codec",
-   "version": "1.5.5",
+   "version": "1.6.0",
    "ecosystem": "npm",
    "licence": "MIT",
    "copyright": "Copyright 2024 Justin Ridgewell <justin@ridgewell.name>",
@@ -673,7 +673,7 @@
   },
   {
    "name": "@wailsio/runtime",
-   "version": "3.0.0-beta.18",
+   "version": "3.0.0-beta.25",
    "ecosystem": "npm",
    "licence": "MIT",
    "copyright": "Copyright (c) 2018-Present Lea Anthony",
@@ -771,7 +771,7 @@
   },
   {
    "name": "devalue",
-   "version": "5.9.0",
+   "version": "5.9.4",
    "ecosystem": "npm",
    "licence": "MIT",
    "copyright": "Copyright (c) 2018-19 [these people](https://github.com/rich-harris/devalue/graphs/contributors)",
@@ -796,7 +796,7 @@
   },
   {
    "name": "esrap",
-   "version": "2.3.4",
+   "version": "2.3.11",
    "ecosystem": "npm",
    "licence": "MIT",
    "copyright": "Copyright (c) 2023-2025 [these people](https://github.com/sveltejs/esrap/graphs/contributors)",
@@ -836,7 +836,7 @@
   },
   {
    "name": "svelte",
-   "version": "5.57.0",
+   "version": "5.57.1",
    "ecosystem": "npm",
    "licence": "MIT",
    "copyright": "Copyright (c) 2016-2025 [Svelte Contributors](https://github.com/sveltejs/svelte/graphs/contributors)",

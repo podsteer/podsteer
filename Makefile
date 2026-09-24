@@ -45,7 +45,22 @@ LINUX_BACKEND_TAG :=
 ifeq ($(shell uname -s),Linux)
 LINUX_BACKEND_TAG := gtk3
 endif
-RELEASE_TAGS := production$(if $(LINUX_BACKEND_TAG),$(comma)$(LINUX_BACKEND_TAG))
+
+# On macOS, `private_mac_apis`. From Wails v3.0.0-beta.19 the undocumented
+# WebKit calls are compiled only under this tag, and without it they are
+# no-ops — among them the webview's background colour, which is what paints
+# the window in the splash's dark surface before the first render. Untagged,
+# every launch flashes white again. Private API use is an App Store review
+# matter, not a notarisation one, and PodSteer ships Developer ID builds
+# outside the store. See v3.wails.io/guides/build/private-macos-apis.
+MAC_PRIVATE_TAG :=
+ifeq ($(shell uname -s),Darwin)
+MAC_PRIVATE_TAG := private_mac_apis
+endif
+
+# At most one of the two is set on any machine, so they concatenate.
+PLATFORM_TAGS := $(LINUX_BACKEND_TAG)$(MAC_PRIVATE_TAG)
+RELEASE_TAGS := production$(if $(PLATFORM_TAGS),$(comma)$(PLATFORM_TAGS))
 
 # Whether the build links C, stated rather than inherited. macOS links Cocoa
 # and Linux links GTK, so both need a toolchain; v3's Windows backend is pure
@@ -81,7 +96,7 @@ WINDOWS_LDFLAGS :=
 ifeq ($(OS),Windows_NT)
 WINDOWS_LDFLAGS := -H windowsgui
 endif
-BUILD_TAGS := $(LINUX_BACKEND_TAG)
+BUILD_TAGS := $(PLATFORM_TAGS)
 
 # Where the build leaves things. On macOS the executable is inside the .app
 # bundle this file assembles; elsewhere it sits directly in build/bin.
@@ -230,7 +245,7 @@ dev: web-build
 # devtools and the dev-server support that tag strips out.
 dev-build: embed-stub icons
 	@mkdir -p $(BIN_DIR)
-	go build -gcflags=all="-l" -o $(DEV_BIN) .
+	go build $(if $(BUILD_TAGS),-tags $(BUILD_TAGS)) -gcflags=all="-l" -o $(DEV_BIN) .
 ifdef DEV_BUNDLE
 	@mkdir -p $(DEV_BUNDLE)/Contents/Resources
 	@cp build/darwin/Info.dev.plist $(DEV_BUNDLE)/Contents/Info.plist

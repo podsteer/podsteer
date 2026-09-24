@@ -4,18 +4,27 @@ A desktop Kubernetes client built on Wails v3 (Go backend + the OS's native
 webview) rather than Electron, so that it starts fast and stays small in
 memory.
 
-Wails v3 is a BETA (`v3.0.0-beta.18`, pinned exactly in `go.mod`, in
-`.github/workflows/ci-cd.yaml` and in README's CLI install line). It is pinned
-rather than floated because a beta renames things between releases, and
-`@latest` in CI would break a build nobody changed.
+Wails v3 is a BETA (`v3.0.0-beta.25`, pinned exactly in FOUR places that move
+together: `go.mod`, `@wailsio/runtime` in `web/package.json`,
+`.github/workflows/ci-cd.yaml` and README's CLI install line — then
+`make bindings` and `make notices`). It is pinned rather than floated because a
+beta renames things between releases, and `@latest` in CI would break a build
+nobody changed. Read every release note between the pin and the target before
+moving it; Dependabot proposes a version, not a migration.
 
-**Do not float past beta.18 without reading what beta.19 does.** It moves the
-private macOS APIs behind `-tags private_mac_apis`, so upgrading without that
-tag turns webview transparency opaque. beta.18 itself was taken from beta.16
-for one reason: on Windows, `WebResourceRequested` called `log.Fatal` when COM
-failed to set the request out-pointer under load, which killed the process
-rather than dropping one request — and that risk scales with the number of
-webviews.
+**macOS builds carry `-tags private_mac_apis`, and must.** From beta.19 the
+undocumented WebKit calls compile only under that tag and are no-ops without
+it — including the webview background colour that paints the window in the
+splash's dark surface, so an untagged build flashes white on every launch. The
+Makefile adds it on Darwin (`MAC_PRIVATE_TAG`, folded into `RELEASE_TAGS` and
+`BUILD_TAGS`); a hand-written `go build` on a Mac has to add it too. It is an
+App Store concern, not a notarisation one, and PodSteer ships outside the store.
+Two more changes crossed with beta.19–25 and are worth knowing: beta.21 starts
+a default signal handler inside `App.Run`, so SIGINT/SIGTERM now run the
+ordinary `OnShutdown` teardown (`podsteer mcp` never calls `App.Run` and keeps
+its own); beta.23 claims the Linux single-instance D-Bus name under the app's
+own ID. beta.18 itself was taken from beta.16 because `WebResourceRequested`
+called `log.Fatal` on Windows under load.
 
 ## Layout
 

@@ -102,7 +102,7 @@ downloads with a little more context.
 - Node.js 20+
 - The [Wails v3 CLI](https://v3.wails.io), pinned to the beta this repository
   builds against:
-  `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.18`
+  `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.25`
 - A kubeconfig at `$KUBECONFIG` or `~/.kube/config`
 
 &nbsp;
