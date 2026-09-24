@@ -548,26 +548,6 @@
   ].filter(Boolean))
 
   /**
-   * A kind with no purpose-built sections at all — a CRD, or anything served
-   * by the generic table.
-   *
-   * Its panel is otherwise Identity, Labels and Annotations, all collapsed,
-   * which opens on three closed headers and nothing else and reads as a panel
-   * that failed to load.
-   */
-  const isGenericKind = $derived(
-    !isPodPanel &&
-      !isWorkload &&
-      !isIngress &&
-      !gitOpsPanel &&
-      !operatorPanel &&
-      !standardPanel &&
-      !selectedNode &&
-      !selectedNamespaceRow &&
-      kind !== 'Namespace',
-  )
-
-  /**
    * Whether this kind's conditions are its verdict or its receipts.
    *
    * A controller's are the rollout's state, a node's are the kubelet's own
@@ -580,8 +560,6 @@
     !isPodPanel && (kind !== 'Namespace' || conditions.length > 0),
   )
 
-  /** Whether this kind has anything above Identity to look at. */
-  const identityLeads = $derived(isGenericKind)
 
   /**
    * The kind, for the section ids that now differ by it.
@@ -1219,22 +1197,6 @@
     {/if}
 
     <!--
-      What is on the node, which is the second thing a node panel is opened to
-      answer. Below usage because "how full is it" comes first and this is the
-      detail behind that number; above identity because a machine's labels
-      matter less than its tenants.
-    -->
-    {#if selectedNode && clusterId}
-      <NodePods {clusterId} nodeName={selectedNode.name} {onopen} />
-    {/if}
-
-    <!--
-      What is in a namespace, for the same reason and in the same place: the
-      panel's own labels matter less than its contents, and "is this namespace
-      empty" is the question that decides whether anything else here is worth
-      reading.
-    -->
-    <!--
       A namespace's usage, on the same terms as a node's: the row carries the
       figures, the series comes from what the list has been recording since
       the tab opened, and the reference lines are the SUM of its pods'
@@ -1278,10 +1240,6 @@
           <MetricsBackendNote {backend} />
         </div>
       </DetailSection>
-    {/if}
-
-    {#if kind === 'Namespace' && clusterId && metadata.name}
-      <NamespaceContents {clusterId} namespace={metadata.name} {onbrowse} />
     {/if}
 
     <!--
@@ -1339,11 +1297,48 @@
     {/if}
 
     <!--
+      THE MANIFEST'S OWN ORDER FROM HERE DOWN: metadata, then what the object
+      was told to be (spec), then what it reports back (status). Only the two
+      sections above — what is wrong, and what it is using — come first, since
+      neither is a field in the manifest and each is the reason the pane was
+      opened.
+
+      Metadata sat in a footer below everything for a while, on the argument
+      that it was a lookup and interrupted the flow from usage to containers.
+      It is back at the top because the panel is a READING of the manifest,
+      and every other reading of one — `kubectl describe`, Lens and FreeLens's
+      metadata block, Headlamp's main info section, the YAML tab beside this
+      one — puts name, labels and annotations first. Keeping that order is what
+      lets somebody move between this tab and the YAML without re-orienting.
+      Labels and annotations stay collapsed by default, so the cost is two
+      header lines. Name, namespace, labels, annotations is the order a
+      manifest is WRITTEN in; `kubectl get -o yaml` sorts keys alphabetically,
+      which is a serialiser's order rather than anybody's reading one.
+    -->
+    <DetailSection level="h3" id="identity" title="Identity">
+      <DetailList rows={basicRows} />
+    </DetailSection>
+
+    {#if labels.length > 0}
+      <DetailSection level="h3" id="labels" title="Labels" defaultOpen={false} hint={String(labels.length)}>
+        <DetailList rows={pairRows(labels)} />
+      </DetailSection>
+    {/if}
+
+    {#if annotations.length > 0}
+      <!-- An annotation routinely holds an entire serialised manifest, which
+           is the case the list's clipping exists for: one line each, and the
+           one somebody wants opens. -->
+      <DetailSection level="h3" id="annotations" title="Annotations" defaultOpen={false} hint={String(annotations.length)}>
+        <DetailList rows={pairRows(annotations)} />
+      </DetailSection>
+    {/if}
+
+    <!--
       A Secret's or ConfigMap's own keys.
 
-      Placed above the pod sections because for these two kinds it IS the
-      object: everything else the panel shows about a Secret is metadata about
-      a thing whose contents were the reason somebody opened it.
+      Straight after the metadata, where `data` sits in a written manifest:
+      for these two kinds it IS the object, and there is no spec between.
     -->
     {#if dataRows.length > 0}
       <DetailSection
@@ -1360,26 +1355,10 @@
       </DetailSection>
     {/if}
 
-    <!-- Pod-specific sections -->
+    <!-- Pod-specific sections: spec.containers, ephemeralContainers,
+         initContainers, volumes, then the scheduling fields, in the order a
+         pod manifest is written. -->
     {#if kind === 'Pod' || selectedPod}
-
-      <!-- Status -->
-      <DetailSection level="h3" id="status" title="Status" hint={status.phase ?? ''}>
-        <DetailList rows={statusRows} />
-      </DetailSection>
-
-
-      <!--
-        Scheduling, when anything constrains it. A pod with no selector, no
-        toleration and no spread rule has an empty section, and an empty
-        section that says "no constraints" is a row of nothing.
-      -->
-      {#if schedulingRows.length > 0}
-        <DetailSection level="h3" id="scheduling" title="Scheduling" defaultOpen={false} hint={String(schedulingRows.length)}>
-          <DetailList rows={schedulingRows} />
-        </DetailSection>
-      {/if}
-
       <!-- Containers -->
       {#if containers.length > 0}
         <DetailSection level="h3" id="containers" title="Containers" hint={String(containers.length)}>
@@ -1479,13 +1458,24 @@
           <DetailList rows={volumeRows} />
         </DetailSection>
       {/if}
+
+      <!--
+        Scheduling, when anything constrains it. A pod with no selector, no
+        toleration and no spread rule has an empty section, and an empty
+        section that says "no constraints" is a row of nothing.
+      -->
+      {#if schedulingRows.length > 0}
+        <DetailSection level="h3" id="scheduling" title="Scheduling" defaultOpen={false} hint={String(schedulingRows.length)}>
+          <DetailList rows={schedulingRows} />
+        </DetailSection>
+      {/if}
     {/if}
 
     <!-- Deployment/StatefulSet-specific sections -->
     <!--
       Replicas, and it is the most-read section a controller has: desired
-      against ready is the question the panel was opened with. It sat below
-      Identity and Labels, which is a lookup people do occasionally.
+      against ready is the question the panel was opened with. First in the
+      spec, as `spec.replicas` is first in the manifest.
 
       A ReplicaSet is included now. It has the same desired and ready numbers
       as the Deployment above it and was excluded for no reason anybody
@@ -1501,6 +1491,18 @@
           <DetailList rows={strategyRows} />
         </DetailSection>
       {/if}
+    {/if}
+
+    <!--
+      A CRONJOB'S SCHEDULE IS ITS IDENTITY, and it appeared nowhere: not the
+      expression, not whether it is suspended, not when it last ran. Between
+      runs that left the panel showing usage of nothing, a template, and some
+      metadata.
+    -->
+    {#if cronRows.length > 0}
+      <DetailSection level="h3" id="schedule" title="Schedule" hint={spec.schedule ?? ''}>
+        <DetailList rows={cronRows} />
+      </DetailSection>
     {/if}
 
     <!--
@@ -1588,30 +1590,6 @@
           <DetailList rows={templateVolumeRows} />
         </DetailSection>
       {/if}
-    {/if}
-
-    <!--
-      A CRONJOB'S SCHEDULE IS ITS IDENTITY, and it appeared nowhere: not the
-      expression, not whether it is suspended, not when it last ran. Between
-      runs that left the panel showing usage of nothing, a template, and some
-      metadata.
-    -->
-    {#if cronRows.length > 0}
-      <DetailSection level="h3" id="schedule" title="Schedule" hint={spec.schedule ?? ''}>
-        <DetailList rows={cronRows} />
-      </DetailSection>
-    {/if}
-
-    <!-- A Job's progress, which is the whole of what a Job is. -->
-    {#if jobRows.length > 0}
-      <DetailSection
-        level="h3"
-        id="job-progress"
-        title="Progress"
-        hint="{status.succeeded ?? 0}/{spec.completions ?? 1}"
-      >
-        <DetailList rows={jobRows} />
-      </DetailSection>
     {/if}
 
     <!--
@@ -1713,19 +1691,6 @@
     {/if}
 
     <!--
-      A SECRET'S OWN CERTIFICATE, ON REQUEST — the read the Ingress panel
-      above deliberately does not perform. Keyed on the Secret's identity so
-      switching to a different one starts the section over rather than
-      showing a stale chain under a new name; see CertificateInspector's own
-      header comment for why nothing here is fetched until asked.
-    -->
-    {#if hasCertificate && clusterId && metadata.name}
-      {#key `${clusterId}|${metadata.namespace}|${metadata.name}`}
-        <CertificateInspector {clusterId} namespace={metadata.namespace ?? ''} name={metadata.name} />
-      {/key}
-    {/if}
-
-    <!--
       A SERVICE'S PORTS, AND A FORWARD ONTO ONE. The only place in the panel
       that offers to forward something that is not a pod — see the component
       for why that is a translation PodSteer performs rather than something
@@ -1741,6 +1706,97 @@
           namespace={metadata.namespace ?? ''}
           name={metadata.name}
         />
+      {/key}
+    {/if}
+
+    {#if kind === 'Pod' || selectedPod}
+      <!-- Status -->
+      <DetailSection level="h3" id="status" title="Status" hint={status.phase ?? ''}>
+        <DetailList rows={statusRows} />
+      </DetailSection>
+    {/if}
+
+    <!-- A Job's progress, which is the whole of what a Job is. -->
+    {#if jobRows.length > 0}
+      <DetailSection
+        level="h3"
+        id="job-progress"
+        title="Progress"
+        hint="{status.succeeded ?? 0}/{spec.completions ?? 1}"
+      >
+        <DetailList rows={jobRows} />
+      </DetailSection>
+    {/if}
+
+    <!--
+      CONDITIONS ARE NOT ONE THING, but they have one place: at the head of
+      status, where the manifest keeps them. What differs by kind is whether
+      they open.
+
+      On a pod they are a transcript that Status and the findings above
+      already summarise — receipts, worth keeping and worth keeping out of the
+      way, so closed. On a controller they are the ROLLOUT VERDICT:
+      ReplicaFailure carries the quota message that explains a stuck rollout
+      and nothing else in this panel does. On a node they are the kubelet's
+      own alarms. And on a custom resource they are usually the whole of its
+      status — a cert-manager Certificate or a Flux Kustomization says
+      Ready=False with a message, and that is the entire reason somebody
+      opened the panel. Those open.
+    -->
+    {#if conditions.length > 0 && !conditionsOwned}
+      <DetailSection
+        level="h3"
+        id="{conditionsKey}-conditions"
+        title="Conditions"
+        defaultOpen={conditionsLead}
+        hint={String(conditions.length)}
+      >
+        <DetailList rows={conditionRows} />
+      </DetailSection>
+    {/if}
+
+    <!--
+      The machine, and above all its taints. The pod panel opposite renders
+      tolerations in full, including the toleration seconds several clients
+      drop, and the thing they exist to tolerate was shown nowhere.
+    -->
+    {#if machineRows.length > 0}
+      <DetailSection level="h3" id="machine" title="Machine" defaultOpen={false} hint={String(machineRows.length)}>
+        <DetailList rows={machineRows} />
+      </DetailSection>
+    {/if}
+
+    <!--
+      NOT IN THE MANIFEST. What runs on a node and what a namespace holds are
+      relationships the API server has to be asked about, and the certificate,
+      reachability and image panels each go and find something out on request.
+      None of them is a field of this object, so none of them interrupts its
+      reading order; they follow it.
+    -->
+
+    <!--
+      What is on the node — the detail behind the usage figures at the top,
+      read from the pod list rather than from this Node object, which is why
+      it sits with the other sections the manifest does not contain.
+    -->
+    {#if selectedNode && clusterId}
+      <NodePods {clusterId} nodeName={selectedNode.name} {onopen} />
+    {/if}
+
+    {#if kind === 'Namespace' && clusterId && metadata.name}
+      <NamespaceContents {clusterId} namespace={metadata.name} {onbrowse} />
+    {/if}
+
+    <!--
+      A SECRET'S OWN CERTIFICATE, ON REQUEST — the read the Ingress panel
+      above deliberately does not perform. Keyed on the Secret's identity so
+      switching to a different one starts the section over rather than
+      showing a stale chain under a new name; see CertificateInspector's own
+      header comment for why nothing here is fetched until asked.
+    -->
+    {#if hasCertificate && clusterId && metadata.name}
+      {#key `${clusterId}|${metadata.namespace}|${metadata.name}`}
+        <CertificateInspector {clusterId} namespace={metadata.namespace ?? ''} name={metadata.name} />
       {/key}
     {/if}
 
@@ -1779,82 +1835,6 @@
           containers={imageContainerNames}
         />
       {/key}
-    {/if}
-
-    <!--
-      The machine, and above all its taints. The pod panel opposite renders
-      tolerations in full, including the toleration seconds several clients
-      drop, and the thing they exist to tolerate was shown nowhere.
-    -->
-    {#if machineRows.length > 0}
-      <DetailSection level="h3" id="machine" title="Machine" defaultOpen={false} hint={String(machineRows.length)}>
-        <DetailList rows={machineRows} />
-      </DetailSection>
-    {/if}
-
-    <!--
-      CONDITIONS ARE NOT ONE THING, which is why they are not in one place.
-
-      On a pod they are a transcript that Status and the findings above
-      already summarise — receipts, worth keeping and worth keeping out of the
-      way. On a controller they are the ROLLOUT VERDICT: ReplicaFailure
-      carries the quota message that explains a stuck rollout and nothing else
-      in this panel does. On a node they are the kubelet's own alarms. And on
-      a custom resource they are usually the whole of its status — a
-      cert-manager Certificate or a Flux Kustomization says Ready=False with a
-      message, and that is the entire reason somebody opened the panel.
-    -->
-    {#if conditions.length > 0 && conditionsLead && !conditionsOwned}
-      <DetailSection level="h3" id="{conditionsKey}-conditions" title="Conditions" hint={String(conditions.length)}>
-        <DetailList rows={conditionRows} />
-      </DetailSection>
-    {/if}
-
-    <!--
-      REFERENCE, IN A FIXED FOOTER, ON EVERY KIND.
-      
-      These sat at the very bottom once, were moved up here because "which one
-      is this" meant scrolling past everything, and are back at the bottom
-      because that diagnosis solved a real problem on the wrong axis. What
-      makes a section findable is being in the SAME PLACE on every kind, not
-      being early; and the drawer's header already answers which object this
-      is, in the two lines above the tabs.
-      
-      What the middle position cost was the reading order: on every pod open,
-      three closed headers sat between the usage chart and the status and
-      containers people came for, interrupting the flow from "what is it
-      doing" to "what was it told to be" in order to optimise a lookup that
-      happens occasionally.
-    -->
-    <DetailSection level="h3" id="identity" title="Identity" defaultOpen={identityLeads}>
-      <DetailList rows={basicRows} />
-    </DetailSection>
-
-    {#if labels.length > 0}
-      <DetailSection level="h3" id="labels" title="Labels" defaultOpen={false} hint={String(labels.length)}>
-        <DetailList rows={pairRows(labels)} />
-      </DetailSection>
-    {/if}
-
-    {#if annotations.length > 0}
-      <!-- An annotation routinely holds an entire serialised manifest, which
-           is the case the list's clipping exists for: one line each, and the
-           one somebody wants opens. -->
-      <DetailSection level="h3" id="annotations" title="Annotations" defaultOpen={false} hint={String(annotations.length)}>
-        <DetailList rows={pairRows(annotations)} />
-      </DetailSection>
-    {/if}
-
-    {#if conditions.length > 0 && !conditionsLead && !conditionsOwned}
-      <DetailSection
-        level="h3"
-        id="{conditionsKey}-conditions"
-        title="Conditions"
-        defaultOpen={false}
-        hint={String(conditions.length)}
-      >
-        <DetailList rows={conditionRows} />
-      </DetailSection>
     {/if}
 
   {/if}
