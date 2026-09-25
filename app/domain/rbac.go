@@ -399,11 +399,11 @@ func wildcardFindings(review RoleReview) []RBACFinding {
 			ID:       "rbac:wildcard-verbs",
 			Severity: severity,
 			Title:    "Every verb",
-			Detail: "A rule grants `*` verbs, which is every action the API server offers on the " +
+			Detail: "A rule grants \"*\" verbs, which is every action the API server offers on the " +
 				"resources it names " + reach + " — including delete, and including verbs added by a " +
 				"future Kubernetes release.",
-			Advice: "List the verbs actually needed. `*` also silently covers escalate, bind and " +
-				"impersonate wherever the resources it names carry them.",
+			Advice: "List the verbs actually needed. The wildcard verb \"*\" also silently covers " +
+				"escalate, bind and impersonate wherever the resources it names carry them.",
 		})
 	}
 	if resources {
@@ -411,7 +411,7 @@ func wildcardFindings(review RoleReview) []RBACFinding {
 			ID:       "rbac:wildcard-resources",
 			Severity: severity,
 			Title:    "Every resource",
-			Detail: "A rule grants `*` resources, which is every kind in the API groups it names " +
+			Detail: "A rule grants \"*\" resources, which is every kind in the API groups it names " +
 				reach + " — Secrets included, and every custom resource an operator installs later.",
 			Advice: "Name the resources needed. A wildcard here grows on its own as the cluster " +
 				"gains CRDs, so what it permits next month is not what was reviewed today.",
@@ -422,7 +422,7 @@ func wildcardFindings(review RoleReview) []RBACFinding {
 			ID:       "rbac:wildcard-api-groups",
 			Severity: severity,
 			Title:    "Every API group",
-			Detail: "A rule grants `*` apiGroups, which reaches the core group, every built-in " +
+			Detail: "A rule grants \"*\" apiGroups, which reaches the core group, every built-in " +
 				"group and every group a CRD introduces " + reach + ".",
 			Advice: "Name the groups needed — most workloads use one. This is the widest of the " +
 				"three wildcards, because a group nobody has installed yet is already covered.",
@@ -452,7 +452,7 @@ var escalationVerbs = []escalationVerb{
 		verb:  "escalate",
 		id:    "rbac:verb-escalate",
 		title: "Can escalate",
-		detail: "The `escalate` verb waives the check that normally stops an account granting " +
+		detail: "The \"escalate\" verb waives the check that normally stops an account granting " +
 			"permissions it does not itself hold, so the holder can write any rule into the roles " +
 			"this rule names.",
 		advice: "This is a privilege-escalation primitive by design — it exists so a controller can " +
@@ -462,16 +462,16 @@ var escalationVerbs = []escalationVerb{
 		verb:  "bind",
 		id:    "rbac:verb-bind",
 		title: "Can bind",
-		detail: "The `bind` verb lets the holder create bindings to the roles this rule names even " +
+		detail: "The \"bind\" verb lets the holder create bindings to the roles this rule names even " +
 			"though it does not hold those roles' permissions itself.",
 		advice: "Whoever holds this can hand out every permission the referenced roles carry. Check " +
-			"which roles the rule names — `bind` on cluster-admin is cluster-admin.",
+			"which roles the rule names — \"bind\" on cluster-admin is cluster-admin.",
 	},
 	{
 		verb:  "impersonate",
 		id:    "rbac:verb-impersonate",
 		title: "Can impersonate",
-		detail: "The `impersonate` verb lets the holder act as another user, group or service " +
+		detail: "The \"impersonate\" verb lets the holder act as another user, group or service " +
 			"account, and is then authorised as that account rather than as itself.",
 		advice: "Impersonating a cluster administrator is administrator access, and the audit log " +
 			"records both identities — so this is traceable, not contained. Narrow it with " +
@@ -615,7 +615,7 @@ func podCreationFindings(review RoleReview) []RBACFinding {
 		ID:       "rbac:create-pods",
 		Severity: severity,
 		Title:    "Creates pods",
-		Detail: "A rule grants `create` on pods " + scopeWords(review.Scope) + ". A pod names the " +
+		Detail: "A rule grants \"create\" on pods " + scopeWords(review.Scope) + ". A pod names the " +
 			"service account it runs as, and the kubelet mounts that account's token into the " +
 			"container.",
 		Advice: "This reaches whatever the most powerful service account within reach can do, so it " +

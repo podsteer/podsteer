@@ -43,7 +43,7 @@
   import ToolbarToggle from './ToolbarToggle.svelte'
   import ToolbarButton from './ToolbarButton.svelte'
   import WrapLinesToggle from './WrapLinesToggle.svelte'
-  import { splitOnMatches, splitOnRegex } from '$lib/textSearch'
+  import { splitOnQuery } from '$lib/textSearch'
   import { matches, parseQuery, type Query } from '$lib/query'
   import { formatLogTimestamp, parseLogTimestamp, type TimestampMode } from '$lib/logTimestamps'
   import { detectSeverity, parseStructuredLine, type Severity, type StructuredLine } from '$lib/logFormat'
@@ -472,20 +472,16 @@
   }
 
   /**
-   * Where the query's own highlight comes from: the first non-negated
-   * text/regex term. A label term (`key=value`) never applies to a log line
-   * — logs carry no labels — so it is skipped rather than highlighted as
-   * literal text nobody typed.
+   * Where the query's own highlight comes from: every non-negated text/regex
+   * term, not only the first — an unquoted multi-word query like `issuer
+   * unavailable` is two AND'd substring terms (see query.ts), and both need
+   * to light up or a phrase that is plainly there reads as half-found. A
+   * label term (`key=value`) never applies to a log line — logs carry no
+   * labels — so it contributes no range, exactly as before.
    */
   function highlightRuns(text: string, q: Query): Array<{ text: string; match: boolean }> {
     if (!queryActive) return [{ text, match: false }]
-    const term = q.terms.find(
-      (t) => !t.negated && ((t.kind === 'text' && t.value !== '') || (t.kind === 'regex' && t.regex !== null)),
-    )
-    if (!term) return [{ text, match: false }]
-    if (term.kind === 'text') return splitOnMatches(text, term.value)
-    if (term.kind === 'regex' && term.regex) return splitOnRegex(text, term.regex)
-    return [{ text, match: false }]
+    return splitOnQuery(text, q)
   }
 
   /*
@@ -1391,6 +1387,21 @@
              are what make it. -->
         <div style="height: {spacerAbove}px" aria-hidden="true"></div>
 
+        <!-- One filter match can span what would otherwise be two separate
+             pieces of markup — the space between two AND'd words, or the
+             `=` between a structured chip's key and its value — so every
+             place text is rendered below calls this ONE snippet rather than
+             building its own `{#each highlightRuns...}` loop. Two copies of
+             that loop is how a structured chip's highlighting could drift
+             from the unparsed line's. -->
+        <!-- Deliberately all one line, with no whitespace between the
+             snippet tags and their content: every caller renders this inside
+             a `whitespace-pre`/`whitespace-pre-wrap` line, where an
+             indentation newline would not be trimmed away like it is in
+             ordinary markup — it would show up as a literal space or blank
+             line splicing itself into somebody's log. -->
+        {#snippet highlighted(text: string)}{#each highlightRuns(text, query) as run, i (i)}{#if run.match}<mark class="rounded-xs bg-gauge-warn/30 text-on-surface">{run.text}</mark>{:else}{run.text}{/if}{/each}{/snippet}
+
         {#each visibleRows as row (row.log.seq)}
           {@const log = row.log}
           {@const parsedTimestamp = timestampOf(log)}
@@ -1419,31 +1430,41 @@
 
             {#if structured && structured.kind !== 'plain'}
               <!-- Structured: level/message/timestamp/error promoted ahead
-                   of the rest, as key=value chips — see logFormat.ts. -->
+                   of the rest, as key=value chips — see logFormat.ts. Every
+                   piece goes through the same `highlighted` snippet as the
+                   unparsed line below, so a filter match inside a promoted
+                   field or a `key=value` chip is marked exactly as it would
+                   be in the raw text — including a match that sits inside a
+                   quoted logfmt value, or that spans the `=` between a
+                   chip's key and its value. -->
               <span class="inline">
                 {#if structured.level}
                   <span
                     class="mr-1 rounded px-1 py-px text-label-small font-medium
                            {detectSeverity(structured) ? SEVERITY_ACTIVE_CLASS[detectSeverity(structured)!] : 'bg-surface-container text-on-surface-variant'}"
-                    >{structured.level}</span
+                    >{@render highlighted(structured.level)}</span
                   >
                 {/if}
                 {#if structured.message}
                   <span class="text-on-surface"
-                    >{#each ansiToSpans(structured.message) as span, i (i)}<span class={span.bold ? 'font-semibold' : ''} style={ansiSpanStyle(span)}
-                        >{span.text}</span
-                      >{/each}</span
+                    >{#if structured.message.includes('\x1b')}<!-- Mutually exclusive with search highlighting, exactly as
+                           the unparsed-line branch below is: a coloured tool's
+                           own output is already doing the work a highlight
+                           would. -->{#each ansiToSpans(structured.message) as span, i (i)}<span
+                            class={span.bold ? 'font-semibold' : ''}
+                            style={ansiSpanStyle(span)}>{span.text}</span
+                          >{/each}{:else}{@render highlighted(structured.message)}{/if}</span
                   >
                 {/if}
                 {#if structured.error}
-                  <span class="ml-1 text-gauge-critical-ink">{structured.error}</span>
+                  <span class="ml-1 text-gauge-critical-ink">{@render highlighted(structured.error)}</span>
                 {/if}
                 {#if structured.timestamp}
-                  <span class="ml-1 text-on-surface-variant/60">{structured.timestamp}</span>
+                  <span class="ml-1 text-on-surface-variant/60">{@render highlighted(structured.timestamp)}</span>
                 {/if}
                 {#each structured.fields as field (field.key)}
                   <span class="ml-1 rounded bg-surface-container px-1 py-px text-label-small text-on-surface-variant"
-                    >{field.key}={field.value}</span
+                    >{@render highlighted(`${field.key}=${field.value}`)}</span
                   >
                 {/each}
               </span>
@@ -1464,12 +1485,7 @@
                    highlight says WHERE in each one, which is the part a
                    filtered view otherwise leaves you hunting for on a
                    400-character line. Same amber as the manifest's matches. -->
-              <span class="text-on-surface"
-                >{#each highlightRuns(row.text, query) as run, i (i)}{#if run.match}<mark
-                      class="rounded-xs bg-gauge-warn/30 text-on-surface"
-                      >{run.text}</mark
-                    >{:else}{run.text}{/if}{/each}</span
-              >
+              <span class="text-on-surface">{@render highlighted(row.text)}</span>
             {/if}
 
             {#if memberCount}

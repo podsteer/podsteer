@@ -2,6 +2,8 @@
  * Finding literal text, shared by the editor and the box that drives it.
  */
 
+import type { Query } from './query'
+
 /**
  * Every occurrence of `needle` in `text`, as `[start, end]` offsets.
  *
@@ -100,5 +102,87 @@ export function splitOnRegex(
 
   if (at < text.length) runs.push({ text: text.slice(at), match: false })
   if (runs.length === 0) return [{ text, match: false }]
+  return runs
+}
+
+/**
+ * Merges match ranges that overlap, touch, or are separated only by
+ * whitespace, into the fewest ranges that cover the same characters.
+ *
+ * The whitespace case is what makes an AND query of adjacent words read as
+ * one highlight: `query.ts` splits an unquoted "issuer unavailable" into two
+ * separate substring terms, and each lands on its own word — "issuer" ending
+ * right where a single space precedes "unavailable". Merging only touching
+ * ranges would leave that space unmarked, rendering as two marks either side
+ * of a gap where an operator typed one phrase and expects to see one.
+ */
+function mergeRanges(ranges: Array<[number, number]>, text: string): Array<[number, number]> {
+  if (ranges.length === 0) return []
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0] || a[1] - b[1])
+
+  const merged: Array<[number, number]> = [[sorted[0][0], sorted[0][1]]]
+  for (let i = 1; i < sorted.length; i++) {
+    const [start, end] = sorted[i]
+    const last = merged[merged.length - 1]
+    if (start <= last[1] || /^\s*$/.test(text.slice(last[1], start))) {
+      last[1] = Math.max(last[1], end)
+    } else {
+      merged.push([start, end])
+    }
+  }
+  return merged
+}
+
+/**
+ * Every highlight range `query` finds in `text`, from EVERY non-negated
+ * text/regex term rather than one — `query.ts`'s grammar ANDs terms
+ * together, so a plain multi-word query like `issuer unavailable` is two
+ * substring terms, both of which must match for a line to pass the filter at
+ * all, and both of which belong in what lights up. A negated term (`-foo`)
+ * says the text must NOT contain something, so it contributes no range; a
+ * label term (`key=value`, `label:key`, `cluster:name`) has nothing to
+ * highlight in log or manifest text either.
+ */
+function rangesForQuery(text: string, query: Query): Array<[number, number]> {
+  const ranges: Array<[number, number]> = []
+  for (const term of query.terms) {
+    if (term.negated) continue
+    if (term.kind === 'text' && term.value !== '') {
+      ranges.push(...findMatches(text, term.value))
+    } else if (term.kind === 'regex' && term.regex) {
+      const flags = term.regex.flags.includes('g') ? term.regex.flags : term.regex.flags + 'g'
+      const global = new RegExp(term.regex.source, flags)
+      for (const match of text.matchAll(global)) {
+        const value = match[0]
+        if (value.length === 0) continue
+        const start = match.index ?? 0
+        ranges.push([start, start + value.length])
+      }
+    }
+  }
+  return mergeRanges(ranges, text)
+}
+
+/**
+ * The query counterpart to `splitOnMatches`/`splitOnRegex`: splits `text`
+ * into runs covering every term of `query` at once, so a caller with a
+ * `Query` already parsed (the log pane's filter box, which accepts the same
+ * `re:`/`/pattern/` forms as a plain substring) does not have to pick just
+ * one term to highlight and silently drop the rest.
+ *
+ * Always returns at least one run, for the same reason `splitOnMatches` does.
+ */
+export function splitOnQuery(text: string, query: Query): Array<{ text: string; match: boolean }> {
+  const ranges = rangesForQuery(text, query)
+  if (ranges.length === 0) return [{ text, match: false }]
+
+  const runs: Array<{ text: string; match: boolean }> = []
+  let at = 0
+  for (const [start, end] of ranges) {
+    if (start > at) runs.push({ text: text.slice(at, start), match: false })
+    runs.push({ text: text.slice(start, end), match: true })
+    at = end
+  }
+  if (at < text.length) runs.push({ text: text.slice(at), match: false })
   return runs
 }
