@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   formatEnvValue,
   resolveEnvReference,
+  resourceLines,
+  specResourceLines,
   formatMount,
   formatPorts,
   formatProbe,
@@ -318,5 +320,21 @@ describe('resolveEnvReference — a pod template shaped like a pod', () => {
 
   it('never calls a literal resolved', () => {
     expect(resolveEnvReference({ name: 'X', value: 'development' }, template)).toBeNull()
+  })
+})
+
+describe('resource lines', () => {
+  it('splits the Go formatter\'s shape into one line per resource', () => {
+    expect(resourceLines('cpu: 100m, memory: 256Mi')).toEqual(['CPU: 100m', 'Memory: 256Mi'])
+    expect(resourceLines('memory: 256Mi')).toEqual(['Memory: 256Mi'])
+    expect(resourceLines('')).toEqual([])
+  })
+
+  it('quotes a spec in CPU, memory, then the rest', () => {
+    expect(specResourceLines({ 'nvidia.com/gpu': '1', memory: '1Gi', cpu: '2' })).toEqual([
+      'CPU: 2',
+      'Memory: 1Gi',
+      'nvidia.com/gpu: 1',
+    ])
   })
 })

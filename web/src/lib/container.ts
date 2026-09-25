@@ -405,3 +405,42 @@ export function formatMount(mount: VolumeMount): string {
   const sub = mount.subPath ? `,path="${mount.subPath}"` : ''
   return `${mount.mountPath} from ${mount.name} (${mode}${sub})`
 }
+
+/** A resource's display name: the two everybody has capitalised, the rest as written. */
+function resourceName(name: string): string {
+  if (name === 'cpu') return 'CPU'
+  if (name === 'memory') return 'Memory'
+  return name
+}
+
+/**
+ * "cpu: 100m, memory: 256Mi" — as Go formats a live container's requests and
+ * limits, kubectl's own shape — as one line per resource: "CPU: 100m",
+ * "Memory: 256Mi".
+ *
+ * Split on the separator that formatter writes (`formatResources` in
+ * app/adapters/wails/dto_resources.go), and only there: a part without a
+ * "name: " prefix is kept whole rather than guessed at.
+ */
+export function resourceLines(formatted: string | undefined): string[] {
+  if (!formatted) return []
+  return formatted.split(', ').map((part) => {
+    const colon = part.indexOf(': ')
+    return colon > 0 ? `${resourceName(part.slice(0, colon))}: ${part.slice(colon + 2)}` : part
+  })
+}
+
+/**
+ * A template's declared requests or limits, one line per resource, QUOTED
+ * as written in the spec — "500m", "512Mi". A template has no running
+ * container for Go to have formatted, and converting here would be a second
+ * implementation of the quantity arithmetic the backend owns.
+ */
+export function specResourceLines(declared: Record<string, unknown> | undefined): string[] {
+  if (!declared) return []
+  const order = (name: string) => (name === 'cpu' ? 0 : name === 'memory' ? 1 : 2)
+  return Object.entries(declared)
+    .filter(([, quantity]) => quantity !== undefined && quantity !== null && quantity !== '')
+    .sort(([a], [b]) => order(a) - order(b) || a.localeCompare(b))
+    .map(([name, quantity]) => `${resourceName(name)}: ${String(quantity)}`)
+}

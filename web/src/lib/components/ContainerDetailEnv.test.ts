@@ -85,20 +85,58 @@ describe('a running container\'s Status row', () => {
 
   it('says the state on one line and readiness on the next', () => {
     const { container } = renderStatus({})
-    expect(words(container)).toContain('Status Running')
-    expect(container.querySelector('[data-row-detail]')?.textContent).toBe('Ready')
+    const lines = [...container.querySelectorAll('[data-row-line]')].map((line) => line.textContent)
+    // Two lines of the value itself, not a muted footnote.
+    expect(lines.slice(0, 2)).toEqual(['Running', 'Ready'])
+    expect(container.querySelector('[data-row-detail]')).toBeNull()
   })
 
   it('tells started-but-not-ready apart from still starting', () => {
     const started = renderStatus({ ready: false, started: true })
-    expect(started.container.querySelector('[data-row-detail]')?.textContent).toContain('readiness check')
+    expect(started.container.querySelectorAll('[data-row-line]')[1]?.textContent).toContain('readiness check')
     cleanup()
     const starting = renderStatus({ ready: false, started: false })
-    expect(starting.container.querySelector('[data-row-detail]')?.textContent).toContain('still starting')
+    expect(starting.container.querySelectorAll('[data-row-line]')[1]?.textContent).toContain('still starting')
   })
 
   it('carries the reason with the state', () => {
     const { container } = renderStatus({ state: 'Waiting', reason: 'CrashLoopBackOff', ready: false, started: false })
     expect(words(container)).toContain('Waiting (CrashLoopBackOff)')
+  })
+})
+
+describe('requests, limits and usage', () => {
+  const lines = (container: HTMLElement) => [...container.querySelectorAll('[data-row-line]')].map((line) => line.textContent)
+
+  it('put CPU and memory on separate lines for a running container', () => {
+    const { container } = render(ContainerDetail, {
+      props: {
+        spec: { name: 'app', image: 'nginx:1.27' },
+        status: {
+          name: 'app', state: 'Running', reason: '', ready: true, started: true,
+          requests: 'cpu: 0.05, memory: 128.0MiB', limits: 'cpu: 0.25, memory: 128.0MiB',
+          hasMetrics: true, cpu: '0.001', memory: '19.9MiB',
+        } as never,
+        clusterId: '',
+        namespace: 'shop',
+      },
+    })
+    const all = lines(container)
+    expect(all).toContain('CPU: 0.05')
+    expect(all).toContain('Memory: 128.0MiB')
+    expect(all).toContain('CPU: 0.001')
+    expect(all).toContain('Memory: 19.9MiB')
+  })
+
+  it('quote a template\'s declared figures, which it used not to show at all', () => {
+    const { container } = render(ContainerDetail, {
+      props: {
+        spec: { name: 'app', image: 'nginx:1.27', resources: { requests: { memory: '256Mi', cpu: '100m' }, limits: { memory: '512Mi' } } },
+        context: 'template',
+        clusterId: '',
+        namespace: 'shop',
+      },
+    })
+    expect(lines(container)).toEqual(['CPU: 100m', 'Memory: 256Mi', 'Memory: 512Mi'])
   })
 })

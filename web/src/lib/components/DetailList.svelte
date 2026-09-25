@@ -113,6 +113,17 @@
      */
     detail?: string
     /**
+     * Several values for one label, each on its own line and in the value's
+     * own size and colour — a container's state and its readiness, a
+     * request's CPU and its memory.
+     *
+     * Distinct from `detail`, which is a muted explanation OF the value; these
+     * are the value, and a second one set smaller and greyer would read as
+     * less true than the first. `value` still carries them joined, for Copy
+     * and for the tooltip.
+     */
+    lines?: string[]
+    /**
      * The resource this row refers to, reachable from its menu.
      *
      * Distinct from `onclick`, which makes the VALUE a link and is right when
@@ -602,6 +613,10 @@
               <ExternalLink class="size-3 shrink-0 self-center" strokeWidth={1.8} />
             {/if}
           </button>
+        {:else if row.lines?.length}
+          {#each row.lines as line, lineIndex (lineIndex)}
+            <span class="block {open ? 'break-words' : 'truncate'}" data-row-line>{line}</span>
+          {/each}
         {:else}
           {row.value}
         {/if}

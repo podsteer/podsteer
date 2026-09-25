@@ -29,6 +29,8 @@
   import {
     formatEnvValue,
     resolveEnvReference,
+    resourceLines,
+    specResourceLines,
     formatMount,
     formatProbe,
     sensitivity,
@@ -200,10 +202,13 @@
             ? 'Not ready — started, not passing its readiness check'
             : 'Not ready — still starting'
           : 'Not ready'
+    const stateLine = status.reason ? `${state} (${status.reason})` : state
     return {
       label: 'Status',
-      value: status.reason ? `${state} (${status.reason})` : state,
-      detail: readiness,
+      value: `${stateLine}, ${readiness}`,
+      // Two values of equal standing — what the container is doing and
+      // whether it is serving — so each gets a line in the same type.
+      lines: [stateLine, readiness],
       // Amber for a container that should be serving and is not; a Job's
       // finished container is not ready by design and is left alone.
       tone: !status.ready && !finished ? 'warn' : undefined,
@@ -224,14 +229,22 @@
 
     // Requests and limits come from the DTO, already formatted in Go, so the
     // quantity strings are parsed in exactly one place in the codebase.
-    if (status?.requests) out.push({ label: 'Requests', value: status.requests })
-    if (status?.limits) out.push({ label: 'Limits', value: status.limits })
+    //
+    // One line per resource. A template has no formatted status, so its
+    // requests and limits are quoted from the spec instead — they used to be
+    // absent from a template altogether, which read as a controller that
+    // declares none.
+    const requests = status ? resourceLines(status.requests) : specResourceLines(spec.resources?.requests)
+    const limits = status ? resourceLines(status.limits) : specResourceLines(spec.resources?.limits)
+    if (requests.length) out.push({ label: 'Requests', value: requests.join(', '), lines: requests })
+    if (limits.length) out.push({ label: 'Limits', value: limits.join(', '), lines: limits })
 
     // What THIS container is using. The pod's total was always on screen and
     // never said which container it came from — on a pod with a sidecar, half
     // the time the answer is the sidecar, and nothing showed that.
     if (status?.hasMetrics) {
-      out.push({ label: 'Using', value: `cpu: ${status.cpu}, memory: ${status.memory}` })
+      const using = [`CPU: ${status.cpu}`, `Memory: ${status.memory}`]
+      out.push({ label: 'Using', value: using.join(', '), lines: using })
     }
 
     // ALL THREE PROBES. A probe missing from a pane reads as a container
