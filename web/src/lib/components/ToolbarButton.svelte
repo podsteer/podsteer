@@ -43,7 +43,7 @@
   class="state-layer grid size-7 shrink-0 place-items-center rounded-sm
          transition-colors duration-100
          {active
-    ? 'text-gauge-normal'
+    ? 'text-gauge-normal-ink'
     : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}
          disabled:pointer-events-none disabled:opacity-30"
 >

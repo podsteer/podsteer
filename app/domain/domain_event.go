@@ -17,6 +17,10 @@ const (
 	// EventClusterUnreachable is raised when a cluster that PodSteer tried to
 	// reach did not answer.
 	EventClusterUnreachable EventName = "cluster:unreachable"
+
+	// EventKubeconfigChanged is raised when the set of kubeconfig files
+	// PodSteer reads, or the content of one of them, has changed on disk.
+	EventKubeconfigChanged EventName = "kubeconfig:changed"
 )
 
 // DomainEvent is something noteworthy that happened inside PodSteer.
@@ -62,10 +66,36 @@ func (e ClusterUnreachable) Name() EventName { return EventClusterUnreachable }
 // OccurredAt implements Event.
 func (e ClusterUnreachable) OccurredAt() time.Time { return e.At.UTC() }
 
+// KubeconfigChanged records that the kubeconfig on disk is not what PodSteer
+// last read.
+//
+// IT CARRIES NO PATH AND NO CONTEXT NAME. Which file changed is not something
+// the interface acts on — the answer to any of them is the same, re-read the
+// list — and a path is a thing about the operator's machine that would then
+// travel through the event bus and into any log that records events. The count
+// is enough to say something true in the interface ("the kubeconfig changed")
+// without saying anything about where.
+type KubeconfigChanged struct {
+	// Files is how many kubeconfig files were being read when the change was
+	// noticed. It is a magnitude, not a list.
+	Files int
+	// At is when the change was noticed, which is up to one poll interval
+	// after it happened — see application.KubeconfigWatcher for why that is
+	// the right trade rather than a watcher per file.
+	At time.Time
+}
+
+// Name implements Event.
+func (e KubeconfigChanged) Name() EventName { return EventKubeconfigChanged }
+
+// OccurredAt implements Event.
+func (e KubeconfigChanged) OccurredAt() time.Time { return e.At.UTC() }
+
 // Compile-time proof that both events satisfy DomainEvent. Cheap insurance: the
 // interface is only ever consumed through an outbound port, so a missing
 // method would otherwise surface as a confusing failure at the wiring site.
 var (
+	_ DomainEvent = KubeconfigChanged{}
 	_ DomainEvent = ClusterConnected{}
 	_ DomainEvent = ClusterUnreachable{}
 )

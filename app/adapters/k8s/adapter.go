@@ -25,6 +25,32 @@ import (
 // behind, so an object deleted a moment ago may appear in one more refresh.
 // In practice that is invisible — a deleting pod reports Terminating for
 // seconds regardless — and it is undone by removing this one field.
+//
+// NEVER SEND THIS WITH A Limit. THE SERVER DROPS THE LIMIT, SILENTLY.
+//
+// This is the trap that made three of this package's caps decorative, and it
+// is invisible from the client: the request is accepted, no error comes back,
+// and the response simply contains everything. In the API server,
+// ShouldDelegateList excludes ResourceVersion "0" from the branch that would
+// send a limited list to etcd, so the watch cache answers it — and
+// computeListLimit returns 0 whenever ResourceVersion is "0", with the
+// upstream comment "as of today, the limit is ignored for requests that set
+// RV == 0". The response therefore carries no Continue token either, so a
+// paging loop reads one page, sees no token, and reports itself complete
+// having read the whole collection in one request.
+//
+// WORSE, IT IS NOT EVEN CONSISTENT. When the watch cache for that resource is
+// not yet ready, a limited list with no selectors IS delegated to etcd
+// (shouldDelegateListOnNotReadyCache), where the limit binds. So the same
+// cluster truncates at the cap shortly after an API-server restart and reads
+// the whole collection once the cache warms — two opposite bugs from one
+// line, decided by something no operator can see.
+//
+// THE RULE: a read that names a Limit must NOT name this. Consistency is not
+// what it is giving up — a limited read with no ResourceVersion is a quorum
+// read, which is the price of a cap that binds and a Continue token that
+// exists. A read with no Limit uses this freely; that is what it is for.
+// TestNoLimitedListAsksForTheWatchCache enforces the pairing.
 const cachedResourceVersion = "0"
 
 // Adapter is the driven adapter for Kubernetes.
@@ -47,9 +73,48 @@ type Adapter struct {
 	// service, because each one is a goroutine holding a socket and the thing
 	// that must not happen is the record and the goroutine parting company.
 	forwards portForwards
+	// nodeShells are the live node shells. Owned here for the same reason as
+	// forwards: each is a privileged pod PodSteer created, and the record of
+	// it must never outlive or predecease the pod itself. See nodeshell.go.
+	nodeShells nodeShells
+	// clusterShells are the live in-cluster shells — ordinary, unprivileged
+	// pods PodSteer created in a namespace. A second registry rather than a
+	// field on nodeShells: the two have different lifecycles to explain and
+	// different sweeps to name in OnShutdown, and a shared map would make
+	// "stop all node shells" and "stop all in-cluster shells" the same
+	// button. See clustershell.go.
+	clusterShells clusterShells
 	// backends caches metrics-backend discovery, which answers a question
 	// whose value moves in days: a monitoring stack is installed once.
 	backends backendCache
+	// kubeState caches kube-state-metrics discovery — the same question at
+	// the same cadence as backends, about a different thing. See kubestate.go.
+	kubeState kubeStateCache
+	// queryRefusals remembers which clusters refused the services/proxy
+	// subresource, so an account that may never proxy is not asked again for
+	// queryRefusalTTL. The one cache here that holds a REFUSAL and nothing
+	// else — see promquery.go, where the reason is that each retry is a
+	// denied request in somebody's audit log.
+	queryRefusals forbiddenBackends
+	// generations numbers each cluster's connection. Everything the
+	// monitoring-backend read caches is written under the generation captured
+	// before the request, so an answer computed against a connection that has
+	// since been invalidated cannot be cached against its replacement — see
+	// promquery.go, where ordering alone provably cannot close that window.
+	generations generations
+	// upgrades caches served API discovery and the writer scans found for
+	// deprecated versions of it — see upgrade.go.
+	upgrades upgradeCache
+	// vulnerabilities caches what a scanner already running in the cluster
+	// wrote, per cluster and namespace. Its whole point is being OFF the
+	// refresh tick — see trivy.go.
+	vulnerabilities vulnerabilityCache
+	// helm caches Helm release listings per cluster and namespace, for five
+	// minutes. Off the refresh tick for a sharper reason than the others:
+	// re-listing Secrets on a timer is the Secrets doctrine's own audit
+	// signature. It is the ONE cache here that stores a REFUSAL as a refusal
+	// rather than as an empty answer — see helm.go.
+	helm helmCache
 	// watches mirror a cluster's pods locally, so a refresh reads memory
 	// rather than the network. An optimisation: see watch.go, where the
 	// governing sentence is that polling remains the truth.
@@ -62,14 +127,19 @@ type Adapter struct {
 
 // Compile-time proof that the adapter satisfies every outbound port it claims.
 var (
-	_ ports.KubeconfigPort  = (*Adapter)(nil)
-	_ ports.ClusterPort     = (*Adapter)(nil)
-	_ ports.WorkloadPort    = (*Adapter)(nil)
-	_ ports.EventPort       = (*Adapter)(nil)
-	_ ports.MetricsPort     = (*Adapter)(nil)
-	_ ports.ResourcePort    = (*Adapter)(nil)
-	_ ports.ManagementPort  = (*Adapter)(nil)
-	_ ports.PortForwardPort = (*Adapter)(nil)
+	_ ports.KubeconfigPort   = (*Adapter)(nil)
+	_ ports.ClusterPort      = (*Adapter)(nil)
+	_ ports.WorkloadPort     = (*Adapter)(nil)
+	_ ports.EventPort        = (*Adapter)(nil)
+	_ ports.MetricsPort      = (*Adapter)(nil)
+	_ ports.ResourcePort     = (*Adapter)(nil)
+	_ ports.RBACPort         = (*Adapter)(nil)
+	_ ports.HelmPort         = (*Adapter)(nil)
+	_ ports.ManagementPort   = (*Adapter)(nil)
+	_ ports.PortForwardPort  = (*Adapter)(nil)
+	_ ports.NodeShellPort    = (*Adapter)(nil)
+	_ ports.ClusterShellPort = (*Adapter)(nil)
+	_ ports.InspectPort      = (*Adapter)(nil)
 )
 
 // New returns a Kubernetes adapter configured by cfg.
@@ -82,13 +152,28 @@ func New(cfg Config, logger *slog.Logger) *Adapter {
 		logger = slog.Default()
 	}
 	scoped := logger.With(slog.String("adapter", "k8s"))
+
+	factory := newClientFactory(cfg)
+	factory.logger = scoped
+
 	return &Adapter{
-		factory:  newClientFactory(cfg),
-		logger:   scoped,
-		watches:  newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery, recheckEvery),
-		forwards: portForwards{byID: make(map[string]*forwarder)},
+		factory:    factory,
+		logger:     scoped,
+		watches:    newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery, recheckEvery),
+		forwards:   portForwards{byID: make(map[string]*forwarder)},
+		nodeShells: nodeShells{byID: make(map[string]domain.NodeShell)},
+
+		clusterShells: clusterShells{byID: make(map[string]domain.ClusterShell)},
 	}
 }
+
+// KubeconfigFiles reports the kubeconfig files this adapter reads, in
+// precedence order, so a local shell can be given the same KUBECONFIG.
+//
+// Not part of any port: it is not a Kubernetes operation, it is this adapter
+// saying which of the operator's files it is looking at. The composition root
+// hands it to the local shell manager as a function.
+func (a *Adapter) KubeconfigFiles() []string { return a.factory.KubeconfigFiles() }
 
 // ServerVersion reaches the cluster's API server and reports its version.
 func (a *Adapter) ServerVersion(ctx context.Context, id domain.ClusterID) (domain.ServerVersion, error) {
@@ -129,13 +214,33 @@ func (a *Adapter) ServerVersion(ctx context.Context, id domain.ClusterID) (domai
 	return mapServerVersion(&info), nil
 }
 
-// Invalidate drops the cached clients for id.
+// Invalidate releases everything this adapter holds for id: its cached
+// clients, its per-cluster caches, its watch — and its port-forwards, which
+// are goroutines rather than cached answers and are stopped and waited for
+// first.
 //
 // Exposed beyond the ports so the composition root can react to a kubeconfig
 // change on disk, and so disconnecting a cluster genuinely releases its
 // connections rather than leaving them pooled.
 func (a *Adapter) Invalidate(id domain.ClusterID) {
-	// THE CLIENT GOES FIRST, AND THE ORDER IS LOAD-BEARING. A read racing
+	// THE FORWARDS GO BEFORE EVERYTHING, INCLUDING THE CLIENT. A forward's
+	// supervisor is a goroutine of this cluster's that OUTLIVES the client it
+	// dialled with — the stream runs on a transport it built itself — and
+	// when its pod dies it lists pods every three seconds for two minutes
+	// looking for a replacement. That list rebuilds the discarded client,
+	// re-executes the credential plugin, ensures a fresh watch set and
+	// repopulates the read cache: the resurrection the ordering below exists
+	// to prevent, arriving through a door the ordering does not cover. So the
+	// goroutine is ended and WAITED for first, and nothing of this cluster's
+	// is left running to race what follows.
+	//
+	// This is why a forward does not outlive the tab that opened it. Nothing
+	// in the interface or the documentation ever promised it would — the
+	// frontend has no way to forget one cluster's forwards, so before this a
+	// disconnected cluster's forward simply stayed in the activity list,
+	// labelled with a cluster nothing was connected to.
+	a.stopPortForwardsFor(id)
+	// THE CLIENT GOES NEXT, AND THE ORDER IS LOAD-BEARING. A read racing
 	// this call can re-`ensure` a watch set at any point, so the invalidation
 	// has to happen while `forget` is still ahead of it: the racing read gets
 	// a rebuilt client, and `forget` then destroys whatever set exists.
@@ -155,6 +260,41 @@ func (a *Adapter) Invalidate(id domain.ClusterID) {
 	// would answer the first assessment of a freshly opened cluster with
 	// numbers from before it was closed.
 	a.filesystems.forget(id)
+	a.upgrades.forget(id)
+	// kube-state-metrics discovery too, and for a sharper reason than the
+	// sweep: a tab is routinely reconnected because its kubeconfig context
+	// now points at a different cluster, and a half-hour answer carried
+	// across that would name a namespace in the cluster this tab used to be.
+	a.kubeState.forget(id)
+	// Scanner reports go the same way, and for the same reason as the disk
+	// sweep: a ten-minute answer carried across a reconnect would put the
+	// previous connection's findings on the first pod list of the new one.
+	a.vulnerabilities.forget(id)
+	// The monitoring-backend refusal goes too: a cached "this account may not
+	// proxy" carried across a reconnect would keep refusing after the
+	// operator reconnected with credentials that can, with no request ever
+	// made to find out. Its HTTP client needs no line here — it lives on the
+	// client set the factory just dropped, which is what keeps it from
+	// outliving the config it was built from.
+	a.queryRefusals.forget(id)
+	// And WHERE monitoring is, not only whether it may be reached. This is
+	// the longest-lived answer the adapter holds — half an hour, because a
+	// monitoring stack is installed once — and it is a Service coordinate, so
+	// carrying it across a reconnect pointed PromQL at an address discovered
+	// in the cluster this tab used to be. See backendCache.forget.
+	a.backends.forget(id)
+	// AND THE GENERATION IS BUMPED LAST, after every forget above. A query
+	// that read the old client set is still running and will try to cache
+	// what it finds; from here its captured generation no longer matches, so
+	// the write lands nowhere instead of teaching the new connection about
+	// the old cluster. Ordering alone cannot close that window — this is what
+	// does.
+	a.generations.bump(id)
+	// The Helm listing too, and for the reason above sharpened: a tab is
+	// routinely reconnected because its context now points somewhere else,
+	// and a five-minute answer carried across would name releases in the
+	// cluster this tab used to be.
+	a.helm.forget(id)
 	a.reads.forget(id.String())
 }
 
@@ -172,6 +312,15 @@ func (a *Adapter) StopAllWatches() {
 // Called after every write. Two seconds is short, but it is long enough to
 // hand back the list a pod was just deleted from — which reads as the
 // application ignoring what it was told to do rather than as a stale cache.
+//
+// THE HELM LISTING GOES WITH THEM, and it is here rather than in a hook of
+// its own precisely so nothing has to remember to call one. A write PodSteer
+// made is one of the three events ADR 6 says the Helm list refreshes on
+// (opening the page, an explicit refresh, and a write PodSteer made), and
+// this method already runs after every one of those writes. Its own window is
+// five minutes rather than two seconds, so a stale listing would otherwise
+// outlive the write by a great deal more than a pod list would.
 func (a *Adapter) forgetReads(id domain.ClusterID) {
 	a.reads.forget(id.String())
+	a.helm.forget(id)
 }

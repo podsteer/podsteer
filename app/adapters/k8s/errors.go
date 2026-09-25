@@ -48,6 +48,23 @@ func classify(op string, err error) error {
 			op, ports.ErrCredentialPluginMissing, binary, err)
 	}
 
+	// BESIDE IT, AND FOR A NEARBY REASON. The kubeconfig names an
+	// `auth-provider` this binary never registered, so nothing is ever
+	// dialled and, left to the default branch, it reads as a bug in PodSteer
+	// rather than as a kubeconfig that needs converting.
+	//
+	// IT IS RAISED WHILE BUILDING THE CLIENT, NOT THE REQUEST — client-go
+	// resolves the provider in rest.TransportConfig, which runs inside
+	// kubernetes.NewForConfig — which is why clientsFor now classifies its
+	// own construction error. It did not, and this branch was therefore
+	// unreachable on the only path that produces the failure. The credential
+	// plugin above is genuinely request-time by comparison: the binary is
+	// resolved when a credential is first fetched.
+	// See ports.ErrLegacyAuthProvider.
+	if provider := legacyAuthProvider(err); provider != "" {
+		return fmt.Errorf("%s: %w: %q: %w", op, ports.ErrLegacyAuthProvider, provider, err)
+	}
+
 	switch {
 	case apierrors.IsUnauthorized(err):
 		return fmt.Errorf("%s: %w: %w", op, ports.ErrUnauthenticated, err)
@@ -55,6 +72,32 @@ func classify(op string, err error) error {
 		return fmt.Errorf("%s: %w: %w", op, ports.ErrForbidden, err)
 	case apierrors.IsNotFound(err):
 		return fmt.Errorf("%s: %w: %w", op, ports.ErrNotFound, err)
+	case apierrors.IsConflict(err):
+		// The one 409 PodSteer expects: UpdateResource's PUT carried a
+		// resourceVersion the server no longer recognises, because the
+		// object changed since the manifest was read. Its own sentinel
+		// rather than falling through to the opaque default case, because
+		// the recovery — reload, then re-apply — is specific to this failure
+		// and nothing else here produces it.
+		return fmt.Errorf("%s: %w: %w", op, ports.ErrConflict, err)
+	case apierrors.IsInvalid(err):
+		// The request reached the server and was well-formed enough to
+		// route, but the OBJECT itself was declined — a schema violation, or
+		// a ValidatingWebhookConfiguration saying no. Surfaces mainly
+		// through UpdateResource's dry run, where the message is the reason
+		// Validate exists: an operator needs it close to verbatim to fix
+		// their manifest, which is why it is wrapped rather than replaced
+		// the way most other cases here are.
+		return fmt.Errorf("%s: %w: %w", op, ports.ErrManifestRejected, err)
+	case apierrors.IsTooManyRequests(err):
+		// The one 429 PodSteer ever expects to see: the eviction subresource
+		// returning it because a PodDisruptionBudget would be violated. It is
+		// not a rate limit and not RBAC — the request was well-formed and
+		// permitted, and the OBJECT'S OWN POLICY declined it — so it gets a
+		// sentinel of its own rather than falling into ErrForbidden, which
+		// would tell an operator to ask for different credentials for
+		// something more credentials cannot fix.
+		return fmt.Errorf("%s: %w: %w", op, ports.ErrDisruptionBudget, err)
 	case apierrors.IsTimeout(err),
 		apierrors.IsServerTimeout(err),
 		apierrors.IsServiceUnavailable(err):
@@ -105,6 +148,37 @@ func missingCredentialPlugin(err error) string {
 		return "the credential plugin"
 	}
 	return rest[:end]
+}
+
+// legacyAuthProvider names the `auth-provider` a kubeconfig asked for and this
+// binary does not register, or "" when that is not what failed.
+//
+// MATCHED ON THE MESSAGE, because client-go offers nothing else: the failure
+// is `fmt.Errorf("no Auth Provider found for name %q", name)` in
+// client-go/rest/plugin.go, with no typed error and no sentinel to compare
+// against. The prefix is stable across every release since the mechanism was
+// deprecated in 1.22 and is what the provider name follows.
+func legacyAuthProvider(err error) string {
+	const marker = `no Auth Provider found for name `
+
+	message := err.Error()
+	start := strings.Index(message, marker)
+	if start < 0 {
+		return ""
+	}
+
+	rest := message[start+len(marker):]
+	if len(rest) == 0 || rest[0] != '"' {
+		// The shape changed. Still this failure, still worth naming as one —
+		// the provider is simply unknown.
+		return "that auth-provider"
+	}
+
+	end := strings.Index(rest[1:], `"`)
+	if end <= 0 {
+		return "that auth-provider"
+	}
+	return rest[1 : end+1]
 }
 
 // transportFailure names the network-level failure behind err, or nil when it

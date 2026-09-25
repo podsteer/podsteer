@@ -9,26 +9,38 @@
   Action buttons in the header allow delete, scale, restart, and edit.
 -->
 <script lang="ts">
+  import { copyText } from '$lib/clipboard'
   import { flash } from '$lib/flash.svelte'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
-  import type { ClusterSession } from '$stores/session.svelte'
+  import { untrack } from 'svelte'
+  import type { ClusterSession, DetailAction } from '$stores/session.svelte'
   import { WORKLOAD_KIND_BY_ID } from '$stores/session.svelte'
   import LogViewer from './LogViewer.svelte'
   import ResourceOverview from './ResourceOverview.svelte'
   import EventsView from './EventsView.svelte'
+  import TimelinePanel from './TimelinePanel.svelte'
+  import { timeline } from '$stores/timeline.svelte'
   import EventDetail from './EventDetail.svelte'
   import ApplicationDetail from './ApplicationDetail.svelte'
   import { iconForKind } from '$lib/kindIcons'
   import { parse } from 'yaml'
   import { forwards } from '$stores/forwards.svelte'
+  import { sessionLauncher } from '$stores/sessionLauncher.svelte'
   import YamlPane from './YamlPane.svelte'
+  import FieldOwnershipPanel from './FieldOwnershipPanel.svelte'
   import Button from './Button.svelte'
   import ToolbarButton from './ToolbarButton.svelte'
+  import HelpButton from './HelpButton.svelte'
   import ToolbarToggle from './ToolbarToggle.svelte'
   import PaneDialog from './PaneDialog.svelte'
+  import CreateResourceDialog from './CreateResourceDialog.svelte'
+  import CompareDialog from './CompareDialog.svelte'
   import { withoutManagedFields } from '$lib/manifest'
-  import { gitOpsOwner, revertWarning } from '$lib/gitops'
+  import { stripForDuplicate } from '$lib/duplicate'
+  import { managementWarning, type GitOpsManagement } from '$lib/gitops'
+  import { resolveManagement } from '$lib/gitopsChain'
   import GitOpsBadge from './GitOpsBadge.svelte'
+  import { organisation } from '$stores/organisation.svelte'
   import {
     preferences,
     detailWidthBounds,
@@ -41,11 +53,23 @@
   import DeleteDialog from './DeleteDialog.svelte'
   import ScaleDialog from './ScaleDialog.svelte'
   import RestartDialog from './RestartDialog.svelte'
+  import DialogFooter from './DialogFooter.svelte'
+  import { apply as kubectlApply, applyDryRun as kubectlApplyDryRun, resourceArgForKind } from '$lib/kubectl'
+  import { ApiError } from '$lib/api/errors'
+  import TriggerDialog from './TriggerDialog.svelte'
+  import SuspendDialog from './SuspendDialog.svelte'
+  import CordonDialog from './CordonDialog.svelte'
+  import DrainDialog from './DrainDialog.svelte'
+  import EvictDialog from './EvictDialog.svelte'
+  import SetImageDialog from './SetImageDialog.svelte'
+  import RolloutHistory from './RolloutHistory.svelte'
+  import RollbackDialog from './RollbackDialog.svelte'
   import Terminal from './Terminal.svelte'
   import DependencyMap from './DependencyMap.svelte'
-  import { DeleteResource, RestartRollout } from '$lib/wailsjs/go/wails/ManagementAPI'
-  import { ListPodsForWorkload } from '$lib/wailsjs/go/wails/WorkloadAPI'
-  import type { Pod } from '$lib/api/client'
+  import { DeleteResource, RestartRollout } from '$bindings/managementapi'
+  import { ListPodsForWorkload } from '$bindings/workloadapi'
+  import { triggerCronJob, suspendWorkload, cordonNode, evictPod, getManifest, type Pod, type Revision } from '$lib/api/client'
+  import { podTemplateOf, type PodTemplate } from '$lib/podTemplate'
   import {
     X,
     Info,
@@ -56,8 +80,11 @@
     FileCode,
     RotateCcw,
     Scale,
+    ImageUp,
     Pencil,
     Copy,
+    CopyPlus,
+    GitCompare,
     Check,
     Trash2,
     Maximize2,
@@ -66,6 +93,13 @@
     EyeOff,
     Plug,
     Loader,
+    Play,
+    CirclePlay,
+    CirclePause,
+    Ban,
+    LogOut,
+    History as HistoryIcon,
+    Clock,
   } from '@lucide/svelte'
 
   interface Props {
@@ -74,7 +108,15 @@
 
   let { session }: Props = $props()
 
-  type Tab = 'overview' | 'logs' | 'terminal' | 'map' | 'events' | 'yaml'
+  type Tab =
+    | 'overview'
+    | 'logs'
+    | 'terminal'
+    | 'map'
+    | 'history'
+    | 'events'
+    | 'timeline'
+    | 'yaml'
   let activeTab = $state<Tab>('overview')
   const copied = flash(1500)
   let deleteDialogOpen = $state(false)
@@ -97,8 +139,82 @@
   /** Which pane, if any, has been given the whole window. */
   let maximized = $state<'yaml' | 'logs' | 'terminal' | 'map' | null>(null)
   let restartDialogOpen = $state(false)
+  let triggerDialogOpen = $state(false)
+  let suspendDialogOpen = $state(false)
+  let cordonDialogOpen = $state(false)
+  let drainDialogOpen = $state(false)
+  let evictDialogOpen = $state(false)
+  let setImageDialogOpen = $state(false)
   let actionError = $state<string | null>(null)
+
+  /**
+   * What the API server warned about on the last apply or validate.
+   *
+   * KEPT ON SCREEN RATHER THAN FLASHED, because a warning is a fact about the
+   * manifest rather than an event: "apps/v1beta1 is deprecated in v1.25+" is
+   * still true two seconds later, and a toast that has gone by the time the
+   * operator finishes reading it is the same as not showing it. Cleared when
+   * the next edit starts, beside actionError, so it never describes a draft
+   * that is no longer on screen.
+   */
+  let applyWarnings = $state<string[]>([])
   let workloadPods = $state<Pod[]>([])
+
+  /** "Image updated" after SetImageDialog applies every changed container. The same self-clearing flag as `copied` and `triggered` — see $lib/flash.svelte. */
+  const imageUpdated = flash(3000)
+
+  let rollbackDialogOpen = $state(false)
+  /** The revision RollbackDialog was opened for. Set only alongside
+   * rollbackDialogOpen = true, so the dialog never renders with a stale
+   * target from a previous click. */
+  let rollbackTarget = $state<Revision | null>(null)
+  /**
+   * Bumped after a rollback succeeds, to make RolloutHistory refetch — a
+   * rollback changes which revision is current and, for a Deployment,
+   * routinely bumps the target ReplicaSet's own revision number, neither of
+   * which the tab would otherwise know to reload for.
+   */
+  let historyReloadToken = $state(0)
+  /** "Rolled back to revision N" after a rollback succeeds. The same
+   * self-clearing flag as `imageUpdated`, paired with the revision for the
+   * same reason `triggered` is paired with the job name. */
+  const rolledBack = flash(4000)
+  let rolledBackToRevision = $state(0)
+
+  /**
+   * Names the Job a "Run now" just created, for a few seconds.
+   *
+   * The same self-clearing flag LogViewer and RowMenu use for "Copied!" —
+   * see $lib/flash.svelte — paired with the name here because the flag
+   * itself carries no content of its own.
+   */
+  const triggered = flash(4000)
+  let triggeredJobName = $state('')
+
+  /**
+   * A transient notice after Apply or Validate succeeds: "Applied",
+   * "Created", or "Valid — the server accepted this manifest". The same
+   * self-clearing flag as `triggered` above, paired with a message for the
+   * same reason.
+   */
+  const applyResult = flash(4000)
+  let applyResultMessage = $state('')
+
+  /** Whether a dry run is in flight, so Validate can show it is working. */
+  let validating = $state(false)
+
+  /**
+   * Whether the last Apply failed because the object changed on the
+   * cluster since this manifest was read (HTTP 409 on the PUT).
+   *
+   * A PERSISTENT banner rather than a flash: `applyResult` above says
+   * something happened and fades, which is right for a success an operator
+   * does not need to act on. A conflict is the opposite — it stays until
+   * Reload (or Cancel) is chosen, the same way `actionError` stays, because
+   * disappearing on its own would silently leave the stale draft on screen
+   * looking exactly like one that would apply cleanly.
+   */
+  let conflict = $state(false)
 
   /** The selected kind's own icon, so the drawer is marked like its row. */
   const KindIcon = $derived(
@@ -107,9 +223,53 @@
 
   const isPod = $derived(session.selectedKindId === 'core/v1/pods')
 
+  /**
+   * What the session timeline holds about the object on screen.
+   *
+   * Keyed by the Kubernetes Kind rather than the catalogue id, because that
+   * is what an entry carries: an event names its involved object's kind, and
+   * a recorded write names the kind the write was made against. Empty until
+   * something happens, which is the ordinary state of a quiet object.
+   */
+  const objectTimeline = $derived(
+    timeline.forObject(
+      session.cluster.id,
+      session.selectedKind?.kind ?? '',
+      session.selectedKind?.namespaced ? session.selectedNamespace : '',
+      session.selectedName ?? '',
+    ),
+  )
+
   const isEvent = $derived(session.selectedKindId === 'core/v1/events')
   const isApplication = $derived(!!session.selectedApplication)
   const isSecret = $derived(session.selectedKindId === 'core/v1/secrets')
+
+  /**
+   * The guardrails for the group this cluster sits in.
+   *
+   * Read fresh on every access rather than cached on connect, because an
+   * operator can change a group's environment or read-only flag in Organise
+   * while a tab for one of its clusters is sitting open right here — the
+   * banner and the disabled controls below have to follow that immediately,
+   * not on the next reconnect.
+   */
+  const groupPlacement = $derived(organisation.placementOf(session.cluster.id))
+  const groupName = $derived(
+    organisation
+      .groupsIn(groupPlacement.project)
+      .find((group) => group.id === groupPlacement.group)?.name ?? 'Default',
+  )
+  const groupSettings = $derived(
+    organisation.settingsFor(groupPlacement.project, groupPlacement.group),
+  )
+  const isProduction = $derived(groupSettings.environment === 'production')
+  /** Non-null exactly when the production banner below should show. */
+  const productionGroup = $derived(isProduction ? groupName : null)
+  const isReadOnly = $derived(groupSettings.readOnly)
+  // Matches the backend's own message (see app/adapters/wails/errors.go's
+  // CodeReadOnly and Terminal.svelte's READ_ONLY_REASON) so an operator sees
+  // one sentence for this, however they reach it.
+  const readOnlyReason = 'This cluster is marked read-only in PodSteer. Change that under Organise.'
 
   /**
    * The manifest as shown, which is not always the manifest as fetched.
@@ -140,13 +300,46 @@
    * evidence lives in labels and annotations that the table columns do not
    * carry — and because the manifest is already here for the YAML tab.
    */
-  const managedBy = $derived.by(() => {
-    if (!session.manifest) return null
-    try {
-      return gitOpsOwner(parse(session.manifest))
-    } catch {
-      return null
+  let managedBy = $state<GitOpsManagement | null>(null)
+
+
+  /**
+   * Resolves it, which for most objects is not a read at all.
+   *
+   * AN EFFECT RATHER THAN A DERIVED, because the answer is not always in the
+   * manifest. A Deployment says so itself and this settles synchronously; a
+   * POD SAYS NOTHING — it carries no GitOps marker, only a pod-template-hash
+   * — so the only way to know its spec comes from Git is to ask what controls
+   * it, which is a read. See $lib/gitopsChain.
+   *
+   * Guarded by a generation, for the reason every other read here is: opening
+   * a second object while the first one's walk is in flight must not leave
+   * the first object's answer on screen.
+   */
+  let managementGeneration = 0
+  $effect(() => {
+    const text = session.manifest
+    const namespace = session.selectedNamespace
+
+    const generation = ++managementGeneration
+    if (!text) {
+      managedBy = null
+      return
     }
+
+    let parsed: unknown
+    try {
+      parsed = parse(text)
+    } catch {
+      managedBy = null
+      return
+    }
+
+    void resolveManagement(parsed, namespace, (kindId, ns, name) =>
+      getManifest(session.cluster.id, kindId, ns, name).then((body: string) => parse(body)),
+    ).then((found) => {
+      if (generation === managementGeneration) managedBy = found
+    })
   })
 
   /**
@@ -161,16 +354,94 @@
     session.selectedKindId === 'core/v1/secrets' && !session.secretsRevealed && !!session.manifest,
   )
 
-  const canEdit = $derived(!!session.manifest && !isEvent && !secretsHidden)
+  const canEdit = $derived(!!session.manifest && !isEvent && !secretsHidden && !isReadOnly)
 
   const editHint = $derived(
-    isEvent
-      ? 'An event is a record of something that happened — there is nothing to change'
+    isReadOnly
+      ? readOnlyReason
+      : isEvent
+        ? 'An event is a record of something that happened — there is nothing to change'
+        : secretsHidden
+          ? 'Reveal the values first — saving now would overwrite them with their placeholders'
+          : session.manifest
+            ? 'Edit YAML'
+            : 'Nothing loaded yet',
+  )
+
+  /**
+   * Whether duplicating this object means anything.
+   *
+   * An application has no manifest at all (see the YAML tab's own `show`
+   * below), and a Secret whose values are still hidden shows their
+   * placeholders where the real data belongs — duplicating THAT would carry
+   * `<hidden, N bytes>` into the copy as if it were the value, the same data
+   * loss `canEdit` refuses for the same reason. Unlike editing, an event's
+   * own record is not excluded: it has nothing to reconcile against, but
+   * nothing here stops somebody from wanting the same manifest as a
+   * starting point.
+   */
+  const canDuplicate = $derived(!!session.manifest && !secretsHidden && !isReadOnly)
+
+  const duplicateHint = $derived(
+    isReadOnly
+      ? readOnlyReason
       : secretsHidden
-        ? 'Reveal the values first — saving now would overwrite them with their placeholders'
-        : session.manifest
-          ? 'Edit YAML'
-          : 'Nothing loaded yet',
+        ? 'Reveal the values first — duplicating now would copy their placeholders'
+        : 'Duplicate',
+  )
+
+  /** The "Duplicate <Kind>" dialog, seeded from the manifest as fetched —
+      never from `shownManifest`, so the copy is unaffected by whether
+      managed fields happen to be showing. `stripForDuplicate` removes them
+      itself either way; see $lib/duplicate. */
+  let duplicateDialogOpen = $state(false)
+  const duplicateSeed = $derived(session.manifest ? stripForDuplicate(session.manifest) : '')
+
+  /**
+   * Whether comparing this object means anything.
+   *
+   * Narrower than canDuplicate's guard, and deliberately so: CompareDialog
+   * fetches its OWN left-hand manifest with revealSecrets=false on every
+   * compare, never `session.manifest`, so a Secret's values being hidden or
+   * revealed right now makes no difference to what Compare would show —
+   * there is no placeholder-carried-forward risk here the way there is for
+   * Duplicate. An application is the one real exclusion, same as the YAML
+   * tab's own `show` below: there is no manifest to fetch for something that
+   * is not a Kubernetes object.
+   */
+  const canCompare = $derived(!!session.selectedKind && !isApplication)
+
+  // Read-only is not a reason to hide or disable Compare — nothing here
+  // writes anything, so the guard that blocks Edit and Duplicate on a
+  // read-only cluster has no reason to apply to a feature that only reads.
+
+  /**
+   * Opens CompareDialog on the object currently shown.
+   *
+   * PER-OBJECT ONLY. PodSteer has no multi-select anywhere yet — DataTable's
+   * own header comment says pagination and the toolbar live above it and
+   * selection is not among what either owns — so there is no list of
+   * objects to hand this a batch of. The list-level comparison lives where
+   * the selection does, on the bulk bar in ClusterWorkspace: tick two rows
+   * and it opens this same dialog with both halves already filled in. It is
+   * deliberately not a loop over this dialog, and deliberately not offered
+   * at any count but two — a diff has two sides.
+   */
+  let compareDialogOpen = $state(false)
+
+  /**
+   * The kubectl equivalent of Apply: what PodSteer actually sends is the
+   * edited manifest itself, so the only thing worth showing is the
+   * invocation that would read it from stdin — see $lib/kubectl.apply.
+   */
+  const applyCommand = $derived(
+    kubectlApply(session.cluster.id, session.selectedKind?.namespaced ? session.selectedNamespace : undefined),
+  )
+
+  /** The kubectl equivalent of Validate — apply's own hint, plus the flag
+      that makes it a server-side dry run rather than a real write. */
+  const applyDryRunCommand = $derived(
+    kubectlApplyDryRun(session.cluster.id, session.selectedKind?.namespaced ? session.selectedNamespace : undefined),
   )
 
   /**
@@ -228,6 +499,51 @@
     session.selectedKindId === 'apps/v1/daemonsets'
   )
 
+  // The same three kinds as isRestartable — Deployment, StatefulSet and
+  // DaemonSet are exactly the controllers whose pod template sits at
+  // spec.template, which is what ManagementPort.SetImage's patch targets.
+  // Named separately anyway: the two happen to coincide today, and tying
+  // them together would make a future kind that supports one but not the
+  // other an awkward split rather than a one-line change.
+  const isSetImageable = $derived(
+    session.selectedKindId === 'apps/v1/deployments' ||
+    session.selectedKindId === 'apps/v1/statefulsets' ||
+    session.selectedKindId === 'apps/v1/daemonsets'
+  )
+
+  // The same three kinds as isSetImageable — a rollout history exists for
+  // exactly the controllers whose pod template sits at spec.template, the
+  // one thing a revision records. Named separately anyway, mirroring
+  // isSetImageable's own doc comment: the two happen to coincide today, and
+  // tying them together would make a future kind that supports one but not
+  // the other an awkward split rather than a one-line change.
+  const hasRolloutHistory = $derived(
+    session.selectedKindId === 'apps/v1/deployments' ||
+    session.selectedKindId === 'apps/v1/statefulsets' ||
+    session.selectedKindId === 'apps/v1/daemonsets'
+  )
+
+  /**
+   * The open workload's pod template, for SetImageDialog to list containers
+   * from.
+   *
+   * FROM session.manifest, NEVER FROM THE WATCH STORE — the drawer's own copy
+   * of the object's manifest, which is what podTemplateOf's own doc comment
+   * requires. Mirrors ResourceOverview's identical derivation.
+   */
+  const workloadPodTemplate = $derived.by((): PodTemplate | null => {
+    if (!isSetImageable || !session.manifest) return null
+    try {
+      return podTemplateOf(parse(session.manifest), session.selectedKind?.kind)
+    } catch {
+      return null
+    }
+  })
+
+  const isCronJob = $derived(session.selectedKindId === 'batch/v1/cronjobs')
+  const isJob = $derived(session.selectedKindId === 'batch/v1/jobs')
+  const isNode = $derived(session.selectedKindId === 'core/v1/nodes')
+
   /** The Kubernetes kind of the open workload, or null when it is not one. */
   const mappedWorkloadKind = $derived(
     session.selectedKindId ? (WORKLOAD_KIND_BY_ID[session.selectedKindId] ?? null) : null,
@@ -235,6 +551,19 @@
 
   /** Whether the open object is one of the six controllers. */
   const isWorkloadKind = $derived(Boolean(mappedWorkloadKind))
+
+  /**
+   * Whether there is a map to draw.
+   *
+   * A real object of any kind has one. The pinned pseudo-entries do not: the
+   * overview is an assessment, and Applications and the fleet view are
+   * aggregations across clusters — none of them is something a cluster can be
+   * asked to GET, which is what a map is drawn from. `selectedApplication` is
+   * the third case, an inventory row rather than a catalogue kind.
+   */
+  const hasMap = $derived(
+    Boolean(session.selectedKindId && session.selectedName) && !isApplication,
+  )
 
   const isWorkloadWithLogs = $derived(
     session.selectedKindId === 'apps/v1/deployments' ||
@@ -248,11 +577,14 @@
   )
 
   const containerNames = $derived(
-    selectedPod?.containers.map(c => c.name) ?? []
+    selectedPod?.containers?.map(c => c.name) ?? []
   )
 
+  // Broader than isScalable: Trigger and Suspend act on CronJobs and Jobs
+  // too, and ResourceOverview already excludes those two kinds from what it
+  // does with this prop, so widening it here is safe.
   const selectedWorkload = $derived(
-    isScalable ? session.workloads.find(w => w.name === session.selectedName && w.namespace === session.selectedNamespace) : null
+    isWorkloadKind ? session.workloads.find(w => w.name === session.selectedName && w.namespace === session.selectedNamespace) : null
   )
 
   /**
@@ -288,7 +620,7 @@
         session.selectedName
       )
       if (request !== podRequest) return
-      workloadPods = pods
+      workloadPods = pods ?? []
     } catch (error) {
       if (request !== podRequest) return
       console.error('Failed to load workload pods:', error)
@@ -314,7 +646,92 @@
     shownObject
     activeTab = 'overview'
     actionError = null
+    // A "Created <job>" notice from a Run now on the PREVIOUS object must not
+    // keep showing over a different one now open in its place.
+    triggered.cancel()
+    imageUpdated.cancel()
+    // Same reasoning for an Apply/Validate result, and a conflict banner is
+    // about the PREVIOUS object's stale draft — it says nothing true about
+    // whatever is opening now.
+    applyResult.cancel()
+    conflict = false
+    // A "Rolled back to revision N" notice, and the dialog it came from, are
+    // about the PREVIOUS object too.
+    rolledBack.cancel()
+    rollbackDialogOpen = false
+    rollbackTarget = null
   })
+
+  /**
+   * A row menu's request, applied to the drawer's own controls.
+   *
+   * DECLARED AFTER THE RESET ABOVE, and that is load-bearing rather than
+   * tidy: opening an object from a row menu makes both effects dirty in the
+   * same flush, they run in the order they were created, and the reset sets
+   * the tab back to Overview. Put this first and every "Logs" from a row
+   * menu would land on the Overview tab.
+   *
+   * The request is TAKEN, which clears it — see ClusterSession.takeDetailIntent
+   * — inside `untrack` so clearing it does not re-run this effect against a
+   * tab the operator may have moved off since. The early return covers the
+   * ordinary case where there is no request at all, which is every click on
+   * a row.
+   */
+  $effect(() => {
+    if (!session.detailIntent) return
+    untrack(() => {
+      const intent = session.takeDetailIntent()
+      if (!intent) return
+      if (intent.tab) activeTab = intent.tab
+      if (intent.action) openDrawerAction(intent.action)
+    })
+  })
+
+  /**
+   * Engages one of the drawer's own controls, exactly as its toolbar button
+   * does — never a second implementation of the act.
+   *
+   * Two of them run at once with no dialog, and that is the drawer's own
+   * rule rather than a shortcut taken here: Resume and Uncordon each undo a
+   * visible, deliberate state rather than doing anything the cluster cannot
+   * immediately reverse, so the toolbar buttons for them act directly too.
+   * Everything else opens the dialog that already carries the confirmation
+   * — and, on a production cluster, the type-the-name gate.
+   */
+  function openDrawerAction(action: DetailAction): void {
+    switch (action) {
+      case 'delete':
+        deleteDialogOpen = true
+        break
+      case 'evict':
+        evictDialogOpen = true
+        break
+      case 'restart':
+        restartDialogOpen = true
+        break
+      case 'scale':
+        scaleDialogOpen = true
+        break
+      case 'trigger':
+        triggerDialogOpen = true
+        break
+      case 'suspend':
+        suspendDialogOpen = true
+        break
+      case 'resume':
+        void handleSuspend(false)
+        break
+      case 'cordon':
+        cordonDialogOpen = true
+        break
+      case 'uncordon':
+        void handleCordon(false)
+        break
+      case 'drain':
+        drainDialogOpen = true
+        break
+    }
+  }
 
   /**
    * Arrow keys move between tabs, which is what a tablist is for.
@@ -390,8 +807,11 @@
    */
   async function copyManifest(): Promise<void> {
     if (!shownManifest) return
-    await navigator.clipboard.writeText(shownManifest)
-    copied.show()
+    // Confirms only a copy that took. A manifest is the longest thing anybody
+    // copies out of this application and the least likely to be checked after
+    // pasting, so a tick that stands for nothing is at its most expensive
+    // here. See $lib/clipboard.
+    if (await copyText(shownManifest)) copied.show()
   }
 
   async function handleDelete(): Promise<void> {
@@ -440,6 +860,113 @@
     }
   }
 
+  async function handleTrigger(): Promise<void> {
+    if (!selectedWorkload) return
+    try {
+      const jobName = await triggerCronJob(session.cluster.id, selectedWorkload.namespace, selectedWorkload.name)
+      triggerDialogOpen = false
+      triggeredJobName = jobName
+      triggered.show()
+      await session.refresh()
+    } catch (error) {
+      actionError = `Failed to trigger: ${error}`
+    }
+  }
+
+  /** Suspends or resumes the selected CronJob or Job. Resume needs no dialog. */
+  async function handleSuspend(suspend: boolean): Promise<void> {
+    if (!session.selectedKind || !selectedWorkload) return
+    try {
+      await suspendWorkload(
+        session.cluster.id,
+        session.selectedKind.kind,
+        selectedWorkload.namespace,
+        selectedWorkload.name,
+        suspend,
+      )
+      suspendDialogOpen = false
+      await session.refresh()
+    } catch (error) {
+      actionError = `Failed to ${suspend ? 'suspend' : 'resume'}: ${error}`
+    }
+  }
+
+  /** Opens RollbackDialog for one revision, from the History tab's own
+   * "Roll back…" button — RolloutHistory only reads and compares, so the
+   * write it can trigger is turned into a dialog here rather than fired
+   * directly. */
+  function handleOpenRollback(revision: Revision): void {
+    rollbackTarget = revision
+    rollbackDialogOpen = true
+  }
+
+  /** Called once RollbackDialog's own confirm succeeds. */
+  async function handleRolledBack(): Promise<void> {
+    rollbackDialogOpen = false
+    rolledBackToRevision = rollbackTarget?.number ?? 0
+    rollbackTarget = null
+    rolledBack.show()
+    // The History tab's own list is not part of session state — nothing
+    // else refetches it — so it needs telling separately from the refresh
+    // below, which is for the workload list and consumption meters.
+    historyReloadToken += 1
+    await session.refresh()
+  }
+
+  /** Cordons or uncordons the selected node. Uncordon needs no dialog — it
+   * undoes a visible, deliberate state rather than doing anything the
+   * cluster cannot immediately reverse. */
+  async function handleCordon(cordon: boolean): Promise<void> {
+    if (!session.selectedName) return
+    try {
+      await cordonNode(session.cluster.id, session.selectedName, cordon)
+      cordonDialogOpen = false
+      await session.refresh()
+    } catch (error) {
+      actionError = `Failed to ${cordon ? 'cordon' : 'uncordon'}: ${error}`
+    }
+  }
+
+  /** Evicts the selected pod through the eviction subresource. */
+  async function handleEvict(): Promise<void> {
+    if (!session.selectedNamespace || !session.selectedName) return
+    try {
+      await evictPod(session.cluster.id, session.selectedNamespace, session.selectedName, -1)
+      evictDialogOpen = false
+      await session.refresh()
+    } catch (error) {
+      actionError = `Failed to evict: ${error}`
+    }
+  }
+
+  /**
+   * Opens the debug dialog for the pod on screen. The dialog and the terminal
+   * it leads to live in SessionOverlay at the workspace level, so a debug
+   * container outlives this drawer the way the container itself outlives it.
+   */
+  function openDebug(): void {
+    if (!selectedPod) return
+    sessionLauncher.requestDebug({
+      clusterId: session.cluster.id,
+      namespace: selectedPod.namespace,
+      pod: selectedPod.name,
+      containers: selectedPod.containers?.map((c) => c.name) ?? [],
+      readOnly: isReadOnly,
+      productionGroup,
+    })
+  }
+
+  /** Opens the node-shell dialog for the node on screen. */
+  function openNodeShell(): void {
+    if (!session.selectedName) return
+    sessionLauncher.requestNodeShell({
+      clusterId: session.cluster.id,
+      node: session.selectedName,
+      readOnly: isReadOnly,
+      productionGroup,
+    })
+  }
+
   /** True once the draft differs from what it was seeded with. */
   const dirty = $derived(draft !== null && draft !== draftOrigin)
 
@@ -454,17 +981,86 @@
     editing = false
     draft = null
     draftOrigin = ''
+    // A conflict banner is about the draft that is about to disappear; it
+    // must not linger to describe the next edit.
+    conflict = false
   }
 
   async function applyEdit(): Promise<void> {
     if (draft === null) return
+    actionError = null
+    applyWarnings = []
+    conflict = false
     try {
-      await session.updateResource(draft)
+      const outcome = await session.updateResource(draft)
       stopEditing()
+      // THE SERVER ACCEPTED IT AND SAID SOMETHING ANYWAY. A deprecated
+      // apiVersion, an admission webhook that warned rather than rejected —
+      // this is the cluster telling the operator something at the one moment
+      // they can act on it, and it used to be discarded before it left Go.
+      applyWarnings = outcome.warnings ?? []
+      applyResultMessage = outcome.created ? 'Created' : 'Applied'
+      applyResult.show()
+      // Reloads the manifest so the NEXT apply carries the resourceVersion
+      // this one just produced — without this, editing the same object
+      // again would PUT with the version it was opened under and land as a
+      // conflict for a reason nothing on screen would explain.
+      await session.reloadManifest()
       await session.refresh()
     } catch (error) {
-      actionError = `Failed to update: ${error}`
+      if (error instanceof ApiError && error.isConflict) {
+        conflict = true
+      } else {
+        actionError = `Failed to update: ${error}`
+      }
     }
+  }
+
+  /**
+   * Validates the draft against the cluster without applying it — the same
+   * generic path as Apply, with the API server's dry run. Shows the
+   * server's own error verbatim on failure, since that diagnosis (a schema
+   * violation, an admission webhook's reason) is the entire point of
+   * asking before committing to a real write.
+   */
+  async function validateManifest(): Promise<void> {
+    if (draft === null) return
+    actionError = null
+    applyWarnings = []
+    conflict = false
+    validating = true
+    try {
+      const outcome = await session.validateResource(draft)
+      // "Valid" ON ITS OWN WOULD BE A CLAIM THIS CANNOT KEEP. A dry run that
+      // the server accepted while warning that the kind is deprecated is not
+      // the same answer as one it accepted silently, and validate is the
+      // control an operator presses precisely to be told before committing.
+      applyWarnings = outcome.warnings ?? []
+      applyResultMessage = applyWarnings.length > 0
+        ? 'Valid, with warnings'
+        : 'Valid — the server accepted this manifest'
+      applyResult.show()
+    } catch (error) {
+      actionError = error instanceof ApiError ? error.message : `Failed to validate: ${error}`
+    } finally {
+      validating = false
+    }
+  }
+
+  /**
+   * Discards the current draft for whatever the cluster holds now, after a
+   * conflict — the object changed underneath this edit, so the
+   * resourceVersion (and possibly the content) the draft was built from is
+   * no longer the truth. Re-fetching without discarding the draft would
+   * leave an operator re-applying an edit still built on the stale version,
+   * which is the exact failure this banner exists to stop.
+   */
+  async function reloadAfterConflict(): Promise<void> {
+    await session.reloadManifest()
+    conflict = false
+    const seed = shownManifest ?? ''
+    draft = seed
+    draftOrigin = seed
   }
 
   /**
@@ -505,15 +1101,28 @@
     { id: 'overview', label: 'Overview', icon: Info, show: () => true },
     { id: 'logs', label: 'Logs', icon: ScrollText, show: () => isPod || isWorkloadWithLogs },
     { id: 'terminal', label: 'Terminal', icon: TerminalSquare, show: () => isPod || isWorkloadWithLogs },
-    // Pods and the six controllers. A pod's map is a chain with the pod in
-    // the middle; a workload's is a fan — one controller over the pods it
-    // currently has — and both are worth walking, which is what the map is
-    // for. Nothing else has dependencies to draw.
-    { id: 'map', label: 'Map', icon: Workflow, show: () => isPod || isWorkloadKind },
+    // EVERY OBJECT, not only pods and the six controllers. A pod's map is a
+    // chain with the pod in the middle, a workload's is a fan, and everything
+    // else — a Service, a ConfigMap, a PVC, a CRD instance — is the
+    // neighbourhood: the object in the middle, what its spec names below it,
+    // what owns it above. Three shapes, because the subject decides the
+    // structure. What is NOT offered is the aggregations, which are not
+    // objects and have nothing to GET: the overview, the applications view and
+    // the fleet view.
+    { id: 'map', label: 'Map', icon: Workflow, show: () => hasMap },
+    // Deployments, StatefulSets and DaemonSets only — the three kinds a
+    // revision exists for. See hasRolloutHistory's own doc comment.
+    { id: 'history', label: 'History', icon: HistoryIcon, show: () => hasRolloutHistory },
     // An event has no events of its own, and asking for them returns the
     // empty list that means "nothing recent" — which reads as a fault here
     // rather than as the tautology it is.
     { id: 'events', label: 'Events', icon: Activity, show: () => !isEvent && !isApplication },
+    // What happened to THIS object while the tab has been open: its events,
+    // its findings appearing and clearing, and the writes PodSteer made to
+    // it. Hidden on the same two as Events and for the same reason — an
+    // Event is not a thing things happen to, and an application is not an
+    // object at all. See $stores/timeline for why it is in memory only.
+    { id: 'timeline', label: 'Timeline', icon: Clock, show: () => !isEvent && !isApplication },
     // AN APPLICATION HAS NO MANIFEST. It is a set of objects that agree about
     // a label, so there is nothing to GET by that name, nothing to edit and
     // nothing to delete — and a YAML tab offering to show one would be an
@@ -589,6 +1198,12 @@
 
   // Nothing left running behind a component that has gone away.
   $effect(() => () => copied.cancel())
+  $effect(() => () => {
+    triggered.cancel()
+    imageUpdated.cancel()
+    applyResult.cancel()
+    rolledBack.cancel()
+  })
 </script>
 
 <!--
@@ -612,14 +1227,97 @@
   A chip in the header says WHO owns it; this says what happens if you press
   Apply anyway, which is a different question and only arises here.
 -->
+<!--
+  The edit footer's last row, shared by the drawer and the maximized pane so
+  the two cannot drift: the kubectl equivalent behind a link on the left,
+  collapsed until asked for, and the three buttons on the right.
+-->
+{#snippet editActions()}
+  <DialogFooter class="" command={validating ? applyDryRunCommand : applyCommand}>
+    <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
+    <Button variant="outlined" disabled={validating} onclick={validateManifest}>
+      {validating ? 'Validating…' : 'Validate'}
+    </Button>
+    <Button variant="filled" disabled={isReadOnly} onclick={applyEdit}>Apply</Button>
+  </DialogFooter>
+{/snippet}
+
 {#snippet revertNotice()}
   {#if managedBy}
+    <!-- The hairline under it sets the warning apart from the row of buttons
+         it is warning about, rather than letting it read as their caption. -->
     <p
-      class="flex min-w-0 flex-1 items-start gap-2 text-body-small text-gauge-warn"
+      class="flex min-w-0 flex-1 items-start gap-2 border-b border-outline-variant/60 pb-3
+             text-body-small text-gauge-warn-ink"
       role="status"
     >
       <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={2} />
-      <span class="min-w-0">{revertWarning(managedBy)}</span>
+      <span class="min-w-0">{managementWarning(managedBy)}</span>
+    </p>
+  {/if}
+{/snippet}
+
+<!--
+  The one-line warning every write dialog shows on a production cluster —
+  see CLAUDE.md, "Where the environment shows". The YAML tab has no dialog
+  of its own (editing is a mode of the pane, not a modal), so this is where
+  the same fact reaches an operator about to press Apply.
+-->
+{#snippet productionBanner()}
+  {#if productionGroup}
+    <p
+      class="flex w-full items-start gap-2 rounded-sm border border-error/30 bg-error-container/40
+             px-3 py-2 text-body-small text-on-error-container"
+    >
+      <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
+      This cluster is in {productionGroup}, marked production.
+    </p>
+  {/if}
+{/snippet}
+
+<!--
+  A PUT rejected because the object changed on the cluster since this
+  manifest was read (HTTP 409 — see ports.ErrConflict). Distinct from
+  actionError because the recovery is a specific ACTION, not just a message:
+  the draft's resourceVersion is stale, so the one useful next step is
+  discarding it for what the cluster holds now, which is what Reload does.
+-->
+{#snippet conflictBanner()}
+  {#if conflict}
+    <div
+      class="flex w-full items-start gap-2 rounded-sm border border-error/30 bg-error-container/40
+             px-3 py-2 text-body-small text-on-error-container"
+      role="alert"
+    >
+      <TriangleAlert class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
+      <span class="min-w-0 flex-1"
+        >This object changed on the cluster since you opened it.</span
+      >
+      <button
+        type="button"
+        class="shrink-0 font-medium underline underline-offset-2 hover:no-underline"
+        onclick={reloadAfterConflict}
+      >
+        Reload
+      </button>
+    </div>
+  {/if}
+{/snippet}
+
+<!--
+  "Applied", "Created", or Validate's "Valid" — a transient success notice,
+  the same shape as the "Run now" notice above the tabs but scoped to the
+  YAML footer, since Apply and Validate are only ever pressed from there.
+-->
+{#snippet applyResultNotice()}
+  {#if applyResult.on}
+    <p
+      class="flex w-full items-center gap-2 rounded-sm border border-success/20 bg-success-container/50
+             px-3 py-2 text-body-small text-on-success-container"
+      role="status"
+    >
+      <Check class="size-3.5 shrink-0 text-success" strokeWidth={2} />
+      {applyResultMessage}
     </p>
   {/if}
 {/snippet}
@@ -641,6 +1339,7 @@
       podName={selectedPod.name}
       containers={selectedPod.containers?.map((c) => c.name) ?? []}
       onmaximize={maximized === 'logs' ? undefined : () => (maximized = 'logs')}
+      minimap={maximized === 'logs'}
     />
     {:else if isWorkloadWithLogs && workloadPods.length > 0}
     <LogViewer
@@ -651,6 +1350,7 @@
         containers: p.containers?.map((c: any) => c.name) ?? [],
       }))}
       onmaximize={maximized === 'logs' ? undefined : () => (maximized = 'logs')}
+      minimap={maximized === 'logs'}
     />
     {/if}
   {/key}
@@ -675,6 +1375,22 @@
       onopen={openObject}
       onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
     />
+  {:else if hasMap && session.selectedKind && session.selectedName}
+    <!--
+      The neighbourhood shape. The catalogue id goes with the kind because the
+      backend needs the API group, version and resource to read an arbitrary
+      object, and a Kind name alone does not carry them — "Application" exists
+      in three API groups.
+    -->
+    <DependencyMap
+      clusterId={session.cluster.id}
+      namespace={session.selectedNamespace}
+      name={session.selectedName}
+      kind={session.selectedKind.kind}
+      kindId={session.selectedKind.id}
+      onopen={openObject}
+      onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
+    />
   {/if}
 {/snippet}
 
@@ -686,7 +1402,9 @@
       namespace={selectedPod.namespace}
       podName={selectedPod.name}
       containerName={selectedPod.containers?.[0]?.name ?? ''}
-      containers={selectedPod.containers?.map((c) => c.name) ?? []}
+      containers={selectedPod.containers?.map((c) => ({ name: c.name, tty: c.tty })) ?? []}
+      readOnly={isReadOnly}
+      ondebug={openDebug}
       onmaximize={maximized === 'terminal' ? undefined : () => (maximized = 'terminal')}
     />
     {:else if isWorkloadWithLogs && workloadPods.length > 0}
@@ -695,7 +1413,8 @@
       namespace={workloadPods[0].namespace}
       podName={workloadPods[0].name}
       containerName={workloadPods[0].containers?.[0]?.name ?? ''}
-      containers={workloadPods[0].containers?.map((c: any) => c.name) ?? []}
+      containers={workloadPods[0].containers?.map((c: any) => ({ name: c.name, tty: c.tty })) ?? []}
+      readOnly={isReadOnly}
       onmaximize={maximized === 'terminal' ? undefined : () => (maximized = 'terminal')}
     />
     {/if}
@@ -709,7 +1428,27 @@
     onchange={(value) => (draft = value)}
     managedFieldsDisabled={editing && dirty}
     managedFieldsDisabledReason="Can’t change while there are unsaved edits"
+    minimap={maximized === 'yaml'}
   >
+    {#snippet banner()}
+      <!--
+        THE TOGGLE'S CLAIM, KEPT. Its tooltip says it shows which controller
+        owns which field; on its own it showed the API server's storage format
+        for a field set, which is not that. The decoded ledger sits above the
+        raw record rather than replacing it — see FieldOwnershipPanel.
+
+        Read from `session.manifest`, never from `shownManifest`: the latter
+        is the trimmed view, and trimming managedFields out is precisely what
+        it does.
+
+        Not while editing. The panel describes what the cluster holds, and a
+        draft is not that yet.
+      -->
+      {#if preferences.showManagedFields && !editing}
+        <FieldOwnershipPanel manifest={session.manifest} />
+      {/if}
+    {/snippet}
+
     {#snippet actions()}
       <!--
         Reveal, for a Secret whose values are hidden. Its own control rather
@@ -746,6 +1485,20 @@
         disabled={!canEdit}
         title={editing ? 'Editing — click to stop' : editHint}
         onclick={() => (editing ? stopEditing() : startEditing())}
+      />
+      <ToolbarButton
+        icon={CopyPlus}
+        label="Duplicate"
+        title={duplicateHint}
+        disabled={!canDuplicate}
+        onclick={() => (duplicateDialogOpen = true)}
+      />
+      <ToolbarButton
+        icon={GitCompare}
+        label="Compare…"
+        title={canCompare ? 'Compare against another object' : 'Nothing to compare yet'}
+        disabled={!canCompare}
+        onclick={() => (compareDialogOpen = true)}
       />
       <ToolbarButton
         icon={copied.on ? Check : Copy}
@@ -899,6 +1652,7 @@
             {session.selectedName}
           </span>
 
+
           <!--
             Repeated from the list, because a forward moves between pods when
             one is replaced and this pane is where somebody arrives to check
@@ -908,7 +1662,9 @@
             <span
               class="inline-flex shrink-0 items-center gap-1 rounded bg-primary/12 px-1.5
                      text-body-small text-primary"
-              title="{forward.address} → container port {forward.remotePort}"
+              title={forward.reconnecting
+                ? `Waiting for a replacement pod — was ${forward.address}`
+                : `${forward.address} → container port ${forward.remotePort}`}
             >
               {#if forward.reconnecting}
                 <Loader class="size-3 animate-spin" strokeWidth={2} />
@@ -953,21 +1709,30 @@
                somebody editing the manifest. -->
           {#if managedBy}
             <span class="shrink-0 text-on-surface-variant/40" aria-hidden="true">·</span>
-            <GitOpsBadge owner={managedBy} compact />
+            <GitOpsBadge owner={managedBy.owner} title={managementWarning(managedBy)} compact />
           {/if}
         </p>
       </div>
 
       <!-- Action buttons -->
+      <!-- NEVER HIDDEN FOR READ-ONLY. A disabled button with a reason is a
+           feature somebody can find and understand; a missing one reads as a
+           feature that does not exist. See CLAUDE.md's read-only section. -->
+      {#if isReadOnly}
+        <p id="drawer-readonly-hint" class="sr-only">{readOnlyReason}</p>
+      {/if}
       <div class="flex items-center gap-0.5">
         {#if isRestartable}
           <button
             type="button"
             onclick={() => (restartDialogOpen = true)}
+            disabled={isReadOnly}
             aria-label="Restart rollout"
-            title="Restart rollout"
+            aria-describedby={isReadOnly ? 'drawer-readonly-hint' : undefined}
+            title={isReadOnly ? readOnlyReason : 'Restart rollout'}
             class="state-layer grid size-8 shrink-0 place-items-center rounded-full
-                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
+                   disabled:pointer-events-none disabled:opacity-38"
           >
             <RotateCcw class="size-4" strokeWidth={1.8} />
           </button>
@@ -977,12 +1742,127 @@
           <button
             type="button"
             onclick={() => (scaleDialogOpen = true)}
+            disabled={isReadOnly}
             aria-label="Scale"
-            title="Scale replicas"
+            aria-describedby={isReadOnly ? 'drawer-readonly-hint' : undefined}
+            title={isReadOnly ? readOnlyReason : 'Scale replicas'}
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
+                   disabled:pointer-events-none disabled:opacity-38"
+          >
+            <Scale class="size-4" strokeWidth={1.8} />
+          </button>
+        {/if}
+
+        {#if isSetImageable}
+          <button
+            type="button"
+            onclick={() => (setImageDialogOpen = true)}
+            disabled={isReadOnly}
+            aria-label="Set image"
+            aria-describedby={isReadOnly ? 'drawer-readonly-hint' : undefined}
+            title={isReadOnly ? readOnlyReason : 'Set image'}
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
+                   disabled:pointer-events-none disabled:opacity-38"
+          >
+            <ImageUp class="size-4" strokeWidth={1.8} />
+          </button>
+        {/if}
+
+        <!-- "Run now" — CronJobs only. Creates a Job outside the schedule;
+             see TriggerDialog for what that means for history limits. -->
+        {#if isCronJob}
+          <button
+            type="button"
+            onclick={() => (triggerDialogOpen = true)}
+            aria-label="Run now"
+            title="Run now"
             class="state-layer grid size-8 shrink-0 place-items-center rounded-full
                    text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
           >
-            <Scale class="size-4" strokeWidth={1.8} />
+            <Play class="size-4" strokeWidth={1.8} />
+          </button>
+        {/if}
+
+        <!-- Suspend/Resume — CronJobs and Jobs. Resume acts immediately with
+             no dialog: it undoes a visible, deliberate state rather than
+             doing anything destructive, unlike suspending a running Job. -->
+        {#if (isCronJob || isJob) && selectedWorkload}
+          {@const workload = selectedWorkload}
+          <button
+            type="button"
+            onclick={() => (workload.suspended ? handleSuspend(false) : (suspendDialogOpen = true))}
+            aria-label={workload.suspended ? 'Resume' : 'Suspend'}
+            title={workload.suspended ? 'Resume' : 'Suspend'}
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+          >
+            {#if workload.suspended}
+              <CirclePlay class="size-4" strokeWidth={1.8} />
+            {:else}
+              <CirclePause class="size-4" strokeWidth={1.8} />
+            {/if}
+          </button>
+        {/if}
+
+        <!-- Cordon/Uncordon and Drain — nodes only. Uncordon acts at once,
+             the same reasoning as Resume above; cordoning and draining both
+             open a dialog because each changes what the cluster is willing
+             to schedule, cordoning implicitly and draining by force. -->
+        {#if isNode}
+          <button
+            type="button"
+            onclick={() => (session.selectedNode?.unschedulable ? handleCordon(false) : (cordonDialogOpen = true))}
+            aria-label={session.selectedNode?.unschedulable ? 'Uncordon' : 'Cordon'}
+            title={session.selectedNode?.unschedulable ? 'Uncordon' : 'Cordon'}
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+          >
+            <Ban class="size-4 {session.selectedNode?.unschedulable ? 'text-warning' : ''}" strokeWidth={1.8} />
+          </button>
+
+          <button
+            type="button"
+            onclick={() => (drainDialogOpen = true)}
+            aria-label="Drain…"
+            title="Drain node"
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+          >
+            <LogOut class="size-4" strokeWidth={1.8} />
+          </button>
+
+          <!-- Node shell — a root shell on the node. A write (it creates a
+               privileged pod), so disabled on a read-only cluster like the
+               others, never hidden. -->
+          <button
+            type="button"
+            onclick={openNodeShell}
+            disabled={isReadOnly}
+            aria-label="Node shell"
+            aria-describedby={isReadOnly ? 'drawer-readonly-hint' : undefined}
+            title={isReadOnly ? readOnlyReason : 'Open a root shell on this node'}
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface
+                   disabled:pointer-events-none disabled:opacity-38"
+          >
+            <TerminalSquare class="size-4" strokeWidth={1.8} />
+          </button>
+        {/if}
+
+        <!-- Evict — pods only. Distinct from Delete: goes through the
+             eviction subresource, which a PodDisruptionBudget can refuse. -->
+        {#if isPod}
+          <button
+            type="button"
+            onclick={() => (evictDialogOpen = true)}
+            aria-label="Evict"
+            title="Evict pod"
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+          >
+            <LogOut class="size-4" strokeWidth={1.8} />
           </button>
         {/if}
 
@@ -1000,14 +1880,23 @@
         <button
           type="button"
           onclick={() => (deleteDialogOpen = true)}
+          disabled={isReadOnly}
           aria-label="Delete"
-          title="Delete resource"
+          aria-describedby={isReadOnly ? 'drawer-readonly-hint' : undefined}
+          title={isReadOnly ? readOnlyReason : 'Delete resource'}
           class="state-layer grid size-8 shrink-0 place-items-center rounded-full
-                 text-on-surface-variant transition-colors duration-100 hover:bg-error/10 hover:text-error"
+                 text-on-surface-variant transition-colors duration-100 hover:bg-error/10 hover:text-error
+                 disabled:pointer-events-none disabled:opacity-38"
         >
           <Trash2 class="size-4" strokeWidth={1.8} />
         </button>
         {/if}
+
+        <!-- What the panel's sections mean — the notes that used to sit under
+             them (a template versus a running pod, how Secret values behave,
+             what "(resolved)" marks) — one press away rather than on every
+             open. -->
+        <HelpButton topic="object-details" about="the details panel" />
 
         <div class="mx-1 h-5 w-px bg-outline-variant/40"></div>
 
@@ -1053,7 +1942,7 @@
             aria-controls="detail-panel"
             tabindex={active ? 0 : -1}
             onclick={() => (activeTab = tab.id)}
-            class="flex items-center gap-1.5 border-b-2 px-3 py-2 text-body-small font-medium
+            class="flex items-center gap-1.5 border-b-2 px-3 py-2 text-label-medium font-medium
                    transition-colors duration-100
                    {active
                      ? 'border-primary text-primary'
@@ -1067,10 +1956,48 @@
     </div>
 
     <!-- Error message -->
+    <!--
+      The API server's own warnings about a write it ACCEPTED. Distinct from
+      actionError in tone as well as colour: nothing failed, and an operator
+      who reads this as a failure will go looking for a problem that is not
+      there. Each warning is the server's sentence verbatim — PodSteer neither
+      re-words it nor decides which ones matter.
+    -->
+    {#each applyWarnings as warning (warning)}
+      <div class="flex items-start gap-2 border-b border-gauge-warn/20 bg-notice-warn px-4 py-2 text-body-small text-on-surface">
+        <TriangleAlert class="mt-0.5 size-3.5 shrink-0 text-gauge-warn-ink" strokeWidth={2} />
+        <span data-selectable>{warning}</span>
+      </div>
+    {/each}
+
     {#if actionError}
       <div class="flex items-center gap-2 border-b border-error/20 bg-error-container/50 px-4 py-2 text-body-small text-on-error-container">
         <Activity class="size-3.5 shrink-0 text-error" strokeWidth={2} />
         {actionError}
+      </div>
+    {/if}
+
+    <!-- "Run now" success notice: names the Job it created, since the
+         operator has no other way to find it among the CronJob's history
+         without knowing what to look for. -->
+    {#if triggered.on}
+      <div class="flex items-center gap-2 border-b border-success/20 bg-success-container/50 px-4 py-2 text-body-small text-on-success-container">
+        <Check class="size-3.5 shrink-0 text-success" strokeWidth={2} />
+        Created job <strong data-selectable>{triggeredJobName}</strong>
+      </div>
+    {/if}
+
+    {#if imageUpdated.on}
+      <div class="flex items-center gap-2 border-b border-success/20 bg-success-container/50 px-4 py-2 text-body-small text-on-success-container">
+        <Check class="size-3.5 shrink-0 text-success" strokeWidth={2} />
+        Image updated
+      </div>
+    {/if}
+
+    {#if rolledBack.on}
+      <div class="flex items-center gap-2 border-b border-success/20 bg-success-container/50 px-4 py-2 text-body-small text-on-success-container">
+        <Check class="size-3.5 shrink-0 text-success" strokeWidth={2} />
+        Rolled back to revision {rolledBackToRevision}
       </div>
     {/if}
 
@@ -1104,17 +2031,31 @@
         />
       {:else if activeTab === 'overview'}
         <ResourceOverview
+          management={managedBy}
           manifest={session.manifest}
           selectedPod={selectedPod}
           selectedNode={session.selectedNode}
+          nodeLoad={session.nodeLoadFor(session.selectedNode?.name)}
           selectedNamespaceRow={session.selectedNamespaceRow}
           selectedWorkload={selectedWorkload}
           kind={session.selectedKind?.kind}
+          group={session.selectedKind?.group}
           usage={session.usage}
           backend={session.overview?.backend}
           clusterId={session.cluster.id}
           canOpen={kindIdFor}
           onopen={openObject}
+          {productionGroup}
+          {isReadOnly}
+          {readOnlyReason}
+          onchanged={async () => {
+            // The Rollout controls are the one write a detail PANEL makes.
+            // The controller rewrites the status within the second, so the
+            // panel has to re-read rather than wait for the next poll — the
+            // same reload an apply performs, and for the same reason.
+            await session.reloadManifest()
+            await session.refresh()
+          }}
           onnamespace={(namespace) => void session.selectNamespace(namespace)}
           onbrowse={(kindId, namespace) => void session.browseKind(kindId, namespace)}
           tick={session.lastRefreshedAt}
@@ -1176,12 +2117,31 @@
               Showing the map in a larger window.
             </p>
           </div>
-        {:else if (isPod && selectedPod) || mappedWorkloadKind}
+        {:else if (isPod && selectedPod) || mappedWorkloadKind || hasMap}
           {@render mapSurface()}
         {:else}
           <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
             <Workflow class="size-8" strokeWidth={1.2} />
-            <p class="text-body-medium">This kind has no dependencies to map</p>
+            <p class="text-body-medium">There is nothing here to map</p>
+          </div>
+        {/if}
+      {:else if activeTab === 'history'}
+        {#if hasRolloutHistory && session.selectedKind && session.selectedName}
+          <RolloutHistory
+            clusterId={session.cluster.id}
+            kind={session.selectedKind.kind}
+            namespace={session.selectedNamespace}
+            name={session.selectedName}
+            {isReadOnly}
+            {readOnlyReason}
+            reloadToken={historyReloadToken}
+            onrollback={handleOpenRollback}
+            management={managedBy}
+          />
+        {:else}
+          <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
+            <HistoryIcon class="size-8" strokeWidth={1.2} />
+            <p class="text-body-medium">This kind has no rollout history</p>
           </div>
         {/if}
       {:else if activeTab === 'events'}
@@ -1190,6 +2150,12 @@
           namespace={session.selectedNamespace}
           kind={session.selectedKind?.kind ?? ''}
           name={session.selectedName ?? ''}
+        />
+      {:else if activeTab === 'timeline'}
+        <TimelinePanel
+          entries={objectTimeline}
+          startedAt={timeline.startedAt(session.cluster.id)}
+          eventsRefused={timeline.eventsRefused(session.cluster.id)}
         />
       {:else if activeTab === 'yaml'}
         <div class="h-full">
@@ -1231,31 +2197,80 @@
         class="flex shrink-0 flex-col gap-3 border-t border-outline-variant/60
                bg-surface-container-low px-4 py-3"
       >
+        {@render productionBanner()}
         {@render revertNotice()}
-        <div class="flex items-center justify-end gap-3">
-          <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
-          <Button variant="filled" onclick={applyEdit}>Apply</Button>
-        </div>
+        {@render conflictBanner()}
+        {@render applyResultNotice()}
+        {@render editActions()}
       </div>
     {/if}
   </div>
 
   <!-- Dialogs -->
   <DeleteDialog
+    management={managedBy}
     open={deleteDialogOpen}
     resourceName={session.selectedName}
     resourceKind={session.selectedKind?.singular ?? 'resource'}
+    ctx={session.cluster.id}
+    resource={session.selectedKind ? resourceArgForKind(session.selectedKind) : ''}
+    namespace={session.selectedNamespace}
+    {productionGroup}
     onclose={() => (deleteDialogOpen = false)}
     onconfirm={handleDelete}
   />
 
-  {#if selectedWorkload}
+  {#if selectedWorkload && mappedWorkloadKind}
     <ScaleDialog
+      management={managedBy}
       open={scaleDialogOpen}
       currentReplicas={selectedWorkload.desired}
+      ctx={session.cluster.id}
+      kind={mappedWorkloadKind}
+      name={selectedWorkload.name}
+      namespace={selectedWorkload.namespace}
+      checkAutoscalers={session.autoscalersFor}
+      canOpen={kindIdFor}
+      onopen={openObject}
+      {productionGroup}
       onclose={() => (scaleDialogOpen = false)}
       onconfirm={handleScale}
     />
+
+    <SetImageDialog
+
+      management={managedBy}
+      open={setImageDialogOpen}
+      ctx={session.cluster.id}
+      kind={mappedWorkloadKind}
+      name={selectedWorkload.name}
+      namespace={selectedWorkload.namespace}
+      template={workloadPodTemplate}
+      {productionGroup}
+      onclose={() => (setImageDialogOpen = false)}
+      onapplied={async () => {
+        setImageDialogOpen = false
+        imageUpdated.show()
+        await session.refresh()
+      }}
+    />
+
+    {#if rollbackTarget}
+      <RollbackDialog
+        management={managedBy}
+        open={rollbackDialogOpen}
+        ctx={session.cluster.id}
+        kind={mappedWorkloadKind}
+        name={selectedWorkload.name}
+        namespace={selectedWorkload.namespace}
+        toRevision={rollbackTarget.number}
+        {productionGroup}
+        {isReadOnly}
+        {readOnlyReason}
+        onclose={() => (rollbackDialogOpen = false)}
+        onrolledback={handleRolledBack}
+      />
+    {/if}
   {/if}
 
   <!-- The same pane, given the window. Closing restores it to the drawer
@@ -1266,15 +2281,23 @@
     kind={session.selectedKind?.singular}
     name={session.selectedName ?? ''}
     label="Manifest"
+    onrestore={() => (maximized = null)}
     onclose={() => (maximized = null)}
   >
     {@render yamlSurface()}
 
     {#snippet footer()}
       {#if editing}
-        {@render revertNotice()}
-        <Button variant="outlined" onclick={stopEditing}>Cancel</Button>
-        <Button variant="filled" onclick={applyEdit}>Apply</Button>
+        <!-- A column claiming the whole of PaneDialog's justify-end row, so
+             this footer stacks exactly as the drawer's does and the link sits
+             at the left edge rather than beside the buttons. -->
+        <div class="flex w-full min-w-0 flex-col gap-3">
+          {@render productionBanner()}
+          {@render revertNotice()}
+          {@render conflictBanner()}
+          {@render applyResultNotice()}
+          {@render editActions()}
+        </div>
       {/if}
     {/snippet}
   </PaneDialog>
@@ -1285,6 +2308,7 @@
     kind={session.selectedKind?.singular}
     name={session.selectedName ?? ''}
     label="Logs"
+    onrestore={() => (maximized = null)}
     onclose={() => (maximized = null)}
   >
     {@render logsSurface()}
@@ -1296,6 +2320,7 @@
     kind={session.selectedKind?.singular}
     name={session.selectedName ?? ''}
     label="Terminal"
+    onrestore={() => (maximized = null)}
     onclose={() => (maximized = null)}
   >
     {@render terminalSurface()}
@@ -1307,6 +2332,7 @@
     kind={session.selectedKind?.singular}
     name={session.selectedName ?? ''}
     label="Map"
+    onrestore={() => (maximized = null)}
     onclose={() => (maximized = null)}
   >
     {@render mapSurface()}
@@ -1314,14 +2340,100 @@
 
   {#if selectedWorkload}
     <RestartDialog
+      management={managedBy}
       open={restartDialogOpen}
       workloadName={selectedWorkload.name}
       workloadKind={session.selectedKind?.singular ?? 'workload'}
+      ctx={session.cluster.id}
+      namespace={selectedWorkload.namespace}
+      {productionGroup}
       onclose={() => (restartDialogOpen = false)}
       onconfirm={async () => {
         restartDialogOpen = false
         await handleRestart()
       }}
     />
+
+    <TriggerDialog
+      open={triggerDialogOpen}
+      ctx={session.cluster.id}
+      namespace={selectedWorkload.namespace}
+      workloadName={selectedWorkload.name}
+      onclose={() => (triggerDialogOpen = false)}
+      onconfirm={handleTrigger}
+    />
+
+    <SuspendDialog
+
+      management={managedBy}
+      open={suspendDialogOpen}
+      ctx={session.cluster.id}
+      namespace={selectedWorkload.namespace}
+      workloadName={selectedWorkload.name}
+      workloadKind={session.selectedKind?.kind ?? 'CronJob'}
+      onclose={() => (suspendDialogOpen = false)}
+      onconfirm={() => handleSuspend(true)}
+    />
+  {/if}
+
+  {#if isNode}
+    <CordonDialog
+      open={cordonDialogOpen}
+      ctx={session.cluster.id}
+      nodeName={session.selectedName}
+      onclose={() => (cordonDialogOpen = false)}
+      onconfirm={() => handleCordon(true)}
+    />
+
+    <DrainDialog
+      open={drainDialogOpen}
+      clusterId={session.cluster.id}
+      ctx={session.cluster.id}
+      nodeName={session.selectedName}
+      onclose={() => (drainDialogOpen = false)}
+      ondrained={() => void session.refresh()}
+      onerror={(message) => (actionError = `Failed to drain: ${message}`)}
+    />
+  {/if}
+
+  {#if isPod}
+    <EvictDialog
+      open={evictDialogOpen}
+      podName={session.selectedName}
+      onclose={() => (evictDialogOpen = false)}
+      onconfirm={handleEvict}
+    />
+  {/if}
+
+  {#if session.selectedKind}
+    <CreateResourceDialog
+      open={duplicateDialogOpen}
+      icon={KindIcon}
+      kindLabel={session.selectedKind.singular}
+      verb="Duplicate"
+      seed={duplicateSeed}
+      clusterId={session.cluster.id}
+      namespace={session.selectedKind.namespaced ? session.selectedNamespace : undefined}
+      {productionGroup}
+      {isReadOnly}
+      {readOnlyReason}
+      onclose={() => (duplicateDialogOpen = false)}
+      oncreated={async (name, namespace) => {
+        await session.refresh()
+        if (name) await session.openDetail(name, namespace)
+      }}
+    />
+
+    {#if session.selectedName}
+      <CompareDialog
+        open={compareDialogOpen}
+        icon={KindIcon}
+        clusterId={session.cluster.id}
+        kind={session.selectedKind}
+        namespace={session.selectedNamespace}
+        name={session.selectedName}
+        onclose={() => (compareDialogOpen = false)}
+      />
+    {/if}
   {/if}
 {/if}

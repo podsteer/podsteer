@@ -6,19 +6,53 @@
   CronJobs are the exception and get their schedule columns instead.
 -->
 <script lang="ts">
-  import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import DataTable, { ROW_MENU_COLUMN, type Column } from '$lib/components/DataTable.svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
+  import { type RowAction } from '$lib/components/RowMenu.svelte'
+  import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { copyText } from '$lib/clipboard'
+  import { rowActionsFor, toRowActions } from '$lib/rowActions'
+  import { organisation } from '$stores/organisation.svelte'
+  import { isControlColumn } from '$lib/fixedColumns'
+  import CustomCells from '$lib/components/CustomCells.svelte'
+  import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
+  import RowSelect from '$lib/components/RowSelect.svelte'
+  import { rowKey } from '$lib/bulk'
   import { formatAge } from '$lib/format'
   import { cpuMeter, cpuTitle, memoryMeter, memoryTitle, type Measured } from '$lib/meter'
   import { preferences } from '$stores/preferences.svelte'
+  import { get as kubectlGet, resourceArgForKind } from '$lib/kubectl'
   import type { Tone } from '$lib/format'
-  import type { ClusterSession } from '$stores/session.svelte'
+  import type { ClusterSession, DetailIntent } from '$stores/session.svelte'
   import type { Workload } from '$lib/api/client'
   import { Container, CircleDot } from '@lucide/svelte'
   import { iconForKind } from '$lib/kindIcons'
-  import { gitOpsOwner } from '$lib/gitops'
+  import { managementWarning, type GitOpsManagement } from '$lib/gitops'
+  import { managementFromMarker } from '$lib/gitopsChain'
+
+  /**
+   * What holds this row's spec in Git, from the row itself.
+   *
+   * THE KIND AND NAME ARE PART OF THE EVIDENCE, not decoration. A ReplicaSet
+   * carries a copy of its Deployment's tracking id — the Deployment
+   * controller puts it there — so a rule that read the annotation alone
+   * called every ReplicaSet Argo CD-managed and warned that an edit would be
+   * reverted, which Argo CD would never do. Handing over what the object IS
+   * lets the marker be compared with what it names.
+   */
+  function managementOf(workload: Workload): GitOpsManagement | null {
+    return managementFromMarker({
+      kind: workload.kind,
+      metadata: {
+        name: workload.name,
+        labels: workload.labels,
+        annotations: workload.annotations,
+      },
+    })
+  }
   import GitOpsBadge from '$lib/components/GitOpsBadge.svelte'
 
   const UNMEASURED: Measured = {
@@ -51,6 +85,7 @@
   const isCronJob = $derived(session.selectedKindId === 'batch/v1/cronjobs')
 
   const columns = $derived<Column[]>([
+    { id: 'select', label: 'Select', width: 40, pinned: true, select: true },
     { id: 'status', label: 'Status', width: 44, icon: CircleDot },
     { id: 'name', label: 'Name', width: 300, pinned: true },
     { id: 'namespace', label: 'Namespace', width: 150 },
@@ -78,6 +113,10 @@
     { id: 'gitops', label: 'GitOps', width: 150, defaultHidden: true },
     { id: 'controlledBy', label: 'Controlled By', width: 200, defaultHidden: true },
     { id: 'age', label: 'Age', width: 80, numeric: true },
+    // The operator's own, after the built-in set — see $lib/customColumns.
+    ...toColumns(session.customColumns),
+    // The row menu last, because it is the end of the row.
+    ROW_MENU_COLUMN,
   ])
 
   function tone(workload: Workload): Tone {
@@ -85,6 +124,132 @@
     if (!workload.isHealthy) return workload.readyCount === 0 ? 'error' : 'warning'
     if (workload.isRolling) return 'info'
     return 'success'
+  }
+
+  /**
+   * The kind is the SAME for every row of this table — WorkloadsView shows
+   * one kind at a time — so it is computed once rather than re-derived per
+   * row.
+   */
+  const resource = $derived(session.selectedKind ? resourceArgForKind(session.selectedKind) : null)
+
+  /** The Kubernetes kind this table is showing — the same for every row. */
+  const kind = $derived(session.selectedKind?.kind ?? '')
+
+  /** See PodsView: read fresh so a change in Organise applies at once. */
+  const placement = $derived(organisation.placementOf(session.cluster.id))
+  const isReadOnly = $derived(
+    organisation.settingsFor(placement.project, placement.group).readOnly,
+  )
+
+  /** The rows on screen, in display order, for range and select-all. See PodsView. */
+  $effect(() => {
+    session.selection.visible = session.pagedWorkloads.map((workload) =>
+      rowKey(workload.namespace, workload.name),
+    )
+    return () => {
+      session.selection.visible = []
+    }
+  })
+
+  /**
+   * What a controller row offers, which kind by kind.
+   *
+   * The ids come from `rowActionsFor`, which mirrors the DRAWER's own toolbar
+   * — a DaemonSet has no Scale because it has no replica count, a ReplicaSet
+   * has none because the drawer renders no Scale dialog for one, and only a
+   * CronJob offers Run now. Every write item opens the object with the
+   * drawer's control engaged, so the dialog, its confirmation and the
+   * production type-the-name gate are the ones that already existed.
+   *
+   * Suspend and Resume are one item, chosen from the row's own `suspended`
+   * flag: only one of them could do anything, and Resume acts without a
+   * dialog exactly as the drawer's button does.
+   */
+  function actionsFor(workload: Workload): RowAction[] {
+    if (!resource || !kind) return []
+    const open = (intent: DetailIntent) => () =>
+      void session.openDetailFor(intent, workload.name, workload.namespace, undefined, workload)
+
+    return toRowActions(
+      rowActionsFor(kind, { suspended: workload.suspended }),
+      {
+        overview: open({ tab: 'overview' }),
+        restart: open({ action: 'restart' }),
+        scale: open({ action: 'scale' }),
+        trigger: open({ action: 'trigger' }),
+        suspend: open({ action: 'suspend' }),
+        resume: open({ action: 'resume' }),
+        delete: open({ action: 'delete' }),
+        kubectl: () =>
+          copyText(kubectlGet(session.cluster.id, resource, workload.name, workload.namespace)),
+      },
+      isReadOnly,
+    )
+  }
+
+  /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
+      repeated here rather than asked of either. */
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[session.selectedKindId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /** The controller list's CSV export. Every field is the text its own cell
+      shows — the meter columns export the aggregated usage with its unit,
+      not the bare percentage, exactly as WorkloadsView derives it for the
+      row. */
+  function exportCSV(): CSVExport {
+    // The tick box and the row menu are controls, not columns with text in
+    // them: exported, each would be a heading over a column of empty cells.
+    const visible = columns.filter((column) => !isControlColumn(column) && isColumnVisible(column))
+
+    function cell(workload: Workload, id: string): string {
+      const custom = parseCustomColumnId(id)
+      if (custom) return customCell(workload, custom)
+      const usage = session.workloadUsage[`${workload.namespace}/${workload.name}`] ?? UNMEASURED
+      switch (id) {
+        case 'status':
+          return workload.status
+        case 'name':
+          return workload.name
+        case 'namespace':
+          return workload.namespace
+        case 'schedule':
+          return workload.schedule || '—'
+        case 'lastRun':
+          return workload.lastScheduled ? new Date(workload.lastScheduled).toLocaleString() : 'never'
+        case 'ready':
+          return workload.ready
+        case 'updated':
+          return String(workload.updated)
+        case 'available':
+          return String(workload.available)
+        case 'cpu':
+          return usage.hasMetrics ? usage.cpu : '—'
+        case 'memory':
+          return usage.hasMetrics ? usage.memory : '—'
+        case 'images':
+          return (workload.images ?? []).join(', ') || '—'
+        case 'gitops': {
+          const management = managementOf(workload)
+          if (!management) return '—'
+          const { owner } = management
+          return owner.source ? `${owner.label}/${owner.source}` : owner.label
+        }
+        case 'controlledBy':
+          return workload.controlledBy || '—'
+        case 'age':
+          return formatAge(workload.ageSeconds)
+        default:
+          return ''
+      }
+    }
+
+    return {
+      columns: visible.map((column) => column.label),
+      rows: session.sortedWorkloads.map((workload) => visible.map((column) => cell(workload, column.id))),
+    }
   }
 </script>
 
@@ -94,6 +259,12 @@
   isEmpty={session.pagedWorkloads.length === 0}
   sort={session.sort}
   onsort={session.toggleSort}
+  exportRows={exportCSV}
+  selectAll={{
+    checked: session.selection.allVisibleSelected,
+    indeterminate: session.selection.someVisibleSelected,
+    ontoggle: () => session.selection.toggleAllVisible(),
+  }}
 >
   {#snippet empty()}
     <EmptyState
@@ -116,11 +287,27 @@
       -->
       {@const usage =
         session.workloadUsage[`${workload.namespace}/${workload.name}`] ?? UNMEASURED}
+      {@const key = rowKey(workload.namespace, workload.name)}
+      {@const ticked = session.selection.has(key)}
+      <!-- The state grounds are OPAQUE tokens rather than the translucent
+           `bg-primary/8` they used to be: the pinned columns inherit this
+           row's own colour, and a translucent one lets the cells scrolling
+           underneath show through them. See the row grounds in app.css. -->
       <tr
-        class="group cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
-               {selected ? 'bg-primary/8' : 'hover:bg-surface-container-low'}"
+        class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
+               {selected
+          ? 'bg-row-open'
+          : ticked
+            ? 'bg-row-ticked'
+            : 'bg-surface hover:bg-surface-container-low'}"
+        aria-selected={ticked}
         onclick={() => session.openDetail(workload.name, workload.namespace, undefined, workload)}
       >
+        <RowSelect
+          selected={ticked}
+          label={workload.name}
+          ontoggle={(range) => session.selection.toggle(key, range)}
+        />
         {#if isVisible('status')}
           <td class="overflow-hidden py-1.5 pr-3 pl-5">
             <StatusIndicator
@@ -138,7 +325,7 @@
         </td>
         {#if isVisible('namespace')}
           <td class="truncate px-3 py-1.5">
-            <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-small text-on-surface-variant">
+            <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-medium text-on-surface-variant">
               {workload.namespace}
             </span>
           </td>
@@ -196,20 +383,18 @@
           </td>
         {/if}
         {#if isVisible('images')}
-          <td class="truncate px-3 py-1.5" title={workload.images.join(', ')}>
+          <td class="truncate px-3 py-1.5" title={(workload.images ?? []).join(', ')}>
             <span class="flex items-center gap-1.5 text-body-medium text-on-surface-variant">
               <Container class="size-3.5 shrink-0 text-on-surface-variant/40" strokeWidth={1.5} />
-              <span class="truncate">{workload.images.join(', ') || '—'}</span>
+              <span class="truncate">{(workload.images ?? []).join(', ') || '—'}</span>
             </span>
           </td>
         {/if}
         {#if isVisible('gitops')}
-          {@const owner = gitOpsOwner({
-            metadata: { labels: workload.labels, annotations: workload.annotations },
-          })}
+          {@const management = managementOf(workload)}
           <td class="truncate px-3 py-1.5">
-            {#if owner}
-              <GitOpsBadge {owner} />
+            {#if management}
+              <GitOpsBadge owner={management.owner} title={managementWarning(management)} />
             {:else}
               <span class="text-on-surface-variant/40">—</span>
             {/if}
@@ -223,7 +408,8 @@
             {formatAge(workload.ageSeconds)}
           </td>
         {/if}
-        <td></td>
+        <CustomCells specs={session.customColumns} row={workload} {isVisible} />
+        <RowMenuCell actions={actionsFor(workload)} label={workload.name} />
       </tr>
     {/each}
   {/snippet}

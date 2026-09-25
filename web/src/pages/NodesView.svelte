@@ -6,12 +6,26 @@
   even though capacity says otherwise.
 -->
 <script lang="ts">
-  import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import DataTable, { ROW_MENU_COLUMN, type Column } from '$lib/components/DataTable.svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
+  import { type RowAction } from '$lib/components/RowMenu.svelte'
+  import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { copyText } from '$lib/clipboard'
+  import { rowActionsFor, toRowActions } from '$lib/rowActions'
+  import { isControlColumn } from '$lib/fixedColumns'
+  import CustomCells from '$lib/components/CustomCells.svelte'
+  import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
+  import RowSelect from '$lib/components/RowSelect.svelte'
   import { formatAge } from '$lib/format'
-  import type { ClusterSession } from '$stores/session.svelte'
+  import { get as kubectlGet } from '$lib/kubectl'
+  import { preferences } from '$stores/preferences.svelte'
+  import { organisation } from '$stores/organisation.svelte'
+  import { sessionLauncher } from '$stores/sessionLauncher.svelte'
+  import type { ClusterSession, DetailIntent } from '$stores/session.svelte'
+  import type { Node } from '$lib/api/client'
   import { Server, CircleDot } from '@lucide/svelte'
 
   interface Props {
@@ -20,7 +34,61 @@
 
   let { session }: Props = $props()
 
+  /** This cluster's guardrail settings, read fresh so a change in Organise
+   * takes effect at once — the same pattern the drawer uses. */
+  const placement = $derived(organisation.placementOf(session.cluster.id))
+  const groupSettings = $derived(organisation.settingsFor(placement.project, placement.group))
+  const groupName = $derived(
+    organisation.groupsIn(placement.project).find((group) => group.id === placement.group)?.name ??
+      'Default',
+  )
+  const productionGroup = $derived(groupSettings.environment === 'production' ? groupName : null)
+
+  /**
+   * What a node row offers. Nodes are cluster-scoped, so there is no
+   * namespace to pass.
+   *
+   * Cordon and Uncordon are ONE item, chosen from the row's own
+   * `unschedulable` flag — only one of them could change anything, and an
+   * item that would refuse itself is worse than no item. Uncordon acts
+   * immediately with no dialog, which is the drawer's own rule for it: it
+   * undoes a visible, deliberate state.
+   *
+   * Drain opens the drawer's DrainDialog, which plans the drain and shows
+   * the per-node preview before anything is evicted. That preview is why
+   * there is no bulk drain: several nodes at once can take a cluster down,
+   * and the preview is the safety that would be lost.
+   *
+   * Node shell keeps launching through `sessionLauncher` rather than the
+   * drawer, because the terminal it opens outlives the surface that launched
+   * it — see $stores/sessionLauncher.
+   */
+  function actionsFor(node: Node): RowAction[] {
+    const open = (intent: DetailIntent) => () =>
+      void session.openDetailFor(intent, node.name, '', undefined, undefined, node)
+
+    return toRowActions(
+      rowActionsFor('Node', { unschedulable: node.unschedulable }),
+      {
+        overview: open({ tab: 'overview' }),
+        cordon: open({ action: 'cordon' }),
+        uncordon: open({ action: 'uncordon' }),
+        drain: open({ action: 'drain' }),
+        nodeShell: () =>
+          sessionLauncher.requestNodeShell({
+            clusterId: session.cluster.id,
+            node: node.name,
+            readOnly: groupSettings.readOnly,
+            productionGroup,
+          }),
+        kubectl: () => copyText(kubectlGet(session.cluster.id, 'nodes', node.name)),
+      },
+      groupSettings.readOnly,
+    )
+  }
+
   const COLUMNS: Column[] = [
+    { id: 'select', label: 'Select', width: 40, pinned: true, select: true },
     { id: 'status', label: 'Status', width: 44, icon: CircleDot },
     { id: 'name', label: 'Name', width: 300, pinned: true },
     { id: 'roles', label: 'Roles', width: 140 },
@@ -34,14 +102,89 @@
     { id: 'taints', label: 'Taints', width: 80, numeric: true },
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
+
+  /** The built-in columns, then the operator's own — see $lib/customColumns —
+      and the row menu last, because it is the end of the row. */
+  const columns = $derived<Column[]>([
+    ...COLUMNS,
+    ...toColumns(session.customColumns),
+    ROW_MENU_COLUMN,
+  ])
+
+  /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
+      repeated here rather than asked of either. */
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[session.selectedKindId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /** The rows on screen, in display order, for range and select-all. See
+      PodsView. Nodes are cluster-scoped, so the key is the bare name. */
+  $effect(() => {
+    session.selection.visible = session.pagedNodes.map((node) => node.name)
+    return () => {
+      session.selection.visible = []
+    }
+  })
+
+  /** The node list's CSV export, mirroring exactly what each cell shows. */
+  function exportCSV(): CSVExport {
+    // The tick box and the row menu are controls, not columns with text in
+    // them: exported, each would be a heading over a column of empty cells.
+    const visible = columns.filter((column) => !isControlColumn(column) && isColumnVisible(column))
+
+    function cell(node: Node, id: string): string {
+      const custom = parseCustomColumnId(id)
+      if (custom) return customCell(node, custom)
+      switch (id) {
+        case 'status':
+          return node.status
+        case 'name':
+          return node.name
+        case 'roles':
+          return node.roles?.length ? node.roles.join(', ') : 'worker'
+        case 'cpu':
+          return node.cpu
+        case 'memory':
+          return node.memory
+        case 'disk':
+          return node.disk
+        case 'version':
+          return node.version
+        case 'ip':
+          return node.internalIp || '—'
+        case 'os':
+          return node.osImage || '—'
+        case 'pods':
+          return node.maxPods ? String(node.maxPods) : '—'
+        case 'taints':
+          return String(node.taints)
+        case 'age':
+          return formatAge(node.ageSeconds)
+        default:
+          return ''
+      }
+    }
+
+    return {
+      columns: visible.map((column) => column.label),
+      rows: session.sortedNodes.map((node) => visible.map((column) => cell(node, column.id))),
+    }
+  }
 </script>
 
 <DataTable
   kindId={session.selectedKindId}
-  columns={COLUMNS}
+  {columns}
   isEmpty={session.pagedNodes.length === 0}
   sort={session.sort}
   onsort={session.toggleSort}
+  exportRows={exportCSV}
+  selectAll={{
+    checked: session.selection.allVisibleSelected,
+    indeterminate: session.selection.someVisibleSelected,
+    ontoggle: () => session.selection.toggleAllVisible(),
+  }}
 >
   {#snippet empty()}
     <EmptyState title="No nodes" description="This cluster reports no nodes you can see." />
@@ -50,11 +193,26 @@
   {#snippet rows(isVisible)}
     {#each session.pagedNodes as node (node.name)}
       {@const selected = session.selectedName === node.name}
+      {@const ticked = session.selection.has(node.name)}
+      <!-- The state grounds are OPAQUE tokens rather than the translucent
+           `bg-primary/8` they used to be: the pinned columns inherit this
+           row's own colour, and a translucent one lets the cells scrolling
+           underneath show through them. See the row grounds in app.css. -->
       <tr
-        class="group cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
-               {selected ? 'bg-primary/8' : 'hover:bg-surface-container-low'}"
+        class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
+               {selected
+          ? 'bg-row-open'
+          : ticked
+            ? 'bg-row-ticked'
+            : 'bg-surface hover:bg-surface-container-low'}"
+        aria-selected={ticked}
         onclick={() => session.openDetail(node.name, '', undefined, undefined, node)}
       >
+        <RowSelect
+          selected={ticked}
+          label={node.name}
+          ontoggle={(range) => session.selection.toggle(node.name, range)}
+        />
         {#if isVisible('status')}
           <td class="overflow-hidden py-1.5 pr-3 pl-5">
             <StatusIndicator
@@ -79,8 +237,8 @@
               carried a severity it does not. Reading down a mixed column is
               easier when the only thing changing is the word.
             -->
-            <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-small text-on-surface-variant">
-              {node.roles.length ? node.roles.join(', ') : 'worker'}
+            <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-medium text-on-surface-variant">
+              {node.roles?.length ? node.roles.join(', ') : 'worker'}
             </span>
           </td>
         {/if}
@@ -185,7 +343,8 @@
             {formatAge(node.ageSeconds)}
           </td>
         {/if}
-        <td></td>
+        <CustomCells specs={session.customColumns} row={node} {isVisible} />
+        <RowMenuCell actions={actionsFor(node)} label={node.name} />
       </tr>
     {/each}
   {/snippet}

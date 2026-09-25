@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/podsteer/podsteer/app/domain"
@@ -23,7 +24,16 @@ import (
 // refresh whatever is on screen, and so does the namespace list, and on a
 // controller list the consumption sums do it for one namespace. See
 // readcache.go — identical reads in one tick become one request.
-func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error) {
+//
+// THE PROJECTION IS PART OF THE KEY. A pod read with one set of annotation
+// keys cannot answer a read that wants another: the domain value carries
+// only what was asked for, and there is no way to add a key to a mapped pod
+// afterwards. So a list view with an annotation column reads beside the
+// assessment's own list rather than sharing it — one extra list per refresh,
+// paid only by whoever configured such a column, and only CPU when the watch
+// is serving. The empty projection, which every non-list caller passes,
+// keys exactly as before.
+func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error) {
 	// ONE NAMESPACE OUT OF A READ THAT ALREADY COVERS IT. The assessment
 	// lists every pod in the cluster on every refresh whatever is on screen,
 	// so on a controller page the cluster-wide read is in flight beside this
@@ -34,7 +44,7 @@ func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace d
 	// namespace and not the cluster has no such read to borrow, so this
 	// misses and the narrow request goes out as before.
 	if !namespace.IsAll() {
-		if all, borrowed := borrow[[]domain.Pod](ctx, &a.reads, readKey(id.String(), "pods", "")); borrowed {
+		if all, borrowed := borrow[[]domain.Pod](ctx, &a.reads, readKey(id.String(), "pods", "", projection.String())); borrowed {
 			return podsIn(all, namespace), nil
 		}
 	}
@@ -49,11 +59,23 @@ func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace d
 	// values — and the assessment and the open list both want them in the
 	// same instant. Coalescing that is the same job it was doing before, so
 	// the mapping happens once per tick rather than once per caller.
-	return cachedSlice(&a.reads, ctx, readKey(id.String(), "pods", namespace.String()), func(ctx context.Context) ([]domain.Pod, error) {
-		if stored, serving := watched[*corev1.Pod](a.watches, id, watchPods); serving {
-			return mapWatchedPods(id, stored, namespace)
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "pods", namespace.String(), projection.String()), func(ctx context.Context) ([]domain.Pod, error) {
+		// THE STORE IS BYPASSED FOR A JSONPATH COLUMN, and that is the whole
+		// of what an operator's own expression costs.
+		//
+		// stripPod removes what nothing here reads before a pod is stored —
+		// volumes, affinity, tolerations, nodeSelector, container env and
+		// command among them — which is what keeps five thousand pods
+		// affordable in memory. An expression may name any of those, and a
+		// column that rendered blank on a cluster the watch happens to be
+		// serving and full on one it is not would be the worst kind of
+		// wrong: two answers for one question, decided by something the
+		// operator cannot see. So a list with expressions goes to the
+		// network, where the object is whole. See Projection.NeedsWholeObject.
+		if stored, serving := watched[*corev1.Pod](a.watches, id, watchPods); serving && !projection.NeedsWholeObject() {
+			return mapWatchedPods(id, stored, namespace, projection)
 		}
-		return a.listPods(ctx, id, namespace)
+		return a.listPods(ctx, id, namespace, projection)
 	})
 }
 
@@ -63,13 +85,13 @@ func (a *Adapter) ListPods(ctx context.Context, id domain.ClusterID, namespace d
 // A pod that will not map is SKIPPED rather than failing the read: the store
 // holds whatever the cluster sent, and one unmappable object must not empty a
 // list of five thousand. That matches how the list path already treats them.
-func mapWatchedPods(id domain.ClusterID, watched []*corev1.Pod, namespace domain.NamespaceName) ([]domain.Pod, error) {
+func mapWatchedPods(id domain.ClusterID, watched []*corev1.Pod, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error) {
 	pods := make([]domain.Pod, 0, len(watched))
 	for _, pod := range watched {
 		if !namespace.IsAll() && pod.Namespace != namespace.String() {
 			continue
 		}
-		mapped, err := mapPod(id, pod)
+		mapped, err := mapPod(id, pod, projection)
 		if err != nil {
 			continue
 		}
@@ -92,7 +114,7 @@ func podsIn(pods []domain.Pod, namespace domain.NamespaceName) []domain.Pod {
 
 // ListPods returns the pods in namespace, or across every namespace when it is
 // domain.NamespaceAll.
-func (a *Adapter) listPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error) {
+func (a *Adapter) listPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error) {
 	op := fmt.Sprintf("listing pods in %q of %q", namespace, id)
 
 	client, err := a.factory.clientFor(id)
@@ -109,7 +131,7 @@ func (a *Adapter) listPods(ctx context.Context, id domain.ClusterID, namespace d
 
 	pods := make([]domain.Pod, 0, len(list.Items))
 	for i := range list.Items {
-		pod, err := mapPod(id, &list.Items[i])
+		pod, err := mapPod(id, &list.Items[i], projection)
 		if err != nil {
 			// A single object the domain rejects is a mapping bug or an
 			// unfamiliar API shape, not a reason to show the operator an empty
@@ -132,25 +154,33 @@ func (a *Adapter) listPods(ctx context.Context, id domain.ClusterID, namespace d
 // Cached, which is what makes the controller list's meters free: the list and
 // its consumption sums both ask for the same controllers in the same tick,
 // and the assessment asks for all six kinds alongside.
-func (a *Adapter) ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
+func (a *Adapter) ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Workload, error) {
 	a.watches.ensure(id, func() (kubernetes.Interface, error) { return a.factory.clientFor(id) })
 
-	return cachedSlice(&a.reads, ctx, readKey(id.String(), "workloads", string(kind), namespace.String()), func(ctx context.Context) ([]domain.Workload, error) {
+	// The projection keys the read for the reason ListPods gives.
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "workloads", string(kind), namespace.String(), projection.String()), func(ctx context.Context) ([]domain.Workload, error) {
 		// Only the two that are watched, and only because they are the ones a
 		// refresh re-reads: ReplicaSets stand between a Deployment and its
 		// pods, Jobs between a CronJob and its. The other four are one small
 		// list each and go to the cluster.
-		switch kind {
-		case domain.WorkloadReplicaSet:
+		// The same bypass the pod list makes, for the same reason: these two
+		// are stored, and a stored object is not a whole one.
+		switch {
+		case projection.NeedsWholeObject():
+		case kind == domain.WorkloadReplicaSet:
 			if stored, serving := watched[*appsv1.ReplicaSet](a.watches, id, watchReplicaSets); serving {
-				return mapWatched(id, stored, namespace, mapReplicaSet), nil
+				return mapWatched(id, stored, namespace, func(id domain.ClusterID, item *appsv1.ReplicaSet) (domain.Workload, error) {
+					return mapReplicaSet(id, item, projection)
+				}), nil
 			}
-		case domain.WorkloadJob:
+		case kind == domain.WorkloadJob:
 			if stored, serving := watched[*batchv1.Job](a.watches, id, watchJobs); serving {
-				return mapWatched(id, stored, namespace, mapJob), nil
+				return mapWatched(id, stored, namespace, func(id domain.ClusterID, item *batchv1.Job) (domain.Workload, error) {
+					return mapJob(id, item, projection)
+				}), nil
 			}
 		}
-		return a.listWorkloads(ctx, id, kind, namespace)
+		return a.listWorkloads(ctx, id, kind, namespace, projection)
 	})
 }
 
@@ -186,7 +216,7 @@ func mapWatched[T interface{ GetNamespace() string }, R any](
 // One method rather than six because the caller's question is the same in
 // every case, and the typed clients differ only in which List to call. The
 // per-kind translation lives in the mapper.
-func (a *Adapter) listWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
+func (a *Adapter) listWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Workload, error) {
 	op := fmt.Sprintf("listing %ss in %q of %q", kind, namespace, id)
 
 	client, err := a.factory.clientFor(id)
@@ -207,7 +237,7 @@ func (a *Adapter) listWorkloads(ctx context.Context, id domain.ClusterID, kind d
 		var list *appsv1.DeploymentList
 		if list, listErr = client.AppsV1().Deployments(ns).List(ctx, options); listErr == nil {
 			workloads = a.collect(ctx, id, len(list.Items), func(i int) (domain.Workload, error) {
-				return mapDeployment(id, &list.Items[i])
+				return mapDeployment(id, &list.Items[i], projection)
 			})
 		}
 
@@ -215,7 +245,7 @@ func (a *Adapter) listWorkloads(ctx context.Context, id domain.ClusterID, kind d
 		var list *appsv1.StatefulSetList
 		if list, listErr = client.AppsV1().StatefulSets(ns).List(ctx, options); listErr == nil {
 			workloads = a.collect(ctx, id, len(list.Items), func(i int) (domain.Workload, error) {
-				return mapStatefulSet(id, &list.Items[i])
+				return mapStatefulSet(id, &list.Items[i], projection)
 			})
 		}
 
@@ -223,7 +253,7 @@ func (a *Adapter) listWorkloads(ctx context.Context, id domain.ClusterID, kind d
 		var list *appsv1.DaemonSetList
 		if list, listErr = client.AppsV1().DaemonSets(ns).List(ctx, options); listErr == nil {
 			workloads = a.collect(ctx, id, len(list.Items), func(i int) (domain.Workload, error) {
-				return mapDaemonSet(id, &list.Items[i])
+				return mapDaemonSet(id, &list.Items[i], projection)
 			})
 		}
 
@@ -231,7 +261,7 @@ func (a *Adapter) listWorkloads(ctx context.Context, id domain.ClusterID, kind d
 		var list *appsv1.ReplicaSetList
 		if list, listErr = client.AppsV1().ReplicaSets(ns).List(ctx, options); listErr == nil {
 			workloads = a.collect(ctx, id, len(list.Items), func(i int) (domain.Workload, error) {
-				return mapReplicaSet(id, &list.Items[i])
+				return mapReplicaSet(id, &list.Items[i], projection)
 			})
 		}
 
@@ -239,7 +269,7 @@ func (a *Adapter) listWorkloads(ctx context.Context, id domain.ClusterID, kind d
 		var list *batchv1.JobList
 		if list, listErr = client.BatchV1().Jobs(ns).List(ctx, options); listErr == nil {
 			workloads = a.collect(ctx, id, len(list.Items), func(i int) (domain.Workload, error) {
-				return mapJob(id, &list.Items[i])
+				return mapJob(id, &list.Items[i], projection)
 			})
 		}
 
@@ -247,7 +277,7 @@ func (a *Adapter) listWorkloads(ctx context.Context, id domain.ClusterID, kind d
 		var list *batchv1.CronJobList
 		if list, listErr = client.BatchV1().CronJobs(ns).List(ctx, options); listErr == nil {
 			workloads = a.collect(ctx, id, len(list.Items), func(i int) (domain.Workload, error) {
-				return mapCronJob(id, &list.Items[i])
+				return mapCronJob(id, &list.Items[i], projection)
 			})
 		}
 
@@ -284,7 +314,7 @@ func (a *Adapter) collect(ctx context.Context, id domain.ClusterID, count int, m
 }
 
 // ListEvents returns events in the given namespace.
-func (a *Adapter) ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Event, error) {
+func (a *Adapter) ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Event, error) {
 	op := fmt.Sprintf("listing events in %q of %q", namespace, id)
 
 	client, err := a.factory.clientFor(id)
@@ -294,8 +324,7 @@ func (a *Adapter) ListEvents(ctx context.Context, id domain.ClusterID, namespace
 
 	// A busy cluster holds tens of thousands of events and they expire after
 	// an hour anyway. Capping the request keeps a namespace-wide event view
-	// from pulling megabytes the operator will never scroll through; the
-	// service sorts warnings to the top so the cap does not hide them.
+	// from pulling megabytes the operator will never scroll through.
 	list, err := client.CoreV1().Events(namespace.String()).List(ctx, metav1.ListOptions{
 		Limit: eventListLimit,
 	})
@@ -304,13 +333,57 @@ func (a *Adapter) ListEvents(ctx context.Context, id domain.ClusterID, namespace
 	}
 
 	events := make([]domain.Event, 0, len(list.Items))
+	seen := make(map[types.UID]bool, len(list.Items))
 	for i := range list.Items {
-		event, err := mapEvent(id, &list.Items[i])
+		event, err := mapEvent(id, &list.Items[i], projection)
 		if err != nil {
 			a.logger.WarnContext(ctx, "skipping unmappable event",
 				slog.String("cluster", id.String()),
 				slog.String("name", list.Items[i].Name),
 				slog.String("error", err.Error()))
+			continue
+		}
+		seen[list.Items[i].UID] = true
+		events = append(events, event)
+	}
+
+	// THE CAP CAN HIDE A WARNING, AND THIS IS WHY THAT MATTERS. A limited
+	// list is paged in etcd KEY order — namespace and name — not by time and
+	// not by type, so the thousand the server returns is an arbitrary
+	// thousand. The comment here used to say the service "sorts warnings to
+	// the top so the cap does not hide them"; that sort runs on whatever
+	// arrived, so a Warning whose key sorts after the cut was simply absent —
+	// and the assessment's event findings are computed from this list. A
+	// cluster busy enough to hold a thousand events could be told it had no
+	// problems while warnings existed.
+	//
+	// So when the read was cut short, ask again for the warnings alone. One
+	// extra list, only on a cluster that exceeded the cap, and the findings
+	// then see every warning up to the same bound.
+	if list.Continue == "" {
+		return events, nil
+	}
+
+	warnings, err := client.CoreV1().Events(namespace.String()).List(ctx, metav1.ListOptions{
+		Limit:         eventListLimit,
+		FieldSelector: "type=Warning",
+	})
+	if err != nil {
+		// The first list succeeded, so this is a degraded answer rather than
+		// a failed one: return what was read rather than losing it.
+		a.logger.WarnContext(ctx, "event list was capped and the warning re-read failed",
+			slog.String("cluster", id.String()),
+			slog.String("namespace", namespace.String()),
+			slog.String("error", err.Error()))
+		return events, nil
+	}
+
+	for i := range warnings.Items {
+		if seen[warnings.Items[i].UID] {
+			continue
+		}
+		event, err := mapEvent(id, &warnings.Items[i], projection)
+		if err != nil {
 			continue
 		}
 		events = append(events, event)
@@ -412,7 +485,9 @@ func (a *Adapter) ListPodsOnNode(ctx context.Context, id domain.ClusterID, nodeN
 
 	pods := make([]domain.Pod, 0, len(list.Items))
 	for i := range list.Items {
-		pod, err := mapPod(id, &list.Items[i])
+		// No projection: this feeds the node drawer's pod list, which has
+		// no custom columns.
+		pod, err := mapPod(id, &list.Items[i], domain.Projection{})
 		if err != nil {
 			// One object the domain rejects is a mapping bug, not a reason to
 			// tell somebody their node is empty.
@@ -449,9 +524,16 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 	// pods rather than the namespace's. An empty selector (an unsupported
 	// kind, or a workload without one) falls back to the previous behaviour
 	// rather than failing.
+	// CLASSIFIED LIKE THE JOB AND CRONJOB BRANCHES BELOW, which is the whole
+	// point: these four kinds were the only ones returning client-go's error
+	// raw, so a permission this account lacks, a workload since deleted and a
+	// cluster that has gone away all arrived at the frontend with no sentinel
+	// and read as "An unexpected error occurred" — on the Pods tab of every
+	// Deployment, which is the most-opened tab there is. Which of two adjacent
+	// cases you landed in decided whether you were told what happened.
 	selector, err := selectorForWorkload(ctx, client, namespace, kind, name)
 	if err != nil {
-		return nil, fmt.Errorf("reading selector for %s %q: %w", kind, name, err)
+		return nil, classify(fmt.Sprintf("reading selector for %s %q", kind, name), err)
 	}
 	podOptions := metav1.ListOptions{
 		LabelSelector:   selector,
@@ -466,7 +548,7 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 		// then find all pods owned by those ReplicaSets.
 		rsList, err := client.AppsV1().ReplicaSets(namespace.String()).List(ctx, metav1.ListOptions{ResourceVersion: cachedResourceVersion})
 		if err != nil {
-			return nil, fmt.Errorf("listing replicasets: %w", err)
+			return nil, classify(fmt.Sprintf("listing replicasets for deployment %q", name), err)
 		}
 
 		// Find ReplicaSets owned by this deployment
@@ -483,7 +565,7 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 		// Get all pods in the namespace
 		podList, err = client.CoreV1().Pods(namespace.String()).List(ctx, podOptions)
 		if err != nil {
-			return nil, fmt.Errorf("listing pods: %w", err)
+			return nil, classify(fmt.Sprintf("listing pods for %s %q", kind, name), err)
 		}
 
 		// Filter pods owned by the deployment's ReplicaSets
@@ -503,7 +585,7 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 		// For these workloads, pods are directly owned by the workload
 		podList, err = client.CoreV1().Pods(namespace.String()).List(ctx, podOptions)
 		if err != nil {
-			return nil, fmt.Errorf("listing pods: %w", err)
+			return nil, classify(fmt.Sprintf("listing pods for %s %q", kind, name), err)
 		}
 
 		// Filter pods owned by this workload
@@ -577,7 +659,7 @@ func (a *Adapter) ListPodsForWorkload(ctx context.Context, id domain.ClusterID, 
 	// Convert to domain pods
 	pods := make([]domain.Pod, 0, len(podList.Items))
 	for i := range podList.Items {
-		pod, err := mapPod(id, &podList.Items[i])
+		pod, err := mapPod(id, &podList.Items[i], domain.Projection{})
 		if err != nil {
 			a.logger.WarnContext(ctx, "skipping unmappable pod",
 				slog.String("cluster", id.String()),
@@ -615,9 +697,13 @@ func (a *Adapter) ListEventsForResource(ctx context.Context, id domain.ClusterID
 	}).String()
 
 	list, err := client.CoreV1().Events(namespace.String()).List(ctx, metav1.ListOptions{
-		FieldSelector:   selector,
-		Limit:           eventListLimit,
-		ResourceVersion: cachedResourceVersion,
+		FieldSelector: selector,
+		Limit:         eventListLimit,
+		// NO ResourceVersion: a limited list sent to the watch cache has its
+		// limit dropped, so this cap did not exist. See cachedResourceVersion.
+		// The quorum read it costs is affordable precisely here — this runs
+		// when the drawer is pointed at an object, once per selection, not on
+		// the refresh tick (see EventsView.svelte).
 	})
 	if err != nil {
 		return nil, classify(op, err)
@@ -626,7 +712,7 @@ func (a *Adapter) ListEventsForResource(ctx context.Context, id domain.ClusterID
 	events := make([]domain.Event, 0, len(list.Items))
 	for i := range list.Items {
 		event := &list.Items[i]
-		mappedEvent, err := mapEvent(id, event)
+		mappedEvent, err := mapEvent(id, event, domain.Projection{})
 		if err != nil {
 			a.logger.WarnContext(ctx, "skipping unmappable event",
 				slog.String("cluster", id.String()),

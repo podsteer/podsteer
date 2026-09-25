@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
@@ -73,12 +75,23 @@ func (q *terminalSizeQueue) close() {
 	close(q.ch)
 }
 
-// terminalSession represents a live exec session with a pod container.
+// terminalSession represents a live session behind one pane.
+//
+// TWO KINDS BEHIND ONE RECORD. Almost every session here is an exec or attach
+// against a container, resized by handing client-go a size through sizeQueue.
+// A LOCAL session is a process on this machine on a pseudo-terminal, resized
+// by an ioctl on that terminal — so it carries a resize function instead, and
+// exactly one of the two fields is ever set. Keeping both kinds in one
+// registry is what lets Write, Resize and StopSession work on a session id
+// without the frontend knowing which kind it holds.
 type terminalSession struct {
 	id        string
 	cancel    context.CancelFunc
 	stdinPipe io.WriteCloser
+	// sizeQueue resizes a cluster session; nil for a local shell.
 	sizeQueue *terminalSizeQueue
+	// resize resizes a local shell; nil for a cluster session.
+	resize func(cols, rows uint16) error
 }
 
 // TerminalDataEvent is the payload of the "terminal:data" event.
@@ -104,18 +117,32 @@ type TerminalExitEvent struct {
 // interactive programs like top, htop, vim, less, and interactive shells.
 type TerminalAPI struct {
 	management *application.ManagementService
-	app        *App
-	logger     *slog.Logger
+	// nodeShells creates and deletes the privileged pod behind a node shell.
+	// A node shell's pod is created before its attach session opens and
+	// deleted when the session ends, so the terminal API — which owns the
+	// session's lifetime — is what ties the two together.
+	nodeShells ports.NodeShellPort
+	// localShells runs shells on the OPERATOR'S OWN MACHINE. Held here rather
+	// than in a second bound object so a local session's id lives in the same
+	// registry as every other one, and Write/Resize/StopSession need no
+	// second binding on the frontend.
+	localShells ports.LocalShellPort
+	app         *App
+	logger      *slog.Logger
 
 	mu       sync.Mutex
 	sessions map[string]*terminalSession
 }
 
 // NewTerminalAPI returns a new terminal API.
-func NewTerminalAPI(management *application.ManagementService, app *App, logger *slog.Logger) (*TerminalAPI, error) {
+func NewTerminalAPI(management *application.ManagementService, nodeShells ports.NodeShellPort, localShells ports.LocalShellPort, app *App, logger *slog.Logger) (*TerminalAPI, error) {
 	switch {
 	case management == nil:
 		return nil, errors.New("wails: TerminalAPI requires a ManagementService")
+	case nodeShells == nil:
+		return nil, errors.New("wails: TerminalAPI requires a NodeShellPort")
+	case localShells == nil:
+		return nil, errors.New("wails: TerminalAPI requires a LocalShellPort")
 	case app == nil:
 		return nil, errors.New("wails: TerminalAPI requires an App")
 	}
@@ -125,10 +152,12 @@ func NewTerminalAPI(management *application.ManagementService, app *App, logger 
 	}
 
 	return &TerminalAPI{
-		management: management,
-		app:        app,
-		logger:     logger.With(slog.String("api", "terminal")),
-		sessions:   make(map[string]*terminalSession),
+		management:  management,
+		nodeShells:  nodeShells,
+		localShells: localShells,
+		app:         app,
+		logger:      logger.With(slog.String("api", "terminal")),
+		sessions:    make(map[string]*terminalSession),
 	}, nil
 }
 
@@ -148,12 +177,24 @@ func generateTerminalID() string {
 func (t *TerminalAPI) StartSession(clusterID, namespace, podName, containerName string, cols, rows int) (string, error) {
 	id, err := domain.NewClusterID(clusterID)
 	if err != nil {
-		return "", err
+		return "", apiError(t.logger, "StartSession", err)
 	}
 
 	ns, err := domain.NewNamespaceName(namespace)
 	if err != nil {
-		return "", err
+		return "", apiError(t.logger, "StartSession", err)
+	}
+
+	// An interactive shell can mutate the cluster as freely as any other
+	// write, so it gets the same refusal — but checked HERE, synchronously,
+	// before a PTY is allocated and a goroutine started. Letting the session
+	// open and fail on its first write would read as a terminal that
+	// connected and then immediately died for no visible reason.
+	// ManagementService.ExecInPodWithTTY checks again; this is only the fast
+	// path that avoids the false start.
+	if t.management.ReadOnly(id) {
+		return "", apiError(t.logger, "StartSession",
+			fmt.Errorf("starting terminal session: %w", ports.ErrReadOnly))
 	}
 
 	sessionID := generateTerminalID()
@@ -246,6 +287,539 @@ func (t *TerminalAPI) StartSession(clusterID, namespace, podName, containerName 
 	return sessionID, nil
 }
 
+// StartAttachSession creates a new interactive session attached to a
+// container's own running process — PID 1, whatever the image's
+// ENTRYPOINT/CMD started — rather than the new shell StartSession opens.
+//
+// It shares StartSession's machinery end to end: the same session registry,
+// the same "terminal:data"/"terminal:exit" events, and Write/Resize/StopSession
+// work identically on either kind of session, so the frontend need not know
+// which one it opened once it has the session ID back.
+//
+// Returns the session ID.
+func (t *TerminalAPI) StartAttachSession(clusterID, namespace, podName, containerName string, cols, rows int) (string, error) {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return "", apiError(t.logger, "StartAttachSession", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return "", apiError(t.logger, "StartAttachSession", err)
+	}
+
+	// Attaching can type into the container's process as freely as an
+	// interactive shell can, so it gets StartSession's identical synchronous
+	// refusal, checked HERE before a PTY is allocated or a goroutine
+	// started. ManagementService.AttachToPod checks again; this is only the
+	// fast path that avoids the false start.
+	if t.management.ReadOnly(id) {
+		return "", apiError(t.logger, "StartAttachSession",
+			fmt.Errorf("starting attach session: %w", ports.ErrReadOnly))
+	}
+
+	sessionID := generateTerminalID()
+
+	// Create the stdin pipe
+	stdinReader, stdinWriter := io.Pipe()
+
+	// Create the terminal size queue with initial size
+	sizeQueue := newTerminalSizeQueue()
+	sizeQueue.send(ports.TerminalSize{
+		Width:  uint16(cols),
+		Height: uint16(rows),
+	})
+
+	parent, ok := t.app.runtimeContext()
+	if !ok {
+		return "", errors.New("application is shutting down")
+	}
+	ctx, cancel := context.WithCancel(parent)
+
+	session := &terminalSession{
+		id:        sessionID,
+		cancel:    cancel,
+		stdinPipe: stdinWriter,
+		sizeQueue: sizeQueue,
+	}
+
+	t.mu.Lock()
+	t.sessions[sessionID] = session
+	t.mu.Unlock()
+
+	stdoutWriter := &terminalOutputWriter{
+		sessionID: sessionID,
+		app:       t.app,
+	}
+
+	go func() {
+		defer func() {
+			t.mu.Lock()
+			delete(t.sessions, sessionID)
+			t.mu.Unlock()
+
+			// Closing signals EOF to the remote process; the attach is
+			// already unwinding.
+			_ = stdinWriter.Close()
+			sizeQueue.close()
+		}()
+
+		err := t.management.AttachToPod(
+			ctx,
+			id,
+			ns,
+			podName,
+			containerName,
+			stdinReader,
+			stdoutWriter,
+			stdoutWriter, // stderr goes to same output in TTY mode
+			sizeQueue,
+		)
+
+		reason := ""
+		if err != nil && !errors.Is(err, context.Canceled) {
+			reason = err.Error()
+			t.logger.Error("attach session ended with error",
+				slog.String("session", sessionID),
+				slog.String("error", err.Error()))
+		}
+
+		// Reported through the SAME event StartSession uses: the frontend
+		// treats an attach session's exit identically to a shell's.
+		t.app.emit("terminal:exit", TerminalExitEvent{
+			SessionID: sessionID,
+			Reason:    reason,
+		})
+	}()
+
+	t.logger.Info("attach session started",
+		slog.String("session", sessionID),
+		slog.String("pod", podName),
+		slog.String("container", containerName))
+
+	return sessionID, nil
+}
+
+// debugPrepTimeout bounds adding the ephemeral container and waiting for it to
+// run — an image pull, mostly. Generous, because the shell must not be opened
+// before the container is up, and the alternative to waiting is a session that
+// connects to nothing.
+const debugPrepTimeout = 90 * time.Second
+
+// nodeShellPrepTimeout bounds creating the node-shell pod and waiting for it to
+// schedule and run, for the same reason.
+const nodeShellPrepTimeout = 90 * time.Second
+
+// clusterShellPrepTimeout bounds creating the in-cluster shell pod and waiting
+// for it to schedule and run. The node shell's number, because the wait is the
+// same wait: a scheduling decision and an image pull.
+const clusterShellPrepTimeout = 90 * time.Second
+
+// StartDebugSession adds an ephemeral debug container to a pod — the way
+// `kubectl debug -it POD --image=… --target=CONTAINER` does — waits for it to
+// run, and opens an interactive shell into it through the SAME exec path
+// StartSession uses. It returns the session ID.
+//
+// The container it adds cannot be removed: an ephemeral container stays in the
+// pod's spec until the pod is deleted, which is Kubernetes' behaviour and what
+// the dialog offering this states. There is therefore nothing to track and no
+// teardown here — unlike a node shell, whose pod PodSteer must delete.
+func (t *TerminalAPI) StartDebugSession(clusterID, namespace, podName, targetContainer, image string, command []string, cols, rows int) (string, error) {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return "", apiError(t.logger, "StartDebugSession", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return "", apiError(t.logger, "StartDebugSession", err)
+	}
+
+	// Adding a debug container mutates the pod, so it gets the same
+	// synchronous read-only refusal StartSession makes — before any container
+	// is added, not after. ManagementService.AddEphemeralContainer checks
+	// again; this is the fast path that avoids growing a pod a debugger nobody
+	// will be allowed to use.
+	if t.management.ReadOnly(id) {
+		return "", apiError(t.logger, "StartDebugSession",
+			fmt.Errorf("starting debug session: %w", ports.ErrReadOnly))
+	}
+
+	if len(command) == 0 {
+		command = []string{"sh"}
+	}
+	spec := domain.DebugContainerSpec{
+		Image:           image,
+		TargetContainer: targetContainer,
+		Command:         command,
+		TTY:             true,
+		Stdin:           true,
+	}
+
+	parent, ok := t.app.runtimeContext()
+	if !ok {
+		return "", errors.New("application is shutting down")
+	}
+
+	// Adding and waiting run on a bounded context of their own, separate from
+	// the session's: this call returns once the shell is open, and the shell
+	// then lives on the application-lifetime context like every other session.
+	prepCtx, cancelPrep := context.WithTimeout(parent, debugPrepTimeout)
+	defer cancelPrep()
+
+	containerName, err := t.management.AddEphemeralContainer(prepCtx, id, ns, podName, spec)
+	if err != nil {
+		return "", apiError(t.logger, "StartDebugSession", err)
+	}
+
+	if err := t.management.WaitForEphemeralContainerRunning(prepCtx, id, ns, podName, containerName); err != nil {
+		return "", apiError(t.logger, "StartDebugSession", err)
+	}
+
+	sessionID, err := t.openExecSession(parent, id, ns, podName, containerName, cols, rows, "debug session")
+	if err != nil {
+		return "", err
+	}
+
+	t.logger.Info("debug session started",
+		slog.String("session", sessionID),
+		slog.String("pod", podName),
+		slog.String("container", containerName),
+		slog.String("image", image))
+
+	return sessionID, nil
+}
+
+// StartNodeShellSession creates a privileged pod on a node that enters the
+// node's host namespaces — the way `kubectl node-shell` and Lens do — and
+// attaches to its login shell. It returns the session ID.
+//
+// The pod is DELETED when this session ends, so the pod and the terminal that
+// makes it useful are bound together the way CLAUDE.md's node-shell lifecycle
+// requires: nothing privileged is left running on a node once the operator has
+// closed the shell. The activeDeadlineSeconds the pod carries is only a
+// backstop for the one case this cannot cover — PodSteer crashing.
+func (t *TerminalAPI) StartNodeShellSession(clusterID, namespace, nodeName, image string, cols, rows int) (string, error) {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return "", apiError(t.logger, "StartNodeShellSession", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return "", apiError(t.logger, "StartNodeShellSession", err)
+	}
+
+	// Creating a privileged pod is a write, so it gets the same synchronous
+	// read-only refusal — before the pod is created, not after.
+	if t.management.ReadOnly(id) {
+		return "", apiError(t.logger, "StartNodeShellSession",
+			fmt.Errorf("starting node shell: %w", ports.ErrReadOnly))
+	}
+
+	parent, ok := t.app.runtimeContext()
+	if !ok {
+		return "", errors.New("application is shutting down")
+	}
+
+	prepCtx, cancelPrep := context.WithTimeout(parent, nodeShellPrepTimeout)
+	defer cancelPrep()
+
+	shell, err := t.nodeShells.StartNodeShell(prepCtx, id, ns, nodeName, image)
+	if err != nil {
+		return "", apiError(t.logger, "StartNodeShellSession", err)
+	}
+
+	// The pod is deleted when the attach session ends — see the onExit hook.
+	sessionID, err := t.openAttachSession(parent, id, ns, shell.PodName, shell.ContainerName, cols, rows, "node shell session", true, func() {
+		if err := t.nodeShells.StopNodeShell(shell.ID); err != nil {
+			t.logger.Error("failed to delete node shell pod",
+				slog.String("pod", shell.PodName),
+				slog.String("error", err.Error()))
+		}
+	})
+	if err != nil {
+		// The session never started, so nothing will delete the pod on exit.
+		// Remove it here rather than leak a privileged pod nobody is attached
+		// to.
+		_ = t.nodeShells.StopNodeShell(shell.ID)
+		return "", err
+	}
+
+	t.logger.Info("node shell session started",
+		slog.String("session", sessionID),
+		slog.String("node", nodeName),
+		slog.String("pod", shell.PodName),
+		slog.String("image", image))
+
+	return sessionID, nil
+}
+
+// StartClusterShellSession creates an ordinary, unprivileged pod in a
+// namespace and attaches to the shell running in it — a vantage point INSIDE
+// the cluster's network, for kubectl, dig and curl. It returns the session ID.
+//
+// The pod is DELETED when this session ends, exactly as a node shell's is, and
+// for the same reason: PodSteer created it, so PodSteer removes it. The
+// activeDeadlineSeconds the pod carries is only a backstop for the one case
+// this cannot cover — PodSteer crashing.
+//
+// NOT the node shell (privileged, host namespaces, pinned to a node) and NOT
+// the ephemeral debug container (injected into somebody else's pod, and never
+// removed because Kubernetes will not remove one). See
+// ports.ClusterShellPort.
+func (t *TerminalAPI) StartClusterShellSession(clusterID, namespace, image string, cols, rows int) (string, error) {
+	id, ns, err := t.clusterShellTarget("StartClusterShellSession", clusterID, namespace)
+	if err != nil {
+		return "", err
+	}
+
+	parent, ok := t.app.runtimeContext()
+	if !ok {
+		return "", errors.New("application is shutting down")
+	}
+
+	prepCtx, cancelPrep := context.WithTimeout(parent, clusterShellPrepTimeout)
+	defer cancelPrep()
+
+	shell, err := t.management.StartClusterShell(prepCtx, id, ns, image)
+	if err != nil {
+		return "", apiError(t.logger, "StartClusterShellSession", err)
+	}
+
+	return t.attachClusterShell(parent, shell, cols, rows)
+}
+
+// AttachClusterShellSession attaches to a shell pod PodSteer already created in
+// this namespace — the reuse path, offered when one is found RUNNING.
+//
+// Adopting the pod puts it on the same hook a created one is on: it is deleted
+// when this session ends. That is the point of adopting rather than merely
+// attaching — a pod nobody owns is a pod nobody deletes, and reuse would
+// otherwise be how a namespace fills up.
+func (t *TerminalAPI) AttachClusterShellSession(clusterID, namespace, podName string, cols, rows int) (string, error) {
+	id, ns, err := t.clusterShellTarget("AttachClusterShellSession", clusterID, namespace)
+	if err != nil {
+		return "", err
+	}
+
+	parent, ok := t.app.runtimeContext()
+	if !ok {
+		return "", errors.New("application is shutting down")
+	}
+
+	prepCtx, cancelPrep := context.WithTimeout(parent, clusterShellPrepTimeout)
+	defer cancelPrep()
+
+	shell, err := t.management.AdoptClusterShell(prepCtx, id, ns, podName)
+	if err != nil {
+		return "", apiError(t.logger, "AttachClusterShellSession", err)
+	}
+
+	return t.attachClusterShell(parent, shell, cols, rows)
+}
+
+// clusterShellTarget parses and guards the two arguments both in-cluster shell
+// starts share.
+//
+// The read-only refusal is the same fast path StartNodeShellSession makes, and
+// for the same reason: creating (or adopting, which is signing up to delete) a
+// pod is a write, and refusing here avoids allocating a session for a start
+// ManagementService is going to refuse anyway. ManagementService checks again —
+// that one is the guard; this is what keeps a doomed session from being built.
+func (t *TerminalAPI) clusterShellTarget(op, clusterID, namespace string) (domain.ClusterID, domain.NamespaceName, error) {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return "", "", apiError(t.logger, op, err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return "", "", apiError(t.logger, op, err)
+	}
+	// NewNamespaceName("") is NamespaceAll, not an error, so an empty argument
+	// would otherwise reach the create as "every namespace" and land the pod in
+	// the kubeconfig's default. Refused here as well as in ManagementService,
+	// so the frontend's mistake is named at the boundary it was made at.
+	if ns.IsAll() {
+		return "", "", apiError(t.logger, op, domain.ErrShellNamespaceRequired)
+	}
+
+	if t.management.ReadOnly(id) {
+		return "", "", apiError(t.logger, op,
+			fmt.Errorf("starting an in-cluster shell: %w", ports.ErrReadOnly))
+	}
+
+	return id, ns, nil
+}
+
+// attachClusterShell opens the attach session for a shell pod and arranges for
+// the pod to be deleted when it ends.
+func (t *TerminalAPI) attachClusterShell(parent context.Context, shell domain.ClusterShell, cols, rows int) (string, error) {
+	sessionID, err := t.openAttachSession(parent, shell.ClusterID, shell.Namespace, shell.PodName, shell.ContainerName, cols, rows, "in-cluster shell session", !shell.Adopted, func() {
+		if err := t.management.StopClusterShell(shell.ID); err != nil {
+			t.logger.Error("failed to delete in-cluster shell pod",
+				slog.String("pod", shell.PodName),
+				slog.String("error", err.Error()))
+		}
+	})
+	if err != nil {
+		// The session never started, so nothing will delete the pod on exit.
+		// Remove it here rather than leave a pod nobody is attached to.
+		_ = t.management.StopClusterShell(shell.ID)
+		return "", err
+	}
+
+	t.logger.Info("in-cluster shell session started",
+		slog.String("session", sessionID),
+		slog.String("namespace", shell.Namespace.String()),
+		slog.String("pod", shell.PodName),
+		slog.Bool("adopted", shell.Adopted))
+
+	return sessionID, nil
+}
+
+// openExecSession allocates a session, spawns the exec goroutine and returns
+// the session ID. Shared by StartDebugSession and, below, by the plumbing that
+// makes a debug shell indistinguishable from an ordinary one — the only thing
+// that differs is which container name is passed in.
+//
+// parent is the application-lifetime context; the session runs on a cancelable
+// child of it, exactly as StartSession does.
+func (t *TerminalAPI) openExecSession(parent context.Context, id domain.ClusterID, ns domain.NamespaceName, podName, containerName string, cols, rows int, label string) (string, error) {
+	ctx, cancel := context.WithCancel(parent)
+
+	sessionID := generateTerminalID()
+	stdinReader, stdinWriter := io.Pipe()
+	sizeQueue := newTerminalSizeQueue()
+	sizeQueue.send(ports.TerminalSize{Width: uint16(cols), Height: uint16(rows)})
+
+	session := &terminalSession{
+		id:        sessionID,
+		cancel:    cancel,
+		stdinPipe: stdinWriter,
+		sizeQueue: sizeQueue,
+	}
+
+	t.mu.Lock()
+	t.sessions[sessionID] = session
+	t.mu.Unlock()
+
+	stdoutWriter := &terminalOutputWriter{sessionID: sessionID, app: t.app}
+
+	go func() {
+		defer func() {
+			t.mu.Lock()
+			delete(t.sessions, sessionID)
+			t.mu.Unlock()
+
+			_ = stdinWriter.Close()
+			sizeQueue.close()
+		}()
+
+		err := t.management.ExecInPodWithTTY(ctx, id, ns, podName, containerName,
+			[]string{"/bin/sh"}, stdinReader, stdoutWriter, stdoutWriter, sizeQueue)
+
+		reason := ""
+		if err != nil && !errors.Is(err, context.Canceled) {
+			reason = err.Error()
+			t.logger.Error(label+" ended with error",
+				slog.String("session", sessionID),
+				slog.String("error", err.Error()))
+		}
+
+		t.app.emit("terminal:exit", TerminalExitEvent{SessionID: sessionID, Reason: reason})
+	}()
+
+	return sessionID, nil
+}
+
+// openAttachSession is openExecSession's attach twin — it connects to the
+// container's OWN running process rather than starting a new one, which is
+// what makes a node shell a node shell: the pod's process is the login shell
+// in the host's namespaces, and attaching lands the operator on it. onExit, if
+// set, runs after the session ends — a node shell uses it to delete its pod.
+//
+// newShell says PodSteer created this pod for this session, which decides
+// whether the pane presses enter for the operator — see the write below.
+func (t *TerminalAPI) openAttachSession(parent context.Context, id domain.ClusterID, ns domain.NamespaceName, podName, containerName string, cols, rows int, label string, newShell bool, onExit func()) (string, error) {
+	ctx, cancel := context.WithCancel(parent)
+
+	sessionID := generateTerminalID()
+	stdinReader, stdinWriter := io.Pipe()
+	sizeQueue := newTerminalSizeQueue()
+	sizeQueue.send(ports.TerminalSize{Width: uint16(cols), Height: uint16(rows)})
+
+	session := &terminalSession{
+		id:        sessionID,
+		cancel:    cancel,
+		stdinPipe: stdinWriter,
+		sizeQueue: sizeQueue,
+	}
+
+	t.mu.Lock()
+	t.sessions[sessionID] = session
+	t.mu.Unlock()
+
+	stdoutWriter := &terminalOutputWriter{sessionID: sessionID, app: t.app}
+
+	go func() {
+		defer func() {
+			t.mu.Lock()
+			delete(t.sessions, sessionID)
+			t.mu.Unlock()
+
+			_ = stdinWriter.Close()
+			sizeQueue.close()
+
+			if onExit != nil {
+				onExit()
+			}
+		}()
+
+		err := t.management.AttachToPod(ctx, id, ns, podName, containerName,
+			stdinReader, stdoutWriter, stdoutWriter, sizeQueue)
+
+		reason := ""
+		if err != nil && !errors.Is(err, context.Canceled) {
+			reason = err.Error()
+			t.logger.Error(label+" ended with error",
+				slog.String("session", sessionID),
+				slog.String("error", err.Error()))
+		}
+
+		t.app.emit("terminal:exit", TerminalExitEvent{SessionID: sessionID, Reason: reason})
+	}()
+
+	if newShell {
+		// PRESS ENTER ONCE, so the pane opens on a prompt rather than on
+		// nothing.
+		//
+		// A shell prints its prompt when it starts reading, which is when the
+		// container starts — seconds before this stream exists — and attach
+		// replays nothing it missed. So the first prompt is always gone by the
+		// time anybody could have seen it, and the operator faces a black pane
+		// that echoes what they type and answers nothing. It is why kubectl
+		// says "If you don't see a command prompt, try pressing enter"; this
+		// presses it for them.
+		//
+		// ON THE PIPE RATHER THAN ON A TIMER. An io.Pipe write blocks until
+		// the attach's copy loop reads it, so this cannot land before the
+		// stream is established, and if the session never starts at all the
+		// deferred Close above releases it as ErrClosedPipe rather than
+		// leaving a goroutine parked forever.
+		//
+		// ONLY FOR A SHELL PODSTEER JUST CREATED, which is what newShell
+		// states. Adopting a pod that outlived its pane means attaching to a
+		// shell somebody was using, and its readline buffer may hold a
+		// half-typed line — a carriage return would RUN it. An empty pane is
+		// worth less than a command nobody meant to issue.
+		go func() { _, _ = stdinWriter.Write([]byte("\r")) }()
+	}
+
+	return sessionID, nil
+}
+
 // Write sends data to the terminal's stdin.
 //
 // This is called by the frontend for every keystroke or paste operation.
@@ -276,6 +850,12 @@ func (t *TerminalAPI) Resize(sessionID string, cols, rows int) error {
 		return errors.New("terminal session not found")
 	}
 
+	// A local shell resizes its own pseudo-terminal; only a cluster session
+	// has a size queue to put a size on.
+	if session.resize != nil {
+		return session.resize(uint16(cols), uint16(rows))
+	}
+
 	// The queue decides whether it can still take one. Reading the session
 	// out of the map and then sending is inherently a window in which the
 	// exec goroutine can finish and close the queue underneath us.
@@ -304,6 +884,174 @@ func (t *TerminalAPI) StopSession(sessionID string) error {
 	t.logger.Info("terminal session stopped", slog.String("session", sessionID))
 	return nil
 }
+
+// CodingAgentDTO is one coding agent found on the operator's machine.
+type CodingAgentDTO struct {
+	// ID is the binary's name, and what StartAgentSession takes back.
+	ID string `json:"id"`
+	// Label is what the operator reads.
+	Label string `json:"label"`
+	// Path is where it was found, shown so it is obvious WHICH binary this is
+	// — a machine can easily have two.
+	Path string `json:"path"`
+}
+
+// LocalShellSupportDTO reports whether this platform can open a local shell.
+type LocalShellSupportDTO struct {
+	// Supported is false on Windows, where there is no pseudo-terminal here.
+	Supported bool `json:"supported"`
+	// Reason is the sentence to show when it is not, empty when it is.
+	Reason string `json:"reason"`
+}
+
+// LocalShellSupported reports whether a local shell can be opened here.
+//
+// Asked by the interface before the control is offered, so an operator on a
+// platform without it reads one honest sentence rather than pressing something
+// that fails.
+func (t *TerminalAPI) LocalShellSupported() LocalShellSupportDTO {
+	ok, reason := t.localShells.LocalShellSupported()
+	return LocalShellSupportDTO{Supported: ok, Reason: reason}
+}
+
+// DetectAgents reports the coding agents present on the operator's PATH.
+//
+// FOUND, NOT INSTALLED, and that distinction is the whole feature: PodSteer
+// looks for binaries the operator already has and offers those. It downloads
+// nothing, suggests installing nothing, and an empty list is an ordinary
+// answer for a machine with no agent on it.
+func (t *TerminalAPI) DetectAgents() []CodingAgentDTO {
+	agents := t.localShells.DetectAgents()
+	out := make([]CodingAgentDTO, 0, len(agents))
+	for _, agent := range agents {
+		out = append(out, CodingAgentDTO{ID: agent.ID, Label: agent.Label, Path: agent.Path})
+	}
+	return out
+}
+
+// StartLocalSession opens the operator's own login shell on THIS machine, with
+// KUBECONFIG set to the same files PodSteer reads and a notice naming the open
+// tab's context. It returns the session ID.
+//
+// NO READ-ONLY REFUSAL, and its absence is deliberate rather than an omission.
+// Every other Start method here checks ManagementService.ReadOnly first,
+// because each of them makes PodSteer write to a cluster. This one starts a
+// process on the operator's laptop that PodSteer neither mediates nor observes
+// — the guard is about this application's own writes, and a shell somebody
+// opened on their own machine with their own credentials is not something it
+// can or should police. The pane says exactly that, and so does SECURITY.md.
+func (t *TerminalAPI) StartLocalSession(clusterContext string, cols, rows int) (string, error) {
+	return t.openLocalSession(domain.LocalShellSpec{
+		Context: clusterContext,
+		Cols:    uint16(cols),
+		Rows:    uint16(rows),
+	}, "local shell")
+}
+
+// StartAgentSession opens the operator's own coding agent CLI in a local
+// shell's place, in the same environment, with an opening prompt naming the
+// cluster and the object they had open. It returns the session ID.
+//
+// NOTHING IS SENT ANYWHERE BY PODSTEER. This starts a local process and hands
+// it an argument; whatever the agent then does with its own provider is
+// between the operator and the tool they installed. That is what keeps this
+// consistent with the no-account, no-telemetry commitment — there is no
+// PodSteer service in the path, and adding one would be a different decision
+// requiring a different record.
+//
+// readOnly is the default the launcher offers: it sets a marker in the
+// environment and asks, in the prompt, for read-only kubectl unless the
+// operator says otherwise. A REQUEST, not a restriction — the agent holds the
+// operator's own credentials and nothing here can narrow them.
+func (t *TerminalAPI) StartAgentSession(clusterContext, agent, kind, namespace, name string, readOnly bool, cols, rows int) (string, error) {
+	if agent == "" {
+		return "", apiError(t.logger, "StartAgentSession", errors.New("no coding agent named"))
+	}
+	return t.openLocalSession(domain.LocalShellSpec{
+		Context:  clusterContext,
+		Cols:     uint16(cols),
+		Rows:     uint16(rows),
+		Agent:    agent,
+		ReadOnly: readOnly,
+		Subject:  domain.TerminalSubject{Kind: kind, Namespace: namespace, Name: name},
+	}, "agent session")
+}
+
+// openLocalSession starts the process and registers it beside every cluster
+// session, so Write, Resize and StopSession reach it by id alone.
+func (t *TerminalAPI) openLocalSession(spec domain.LocalShellSpec, label string) (string, error) {
+	sessionID := generateTerminalID()
+	stdout := &terminalOutputWriter{sessionID: sessionID, app: t.app}
+
+	// Registered BEFORE the process starts. The shell writes its prompt within
+	// microseconds and the exit hook can fire almost as fast for a command
+	// that refuses to run, so a session that appeared in the map afterwards
+	// could be removed by its own exit before it was ever added.
+	session := &terminalSession{id: sessionID}
+	t.mu.Lock()
+	t.sessions[sessionID] = session
+	t.mu.Unlock()
+
+	shell, err := t.localShells.StartLocalShell(spec, stdout, func(reason string) {
+		t.mu.Lock()
+		delete(t.sessions, sessionID)
+		t.mu.Unlock()
+
+		if reason != "" {
+			t.logger.Error(label+" ended with error",
+				slog.String("session", sessionID), slog.String("error", reason))
+		}
+		// The SAME event a cluster session's exit uses: the pane treats a
+		// local shell ending exactly as it treats a container's.
+		t.app.emit("terminal:exit", TerminalExitEvent{SessionID: sessionID, Reason: reason})
+	})
+	if err != nil {
+		t.mu.Lock()
+		delete(t.sessions, sessionID)
+		t.mu.Unlock()
+		return "", apiError(t.logger, "StartLocalSession", err)
+	}
+
+	// Filled in now the process behind them exists. The frontend cannot have
+	// sent a keystroke yet — it has not been given the session id — so this is
+	// the last moment before the record is reachable from outside.
+	t.mu.Lock()
+	session.stdinPipe = &localShellWriter{shells: t.localShells, id: shell.ID}
+	session.resize = func(cols, rows uint16) error {
+		return t.localShells.ResizeLocalShell(shell.ID, cols, rows)
+	}
+	// Not a context cancellation: a local process is ended by signalling it,
+	// and the manager waits for it to be gone.
+	session.cancel = func() { _ = t.localShells.StopLocalShell(shell.ID) }
+	t.mu.Unlock()
+
+	t.logger.Info(label+" started",
+		slog.String("session", sessionID),
+		slog.String("context", spec.Context),
+		slog.String("agent", spec.Agent))
+
+	return sessionID, nil
+}
+
+// localShellWriter carries keystrokes to a local shell.
+//
+// An io.WriteCloser so a local session sits in the same field as a cluster
+// session's stdin pipe. Close is a no-op on purpose: hanging the terminal up
+// is what StopLocalShell does, and StopSession closes this pipe right after
+// cancelling, which would otherwise be the second hangup.
+type localShellWriter struct {
+	shells ports.LocalShellPort
+	id     string
+}
+
+func (w *localShellWriter) Write(p []byte) (int, error) {
+	if err := w.shells.WriteLocalShell(w.id, p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (w *localShellWriter) Close() error { return nil }
 
 // terminalOutputWriter forwards writes to the frontend as terminal:data events.
 type terminalOutputWriter struct {

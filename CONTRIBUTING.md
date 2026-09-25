@@ -44,11 +44,12 @@ make bindings  # only if you changed a bound method or a DTO
 
 CI runs all of these, and three of them fail in ways worth anticipating:
 
-- **`make bindings` output is committed.** Wails generates
-  `web/src/lib/wailsjs/` by compiling and running the application; `wails dev`
-  and `wails build` regenerate it, plain `go build` does not. The `bindings`
-  job fails on any drift, so a forgotten regeneration is caught in CI rather
-  than at runtime.
+- **`make bindings` output is committed.** `wails3 generate bindings` reads the
+  Go source and writes `web/src/lib/bindings/`. Nothing else regenerates it —
+  not `make build`, not `make dev` — so a forgotten `make bindings` leaves the
+  frontend compiling against a contract the backend no longer honours. The
+  `bindings` job fails on any drift, so that is caught in CI rather than at
+  runtime.
 - **`make notices` is a policy gate, not a formatting step.** It regenerates
   the dependency inventory *and* enforces
   [docs/LICENCE-POLICY.md](docs/LICENCE-POLICY.md) in one pass. A new

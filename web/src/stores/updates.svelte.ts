@@ -18,8 +18,8 @@
  * bridge, and the Go service refuses independently. Both are asserted.
  */
 
-import { CheckForUpdate, UpdateChecksPermitted } from '$lib/wailsjs/go/wails/UpdateAPI'
-import type { wails } from '$lib/wailsjs/go/models'
+import { CheckForUpdate, UpdateChecksPermitted } from '$bindings/updateapi'
+import type * as wails from '$bindings/models'
 import { preferences } from './preferences.svelte'
 
 export type UpdateStatus = wails.UpdateStatus

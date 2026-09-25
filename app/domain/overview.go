@@ -124,6 +124,22 @@ const (
 	CategoryFindingConfiguration FindingCategory = "Configuration"
 	// CategoryFindingStorage covers persistent volumes and the claims on them.
 	CategoryFindingStorage FindingCategory = "Storage"
+	// CategoryFindingUpgrade covers API versions the cluster serves today
+	// that a future Kubernetes minor removes — see deprecations.go.
+	CategoryFindingUpgrade FindingCategory = "Upgrade"
+	// CategoryFindingSecurity covers privileges a workload's own spec takes.
+	//
+	// SEPARATE FROM Configuration, ON PURPOSE. A missing resource limit and a
+	// privileged container are both "a declaration that will hurt later", and
+	// grouping them would be defensible — but an operator triaging one is not
+	// triaging the other, and somebody scanning the overview for the thing
+	// that matters at 2am should not have to read past six rightsizing rows
+	// to find that a pod shares the node's PID namespace.
+	//
+	// It covers ONLY what a manifest states. Vulnerability counts come from a
+	// scanner PodSteer does not run and are not findings here — see
+	// vulnerability.go.
+	CategoryFindingSecurity FindingCategory = "Security"
 )
 
 // Thresholds for the rules below. They are named constants rather than magic
@@ -898,6 +914,33 @@ type OverviewInput struct {
 	// Backend is a monitoring system found running in the cluster, if any.
 	// Zero means none was found, which is the ordinary case.
 	Backend MetricsBackend
+	// KubeState is a kube-state-metrics installation found in the cluster,
+	// if any. Zero means none was found, which is the ordinary case, and it
+	// is carried separately from Backend because they answer different
+	// questions — one keeps series, the other produces object-state ones.
+	KubeState KubeStateMetrics
+	// ServedAPIs is every group/version discovery reports the cluster
+	// serves, straight from the API server rather than from the catalog:
+	// the catalog only ever holds the CURRENT version PodSteer targets for
+	// each kind, so it can never contain a deprecated one for UpgradeImpact
+	// to match against.
+	ServedAPIs []APIGroupVersion
+	// APIsKnown reports whether ServedAPIs could be read at all. False —
+	// discovery failed — means nothing is assessed: Upgrade stays zero and
+	// no upgrade findings are produced, whatever TargetVersion says, because
+	// a target compared against an unknown served set cannot honestly say
+	// anything either broke or survived.
+	APIsKnown bool
+	// APIUsage reports, per served, deprecation-table-matched group/version,
+	// who is still writing through it — keyed by Deprecation.ResourceKind().
+	// ID(). See UpgradeImpact's own doc comment for what an absent key means.
+	APIUsage map[string]APIUsage
+	// TargetVersion is the Kubernetes minor to assess an upgrade against,
+	// e.g. "1.33". Blank defaults to the minor immediately after Version —
+	// the question an operator actually opens this for is "what happens at
+	// the next upgrade", not an arbitrarily distant one, though the UI may
+	// ask about a later one explicitly.
+	TargetVersion string
 	// Now is the reference time. Passed rather than read so the rules are
 	// testable, the same reason every Age method takes it.
 	Now time.Time
@@ -920,6 +963,23 @@ type Overview struct {
 	Workloads   []WorkloadKindSummary
 	Namespaces  []NamespaceLoad
 	Restarts    []RestartHotspot
+	// Events are the Kubernetes Events this assessment read, CARRIED rather
+	// than assessed.
+	//
+	// Everything else on this struct is a verdict; this is the input the
+	// event findings were derived from, passed through unchanged. It is here
+	// because the session timeline needs the events themselves and not only
+	// what was concluded from them, and because the assessment is the one
+	// read that happens on every tick whatever view is on screen — so
+	// carrying them costs no request, which is the property the timeline is
+	// built on. Recording them from the view that happened to fetch them
+	// instead made a cluster's record a function of somebody's browsing.
+	//
+	// Bounded by whatever the port returned; the Kubernetes adapter caps a
+	// single event query, and an assessment that could not read events at
+	// all leaves this empty AND names "events" in Unavailable — the two are
+	// not the same fact and a reader must not collapse them.
+	Events []Event
 	// Unavailable names the data sources that could not be read, so the UI can
 	// say "no metrics" instead of quietly showing zeroes.
 	Unavailable []string
@@ -933,6 +993,30 @@ type Overview struct {
 	// keeps minutes of, rather than pretending its own window is the whole
 	// picture.
 	Backend MetricsBackend
+	// KubeState names a kube-state-metrics installation found in this
+	// cluster, when one was found. It changes nothing PodSteer measures
+	// either — every figure on this screen comes from the metrics API and
+	// from PodSteer's own samples — and it is here so the UI can say exactly
+	// that, rather than leaving somebody to wonder whether the two agree.
+	KubeState KubeStateMetrics
+	// Upgrade summarises what UpgradeImpact found against TargetVersion.
+	// Zero (TargetMinor == "") means no target could be placed — Version was
+	// unparseable, or too new for even NextMinor to reason about — which is
+	// distinct from a target that was assessed and found nothing wrong: the
+	// UI must be able to tell "not assessed" from "assessed, clean".
+	Upgrade UpgradeSummary
+}
+
+// UpgradeSummary is the one-line version of what UpgradeImpact found, for the
+// overview header — "Next minor: 1.33 — 2 APIs to migrate" — without the UI
+// having to filter Findings by category and count them itself.
+type UpgradeSummary struct {
+	// TargetMinor is the Kubernetes minor the assessment was made against.
+	TargetMinor string
+	// Count is how many upgrade-impact findings were raised, at any
+	// severity: an API about to break, one served but unused, or one merely
+	// deprecated that survives this target regardless.
+	Count int
 }
 
 // NewOverview assesses a cluster snapshot.
@@ -956,6 +1040,29 @@ func NewOverview(input OverviewInput) Overview {
 
 	support := SupportFor(input.Version, now)
 
+	// The target defaults to the next minor rather than being left unset:
+	// "what happens at the next upgrade" is the question this exists to
+	// answer, and requiring the caller to compute that default themselves
+	// would be one more place it could be gotten wrong. A caller that wants
+	// a different, UI-selected target sets TargetVersion explicitly.
+	targetMinor := input.TargetVersion
+	if targetMinor == "" {
+		targetMinor, _ = nextMinor(input.Version)
+	}
+
+	// APIsKnown false means discovery could not be read: served is unknown,
+	// so nothing can be honestly compared against target either way. Upgrade
+	// stays zero (TargetMinor "") and no upgrade findings are produced,
+	// whatever target was asked for — the UI reads TargetMinor == "" as "not
+	// assessed", not as "assessed, clean".
+	var upgradeFindings []Finding
+	upgrade := UpgradeSummary{}
+	if targetMinor != "" && input.APIsKnown {
+		target := ServerVersion{GitVersion: "v" + targetMinor}
+		upgradeFindings = UpgradeImpact(input.ServedAPIs, input.Version, target, input.APIUsage)
+		upgrade = UpgradeSummary{TargetMinor: targetMinor, Count: len(upgradeFindings)}
+	}
+
 	findings := make([]Finding, 0, 16)
 	findings = append(findings, podFindings(input.Pods, owners, now)...)
 	findings = append(findings, workloadFindings(input.Workloads, findings, now)...)
@@ -968,8 +1075,11 @@ func NewOverview(input OverviewInput) Overview {
 	findings = append(findings, restartFindings(input.Pods, now)...)
 	findings = append(findings, configurationFindings(input.Pods, pods)...)
 	findings = append(findings, memoryLimitFindings(input.Pods, input.MetricsMeasured)...)
+	findings = append(findings, sizingFindings(input.Pods, owners, input.MetricsMeasured, now)...)
 	findings = append(findings, imageDriftFindings(input.Pods)...)
+	findings = append(findings, securityFindings(input.Pods)...)
 	findings = append(findings, eventFindings(input.Events, findings, now)...)
+	findings = append(findings, upgradeFindings...)
 	rankFindings(findings)
 
 	return Overview{
@@ -988,9 +1098,15 @@ func NewOverview(input OverviewInput) Overview {
 		Consumers:   topConsumers(input.Pods, input.MetricsMeasured),
 		Support:     support,
 		NodeLoads:   nodeLoads(input.Nodes, input.Pods),
+		// Cloned for the same reason Unavailable is: the caller's slice must
+		// not alias the assessment, which outlives the read that produced it
+		// by however long the overview cache holds it.
+		Events:      slices.Clone(input.Events),
 		Unavailable: slices.Clone(input.Unavailable),
 		Metrics:     input.Metrics,
 		Backend:     input.Backend,
+		KubeState:   input.KubeState,
+		Upgrade:     upgrade,
 	}
 }
 
@@ -2426,10 +2542,26 @@ func eventFindings(events []Event, existing []Finding, now time.Time) []Finding 
 		// seen deduplicates the rows: a pod that logs the same message twice
 		// is one line saying so, not the same line twice. The event count
 		// above it is what states how often it happened.
-		seen    map[string]bool
-		count   int
-		newest  time.Time
+		seen   map[string]bool
+		count  int
+		newest time.Time
+		// oldest is the earliest FirstSeen in the group, which is what the
+		// finding's age reports. Kept beside newest rather than replacing it:
+		// newest still chooses which message to quote, because the latest
+		// wording of a recurring event is the useful one.
+		oldest  time.Time
 		message string
+	}
+
+	// oldestOrNewest falls back when nothing carried a first-seen time — an
+	// event from a source that only records lastTimestamp. Reporting the
+	// newest then is the old behaviour, which is wrong by a known amount
+	// rather than by an unknown one.
+	oldestOrNewest := func(g *group) time.Time {
+		if g.oldest.IsZero() {
+			return g.newest
+		}
+		return g.oldest
 	}
 
 	groups := make(map[string]*group)
@@ -2454,6 +2586,15 @@ func eventFindings(events []Event, existing []Finding, now time.Time) []Finding 
 		if event.LastSeen().After(current.newest) {
 			current.newest = event.LastSeen()
 			current.message = event.Message()
+		}
+		// THE OLDEST OCCURRENCE, WHICH IS THE ONE THE AGE IS ABOUT. This
+		// grouping tracked only the newest, and then reported `now - newest`
+		// as OldestSeconds — so a warning that had been recurring for half an
+		// hour said it was seconds old, which is the exact distinction the
+		// field exists to draw and inverted.
+		if first := event.FirstSeen(); !first.IsZero() &&
+			(current.oldest.IsZero() || first.Before(current.oldest)) {
+			current.oldest = first
 		}
 		row := string(event.Namespace()) + "/" + event.InvolvedName() + "\x00" + event.Message()
 		if len(current.subjects) < maxSubjects && !current.seen[row] {
@@ -2481,7 +2622,7 @@ func eventFindings(events []Event, existing []Finding, now time.Time) []Finding 
 			Subjects:      current.subjects,
 			Count:         current.count,
 			KindID:        eventKindID,
-			OldestSeconds: int64(now.Sub(current.newest).Seconds()),
+			OldestSeconds: int64(now.Sub(oldestOrNewest(current)).Seconds()),
 		})
 	}
 	return findings

@@ -21,9 +21,15 @@
   import FindingCard from '$lib/components/FindingCard.svelte'
   import NodeLoadGrid from '$lib/components/NodeLoadGrid.svelte'
   import MetricsBackendNote from '$lib/components/MetricsBackendNote.svelte'
+  import KubeStateNote from '$lib/components/KubeStateNote.svelte'
   import TrendChart from '$lib/components/TrendChart.svelte'
+  import Select from '$lib/components/Select.svelte'
+  import { untrack } from 'svelte'
   import { formatAge } from '$lib/format'
   import { ClusterHistory, TREND_WINDOWS } from '$stores/history.svelte'
+  import { BackendTrend, type MetricsQueryMode } from '$stores/backendTrend.svelte'
+  import { clusterSettings } from '$stores/clusterSettings.svelte'
+  import BackendSeriesNote from '$lib/components/BackendSeriesNote.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import {
@@ -51,6 +57,40 @@
   let { session }: Props = $props()
 
   const overview = $derived(session.overview)
+
+  /**
+   * "Check against" — the range of Kubernetes minors the upgrade-impact
+   * findings can be scored against, next minor first.
+   *
+   * Bounded to what the support-window table knows (`overview.knownMinors`)
+   * rather than a free-text field: asking about a version neither table has
+   * heard of would only ever come back silent, with nothing on screen to say
+   * why.
+   */
+  function nextMinorOf(minor: string): string {
+    const [major, small] = minor.split('.').map(Number)
+    return `${major}.${small + 1}`
+  }
+
+  function compareMinor(a: string, b: string): number {
+    const [aMajor, aMinor] = a.split('.').map(Number)
+    const [bMajor, bMinor] = b.split('.').map(Number)
+    return aMajor !== bMajor ? aMajor - bMajor : aMinor - bMinor
+  }
+
+  const upgradeTargetOptions = $derived.by(() => {
+    const current = overview?.support.minor
+    if (!current) return []
+    const next = nextMinorOf(current)
+    return (overview?.knownMinors ?? [])
+      .filter((minor) => compareMinor(minor, next) >= 0)
+      .map((minor) => ({ value: minor, label: minor === next ? `${minor} (next)` : minor }))
+  })
+
+  // What the selector shows: the operator's explicit choice, or whatever
+  // TargetVersion the backend actually assessed against by default — never
+  // invented client-side, so the two can never disagree.
+  const upgradeTargetValue = $derived(session.upgradeTarget ?? overview?.upgrade.targetMinor ?? '')
 
   /**
    * Findings the operator should act on, and the rest.
@@ -140,7 +180,8 @@
     const nodes = overview?.nodes
     if (!nodes) return []
 
-    const versions = nodes.kubeletVersions
+    // A nil slice marshals to null: no kubelet answered with a version at all.
+    const versions = nodes.kubeletVersions ?? []
     const skewed = versions.length > 1
 
     return [
@@ -206,7 +247,7 @@
 
   /** How many claims are in one phase, zero when none are. */
   function claimPhase(phase: string): number {
-    return overview?.storage.claims.find((entry) => entry.phase === phase)?.count ?? 0
+    return overview?.storage.claims?.find((entry) => entry.phase === phase)?.count ?? 0
   }
 
   /**
@@ -220,7 +261,7 @@
     const storage = overview?.storage
     if (!storage) return []
 
-    const volumesBound = storage.volumes.find((entry) => entry.phase === 'Bound')?.count ?? 0
+    const volumesBound = storage.volumes?.find((entry) => entry.phase === 'Bound')?.count ?? 0
 
     return [
       {
@@ -334,6 +375,54 @@
    */
   const history = $derived(new ClusterHistory(session.cluster.id))
 
+  /**
+   * What this cluster's monitoring backend answered, when it was asked.
+   *
+   * OFF UNTIL AN OPERATOR SWITCHES IT ON, per cluster, under Settings →
+   * Clusters — so on every cluster nobody has configured this is a store that
+   * makes no call and draws nothing, and the chart is exactly what it was.
+   *
+   * The mode is mirrored from the backend-owned settings rather than kept
+   * here: it decides what reaches the network, so the Go process owns it.
+   */
+  const backendMode = $derived(
+    (clusterSettings.for(session.cluster.id).metricsQueryMode ?? 'off') as MetricsQueryMode,
+  )
+  const backendTrend = $derived(new BackendTrend(session.cluster.id, backendMode))
+
+  // Read once when the section is first drawn, so a cluster's mode is known
+  // before anything decides whether to ask. It is a map lookup in the Go
+  // process, not a cluster read.
+  $effect(() => {
+    void clusterSettings.load([session.cluster.id])
+  })
+
+  /**
+   * THE QUERY IS DRIVEN BY THE CHART, NEVER BY THE TICK.
+   *
+   * Deliberately a SEPARATE effect from the one below, and the separation is
+   * the rule rather than tidiness: this one reads the cluster, the metric and
+   * the mode and does NOT read `session.lastRefreshedAt`, so a refresh cannot
+   * re-run it. Folding the two together would put PromQL onto somebody's
+   * production Prometheus every ten seconds, which is the one thing ADR 7
+   * refused outright. `backendTrend.test.ts` counts calls across driven
+   * refreshes to keep this honest.
+   *
+   * THE WINDOW IS READ WITHOUT SUBSCRIBING, and that is the second rule here.
+   * A range change has its own trigger on the control that makes it, so
+   * reading `history.windowMinutes` reactively would make this effect a
+   * SECOND trigger for the same gesture: the control assigns the window
+   * synchronously, this effect re-runs, and both queries reach the backend
+   * and the operator's audit log. One change, one trigger.
+   */
+  $effect(() => {
+    const trend = backendTrend
+    trend.metric = metric
+    trend.mode = backendMode
+    trend.windowMinutes = untrack(() => history.windowMinutes)
+    void trend.consider('open')
+  })
+
   $effect(() => {
     const current = history
 
@@ -420,9 +509,25 @@
           </p>
         </div>
 
-        <dl class="flex shrink-0 flex-wrap gap-x-6 gap-y-1 text-body-small">
+        <!--
+          THE FIGURES BESIDE THE VERDICT, at the size the rest of this page
+          uses. They were 12px — the caption size, for a line under a chart —
+          which is what this application's own rule reserves it for: "the size
+          for a caption under a figure, not for the labels, values and
+          paragraphs somebody is reading in order to decide something", and
+          DialogChrome.node.test.ts already enforces that for every dialog
+          while naming the overview as the page they should agree with. This
+          card was the page disagreeing with itself.
+
+          The LABEL carries the weight and the value does not, which is the
+          other way round from most dashboards. It is deliberate: these five
+          are read as a set — you scan the labels to find the one you want and
+          then read across — so the labels are the thing being scanned, and a
+          bold number beside a faint word makes the word the harder half.
+        -->
+        <dl class="flex shrink-0 flex-wrap gap-x-6 gap-y-1 text-body-medium">
           <div class="flex flex-col">
-            <dt class="opacity-70">Version</dt>
+            <dt class="font-semibold">Version</dt>
             <dd class="flex items-center gap-1.5 tabular-nums">
               {overview.version || '—'}
               <!-- Said where the version already is. A control plane past end
@@ -456,16 +561,68 @@
               {/if}
             </dd>
           </div>
+          {#if upgradeTargetOptions.length > 0}
+            <div class="flex flex-col">
+              <dt class="font-semibold">Check against</dt>
+              <dd class="flex items-center gap-1.5">
+                <Select
+                  label="Check against"
+                  accessibleName="Check upgrade impact against Kubernetes version"
+                  value={upgradeTargetValue}
+                  options={upgradeTargetOptions}
+                  compact
+                  onchange={(minor) => void session.setUpgradeTarget(minor)}
+                />
+                <!--
+                  ALL THREE ANSWERS, because the control is otherwise a
+                  control with no visible effect. Choosing a version re-runs
+                  the assessment against it — see ClusterSession.setUpgradeTarget
+                  — and until now only ONE outcome was drawn: something to
+                  migrate. A cluster with nothing to migrate and a cluster
+                  whose APIs could not be read both rendered as blank space,
+                  so the honest reading of the selector was "this does
+                  nothing", and the two facts were indistinguishable.
+
+                  The domain already tells them apart and says so in as many
+                  words: an empty TargetMinor is "not assessed", never
+                  "assessed and clean".
+                -->
+                {#if overview.upgrade.count > 0}
+                  <span
+                    class="rounded-full bg-warning-container px-1.5 py-0.5 text-label-small text-on-warning-container"
+                    title="{overview.upgrade.count} {overview.upgrade.count === 1 ? 'API needs' : 'APIs need'} migrating before {overview.upgrade.targetMinor}"
+                  >
+                    {overview.upgrade.count} to migrate
+                  </span>
+                {:else if overview.upgrade.targetMinor}
+                  <span
+                    class="rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small text-on-surface-variant"
+                    title="Nothing this cluster serves is removed in {overview.upgrade.targetMinor}, and nothing was seen writing through a version that is"
+                  >
+                    nothing to migrate
+                  </span>
+                {:else}
+                  <!-- NOT THE SAME AS CLEAN, and it must not read as it. -->
+                  <span
+                    class="rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small text-on-surface-variant/70"
+                    title="PodSteer could not read what this cluster's API server serves, so it has nothing to compare against a target. This says nothing about whether an upgrade is safe."
+                  >
+                    not checked
+                  </span>
+                {/if}
+              </dd>
+            </div>
+          {/if}
           <div class="flex flex-col">
-            <dt class="opacity-70">Nodes</dt>
+            <dt class="font-semibold">Nodes</dt>
             <dd class="tabular-nums">{overview.nodes.total}</dd>
           </div>
           <div class="flex flex-col">
-            <dt class="opacity-70">Pods</dt>
+            <dt class="font-semibold">Pods</dt>
             <dd class="tabular-nums">{overview.pods.total}</dd>
           </div>
           <div class="flex flex-col">
-            <dt class="opacity-70">Age</dt>
+            <dt class="font-semibold">Age</dt>
             <dd class="tabular-nums">{formatAge(overview.nodes.oldestSeconds)}</dd>
           </div>
         </dl>
@@ -528,14 +685,15 @@
       {/if}
       </section>
 
-      <!-- A source that could not be read is stated, never silently zeroed. -->
-      {#if overview.unavailable.length > 0}
+      <!-- A source that could not be read is stated, never silently zeroed.
+           An absent list is the same as an empty one: nothing was unreadable. -->
+      {#if (overview.unavailable ?? []).length > 0}
         <p
           class="flex items-center gap-2 rounded-sm border border-outline-variant/40 bg-surface-container-low
-                 px-3 py-2 text-body-small text-on-surface-variant"
+                 px-3 py-2 text-body-medium text-on-surface-variant"
         >
           <CircleSlash class="size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
-          Assessed without {overview.unavailable.join(', ')} — those figures are missing rather than zero.
+          Assessed without {(overview.unavailable ?? []).join(', ')} — those figures are missing rather than zero.
         </p>
       {/if}
 
@@ -555,7 +713,7 @@
       {#if metricsNotice}
         <p
           class="flex items-start gap-2 rounded-sm border border-outline-variant/30 bg-surface-container-low
-                 px-3 py-2 text-body-small text-on-surface-variant"
+                 px-3 py-2 text-body-medium text-on-surface-variant"
         >
           <Gauge class="mt-0.5 size-4 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
           <span>{metricsNotice}</span>
@@ -598,6 +756,7 @@
               label="Ephemeral storage"
               usage={overview.capacity.ephemeral}
               note={ephemeralNote}
+              noteLabel="Why nothing is reserved"
               fourth={fullestDisk}
             />
           {/if}
@@ -613,9 +772,21 @@
            would have. -->
       <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
-            <TrendingUp class="size-4 text-on-surface-variant" strokeWidth={1.8} />
+          <h3 class="flex items-center gap-1.5 text-title-medium font-semibold text-on-surface">
+            <TrendingUp class="mr-0.5 size-4 text-on-surface-variant" strokeWidth={1.8} />
             Trend
+            <!--
+              Beside the heading and not folded into MetricsBackendNote below:
+              a cluster commonly has one and not the other, and the two answer
+              different questions — where a longer history is kept, and where
+              the object gauges in a dashboard come from. One line saying
+              "monitoring is installed" would answer neither properly.
+
+              It sits here rather than under the chart because it is
+              provenance for everything on this screen, not a caveat about
+              this chart: asked for once, then known.
+            -->
+            <KubeStateNote kubeState={overview.kubeState} />
           </h3>
 
           <div class="flex items-center gap-3">
@@ -641,7 +812,13 @@
               {#each TREND_WINDOWS as option (option.minutes)}
                 <button
                   type="button"
-                  onclick={() => void history.setWindow(option.minutes)}
+                  onclick={() => {
+                    void history.setWindow(option.minutes)
+                    // A RANGE CHANGE IS ITS OWN REASON. Under `auto` this
+                    // asks; under `manual` it does not, and the store is what
+                    // decides — see $stores/backendTrend.
+                    void backendTrend.setWindow(option.minutes)
+                  }}
                   aria-pressed={history.windowMinutes === option.minutes}
                   class="rounded px-2 py-1 text-label-medium tabular-nums transition-colors duration-100
                          {history.windowMinutes === option.minutes
@@ -665,12 +842,27 @@
             open, so a line appears once a second sample lands.
           </p>
         {:else}
-          <TrendChart samples={history.samples} {metric} />
+          <TrendChart samples={history.samples} {metric} backend={backendTrend.result} />
           <p class="text-body-small text-on-surface-variant/60">
             Covering the last {formatAge(history.spanSeconds)} that PodSteer has been open on this
             cluster — not the cluster's whole history.
           </p>
         {/if}
+
+        <!--
+          What the monitoring backend said, or why it said nothing. OUTSIDE
+          the three branches above for the reason the note below it is: a
+          backend's answer is worth the same whether PodSteer's own recording
+          is off, still collecting, or drawn — and a refusal has to be
+          readable on a cluster with no sampled line at all.
+        -->
+        <BackendSeriesNote
+          result={backendTrend.result}
+          mode={backendMode}
+          busy={backendTrend.status === 'loading'}
+          error={backendTrend.error}
+          onrefresh={() => void backendTrend.consider('manual')}
+        />
 
         <!--
           Outside the three branches above deliberately: whether history is
@@ -691,11 +883,11 @@
             Workloads
           </h3>
 
-          {#if overview.workloads.length === 0}
+          {#if (overview.workloads ?? []).length === 0}
             <p class="text-body-small text-on-surface-variant/60">Nothing deployed.</p>
           {:else}
             <ul class="flex flex-col divide-y divide-outline-variant/30">
-              {#each overview.workloads as kind (kind.kindId)}
+              {#each overview.workloads ?? [] as kind (kind.kindId)}
                 <li>
                   <button
                     type="button"
@@ -863,12 +1055,12 @@
 
             <!-- By class, because a cluster quietly paying for premium disks
                  it did not mean to buy cannot see that anywhere else. -->
-            {#if storage.classes.length > 0}
+            {#if (storage.classes ?? []).length > 0}
               <div class="flex flex-col gap-1.5">
                 <p class="text-label-small uppercase tracking-wider text-on-surface-variant">
                   By storage class
                 </p>
-                {#each storage.classes as class_ (class_.name)}
+                {#each storage.classes ?? [] as class_ (class_.name)}
                   <div class="flex items-center gap-3">
                     <span
                       class="w-32 shrink-0 truncate text-body-medium text-on-surface"
@@ -934,7 +1126,7 @@
            evenly loaded cluster from one where half the nodes are full, and
            only the second explains a pod that will not schedule on a cluster
            reading 46% requested. -->
-      {#if overview.nodeLoads.length > 1}
+      {#if (overview.nodeLoads ?? []).length > 1}
         <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
           <div class="flex items-baseline justify-between gap-3">
             <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
@@ -947,12 +1139,12 @@
                  eighteen is the sort of small untruth this page cannot
                  afford. The Nodes page is where the rest live. -->
             <span class="text-body-small text-on-surface-variant/70">
-              {overview.nodeLoads.length > 6 ? 'Busiest 6' : 'Busiest first'}
+              {(overview.nodeLoads ?? []).length > 6 ? 'Busiest 6' : 'Busiest first'}
             </span>
           </div>
 
           <NodeLoadGrid
-            loads={overview.nodeLoads}
+            loads={overview.nodeLoads ?? []}
             onselect={(name) => void openObject('core/v1/nodes', name, '')}
           />
         </section>
@@ -968,7 +1160,7 @@
            a node name carries, the pod on its own line beneath, then the bar
            and its figures — because they answer the same question from
            opposite ends: which node is full, and what filled it. -->
-      {#if overview.consumers.measured && overview.consumers.byCpu.length > 0}
+      {#if overview.consumers.measured && (overview.consumers.byCpu ?? []).length > 0}
         <section class="flex flex-col gap-3 rounded-sm border border-outline-variant/40 bg-surface-container-low p-4">
           <div class="flex items-baseline justify-between gap-3">
             <h3 class="flex items-center gap-2 text-title-medium font-semibold text-on-surface">
@@ -1063,7 +1255,7 @@
             <span class="text-body-small text-on-surface-variant/70">by CPU requested</span>
           </div>
 
-          {#if overview.namespaces.length === 0}
+          {#if (overview.namespaces ?? []).length === 0}
             <p class="text-body-small text-on-surface-variant/60">Nothing scheduled.</p>
           {:else}
             <!-- Laid out like the consumers and the node grid: the name on
@@ -1072,7 +1264,7 @@
                  fill a cluster — the usage beside it is how much of that
                  reservation is real. -->
             <ul class="flex flex-col gap-2">
-              {#each overview.namespaces as load (load.name)}
+              {#each overview.namespaces ?? [] as load (load.name)}
                 <li class="flex min-w-0 flex-col gap-1">
                   <div class="flex items-baseline justify-between gap-3">
                     <button
@@ -1083,7 +1275,7 @@
                     >
                       {load.name}
                     </button>
-                    <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant/70">
+                    <span class="shrink-0 text-body-medium tabular-nums text-on-surface-variant/70">
                       {load.pods} pod{load.pods === 1 ? '' : 's'}{load.notReady > 0
                         ? `, ${load.notReady} down`
                         : ''}
@@ -1140,7 +1332,7 @@
             </span>
           </div>
 
-          {#if overview.restarts.length === 0}
+          {#if (overview.restarts ?? []).length === 0}
             <p class="text-body-small text-on-surface-variant/60">Nothing has restarted.</p>
           {:else}
             <!-- Divided rows at the same weight as Workloads and Nodes: the
@@ -1148,7 +1340,7 @@
                  of the row is for the two things that change what the count
                  means — why it restarted, and whether it is up now. -->
             <ul class="flex flex-col divide-y divide-outline-variant/30">
-              {#each overview.restarts as hotspot (hotspot.namespace + '/' + hotspot.name)}
+              {#each overview.restarts ?? [] as hotspot (hotspot.namespace + '/' + hotspot.name)}
                 <li>
                   <button
                     type="button"
@@ -1171,7 +1363,7 @@
                     {/if}
 
                     {#if hotspot.reason}
-                      <span class="shrink-0 truncate text-body-small text-on-surface-variant/70">
+                      <span class="shrink-0 truncate text-body-medium text-on-surface-variant/70">
                         {hotspot.reason}
                       </span>
                     {/if}
@@ -1194,12 +1386,38 @@
            compete with the findings above. -->
       {#if notes.length > 0}
         <section class="flex flex-col gap-2">
-          <h3 class="text-label-large uppercase tracking-wider text-on-surface-variant">
-            Worth knowing
+          <!-- The heading IS the toggle, like the verdict card's own. A note
+               is not a fault, and on a busy cluster this section runs to a
+               dozen cards — read once and then in the way. Collapsed it
+               still says how many there are, so nothing is hidden that the
+               operator did not already know was there. -->
+          <h3>
+            <button
+              type="button"
+              onclick={preferences.toggleNotes}
+              aria-expanded={preferences.notesExpanded}
+              aria-controls="overview-notes"
+              class="state-layer flex w-full items-center gap-1.5 rounded-sm py-1.5 text-left
+                     text-label-large uppercase tracking-wider text-on-surface-variant
+                     transition-colors duration-100 hover:text-on-surface"
+            >
+              <ChevronRight
+                class="size-4 shrink-0 transition-transform duration-150
+                       {preferences.notesExpanded ? 'rotate-90' : ''}"
+                strokeWidth={2}
+              />
+              Worth knowing
+              <span class="tabular-nums opacity-70">{notes.length}</span>
+            </button>
           </h3>
-          {#each notes as finding (finding.id)}
-            <FindingCard {finding} onopen={openList} onselect={openObject} />
-          {/each}
+
+          {#if preferences.notesExpanded}
+            <div id="overview-notes" class="flex flex-col gap-2">
+              {#each notes as finding (finding.id)}
+                <FindingCard {finding} onopen={openList} onselect={openObject} />
+              {/each}
+            </div>
+          {/if}
         </section>
       {/if}
     </div>

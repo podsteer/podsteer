@@ -7,11 +7,14 @@
 //
 // # Why this is not package main
 //
-// The Wails CLI compiles the package in the project root — `wails build` runs
+// The Wails v2 CLI compiled the package in the project root — `wails build` ran
 // `go build` with its working directory set there and no package argument — so
-// the `main` package has to live at the repository root. That root main.go is
+// the `main` package had to live at the repository root. That root main.go is
 // a three-line shim that calls Main below; every line of real wiring is here,
-// under app/, where the project layout requires it.
+// under app/, where the project layout puts it.
+//
+// Wails v3 imposes no such rule, so this is now inherited rather than forced.
+// See the root main.go for what moving it would involve.
 package cmd
 
 import (
@@ -19,19 +22,22 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 
-	wailsapp "github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	// Aliased because this repository has an `application` package of its own —
+	// the use-case layer — and the composition root is the one file that
+	// names both.
+	wailsapp "github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
+	"github.com/podsteer/podsteer/app/adapters/archive"
 	"github.com/podsteer/podsteer/app/adapters/assets"
 	historystore "github.com/podsteer/podsteer/app/adapters/history"
 	"github.com/podsteer/podsteer/app/adapters/k8s"
+	"github.com/podsteer/podsteer/app/adapters/localshell"
 	"github.com/podsteer/podsteer/app/adapters/macwindow"
 	"github.com/podsteer/podsteer/app/adapters/shellpath"
 	"github.com/podsteer/podsteer/app/adapters/updates"
+	"github.com/podsteer/podsteer/app/adapters/vendorcli"
 	wailsadapter "github.com/podsteer/podsteer/app/adapters/wails"
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/config"
@@ -54,11 +60,73 @@ const trafficLightVerticalNudge = 6.0
 // It is the only function in the codebase that calls os.Exit, so every other
 // layer stays testable and composable.
 func Main() {
-	if err := run(); err != nil {
+	if err := dispatch(os.Args[1:]); err != nil {
 		// The logger may not exist yet if configuration itself failed, so this
 		// deliberately writes to stderr directly.
 		fmt.Fprintf(os.Stderr, "podsteer: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// dispatch chooses between the desktop application and the subcommands.
+//
+// NO ARGUMENTS MEANS THE WINDOW, and that is not merely the default: it is
+// how the application is actually started. A double-click in Finder, a Dock
+// icon, a desktop launcher and `brew install --cask podsteer` all run this
+// binary with nothing after its name, so a required flag, a usage message or
+// a prompt in front of that path would make PodSteer unstartable for
+// everybody who has never opened a terminal. A subcommand is therefore
+// additive: it is reached only when the first argument names it, and every
+// other launch behaves exactly as it did before this existed.
+//
+// Under Wails v2 there was a second, mechanical reason — binding generation
+// compiled and RAN this binary argument-free — and it is gone: `wails3
+// generate bindings` reads the source. The rule outlived it; see
+// main_test.go.
+func dispatch(args []string) error {
+	chosen, rest, err := route(args)
+	if err != nil {
+		return err
+	}
+
+	switch chosen {
+	case commandMCP:
+		return runMCP(rest)
+	default:
+		return run()
+	}
+}
+
+// command is what a set of arguments asks for.
+type command int
+
+const (
+	// commandWindow is the desktop application, and the zero value: the
+	// argument-free launch must never depend on this file adding a case.
+	commandWindow command = iota
+	// commandMCP is the Model Context Protocol server on stdio.
+	commandMCP
+)
+
+// route decides which command the arguments name.
+//
+// Split from dispatch so the rule above — no arguments means the window — is
+// something a test can assert without starting a window, which is exactly
+// what a test of the binding-generation path cannot do.
+func route(args []string) (command, []string, error) {
+	if len(args) == 0 {
+		return commandWindow, nil, nil
+	}
+
+	switch args[0] {
+	case "mcp":
+		return commandMCP, args[1:], nil
+	default:
+		// Refused rather than ignored. Silently opening the window on an
+		// argument nobody recognised would answer a mistyped subcommand with
+		// a desktop application, which is not what anyone piping stdio at
+		// this binary is waiting for.
+		return commandWindow, nil, fmt.Errorf("unknown command %q (try: podsteer mcp --help)", args[0])
 	}
 }
 
@@ -103,14 +171,47 @@ func run() error {
 	// adapter performs no I/O here: a machine with an unreachable cluster, or
 	// none at all, still reaches a usable window.
 
+	// THE SETTINGS STORE COMES FIRST, and the order is load-bearing twice
+	// over. The Kubernetes adapter reads the operator's kubeconfig sources
+	// through it, and the history service reads the recording policy from it
+	// before its first tick — a sampler constructed ahead of the store would
+	// run that tick under the defaults and record a cluster on a machine
+	// where the operator had turned recording off.
+	settingsStore := openSettings(false, logger)
+
 	kubernetes := k8s.New(k8s.Config{
 		KubeconfigPath: cfg.Kubernetes.KubeconfigPath,
+		KubeconfigDir:  cfg.Kubernetes.KubeconfigDir,
+		Sources:        kubeconfigSources(settingsStore),
+		Proxy:          proxySetting(settingsStore),
 		QPS:            cfg.Kubernetes.QPS,
 		Burst:          cfg.Kubernetes.Burst,
 		UserAgent:      fmt.Sprintf("%s/%s", cfg.App.Name, cfg.App.Version),
 		EnvReady:       envReady,
 		LiveWatch:      cfg.Kubernetes.LiveWatch,
 	}, logger)
+
+	// Shells on the operator's OWN machine — the local terminal and the coding
+	// agent it can launch. It reaches no cluster, so it is not a Kubernetes
+	// adapter and holds no client; the one thing it needs from the cluster
+	// side is which kubeconfig files to name in KUBECONFIG, and it takes that
+	// as a function so a file dropped into the kubeconfig directory is seen by
+	// the next shell without a restart.
+	//
+	// It also inherits the PATH the goroutine above adopts, which is what
+	// makes both a Homebrew kubectl and a Homebrew coding agent findable from
+	// a Dock launch.
+	localShells := localshell.New(localshell.Config{
+		KubeconfigFiles: kubernetes.KubeconfigFiles,
+		Shell:           shellpath.LoginShell,
+	}, logger)
+
+	// The cloud CLIs an operator may already have, driven rather than
+	// replaced — see decision 12. Beside the local shell for the same reason
+	// it is: it starts programs the operator installed, reaches no cluster,
+	// and inherits the PATH the goroutine above adopts, which is what makes a
+	// Homebrew cloud CLI findable from a Dock launch.
+	vendorCLIs := vendorcli.New(logger)
 
 	// The Wails lifecycle handler doubles as the outbound event publisher, so
 	// it is constructed before the use cases that publish through it.
@@ -126,22 +227,92 @@ func run() error {
 	registry := application.NewRegistry()
 	catalog := domain.NewCatalog()
 
-	clusterService, err := application.NewClusterService(application.ClusterServiceDeps{
-		Kubeconfig: kubernetes,
-		Cluster:    kubernetes,
-		Workloads:  kubernetes,
-		Metrics:    kubernetes,
-		Events:     desktop,
-		Registry:   registry,
-		Catalog:    catalog,
-		Logger:     logger,
-		// The adapter's own caches are released here on disconnect, which is
-		// the composition root's job precisely because Invalidate is not a
-		// port — it exists to serve the adapter's caching, not the domain.
-		Invalidator: kubernetes,
+	// BEFORE the cluster service, which is the only reason it is up here
+	// rather than beside the history service it feeds: it holds a cluster's
+	// last assessment, so it is one of the two things a disconnect has to
+	// release, and it has to exist before the invalidator list is composed.
+	overviewService, err := application.NewOverviewService(application.OverviewServiceDeps{
+		Cluster:   kubernetes,
+		Workloads: kubernetes,
+		Events:    kubernetes,
+		Metrics:   kubernetes,
+		APIs:      kubernetes,
+		Registry:  registry,
+		Logger:    logger,
 	})
 	if err != nil {
-		return fmt.Errorf("wiring cluster service: %w", err)
+		return fmt.Errorf("wiring overview service: %w", err)
+	}
+
+	// The backend settings, as a use case. It reads the composed kubeconfig
+	// loading list through the Kubernetes adapter, because only the thing
+	// that performs the merge can say which file contributed which context.
+	//
+	// WIRED BEFORE clusterService because the metrics-query service below
+	// reads the per-cluster switch through it, and that service has to be in
+	// the Invalidators list clusterService is built with — the list is
+	// composed once and never mutated, so everything in it must exist first.
+	// A kubeconfig changed in another window — `kubectl config use-context`,
+	// a colleague's file dropped into a synced folder — is a thing the
+	// operator did, not a thing PodSteer did, so nothing else in the process
+	// would ever notice it. See application.KubeconfigWatcher for why this
+	// stats rather than watches.
+	kubeconfigWatcher, err := application.NewKubeconfigWatcher(application.KubeconfigWatcherDeps{
+		Files:  kubernetes.KubeconfigFiles,
+		Events: desktop,
+		Logger: logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring kubeconfig watcher: %w", err)
+	}
+
+	// Assigned once every holder of a per-cluster client exists — see the
+	// Reconnect field below.
+	var reconnectClusters func()
+
+	settingsService, err := application.NewSettingsService(application.SettingsServiceDeps{
+		Settings:   settingsStore,
+		Kubeconfig: kubernetes,
+		// A PROXY CHANGE HAS TO REACH THE CLUSTERS ALREADY OPEN. A client-go
+		// client captures its transport when it is built, so writing the
+		// setting alone would apply it to connections made afterwards and to
+		// nothing on screen — some tabs on the new route, some on the old,
+		// and nothing saying which.
+		//
+		// INDIRECTED THROUGH A VARIABLE ASSIGNED BELOW, because the holders
+		// it has to release are built after this service is: the metrics
+		// query service takes settings, and the settings service takes the
+		// invalidation. The cycle is real and the composition root is where
+		// it is broken — the function cannot be called before the window
+		// exists, and by then every holder is assigned.
+		Reconnect: func() {
+			if reconnectClusters != nil {
+				reconnectClusters()
+			}
+		},
+		Logger: logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring settings service: %w", err)
+	}
+
+	// Reading a longer history out of a monitoring stack the cluster already
+	// runs — ADR 7, and the first thing here that sends an expression PodSteer
+	// composed to a system that is not the API server's own object store.
+	//
+	// It is OFF for every cluster until an operator switches it on under
+	// Settings -> Clusters, which is why the settings service is its first
+	// dependency: the gate is read before discovery runs, before the node
+	// list, and before anything reaches the network.
+	metricsQueryService, err := application.NewMetricsQueryService(application.MetricsQueryServiceDeps{
+		Settings:  settingsService,
+		Discovery: kubernetes,
+		Query:     kubernetes,
+		Nodes:     kubernetes,
+		Logger:    logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring metrics query service: %w", err)
 	}
 
 	workloadService, err := application.NewWorkloadService(application.WorkloadServiceDeps{
@@ -165,16 +336,90 @@ func run() error {
 		return fmt.Errorf("wiring browse service: %w", err)
 	}
 
-	overviewService, err := application.NewOverviewService(application.OverviewServiceDeps{
-		Cluster:   kubernetes,
-		Workloads: kubernetes,
-		Events:    kubernetes,
-		Metrics:   kubernetes,
+	// The fleet reads through the two services above rather than the
+	// adapter, so a cross-cluster row is exactly the row that cluster's own
+	// tab would show, and the read cache coalesces the two.
+	fleetService, err := application.NewFleetService(application.FleetServiceDeps{
+		Workloads: workloadService,
+		Events:    browseService,
+		Resources: browseService,
+		Catalog:   catalog,
 		Registry:  registry,
 		Logger:    logger,
 	})
 	if err != nil {
-		return fmt.Errorf("wiring overview service: %w", err)
+		return fmt.Errorf("wiring fleet service: %w", err)
+	}
+
+	// WIRED AFTER THE SERVICES IT RELEASES, for the reason given at
+	// metricsQueryService above: everything in the Invalidators list has to
+	// exist before the list is composed, and the fleet service is the last of
+	// them because it reads through workloadService and browseService.
+	clusterService, err := application.NewClusterService(application.ClusterServiceDeps{
+		Kubeconfig: kubernetes,
+		Cluster:    kubernetes,
+		Workloads:  kubernetes,
+		Metrics:    kubernetes,
+		Events:     desktop,
+		Registry:   registry,
+		Catalog:    catalog,
+		Logger:     logger,
+		// What a disconnect releases, in one list, composed here for the
+		// reason Invalidate is not a port: it exists to serve caching and
+		// goroutine ownership, not the domain. The adapter releases its
+		// clients, its watch, its per-cluster caches and its port-forwards;
+		// the overview releases the assessment it is holding, which would
+		// otherwise be served to a reconnect of the same context name inside
+		// the freshness window — and that context may now point at an
+		// entirely different cluster; the metrics-query service releases the
+		// node-set verification it made about that context's monitoring
+		// backend, which would otherwise license an aggregate checked against
+		// nodes this connection has never seen; and the fleet service
+		// releases the late answers it is holding, which would otherwise be
+		// rendered as the new connection's rows in the merged table.
+		Invalidator: application.Invalidators{kubernetes, overviewService, metricsQueryService, fleetService},
+	})
+
+	// Every open cluster's client, released. This is the same set of holders
+	// the disconnect path releases, for the same reason: a client outlives
+	// the settings it was built from, so a transport change means rebuilding
+	// rather than notifying. Note that this path reconnects clusters WITHOUT
+	// closing their tabs, which is why every holder of per-connection state
+	// has to be in it and not only in Disconnect's.
+	reconnectClusters = func() {
+		invalidators := application.Invalidators{kubernetes, overviewService, metricsQueryService, fleetService}
+		for _, cluster := range registry.All() {
+			invalidators.Invalidate(cluster.ID())
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("wiring cluster service: %w", err)
+	}
+
+	// The RBAC explorer. Every call it makes is a read, and every one of
+	// them happens because somebody pressed something — it is deliberately
+	// not wired into anything that runs on a timer.
+	rbacService, err := application.NewRBACService(application.RBACServiceDeps{
+		RBAC:     kubernetes,
+		Registry: registry,
+		Logger:   logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring rbac service: %w", err)
+	}
+
+	// The Helm page. One read, made when the page opens or somebody presses
+	// Refresh, and deliberately not wired into anything that runs on a timer:
+	// re-listing Secrets every ten seconds is the audit pattern the Secrets
+	// doctrine exists to avoid, with the bytes removed and the shape intact.
+	// The five-minute cache and its invalidation live in the adapter.
+	helmService, err := application.NewHelmService(application.HelmServiceDeps{
+		Helm:     kubernetes,
+		Registry: registry,
+		Logger:   logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring helm service: %w", err)
 	}
 
 	// Sampling records what each open cluster looks like over time, so the
@@ -188,11 +433,14 @@ func run() error {
 	}
 
 	historyService, err := application.NewHistoryService(application.HistoryServiceDeps{
-		History:      historystore.New(historyDir),
-		Overview:     overviewService,
-		Registry:     registry,
-		SettingsPath: filepath.Join(filepath.Dir(historyDir), "history.json"),
-		Logger:       logger,
+		History:  historystore.New(historyDir),
+		Overview: overviewService,
+		Registry: registry,
+		// The recording policy now lives in the one backend settings file,
+		// which was opened above. The service takes a two-method view of it
+		// rather than the whole store — see HistorySettingsStore.
+		Settings: settingsStore,
+		Logger:   logger,
 	})
 	if err != nil {
 		return fmt.Errorf("wiring history service: %w", err)
@@ -203,16 +451,63 @@ func run() error {
 
 	managementService, err := application.NewManagementService(application.ManagementServiceDeps{
 		Management: kubernetes,
-		Logger:     logger,
+		// The same registry clusterService reads and ClusterAPI.SetReadOnly
+		// writes: a policy set through one has to be enforced by the other,
+		// or a cluster the operator marked read-only would still accept
+		// writes issued through this service.
+		Registry: registry,
+		Logger:   logger,
+		// The local half of a file copy. Everything that decides what a
+		// container's tar stream may do to this machine lives behind it,
+		// and the ceilings come from configuration so an operator who
+		// means to move more can say so.
+		Archive: archive.Local{},
+		TransferLimits: domain.TransferLimits{
+			MaxBytes:   cfg.FileCopy.MaxBytes,
+			MaxEntries: cfg.FileCopy.MaxEntries,
+		},
+		// The in-cluster shell's pods. Wired HERE rather than handed to
+		// TerminalAPI the way the node shell's port is, because creating a
+		// pod is a write and every write in this application goes through
+		// this service's read-only guard and audit line. Deliberately NOT
+		// wired in the MCP composition: the agent surface reads only.
+		ClusterShells: kubernetes,
 	})
 	if err != nil {
 		return fmt.Errorf("wiring management service: %w", err)
+	}
+
+	// The on-request inspections: a reachability probe, and an image report.
+	// The registry goes in for one method only — an in-cluster probe runs a
+	// command in somebody's container, which is write-shaped whatever it
+	// reads, so it is refused on a cluster the operator marked read-only and
+	// audited like every other exec here.
+	inspectService, err := application.NewInspectService(application.InspectServiceDeps{
+		Inspect:  kubernetes,
+		Registry: registry,
+		Logger:   logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring inspect service: %w", err)
 	}
 
 	// --- Driving (inbound) adapters ---------------------------------------
 	//
 	// These depend on the inbound ports, not on the concrete services: the
 	// bindings would work just as well against a fake implementation.
+
+	vendorCLIService, err := application.NewVendorCLIService(application.VendorCLIServiceDeps{
+		CLIs:   vendorCLIs,
+		Logger: logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring cloud CLI service: %w", err)
+	}
+
+	vendorCLIAPI, err := wailsadapter.NewVendorCLIAPI(vendorCLIService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring cloud CLI API: %w", err)
+	}
 
 	clusterAPI, err := wailsadapter.NewClusterAPI(clusterService, desktop, logger)
 	if err != nil {
@@ -235,14 +530,43 @@ func run() error {
 		return fmt.Errorf("wiring overview API: %w", err)
 	}
 
-	managementAPI, err := wailsadapter.NewManagementAPI(managementService, kubernetes, desktop, logger)
+	fleetAPI, err := wailsadapter.NewFleetAPI(fleetService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring fleet API: %w", err)
+	}
+
+	rbacAPI, err := wailsadapter.NewRBACAPI(rbacService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring rbac API: %w", err)
+	}
+
+	helmAPI, err := wailsadapter.NewHelmAPI(helmService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring helm API: %w", err)
+	}
+
+	// The Kubernetes adapter is the port-forward AND the node-shell transport:
+	// both track a resource PodSteer created (a bound socket, a privileged
+	// pod) and both must tear it down where the record lives, so they share
+	// the adapter rather than a service layer that would only forward calls.
+	managementAPI, err := wailsadapter.NewManagementAPI(managementService, kubernetes, kubernetes, workloadService, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring management API: %w", err)
 	}
 
-	terminalAPI, err := wailsadapter.NewTerminalAPI(managementService, desktop, logger)
+	terminalAPI, err := wailsadapter.NewTerminalAPI(managementService, kubernetes, localShells, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring terminal API: %w", err)
+	}
+
+	fileCopyAPI, err := wailsadapter.NewFileCopyAPI(managementService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring file copy API: %w", err)
+	}
+
+	inspectAPI, err := wailsadapter.NewInspectAPI(inspectService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring inspect API: %w", err)
 	}
 
 	historyAPI, err := wailsadapter.NewHistoryAPI(historyService, desktop, logger)
@@ -250,11 +574,25 @@ func run() error {
 		return fmt.Errorf("wiring history API: %w", err)
 	}
 
+	settingsAPI, err := wailsadapter.NewSettingsAPI(settingsService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring settings API: %w", err)
+	}
+
+	// The monitoring-backend read. Bound SEPARATELY from HistoryAPI beside
+	// it, deliberately: that one serves PodSteer's own samples and this one
+	// serves somebody else's measurement, and two calls is what keeps a
+	// component from treating one as a continuation of the other.
+	metricsQueryAPI, err := wailsadapter.NewMetricsQueryAPI(metricsQueryService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring metrics query API: %w", err)
+	}
+
 	// The update check. Its adapter is the ONLY thing in PodSteer that talks
 	// to anything but a cluster, and it acts only when the interface asks —
 	// there is no timer here and nothing on the startup path. It sends no
 	// identifier and is off entirely under PODSTEER_UPDATE_CHECK=false.
-	updateService := application.NewUpdateService(updates.NewClient(), cfg.App.Version, logger)
+	updateService := application.NewUpdateService(updates.NewClient(proxySetting(settingsStore)), cfg.App.Version, logger)
 
 	updateAPI, err := wailsadapter.NewUpdateAPI(updateService, logger)
 	if err != nil {
@@ -266,86 +604,185 @@ func run() error {
 		return fmt.Errorf("wiring system API: %w", err)
 	}
 
+	// Desktop notifications. It decides nothing — whether a finding is new,
+	// snoozed, wanted or too recent is settled in the frontend beside the
+	// assessment diff those questions are about — so this is the delivery
+	// mechanism and the platform's own honesty about what it can deliver.
+	notificationAPI, err := wailsadapter.NewNotificationAPI(desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring notification API: %w", err)
+	}
+
 	frontend, err := assets.FS()
 	if err != nil {
 		return err
 	}
 
-	// --- Window ------------------------------------------------------------
+	// --- Application and window --------------------------------------------
+	//
+	// Wails v3 separates the two: the application holds the services, the
+	// assets and the process lifetime, and a window is a thing it is asked to
+	// open. PodSteer opens exactly one and names it, because every runtime
+	// call in v3 is made on a window and Window.Current answers with the
+	// focused one — which is none at all when the application is hidden.
 
-	err = wailsapp.Run(&options.App{
-		Title:     cfg.App.Title,
-		Width:     cfg.Window.Width,
-		Height:    cfg.Window.Height,
-		MinWidth:  cfg.Window.MinWidth,
-		MinHeight: cfg.Window.MinHeight,
+	desktopApp := wailsapp.New(wailsapp.Options{
+		Name: cfg.App.Title,
+		// Shown in the platform's own About box, which is where v2's
+		// mac.AboutInfo.Message went.
+		Description: "A fast, native Kubernetes client.\nVersion " + cfg.App.Version,
 
-		AssetServer: &assetserver.Options{Assets: frontend},
+		// Wails' OWN logging, not the application's. It shares the handler so
+		// there is one stream to read, and sits at warn because the v3 asset
+		// server otherwise logs a line per request — every chunk of every
+		// bundle, on every launch.
+		Logger:   logger,
+		LogLevel: slog.LevelWarn,
 
-		// Matches the frontend's dark surface colour, which the splash screen
-		// shares regardless of the operator's theme. Without it the webview
-		// paints white for the frame or two before the first render, which
-		// reads as a flash every launch.
-		BackgroundColour: &options.RGBA{R: 20, G: 18, B: 24, A: 1},
-
-		OnStartup: func(ctx context.Context) {
-			desktop.OnStartup(ctx)
-			// No-op on every platform but macOS. See trafficLightVerticalNudge.
-			macwindow.NudgeTrafficLights(trafficLightVerticalNudge)
-			// Sampling is bounded by the window's own lifetime: it starts when
-			// the application does and stops when it closes, which is exactly
-			// the window the recorded history claims to cover.
-			historyService.Start(ctx)
+		Assets: wailsapp.AssetOptions{
+			Handler:        wailsapp.AssetFileServerFS(frontend),
+			DisableLogging: true,
 		},
-		OnShutdown: func(ctx context.Context) {
+
+		// Everything registered here becomes callable from TypeScript, and
+		// `wails3 generate bindings` reads THIS LIST by static analysis to
+		// produce the declarations — it no longer compiles and runs the
+		// binary to find them out. Every exported method of every service is
+		// bound, which is why App itself is not one: see
+		// wails.App.StartNotifications.
+		Services: []wailsapp.Service{
+			wailsapp.NewService(clusterAPI),
+			wailsapp.NewService(vendorCLIAPI),
+			wailsapp.NewService(workloadAPI),
+			wailsapp.NewService(browseAPI),
+			wailsapp.NewService(overviewAPI),
+			wailsapp.NewService(fleetAPI),
+			wailsapp.NewService(rbacAPI),
+			wailsapp.NewService(helmAPI),
+			wailsapp.NewService(historyAPI),
+			wailsapp.NewService(metricsQueryAPI),
+			wailsapp.NewService(settingsAPI),
+			wailsapp.NewService(managementAPI),
+			wailsapp.NewService(terminalAPI),
+			wailsapp.NewService(fileCopyAPI),
+			wailsapp.NewService(inspectAPI),
+			wailsapp.NewService(systemAPI),
+			wailsapp.NewService(updateAPI),
+			wailsapp.NewService(notificationAPI),
+		},
+
+		// Only one PodSteer should hold the kubeconfig and its client caches;
+		// a second launch raises the existing window instead of opening a
+		// second one. Under v2 the raise was the framework's; here the
+		// callback is where it happens, which is also the only way the second
+		// process's launch is observable at all.
+		SingleInstance: &wailsapp.SingleInstanceOptions{
+			UniqueID: "com.podsteer.desktop",
+			OnSecondInstanceLaunch: func(wailsapp.SecondInstanceData) {
+				desktop.RaiseWindow()
+			},
+		},
+
+		Mac: wailsapp.MacOptions{
+			// v3 keeps an application alive with no windows — it is built for
+			// tray and multi-window applications. PodSteer has one window, so
+			// closing it means quitting, which is what v2 did unconditionally.
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
+
+		OnShutdown: func() {
 			// Forwards first: each one holds a local socket, and a process
 			// that exits without releasing them leaves ports bound until the
 			// operating system reaps them. That is the orphaned-port
 			// complaint every competing client has an issue open about, and
 			// the fix is to close them rather than to hope.
+			// The kubeconfig watch first, because it is the cheapest thing
+			// to stop and the only one that would otherwise keep stat'ing
+			// files while everything below it is being torn down.
+			kubeconfigWatcher.Stop()
 			kubernetes.StopAllPortForwards()
+			// Node shells next, and for a sharper reason than a leaked socket:
+			// each is a PRIVILEGED pod on a node, and a process that exits
+			// without deleting them leaves root shells running on the cluster
+			// until their one-hour deadline reaps them. The deadline is the
+			// backstop; this is the normal path.
+			kubernetes.StopAllNodeShells()
+			// In-cluster shells next, beside the node shells and for the
+			// same reason with the sharpness removed: nothing here is
+			// privileged, but each is still a pod PodSteer created in
+			// somebody's namespace, and a process that exits without
+			// deleting them leaves pods nobody can account for until their
+			// one-hour deadline reaps them. The deadline is the backstop;
+			// this is the normal path.
+			kubernetes.StopAllClusterShells()
+			// Local shells next. Nothing in a cluster leaks here — these are
+			// processes on this machine — but a shell whose window has gone is
+			// a shell nobody can see, type into, or end, and a login shell
+			// left behind holds its own children with it. Same rule as the
+			// two above: PodSteer started the process, so PodSteer ends it.
+			localShells.StopAllLocalShells()
 			// Same reason, same place: reflectors are goroutines holding
 			// connections, and every one of them has an owner that stops it.
 			kubernetes.StopAllWatches()
 			historyService.Close()
-			desktop.OnShutdown(ctx)
+			// Before Detach, which drops the handle this needs to release
+			// what the platform held — a D-Bus connection on Linux. Same rule
+			// as the three above: PodSteer opened it.
+			desktop.StopNotifications()
+			desktop.Detach()
 		},
+	})
 
-		// Everything bound here becomes callable from TypeScript, and Wails
-		// generates the declarations for it into web/src/lib/wailsjs.
-		Bind: []any{
-			clusterAPI,
-			workloadAPI,
-			browseAPI,
-			overviewAPI,
-			historyAPI,
-			managementAPI,
-			terminalAPI,
-			systemAPI,
-			updateAPI,
-		},
+	// The handle every bound service reaches the runtime through. It cannot be
+	// a constructor argument: those services are this application's own
+	// Services list, so they exist first. See wails.App.Attach.
+	desktop.Attach(desktopApp)
 
-		// Only one PodSteer should hold the kubeconfig and its client caches;
-		// a second launch raises the existing window instead.
-		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId: "com.podsteer.desktop",
-		},
+	desktopApp.Window.NewWithOptions(wailsapp.WebviewWindowOptions{
+		Name:      wailsadapter.MainWindowName,
+		Title:     cfg.App.Title,
+		Width:     cfg.Window.Width,
+		Height:    cfg.Window.Height,
+		MinWidth:  cfg.Window.MinWidth,
+		MinHeight: cfg.Window.MinHeight,
+		URL:       "/",
 
-		Mac: &mac.Options{
+		// Matches the frontend's dark surface colour, which the splash screen
+		// shares regardless of the operator's theme. Without it the webview
+		// paints white for the frame or two before the first render, which
+		// reads as a flash every launch.
+		BackgroundColour: wailsapp.NewRGB(20, 18, 24),
+
+		Mac: wailsapp.MacWindow{
 			// An inset title bar lets the UI's own header double as the drag
 			// region, which is the native-feeling MD3 layout on macOS.
-			TitleBar: mac.TitleBarHiddenInset(),
+			TitleBar: wailsapp.MacTitleBarHiddenInset,
 			// No appearance pin: the frontend offers a light/dark toggle and
 			// there is no runtime handle to re-pin NSAppearance with it, so
 			// the window frame follows the OS instead of contradicting one
 			// of the two themes.
-			About: &mac.AboutInfo{
-				Title:   cfg.App.Title,
-				Message: "A fast, native Kubernetes client.\nVersion " + cfg.App.Version,
-			},
 		},
 	})
-	if err != nil {
+
+	// v2's OnStartup hook, in the shape v3 offers it. The work is the same and
+	// so is the timing: after the platform has finished launching, which on
+	// macOS is when the window and its traffic lights actually exist.
+	desktopApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*wailsapp.ApplicationEvent) {
+		// No-op on every platform but macOS. See trafficLightVerticalNudge.
+		macwindow.NudgeTrafficLights(trafficLightVerticalNudge)
+		// Sampling is bounded by the window's own lifetime: it starts when
+		// the application does and stops when it closes, which is exactly
+		// the window the recorded history claims to cover.
+		historyService.Start(desktopApp.Context())
+		// Bounded by the window's lifetime for the same reason: a stat loop
+		// with no window to tell is a timer nobody reads.
+		kubeconfigWatcher.Start(desktopApp.Context())
+		// It asks for no permission here — see App.StartNotifications — and
+		// failing is not fatal.
+		desktop.StartNotifications()
+	})
+
+	if err := desktopApp.Run(); err != nil {
 		return fmt.Errorf("running application: %w", err)
 	}
 

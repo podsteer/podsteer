@@ -94,6 +94,17 @@ func Resolve(ctx context.Context) string {
 	return fmt.Sprintf("adopted the login shell's PATH, adding %s", strings.Join(added, ", "))
 }
 
+// LoginShell names the shell the operator actually uses.
+//
+// The same $SHELL this package already asks for PATH, exported so the local
+// terminal opens the shell somebody configured rather than a shell PodSteer
+// chose. Empty when there is nothing to go on, which the caller decides what
+// to do about — this package has no opinion about a machine with no $SHELL,
+// and inventing one here would put the fallback in two places.
+func LoginShell() string {
+	return os.Getenv("SHELL")
+}
+
 // looksInherited reports whether PATH looks like the bare system default,
 // which is the signal that no shell handed it down.
 //

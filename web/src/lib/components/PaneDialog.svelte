@@ -22,6 +22,8 @@
   import type { Snippet } from 'svelte'
   import type { Component } from 'svelte'
   import { Minimize2, X } from '@lucide/svelte'
+  import HelpButton from './HelpButton.svelte'
+  import type { HelpTopicId } from '$lib/help'
 
   interface Props {
     open: boolean
@@ -33,13 +35,25 @@
     name?: string
     /** Names the dialog for assistive technology. */
     label: string
+    /**
+     * Which help topic the (?) opens, for a pane that has one — a terminal
+     * kind, say. Omitted for a pane holding something the drawer already
+     * explains.
+     */
+    help?: HelpTopicId | null
+    /**
+     * Put the pane back where it came from, for a pane that came from
+     * somewhere. Omitted by a pane that was opened at this size — a terminal
+     * from the toolbar — which then shows only the close control.
+     */
+    onrestore?: (() => void) | null
     onclose: () => void
     children: Snippet
     /** Actions along the bottom, for a pane that has any. */
     footer?: Snippet
   }
 
-  let { open, icon: Icon, kind, name, label, onclose, children, footer }: Props = $props()
+  let { open, icon: Icon, kind, name, label, help: topic = null, onrestore = null, onclose, children, footer }: Props = $props()
 
   function onKeydown(event: KeyboardEvent): void {
     // Only when nothing nearer has claimed it — a search box with something in
@@ -94,22 +108,34 @@
           <h2 class="truncate text-title-medium font-semibold text-on-surface">{name}</h2>
         {/if}
         {#if kind}
-          <p class="text-body-small text-on-surface-variant/70">{kind}</p>
+          <p class="text-body-medium text-on-surface-variant">{kind}</p>
         {/if}
       </div>
 
       <div class="ml-auto flex items-center gap-0.5">
-        <button
-          type="button"
-          onclick={onclose}
-          aria-label="Restore"
-          title="Restore to the side panel"
-          class="state-layer grid size-8 shrink-0 place-items-center rounded-full
-                 text-on-surface-variant transition-colors duration-100
-                 hover:bg-surface-container hover:text-on-surface"
-        >
-          <Minimize2 class="size-4" strokeWidth={1.8} />
-        </button>
+        {#if topic}
+          <HelpButton {topic} about={kind || label} />
+        {/if}
+        <!-- ONLY WHERE THERE IS SOMEWHERE TO RESTORE TO. This pane is the
+             maximised form of the drawer's editor and log surfaces, and for
+             those "restore" is the true name of closing it: the pane goes
+             back to the side panel with its draft intact. A terminal opened
+             from the toolbar was never in the side panel and has no smaller
+             form to return to, so the control offered one and did the same
+             thing as the X beside it. -->
+        {#if onrestore}
+          <button
+            type="button"
+            onclick={onrestore}
+            aria-label="Restore"
+            title="Restore to the side panel"
+            class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant transition-colors duration-100
+                   hover:bg-surface-container hover:text-on-surface"
+          >
+            <Minimize2 class="size-4" strokeWidth={1.8} />
+          </button>
+        {/if}
         <button
           type="button"
           onclick={onclose}

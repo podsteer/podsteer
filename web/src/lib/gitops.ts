@@ -12,8 +12,15 @@
  * after it.
  */
 
-/** The GitOps controllers PodSteer can recognise. */
-export type GitOpsTool = 'argocd' | 'flux'
+/**
+ * The controllers PodSteer can recognise as owning an object.
+ *
+ * External Secrets is not GitOps — it reconciles a Secret against an external
+ * store, not against Git — but for the operator in front of an editor the
+ * consequence is identical: a hand-made change is overwritten. So it rides the
+ * same warning, the same badge and the same sentence slot, with its own words.
+ */
+export type GitOpsTool = 'argocd' | 'flux' | 'external-secrets'
 
 export interface GitOpsOwner {
   tool: GitOpsTool
@@ -26,13 +33,38 @@ export interface GitOpsOwner {
   source: string
   /** The kind of the owning object, for wording that reads naturally. */
   sourceKind: string
+  /**
+   * The object the controller actually applies, when it says so.
+   *
+   * ARGO CD'S TRACKING ID NAMES ITS TARGET, and that is not always the object
+   * carrying it. The Deployment controller copies a Deployment's annotations
+   * onto every ReplicaSet it creates, so a ReplicaSet ends up holding a
+   * tracking id that reads `…:apps/Deployment:synapctx/web` — a perfectly
+   * accurate statement about a Deployment, found on something else. Reading
+   * it as "this ReplicaSet is managed by Argo CD" produced a warning that was
+   * wrong twice over: Argo CD never touches the ReplicaSet, and what really
+   * undoes an edit to one is the Deployment controller.
+   *
+   * Null for the older signals — the `argocd.argoproj.io/instance` label and
+   * `app.kubernetes.io/managed-by` — which name no target, so nothing can be
+   * compared and the object is taken at its word.
+   */
+  target: { kind: string; name: string; namespace: string } | null
 }
 
 /** Metadata as it appears in a parsed manifest. */
 interface Metadata {
   labels?: Record<string, string>
   annotations?: Record<string, string>
+  ownerReferences?: { apiVersion?: string; kind?: string; name?: string }[]
 }
+
+/**
+ * The annotation ESO writes on every Secret it manages, holding a hash of the
+ * data it last wrote — its own drift check. Present under every creation
+ * policy, including `Merge`, which writes no ownerReference.
+ */
+const ESO_DATA_HASH = 'reconcile.external-secrets.io/data-hash'
 
 /**
  * Identifies the controller managing an object, or null.
@@ -54,6 +86,20 @@ export function gitOpsOwner(manifest: unknown): GitOpsOwner | null {
   const labels = metadata.labels ?? {}
   const annotations = metadata.annotations ?? {}
 
+  // --- External Secrets --------------------------------------------------
+  //
+  // FIRST, because it is the most specific answer for the one kind it
+  // applies to. Argo CD tracks the ExternalSecret, not the Secret it
+  // produces; if the template copied a tracking id onto the Secret, what
+  // actually overwrites an edit is still ESO. The ownerReference (the default
+  // `creationPolicy: Owner`) names the ExternalSecret; the data-hash
+  // annotation alone says ESO without saying which.
+  const externalSecret = (metadata.ownerReferences ?? []).find(
+    (ref) => ref.kind === 'ExternalSecret' && (ref.apiVersion ?? '').startsWith('external-secrets.io/'),
+  )
+  if (externalSecret) return eso(externalSecret.name ?? '')
+  if (annotations[ESO_DATA_HASH]) return eso('')
+
   // --- Argo CD ------------------------------------------------------------
   //
   // The tracking id is Argo CD's own record of ownership and is the only
@@ -63,7 +109,7 @@ export function gitOpsOwner(manifest: unknown): GitOpsOwner | null {
   // value from the `instance` label beside it, the label naming a parent app.
   const trackingId = annotations['argocd.argoproj.io/tracking-id']
   if (trackingId) {
-    return argo(trackingId.split(':')[0] ?? '')
+    return argo(trackingId.split(':')[0] ?? '', parseTarget(trackingId))
   }
 
   // The older tracking method, and unambiguous because it is Argo CD's own
@@ -86,12 +132,41 @@ export function gitOpsOwner(manifest: unknown): GitOpsOwner | null {
   return null
 }
 
-function argo(application: string): GitOpsOwner {
-  return { tool: 'argocd', label: 'Argo CD', source: application, sourceKind: 'Application' }
+function argo(application: string, target: GitOpsOwner['target'] = null): GitOpsOwner {
+  return { tool: 'argocd', label: 'Argo CD', source: application, sourceKind: 'Application', target }
 }
 
 function flux(source: string, sourceKind: string): GitOpsOwner {
-  return { tool: 'flux', label: 'Flux', source, sourceKind }
+  return { tool: 'flux', label: 'Flux', source, sourceKind, target: null }
+}
+
+function eso(externalSecret: string): GitOpsOwner {
+  return {
+    tool: 'external-secrets',
+    label: 'External Secrets',
+    source: externalSecret,
+    sourceKind: 'ExternalSecret',
+    target: null,
+  }
+}
+
+/**
+ * Reads the object out of a tracking id.
+ *
+ * The form is `<application>:<group>/<Kind>:<namespace>/<name>`, and the
+ * group is optional for core kinds — `web:/Service:platform/web`. Anything
+ * that does not parse returns null, which means "no target to compare" and
+ * leaves the object taken at its word.
+ */
+function parseTarget(trackingId: string): GitOpsOwner['target'] {
+  const parts = trackingId.split(':')
+  if (parts.length < 3) return null
+
+  const kind = parts[1]?.split('/').pop() ?? ''
+  const [namespace, name] = (parts[2] ?? '').split('/')
+  if (!kind || !name) return null
+
+  return { kind, name, namespace: namespace ?? '' }
 }
 
 /**
@@ -106,5 +181,79 @@ export function revertWarning(owner: GitOpsOwner): string {
     ? `${owner.label} — the ${owner.source} ${owner.sourceKind}`
     : owner.label
 
+  // Not "against Git": ESO's source of truth is the external store, and its
+  // clock is the ExternalSecret's refreshInterval.
+  if (owner.tool === 'external-secrets') {
+    return `This Secret is written by ${by}. Changes made here are overwritten the next time it refreshes from the external secret store.`
+  }
+
   return `This object is managed by ${by}. Changes made here are reverted the next time it reconciles against Git.`
+}
+
+/**
+ * How an object comes to be under a GitOps controller.
+ *
+ * `direct` is the object the controller applies — a Deployment with Argo CD's
+ * tracking annotation on it. `inherited` is everything below that: a POD
+ * carries no GitOps marker at all (measured on a real cluster: the Deployment
+ * had the tracking id, its pods had `app.kubernetes.io/name` and a
+ * pod-template-hash and nothing else), so the only way to know a pod's spec
+ * comes from Git is to ask what controls it.
+ *
+ * THE TWO CASES NEED DIFFERENT SENTENCES, and getting that wrong is how a
+ * warning stops being read. A change to the Deployment is reverted, usually
+ * within seconds where self-heal is on. A change to one of its pods is NOT
+ * reverted — Argo CD reconciles the Deployment, and an in-place resize does
+ * not change the Deployment, so the Application stays Synced and the pod
+ * keeps the new figures. It is lost later, when something replaces the pod.
+ */
+export interface GitOpsManagement {
+  owner: GitOpsOwner
+  through: 'direct' | 'inherited'
+  /** The controller carrying the marker. Empty when `through` is direct. */
+  controller: { kind: string; name: string } | null
+}
+
+/** One sentence for either case, saying what actually happens. */
+export function managementWarning(management: GitOpsManagement): string {
+  if (management.through === 'direct') return revertWarning(management.owner)
+
+  const { owner, controller } = management
+  const by = owner.source ? `${owner.label} — the ${owner.source} ${owner.sourceKind}` : owner.label
+  const above = controller ? `the ${controller.name} ${controller.kind}` : 'its controller'
+
+  // DELIBERATELY NOT "will be reverted". The controller does not watch this
+  // object, so the change stands; what ends it is the replacement, which
+  // comes from Git.
+  return `This belongs to ${above}, which is managed by ${by}. A change here stays on this object, but its replacement comes from Git — so the next rollout, restart or eviction brings back the figures Git holds.`
+}
+
+/**
+ * What a rollback does to an object a GitOps controller manages.
+ *
+ * KUBERNETES ALLOWS IT, AND THAT IS THE TRAP. The rollback succeeds, the
+ * Deployment runs the old template, and the controller then puts back what
+ * Git says — within seconds where Argo CD's self-heal is on, at Flux's next
+ * reconcile, or at the next sync otherwise. Nothing is blocked here, because
+ * there is a legitimate case (an emergency, with automated sync paused), but
+ * the sentence says what undoes it and what to do instead, which is the part
+ * the general "changes are reverted" warning leaves somebody to work out.
+ *
+ * Whether self-heal is actually on lives in the Argo CD Application, which
+ * this does not read — so the sentence covers both cases rather than
+ * guessing which one applies.
+ */
+export function rollbackWarning(management: GitOpsManagement): string {
+  if (management.through !== 'direct') return managementWarning(management)
+
+  const { owner } = management
+  const by = owner.source ? `${owner.label} — the ${owner.source} ${owner.sourceKind}` : owner.label
+
+  if (owner.tool === 'argocd') {
+    return `This is managed by ${by}. A rollback here is overwritten by the next sync from Git — within seconds if self-heal is on. To roll back for good, revert the change in Git, or use Argo CD's own rollback with automated sync turned off.`
+  }
+  if (owner.tool === 'flux') {
+    return `This is managed by ${by}. A rollback here is overwritten at its next reconcile. To roll back for good, revert the change in Git, or suspend the ${owner.sourceKind} first.`
+  }
+  return managementWarning(management)
 }

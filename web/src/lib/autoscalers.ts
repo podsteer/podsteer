@@ -1,0 +1,206 @@
+/**
+ * Locating the autoscaler, if any, that owns a workload's replica count.
+ *
+ * Scaling a Deployment or StatefulSet by hand while a HorizontalPodAutoscaler
+ * or a KEDA ScaledObject targets it is undone within its next sync period,
+ * silently — the controller reconciles the replica count right back to
+ * whatever it decided. Kubernetes puts no marker on the WORKLOAD saying
+ * "something else is scaling me"; the only place that relationship is
+ * recorded is on the autoscaler itself, in `spec.scaleTargetRef`.
+ *
+ * Both kinds are served by the generic table path (`BrowseAPI.ListTable`),
+ * which prints the columns `kubectl get` would — an HPA's `REFERENCE` column
+ * reads `Deployment/web`, and a ScaledObject prints `SCALETARGETKIND` and
+ * `SCALETARGETNAME` as two columns instead of one string. Reading them here
+ * is a QUOTATION of what is already on screen in the table view, the same
+ * string the API server itself prints — comparing it for an exact match is
+ * not a verdict, so this stays in TypeScript rather than crossing into Go.
+ * See the QUOTATION vs VERDICT rule in CLAUDE.md.
+ */
+
+import type { ResourceTable } from './api/client'
+
+/** One autoscaler found to be targeting a workload. */
+export interface AutoscalerRef {
+  name: string
+  kind: 'HorizontalPodAutoscaler' | 'ScaledObject'
+  /** From the table's MINPODS (HPA) or MIN (KEDA) column, when the server printed one. */
+  minReplicas?: string
+  /** From the table's MAXPODS (HPA) or MAX (KEDA) column, when the server printed one. */
+  maxReplicas?: string
+  /**
+   * An HPA's: the ScaledObject KEDA created it for, from the
+   * `scaledobject.keda.sh/name` label KEDA puts on it. A ScaledObject's: the
+   * HPA it drives, once `foldKedaAutoscalers` has paired them.
+   */
+  keda?: string
+}
+
+/** The label KEDA writes on every HPA it creates, naming its ScaledObject. */
+const KEDA_OWNER_LABEL = 'scaledobject.keda.sh/name'
+
+/**
+ * One warning per AUTOSCALER, not per object.
+ *
+ * KEDA does not scale anything itself: a ScaledObject makes an HPA
+ * (`keda-hpa-<name>` by default) and the HPA does the scaling. Both target the
+ * workload, so both were found, and the dialog said "an autoscaler manages
+ * this" twice — about one autoscaler, under two names, one of them a
+ * generated one nobody wrote. The ScaledObject is what an operator edits, so
+ * it stays, and the HPA it drives is folded into it by name.
+ *
+ * Paired by KEDA's own label first; by the default name only when a row
+ * carried no labels, since a custom `horizontalPodAutoscalerConfig.name` is
+ * what the label exists to survive. An HPA that pairs with nothing is left
+ * alone: it is a separate autoscaler, and two warnings are then the truth.
+ */
+export function foldKedaAutoscalers(refs: AutoscalerRef[]): AutoscalerRef[] {
+  const scaledObjects = new Set(refs.filter((ref) => ref.kind === 'ScaledObject').map((ref) => ref.name))
+  const driven = new Map<string, string>()
+  for (const ref of refs) {
+    if (ref.kind !== 'HorizontalPodAutoscaler') continue
+    const owner =
+      ref.keda ?? (ref.name.startsWith('keda-hpa-') ? ref.name.slice('keda-hpa-'.length) : undefined)
+    if (owner && scaledObjects.has(owner)) driven.set(owner, ref.name)
+  }
+
+  const folded = new Set(driven.values())
+  return refs
+    .filter((ref) => !(ref.kind === 'HorizontalPodAutoscaler' && folded.has(ref.name)))
+    .map((ref) => (ref.kind === 'ScaledObject' && driven.has(ref.name) ? { ...ref, keda: driven.get(ref.name) } : ref))
+}
+
+/**
+ * Whether the Scale dialog could establish the answer.
+ *
+ * A THIRD STATE, DELIBERATELY. Collapsing "asked and found nothing" and
+ * "could not ask" into the same `autoscalers: []` would tell an operator
+ * nothing manages their workload when the honest answer is "unreadable" — the
+ * same distinction `domain.MetricsStatus` draws for the overview (see
+ * CLAUDE.md): an absent answer and a refused one are different things, and
+ * only one of them is safe to read as permission to scale freely.
+ */
+export type AutoscalerCheck =
+  | { status: 'known'; autoscalers: AutoscalerRef[] }
+  | { status: 'unknown'; reason: string }
+
+/**
+ * "HorizontalPodAutoscaler, min 2, max 10" — the kind and only the bounds
+ * the server printed. Shared by the Scale dialog and the bulk review so the
+ * same autoscaler reads the same way wherever the warning appears.
+ */
+export function describeAutoscaler(ref: AutoscalerRef): string {
+  const bounds = [
+    ref.minReplicas ? `min ${ref.minReplicas}` : null,
+    ref.maxReplicas ? `max ${ref.maxReplicas}` : null,
+  ].filter((part): part is string => part !== null)
+  const described = bounds.length ? `${ref.kind}, ${bounds.join(', ')}` : ref.kind
+  // The HPA it drives is named, because that is the object whose events say
+  // what the scaler actually did.
+  return ref.kind === 'ScaledObject' && ref.keda ? `${described}, through the ${ref.keda} HPA` : described
+}
+
+/** Finds a column by its header, case-insensitively. -1 when the server did not print it. */
+function columnIndex(table: ResourceTable, header: string): number {
+  return (table.columns ?? []).findIndex(
+    (column) => column.name.toLowerCase() === header.toLowerCase(),
+  )
+}
+
+/**
+ * Finds every row of an autoscaler table that targets `target`.
+ *
+ * MISSING COLUMNS ARE NOT AN ERROR, NEVER A THROW. A server that prints a
+ * table without a REFERENCE or a SCALETARGETKIND/SCALETARGETNAME column has
+ * printed something this function does not recognise — additionalPrinterColumns
+ * are not guaranteed to be stable across API versions — and the honest answer
+ * is "found nothing here", the same as a table with no matching row.
+ *
+ * THE MATCH IS EXACT ON BOTH KIND AND NAME. `Deployment/web` naming a
+ * Deployment called "web" must not match a StatefulSet also called "web", and
+ * must not match a Deployment called "web-canary" — a substring or prefix
+ * match would silently point an operator at the wrong autoscaler, or hide a
+ * real one behind what looked like a match.
+ */
+export function findAutoscalers(
+  table: ResourceTable,
+  kindHint: 'hpa' | 'keda',
+  target: { kind: string; name: string },
+): AutoscalerRef[] {
+  return kindHint === 'hpa' ? findHorizontalPodAutoscalers(table, target) : findScaledObjects(table, target)
+}
+
+function findHorizontalPodAutoscalers(
+  table: ResourceTable,
+  target: { kind: string; name: string },
+): AutoscalerRef[] {
+  const referenceIdx = columnIndex(table, 'REFERENCE')
+  if (referenceIdx === -1) return []
+
+  const minIdx = columnIndex(table, 'MINPODS')
+  const maxIdx = columnIndex(table, 'MAXPODS')
+
+  const found: AutoscalerRef[] = []
+  for (const row of table.rows ?? []) {
+    const reference = row.cells?.[referenceIdx]
+    if (!reference) continue
+
+    // "Deployment/web" — Kubernetes' own separator between the target's kind
+    // and its name, and one a resource name may never contain itself.
+    const slash = reference.indexOf('/')
+    if (slash === -1) continue
+    const kind = reference.slice(0, slash)
+    const name = reference.slice(slash + 1)
+    if (kind !== target.kind || name !== target.name) continue
+
+    found.push({
+      name: row.name,
+      kind: 'HorizontalPodAutoscaler',
+      minReplicas: minIdx === -1 ? undefined : row.cells?.[minIdx],
+      maxReplicas: maxIdx === -1 ? undefined : row.cells?.[maxIdx],
+      keda: row.labels?.[KEDA_OWNER_LABEL] || undefined,
+    })
+  }
+  return found
+}
+
+/**
+ * KEDA prints SCALETARGETKIND from `status.scaleTargetKind`, which is the
+ * GroupVersion-qualified form — "apps/v1.Deployment", not "Deployment" — so
+ * the bare kind is whatever follows the last dot. A cell that carries no
+ * qualifier (an older KEDA, or a hand-written row) is returned unchanged.
+ */
+function bareKind(cell: string | undefined): string {
+  if (!cell) return ''
+  const dot = cell.lastIndexOf('.')
+  return dot === -1 ? cell : cell.slice(dot + 1)
+}
+
+function findScaledObjects(
+  table: ResourceTable,
+  target: { kind: string; name: string },
+): AutoscalerRef[] {
+  // Two columns, unlike an HPA's single "Kind/name" REFERENCE — KEDA prints
+  // the target's kind and name separately, so there is no string to split.
+  const kindIdx = columnIndex(table, 'SCALETARGETKIND')
+  const nameIdx = columnIndex(table, 'SCALETARGETNAME')
+  if (kindIdx === -1 || nameIdx === -1) return []
+
+  const minIdx = columnIndex(table, 'MIN')
+  const maxIdx = columnIndex(table, 'MAX')
+
+  const found: AutoscalerRef[] = []
+  for (const row of table.rows ?? []) {
+    if (bareKind(row.cells?.[kindIdx]) !== target.kind || row.cells?.[nameIdx] !== target.name) {
+      continue
+    }
+
+    found.push({
+      name: row.name,
+      kind: 'ScaledObject',
+      minReplicas: minIdx === -1 ? undefined : row.cells?.[minIdx],
+      maxReplicas: maxIdx === -1 ? undefined : row.cells?.[maxIdx],
+    })
+  }
+  return found
+}

@@ -84,6 +84,10 @@ type WorkloadSpec struct {
 	// cluster is 239 KiB across sixty-one deployments and would be re-sent on
 	// every refresh to serve one column.
 	Annotations map[string]string
+	// Custom holds the operator's own JSONPath columns, keyed by the
+	// interface's column id and already rendered as text. Nil when none were
+	// asked for, which is every read but a list view's.
+	Custom map[string]string
 	// Owner is the controlling owner, e.g. the Deployment behind a ReplicaSet.
 	Owner OwnerReference
 	// Suspended reports whether a Job or CronJob is suspended.
@@ -112,6 +116,7 @@ type Workload struct {
 	selector      map[string]string
 	labels        map[string]string
 	annotations   map[string]string
+	custom        map[string]string
 	owner         OwnerReference
 	suspended     bool
 	schedule      string
@@ -151,6 +156,7 @@ func NewWorkload(spec WorkloadSpec) (Workload, error) {
 		selector:      maps.Clone(spec.Selector),
 		labels:        maps.Clone(spec.Labels),
 		annotations:   maps.Clone(spec.Annotations),
+		custom:        maps.Clone(spec.Custom),
 		owner:         spec.Owner,
 		suspended:     spec.Suspended,
 		schedule:      spec.Schedule,
@@ -212,6 +218,10 @@ func (w Workload) Labels() map[string]string { return maps.Clone(w.labels) }
 // Annotations returns a copy of the controller's annotations, which adapters
 // populate selectively. See WorkloadSpec.Annotations.
 func (w Workload) Annotations() map[string]string { return maps.Clone(w.annotations) }
+
+// Custom returns a copy of the operator's own JSONPath column values, keyed
+// by column id.
+func (w Workload) Custom() map[string]string { return maps.Clone(w.custom) }
 
 // Owner returns the controlling owner, if any.
 func (w Workload) Owner() OwnerReference { return w.owner }

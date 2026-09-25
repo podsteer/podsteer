@@ -15,14 +15,16 @@ import (
 // ListNamespaces returns every namespace visible to the credentials.
 //
 // Cached: the assessment and the namespace list both ask on the same tick.
-func (a *Adapter) ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
-	return cachedSlice(&a.reads, ctx, readKey(id.String(), "namespaces"), func(ctx context.Context) ([]domain.Namespace, error) {
-		return a.listNamespaces(ctx, id)
+//
+// The projection keys the read for the reason ListPods gives.
+func (a *Adapter) ListNamespaces(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Namespace, error) {
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "namespaces", projection.String()), func(ctx context.Context) ([]domain.Namespace, error) {
+		return a.listNamespaces(ctx, id, projection)
 	})
 }
 
 // ListNamespaces returns every namespace visible to the configured credentials.
-func (a *Adapter) listNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
+func (a *Adapter) listNamespaces(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Namespace, error) {
 	op := fmt.Sprintf("listing namespaces of %q", id)
 
 	client, err := a.factory.clientFor(id)
@@ -37,7 +39,7 @@ func (a *Adapter) listNamespaces(ctx context.Context, id domain.ClusterID) ([]do
 
 	namespaces := make([]domain.Namespace, 0, len(list.Items))
 	for i := range list.Items {
-		namespace, err := mapNamespace(&list.Items[i])
+		namespace, err := mapNamespace(&list.Items[i], projection)
 		if err != nil {
 			a.logger.WarnContext(ctx, "skipping unmappable namespace",
 				slog.String("cluster", id.String()),
@@ -55,14 +57,14 @@ func (a *Adapter) listNamespaces(ctx context.Context, id domain.ClusterID) ([]do
 //
 // Cached: the assessment reads them on every refresh, and the node list reads
 // them again in the same instant.
-func (a *Adapter) ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
-	return cachedSlice(&a.reads, ctx, readKey(id.String(), "nodes"), func(ctx context.Context) ([]domain.Node, error) {
-		return a.listNodes(ctx, id)
+func (a *Adapter) ListNodes(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Node, error) {
+	return cachedSlice(&a.reads, ctx, readKey(id.String(), "nodes", projection.String()), func(ctx context.Context) ([]domain.Node, error) {
+		return a.listNodes(ctx, id, projection)
 	})
 }
 
 // ListNodes returns the cluster's nodes.
-func (a *Adapter) listNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
+func (a *Adapter) listNodes(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Node, error) {
 	op := fmt.Sprintf("listing nodes of %q", id)
 
 	client, err := a.factory.clientFor(id)
@@ -77,7 +79,7 @@ func (a *Adapter) listNodes(ctx context.Context, id domain.ClusterID) ([]domain.
 
 	nodes := make([]domain.Node, 0, len(list.Items))
 	for i := range list.Items {
-		node, err := mapNode(id, &list.Items[i])
+		node, err := mapNode(id, &list.Items[i], projection)
 		if err != nil {
 			a.logger.WarnContext(ctx, "skipping unmappable node",
 				slog.String("cluster", id.String()),
@@ -236,6 +238,21 @@ var adoptedGroups = map[string]bool{
 	"groupsnapshot.storage.k8s.io": true,
 	// AdminNetworkPolicy, installed by a CNI rather than by Kubernetes.
 	"policy.networking.k8s.io": true,
+	// Dynamic Resource Allocation, which is how a GPU workload is described
+	// now. In-tree rather than installed by anybody, so it stretches this
+	// list's original wording — but it stretches it in the direction the list
+	// exists for. The suffix rule hides a group on the grounds that every
+	// cluster has it, and this one is behind a feature gate that most clusters
+	// do not turn on: a cluster has ResourceClaims because somebody enabled
+	// DRA and installed a driver, exactly as it has Gateways because somebody
+	// installed Gateway API. Hidden, the kinds could not be opened at all.
+	"resource.k8s.io": true,
+	// The admission policies, and the webhook configurations that share their
+	// group. Same reasoning: ValidatingAdmissionPolicy was gated off until
+	// recently and MutatingAdmissionPolicy still is on most clusters, and
+	// nothing in the catalog covers this group, so the whole of what admits or
+	// refuses a write was unreachable.
+	"admissionregistration.k8s.io": true,
 }
 
 // Worth knowing before adding to the list above: `x-k8s.io` groups — Cluster

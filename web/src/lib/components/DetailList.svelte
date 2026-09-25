@@ -28,9 +28,13 @@
   A real <dl>, so the pairing is in the document and not only in the grid.
 -->
 <script lang="ts">
-  import { ChevronDown, ExternalLink } from '@lucide/svelte'
+  import { Check, ChevronDown, ExternalLink, TriangleAlert } from '@lucide/svelte'
   import RowMenu, { type RowAction } from './RowMenu.svelte'
   import ColumnDivider from './ColumnDivider.svelte'
+  import Button from './Button.svelte'
+  import { escapeLayer, type EscapeClaim } from '$lib/escape'
+  import { copyText } from '$lib/clipboard'
+  import { flash } from '$lib/flash.svelte'
 
   export interface DetailRow {
     label: string
@@ -81,6 +85,45 @@
      */
     info?: string
     /**
+     * Muted words after the value that are not part of it — a CronJob's
+     * schedule said in English beside the expression.
+     *
+     * NOT concatenated into `value`, because the value is what Copy takes and
+     * what an edit starts from: `*\/5 * * * * (Every 5 minutes)` pasted into
+     * a manifest is a bug this field exists to avoid.
+     */
+    suffix?: string
+    /**
+     * A reason this value is worth a second look, shown as an amber icon
+     * before it with the reason on hover — an image on `:latest`.
+     *
+     * An icon rather than `tone`: tone recolours the whole value and says
+     * "this value is the problem", while this says "this value is fine to
+     * read, and here is something about it".
+     */
+    warning?: string
+    /**
+     * A second line under the value, muted — a condition's reason and message
+     * under its True or False, a container's readiness under its state.
+     *
+     * Its own line rather than joined to the value with a dot: the value is
+     * the verdict somebody scans the column for, and "True · MinimumReplicas
+     * Available — Deployment has minimum availability" made them read a
+     * sentence to find the one word. Not part of what Copy takes.
+     */
+    detail?: string
+    /**
+     * Several values for one label, each on its own line and in the value's
+     * own size and colour — a container's state and its readiness, a
+     * request's CPU and its memory.
+     *
+     * Distinct from `detail`, which is a muted explanation OF the value; these
+     * are the value, and a second one set smaller and greyer would read as
+     * less true than the first. `value` still carries them joined, for Copy
+     * and for the tooltip.
+     */
+    lines?: string[]
+    /**
      * The resource this row refers to, reachable from its menu.
      *
      * Distinct from `onclick`, which makes the VALUE a link and is right when
@@ -105,6 +148,26 @@
      * audited read whose wording depends on whether it is currently shown.
      */
     action?: RowAction
+    /**
+     * Lets this row's value be edited in place — a Secret key already
+     * revealed, or a ConfigMap key, both already plaintext in `value`.
+     *
+     * DELIBERATELY THIN. DetailList has no idea what a save means or what
+     * should happen after one succeeds — it renders a textarea, calls
+     * `onSave` with what was typed, and shows whatever it throws. The caller
+     * owns the meaning: re-revealing a Secret key through its own audited
+     * path, or refreshing a ConfigMap's cached contents, happens in
+     * `onSave` or after it resolves, never here.
+     *
+     * Absent entirely, not merely disabled, for a Secret row that has not
+     * been revealed yet — editing a value nobody has looked at is the
+     * mistake this ordering exists to prevent, so the caller simply does not
+     * offer `edit` until a reveal has resolved.
+     */
+    edit?: {
+      /** Persists the new value. Reject to keep the editor open with an error. */
+      onSave: (value: string) => Promise<void>
+    }
   }
 
   interface Props {
@@ -118,9 +181,9 @@
    *
    * Copy is on every row, because every row has a value and copying it is the
    * thing an operator does with a panel more than anything else. The other
-   * two are there when they mean something.
+   * ones are there when they mean something.
    */
-  function actionsFor(row: DetailRow): RowAction[] {
+  function actionsFor(row: DetailRow, index: number): RowAction[] {
     const actions: RowAction[] = []
 
     const reference = row.reference ?? row.onclick
@@ -128,20 +191,121 @@
 
     actions.push({ label: 'Copy value', kind: 'copy', onclick: () => copy(row.value) })
 
+    if (row.edit) {
+      actions.push({ label: 'Edit value', kind: 'edit', onclick: () => startEdit(index, row) })
+    }
+
     if (row.action) actions.push(row.action)
     return actions
   }
 
+  // --- Inline editing -------------------------------------------------------
+  //
+  // ONE ROW AT A TIME, keyed by position like everything else in this list.
+  // A second field kept alongside `editingIndex` (rather than an editable
+  // copy of every row's value) is enough because only one editor can be open,
+  // and it is cleared the same way `expanded`/`clipped` are: on a shape
+  // change, so a stale editor cannot survive into a pane about a different
+  // object.
+
+  /** Which row is open for editing, or null. */
+  let editingIndex = $state<number | null>(null)
+  /** What the textarea holds, seeded from the row's value on open. */
+  let editValue = $state('')
+  let editSaving = $state(false)
+  /** What `onSave` rejected with, shown beside the editor rather than as a banner. */
+  let editError = $state('')
+
+  function startEdit(index: number, row: DetailRow): void {
+    editingIndex = index
+    editValue = row.value
+    editError = ''
+  }
+
+  /** "Written", the way RowMenu's own menu item confirms a copy in place. */
+  const written = flash(1200)
+
+  function cancelEdit(): void {
+    editingIndex = null
+    editValue = ''
+    editError = ''
+    written.cancel()
+  }
+
+  async function saveEdit(row: DetailRow): Promise<void> {
+    if (!row.edit || editSaving) return
+
+    editSaving = true
+    editError = ''
+    try {
+      await row.edit.onSave(editValue)
+      editSaving = false
+      // Left to the caller to decide what "shown" means afterwards — a
+      // re-reveal, a refreshed cache read — so the editor does not assume
+      // editValue is now the truth. It shows the confirmation and THEN
+      // closes, rather than closing immediately: a save that vanished the
+      // instant it succeeded looked, on a slow connection, identical to one
+      // that had done nothing at all.
+      written.show(() => {
+        editingIndex = null
+        editValue = ''
+      })
+    } catch (cause) {
+      editSaving = false
+      editError = cause instanceof Error ? cause.message : String(cause)
+    }
+  }
+
+  /** Cmd/Ctrl+Enter saves, mirroring every other multi-line save control here. */
+  function onEditKeydown(event: KeyboardEvent, row: DetailRow): void {
+    if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return
+    event.preventDefault()
+    void saveEdit(row)
+  }
+
   /**
-   * Copies a value.
-   *
-   * Deliberately silent about failure. The webview's clipboard can refuse —
-   * it is a permissioned API — and a panel that raises an error banner
-   * because a copy did not take is worse than one that simply did not copy:
-   * the text is on screen and selectable either way.
+   * Escape belongs to one layer, and while the editor is open this is the
+   * innermost one open inside the drawer. See $lib/escape — the same claim
+   * RowMenu takes for its own popover, so a menu opened from a keyboard
+   * cannot leave two things listening for the same keystroke.
    */
-  function copy(value: string): void {
-    void navigator.clipboard?.writeText(value).catch(() => {})
+  let editEscape = $state<EscapeClaim | null>(null)
+  $effect(() => {
+    if (editingIndex === null) return
+    const held = escapeLayer()
+    editEscape = held
+    return () => {
+      held.release()
+      editEscape = null
+    }
+  })
+
+  function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape' || editingIndex === null) return
+    if (!editEscape?.owns()) return
+    cancelEdit()
+  }
+
+  $effect(() => {
+    if (editingIndex === null) return
+    window.addEventListener('keydown', onWindowKeydown)
+    return () => window.removeEventListener('keydown', onWindowKeydown)
+  })
+
+  /**
+   * Copies a value, and reports whether it got there.
+   *
+   * IT USED TO SWALLOW THE ANSWER, and the row menu above then said
+   * "Copied!" regardless — which was a lie in the shipped webview, where
+   * `navigator.clipboard` is undefined and the optional chain made the whole
+   * expression do nothing at all. See $lib/clipboard.
+   *
+   * Still no error banner: the menu item itself says "Copy failed" in place,
+   * which is where somebody pressing it is looking, and the value is on
+   * screen and selectable either way.
+   */
+  function copy(value: string): Promise<boolean> {
+    return copyText(value)
   }
 
   let list = $state<HTMLElement | null>(null)
@@ -191,6 +355,10 @@
     expanded = []
     clipped = []
     measured = []
+    // A row's position can point at a different object entirely once the
+    // list itself has changed — switching pods mid-edit must not leave an
+    // open textarea quietly saving into the new row underneath it.
+    cancelEdit()
   })
 
   /**
@@ -276,6 +444,9 @@
     const index = Number(cell.getAttribute('data-row'))
     if (Number.isInteger(index)) hovered = index
   }
+
+  // Nothing left running behind a component that has gone away.
+  $effect(() => () => written.cancel())
 </script>
 
 <div class="relative">
@@ -340,10 +511,64 @@
       class="group/row flex min-w-0 items-start gap-1 text-body-medium {row.tone === 'critical'
         ? 'text-error'
         : row.tone === 'warn'
-          ? 'text-gauge-warn'
+          ? 'text-gauge-warn-ink'
           : 'text-on-surface-variant'}"
     >
-      {#if open && laidOut(row.value)}
+      {#if editingIndex === index}
+        <!--
+          THE VALUE CELL BECOMES THE EDITOR, not a dialog over it — editing a
+          Secret key or a ConfigMap key is a small, local act, and a modal
+          over the whole drawer would suggest it is a bigger one than it is.
+
+          Monospace, and several rows tall by default: a certificate or a
+          JSON blob is what most keys worth editing actually hold, and a
+          single-line input would hide that on the first keystroke.
+        -->
+        <form
+          class="flex min-w-0 flex-1 flex-col gap-1.5"
+          onsubmit={(event) => {
+            event.preventDefault()
+            void saveEdit(row)
+          }}
+        >
+          <label class="sr-only" for="detail-list-edit-{index}">Edit {row.label}</label>
+          <!-- svelte-ignore a11y_autofocus -->
+          <textarea
+            id="detail-list-edit-{index}"
+            bind:value={editValue}
+            onkeydown={(event) => onEditKeydown(event, row)}
+            rows="4"
+            spellcheck="false"
+            disabled={editSaving || written.on}
+            autofocus
+            class="w-full resize-y rounded-xs border border-outline-variant bg-surface px-2 py-1.5
+                   font-mono text-body-small text-on-surface outline-none
+                   focus:border-primary disabled:opacity-60"
+            data-selectable
+          ></textarea>
+          {#if editError}
+            <p class="text-body-small text-error" role="alert">{editError}</p>
+          {/if}
+          <div class="flex items-center gap-2">
+            {#if written.on}
+              <!-- The same confirmation RowMenu's own "Copy value" gives,
+                   held on screen long enough to read before the editor
+                   closes on its own — a save button that vanishes the
+                   instant it is pressed looks, on a slow connection,
+                   identical to one that silently did nothing. -->
+              <span class="inline-flex items-center gap-1.5 text-body-medium text-success">
+                <Check class="size-3.5" strokeWidth={2.5} />
+                Written
+              </span>
+            {:else}
+              <Button type="submit" variant="filled" loading={editSaving}>Save</Button>
+              <Button type="button" variant="outlined" disabled={editSaving} onclick={cancelEdit}>
+                Cancel
+              </Button>
+            {/if}
+          </div>
+        </form>
+      {:else if open && laidOut(row.value)}
         <!--
           Laid out, in the monospace face indentation needs to mean anything.
           `pre-wrap` rather than `pre`: a long string value inside the JSON
@@ -358,9 +583,19 @@
       <span
         bind:this={valueCells[index]}
         class="min-w-0 flex-1 {open ? 'break-words' : 'truncate'}"
-        title={row.info ?? row.title}
+        title={row.warning ?? row.info ?? row.title}
         data-selectable
       >
+        {#if row.warning}
+          <span
+            class="mr-1 inline-flex align-[-2px] text-gauge-warn-ink"
+            aria-label={row.warning}
+            role="img"
+            data-row-warning
+          >
+            <TriangleAlert class="size-3.5" strokeWidth={2} />
+          </span>
+        {/if}
         {#if row.onclick}
           <!-- A button, not an anchor: this navigates within the application
                and has no address. Styled as a link because that is what it
@@ -378,8 +613,24 @@
               <ExternalLink class="size-3 shrink-0 self-center" strokeWidth={1.8} />
             {/if}
           </button>
+        {:else if row.lines?.length}
+          {#each row.lines as line, lineIndex (lineIndex)}
+            <span class="block {open ? 'break-words' : 'truncate'}" data-row-line>{line}</span>
+          {/each}
         {:else}
           {row.value}
+        {/if}
+        {#if row.suffix}
+          <span class="ml-1 text-on-surface-variant/70" data-row-suffix>{row.suffix}</span>
+        {/if}
+        {#if row.detail}
+          <!-- Always the muted colour, whatever tone the value carries: the
+               tone belongs to the verdict above, and a whole paragraph in red
+               reads as alarm rather than as the explanation it is. -->
+          <span
+            class="block text-body-small text-on-surface-variant/80 {open ? 'break-words' : 'truncate'}"
+            data-row-detail
+          >{row.detail}</span>
         {/if}
       </span>
       {/if}
@@ -414,6 +665,12 @@
         `focus-visible` on the control itself covers the case where the row
         has nothing else focusable.
       -->
+      {#if editingIndex !== index}
+      <!--
+        Absent entirely while this row is being edited: Save and Cancel are
+        already on screen inside the editor, and a chevron or a "More" menu
+        floating beside them offers nothing the form does not already do.
+      -->
       <span class="ml-auto flex shrink-0 items-center gap-0.5">
 
         <!--
@@ -442,8 +699,9 @@
           </button>
         {/if}
 
-        <RowMenu actions={actionsFor(row)} label={row.label} />
+        <RowMenu actions={actionsFor(row, index)} label={row.label} />
       </span>
+      {/if}
     </dd>
   {/each}
   </dl>

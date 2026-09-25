@@ -24,6 +24,8 @@
   } from '$lib/api/client'
   import { toApiError, type ApiError } from '$lib/api/errors'
   import { workspace } from '$stores/workspace.svelte'
+  import DialogHeader from './DialogHeader.svelte'
+  import VendorCliPane from './VendorCliPane.svelte'
   import { AlertTriangle, CheckCircle2, FileUp } from '@lucide/svelte'
 
   interface Props {
@@ -39,6 +41,18 @@
   let busy = $state(false)
   let error = $state<ApiError | null>(null)
   let added = $state<KubeconfigMerge | null>(null)
+
+  /**
+   * Which source the kubeconfig comes from.
+   *
+   * A SOURCE, NOT A SECOND DIALOG. Whatever a cloud CLI writes lands in `raw`
+   * and goes through the same preview, the same conflict wording, the same Add
+   * button and the same Added screen as a pasted one. A separate surface would
+   * be a second implementation of the merge preview, free to drift from the
+   * one that performs the write — which is what the note at the top of this
+   * file exists to prevent.
+   */
+  let source = $state<'paste' | 'cli'>('paste')
 
   /** Discards everything, so reopening never shows the previous attempt. */
   function reset(): void {
@@ -133,7 +147,10 @@
   }
 
   const canAdd = $derived(
-    !busy && preview !== null && preview.added.length > 0 && preview.conflicts.length === 0,
+    !busy &&
+      preview !== null &&
+      (preview.added?.length ?? 0) > 0 &&
+      (preview.conflicts?.length ?? 0) === 0,
   )
 
   /** Escape belongs to the innermost open layer. See $lib/escape. */
@@ -176,13 +193,13 @@
           <CheckCircle2 class="mt-0.5 size-6 shrink-0 text-success" strokeWidth={1.8} />
           <div class="min-w-0">
             <h2 class="text-headline-small text-on-surface">
-              Added {added.added.length}
-              {added.added.length === 1 ? 'context' : 'contexts'}
+              Added {added.added?.length ?? 0}
+              {added.added?.length === 1 ? 'context' : 'contexts'}
             </h2>
             <p class="mt-1 text-body-medium text-on-surface-variant">
-              {added.added.join(', ')} — now in your picker, under the default project.
+              {(added.added ?? []).join(', ')} — now in your picker, under the default project.
             </p>
-            <p class="mt-3 text-body-small text-on-surface-variant/70">
+            <p class="mt-3 text-body-medium text-on-surface-variant">
               Written to <span class="font-mono" data-selectable>{added.path}</span>. The previous
               version is beside it as
               <span class="font-mono">{added.path}.podsteer.bak</span>.
@@ -195,46 +212,70 @@
           <Button onclick={close}>Done</Button>
         </div>
       {:else}
-        <h2 class="text-headline-small text-on-surface">Add cluster</h2>
-        <p class="mt-1 text-body-small text-on-surface-variant">
-          Paste a kubeconfig — the one your provider gave you, or a single cluster's worth — and
-          PodSteer will merge it into yours. Existing contexts are never replaced.
-        </p>
+        <DialogHeader title="Add cluster" help="add-cluster" onclose={close} />
 
-        <textarea
-          bind:value={raw}
-          spellcheck="false"
-          placeholder={'apiVersion: v1\nkind: Config\nclusters:\n  - cluster:\n      server: https://…'}
-          aria-label="Kubeconfig"
-          class="field mt-4 min-h-56 flex-1 resize-none px-3 py-2 font-mono text-body-small"
-        ></textarea>
+        <div class="mt-3 flex gap-0.5 self-start rounded-full bg-surface-container p-0.5">
+          {#each [{ id: 'paste', label: 'Paste or file' }, { id: 'cli', label: 'From a CLI you have' }] as tab (tab.id)}
+            <button
+              type="button"
+              onclick={() => (source = tab.id as 'paste' | 'cli')}
+              class="rounded-full px-3 py-1 text-label-medium transition-colors duration-100
+                     {source === tab.id
+                ? 'bg-primary/14 text-primary'
+                : 'text-on-surface-variant hover:text-on-surface'}"
+            >
+              {tab.label}
+            </button>
+          {/each}
+        </div>
+
+        {#if source === 'paste'}
+          <p class="mt-3 text-body-medium text-on-surface-variant">
+            Paste a kubeconfig — the one your provider gave you, or a single cluster's worth — and
+            PodSteer will merge it into yours. Existing contexts are never replaced.
+          </p>
+
+          <textarea
+            bind:value={raw}
+            spellcheck="false"
+            placeholder={'apiVersion: v1\nkind: Config\nclusters:\n  - cluster:\n      server: https://…'}
+            aria-label="Kubeconfig"
+            class="field mt-4 min-h-56 flex-1 resize-none px-3 py-2 font-mono text-body-small"
+          ></textarea>
+        {:else}
+          <div class="mt-3 min-h-56 flex-1 overflow-y-auto">
+            <VendorCliPane onkubeconfig={(text) => (raw = text)} />
+          </div>
+        {/if}
 
         <!-- One row, so the panel does not jump as the message changes. -->
-        <div class="mt-3 min-h-10 text-body-small">
-          {#if preview && preview.conflicts.length > 0}
+        <div class="mt-3 min-h-10 text-body-medium">
+          {#if preview && (preview.conflicts?.length ?? 0) > 0}
             <p class="flex items-start gap-2 text-warning">
               <AlertTriangle class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
               <span>
-                Your kubeconfig already has {preview.conflicts.length === 1 ? 'a context' : 'contexts'}
-                named <strong>{preview.conflicts.join(', ')}</strong>. Rename
-                {preview.conflicts.length === 1 ? 'it' : 'them'} in the text above and try again —
-                PodSteer will not overwrite credentials that already work.
+                Your kubeconfig already has {preview.conflicts?.length === 1 ? 'a context' : 'contexts'}
+                named <strong>{(preview.conflicts ?? []).join(', ')}</strong>. Rename
+                {preview.conflicts?.length === 1 ? 'it' : 'them'} and try again — PodSteer will
+                not overwrite credentials that already work.{source === 'cli'
+                  ? ' A cloud CLI names a context for you, so this usually means the cluster is already added.'
+                  : ''}
               </span>
             </p>
-          {:else if preview && preview.added.length > 0}
+          {:else if preview && (preview.added?.length ?? 0) > 0}
             <p class="text-on-surface-variant">
-              Adds <strong class="text-on-surface">{preview.added.join(', ')}</strong>
+              Adds <strong class="text-on-surface">{(preview.added ?? []).join(', ')}</strong>
               to <span class="font-mono">{preview.path}</span>
             </p>
           {:else if previewError}
             <p class="text-error">{previewError}</p>
           {:else if raw.trim() !== ''}
-            <p class="text-on-surface-variant/60">Checking…</p>
+            <p class="text-on-surface-variant">Checking…</p>
           {/if}
         </div>
 
         {#if error}
-          <p class="mt-1 text-body-small text-error">{error.message}</p>
+          <p class="mt-1 text-body-medium text-error">{error.message}</p>
         {/if}
 
         <div class="mt-4 flex shrink-0 items-center justify-between gap-2">

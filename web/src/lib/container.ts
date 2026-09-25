@@ -130,29 +130,14 @@ export function formatProbe(probe: Probe | undefined): string {
  * process has never seen. Showing it labelled as the pod's environment is
  * wrong, not merely risky.
  */
-export function formatEnvValue(variable: EnvVar, pod?: PodManifest): string {
+export function formatEnvValue(variable: EnvVar, pod?: PodManifest, container?: string): string {
   if (variable.value !== undefined) return variable.value
 
   const from = variable.valueFrom
   if (!from) return ''
 
-  // The downward API is not a mystery: every path it can carry is a field of
-  // the pod this pane is already showing, so it is RESOLVED rather than
-  // printed as the path. `<metadata.name>` is what kubectl prints because
-  // kubectl is describing a template; this is describing a running pod, and
-  // the running pod knows its own name.
-  //
-  // Still a quotation, not a conclusion — the value is lifted verbatim out of
-  // the manifest on screen. Anything that will not resolve keeps the path, so
-  // an unfamiliar field degrades to what kubectl would have said.
-  if (from.fieldRef?.fieldPath) {
-    const resolved = resolveFieldPath(pod, from.fieldRef.fieldPath)
-    if (resolved !== null) return resolved
-  }
-  if (from.resourceFieldRef?.resource) {
-    const resolved = resolveResourceField(pod, from.resourceFieldRef)
-    if (resolved !== null) return resolved
-  }
+  const resolved = resolveEnvReference(variable, pod, container)
+  if (resolved !== null) return resolved
 
   if (from.secretKeyRef) {
     // kubectl's exact wording, including the asymmetry with config maps
@@ -172,6 +157,47 @@ export function formatEnvValue(variable: EnvVar, pod?: PodManifest): string {
     }>`
   }
   return ''
+}
+
+/**
+ * A downward-API reference's value, or null where it cannot be known here.
+ *
+ * Separate from `formatEnvValue` so a caller can tell a value that was
+ * RESOLVED from one that was written — the panel marks the first
+ * "(resolved)", because `development` read off an annotation and
+ * `development` typed into the manifest are not the same statement.
+ *
+ * `pod` may be a pod or a POD TEMPLATE shaped like one. For a template the
+ * labels, annotations and namespace are exactly what the next pod will carry,
+ * so they resolve; its name, uid, node and addresses do not exist until it
+ * does, so those stay as the path. `container` is the container being
+ * rendered, which an unnamed resourceFieldRef means.
+ */
+export function resolveEnvReference(
+  variable: EnvVar,
+  pod?: PodManifest,
+  container?: string,
+): string | null {
+  const from = variable.valueFrom
+  if (!from) return null
+
+  // The downward API is not a mystery: every path it can carry is a field of
+  // the pod this pane is already showing, so it is RESOLVED rather than
+  // printed as the path. `<metadata.name>` is what kubectl prints because
+  // kubectl is describing a template; this is describing a running pod, and
+  // the running pod knows its own name.
+  //
+  // Still a quotation, not a conclusion — the value is lifted verbatim out of
+  // the manifest on screen. Anything that will not resolve keeps the path, so
+  // an unfamiliar field degrades to what kubectl would have said.
+  if (from.fieldRef?.fieldPath) return resolveFieldPath(pod, from.fieldRef.fieldPath)
+  if (from.resourceFieldRef?.resource) {
+    return resolveResourceField(pod, {
+      ...from.resourceFieldRef,
+      containerName: from.resourceFieldRef.containerName || container,
+    })
+  }
+  return null
 }
 
 /** The parts of a pod manifest the downward API can name. */
@@ -239,9 +265,9 @@ function resolveFieldPath(pod: PodManifest | undefined, path: string): string | 
 /**
  * The value behind a resourceFieldRef — a container's own request or limit.
  *
- * The container name is optional in the spec and means "this one", but this
- * has no way to know which one is being rendered, so an unnamed reference is
- * left as the path rather than guessed at.
+ * The container name is optional in the spec and means "this one"; the
+ * caller passes the container being rendered for that case, and without it
+ * an unnamed reference is left as the path rather than guessed at.
  */
 function resolveResourceField(
   pod: PodManifest | undefined,
@@ -378,4 +404,43 @@ export function formatMount(mount: VolumeMount): string {
   const mode = mount.readOnly ? 'ro' : 'rw'
   const sub = mount.subPath ? `,path="${mount.subPath}"` : ''
   return `${mount.mountPath} from ${mount.name} (${mode}${sub})`
+}
+
+/** A resource's display name: the two everybody has capitalised, the rest as written. */
+function resourceName(name: string): string {
+  if (name === 'cpu') return 'CPU'
+  if (name === 'memory') return 'Memory'
+  return name
+}
+
+/**
+ * "cpu: 100m, memory: 256Mi" — as Go formats a live container's requests and
+ * limits, kubectl's own shape — as one line per resource: "CPU: 100m",
+ * "Memory: 256Mi".
+ *
+ * Split on the separator that formatter writes (`formatResources` in
+ * app/adapters/wails/dto_resources.go), and only there: a part without a
+ * "name: " prefix is kept whole rather than guessed at.
+ */
+export function resourceLines(formatted: string | undefined): string[] {
+  if (!formatted) return []
+  return formatted.split(', ').map((part) => {
+    const colon = part.indexOf(': ')
+    return colon > 0 ? `${resourceName(part.slice(0, colon))}: ${part.slice(colon + 2)}` : part
+  })
+}
+
+/**
+ * A template's declared requests or limits, one line per resource, QUOTED
+ * as written in the spec — "500m", "512Mi". A template has no running
+ * container for Go to have formatted, and converting here would be a second
+ * implementation of the quantity arithmetic the backend owns.
+ */
+export function specResourceLines(declared: Record<string, unknown> | undefined): string[] {
+  if (!declared) return []
+  const order = (name: string) => (name === 'cpu' ? 0 : name === 'memory' ? 1 : 2)
+  return Object.entries(declared)
+    .filter(([, quantity]) => quantity !== undefined && quantity !== null && quantity !== '')
+    .sort(([a], [b]) => order(a) - order(b) || a.localeCompare(b))
+    .map(([name, quantity]) => `${resourceName(name)}: ${String(quantity)}`)
 }

@@ -15,14 +15,24 @@
   than two numbers in a column of text.
 -->
 <script lang="ts">
-  import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import DataTable, { ROW_MENU_COLUMN, type Column } from '$lib/components/DataTable.svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import MeterBar from '$lib/components/MeterBar.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
+  import { type RowAction } from '$lib/components/RowMenu.svelte'
+  import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { isControlColumn } from '$lib/fixedColumns'
+  import CustomCells from '$lib/components/CustomCells.svelte'
+  import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
   import { formatAge } from '$lib/format'
   import { cpuMeter, cpuTitle, memoryMeter, memoryTitle } from '$lib/meter'
   import { preferences } from '$stores/preferences.svelte'
+  import { copyText } from '$lib/clipboard'
+  import { get as kubectlGet } from '$lib/kubectl'
+  import { rowActionsFor, toRowActions } from '$lib/rowActions'
   import type { ClusterSession } from '$stores/session.svelte'
+  import type { NamespaceSummary } from '$lib/api/client'
   import { Boxes, CircleDot } from '@lucide/svelte'
 
   interface Props {
@@ -30,6 +40,32 @@
   }
 
   let { session }: Props = $props()
+
+  /** Namespaces are cluster-scoped, so there is no namespace to pass. */
+  /**
+   * THROUGH `toRowActions` LIKE EVERY OTHER LIST, even though this menu holds
+   * only what a row of this kind can be put through and that is two items.
+   * Building the array by hand here is what let this view drift from the
+   * others: it had no Overview item, and its copy carried none of the facts
+   * the menu draws its separator from. Ids with no handler are dropped by
+   * `toRowActions`, so naming the kind's whole set costs nothing and the
+   * ordering, the labels and the rule for the dividing line stay in one file.
+   *
+   * `false` for the read-only guard because neither item is a write — and it
+   * is the guard's own flag that decides that, not this argument, so a write
+   * added to this list later would be disabled the moment somebody passed the
+   * cluster's real setting.
+   */
+  function actionsFor(namespace: NamespaceSummary): RowAction[] {
+    return toRowActions(
+      rowActionsFor('Namespace'),
+      {
+        overview: () => void session.openDetailFor({ tab: 'overview' }, namespace.name, ''),
+        kubectl: () => copyText(kubectlGet(session.cluster.id, 'namespaces', namespace.name)),
+      },
+      false,
+    )
+  }
 
   /**
    * The same denominator the pod list is set to.
@@ -58,14 +94,74 @@
     },
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
+
+  /** The built-in columns, then the operator's own — see $lib/customColumns —
+      and the row menu last, because it is the end of the row. This list has
+      no tick boxes, so the menu is the only fixed column on it. */
+  const columns = $derived<Column[]>([
+    ...COLUMNS,
+    ...toColumns(session.customColumns),
+    ROW_MENU_COLUMN,
+  ])
+
+  /** Same rule ColumnMenu and DataTable apply — see PodsView for why it is
+      repeated here rather than asked of either. */
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[session.selectedKindId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /** The namespace list's CSV export, mirroring exactly what each cell
+      shows — the meters export the aggregated usage with its unit, not the
+      bare percentage. */
+  function exportCSV(): CSVExport {
+    // The row menu is a control, not a column with text in it: exported, it
+    // would be a heading over a column of empty cells.
+    const visible = columns.filter((column) => !isControlColumn(column) && isColumnVisible(column))
+
+    function cell(namespace: NamespaceSummary, id: string): string {
+      const custom = parseCustomColumnId(id)
+      if (custom) return customCell(namespace, custom)
+      switch (id) {
+        case 'status':
+          return namespace.phase
+        case 'name':
+          return namespace.name
+        case 'pods':
+          return String(namespace.pods)
+        case 'notReady':
+          return String(namespace.notReady)
+        case 'cpu':
+          return namespace.hasMetrics ? namespace.cpu : '—'
+        case 'memory':
+          return namespace.hasMetrics ? namespace.memory : '—'
+        case 'cpuRequests':
+          return namespace.cpuRequest
+        case 'memoryRequests':
+          return namespace.memoryRequest
+        case 'age':
+          return formatAge(namespace.ageSeconds)
+        default:
+          return ''
+      }
+    }
+
+    return {
+      columns: visible.map((column) => column.label),
+      rows: session.sortedNamespaces.map((namespace) =>
+        visible.map((column) => cell(namespace, column.id)),
+      ),
+    }
+  }
 </script>
 
 <DataTable
   kindId={session.selectedKindId}
-  columns={COLUMNS}
+  {columns}
   isEmpty={session.pagedNamespaces.length === 0}
   sort={session.sort}
   onsort={session.toggleSort}
+  exportRows={exportCSV}
 >
   {#snippet empty()}
     <EmptyState
@@ -77,9 +173,13 @@
   {#snippet rows(isVisible)}
     {#each session.pagedNamespaces as namespace (namespace.name)}
       {@const selected = session.selectedName === namespace.name}
+      <!-- The open row's ground is an OPAQUE token rather than the
+           translucent tint it used to be: the pinned menu column inherits
+           this row's own colour, and a translucent one lets the cells
+           scrolling underneath show through it. See app.css. -->
       <tr
-        class="group cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
-               {selected ? 'bg-primary/8' : 'hover:bg-surface-container-low'}"
+        class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
+               {selected ? 'bg-row-open' : 'bg-surface hover:bg-surface-container-low'}"
         onclick={() => session.openDetail(namespace.name, '')}
       >
         {#if isVisible('status')}
@@ -175,7 +275,8 @@
             {formatAge(namespace.ageSeconds)}
           </td>
         {/if}
-        <td></td>
+        <CustomCells specs={session.customColumns} row={namespace} {isVisible} />
+        <RowMenuCell actions={actionsFor(namespace)} label={namespace.name} />
       </tr>
     {/each}
   {/snippet}

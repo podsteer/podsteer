@@ -15,17 +15,154 @@
  */
 
 import {
+  ALERT_SEVERITIES,
   DEFAULT_ALERT_SOUNDS,
   alertPlayer,
   isAlertSound,
   type AlertSeverity,
 } from './alerts.svelte'
+import {
+  MAX_SAVED_VIEWS,
+  cleanViewName,
+  sanitiseViews,
+  savedViewId,
+  type SavedView,
+  type ViewState,
+} from '$lib/savedViews'
+import { kindSetId, cleanKindSetName, MAX_KIND_SETS, type KindSet } from '$lib/kindSets'
+import { readBinding, type Binding } from '$lib/shortcutBinding'
+import { customColumnId, normaliseSpecs, type CustomColumnSpec } from '$lib/customColumns'
+import { EDGE_COLUMNS, type EdgeColumn } from '$lib/fixedColumns'
+import {
+  entryFor,
+  describeValue,
+  mergeRecord,
+  mergeValue,
+  type FieldRead,
+  type ImportEntry,
+  type ImportMode,
+} from '$lib/settingsDiff'
 
 /** Page sizes offered. 25 is the default; 100 is the ceiling. */
 export const PAGE_SIZES = [10, 25, 50, 100] as const
 
+/**
+ * How many kinds the multi-kind view will show at once.
+ *
+ * Kubernetes has no multi-kind list call — `kubectl get pod,deploy,svc` is
+ * three requests, and so is this — so every kind here is one more request on
+ * every refresh tick. Six answers "what does this application consist of" and
+ * keeps a ten-second tick a reasonable thing to point at somebody's API
+ * server. It is a cap on a REQUEST RATE rather than a taste judgement, which
+ * is why it is enforced on read as well as on add.
+ */
+export const MAX_MULTI_KINDS = 6
+
 /** How many rows a page holds. */
 export type PageSize = (typeof PAGE_SIZES)[number]
+
+/**
+ * How many session-timeline entries one cluster may hold, and how many of
+ * those one object may take.
+ *
+ * Presets rather than a number box, for the reason the thresholds are: a
+ * free-text field invites a value nobody chose deliberately, and this one is
+ * memory held for as long as the tab is open. 2000 and 200 are the defaults
+ * the timeline shipped with — roughly a quarter of a megabyte and a few hours
+ * of a busy cluster — so 10,000 is about a megabyte and a quarter per tab.
+ * Every per-object option is below every per-cluster one, so no pairing the
+ * dialog offers can make the object cap the larger of the two.
+ */
+export const TIMELINE_CLUSTER_LIMITS = [500, 1000, 2000, 5000, 10_000] as const
+export const TIMELINE_OBJECT_LIMITS = [50, 100, 200, 500] as const
+
+export type TimelineClusterLimit = (typeof TIMELINE_CLUSTER_LIMITS)[number]
+export type TimelineObjectLimit = (typeof TIMELINE_OBJECT_LIMITS)[number]
+
+/**
+ * The image an ephemeral debug container proposes before the operator edits it.
+ *
+ * NONROOT, AND THAT IS THE WHOLE REASON THE TWO DEFAULTS BELOW DIFFER. A debug
+ * container is injected into somebody else's pod, in their namespace, so it is
+ * judged by whatever Pod Security admission is enforcing there — and under the
+ * `restricted` level a container that runs as root is rejected outright, before
+ * anything starts. A default that only works on unlabelled namespaces would
+ * fail on exactly the clusters most likely to have someone debugging in them.
+ *
+ * PINNED, NOT FLOATING, like every other image PodSteer puts into a cluster:
+ * what this application injects must not change because an upstream tag moved.
+ * A new image ships in a PodSteer release or not at all.
+ *
+ * `docker.io` is spelled out and the registry is Docker Hub deliberately: the
+ * same repository on ghcr.io answers 403 to an anonymous pull, so a ghcr
+ * reference here would be ImagePullBackOff on every cluster that has no
+ * credential for it — which is all of them.
+ */
+export const DEFAULT_DEBUG_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.31-nonroot'
+
+/**
+ * The image a node shell runs.
+ *
+ * ROOT, deliberately, and the counterpart to the debug default above. A node
+ * shell is a privileged pod that enters the node's host namespaces with
+ * nsenter; that is root by definition, and a nonroot variant could not do the
+ * one thing it exists for. The pod is created in a namespace the operator
+ * chooses — kube-system by default, where admission is already permissive —
+ * rather than injected into somebody's own.
+ *
+ * Same registry and the same pinning rule as the debug image, for the same
+ * reasons.
+ */
+export const DEFAULT_NODE_SHELL_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.31'
+
+/** The namespace a node-shell pod is created in, matching kubectl node-shell. */
+export const DEFAULT_NODE_SHELL_NAMESPACE = 'kube-system'
+
+/**
+ * The image an IN-CLUSTER shell runs.
+ *
+ * NONROOT, and it is the debug image's default rather than the node shell's,
+ * for the debug image's reason: this pod is created in an ordinary namespace
+ * that somebody else's workloads live in, so Pod Security admission judges it,
+ * and under `restricted` a root container is rejected outright before anything
+ * starts. The pod carries a security context built to satisfy that profile —
+ * see `buildClusterShellPod` — and a root image would make every one of those
+ * fields pointless.
+ *
+ * There is deliberately NO default namespace beside it, unlike the node
+ * shell's. This one follows the tab, and when the tab is on "All namespaces"
+ * the dialog asks — see `clusterShellNamespaceFor`, which explains why falling
+ * back to a system namespace is the wrong answer here even though it is the
+ * right one there.
+ *
+ * Same registry and the same pinning rule as the other two, for the same
+ * reasons.
+ */
+export const DEFAULT_CLUSTER_SHELL_IMAGE = 'docker.io/cloudresty/dockydeb:v1.2.31-nonroot'
+
+/**
+ * Defaults an earlier build shipped, which it also WROTE into storage.
+ *
+ * `#save` persists every field, so a machine that ever ran the busybox/alpine
+ * build carries those values as though somebody had typed them — and a stored
+ * value always wins over the default. One that is EXACTLY a retired default is
+ * read as never chosen and given the current one; anything else, a mirror an
+ * air-gapped operator pointed it at included, is theirs and is kept.
+ */
+const RETIRED_IMAGE_DEFAULTS: Record<'debugImage' | 'nodeShellImage' | 'clusterShellImage', readonly string[]> = {
+  debugImage: ['busybox:1.37', 'docker.io/cloudresty/dockydeb:v1.2.28-nonroot'],
+  nodeShellImage: ['docker.io/library/alpine:3.20', 'docker.io/cloudresty/dockydeb:v1.2.28'],
+  clusterShellImage: ['docker.io/cloudresty/dockydeb:v1.2.28-nonroot'],
+}
+
+/** A stored image, with a retired default replaced by the current one. */
+export function adoptImage(
+  field: keyof typeof RETIRED_IMAGE_DEFAULTS,
+  stored: string,
+  current: string,
+): string {
+  return RETIRED_IMAGE_DEFAULTS[field].includes(stored.trim()) ? current : stored
+}
 
 /** The colour schemes PodSteer can render in. */
 export const THEMES = ['dark', 'light'] as const
@@ -361,8 +498,25 @@ interface PersistedShape {
   detailLabelFraction: number
   /** Category names the operator has expanded in the navigator tree. */
   expandedCategories: string[]
+  /**
+   * Navigator sections the operator has COLLAPSED.
+   *
+   * Inverted against `expandedCategories`, and deliberately so. A category is
+   * absent until somebody opens it, because a cluster running Elastic,
+   * cert-manager, Argo and KEDA would otherwise greet them with a wall of
+   * kinds. Pinned and Recent are the opposite case: Pinned holds exactly what
+   * an operator chose to keep one click away, and Recent is capped at twelve.
+   * Neither is a wall, and defaulting Pinned to closed would hide the thing
+   * its owner asked to see. So membership here means CLOSED, and absence —
+   * including for everybody upgrading, who has no such list — means open.
+   */
+  collapsedSections: string[]
   /** Whether the overview's verdict card shows its findings. */
   findingsExpanded: boolean
+  /** Whether the overview's Worth knowing section shows its notes. */
+  notesExpanded: boolean
+  timelineClusterLimit: TimelineClusterLimit
+  timelineObjectLimit: TimelineObjectLimit
   /**
    * Whether monospaced panes wrap long lines instead of scrolling sideways.
    *
@@ -382,6 +536,101 @@ interface PersistedShape {
   showManagedFields: boolean
   /** clusterId -> the namespace filter it was last left on. */
   namespaceByCluster: Record<string, string>
+  /**
+   * clusterId -> pinned kind ids, in the order the operator pinned them.
+   *
+   * KIND IDS ONLY — a catalog identifier like "apps/v1/deployments", never an
+   * object name — so this is exactly the same shape of fact as
+   * namespaceByCluster above and belongs in the same place, the webview's own
+   * storage. Nothing here says which Deployment exists, only that this
+   * operator watches Deployments on this cluster. Objects opened in the
+   * detail drawer are a different kind of fact — see ClusterSession's
+   * recentObjects, which is deliberately NOT persisted here or anywhere else.
+   */
+  pinnedKinds: Record<string, string[]>
+  /**
+   * The kinds the multi-kind view shows together, per cluster, in the order
+   * the operator added them.
+   *
+   * THE SAME SHAPE OF FACT as pinnedKinds directly above — a kind id and a
+   * context name, never an object name — and it lives in the webview's own
+   * storage for the same reason. What it says is "this operator watches
+   * Deployments and Services together here", which is a statement about how
+   * somebody works rather than about what their cluster holds.
+   */
+  multiKindSelection: Record<string, string[]>
+  /**
+   * Context names the operator pinned on the home page, in the order they
+   * pinned them.
+   *
+   * THE SAME SHAPE OF FACT as pinnedKinds and namespaceByCluster: a context
+   * name is the handle the organiser, the per-cluster switches and every API
+   * here already use, and it says which clusters this operator works with —
+   * not what is in any of them.
+   */
+  pinnedClusters: string[]
+  /**
+   * What each context turned out to be, by context name — "eks", "k3s".
+   *
+   * REMEMBERED SO THE HOME LIST IS RIGHT BEFORE ANYTHING IS OPENED. A cluster
+   * that has been connected identified itself from its version string, which
+   * is the strongest evidence there is; a cluster that has not can only be
+   * guessed at from its API server's address, and most self-hosted ones
+   * cannot be guessed at at all. Keeping the better answer means the second
+   * launch shows what the first one learned.
+   *
+   * THE SAME SHAPE OF FACT as pinnedKinds and pinnedClusters, and no more: a
+   * context name the whole application already keys by, and a word describing
+   * the cluster's own software. Nothing about what is inside it.
+   */
+  clusterDistributions: Record<string, string>
+  /**
+   * Views the operator named and kept. See $lib/savedViews for what one holds
+   * and, more to the point, what it deliberately does not.
+   */
+  savedViews: SavedView[]
+  /**
+   * Kind sets the operator named and kept, for the multi-kind view. See
+   * $lib/kindSets — and note it is excluded from the settings export for the
+   * same reason savedViews is: the kind ids are safe, the NAME is not.
+   */
+  pinnedKindSets: KindSet[]
+  /**
+   * Keyboard shortcuts the operator rebound, by shortcut id.
+   *
+   * ONLY THE OVERRIDES, never the whole table: a stored copy of every
+   * shortcut would pin today's defaults into somebody's storage, so a
+   * shortcut they never touched could never be improved. A missing entry
+   * means "whatever this build's default is", which is what a reset writes.
+   */
+  shortcutBindings: Record<string, Binding>
+  /**
+   * Remembered local ports for the port-forward dialog, by the REMOTE port
+   * number. See localPortByPortName below for why there are two of these, and
+   * the class field for what is deliberately never in either one.
+   */
+  localPortByRemotePort: Record<string, number>
+  /** The same idea, keyed by the container port's NAME when it has one. */
+  localPortByPortName: Record<string, number>
+  /**
+   * The last-used image for an ephemeral debug container, the node-shell
+   * image, and the node-shell namespace.
+   *
+   * The SAME KIND OF FACT as localPortByRemotePort above — a workflow
+   * preference (which debugger image, which node-shell namespace), never an
+   * object name — which is why it belongs in the webview's own storage
+   * alongside them and not in the no-object-names disk file.
+   */
+  debugImage: string
+  nodeShellImage: string
+  nodeShellNamespace: string
+  /**
+   * The last-used image for an IN-CLUSTER shell. No namespace beside it: that
+   * one follows the tab, and remembering it would be the one thing here that
+   * is an object-shaped fact about a cluster rather than a workflow
+   * preference.
+   */
+  clusterShellImage: string
   /** clusterId -> snoozeKey() -> epoch milliseconds when the snooze lapses. */
   snoozes: Record<string, Record<string, number>>
   /** Per-surface threshold lines. */
@@ -420,6 +669,16 @@ interface PersistedShape {
   criticalEnabled?: boolean
   /** Whether a newly raised finding makes a sound at all. */
   alertSoundsEnabled: boolean
+  /**
+   * Whether a newly raised CRITICAL finding also posts an OS notification.
+   *
+   * Separate from alertSoundsEnabled rather than one "tell me" switch: a
+   * sound is over in half a second and is heard only by somebody at the
+   * window, while a notification persists in a tray and is the thing that
+   * reaches somebody who has walked away. People want them on different
+   * terms, and a machine that can do one and not the other is ordinary.
+   */
+  desktopNotificationsEnabled: boolean
   /** severity -> the id of the motif it plays, or SILENT. */
   alertSounds: Record<AlertSeverity, string>
   /**
@@ -432,6 +691,31 @@ interface PersistedShape {
   alertSound?: string
   /** kindId -> columnId -> preference */
   columns: Record<string, Record<string, ColumnPreference>>
+  /**
+   * kindId -> the operator's own columns, in the order they are shown.
+   *
+   * Per KIND and not per cluster: a label key means the same thing on every
+   * cluster, and somebody who wants `team` beside every Deployment wants it
+   * on the staging tab too. A kind id and a label key are the same order of
+   * fact as pinnedKinds above — never an object name — which is what lets
+   * them live here. See $lib/customColumns.
+   */
+  customColumns: Record<string, CustomColumnSpec[]>
+  /**
+   * Whether each edge column stays put while a table scrolls sideways.
+   *
+   * ONE SETTING FOR EVERY LIST, not one per kind, and deliberately unlike the
+   * two fields above it. A width and a hidden column answer "the name column
+   * is too narrow on Pods", which is a fact about pods. Keeping the tick box
+   * in view is a reading habit, the way `wrapLines` is: somebody who wants to
+   * aim at it while reading the node column wants that on the node list too,
+   * and making them find the same switch on six lists would be six switches
+   * for one decision.
+   *
+   * See $lib/fixedColumns for what "fixed" means here and why it is not the
+   * same thing as `Column.pinned`.
+   */
+  fixedEdges: Record<EdgeColumn, boolean>
 }
 
 const DEFAULTS: PersistedShape = {
@@ -446,10 +730,27 @@ const DEFAULTS: PersistedShape = {
   detailWidthFraction: DEFAULT_DETAIL_FRACTION,
   detailLabelFraction: DEFAULT_DETAIL_LABEL_SHARE,
   expandedCategories: [],
+  collapsedSections: [],
   findingsExpanded: false,
+  notesExpanded: false,
+  timelineClusterLimit: 2000,
+  timelineObjectLimit: 200,
   wrapLines: true,
   showManagedFields: false,
   namespaceByCluster: {},
+  pinnedKinds: {},
+  multiKindSelection: {},
+  pinnedClusters: [],
+  clusterDistributions: {},
+  savedViews: [],
+  pinnedKindSets: [],
+  shortcutBindings: {},
+  localPortByRemotePort: {},
+  localPortByPortName: {},
+  debugImage: DEFAULT_DEBUG_IMAGE,
+  nodeShellImage: DEFAULT_NODE_SHELL_IMAGE,
+  nodeShellNamespace: DEFAULT_NODE_SHELL_NAMESPACE,
+  clusterShellImage: DEFAULT_CLUSTER_SHELL_IMAGE,
   snoozes: {},
   // Both lines on, everywhere. An operator who only wants to hear about the
   // serious case can turn the first one off, but a default that says nothing
@@ -475,8 +776,103 @@ const DEFAULTS: PersistedShape = {
   // people mute at the operating system, taking the alarm they DID want with
   // it. Whoever wants this turns it on, and hears the sound as they choose it.
   alertSoundsEnabled: false,
+  // Off, for the reason above and one more that is specific to this: on macOS
+  // the first notification triggers a system permission prompt, and a prompt
+  // nobody asked for is one people deny permanently — taking with it the
+  // notification they would have wanted later. Turning it on is what asks.
+  desktopNotificationsEnabled: false,
   alertSounds: DEFAULT_ALERT_SOUNDS,
   columns: {},
+  customColumns: {},
+  // Both on. A control that has scrolled off screen is not a control anybody
+  // can reach, and the operator who wants the whole width for values can say
+  // so in the column menu.
+  fixedEdges: { select: true, menu: true },
+}
+
+/**
+ * The preferences half of a settings file — an ALLOWLIST, not the persisted
+ * shape.
+ *
+ * Three fields of `PersistedShape` are deliberately absent, and each would be
+ * a bug rather than an omission if it appeared here:
+ *
+ * - `snoozes`, whose inner keys are a finding id, a NAMESPACE and an OBJECT
+ *   NAME. That is exactly what SECURITY.md says PodSteer does not write, and
+ *   an export file is where it would leave the machine.
+ * - `namespaceByCluster`, which is a namespace name per cluster — a namespace
+ *   is an object, and "which namespace this operator was last reading" is a
+ *   fact about their cluster's contents, not about how they like PodSteer to
+ *   look.
+ * - `lastUpdateCheck` and `dismissedUpdate`, which are machine state rather
+ *   than an arrangement anybody made, and are wrong the moment they land on
+ *   another machine.
+ *
+ * See `$lib/settingsFile` for the whole rule, and `settingsFile.test.ts` for
+ * the test that fails if this set grows without somebody arguing for it.
+ */
+export interface ExportedPreferences {
+  themePreference: ThemePreference
+  pageSize: PageSize
+  refreshIntervalMs: number
+  autoRefresh: boolean
+  navigatorCollapsed: boolean
+  navigatorWidth: number
+  detailWidthFraction: number
+  detailLabelFraction: number
+  expandedCategories: string[]
+  collapsedSections: string[]
+  findingsExpanded: boolean
+  notesExpanded: boolean
+  timelineClusterLimit: TimelineClusterLimit
+  timelineObjectLimit: TimelineObjectLimit
+  wrapLines: boolean
+  showManagedFields: boolean
+  /** clusterId -> pinned kind ids. A CONTEXT NAME and catalogue ids only. */
+  pinnedKinds: Record<string, string[]>
+  /** clusterId -> the kinds shown together in the multi-kind view. Same shape
+      of fact as pinnedKinds, and subject to the same rule: no object names. */
+  multiKindSelection: Record<string, string[]>
+  /**
+   * Keyboard shortcuts the operator rebound, by shortcut id.
+   *
+   * A KEY COMBINATION IS NOT AN OBJECT NAME, and it is not even a fact about
+   * a cluster: it is the same shape of preference as a column layout, and it
+   * is the one somebody most wants on their other machine.
+   */
+  shortcutBindings: Record<string, Binding>
+  /**
+   * The clusters pinned to the top of the picker: CONTEXT NAMES, the same
+   * fact the keys of pinnedKinds above already carry.
+   *
+   * Saved views are deliberately NOT here beside them. A view holds a
+   * namespace and the operator's own search text, and this file's own header
+   * promises no object names appear in it — a promise somebody keeps a shared
+   * file in git on the strength of. See $lib/savedViews.
+   */
+  pinnedClusters: string[]
+  clusterDistributions: Record<string, string>
+  localPortByRemotePort: Record<string, number>
+  localPortByPortName: Record<string, number>
+  debugImage: string
+  nodeShellImage: string
+  nodeShellNamespace: string
+  /** An image reference like the two above, and never an object name. There
+   * is deliberately no namespace beside it: the in-cluster shell's follows the
+   * tab and is not persisted at all. */
+  clusterShellImage: string
+  thresholds: Record<ThresholdScope, ThresholdSet>
+  podMeasure: PodMeasure
+  usageWindowMinutes: number
+  mapOrientation: 'horizontal' | 'vertical'
+  updateChecksEnabled: boolean
+  sections: Record<string, boolean>
+  alertSoundsEnabled: boolean
+  desktopNotificationsEnabled: boolean
+  alertSounds: Record<AlertSeverity, string>
+  columns: Record<string, Record<string, ColumnPreference>>
+  customColumns: Record<string, CustomColumnSpec[]>
+  fixedEdges: Record<EdgeColumn, boolean>
 }
 
 class Preferences {
@@ -516,6 +912,7 @@ class Preferences {
    * (say, just Workloads) is exactly what greets them next time.
    */
   expandedCategories = $state<string[]>(DEFAULTS.expandedCategories)
+  collapsedSections = $state<string[]>(DEFAULTS.collapsedSections)
 
   /**
    * Collapsed by default: the verdict and the count are the alarm, and the
@@ -523,6 +920,20 @@ class Preferences {
    * either.
    */
   findingsExpanded = $state<boolean>(DEFAULTS.findingsExpanded)
+
+  /**
+   * Collapsed by default, and for a sharper reason than the findings are.
+   *
+   * A note is by definition not a fault — the section is what a cluster has
+   * to say for itself once nothing is wrong — and on a busy cluster it runs
+   * to a dozen cards and several screenfuls below the fold. Open by default
+   * it buried the sections above it under material nobody had asked to read.
+   */
+  notesExpanded = $state<boolean>(DEFAULTS.notesExpanded)
+
+  /** The session timeline's caps; see TIMELINE_CLUSTER_LIMITS. */
+  timelineClusterLimit = $state<TimelineClusterLimit>(DEFAULTS.timelineClusterLimit)
+  timelineObjectLimit = $state<TimelineObjectLimit>(DEFAULTS.timelineObjectLimit)
 
   /** Whether monospaced panes wrap long lines. See the shape above. */
   wrapLines = $state<boolean>(DEFAULTS.wrapLines)
@@ -532,6 +943,76 @@ class Preferences {
 
   /** clusterId -> last-selected namespace filter. */
   namespaceByCluster = $state<Record<string, string>>({})
+
+  /** clusterId -> pinned kind ids, in the order pinned. See the shape above. */
+  pinnedKinds = $state<Record<string, string[]>>({})
+  multiKindSelection = $state<Record<string, string[]>>({})
+  /** Starred context names, in the order they were pinned. */
+  pinnedClusters = $state<string[]>([])
+  /** What each context turned out to be, by context name. See the shape above. */
+  clusterDistributions = $state<Record<string, string>>({})
+  /** Named views, in the order they were saved. */
+  savedViews = $state<SavedView[]>([])
+  pinnedKindSets = $state<KindSet[]>([])
+  /** Rebound keyboard shortcuts, by shortcut id. Only the overrides. */
+  shortcutBindings = $state<Record<string, Binding>>({})
+
+  /**
+   * Remembered local ports for the port-forward dialog.
+   *
+   * ONLY remotePort -> localPort and portName -> localPort live here — never
+   * the pod, the workload, the namespace or the cluster a forward was to.
+   * SECURITY.md enumerates what PodSteer writes to this machine's disk, and
+   * object names are deliberately not on that list; a mapping keyed by one
+   * would put them there through the back door of "remembering a port".
+   * remotePort and portName are properties of a CONTAINER IMAGE, not of any
+   * particular cluster's objects, which is what makes them safe to keep and
+   * useful across every pod that exposes them.
+   *
+   * Two maps rather than one because the two keys answer different
+   * questions: 5432 means Postgres everywhere it is a container's remote
+   * port, so it is worth keying on alone; a NAME is more specific still — see
+   * proposeLocalPort for which one wins when both are on record.
+   */
+  localPortByRemotePort = $state<Record<string, number>>({})
+  /** The same idea, keyed by the container port's NAME when it has one. */
+  localPortByPortName = $state<Record<string, number>>({})
+
+  /**
+   * Remembered debug and node-shell inputs. See the PersistedShape fields of
+   * the same names: a workflow preference, never an object name.
+   */
+  debugImage = $state<string>(DEFAULT_DEBUG_IMAGE)
+  nodeShellImage = $state<string>(DEFAULT_NODE_SHELL_IMAGE)
+  nodeShellNamespace = $state<string>(DEFAULT_NODE_SHELL_NAMESPACE)
+
+  /** Remembers the debug image the operator last used. Blank resets it to the
+   * default rather than persisting an empty image the backend would reject. */
+  setDebugImage = (image: string): void => {
+    this.debugImage = image.trim() || DEFAULT_DEBUG_IMAGE
+    this.#save()
+  }
+
+  /** Remembers the node-shell image. Blank resets to the default. */
+  setNodeShellImage = (image: string): void => {
+    this.nodeShellImage = image.trim() || DEFAULT_NODE_SHELL_IMAGE
+    this.#save()
+  }
+
+  /** Remembers the node-shell namespace. Blank resets to the default. */
+  setNodeShellNamespace = (namespace: string): void => {
+    this.nodeShellNamespace = namespace.trim() || DEFAULT_NODE_SHELL_NAMESPACE
+    this.#save()
+  }
+
+  /** The image an in-cluster shell runs. Blank resets to the default. */
+  clusterShellImage = $state<string>(DEFAULT_CLUSTER_SHELL_IMAGE)
+
+  /** Remembers the in-cluster shell image. Blank resets to the default. */
+  setClusterShellImage = (image: string): void => {
+    this.clusterShellImage = image.trim() || DEFAULT_CLUSTER_SHELL_IMAGE
+    this.#save()
+  }
 
   /**
    * Objects the operator has deliberately quietened, per cluster.
@@ -584,11 +1065,16 @@ class Preferences {
   /** Whether a newly raised warning or critical finding makes a sound. */
   alertSoundsEnabled = $state<boolean>(DEFAULTS.alertSoundsEnabled)
 
+  /** Whether a newly raised CRITICAL finding also posts an OS notification. */
+  desktopNotificationsEnabled = $state<boolean>(DEFAULTS.desktopNotificationsEnabled)
+
   /** Which motif each severity plays, by id, or SILENT for none. */
   alertSounds = $state<Record<AlertSeverity, string>>({ ...DEFAULTS.alertSounds })
 
   /** kindId -> columnId -> preference. */
   columns = $state<Record<string, Record<string, ColumnPreference>>>({})
+  customColumns = $state<Record<string, CustomColumnSpec[]>>({})
+  fixedEdges = $state<Record<EdgeColumn, boolean>>({ ...DEFAULTS.fixedEdges })
 
   constructor() {
     this.#load()
@@ -691,6 +1177,21 @@ class Preferences {
   isCategoryExpanded = (category: string): boolean => this.expandedCategories.includes(category)
 
   /**
+   * Whether one of the navigator's own sections — Pinned, Recent — is open.
+   *
+   * Open unless it is listed. See `collapsedSections` for why these two run
+   * the opposite way round from the kind categories.
+   */
+  isSectionExpanded = (section: string): boolean => !this.collapsedSections.includes(section)
+
+  toggleSection = (section: string): void => {
+    this.collapsedSections = this.collapsedSections.includes(section)
+      ? this.collapsedSections.filter((entry) => entry !== section)
+      : [...this.collapsedSections, section]
+    this.#save()
+  }
+
+  /**
    * Whether the overview's verdict card shows its findings.
    *
    * Persisted like every other collapse in the application, and for a sharper
@@ -700,6 +1201,27 @@ class Preferences {
    */
   toggleFindings = (): void => {
     this.findingsExpanded = !this.findingsExpanded
+    this.#save()
+  }
+
+  /**
+   * Whether the overview's Worth knowing section shows its notes. Persisted
+   * for the same reason toggleFindings is: the workspace remounts on every
+   * tab switch, so a choice held in the view would be forgotten each time
+   * somebody looked at another cluster and came back.
+   */
+  toggleNotes = (): void => {
+    this.notesExpanded = !this.notesExpanded
+    this.#save()
+  }
+
+  setTimelineClusterLimit = (limit: TimelineClusterLimit): void => {
+    this.timelineClusterLimit = limit
+    this.#save()
+  }
+
+  setTimelineObjectLimit = (limit: TimelineObjectLimit): void => {
+    this.timelineObjectLimit = limit
     this.#save()
   }
 
@@ -735,6 +1257,303 @@ class Preferences {
 
   setClusterNamespace = (clusterId: string, namespace: string): void => {
     this.namespaceByCluster = { ...this.namespaceByCluster, [clusterId]: namespace }
+    this.#save()
+  }
+
+  // --- Pinned kinds -----------------------------------------------------------
+
+  /** Kind ids pinned for one cluster, in the order the operator pinned them. */
+  pinnedKindsFor = (clusterId: string): string[] => this.pinnedKinds[clusterId] ?? []
+
+  /** Whether a kind is currently pinned for a cluster. */
+  isKindPinned = (clusterId: string, kindId: string): boolean =>
+    this.pinnedKindsFor(clusterId).includes(kindId)
+
+  /**
+   * Pins a kind, appended after whatever is already pinned.
+   *
+   * A kind already pinned is left exactly where it is rather than moved to
+   * the end — clicking a filled star twice in a row must not reorder the
+   * section out from under somebody who did not ask to reorder anything.
+   */
+  pinKind = (clusterId: string, kindId: string): void => {
+    const existing = this.pinnedKindsFor(clusterId)
+    if (existing.includes(kindId)) return
+    this.pinnedKinds = { ...this.pinnedKinds, [clusterId]: [...existing, kindId] }
+    this.#save()
+  }
+
+  /** Unpins a kind. Not present is not an error — unpinning is idempotent. */
+  unpinKind = (clusterId: string, kindId: string): void => {
+    const existing = this.pinnedKindsFor(clusterId)
+    if (!existing.includes(kindId)) return
+    this.pinnedKinds = {
+      ...this.pinnedKinds,
+      [clusterId]: existing.filter((id) => id !== kindId),
+    }
+    this.#save()
+  }
+
+  /**
+   * The kinds the multi-kind view is showing for one cluster.
+   *
+   * ORDER IS THE OPERATOR'S. It decides which kind's columns claim a position
+   * in the merged table first — see mergeTables — so reordering it is a
+   * visible act and nothing here reorders it behind their back.
+   */
+  multiKindSelectionFor = (clusterId: string): string[] => this.multiKindSelection[clusterId] ?? []
+
+  /**
+   * Adds a kind to the multi-kind view, appended after the ones already there.
+   *
+   * CAPPED, AND THE CAP IS THE POINT. Kubernetes has no multi-kind list call,
+   * so each kind here is one more request on every refresh tick — the same
+   * arithmetic `kubectl get pod,deploy,svc` does, made visible because this
+   * one repeats. Six is enough to answer "what does this app consist of" and
+   * few enough that a ten-second tick stays a reasonable thing to point at
+   * somebody's API server.
+   */
+  addMultiKind = (clusterId: string, kindId: string): void => {
+    const existing = this.multiKindSelectionFor(clusterId)
+    if (existing.includes(kindId) || existing.length >= MAX_MULTI_KINDS) return
+    this.multiKindSelection = { ...this.multiKindSelection, [clusterId]: [...existing, kindId] }
+    this.#save()
+  }
+
+  /** Removes a kind. Not present is not an error — removing is idempotent. */
+  removeMultiKind = (clusterId: string, kindId: string): void => {
+    const existing = this.multiKindSelectionFor(clusterId)
+    if (!existing.includes(kindId)) return
+    this.multiKindSelection = {
+      ...this.multiKindSelection,
+      [clusterId]: existing.filter((id) => id !== kindId),
+    }
+    this.#save()
+  }
+
+  /** Whether another kind can still be added — see addMultiKind's cap. */
+  canAddMultiKind = (clusterId: string): boolean =>
+    this.multiKindSelectionFor(clusterId).length < MAX_MULTI_KINDS
+
+  // --- What each cluster turned out to be -------------------------------------
+
+  /**
+   * Remembers a cluster's distribution, when it is worth remembering.
+   *
+   * ONLY WHEN THE BACKEND FOUND ONE. A blank is not an answer to store: it
+   * means nothing identified this cluster, and writing that down would turn
+   * "not yet known" into a remembered "unknown" that the next launch has no
+   * reason to revisit.
+   */
+  rememberDistribution = (clusterId: string, distributionId: string): void => {
+    if (!clusterId || !distributionId) return
+    if (this.clusterDistributions[clusterId] === distributionId) return
+
+    this.clusterDistributions = { ...this.clusterDistributions, [clusterId]: distributionId }
+    this.#save()
+  }
+
+  /** What was remembered about this context, if anything. */
+  rememberedDistribution = (clusterId: string): string | undefined =>
+    this.clusterDistributions[clusterId]
+
+  // --- Pinned clusters --------------------------------------------------------
+
+  /** Whether this context is pinned. */
+  isClusterPinned = (clusterId: string): boolean => this.pinnedClusters.includes(clusterId)
+
+  /**
+   * Pins or unpins a cluster.
+   *
+   * Appended rather than sorted, and left where it is when it is already
+   * there — the same rule pinKind follows, and for the same reason: a pin
+   * pressed twice must not reorder the home page under somebody.
+   */
+  toggleClusterPin = (clusterId: string): void => {
+    this.pinnedClusters = this.pinnedClusters.includes(clusterId)
+      ? this.pinnedClusters.filter((id) => id !== clusterId)
+      : [...this.pinnedClusters, clusterId]
+    this.#save()
+  }
+
+  // --- Saved views -----------------------------------------------------------
+
+  /**
+   * Saves the view on screen under a name.
+   *
+   * A NAME ALREADY IN USE OVERWRITES THAT VIEW rather than making a second
+   * one beside it. Saving "Crashing pods" twice is somebody correcting the
+   * view, not collecting two of them, and a menu with two identical names is
+   * one nobody can choose from. Its id and position are kept, so the row does
+   * not jump to the bottom of a list the operator was reading.
+   *
+   * Returns the view, or null when there is nothing to save: a blank name, or
+   * a list already at its ceiling.
+   */
+  saveView = (name: string, current: ViewState): SavedView | null => {
+    const cleaned = cleanViewName(name)
+    if (!cleaned) return null
+
+    const captured = {
+      name: cleaned,
+      kindId: current.kindId,
+      namespace: current.namespace,
+      search: current.search,
+      statusFilters: [...current.statusFilters],
+    }
+
+    const existing = this.savedViews.find(
+      (view) => view.name.toLowerCase() === cleaned.toLowerCase(),
+    )
+    if (existing) {
+      const updated = { ...captured, id: existing.id }
+      this.savedViews = this.savedViews.map((view) => (view.id === existing.id ? updated : view))
+      this.#save()
+      return updated
+    }
+
+    if (this.savedViews.length >= MAX_SAVED_VIEWS) return null
+
+    const view = { ...captured, id: savedViewId(cleaned, this.savedViews.map((v) => v.id)) }
+    this.savedViews = [...this.savedViews, view]
+    this.#save()
+    return view
+  }
+
+  /** Forgets a view. Not present is not an error. */
+  deleteView = (id: string): void => {
+    if (!this.savedViews.some((view) => view.id === id)) return
+    this.savedViews = this.savedViews.filter((view) => view.id !== id)
+    this.#save()
+  }
+
+  // --- Kind sets for the multi-kind view -------------------------------------
+
+  /**
+   * Keeps the kinds currently chosen under a name, or renames the set already
+   * called that.
+   *
+   * SAME NAME MEANS SAME SET, as it does for a saved view: an operator typing
+   * a name they have used before is correcting that set, not making a second
+   * one they will then have to tell apart.
+   *
+   * Returns null when the name is empty or the shelf is full, so the caller
+   * can say which — a control that silently does nothing is the shape this
+   * codebase refuses.
+   */
+  saveKindSet = (name: string, kinds: readonly string[]): KindSet | null => {
+    const cleaned = cleanKindSetName(name)
+    if (!cleaned || kinds.length === 0) return null
+
+    const existing = this.pinnedKindSets.find(
+      (set) => set.name.toLowerCase() === cleaned.toLowerCase(),
+    )
+    if (existing) {
+      const updated = { ...existing, name: cleaned, kinds: [...kinds] }
+      this.pinnedKindSets = this.pinnedKindSets.map((set) =>
+        set.id === existing.id ? updated : set,
+      )
+      this.#save()
+      return updated
+    }
+
+    if (this.pinnedKindSets.length >= MAX_KIND_SETS) return null
+
+    const set: KindSet = {
+      id: kindSetId(cleaned, this.pinnedKindSets.map((entry) => entry.id)),
+      name: cleaned,
+      kinds: [...kinds],
+    }
+    this.pinnedKindSets = [...this.pinnedKindSets, set]
+    this.#save()
+    return set
+  }
+
+  /** Forgets a set. Not present is not an error. */
+  deleteKindSet = (id: string): void => {
+    if (!this.pinnedKindSets.some((set) => set.id === id)) return
+    this.pinnedKindSets = this.pinnedKindSets.filter((set) => set.id !== id)
+    this.#save()
+  }
+
+  /**
+   * Applies a set to one cluster, dropping kinds it does not serve.
+   *
+   * SKIPPED, NOT REFUSED. A set saved against a cluster running cert-manager
+   * applied to one that does not should show what it can, the way the
+   * navigator skips a pinned kind whose operator was uninstalled. The cap is
+   * re-applied because a set saved before the cap changed must not become
+   * more requests a tick than the cap allows.
+   */
+  applyKindSet = (clusterId: string, kinds: readonly string[], served: readonly string[]): void => {
+    const usable = kinds.filter((kind) => served.includes(kind)).slice(0, MAX_MULTI_KINDS)
+    this.multiKindSelection = { ...this.multiKindSelection, [clusterId]: usable }
+    this.#save()
+  }
+
+  // --- Keyboard shortcuts ----------------------------------------------------
+
+  /** Rebinds one shortcut. The caller has already checked for a conflict —
+      see conflictWith, which needs the RESOLVED table this store feeds. */
+  setShortcutBinding = (id: string, binding: Binding): void => {
+    this.shortcutBindings = { ...this.shortcutBindings, [id]: binding }
+    this.#save()
+  }
+
+  /** Returns one shortcut to its default. Not present is not an error. */
+  clearShortcutBinding = (id: string): void => {
+    if (!(id in this.shortcutBindings)) return
+    const next = { ...this.shortcutBindings }
+    delete next[id]
+    this.shortcutBindings = next
+    this.#save()
+  }
+
+  /** Returns every shortcut to its default. */
+  resetShortcutBindings = (): void => {
+    if (Object.keys(this.shortcutBindings).length === 0) return
+    this.shortcutBindings = {}
+    this.#save()
+  }
+
+  // --- Remembered local ports ------------------------------------------------
+
+  /**
+   * What the port-forward dialog should propose for a container port, if
+   * anything is on record.
+   *
+   * NAME TAKES PRECEDENCE. A container port named "postgres" keeps whatever
+   * local port an operator settled on wherever it turns up, which is more
+   * specific than the bare remote port number — 5432 is also Postgres on a
+   * pod nobody has decided should share that mapping. Falling back to the
+   * remote port when there is no name (or no memory of that name yet) is
+   * still useful: it is the majority of what "remember the port" means in
+   * practice, most containers exposing one port they care about.
+   */
+  proposeLocalPort = (remotePort: number, portName: string): number | undefined => {
+    const byName = portName ? this.localPortByPortName[portName] : undefined
+    return byName ?? this.localPortByRemotePort[String(remotePort)]
+  }
+
+  /**
+   * Records the local port a forward actually bound, so the next forward to
+   * this remote port — or to this NAMED port on any other pod — proposes it
+   * again.
+   *
+   * Called with whatever the forward actually bound, whether the operator
+   * typed it or the operating system chose it: both are worth remembering,
+   * and treating only a deliberate choice as worth keeping would mean the
+   * common case — nobody types anything, ever — never builds up any memory
+   * at all.
+   */
+  rememberLocalPort = (remotePort: number, portName: string, localPort: number): void => {
+    this.localPortByRemotePort = {
+      ...this.localPortByRemotePort,
+      [String(remotePort)]: localPort,
+    }
+    if (portName) {
+      this.localPortByPortName = { ...this.localPortByPortName, [portName]: localPort }
+    }
     this.#save()
   }
 
@@ -855,6 +1674,20 @@ class Preferences {
   }
 
   /**
+   * Records the desktop-notification choice.
+   *
+   * Only the choice. Asking the operating system for permission is the
+   * Settings pane's job, because it is a visible prompt on macOS and belongs
+   * to the gesture that caused it — a store that requested permission as a
+   * side effect of an import would pop one at somebody who was restoring a
+   * colleague's column layout.
+   */
+  setDesktopNotificationsEnabled = (enabled: boolean): void => {
+    this.desktopNotificationsEnabled = enabled
+    this.#save()
+  }
+
+  /**
    * Chooses one severity's motif, and plays it.
    *
    * Choosing a sound without hearing it is choosing from a few words, so the
@@ -955,10 +1788,78 @@ class Preferences {
     })
   }
 
-  /** Drops every column override for a kind, restoring its defaults. */
+  /**
+   * Drops every column override for a kind, restoring its defaults.
+   *
+   * Widths and visibility only. `fixedEdges` is deliberately untouched: it is
+   * not per kind, so resetting it here would undo a choice made on a
+   * different list from the one whose button was pressed.
+   */
   resetColumns = (kindId: string): void => {
     const { [kindId]: _dropped, ...rest } = this.columns
     this.columns = rest
+    this.#save()
+  }
+
+  // --- Fixed edge columns ---------------------------------------------------
+
+  /** Whether an edge column stays put while the table scrolls sideways. */
+  isEdgeFixed = (edge: EdgeColumn): boolean => this.fixedEdges[edge]
+
+  toggleEdgeFixed = (edge: EdgeColumn): void => {
+    // Reassigned rather than mutated, for the reason #mutateColumn gives:
+    // $state tracks the root reference, and DataTable's placement is derived
+    // from this object.
+    this.fixedEdges = { ...this.fixedEdges, [edge]: !this.fixedEdges[edge] }
+    this.#save()
+  }
+
+  // --- Custom columns -------------------------------------------------------
+
+  /** The operator's own columns for a kind, in display order. */
+  customColumnsFor = (kindId: string): CustomColumnSpec[] => this.customColumns[kindId] ?? []
+
+  /**
+   * Adds a column to a kind, at the end. Adding one that already exists is
+   * a no-op rather than a duplicate, and an invalid key is refused the same
+   * way — the picker validates too, but storage is the layer that has to
+   * hold.
+   */
+  addCustomColumn = (kindId: string, spec: CustomColumnSpec): boolean => {
+    const next = normaliseSpecs([...this.customColumnsFor(kindId), spec])
+    if (next.length === this.customColumnsFor(kindId).length) return false
+    this.#setCustomColumns(kindId, next)
+    return true
+  }
+
+  removeCustomColumn = (kindId: string, spec: CustomColumnSpec): void => {
+    const id = customColumnId(spec)
+    this.#setCustomColumns(
+      kindId,
+      this.customColumnsFor(kindId).filter((existing) => customColumnId(existing) !== id),
+    )
+  }
+
+  /**
+   * Moves a column from one position to another within a kind. Indices
+   * outside the list are ignored rather than clamped: a stale index from a
+   * menu that was open across a change must not silently reorder something.
+   */
+  moveCustomColumn = (kindId: string, from: number, to: number): void => {
+    const existing = this.customColumnsFor(kindId)
+    if (from === to || from < 0 || to < 0 || from >= existing.length || to >= existing.length) return
+    const next = [...existing]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    this.#setCustomColumns(kindId, next)
+  }
+
+  #setCustomColumns(kindId: string, specs: CustomColumnSpec[]): void {
+    // Reassign rather than mutate, for the reason #mutateColumn gives. A
+    // kind with no columns left loses its key entirely, so the stored
+    // object does not grow one empty list per kind ever visited.
+    const { [kindId]: _dropped, ...rest } = this.customColumns
+    this.customColumns = specs.length > 0 ? { ...rest, [kindId]: specs } : rest
     this.#save()
   }
 
@@ -970,6 +1871,113 @@ class Preferences {
     mutate(preference)
     forKind[columnId] = preference
     this.columns = { ...this.columns, [kindId]: forKind }
+    this.#save()
+  }
+
+  // --- Settings file --------------------------------------------------------
+
+  /**
+   * What travels in a settings file.
+   *
+   * WRITTEN OUT FIELD BY FIELD, never spread from a persisted blob. A spread
+   * would carry whatever the shape grows next, and two of the things it has
+   * already grown — the snooze map and the per-cluster namespace — hold
+   * object names. The explicit list is what makes adding one a decision
+   * somebody makes rather than one that happens to them. See
+   * ExportedPreferences.
+   */
+  exportable = (): ExportedPreferences => ({
+    themePreference: this.themePreference,
+    pageSize: this.pageSize,
+    refreshIntervalMs: this.refreshIntervalMs,
+    autoRefresh: this.autoRefresh,
+    navigatorCollapsed: this.navigatorCollapsed,
+    navigatorWidth: this.navigatorWidth,
+    detailWidthFraction: this.detailWidthFraction,
+    detailLabelFraction: this.detailLabelFraction,
+    expandedCategories: [...this.expandedCategories],
+    collapsedSections: [...this.collapsedSections],
+    findingsExpanded: this.findingsExpanded,
+    notesExpanded: this.notesExpanded,
+    timelineClusterLimit: this.timelineClusterLimit,
+    timelineObjectLimit: this.timelineObjectLimit,
+    wrapLines: this.wrapLines,
+    showManagedFields: this.showManagedFields,
+    pinnedKinds: plainCopy(this.pinnedKinds),
+    multiKindSelection: plainCopy(this.multiKindSelection),
+    clusterDistributions: plainCopy(this.clusterDistributions),
+    pinnedClusters: [...this.pinnedClusters],
+    shortcutBindings: plainCopy(this.shortcutBindings),
+    localPortByRemotePort: { ...this.localPortByRemotePort },
+    localPortByPortName: { ...this.localPortByPortName },
+    debugImage: this.debugImage,
+    nodeShellImage: this.nodeShellImage,
+    nodeShellNamespace: this.nodeShellNamespace,
+    clusterShellImage: this.clusterShellImage,
+    thresholds: plainCopy(this.thresholds),
+    podMeasure: this.podMeasure,
+    usageWindowMinutes: this.usageWindowMinutes,
+    mapOrientation: this.mapOrientation,
+    updateChecksEnabled: this.updateChecksEnabled,
+    sections: { ...this.sections },
+    alertSoundsEnabled: this.alertSoundsEnabled,
+    desktopNotificationsEnabled: this.desktopNotificationsEnabled,
+    alertSounds: { ...this.alertSounds },
+    columns: plainCopy(this.columns),
+    customColumns: plainCopy(this.customColumns),
+    fixedEdges: { ...this.fixedEdges },
+  })
+
+  /**
+   * Adopts an imported set wholesale, then persists once.
+   *
+   * The caller passes the COMPLETE result of the merge — see
+   * `mergeExportedPreferences` — so nothing here decides anything about
+   * merge versus replace. The theme is reapplied because it is the one field
+   * with an effect outside this object.
+   */
+  applyExported = (next: ExportedPreferences): void => {
+    this.themePreference = next.themePreference
+    this.pageSize = next.pageSize
+    this.refreshIntervalMs = next.refreshIntervalMs
+    this.autoRefresh = next.autoRefresh
+    this.navigatorCollapsed = next.navigatorCollapsed
+    this.navigatorWidth = next.navigatorWidth
+    this.detailWidthFraction = next.detailWidthFraction
+    this.detailLabelFraction = next.detailLabelFraction
+    this.expandedCategories = [...next.expandedCategories]
+    this.collapsedSections = [...next.collapsedSections]
+    this.findingsExpanded = next.findingsExpanded
+    this.notesExpanded = next.notesExpanded
+    this.timelineClusterLimit = next.timelineClusterLimit
+    this.timelineObjectLimit = next.timelineObjectLimit
+    this.wrapLines = next.wrapLines
+    this.showManagedFields = next.showManagedFields
+    this.pinnedKinds = plainCopy(next.pinnedKinds)
+    this.multiKindSelection = plainCopy(next.multiKindSelection ?? {})
+    this.clusterDistributions = plainCopy(next.clusterDistributions)
+    this.pinnedClusters = [...next.pinnedClusters]
+    this.shortcutBindings = plainCopy(next.shortcutBindings)
+    this.localPortByRemotePort = { ...next.localPortByRemotePort }
+    this.localPortByPortName = { ...next.localPortByPortName }
+    this.debugImage = next.debugImage
+    this.nodeShellImage = next.nodeShellImage
+    this.nodeShellNamespace = next.nodeShellNamespace
+    this.clusterShellImage = next.clusterShellImage
+    this.thresholds = plainCopy(next.thresholds)
+    this.podMeasure = next.podMeasure
+    this.usageWindowMinutes = next.usageWindowMinutes
+    this.mapOrientation = next.mapOrientation
+    this.updateChecksEnabled = next.updateChecksEnabled
+    this.sections = { ...next.sections }
+    this.alertSoundsEnabled = next.alertSoundsEnabled
+    this.desktopNotificationsEnabled = next.desktopNotificationsEnabled
+    this.alertSounds = { ...next.alertSounds }
+    this.columns = plainCopy(next.columns)
+    this.customColumns = plainCopy(next.customColumns)
+    this.fixedEdges = { ...next.fixedEdges }
+
+    this.#applyTheme()
     this.#save()
   }
 
@@ -1005,6 +2013,15 @@ class Preferences {
       if (typeof stored.findingsExpanded === 'boolean') {
         this.findingsExpanded = stored.findingsExpanded
       }
+      if (typeof stored.notesExpanded === 'boolean') {
+        this.notesExpanded = stored.notesExpanded
+      }
+      if ((TIMELINE_CLUSTER_LIMITS as readonly unknown[]).includes(stored.timelineClusterLimit)) {
+        this.timelineClusterLimit = stored.timelineClusterLimit as TimelineClusterLimit
+      }
+      if ((TIMELINE_OBJECT_LIMITS as readonly unknown[]).includes(stored.timelineObjectLimit)) {
+        this.timelineObjectLimit = stored.timelineObjectLimit as TimelineObjectLimit
+      }
       if (typeof stored.wrapLines === 'boolean') {
         this.wrapLines = stored.wrapLines
       }
@@ -1033,8 +2050,116 @@ class Preferences {
           (entry): entry is string => typeof entry === 'string',
         )
       }
+      // Absent from every blob written before Pinned and Recent could fold,
+      // which is the right answer for those: no list means nothing collapsed.
+      if (Array.isArray(stored.collapsedSections)) {
+        this.collapsedSections = stored.collapsedSections.filter(
+          (entry): entry is string => typeof entry === 'string',
+        )
+      }
       if (stored.namespaceByCluster && typeof stored.namespaceByCluster === 'object') {
         this.namespaceByCluster = stored.namespaceByCluster
+      }
+      // BACKWARD-COMPATIBLE: a preferences blob written before this setting
+      // existed has no `pinnedKinds` key at all, and the field stays at its
+      // default of {} — nobody's navigator gains a Pinned section they never
+      // asked for. Each cluster's list is filtered to strings so a corrupted
+      // or hand-edited entry cannot smuggle something other than a kind id in.
+      if (stored.pinnedKinds && typeof stored.pinnedKinds === 'object') {
+        const cleaned: Record<string, string[]> = {}
+        for (const [clusterId, ids] of Object.entries(stored.pinnedKinds)) {
+          if (Array.isArray(ids)) {
+            cleaned[clusterId] = ids.filter((id): id is string => typeof id === 'string')
+          }
+        }
+        this.pinnedKinds = cleaned
+      }
+      // Same sanitising as pinnedKinds directly above, and for the same
+      // reason: a hand-edited entry must not put anything other than a kind
+      // id into a list this application then asks the API server for. The cap
+      // is re-applied on READ as well as on add, so a file naming twenty
+      // kinds does not become twenty requests a tick.
+      if (stored.multiKindSelection && typeof stored.multiKindSelection === 'object') {
+        const cleaned: Record<string, string[]> = {}
+        for (const [clusterId, ids] of Object.entries(stored.multiKindSelection)) {
+          if (Array.isArray(ids)) {
+            cleaned[clusterId] = ids
+              .filter((id): id is string => typeof id === 'string')
+              .slice(0, MAX_MULTI_KINDS)
+          }
+        }
+        this.multiKindSelection = cleaned
+      }
+      if (Array.isArray(stored.pinnedClusters)) {
+        this.pinnedClusters = stored.pinnedClusters.filter(
+          (id): id is string => typeof id === 'string',
+        )
+      }
+      // Validated by the same function the settings IMPORT uses, because the
+      // two inputs are the same kind of thing: a list written by a build that
+      // is not this one. See $lib/savedViews.
+      if (stored.savedViews !== undefined) {
+        this.savedViews = sanitiseViews(stored.savedViews)
+      }
+      // Sanitised the same way and for the same reason: a list written by a
+      // build that is not this one. Every entry must be a name and a list of
+      // catalogue kind ids, and the cap is re-applied on read so a hand-edited
+      // file cannot turn one click into thirty requests a tick.
+      if (Array.isArray(stored.pinnedKindSets)) {
+        this.pinnedKindSets = stored.pinnedKindSets
+          .filter((set): set is KindSet =>
+            !!set &&
+            typeof set === 'object' &&
+            typeof (set as KindSet).id === 'string' &&
+            typeof (set as KindSet).name === 'string' &&
+            Array.isArray((set as KindSet).kinds),
+          )
+          .map((set) => ({
+            id: set.id,
+            name: cleanKindSetName(set.name),
+            kinds: set.kinds
+              .filter((kind): kind is string => typeof kind === 'string')
+              .slice(0, MAX_MULTI_KINDS),
+          }))
+          .filter((set) => set.name !== '' && set.kinds.length > 0)
+          .slice(0, MAX_KIND_SETS)
+      }
+      // Checked one entry at a time rather than adopted whole: a corrupt
+      // override falls back to that shortcut's default, which is the one
+      // failure mode that must not leave somebody unable to open Settings and
+      // put it right. See readBinding.
+      if (stored.shortcutBindings && typeof stored.shortcutBindings === 'object') {
+        const bindings: Record<string, Binding> = {}
+        for (const [id, value] of Object.entries(stored.shortcutBindings)) {
+          const binding = readBinding(value)
+          if (binding) bindings[id] = binding
+        }
+        this.shortcutBindings = bindings
+      }
+      if (stored.localPortByRemotePort && typeof stored.localPortByRemotePort === 'object') {
+        this.localPortByRemotePort = stored.localPortByRemotePort
+      }
+      if (stored.localPortByPortName && typeof stored.localPortByPortName === 'object') {
+        this.localPortByPortName = stored.localPortByPortName
+      }
+      // A stored empty string is ignored rather than trusted: it would send
+      // the backend an image or namespace it will reject, so the default
+      // stands until the operator sets a real one.
+      if (typeof stored.debugImage === 'string' && stored.debugImage.trim() !== '') {
+        this.debugImage = adoptImage('debugImage', stored.debugImage, DEFAULT_DEBUG_IMAGE)
+      }
+      if (typeof stored.nodeShellImage === 'string' && stored.nodeShellImage.trim() !== '') {
+        this.nodeShellImage = adoptImage('nodeShellImage', stored.nodeShellImage, DEFAULT_NODE_SHELL_IMAGE)
+      }
+      if (typeof stored.nodeShellNamespace === 'string' && stored.nodeShellNamespace.trim() !== '') {
+        this.nodeShellNamespace = stored.nodeShellNamespace
+      }
+      if (typeof stored.clusterShellImage === 'string' && stored.clusterShellImage.trim() !== '') {
+        this.clusterShellImage = adoptImage(
+          'clusterShellImage',
+          stored.clusterShellImage,
+          DEFAULT_CLUSTER_SHELL_IMAGE,
+        )
       }
       if (stored.snoozes && typeof stored.snoozes === 'object') {
         this.snoozes = stored.snoozes
@@ -1085,6 +2210,9 @@ class Preferences {
       if (typeof stored.alertSoundsEnabled === 'boolean') {
         this.alertSoundsEnabled = stored.alertSoundsEnabled
       }
+      if (typeof stored.desktopNotificationsEnabled === 'boolean') {
+        this.desktopNotificationsEnabled = stored.desktopNotificationsEnabled
+      }
       // The one sound earlier builds stored becomes the warning sound, before
       // the per-severity map is read over it.
       if (isAlertSound(stored.alertSound)) {
@@ -1103,6 +2231,27 @@ class Preferences {
         this.alertSounds = restored
       }
       if (stored.columns && typeof stored.columns === 'object') this.columns = stored.columns
+      // Validated entry by entry — see normaliseSpecs — because these are
+      // read straight into column definitions, and a malformed one would
+      // otherwise put a column on screen that nothing can read a value for.
+      if (stored.customColumns && typeof stored.customColumns === 'object') {
+        const cleaned: Record<string, CustomColumnSpec[]> = {}
+        for (const [kindId, specs] of Object.entries(stored.customColumns)) {
+          const valid = normaliseSpecs(specs)
+          if (valid.length > 0) cleaned[kindId] = valid
+        }
+        this.customColumns = cleaned
+      }
+      // Key by key against the two that exist, so a build that grows a third
+      // edge column reads an older store as "that one is at its default"
+      // rather than as an object missing a key nothing will ever write.
+      if (stored.fixedEdges && typeof stored.fixedEdges === 'object') {
+        const restored = { ...this.fixedEdges }
+        for (const edge of EDGE_COLUMNS) {
+          if (typeof stored.fixedEdges[edge] === 'boolean') restored[edge] = stored.fixedEdges[edge]
+        }
+        this.fixedEdges = restored
+      }
     } catch {
       // Corrupt or unavailable storage must not stop the app starting. The
       // defaults are perfectly usable, and the next save repairs the entry.
@@ -1121,10 +2270,27 @@ class Preferences {
         navigatorCollapsed: this.navigatorCollapsed,
         navigatorWidth: this.navigatorWidth,
         expandedCategories: this.expandedCategories,
+        collapsedSections: this.collapsedSections,
         findingsExpanded: this.findingsExpanded,
+        notesExpanded: this.notesExpanded,
+        timelineClusterLimit: this.timelineClusterLimit,
+        timelineObjectLimit: this.timelineObjectLimit,
         wrapLines: this.wrapLines,
         showManagedFields: this.showManagedFields,
         namespaceByCluster: this.namespaceByCluster,
+        pinnedKinds: this.pinnedKinds,
+        multiKindSelection: this.multiKindSelection,
+        clusterDistributions: this.clusterDistributions,
+        pinnedClusters: this.pinnedClusters,
+        savedViews: this.savedViews,
+        pinnedKindSets: this.pinnedKindSets,
+        shortcutBindings: this.shortcutBindings,
+        localPortByRemotePort: this.localPortByRemotePort,
+        localPortByPortName: this.localPortByPortName,
+        debugImage: this.debugImage,
+        nodeShellImage: this.nodeShellImage,
+        nodeShellNamespace: this.nodeShellNamespace,
+        clusterShellImage: this.clusterShellImage,
         snoozes: this.#pruneSnoozes(),
         thresholds: this.thresholds,
         podMeasure: this.podMeasure,
@@ -1135,8 +2301,11 @@ class Preferences {
         dismissedUpdate: this.dismissedUpdate,
         sections: this.sections,
         alertSoundsEnabled: this.alertSoundsEnabled,
+        desktopNotificationsEnabled: this.desktopNotificationsEnabled,
         alertSounds: this.alertSounds,
         columns: this.columns,
+        customColumns: this.customColumns,
+        fixedEdges: this.fixedEdges,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
     } catch {
@@ -1174,6 +2343,462 @@ class Preferences {
     document.documentElement.dataset.theme =
       this.themePreference === 'system' ? this.#systemTheme : this.themePreference
   }
+}
+
+/**
+ * A plain, detached copy of a JSON-safe value.
+ *
+ * A round trip rather than `structuredClone`, for one reason that matters:
+ * the fields being copied are `$state` PROXIES, and an exported document must
+ * be a snapshot rather than a live view into the store — a later edit to a
+ * column width must not change a document already written. Everything passing
+ * through here came from storage or from a document, so it is JSON-safe by
+ * construction.
+ */
+function plainCopy<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+/**
+ * Every field of the preferences half, in the order a review lists them.
+ *
+ * The list `exportable()` writes out by hand has to agree with this one, and
+ * `settingsFile.test.ts` asserts that it does — the hand-written version is
+ * what makes adding a field deliberate, and this one is what the reader, the
+ * merge and the review are driven from.
+ */
+export const EXPORTED_PREFERENCE_FIELDS = [
+  'themePreference',
+  'pageSize',
+  'refreshIntervalMs',
+  'autoRefresh',
+  'navigatorCollapsed',
+  'navigatorWidth',
+  'detailWidthFraction',
+  'detailLabelFraction',
+  'expandedCategories',
+  'collapsedSections',
+  'findingsExpanded',
+  'notesExpanded',
+  'timelineClusterLimit',
+  'timelineObjectLimit',
+  'wrapLines',
+  'showManagedFields',
+  'pinnedKinds',
+  'multiKindSelection',
+  'clusterDistributions',
+  'pinnedClusters',
+  'shortcutBindings',
+  'localPortByRemotePort',
+  'localPortByPortName',
+  'debugImage',
+  'nodeShellImage',
+  'nodeShellNamespace',
+  'clusterShellImage',
+  'thresholds',
+  'podMeasure',
+  'usageWindowMinutes',
+  'mapOrientation',
+  'updateChecksEnabled',
+  'sections',
+  'alertSoundsEnabled',
+  'desktopNotificationsEnabled',
+  'alertSounds',
+  'columns',
+  'customColumns',
+  'fixedEdges',
+] as const satisfies readonly (keyof ExportedPreferences)[]
+
+/** What this build sets when a replacing document does not mention a field. */
+export function defaultExportedPreferences(): ExportedPreferences {
+  const out: Record<string, unknown> = {}
+  for (const field of EXPORTED_PREFERENCE_FIELDS) out[field] = plainCopy(DEFAULTS[field])
+  // Assembled key by key from the field list above, so the cast asserts what
+  // the loop guarantees: every field of the shape, and only those.
+  return out as unknown as ExportedPreferences
+}
+
+// --- Reading a document's preferences half ----------------------------------
+
+/** A value this build refuses, reported rather than silently coerced. */
+const REJECT = undefined
+
+function asBoolean(raw: unknown): boolean | undefined {
+  return typeof raw === 'boolean' ? raw : REJECT
+}
+
+function asNumberIn(min: number, max: number): (raw: unknown) => number | undefined {
+  return (raw) =>
+    typeof raw === 'number' && Number.isFinite(raw) && raw >= min && raw <= max ? raw : REJECT
+}
+
+function asNonEmptyString(raw: unknown): string | undefined {
+  return typeof raw === 'string' && raw.trim() !== '' ? raw : REJECT
+}
+
+function asOneOf<T extends string | number>(allowed: readonly T[]): (raw: unknown) => T | undefined {
+  return (raw) => (allowed.includes(raw as T) ? (raw as T) : REJECT)
+}
+
+function asStringArray(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return REJECT
+  return raw.filter((entry): entry is string => typeof entry === 'string')
+}
+
+/**
+ * A keyed map whose values each pass `read`.
+ *
+ * An entry that fails is DROPPED rather than failing the whole map: one
+ * hand-edited column width must not cost somebody every other column they had
+ * arranged. The map itself being the wrong type is a refusal, because that is
+ * the field, not one row of it.
+ */
+function asRecordOf<V>(read: (raw: unknown) => V | undefined): (raw: unknown) => Record<string, V> | undefined {
+  return (raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return REJECT
+    const out: Record<string, V> = {}
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      const read1 = read(value)
+      if (read1 !== undefined) out[key] = read1
+    }
+    return out
+  }
+}
+
+/** One column's stored overrides, keeping only the two fields that exist. */
+function asColumnPreference(raw: unknown): ColumnPreference | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return REJECT
+  const stored = raw as Partial<ColumnPreference>
+  const out: ColumnPreference = {}
+  if (typeof stored.width === 'number' && Number.isFinite(stored.width)) {
+    out.width = Math.round(stored.width)
+  }
+  if (typeof stored.hidden === 'boolean') out.hidden = stored.hidden
+  return out
+}
+
+/** The three surfaces, each repaired the way storage's own read repairs them. */
+function asThresholds(raw: unknown): Record<ThresholdScope, ThresholdSet> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return REJECT
+  const scoped = raw as Partial<Record<ThresholdScope, unknown>>
+  return {
+    overview: readThresholdSet(scoped.overview),
+    nodes: readThresholdSet(scoped.nodes),
+    pods: readThresholdSet(scoped.pods),
+  }
+}
+
+/**
+ * The two edge columns, each read on its own against what this build knows.
+ *
+ * Anything else in the object is dropped rather than carried: an unknown key
+ * here would be an edge column a later build invented, and reading it back
+ * would put a value in the store that nothing renders and nothing can clear.
+ */
+function asFixedEdges(raw: unknown): Record<EdgeColumn, boolean> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return REJECT
+  const stored = raw as Partial<Record<EdgeColumn, unknown>>
+  const out = { ...DEFAULTS.fixedEdges }
+  for (const edge of EDGE_COLUMNS) {
+    if (typeof stored[edge] === 'boolean') out[edge] = stored[edge]
+  }
+  return out
+}
+
+/** Per-severity motifs, each checked against the catalogue that exists here. */
+function asAlertSounds(raw: unknown): Record<AlertSeverity, string> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return REJECT
+  const stored = raw as Partial<Record<AlertSeverity, unknown>>
+  const out = { ...DEFAULT_ALERT_SOUNDS }
+  for (const severity of ALERT_SEVERITIES) {
+    if (isAlertSound(stored[severity])) out[severity] = stored[severity]
+  }
+  return out
+}
+
+/**
+ * How each field of the preferences half is read out of a document.
+ *
+ * The same rules `#load` applies to this machine's own storage, for the same
+ * reason: a document from a colleague deserves no more trust and no less than
+ * the last version of PodSteer to run here. A refusal is counted, not fatal.
+ */
+const PREFERENCE_READERS: {
+  [K in keyof ExportedPreferences]: (raw: unknown) => ExportedPreferences[K] | undefined
+} = {
+  themePreference: asOneOf(THEME_PREFERENCES),
+  pageSize: asOneOf(PAGE_SIZES),
+  refreshIntervalMs: asNumberIn(0, Number.MAX_SAFE_INTEGER),
+  autoRefresh: asBoolean,
+  navigatorCollapsed: asBoolean,
+  navigatorWidth: asNumberIn(180, 400),
+  detailWidthFraction: asNumberIn(0.05, 0.95),
+  detailLabelFraction: asNumberIn(0.05, 0.9),
+  expandedCategories: asStringArray,
+  collapsedSections: asStringArray,
+  findingsExpanded: asBoolean,
+  notesExpanded: asBoolean,
+  timelineClusterLimit: asOneOf(TIMELINE_CLUSTER_LIMITS),
+  timelineObjectLimit: asOneOf(TIMELINE_OBJECT_LIMITS),
+  wrapLines: asBoolean,
+  showManagedFields: asBoolean,
+  pinnedKinds: asRecordOf(asStringArray),
+  multiKindSelection: asRecordOf(asStringArray),
+  clusterDistributions: asRecordOf(asNonEmptyString),
+  pinnedClusters: asStringArray,
+  // Read one at a time by the same function storage goes through, so an
+  // imported file cannot install a binding this build would refuse.
+  shortcutBindings: (raw) => {
+    const map = asRecordOf((value: unknown) => readBinding(value) ?? REJECT)(raw)
+    return map as Record<string, Binding> | undefined
+  },
+  localPortByRemotePort: asRecordOf(asNumberIn(1, 65535)),
+  localPortByPortName: asRecordOf(asNumberIn(1, 65535)),
+  // Through adoptImage, like storage: a file exported by the busybox/alpine
+  // build carries its defaults as if chosen.
+  debugImage: (raw) => {
+    const image = asNonEmptyString(raw)
+    return image === undefined ? image : adoptImage('debugImage', image, DEFAULT_DEBUG_IMAGE)
+  },
+  nodeShellImage: (raw) => {
+    const image = asNonEmptyString(raw)
+    return image === undefined ? image : adoptImage('nodeShellImage', image, DEFAULT_NODE_SHELL_IMAGE)
+  },
+  nodeShellNamespace: asNonEmptyString,
+  clusterShellImage: asNonEmptyString,
+  thresholds: asThresholds,
+  podMeasure: asOneOf(['requests', 'limits'] as const),
+  usageWindowMinutes: asOneOf(USAGE_WINDOWS),
+  mapOrientation: asOneOf(['horizontal', 'vertical'] as const),
+  updateChecksEnabled: asBoolean,
+  sections: asRecordOf(asBoolean),
+  alertSoundsEnabled: asBoolean,
+  desktopNotificationsEnabled: asBoolean,
+  alertSounds: asAlertSounds,
+  columns: asRecordOf(asRecordOf(asColumnPreference)),
+  // Validated spec by spec by the same function the column picker and storage
+  // both go through, so a column that would render as a permanent dash cannot
+  // arrive by import when it cannot arrive any other way.
+  customColumns: (raw) => {
+    const map = asRecordOf((specs: unknown) => {
+      const valid = normaliseSpecs(specs)
+      return valid.length > 0 ? valid : REJECT
+    })(raw)
+    return map as Record<string, CustomColumnSpec[]> | undefined
+  },
+  fixedEdges: asFixedEdges,
+}
+
+/** Reads the preferences half, reporting what it did not know or accept. */
+export function readExportedPreferences(raw: unknown): FieldRead<ExportedPreferences> {
+  const value: Record<string, unknown> = {}
+  const unknown: string[] = []
+  const invalid: string[] = []
+
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { value: {}, unknown, invalid }
+  }
+
+  const known = new Set<string>(EXPORTED_PREFERENCE_FIELDS)
+  for (const [field, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (!known.has(field)) {
+      unknown.push(field)
+      continue
+    }
+    const read = (PREFERENCE_READERS[field as keyof ExportedPreferences] as (raw: unknown) => unknown)(
+      entry,
+    )
+    if (read === undefined) invalid.push(field)
+    else value[field] = read
+  }
+
+  return { value: value as Partial<ExportedPreferences>, unknown, invalid }
+}
+
+// --- Merging and reviewing --------------------------------------------------
+
+/** Fields that are keyed maps, merged key by key rather than wholesale. */
+const RECORD_FIELDS = new Set<keyof ExportedPreferences>([
+  'pinnedKinds',
+  'localPortByRemotePort',
+  'localPortByPortName',
+  'thresholds',
+  'sections',
+  'alertSounds',
+  'columns',
+  'customColumns',
+  'fixedEdges',
+])
+
+/**
+ * Combines the current preferences with a document's, under an import mode.
+ *
+ * Maps merge key by key so importing a colleague's Deployment columns keeps
+ * the Pod columns already arranged here; scalars take the file's value where
+ * it has one. `expandedCategories` is the one array, and it unions rather
+ * than replacing under merge: it is a set of what is OPEN, and combining two
+ * people's open sections is what merging them means.
+ */
+export function mergeExportedPreferences(
+  current: ExportedPreferences,
+  incoming: Partial<ExportedPreferences>,
+  mode: ImportMode,
+): ExportedPreferences {
+  const defaults = defaultExportedPreferences()
+  const out: Record<string, unknown> = {}
+
+  for (const field of EXPORTED_PREFERENCE_FIELDS) {
+    // The INVERSE of expandedCategories, so it merges the other way round.
+    // That array is a set of what is OPEN and unions, because combining two
+    // people's open sections is what merging them means. This one is a set of
+    // what is CLOSED, so a union would hide more than either person had
+    // hidden: importing a colleague's file would fold away a section you had
+    // open. Intersecting keeps a section closed only where both agree, which
+    // is the same principle applied to a set that runs backwards.
+    if (field === 'collapsedSections') {
+      const arriving = incoming.collapsedSections
+      if (!arriving) {
+        out[field] =
+          mode === 'replace' ? [...defaults.collapsedSections] : [...current.collapsedSections]
+      } else {
+        out[field] =
+          mode === 'replace'
+            ? [...arriving]
+            : current.collapsedSections.filter((entry) => arriving.includes(entry))
+      }
+      continue
+    }
+
+    // A UNION IN MERGE MODE, like expandedCategories and for the same reason:
+    // it is a set of what is ON, and combining two people's pinned clusters is
+    // what merging them means. Anything the incoming file does not mention is
+    // left alone rather than cleared.
+    if (field === 'pinnedClusters') {
+      const arriving = incoming.pinnedClusters
+      if (!arriving) {
+        out[field] = mode === 'replace' ? [...defaults.pinnedClusters] : [...current.pinnedClusters]
+      } else {
+        out[field] =
+          mode === 'replace' ? [...arriving] : [...new Set([...current.pinnedClusters, ...arriving])]
+      }
+      continue
+    }
+
+    if (field === 'expandedCategories') {
+      const arriving = incoming.expandedCategories
+      if (!arriving) {
+        out[field] = mode === 'replace' ? [...defaults.expandedCategories] : [...current.expandedCategories]
+      } else {
+        out[field] =
+          mode === 'replace' ? [...arriving] : [...new Set([...current.expandedCategories, ...arriving])]
+      }
+      continue
+    }
+
+    if (RECORD_FIELDS.has(field)) {
+      out[field] = mergeRecord(
+        current[field] as Record<string, unknown>,
+        incoming[field] as Record<string, unknown> | undefined,
+        mode,
+        defaults[field] as Record<string, unknown>,
+      )
+      continue
+    }
+
+    out[field] = mergeValue<unknown>(current[field], incoming[field], mode, defaults[field])
+  }
+
+  return plainCopy(out as unknown as ExportedPreferences)
+}
+
+/** How each field is named and counted in a review. */
+const PREFERENCE_LABELS: Record<keyof ExportedPreferences, { label: string; unit?: string }> = {
+  themePreference: { label: 'Theme' },
+  pageSize: { label: 'Rows per page' },
+  refreshIntervalMs: { label: 'Refresh interval (ms)' },
+  autoRefresh: { label: 'Auto refresh' },
+  navigatorCollapsed: { label: 'Navigator collapsed' },
+  navigatorWidth: { label: 'Navigator width (px)' },
+  detailWidthFraction: { label: 'Detail panel width' },
+  detailLabelFraction: { label: 'Detail label column' },
+  expandedCategories: { label: 'Expanded navigator categories', unit: 'categories' },
+  collapsedSections: { label: 'Collapsed navigator sections', unit: 'sections' },
+  findingsExpanded: { label: 'Findings expanded' },
+  notesExpanded: { label: 'Worth knowing expanded' },
+  timelineClusterLimit: { label: 'Timeline entries per cluster' },
+  timelineObjectLimit: { label: 'Timeline entries per object' },
+  wrapLines: { label: 'Wrap long lines' },
+  showManagedFields: { label: 'Show managed fields' },
+  pinnedKinds: { label: 'Pinned kinds', unit: 'clusters' },
+  multiKindSelection: { label: 'Multi-kind selection', unit: 'clusters' },
+  clusterDistributions: { label: 'What each cluster is', unit: 'clusters' },
+  pinnedClusters: { label: 'Pinned clusters', unit: 'clusters' },
+  shortcutBindings: { label: 'Rebound keyboard shortcuts', unit: 'shortcuts' },
+  localPortByRemotePort: { label: 'Remembered ports, by remote port', unit: 'ports' },
+  localPortByPortName: { label: 'Remembered ports, by port name', unit: 'ports' },
+  debugImage: { label: 'Debug container image' },
+  nodeShellImage: { label: 'Node shell image' },
+  nodeShellNamespace: { label: 'Node shell namespace' },
+  clusterShellImage: { label: 'In-cluster shell image' },
+  thresholds: { label: 'Threshold lines' },
+  podMeasure: { label: 'Pod bars measure against' },
+  usageWindowMinutes: { label: 'Retained usage (minutes)' },
+  mapOrientation: { label: 'Dependency map orientation' },
+  updateChecksEnabled: { label: 'Check for updates' },
+  sections: { label: 'Detail sections opened or closed', unit: 'sections' },
+  alertSoundsEnabled: { label: 'Sound on a new finding' },
+  desktopNotificationsEnabled: { label: 'Desktop notification on a new critical finding' },
+  alertSounds: { label: 'Sound per severity' },
+  columns: { label: 'Saved column layouts', unit: 'kinds' },
+  customColumns: { label: 'Custom columns', unit: 'kinds' },
+  fixedEdges: { label: 'Columns kept in view while a table scrolls sideways' },
+}
+
+/** The three surfaces spelled out, because the numbers ARE the decision. */
+function describeThresholds(value: unknown): string {
+  const scoped = value as Record<ThresholdScope, ThresholdSet>
+  return THRESHOLD_SCOPES.map((scope) => {
+    const set = scoped[scope]
+    const warn = set.warnEnabled ? String(set.warn) : 'off'
+    const critical = set.criticalEnabled ? String(set.critical) : 'off'
+    return `${scope} ${warn}/${critical}`
+  }).join(' · ')
+}
+
+/** Which motif each severity plays, spelled out for the same reason. */
+function describeAlertSounds(value: unknown): string {
+  const sounds = value as Record<AlertSeverity, string>
+  return ALERT_SEVERITIES.map((severity) => `${severity} ${sounds[severity]}`).join(' · ')
+}
+
+/**
+ * Which edge columns are fixed, spelled out.
+ *
+ * Two booleans would otherwise be counted as "2 entries" by the generic
+ * describer, which says nothing about what the import is going to change.
+ */
+function describeFixedEdges(value: unknown): string {
+  const edges = value as Record<EdgeColumn, boolean>
+  return EDGE_COLUMNS.map((edge) => `${edge} ${edges[edge] ? 'fixed' : 'free'}`).join(' · ')
+}
+
+/** One review line per preference field, changed or not. */
+export function describePreferenceChanges(
+  current: ExportedPreferences,
+  next: ExportedPreferences,
+): ImportEntry[] {
+  return EXPORTED_PREFERENCE_FIELDS.map((field) => {
+    const meta = PREFERENCE_LABELS[field]
+    const render =
+      field === 'thresholds'
+        ? describeThresholds
+        : field === 'alertSounds'
+          ? describeAlertSounds
+          : field === 'fixedEdges'
+            ? describeFixedEdges
+            : (value: unknown) => describeValue(value, meta.unit)
+    return entryFor('Preferences', meta.label, current[field], next[field], render)
+  })
 }
 
 /** The application-wide preferences, shared by every tab. */

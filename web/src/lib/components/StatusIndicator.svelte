@@ -67,10 +67,10 @@
    * so a mark means the same thing in light and dark. See app.css.
    */
   const COLOUR: Record<Tone, string> = {
-    success: 'text-gauge-normal',
-    warning: 'text-gauge-warn',
-    error: 'text-gauge-critical',
-    info: 'text-gauge-normal',
+    success: 'text-gauge-normal-ink',
+    warning: 'text-gauge-warn-ink',
+    error: 'text-gauge-critical-ink',
+    info: 'text-gauge-normal-ink',
     // Nothing to report, and not a claim that anything is well: a Normal
     // event is a record, not a verdict.
     neutral: 'text-on-surface-variant/40',
@@ -82,7 +82,20 @@
   const filled = $derived(!icon && !attention)
 </script>
 
-<span class="inline-flex {className}" title={label} aria-label={label} role="img">
+<!--
+  BLOCK-LEVEL FLEX, NOT `inline-flex`, and that is the alignment rule in
+  DataTable's stylesheet applied here rather than a style preference. Inline,
+  this span sits in a line box whose strut is the CELL's font, so the 16px
+  glyph is hung off a text baseline and floats a descender's worth above the
+  name beside it. A block-level flex box has no strut and no baseline to
+  answer to, so the glyph is centred in the cell and the cell is centred in
+  the row.
+
+  Its other callers are unaffected: every one of them puts this inside a flex
+  container, where a child's `display` is blockified anyway and `inline-flex`
+  and `flex` were already the same thing.
+-->
+<span class="flex {className}" title={label} aria-label={label} role="img">
   <!-- Heavier stroke for the two that want attention. In a column of two
        hundred identical glyphs, weight is what separates the exceptions
        before colour has been read at all — and it survives being printed,

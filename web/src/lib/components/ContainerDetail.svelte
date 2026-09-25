@@ -28,22 +28,31 @@
   import DetailList, { type DetailRow } from './DetailList.svelte'
   import {
     formatEnvValue,
+    resolveEnvReference,
+    resourceLines,
+    specResourceLines,
     formatMount,
     formatProbe,
-    isFromSecret,
-    looksSensitive,
     sensitivity,
     type PodManifest,
   } from '$lib/container'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
-  import type { Container } from '$lib/api/client'
+  import { latestTagWarning } from '$lib/objectVersion'
+  import type { GitOpsManagement } from '$lib/gitops'
+  import { setConfigMapKey, type Container } from '$lib/api/client'
   import { forwards } from '$stores/forwards.svelte'
-  import { configMapData } from '$stores/configMaps.svelte'
+  import { configMapData, refreshConfigMap } from '$stores/configMaps.svelte'
   import { secretReveals } from '$stores/secretReveals.svelte'
-  import { BrowserOpenURL } from '$lib/wailsjs/runtime/runtime'
-  import { EyeOff, ExternalLink, Loader, Plug, Unplug } from '@lucide/svelte'
+  import ForwardAddress from './ForwardAddress.svelte'
+  import ForwardKubectl from './ForwardKubectl.svelte'
+  import PortForwardStart from './PortForwardStart.svelte'
+  import FileTransfer from './FileTransfer.svelte'
+  import ResizeDialog from './ResizeDialog.svelte'
+  import { Loader, Scaling, Unplug } from '@lucide/svelte'
 
   interface Props {
+    /** The GitOps controller holding this container's spec, when one does. */
+    management?: GitOpsManagement | null
     /** The pod this container belongs to, for forwarding its ports. */
     podName?: string
     podUID?: string
@@ -78,9 +87,30 @@
     canOpen?: ServesKind
     /** Follows a reference to the object it names. */
     onopen?: OpenObject
+    /** Whether this cluster refuses PodSteer's own writes. The resize control
+     * is absent when it does, matching how the rest of the panel treats a
+     * write it will not make. */
+    isReadOnly?: boolean
+    /** The group's name when this cluster is marked production, for the
+     * banner the resize dialog shows. */
+    productionGroup?: string | null
+    /** Called after a resize is accepted, so the panel re-reads the pod
+     * rather than waiting for the next tick to show the new figures. */
+    onchanged?: () => void
+    /**
+     * Whether this container can be resized in place.
+     *
+     * FALSE FOR AN EPHEMERAL CONTAINER, and that is Kubernetes' rule rather
+     * than a choice made here: an ephemeral container may not declare
+     * resources at all, so there is nothing to change and the API server
+     * refuses the attempt. Offering the control and letting it fail would be
+     * a button that promises something the cluster forbids.
+     */
+    resizable?: boolean
   }
 
   let {
+    management = null,
     spec,
     status,
     clusterId,
@@ -92,9 +122,21 @@
     context = 'pod',
     canOpen,
     onopen,
+    isReadOnly = false,
+    productionGroup = null,
+    onchanged = () => {},
+    resizable = true,
   }: Props = $props()
 
   const isTemplate = $derived(context === 'template')
+
+  /**
+   * One style for every sub-heading inside a container — its name, Ports,
+   * Resources, Environment variables — so a long template reads as blocks
+   * rather than one list. More space above than below: the gap belongs to
+   * the block ending, the heading to the one starting.
+   */
+  const SUBHEADING = 'mt-6 mb-2 text-body-medium font-semibold text-on-surface'
 
   /** Turns a reference into a click handler, or into nothing. */
   const follow = $derived(follower(canOpen, onopen))
@@ -120,8 +162,65 @@
    * carries the digest-resolved reference actually running, which differs
    * from the spec whenever a mutable tag has been re-pushed underneath.
    */
+  let resizeOpen = $state(false)
+
+  /**
+   * The four figures as the SPEC declares them, for the resize dialog's
+   * placeholders.
+   *
+   * From the spec rather than from `status.requests`, which is a formatted
+   * sentence for a row ("cpu: 500m, memory: 512Mi") rather than four values —
+   * and the dialog puts each one in its own box. Blank where the container
+   * declares none, which is a BestEffort container and a real thing to see.
+   */
+  const declaredResources = $derived({
+    cpuRequest: String((spec.resources?.requests?.cpu as string) ?? ''),
+    cpuLimit: String((spec.resources?.limits?.cpu as string) ?? ''),
+    memoryRequest: String((spec.resources?.requests?.memory as string) ?? ''),
+    memoryLimit: String((spec.resources?.limits?.memory as string) ?? ''),
+  })
+
+  /**
+   * A running container's state and readiness, as one row on two lines.
+   *
+   * `started` and `ready` are separate facts and are reported separately.
+   * Started-but-not-ready is a readiness problem; not-started is a startup
+   * problem. Every other client collapses them into one word and sends
+   * people to look in the wrong place — which is why the second line says
+   * which of the two it is, rather than only "not ready".
+   */
+  const statusRow = $derived.by<DetailRow | null>(() => {
+    if (!status) return null
+    const state = status.state || 'Unknown'
+    const finished = state === 'Terminated' && status.reason === 'Completed'
+    const readiness = status.ready
+      ? 'Ready'
+      : finished
+        ? 'Finished — a completed container is not expected to be ready'
+        : state === 'Running'
+          ? status.started
+            ? 'Not ready — started, not passing its readiness check'
+            : 'Not ready — still starting'
+          : 'Not ready'
+    const stateLine = status.reason ? `${state} (${status.reason})` : state
+    return {
+      label: 'Status',
+      value: `${stateLine}, ${readiness}`,
+      // Two values of equal standing — what the container is doing and
+      // whether it is serving — so each gets a line in the same type.
+      lines: [stateLine, readiness],
+      // Amber for a container that should be serving and is not; a Job's
+      // finished container is not ready by design and is left alone.
+      tone: !status.ready && !finished ? 'warn' : undefined,
+    }
+  })
+
   const rows = $derived.by(() => {
-    const out: DetailRow[] = [{ label: 'Image', value: status?.image || spec.image || '—' }]
+    const image = status?.image || spec.image
+    const out: DetailRow[] = [
+      ...(statusRow ? [statusRow] : []),
+      { label: 'Image', value: image || '—', warning: latestTagWarning(spec.image) ?? undefined },
+    ]
 
     if (spec.imagePullPolicy) out.push({ label: 'Pull policy', value: spec.imagePullPolicy })
 
@@ -130,14 +229,22 @@
 
     // Requests and limits come from the DTO, already formatted in Go, so the
     // quantity strings are parsed in exactly one place in the codebase.
-    if (status?.requests) out.push({ label: 'Requests', value: status.requests })
-    if (status?.limits) out.push({ label: 'Limits', value: status.limits })
+    //
+    // One line per resource. A template has no formatted status, so its
+    // requests and limits are quoted from the spec instead — they used to be
+    // absent from a template altogether, which read as a controller that
+    // declares none.
+    const requests = status ? resourceLines(status.requests) : specResourceLines(spec.resources?.requests)
+    const limits = status ? resourceLines(status.limits) : specResourceLines(spec.resources?.limits)
+    if (requests.length) out.push({ label: 'Requests', value: requests.join(', '), lines: requests })
+    if (limits.length) out.push({ label: 'Limits', value: limits.join(', '), lines: limits })
 
     // What THIS container is using. The pod's total was always on screen and
     // never said which container it came from — on a pod with a sidecar, half
     // the time the answer is the sidecar, and nothing showed that.
     if (status?.hasMetrics) {
-      out.push({ label: 'Using', value: `cpu: ${status.cpu}, memory: ${status.memory}` })
+      const using = [`CPU: ${status.cpu}`, `Memory: ${status.memory}`]
+      out.push({ label: 'Using', value: using.join(', '), lines: using })
     }
 
     // ALL THREE PROBES. A probe missing from a pane reads as a container
@@ -261,13 +368,25 @@
           // The wording follows what is on screen, and reading is the
           // deliberate act: see $stores/secretReveals.
           action: shown.value
-            ? { label: 'Hide value', kind: 'hide' as const, onclick: () => secretReveals.hide(key) }
+            ? { label: 'Hide value', kind: 'hide' as const, onclick: () => void secretReveals.hide(key) }
             : {
                 label: 'Reveal value',
                 kind: 'reveal' as const,
                 onclick: () =>
                   void secretReveals.reveal(key, clusterId, namespace, secretName, secretKey),
               },
+          // ONLY OFFERED ONCE REVEALED. Editing a value nobody has looked at
+          // is the mistake this ordering exists to prevent — the Edit
+          // control simply is not there until shown.value is something,
+          // rather than being present but disabled with an explanation
+          // nobody reads. secretReveals.write enforces the same rule again,
+          // one layer down.
+          edit: shown.value
+            ? {
+                onSave: (value: string) =>
+                  secretReveals.write(key, clusterId, namespace, secretName, secretKey, value),
+              }
+            : undefined,
         }
       }
 
@@ -292,12 +411,12 @@
             ? {
                 label: 'Hide value',
                 kind: 'hide' as const,
-                onclick: () => literalReveals.delete(literalKey),
+                onclick: () => void literalReveals.delete(literalKey),
               }
             : {
                 label: 'Reveal value',
                 kind: 'reveal' as const,
-                onclick: () => literalReveals.add(literalKey),
+                onclick: () => void literalReveals.add(literalKey),
               },
         }
       }
@@ -310,24 +429,52 @@
       const resolved =
         configMap?.name && configMap?.key ? configMaps[configMap.name]?.[configMap.key] : undefined
 
-      const field = (variable.valueFrom as { fieldRef?: { fieldPath?: string } })?.fieldRef
+      const from = variable.valueFrom as
+        | { fieldRef?: { fieldPath?: string }; resourceFieldRef?: { resource?: string } }
+        | undefined
+      const downward = resolveEnvReference(variable as never, pod ?? undefined, spec.name)
+      const source = from?.fieldRef?.fieldPath ?? from?.resourceFieldRef?.resource
 
       return {
         label: variable.name,
-        value: resolved ?? formatEnvValue(variable as never, pod ?? undefined),
+        value: resolved ?? downward ?? formatEnvValue(variable as never, pod ?? undefined, spec.name),
+        // NOT marked "(resolved)" on the row. It was, briefly, and a ConfigMap
+        // or a Secret is routinely shared by many workloads, so the marker was
+        // on most rows of most panels — noise that stopped meaning anything.
+        // Where the value came from stays one hover away, below.
         // Said behind the info button once a value replaces the reference to
         // it, because a resolved value no longer names where it came from —
         // and following it still goes there.
         info: configMap?.name
           ? `From the '${configMap.name}' config map, key '${configMap.key}'`
-          : field?.fieldPath
-            ? `From this pod's own ${field.fieldPath}`
+          : source
+            ? isTemplate
+              ? `From the pod template's ${source} — what the next pod will be given`
+              : `From this pod's own ${source}`
             : undefined,
         // A REFERENCE, NOT A LINK ON THE VALUE. Once the value is the config
         // map's contents it no longer names the config map, so making the
         // contents blue and clickable would be pointing at something the text
         // does not mention.
         reference: configMap?.name ? follow('ConfigMap', configMap.name, namespace) : undefined,
+        // No reveal precondition here — unlike a Secret, this value is
+        // already resolved on sight (see the ConfigMap contents effect
+        // above), so `resolved !== undefined` is the only gate: a downward
+        // API field or a literal has nothing here to write back to.
+        edit:
+          resolved !== undefined && configMap?.name && configMap?.key
+            ? {
+                onSave: async (value: string) => {
+                  await setConfigMapKey(clusterId, namespace, configMap.name!, configMap.key!, value)
+                  // The cache exists to spare twenty variables twenty reads
+                  // of the same object, not to keep showing what this pane
+                  // itself just overwrote — so the entry this write touched
+                  // is forced fresh rather than merely assumed.
+                  const fresh = await refreshConfigMap(clusterId, namespace, configMap.name!)
+                  configMaps = { ...configMaps, [configMap.name!]: fresh }
+                },
+              }
+            : undefined,
       }
     }),
   )
@@ -338,23 +485,13 @@
   the section's own heading rule is not immediately followed by another.
 -->
 <div
-  class="flex flex-col [&:not(:first-child)]:mt-4 [&:not(:first-child)]:border-t
-         [&:not(:first-child)]:border-outline-variant/40 [&:not(:first-child)]:pt-4"
+  class="flex flex-col [&:not(:first-child)]:mt-6 [&:not(:first-child)]:border-t
+         [&:not(:first-child)]:border-outline-variant/40 [&:not(:first-child)]:pt-6"
 >
   <p class="mb-2 flex items-baseline gap-2 text-body-medium">
-    <span class="font-medium text-on-surface" data-selectable>{spec.name}</span>
-    {#if status}
-      <!--
-        `started` and `ready` are separate facts and are reported separately.
-        Started-but-not-ready is a readiness problem; not-started is a startup
-        problem. Every other client collapses them into one word and sends
-        people to look in the wrong place.
-      -->
-      <span class="text-body-small text-on-surface-variant">
-        {status.state.toLowerCase()}{status.ready ? ', ready' : status.started ? ', not ready' : ', starting'}
-        {#if status.reason}· {status.reason}{/if}
-      </span>
-    {/if}
+    <!-- Just the name: the state and readiness that used to trail it are
+         the Status row below, on two lines of their own. -->
+    <span class="font-semibold text-on-surface" data-selectable>{spec.name}</span>
   </p>
 
   <DetailList {rows} />
@@ -369,7 +506,7 @@
       about, with a stop button that does nothing because there is nothing
       left to stop.
     -->
-    <p class="mt-3 mb-1 text-body-medium text-on-surface">Ports</p>
+    <p class={SUBHEADING}>Ports</p>
     <div class="flex flex-col gap-1.5">
       {#each forwardable as port, index (index)}
         {@const open = forwards.forPort(clusterId, namespace, podName, port.containerPort)}
@@ -390,7 +527,11 @@
             {port.name || 'Port'}
           </span>
 
-          <span class="flex min-w-0 items-center gap-3">
+          <!-- flex-wrap: PortForwardStart's inline validation message ("Port
+               8080 is in use on this machine") is a sibling in this same row
+               rather than a second grid row of its own, so it needs somewhere
+               to go when the row is already full. -->
+          <span class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
             <span class="shrink-0 tabular-nums text-on-surface-variant">
               {port.containerPort}/{port.protocol ?? 'TCP'}
             </span>
@@ -402,24 +543,14 @@
                 still bound and still correct — whatever is pointed at it is
                 stalling, not broken, and that is a different thing to tell
                 somebody than "the forward is fine".
+
               -->
-              <span class="flex min-w-0 items-center gap-1.5 text-gauge-warn">
+              <span class="flex min-w-0 items-center gap-1.5 text-gauge-warn-ink">
                 <Loader class="size-3.5 shrink-0 animate-spin" strokeWidth={2} />
                 <span class="truncate">holding {open.address} — finding a replacement pod</span>
               </span>
             {:else if open}
-              <!-- The address is opened in the real browser, not the webview:
-                   this is a link to something on the operator's machine, and
-                   loading it inside the application would replace PodSteer. -->
-              <button
-                type="button"
-                onclick={() => BrowserOpenURL(open.address)}
-                class="resource-link flex min-w-0 items-center gap-1.5 text-left"
-                title="Open {open.address}"
-              >
-                <span class="truncate">{open.address}</span>
-                <ExternalLink class="size-3.5 shrink-0" strokeWidth={1.8} />
-              </button>
+              <ForwardAddress forward={open} />
             {/if}
 
             <!-- Pushed to the end of the value column rather than given a
@@ -430,13 +561,37 @@
                  ports themselves are still worth listing, because what a
                  container will listen on is part of what it is. -->
             {#if podName}
-            <button
-              type="button"
-              disabled={busy}
-              onclick={() =>
-                open
-                  ? forwards.stop(open)
-                  : forwards.start(
+              {#if open}
+                <!-- The command that reproduces this forward in a terminal.
+                     Beside Stop rather than in the row's text, so a list of
+                     ports stays a list. -->
+                <span class="ml-auto flex shrink-0 items-center gap-1">
+                  <ForwardKubectl forward={open} />
+
+                <button
+                  type="button"
+                  disabled={busy}
+                  onclick={() => forwards.stop(open)}
+                  class="state-layer inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm
+                         border border-outline-variant px-2 text-label-large
+                         text-on-surface-variant transition-colors duration-100
+                         hover:bg-surface-container hover:text-on-surface disabled:opacity-50"
+                >
+                  {#if busy}
+                    <Loader class="size-3.5 animate-spin" strokeWidth={2} />
+                  {:else}
+                    <Unplug class="size-3.5" strokeWidth={1.8} />
+                  {/if}
+                  Stop
+                </button>
+                </span>
+              {:else}
+                <PortForwardStart
+                  remotePort={port.containerPort}
+                  portName={port.name ?? ''}
+                  {busy}
+                  onstart={(localPort) =>
+                    void forwards.start(
                       clusterId,
                       namespace,
                       podName,
@@ -445,26 +600,65 @@
                       port.name ?? '',
                       port.protocol ?? 'TCP',
                       labels,
+                      localPort,
                     )}
-              class="state-layer ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm
-                     border border-outline-variant px-2 text-label-large
-                     text-on-surface-variant transition-colors duration-100
-                     hover:bg-surface-container hover:text-on-surface disabled:opacity-50"
-            >
-              {#if busy}
-                <Loader class="size-3.5 animate-spin" strokeWidth={2} />
-              {:else if open}
-                <Unplug class="size-3.5" strokeWidth={1.8} />
-              {:else}
-                <Plug class="size-3.5" strokeWidth={1.8} />
+                />
               {/if}
-              {open ? 'Stop' : 'Forward'}
-            </button>
             {/if}
           </span>
         </div>
       {/each}
     </div>
+  {/if}
+
+  {#if podName && !isTemplate && !isReadOnly && resizable}
+    <!--
+      RESIZE, BESIDE THE FIGURES IT CHANGES. On a running container only: a
+      template has nothing to resize in place, and the whole point of the
+      subresource is that it does not roll the workload.
+
+      Absent on a read-only cluster rather than disabled, matching how the
+      rest of this pane treats a write it will not make.
+    -->
+    <p class={SUBHEADING}>Resources</p>
+    <button
+      type="button"
+      onclick={() => (resizeOpen = true)}
+      class="state-layer inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm border
+             border-outline-variant px-2 text-label-large text-on-surface-variant
+             transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+    >
+      <Scaling class="size-3.5" strokeWidth={1.8} />
+      Resize…
+    </button>
+
+    <ResizeDialog
+      open={resizeOpen}
+      ctx={clusterId}
+      {namespace}
+      {podName}
+      container={spec.name}
+      current={declaredResources}
+      {management}
+      {productionGroup}
+      onclose={() => (resizeOpen = false)}
+      onapplied={onchanged}
+    />
+  {/if}
+
+  {#if podName && !isTemplate}
+    <!--
+      Copying files in and out, kubectl cp's way. Absent on a template for
+      the same reason the port controls are: there is no container to copy
+      from, only a description of the one the next pod will get.
+    -->
+    <FileTransfer
+      {clusterId}
+      {namespace}
+      {podName}
+      containerName={spec.name}
+      workingDir={spec.workingDir}
+    />
   {/if}
 
   {#if env.length > 0}
@@ -473,7 +667,11 @@
       scroll past. See container.ts for why no value from a Secret is ever
       resolved here.
     -->
-    <p class="mt-3 mb-1 text-body-medium text-on-surface">Environment ({env.length})</p>
+    <!-- Weighted like a heading: in a long template it is the landmark
+         somebody scrolls for, and at body weight it read as one more row. -->
+    <p class={SUBHEADING}>
+      Environment variables ({env.length})
+    </p>
 
     <!--
       The same list as every other section, on the same grid. It used to be a
@@ -482,22 +680,8 @@
     -->
     <DetailList rows={envRows} />
 
-    {#if env.some((variable) => isFromSecret(variable as never)) || env.some((variable) => looksSensitive(variable as never))}
-      <!-- Set well clear of the last row. Tucked against it, a note about how
-           the pane behaves read as another variable's value. -->
-      <p class="mt-5 flex items-start gap-1.5 text-body-small text-on-surface-variant/70">
-        <EyeOff class="mt-0.5 size-3.5 shrink-0" strokeWidth={1.8} />
-        <span>
-          Secret values are read only when you ask, and hide again shortly after.
-          {#if isTemplate}
-            What a Secret holds now is what the next pod will be given — environment is
-            injected once, at start, so pods already running may hold something older.
-          {:else}
-            What a Secret holds now is not necessarily what this container was started with —
-            environment is injected once, at start, and never updated.
-          {/if}
-        </span>
-      </p>
-    {/if}
+    <!-- How Secret values behave here — read on request, hidden again, and
+         not necessarily what the process started with — lives in the drawer's
+         help (object-details), not under every environment list. -->
   {/if}
 </div>

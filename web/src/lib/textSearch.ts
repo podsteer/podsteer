@@ -62,3 +62,43 @@ export function splitOnMatches(
   if (at < text.length) runs.push({ text: text.slice(at), match: false })
   return runs
 }
+
+/**
+ * The regex counterpart to `splitOnMatches`, for a query term that came from
+ * `re:`/`/pattern/` (see `$lib/query`) rather than a plain substring — the
+ * log pane's filter box accepts both, and needs the same run-splitting
+ * either way to highlight what it found.
+ *
+ * `regex` is re-run with a `g` flag regardless of what it already carries —
+ * `query.ts` compiles its terms case-insensitively but never globally, since
+ * `matches()` only needs a yes/no answer — so a caller does not have to
+ * remember to add one for iterating every occurrence in a line.
+ *
+ * A zero-width match (a pattern like `x*` matching between characters) is
+ * skipped rather than highlighted: there is no text to mark, and colouring
+ * nothing does not help anybody find their match.
+ */
+export function splitOnRegex(
+  text: string,
+  regex: RegExp,
+): Array<{ text: string; match: boolean }> {
+  const flags = regex.flags.includes('g') ? regex.flags : regex.flags + 'g'
+  const global = new RegExp(regex.source, flags)
+
+  const runs: Array<{ text: string; match: boolean }> = []
+  let at = 0
+
+  for (const match of text.matchAll(global)) {
+    const start = match.index ?? 0
+    const value = match[0]
+    if (value.length === 0) continue
+
+    if (start > at) runs.push({ text: text.slice(at, start), match: false })
+    runs.push({ text: value, match: true })
+    at = start + value.length
+  }
+
+  if (at < text.length) runs.push({ text: text.slice(at), match: false })
+  if (runs.length === 0) return [{ text, match: false }]
+  return runs
+}

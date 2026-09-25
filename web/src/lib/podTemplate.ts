@@ -17,7 +17,7 @@
 
 /** The parts of a pod template anything here reads. */
 export interface PodTemplate {
-  metadata?: { labels?: Record<string, string> }
+  metadata?: { labels?: Record<string, string>; annotations?: Record<string, string> }
   spec?: {
     containers?: Record<string, unknown>[]
     initContainers?: Record<string, unknown>[]

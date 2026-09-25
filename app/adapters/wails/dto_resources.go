@@ -109,10 +109,18 @@ type Node struct {
 	// HasDisk distinguishes a node that reported an empty disk from one never
 	// asked. Disk occupancy needs nodes/proxy, which plenty of clusters do
 	// not grant, so absent is the ordinary case rather than a fault.
-	HasDisk    bool   `json:"hasDisk"`
-	MaxPods    int64  `json:"maxPods"`
-	CreatedAt  string `json:"createdAt"`
-	AgeSeconds int64  `json:"ageSeconds"`
+	HasDisk bool  `json:"hasDisk"`
+	MaxPods int64 `json:"maxPods"`
+	// Labels are the node's labels.
+	Labels map[string]string `json:"labels"`
+	// Annotations are only the projected keys — see Pod.Annotations.
+	Annotations map[string]string `json:"annotations"`
+	// Custom holds the operator's own JSONPath columns, keyed by the column
+	// id the interface knows them by and already rendered as text. Nil unless
+	// this list was asked for one — see domain.Projection.
+	Custom     map[string]string `json:"custom"`
+	CreatedAt  string            `json:"createdAt"`
+	AgeSeconds int64             `json:"ageSeconds"`
 }
 
 func toNode(node domain.Node, now time.Time) Node {
@@ -121,6 +129,9 @@ func toNode(node domain.Node, now time.Time) Node {
 
 	return Node{
 		Name:           node.Name(),
+		Labels:         emptyIfNil(node.Labels()),
+		Annotations:    emptyIfNil(node.Annotations()),
+		Custom:         emptyIfNil(node.Custom()),
 		Status:         node.Status(),
 		Roles:          node.Roles(),
 		IsControlPlane: node.IsControlPlane(),
@@ -186,8 +197,12 @@ type Workload struct {
 	// Annotations carries only the GitOps keys — see gitOpsAnnotations in the
 	// k8s mapper for why it is not the whole set.
 	Annotations map[string]string `json:"annotations"`
-	CreatedAt   string            `json:"createdAt"`
-	AgeSeconds  int64             `json:"ageSeconds"`
+	// Custom holds the operator's own JSONPath columns, keyed by the column
+	// id the interface knows them by and already rendered as text. Nil unless
+	// this list was asked for one — see domain.Projection.
+	Custom     map[string]string `json:"custom"`
+	CreatedAt  string            `json:"createdAt"`
+	AgeSeconds int64             `json:"ageSeconds"`
 }
 
 func toWorkload(workload domain.Workload, now time.Time) Workload {
@@ -226,6 +241,7 @@ func toWorkload(workload domain.Workload, now time.Time) Workload {
 		LastScheduled: formatTime(workload.LastScheduled()),
 		Labels:        labels,
 		Annotations:   annotations,
+		Custom:        emptyIfNil(workload.Custom()),
 		CreatedAt:     formatTime(workload.CreatedAt()),
 		AgeSeconds:    int64(workload.Age(now).Seconds()),
 	}
@@ -479,12 +495,23 @@ type Event struct {
 	FirstSeen      string `json:"firstSeen"`
 	LastSeen       string `json:"lastSeen"`
 	AgeSeconds     int64  `json:"ageSeconds"`
+	// Labels are the event object's own labels, almost always empty.
+	Labels map[string]string `json:"labels"`
+	// Annotations are only the projected keys — see Pod.Annotations.
+	Annotations map[string]string `json:"annotations"`
+	// Custom holds the operator's own JSONPath columns, keyed by the column
+	// id the interface knows them by and already rendered as text. Nil unless
+	// this list was asked for one — see domain.Projection.
+	Custom map[string]string `json:"custom"`
 }
 
 func toEvent(event domain.Event, now time.Time) Event {
 	return Event{
 		Name:           event.Name(),
 		Namespace:      event.Namespace().String(),
+		Labels:         emptyIfNil(event.Labels()),
+		Annotations:    emptyIfNil(event.Annotations()),
+		Custom:         emptyIfNil(event.Custom()),
 		Type:           string(event.Type()),
 		IsWarning:      event.IsWarning(),
 		Reason:         event.Reason(),
@@ -519,6 +546,15 @@ type ResourceTable struct {
 	Namespaced bool          `json:"namespaced"`
 	Columns    []TableColumn `json:"columns"`
 	Rows       []TableRow    `json:"rows"`
+	// Truncated reports that the read stopped at Cap with objects left
+	// unread, so Rows is a PREFIX of the kind and not all of it. The
+	// interface has to say so: a capped list is indistinguishable from a
+	// complete one, and the search, the sort and the count are all wrong in
+	// the same silent direction without it.
+	Truncated bool `json:"truncated"`
+	// Cap is the limit that stopped the read, so the sentence can name it.
+	// Zero when nothing did.
+	Cap int `json:"cap"`
 }
 
 // TableColumn describes one column of a generic table.
@@ -537,6 +573,14 @@ type TableRow struct {
 	Name      string   `json:"name"`
 	Namespace string   `json:"namespace"`
 	Cells     []string `json:"cells"`
+	// Labels are the object's labels, from the row's own metadata.
+	Labels map[string]string `json:"labels"`
+	// Annotations are only the projected keys — see Pod.Annotations.
+	Annotations map[string]string `json:"annotations"`
+	// Custom holds the operator's own JSONPath columns, keyed by the column
+	// id the interface knows them by and already rendered as text. Nil unless
+	// this list was asked for one — see domain.Projection.
+	Custom map[string]string `json:"custom"`
 }
 
 func toResourceTable(table domain.ResourceTable) ResourceTable {
@@ -559,9 +603,12 @@ func toResourceTable(table domain.ResourceTable) ResourceTable {
 			cells = []string{}
 		}
 		rows = append(rows, TableRow{
-			Name:      row.Name,
-			Namespace: row.Namespace.String(),
-			Cells:     cells,
+			Name:        row.Name,
+			Namespace:   row.Namespace.String(),
+			Cells:       cells,
+			Labels:      emptyIfNil(row.Labels),
+			Annotations: emptyIfNil(row.Annotations),
+			Custom:      emptyIfNil(row.Custom),
 		})
 	}
 
@@ -571,6 +618,8 @@ func toResourceTable(table domain.ResourceTable) ResourceTable {
 		Namespaced: kind.Namespaced,
 		Columns:    columns,
 		Rows:       rows,
+		Truncated:  table.Truncated(),
+		Cap:        table.Cap(),
 	}
 }
 

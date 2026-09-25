@@ -137,6 +137,10 @@ func (fixedOverview) Overview(context.Context, domain.ClusterID) (domain.Overvie
 	}, nil
 }
 
+func (f fixedOverview) OverviewForTarget(ctx context.Context, id domain.ClusterID, _ string) (domain.Overview, error) {
+	return f.Overview(ctx, id)
+}
+
 // startSampler wires a service around the spy and starts it, returning once the
 // sampler's initial ticker exists so a test can drive ticks without racing it.
 func startSampler(t *testing.T, interval time.Duration) (*HistoryService, *tickerSpy, *countingStore) {

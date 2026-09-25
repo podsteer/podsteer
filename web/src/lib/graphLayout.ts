@@ -26,6 +26,14 @@ export interface LaidOutNode {
   namespace: string
   healthy: boolean
   subject: boolean
+  /**
+   * The qualifier under the name — a pod's phase, "not found", how many of a
+   * folded set are. Carried through the layout because the drawing is what
+   * shows it, and the layout is the only thing that reaches the drawing.
+   */
+  detail: string
+  /** Named by something and not there, as opposed to present and unwell. */
+  missing: boolean
   /** Centre of the box. */
   x: number
   y: number
@@ -56,8 +64,10 @@ export interface GraphSource {
     name: string
     namespace: string
     tier: number
+    detail: string
     healthy: boolean
     subject: boolean
+    missing: boolean
   }[]
   edges: { from: string; to: string }[]
 }
@@ -129,8 +139,10 @@ export function layout(source: GraphSource, horizontal: boolean): Layout {
       apiKind: node.apiKind,
       name: node.name,
       namespace: node.namespace,
+      detail: node.detail,
       healthy: node.healthy,
       subject: node.subject,
+      missing: node.missing,
       x: placed.x,
       y: placed.y,
       width: NODE_WIDTH,

@@ -12,6 +12,7 @@ import {
   ALL_NAMESPACES,
   getManifest,
   getOverview,
+  getOverviewForTarget,
   listEvents,
   listKinds,
   listNamespaces,
@@ -24,6 +25,8 @@ import {
   listWorkloads,
   scaleWorkload,
   updateResource,
+  validateResource,
+  type ApplyOutcome,
   type Cluster,
   type Finding,
   type K8sEvent,
@@ -33,6 +36,7 @@ import {
   type ApplicationInventory,
   type Consumption,
   type Node,
+  type NodeLoad,
   type Overview,
   type Pod,
   type ResourceKind,
@@ -41,7 +45,33 @@ import {
   type Workload,
 } from '$lib/api/client'
 import { ApiError, toApiError } from '$lib/api/errors'
+import { findAutoscalers, foldKedaAutoscalers, type AutoscalerCheck } from '$lib/autoscalers'
+import { RowSelection } from '$lib/selection.svelte'
+import { nodeItem, podItem, rowKey, tableRowItem, workloadItem, type BulkItem } from '$lib/bulk'
 import { podStatusLabel } from '$lib/format'
+import { matchesPodStatusChips } from '$lib/podStatusFilters'
+import type { SavedView, ViewState } from '$lib/savedViews'
+import {
+  EVENT_CHIPS,
+  WORKLOAD_CHIPS,
+  includesCluster,
+  matchesChips,
+  liveClusterSelection,
+  toggleClusterSelection,
+  type FleetChipTab,
+  type FleetRow,
+  type FleetTab,
+} from '$lib/fleet'
+import { describeQuery, matches, parseQuery, type Query, type Row } from '$lib/query'
+import {
+  annotationKeysOf,
+  expressionsOf,
+  customSearchText,
+  customSortAccessor,
+  keysOnScreen,
+  type MetadataKeys,
+  type MetadataRow,
+} from '$lib/customColumns'
 import {
   parseAgeSeconds,
   parseQuantity,
@@ -51,8 +81,16 @@ import {
 } from '$lib/sort'
 import { alertPlayer } from './alerts.svelte'
 import { forgetConfigMaps } from './configMaps.svelte'
+import { forgetVulnerabilities } from './vulnerabilities.svelte'
+import { timeline } from './timeline.svelte'
+import { notifications } from './notifications.svelte'
+// The ONE finding diff, shared with the session timeline — see #adopt.
+import { diffFindings } from '$lib/timeline'
+import { sourcesAreComparable } from '$lib/notify'
 import { usageHistory, usageKey } from './usageHistory.svelte'
 import { preferences } from './preferences.svelte'
+import { mergeTables, type SourcedRow } from '$lib/mergeTables'
+import { fleet } from './fleet.svelte'
 
 /** Lifecycle of an asynchronous read. */
 
@@ -95,6 +133,69 @@ const MAX_USAGE_SAMPLES = 200
 
 /** How often the current view re-fetches while auto-refresh is on. */
 export const DEFAULT_REFRESH_INTERVAL_MS = 10_000
+
+/** One object recently opened in this cluster's detail drawer. */
+export interface RecentObject {
+  kindId: string
+  name: string
+  namespace: string
+}
+
+/**
+ * One of the detail drawer's own controls, named so a row menu can ask for
+ * it — see `ClusterSession.detailIntent`.
+ *
+ * Every entry names a control that already exists on the drawer's toolbar,
+ * with the dialog and the guards it already carries. Nothing here performs a
+ * write of its own: `resume` and `uncordon` are the two the drawer runs
+ * without a dialog, and they run through the drawer's own handlers for the
+ * reason it gives — each undoes a visible, deliberate state rather than
+ * doing anything the cluster cannot immediately reverse.
+ */
+export type DetailAction =
+  | 'delete'
+  | 'evict'
+  | 'restart'
+  | 'scale'
+  | 'trigger'
+  | 'suspend'
+  | 'resume'
+  | 'cordon'
+  | 'uncordon'
+  | 'drain'
+
+/**
+ * What a row menu asks the drawer to do when it opens.
+ *
+ * A tab, an action, or both. The tab is deliberately only the two panes an
+ * operator opens a pod for — an action that needs the drawer's context
+ * belongs in the drawer, at the right tab, rather than being half-rebuilt in
+ * a table row.
+ */
+export interface DetailIntent {
+  /**
+   * Which tab the drawer should land on.
+   *
+   * `overview` IS LISTED EVEN THOUGH THE DRAWER RESETS TO IT ANYWAY, and the
+   * redundancy is the point: the row menu's Overview item states what it
+   * wants rather than relying on a default in another file continuing to be
+   * that value. The reset exists to clear the PREVIOUS object's tab, which is
+   * a different question from where this request wants to land, and the two
+   * are free to diverge — a drawer that one day remembered the last tab per
+   * kind would silently break every Overview item that had said nothing.
+   */
+  tab?: 'overview' | 'logs' | 'terminal'
+  action?: DetailAction
+}
+
+/**
+ * How many recently opened objects the Recent section keeps.
+ *
+ * Twelve, the same order of magnitude as the pinned-kinds star affordance it
+ * sits beside in the navigator — enough to cover a working session's worth of
+ * "what was I just looking at" without becoming a second, unbounded list.
+ */
+const MAX_RECENT_OBJECTS = 12
 
 /**
  * How stale the browsable-kind list may get before it is re-read.
@@ -142,6 +243,141 @@ export const OVERVIEW_KIND_ID = 'podsteer/overview'
  */
 export const APPLICATIONS_KIND_ID = 'podsteer/applications'
 
+/**
+ * The merged cross-cluster view, pinned beside the other two.
+ *
+ * THE THIRD PSEUDO-ENTRY, AND FOR THE SAME REASON: there is no object to GET
+ * called "all clusters". It is the pods, workloads or events of every open
+ * tab in one table — an aggregation, not a kind — and a catalog entry would
+ * offer it to every consumer that expects to fetch what it names, from a
+ * cluster that by definition knows nothing of the other tabs. Its rows live
+ * in $stores/fleet rather than on any one session, because they are nobody's
+ * tab's; what stays here is this tab's own view of them — search, sort,
+ * page, chips.
+ */
+export const FLEET_KIND_ID = 'podsteer/fleet'
+
+/**
+ * The RBAC explorer, pinned beside the other three.
+ *
+ * THE FOURTH PSEUDO-ENTRY, AND FOR THE SAME REASON: there is no object to
+ * GET called "my permissions". It is three questions asked of the
+ * authorization review APIs and one reverse lookup over the binding graph —
+ * an interrogation, not a list — so it is deliberately absent from
+ * `domain/catalog.go`, which is offered to every consumer that expects to be
+ * able to fetch what it names. The Roles and ClusterRoles it inspects ARE
+ * catalog entries, and browsing them stays exactly where it was.
+ *
+ * It also polls nothing. The panel's reads happen when somebody presses
+ * something, which is why `#fetch` has a case for it that fetches nothing at
+ * all: an allow or deny decision shown from a previous tick could report a
+ * permission that has since been revoked as still granted.
+ */
+export const RBAC_KIND_ID = 'podsteer/rbac'
+
+/**
+ * The column-preference and sort key of one of the merged tables.
+ *
+ * Per table rather than one for the view: the three hold different columns,
+ * so a sort set on one must not leak into another — the same rule `sorts`
+ * already applies between kinds.
+ */
+export function fleetTableId(tab: FleetTab): string {
+  return `${FLEET_KIND_ID}/${tab}`
+}
+
+/**
+ * The session timeline's navigation id, the fourth pinned pseudo-entry.
+ *
+ * NOT A KIND, for the reason the other three are not: there is no object to
+ * GET called a timeline. It is the record this tab kept of what it saw while
+ * it was open — events, findings appearing and clearing, and the writes
+ * PodSteer made — so a catalogue entry would offer it to every consumer that
+ * expects to be able to fetch what it names. It is also the only view that
+ * fetches nothing at all: everything in it already crossed the bridge for
+ * some other reason. See $stores/timeline.
+ */
+export const TIMELINE_KIND_ID = 'podsteer/timeline'
+
+/**
+ * What `Overview.unavailable` calls the event read when it failed.
+ *
+ * The Go side names its sources as strings and the frontend matches on them,
+ * so the one place that match is written down is here rather than inline at
+ * the comparison — the same string appears in the overview's "assessed
+ * without …" line, and an assessment carrying no events must be readable as
+ * "refused" rather than as "nothing happened". See the `run` calls in
+ * application/overview.go.
+ */
+export const EVENTS_SOURCE = 'events'
+
+/**
+ * The Helm page, the SIXTH pinned pseudo-entry.
+ *
+ * NOT A KIND, for the reason none of the other five are: there is no object
+ * to GET called a Helm release. A release is a set of Secrets Helm labelled,
+ * and what this page shows is those labels grouped by the release they name —
+ * so a catalogue entry would offer it to every consumer that expects to be
+ * able to fetch what it names, and none of them could. The Secrets themselves
+ * ARE ordinary catalogue entries and stay exactly where they are; this entry
+ * is the reading of them, not the list.
+ *
+ * IT FETCHES NOTHING ON THE TICK, and here that is a stronger rule than it is
+ * for the RBAC explorer beside it. `#fetch` has a case for this view that
+ * returns immediately, because a metadata LIST of Secrets every ten seconds
+ * would put six `list secrets` lines a minute into the operator's audit log
+ * for as long as the page were left open — the Secrets doctrine's own
+ * signature with the bytes removed and the pattern intact. The page reads
+ * when it opens, when somebody presses Refresh, and after a write PodSteer
+ * made (which drops the Go cache); see decision 6 in podsteer/business-docs.
+ */
+export const HELM_KIND_ID = 'podsteer/helm'
+
+/**
+ * The multi-kind view, the SEVENTH pinned pseudo-entry.
+ *
+ * NOT A KIND, and here for the plainest version of the reason: it is SEVERAL
+ * kinds. Kubernetes has no multi-kind list call — `kubectl get pod,deploy,svc`
+ * is three requests — so there is nothing to GET called "pods and deployments
+ * and services", and a catalogue entry would offer one to every consumer that
+ * expects to be able to fetch what it names.
+ *
+ * WHAT IT ANSWERS is the most-upvoted request measured anywhere in this
+ * category: k9s #771, "show multiple resource types without switching", 141
+ * reactions, shipped there in 2024. An operator asking "what does this
+ * application consist of" is asking about Deployments AND Services AND
+ * ConfigMaps at once, and a navigator that selects one kind at a time makes
+ * that three visits and three joins done in somebody's head.
+ *
+ * THE KINDS ARE THE OPERATOR'S and live in `preferences.multiKindSelection`, per
+ * cluster — see MAX_MULTI_KINDS, whose cap is about a request rate rather
+ * than about taste.
+ */
+export const MULTI_KIND_ID = 'podsteer/multi-kind'
+
+/**
+ * The security posture page, the EIGHTH pinned pseudo-entry.
+ *
+ * NOT A KIND, and here the reason is sharper than it is for the seven before
+ * it: there is no object to GET called "posture", and there is no scanner to
+ * ask either. The page is an ASSEMBLY of facts PodSteer already holds — the
+ * privileges a workload's own spec takes (domain/security_findings.go) and
+ * whatever a scanner the operator installed has already written into its own
+ * CRDs — so a catalogue entry would offer it to every consumer that expects
+ * to be able to fetch what it names, and none of them could.
+ *
+ * PODSTEER SCANS NOTHING, and the page says so in its own words rather than
+ * relying on this comment. See SecurityView, and vulnerability.go for why
+ * owning CVE data is a business this project stays out of.
+ *
+ * IT FETCHES NOTHING ON THE TICK. The static findings ride the assessment
+ * that runs under every view anyway; the scanner read is one bounded call
+ * per cluster, cached in $stores/vulnerabilities and in Go behind it. A
+ * cluster-wide LIST of VulnerabilityReports every ten seconds would be the
+ * Helm page's audit problem with a bigger list.
+ */
+export const SECURITY_KIND_ID = 'podsteer/security'
+
 export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
 
 /** Kind ids PodSteer renders with purpose-built columns rather than generically. */
@@ -171,10 +407,34 @@ export const WORKLOAD_KIND_BY_ID: Record<string, string> = {
   'batch/v1/cronjobs': 'CronJob',
 }
 
+/** The kind id behind a controller name — `WORKLOAD_KIND_BY_ID` read the
+    other way, for a row of a merged table that names its kind and needs the
+    navigator's id to open in. */
+export function workloadKindId(kind: string): string | undefined {
+  return Object.keys(WORKLOAD_KIND_BY_ID).find((id) => WORKLOAD_KIND_BY_ID[id] === kind)
+}
+
+/**
+ * The HorizontalPodAutoscaler kind's id.
+ *
+ * Stable, unlike a KEDA ScaledObject's: HPA is a built-in kind — see
+ * `domain/catalog.go` — present in every cluster's catalog whether or not the
+ * API server actually serves `autoscaling/v2`. A ScaledObject has no such
+ * fixed id because it is discovered per cluster, so it is looked up in
+ * `session.kinds` instead. See `ClusterSession.autoscalersFor`.
+ */
+const HPA_KIND_ID = 'autoscaling/v2/horizontalpodautoscalers'
+
 /** What the content pane should render for the selected kind. */
 export type ViewMode =
   | 'overview'
   | 'applications'
+  | 'fleet'
+  | 'rbac'
+  | 'timeline'
+  | 'helm'
+  | 'multi-kind'
+  | 'security'
   | 'pods'
   | 'nodes'
   | 'events'
@@ -206,7 +466,7 @@ const POD_SORT: SortAccessors<Pod> = {
 const NODE_SORT: SortAccessors<Node> = {
   status: (node) => node.status,
   name: (node) => node.name,
-  roles: (node) => (node.roles.length ? node.roles.join(', ') : 'worker'),
+  roles: (node) => ((node.roles ?? []).length ? (node.roles ?? []).join(', ') : 'worker'),
   cpu: (node) => (node.hasMetrics ? node.cpuPercent : null),
   memory: (node) => (node.hasMetrics ? node.memoryPercent : null),
   // Sorted by how FULL it is, not by bytes used. A 900GiB disk with 100GiB
@@ -257,7 +517,7 @@ const WORKLOAD_SORT: SortAccessors<Workload> = {
   ready: (workload) => workload.readyCount,
   updated: (workload) => workload.updated,
   available: (workload) => workload.available,
-  images: (workload) => workload.images.join(', '),
+  images: (workload) => (workload.images ?? []).join(', '),
   controlledBy: (workload) => workload.controlledBy,
   age: (workload) => workload.ageSeconds,
 }
@@ -273,6 +533,28 @@ const EVENT_SORT: SortAccessors<K8sEvent> = {
   age: (event) => event.ageSeconds,
 }
 
+/*
+ * The merged tables sort by the same accessors as their single-cluster twins,
+ * plus the columns they add. Spread rather than re-declared, so a column's
+ * ordering rule cannot differ between "this cluster's pods" and "every
+ * cluster's pods".
+ */
+const FLEET_POD_SORT: SortAccessors<FleetRow<Pod>> = {
+  ...POD_SORT,
+  cluster: (pod) => pod.cluster,
+}
+
+const FLEET_WORKLOAD_SORT: SortAccessors<FleetRow<Workload>> = {
+  ...WORKLOAD_SORT,
+  cluster: (workload) => workload.cluster,
+  kind: (workload) => workload.kind,
+}
+
+const FLEET_EVENT_SORT: SortAccessors<FleetRow<K8sEvent>> = {
+  ...EVENT_SORT,
+  cluster: (event) => event.cluster,
+}
+
 export class ClusterSession {
   /** The connected cluster this tab shows. */
   readonly cluster: Cluster
@@ -281,6 +563,23 @@ export class ClusterSession {
   kinds = $state.raw<ResourceKind[]>([])
   /** Namespaces, for the filter. */
   namespaces = $state.raw<Namespace[]>([])
+
+  /**
+   * Objects recently opened in this cluster's detail drawer, most recent
+   * first.
+   *
+   * IN MEMORY ONLY, NEVER PERSISTED — and deliberately not alongside
+   * pinnedKinds in preferences.svelte.ts, even though both live in the
+   * navigator. A kind id says "this operator watches Deployments here"; an
+   * object name says which Deployment, and SECURITY.md enumerates exactly
+   * what PodSteer writes to disk on this operator's behalf. Object names are
+   * not on that list — the recorded capacity history holds no object names as
+   * a product commitment (see CLAUDE.md, "History is sampled, and says so"),
+   * and a localStorage entry naming every pod somebody opened would quietly
+   * reverse it. This is per tab, like `usage` below, and gone the moment the
+   * tab closes.
+   */
+  recentObjects = $state.raw<RecentObject[]>([])
 
   /** The kind currently selected in the navigator. */
   selectedKindId = $state<string>(DEFAULT_KIND_ID)
@@ -298,6 +597,48 @@ export class ClusterSession {
   /** Active sort per kind id. Kinds hold different columns, so a sort set on
       one must not leak into another. */
   sorts = $state<Record<string, SortState>>({})
+
+  /**
+   * Active status quick-filter ids on the Pods page — see
+   * `$lib/podStatusFilters`. Pod-only rather than a per-kind record like
+   * `sorts`, because no other view has quick-filter chips; if one grows some
+   * this should become one.
+   */
+  podStatusFilters = $state<string[]>([])
+
+  /**
+   * Active quick-filter chips on each of the merged tables — the pod chips
+   * again for Pods, `WORKLOAD_CHIPS` and `EVENT_CHIPS` for the other two.
+   * Kept apart from `podStatusFilters`: a chip pressed while reading every
+   * cluster's pods is not a chip pressed on this cluster's, and the two
+   * views must not surprise each other.
+   */
+  fleetChips = $state<Record<FleetChipTab, string[]>>({ pods: [], workloads: [], events: [] })
+
+  /**
+   * Which clusters the merged tables are showing, set by the strip's chips.
+   *
+   * Empty means every open cluster — see includesCluster in $lib/fleet for
+   * why that is the resting state rather than "all selected", and for what
+   * the chips used to do instead.
+   *
+   * PER SESSION, beside fleetChips rather than in $stores/fleet: the rows
+   * are read once for the whole workspace, but which of them a tab is
+   * looking at is that tab's business, exactly as its search, sort and page
+   * are. Two tabs on the merged table can be narrowed differently without
+   * either one re-reading anything.
+   */
+  fleetClusters = $state<string[]>([])
+
+  /**
+   * That selection as it applies right now — see liveClusterSelection.
+   *
+   * EVERYTHING READS THIS, not the field above. The stored list can name a
+   * cluster whose tab has since closed, and a selection nothing on screen can
+   * show or release is how the merged table went empty with no chip pressed
+   * to explain it.
+   */
+  readonly selectedFleetClusters = $derived(liveClusterSelection(this.fleetClusters, fleet.openClusters()))
 
   /**
    * Rows for whichever view is active. Only one is populated at a time.
@@ -354,15 +695,67 @@ export class ClusterSession {
    * would win.
    */
   #usageGeneration = 0
+
+  /**
+   * Which assessment read is the current one.
+   *
+   * Incremented by both paths that produce an assessment — the side-channel
+   * refresh that runs under every other view, and the overview view's own
+   * fetch — so only the newest may be adopted. See #refreshAssessment for
+   * what an older one landing last did to the alerting baseline.
+   */
+  #assessmentGeneration = 0
   table = $state.raw<ResourceTable | null>(null)
+
+  /**
+   * Autoscaler table reads for the Scale dialog, keyed by `"namespace/kindId"`.
+   *
+   * An HPA or ScaledObject LIST already carries every autoscaler in a
+   * namespace, so a dialog opened on three workloads in the same namespace —
+   * one after another, or reopened while this tab stays open — costs one HPA
+   * request and one ScaledObject request, not three of each. `findAutoscalers`
+   * does the per-workload filtering against whichever table this returns.
+   *
+   * FAILURES ARE NOT CACHED. The same reasoning `readcache.go` applies to the
+   * backend's poll cache holds here: handing the same refusal to every caller
+   * would leave the dialog reporting "could not check" for a namespace whose
+   * permission was granted a moment ago.
+   */
+  #autoscalerTables = new Map<string, Promise<ResourceTable>>()
   overview = $state.raw<Overview | null>(null)
 
   /**
-   * The non-info finding ids of the previous assessment, or null before the
-   * first one has landed. Not reactive: nothing renders it, and it exists
-   * only to decide what is new.
+   * The Kubernetes minor the overview's "check against" selector chose, or
+   * null for the default (the next minor after the cluster's current
+   * version, decided in Go). Session-scoped rather than persisted: asking
+   * what a specific future upgrade breaks is a question about one visit, not
+   * a standing preference like a page size or a sort order.
    */
-  #lastFindingIds: Set<string> | null = null
+  upgradeTarget = $state<string | null>(null)
+
+  /**
+   * The previous assessment's non-info findings, keyed by id, or null before
+   * the first one has landed. Not reactive: nothing renders it, and it exists
+   * only to decide what is new.
+   *
+   * A MAP RATHER THAN A SET OF IDS, because `diffFindings` is what compares
+   * them — the same function the session timeline is built from, held once.
+   * There used to be a second differ here, hand-written over a Set, and two
+   * differs mean two baselines: one could report a finding appearing on a
+   * refresh the other did not, so the sound, the notification and the
+   * timeline row would describe different instants.
+   */
+  #lastFindings: Map<string, Finding> | null = null
+
+  /**
+   * The sources the previous assessment could not read.
+   *
+   * Kept beside #lastFindings and assigned in the same place, because it is
+   * half of the same baseline: a source that was missing last refresh and
+   * answered this one hands over every finding it produces at once, and not
+   * one of them is new. See `sourcesAreComparable`.
+   */
+  #lastUnavailable: string[] | null = null
 
   status = $state<LoadStatus>('idle')
   error = $state<ApiError | null>(null)
@@ -379,8 +772,40 @@ export class ClusterSession {
   selectedNamespaceRow = $state<NamespaceSummary | null>(null)
   /** The open application, which is not a Kubernetes object at all. */
   selectedApplication = $state<Application | null>(null)
+
+  /**
+   * What a row menu asked the drawer to do the moment it opens, or null.
+   *
+   * WHY A REQUEST RATHER THAN THE ROW DOING IT. Every write in this
+   * application goes through one dialog, and each of those dialogs is a
+   * child of DetailDrawer with its guards already attached — the type-the-
+   * name gate on a production cluster, the drain preview, the eviction's
+   * "a budget may refuse this" sentence. A row menu that opened its own
+   * confirmation would be a second implementation of the same act, free to
+   * drift from the first and free to forget the gate; a row menu that called
+   * the API directly would be a write with no confirmation at all. So the
+   * row asks for the object to be OPENED with one of the drawer's own
+   * controls already engaged, and there is still exactly one Delete in the
+   * application.
+   *
+   * `$state.raw` because it is replaced whole and never edited in place, and
+   * consumed exactly once: the drawer takes it, which clears it, so a second
+   * object opened by an ordinary click cannot inherit the first one's
+   * request.
+   */
+  detailIntent = $state.raw<DetailIntent | null>(null)
   manifest = $state<string | null>(null)
   manifestStatus = $state<LoadStatus>('idle')
+
+  /**
+   * The rows ticked for a bulk action — a different thing from the row the
+   * drawer is open on above: that is one object being read, this is a set
+   * about to be acted on together, and ticking five pods then opening a
+   * sixth to check something must leave the five ticked. Cleared whenever
+   * the list underneath changes kind or namespace, because a tick made on
+   * one list means nothing on another. See $lib/selection.
+   */
+  readonly selection = new RowSelection()
 
   /**
    * Monotonic request counter.
@@ -431,6 +856,12 @@ export class ClusterSession {
     const id = this.selectedKindId
     if (id === OVERVIEW_KIND_ID) return 'overview'
     if (id === APPLICATIONS_KIND_ID) return 'applications'
+    if (id === FLEET_KIND_ID) return 'fleet'
+    if (id === RBAC_KIND_ID) return 'rbac'
+    if (id === TIMELINE_KIND_ID) return 'timeline'
+    if (id === HELM_KIND_ID) return 'helm'
+    if (id === MULTI_KIND_ID) return 'multi-kind'
+    if (id === SECURITY_KIND_ID) return 'security'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
     if (id === RICH_KIND_IDS.events) return 'events'
@@ -441,7 +872,11 @@ export class ClusterSession {
 
   /** Whether the selected kind carries namespaces. */
   readonly isNamespaced = $derived(
-    this.viewMode === 'overview' ? false : (this.selectedKind?.namespaced ?? true),
+    this.viewMode === 'overview' ||
+    this.viewMode === 'timeline' ||
+    this.viewMode === 'security'
+      ? false
+      : (this.selectedKind?.namespaced ?? true),
   )
 
   /**
@@ -449,50 +884,344 @@ export class ClusterSession {
    *
    * The overview is an assessment of the whole cluster, so the search box,
    * the pagination and the row count in the toolbar have nothing to act on.
+   * The RBAC explorer is the same case for the same reason — it is a set of
+   * questions and their answers, not rows — and it additionally must not
+   * offer the bulk action bar, which acts on a selection no pane here has.
+   * The Helm page is a third: its rows are releases rather than objects, it
+   * owns its own refresh (the toolbar's would poll `list secrets`), and there
+   * is nothing on it a bulk action could act on — no release is an object the
+   * management port can delete.
+   *
+   * The security page is a fourth: it is an assembly of findings and of what
+   * a scanner already wrote, which is an assessment in the overview's sense
+   * rather than a list of objects — and the objects it names live in the
+   * lists it links to, where a bulk action can honestly reach them.
    */
-  readonly isList = $derived(this.viewMode !== 'overview')
-
-  /** Rows after the search filter, for whichever view is active. */
-  readonly visiblePods = $derived(
-    filterRows(this.pods, this.search, (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase]),
+  readonly isList = $derived(
+    this.viewMode !== 'overview' &&
+      this.viewMode !== 'rbac' &&
+      this.viewMode !== 'timeline' &&
+      this.viewMode !== 'helm' &&
+      this.viewMode !== 'security',
   )
+
+  /**
+   * The search term parsed into a filter language query — regex, negation and
+   * label selectors alongside the plain substring `search` always supported.
+   * See `$lib/query`.
+   *
+   * Parsed here, ONCE per settled search term, rather than inside
+   * `filterRows` per row: a regex compile and a tokenise pass are cheap once
+   * and expensive five thousand times over.
+   */
+  readonly query = $derived(parseQuery(this.search))
+
+  /**
+   * The query for what is CURRENTLY in the box, parsed live rather than
+   * after the debounce `query` waits for.
+   *
+   * Parsing itself is cheap — it is FILTERING the rows that is worth
+   * debouncing — so the field's error state (an unclosed regex, mid-type)
+   * can appear immediately instead of a beat behind the keystroke that
+   * caused it.
+   */
+  readonly typedQuery = $derived(parseQuery(this.typedSearch))
+
+  /** The invalid-regex message for `typedQuery`, or undefined when it parses
+      cleanly. Drives the search field's error styling and accessible
+      description. */
+  readonly searchError = $derived(this.typedQuery.error)
+
+  /** A one-line summary of the syntax currently in the box, for the field's
+      tooltip — see `describeQuery`. */
+  readonly searchDescription = $derived(describeQuery(this.typedQuery))
+
+  /**
+   * The operator's own columns for the selected kind — see $lib/customColumns.
+   *
+   * Read from preferences HERE, once, so the filter, the sort, the fetch and
+   * the views all see one list: a column added while a refresh is in flight
+   * must not leave the search knowing about it and the request not.
+   */
+  readonly customColumns = $derived(preferences.customColumnsFor(this.selectedKindId))
+
+  /**
+   * The annotation keys the current view's list is asked for — the
+   * projection every list call takes. Label columns cost nothing here: every
+   * row carries its labels already.
+   */
+  readonly annotationKeys = $derived(annotationKeysOf(this.customColumns))
+
+  /**
+   * The JSONPath columns the current view's list is asked for.
+   *
+   * SENT WITH EVERY LIST READ, and the reason they are separate from the
+   * annotation keys above is what they cost: an annotation is on a row the
+   * list was fetching anyway, while an expression makes the backend fetch
+   * whole objects and, for a watched kind, skip the store. Empty for every
+   * list nobody has put an expression on, which is almost all of them.
+   */
+  readonly columnExpressions = $derived(expressionsOf(this.customColumns))
+
+  /**
+   * Pods after the search filter alone, BEFORE the status quick-filter chips.
+   *
+   * Kept separate from `visiblePods` so the chip row can count how many of
+   * what a search already narrowed down each chip would ADD — including a
+   * chip that is not currently selected. Counting against the
+   * already-chip-filtered list would make every unselected chip's count
+   * collapse towards zero the moment any chip was active.
+   */
+  readonly searchedPods = $derived(
+    filterRows(
+      this.pods,
+      this.query,
+      (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase, ...this.#customText(pod)],
+      (pod) => pod.labels,
+      () => this.cluster.id,
+    ),
+  )
+
+  /**
+   * Rows after the search filter, for whichever view is active.
+   *
+   * Pods additionally pass through the status quick-filter chips — ANDed
+   * with the text query, since a search term and a chip both narrow the
+   * same list rather than answering different questions.
+   */
+  readonly visiblePods = $derived(
+    this.searchedPods.filter((pod) => matchesPodStatusChips(pod, this.podStatusFilters)),
+  )
+  // Every kind's rows carry labels now, so `label:key` and `key=value` in
+  // the search box mean the same thing on the node list as on the pod list
+  // — and a custom column's value is searchable the way a built-in one's is.
   readonly visibleNodes = $derived(
-    filterRows(this.nodes, this.search, (node) => [node.name, node.status, ...node.roles]),
+    filterRows(
+      this.nodes,
+      this.query,
+      (node) => [node.name, node.status, ...(node.roles ?? []), ...this.#customText(node)],
+      (node) => node.labels,
+      () => this.cluster.id,
+    ),
   )
   readonly visibleWorkloads = $derived(
-    filterRows(this.workloads, this.search, (workload) => [
-      workload.name,
-      workload.namespace,
-      workload.status,
-    ]),
+    filterRows(
+      this.workloads,
+      this.query,
+      (workload) => [workload.name, workload.namespace, workload.status, ...this.#customText(workload)],
+      (workload) => workload.labels,
+      () => this.cluster.id,
+    ),
   )
   readonly visibleApplications = $derived(
-    filterRows(this.applications, this.search, (application) => [
-      application.instance,
-      application.namespace,
-      application.partOf,
-      application.name,
-    ]),
+    filterRows(
+      this.applications,
+      this.query,
+      (application) => [
+        application.instance,
+        application.namespace,
+        application.partOf,
+        application.name,
+      ],
+      undefined,
+      () => this.cluster.id,
+    ),
   )
   readonly visibleNamespaces = $derived(
-    filterRows(this.namespaceRows, this.search, (namespace) => [namespace.name, namespace.phase]),
+    filterRows(
+      this.namespaceRows,
+      this.query,
+      (namespace) => [namespace.name, namespace.phase, ...this.#customText(namespace)],
+      (namespace) => namespace.labels,
+      () => this.cluster.id,
+    ),
   )
   readonly visibleEvents = $derived(
-    filterRows(this.events, this.search, (event) => [
-      event.reason,
-      event.message,
-      event.involvedObject,
-      event.namespace,
-    ]),
+    filterRows(
+      this.events,
+      this.query,
+      (event) => [
+        event.reason,
+        event.message,
+        event.involvedObject,
+        event.namespace,
+        ...this.#customText(event),
+      ],
+      (event) => event.labels,
+      () => this.cluster.id,
+    ),
   )
+  /**
+   * One answer per kind the multi-kind view is showing, in the operator's order.
+   *
+   * `$state.raw` like every other row buffer here: replaced wholesale on each
+   * tick, never mutated, and deep-proxying several thousand printed cells buys
+   * nothing.
+   */
+  multiKindTables = $state.raw<ResourceTable[]>([])
+
+  /**
+   * Those answers as ONE table.
+   *
+   * Different kinds print different columns — a Deployment prints
+   * READY/UP-TO-DATE/AVAILABLE where a Service prints TYPE/CLUSTER-IP — so
+   * the merge matches columns by NAME and leaves a cell empty where a kind
+   * prints no such column. See $lib/mergeTables, which the All-clusters view
+   * uses for the same problem on the other axis.
+   */
+  readonly multiKindTable = $derived(
+    mergeTables(
+      this.multiKindTables.map((table) => ({
+        key: table.kindId,
+        columns: table.columns ?? [],
+        rows: table.rows ?? [],
+      })),
+    ),
+  )
+
+  /** Whether any kind's read stopped at its cap — see the view's notice. */
+  readonly multiKindTruncated = $derived(this.multiKindTables.some((table) => table.truncated))
+
+  /**
+   * The merged rows, filtered the same way every other list is.
+   *
+   * THE KIND IS PART OF THE SEARCHABLE TEXT, which is what makes one search
+   * box enough for a table holding several kinds: typing `service` narrows to
+   * Services without a separate control, and `kind:` needs no new syntax.
+   */
+  readonly visibleMultiKindRows = $derived(
+    filterRows(
+      this.multiKindTable.rows,
+      this.query,
+      (row) => [
+        row.name,
+        row.namespace,
+        this.#multiKindLabel(row.source),
+        ...(row.cells ?? []),
+        ...this.#customText(row),
+      ],
+      (row) => row.labels,
+      () => this.cluster.id,
+    ),
+  )
+
   readonly visibleTableRows = $derived(
-    filterRows(this.table?.rows ?? [], this.search, (row) => [row.name, row.namespace, ...row.cells]),
+    filterRows(
+      this.table?.rows ?? [],
+      this.query,
+      (row) => [row.name, row.namespace, ...(row.cells ?? []), ...this.#customText(row)],
+      (row) => row.labels,
+      () => this.cluster.id,
+    ),
   )
+
+  /**
+   * The merged tables' rows, filtered the same way — search, then chips —
+   * over what $stores/fleet holds for every open cluster. The cluster each
+   * row carries is what a `cluster:` term selects on; the rest of the text
+   * fields are exactly the single-cluster list's, so a search that finds a
+   * pod in one tab finds it here too.
+   */
+  /**
+   * Keeps only the clusters the strip's chips have selected.
+   *
+   * Applied BEFORE the search rather than as one more query term, because a
+   * selection of several clusters is an OR and the query language ANDs — the
+   * whole reason the chips could not select two. See $lib/fleet.
+   */
+  #onSelectedClusters<T extends { cluster: string }>(rows: readonly T[]): T[] {
+    const selected = this.selectedFleetClusters
+    if (selected.length === 0) return rows as T[]
+    return rows.filter((row) => includesCluster(selected, row.cluster))
+  }
+
+  readonly searchedFleetPods = $derived(
+    filterRows(
+      this.#onSelectedClusters(fleet.podRows),
+      this.query,
+      (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase],
+      (pod) => pod.labels,
+      (pod) => pod.cluster,
+    ),
+  )
+  readonly visibleFleetPods = $derived(
+    this.searchedFleetPods.filter((pod) => matchesPodStatusChips(pod, this.fleetChips.pods)),
+  )
+  readonly searchedFleetWorkloads = $derived(
+    filterRows(
+      this.#onSelectedClusters(fleet.workloadRows),
+      this.query,
+      (workload) => [workload.name, workload.namespace, workload.kind, workload.status],
+      (workload) => workload.labels,
+      (workload) => workload.cluster,
+    ),
+  )
+  readonly visibleFleetWorkloads = $derived(
+    this.searchedFleetWorkloads.filter((workload) =>
+      matchesChips(workload, WORKLOAD_CHIPS, this.fleetChips.workloads),
+    ),
+  )
+  readonly searchedFleetEvents = $derived(
+    filterRows(
+      this.#onSelectedClusters(fleet.eventRows),
+      this.query,
+      (event) => [event.reason, event.message, event.involvedObject, event.namespace],
+      undefined,
+      (event) => event.cluster,
+    ),
+  )
+  readonly visibleFleetEvents = $derived(
+    this.searchedFleetEvents.filter((event) =>
+      matchesChips(event, EVENT_CHIPS, this.fleetChips.events),
+    ),
+  )
+
+  /**
+   * The merged generic table's rows, filtered by the same search.
+   *
+   * NO CHIPS, deliberately: a chip is a claim about health, and the columns
+   * of an arbitrary kind are whatever that CRD's author chose to print. See
+   * FleetChipTab. The searchable text is every cell plus the name and
+   * namespace, because there is no fixed field to privilege.
+   */
+  readonly searchedFleetTableRows = $derived(
+    filterRows(
+      this.#onSelectedClusters(fleet.table.rows),
+      this.query,
+      (row) => [row.name, row.namespace, ...(row.cells ?? [])],
+      (row) => row.labels,
+      (row) => row.cluster,
+    ),
+  )
+  readonly visibleFleetTableRows = $derived(this.searchedFleetTableRows)
+
+  /** Total rows of the merged table showing, after filtering. */
+  readonly visibleFleetCount = $derived.by(() => {
+    switch (fleet.tab) {
+      case 'pods':
+        return this.visibleFleetPods.length
+      case 'workloads':
+        return this.visibleFleetWorkloads.length
+      case 'events':
+        return this.visibleFleetEvents.length
+      case 'kinds':
+        return this.visibleFleetTableRows.length
+    }
+  })
+
+  /** What a row's custom columns add to the searchable text. */
+  #customText(row: MetadataRow): string[] {
+    return customSearchText(row, this.customColumns)
+  }
 
   /** Total rows after filtering, before pagination. */
   readonly visibleCount = $derived.by(() => {
     switch (this.viewMode) {
       case 'overview':
+      case 'rbac':
+      case 'timeline':
+      case 'helm':
+      case 'security':
         return 0
       case 'pods':
         return this.visiblePods.length
@@ -506,6 +1235,10 @@ export class ClusterSession {
         return this.visibleNamespaces.length
       case 'applications':
         return this.visibleApplications.length
+      case 'multi-kind':
+        return this.visibleMultiKindRows.length
+      case 'fleet':
+        return this.visibleFleetCount
       default:
         return this.visibleTableRows.length
     }
@@ -528,34 +1261,58 @@ export class ClusterSession {
   /** Index of the first row on the current page, for the range readout. */
   readonly pageStart = $derived((this.currentPage - 1) * preferences.pageSize)
 
+  /** What `sorts` is keyed by: the kind id, or for the merged view the
+      table showing — see `fleetTableId`. */
+  readonly sortKey = $derived(
+    this.viewMode === 'fleet' ? fleetTableId(fleet.tab) : this.selectedKindId,
+  )
+
   /** The sort applied to the current kind, or null for server order. */
-  readonly sort = $derived(this.sorts[this.selectedKindId] ?? null)
+  readonly sort = $derived(this.sorts[this.sortKey] ?? null)
 
   /** Filtered rows after sorting, per view. */
-  readonly sortedPods = $derived(sortRows(this.visiblePods, this.sort, POD_SORT))
-  readonly sortedNodes = $derived(sortRows(this.visibleNodes, this.sort, NODE_SORT))
-  readonly sortedWorkloads = $derived(sortRows(this.visibleWorkloads, this.sort, WORKLOAD_SORT))
-  readonly sortedEvents = $derived(sortRows(this.visibleEvents, this.sort, EVENT_SORT))
-  readonly sortedNamespaces = $derived(
-    sortRows(this.visibleNamespaces, this.sort, NAMESPACE_SORT),
+  readonly sortedPods = $derived(sortRows(this.visiblePods, this.sort, this.#accessors(POD_SORT)))
+  readonly sortedNodes = $derived(sortRows(this.visibleNodes, this.sort, this.#accessors(NODE_SORT)))
+  readonly sortedWorkloads = $derived(
+    sortRows(this.visibleWorkloads, this.sort, this.#accessors(WORKLOAD_SORT)),
   )
+  readonly sortedEvents = $derived(sortRows(this.visibleEvents, this.sort, this.#accessors(EVENT_SORT)))
+  readonly sortedNamespaces = $derived(
+    sortRows(this.visibleNamespaces, this.sort, this.#accessors(NAMESPACE_SORT)),
+  )
+
+  /**
+   * A view's sort accessors, with the custom column's added when that is
+   * what the sort names. Built per sort rather than per view: the custom
+   * columns are the operator's and the built-in tables above are not, so
+   * the two are joined only at the one id being sorted on.
+   */
+  #accessors<T extends MetadataRow>(base: SortAccessors<T>): SortAccessors<T> {
+    const sort = this.sort
+    const custom = sort ? customSortAccessor<T>(sort.columnId) : null
+    return sort && custom ? { ...base, [sort.columnId]: custom } : base
+  }
 
   /**
    * Generic table rows after sorting. The column ids are positional ("c0"),
    * so the accessor is built from the table's own column definitions: numeric
    * columns compare as numbers, date columns as parsed ages, everything else
-   * as text.
+   * as text. A custom column is neither: it reads the row's own metadata.
    */
   readonly sortedTableRows = $derived.by(() => {
     const state = this.sort
     const table = this.table
+    const custom = state ? customSortAccessor<TableRow>(state.columnId) : null
+    if (state && custom) {
+      return sortRows(this.visibleTableRows, state, { [state.columnId]: custom })
+    }
     const index = state ? /^c(\d+)$/.exec(state.columnId)?.[1] : undefined
     if (!state || !table || index === undefined) return this.visibleTableRows
 
-    const column = table.columns[Number(index)]
+    const column = table.columns?.[Number(index)]
     if (!column) return this.visibleTableRows
 
-    const cell = (row: TableRow): string => row.cells[Number(index)] ?? ''
+    const cell = (row: TableRow): string => row.cells?.[Number(index)] ?? ''
     let accessor: (row: TableRow) => string | number | null
     if (column.type === 'integer' || column.type === 'number') {
       accessor = (row) => {
@@ -570,12 +1327,138 @@ export class ClusterSession {
     return sortRows(this.visibleTableRows, state, { [state.columnId]: accessor })
   })
 
+  /**
+   * The merged rows in sort order.
+   *
+   * The Kind column sorts on the kind's own display name rather than on its
+   * id, because the id carries a group and version an operator did not ask to
+   * order by — `apps/v1/deployments` would sort under "a".
+   */
+  readonly sortedMultiKindRows = $derived.by(() => {
+    const state = this.sort
+    if (!state) return this.visibleMultiKindRows
+
+    if (state.columnId === 'kind') {
+      return sortRows(this.visibleMultiKindRows, state, {
+        kind: (row: SourcedRow) => this.#multiKindLabel(row.source),
+      })
+    }
+
+    const custom = customSortAccessor<SourcedRow>(state.columnId)
+    if (custom) return sortRows(this.visibleMultiKindRows, state, { [state.columnId]: custom })
+
+    const index = /^c(\d+)$/.exec(state.columnId)?.[1]
+    if (index === undefined) return this.visibleMultiKindRows
+
+    const column = this.multiKindTable.columns[Number(index)]
+    if (!column) return this.visibleMultiKindRows
+
+    const cell = (row: SourcedRow): string => row.cells?.[Number(index)] ?? ''
+    let accessor: (row: SourcedRow) => string | number | null
+    if (column.type === 'integer' || column.type === 'number') {
+      accessor = (row) => {
+        const parsed = Number.parseFloat(cell(row))
+        return Number.isNaN(parsed) ? null : parsed
+      }
+    } else if (column.type === 'date') {
+      accessor = (row) => parseAgeSeconds(cell(row))
+    } else {
+      accessor = cell
+    }
+    return sortRows(this.visibleMultiKindRows, state, { [state.columnId]: accessor })
+  })
+
+  readonly pagedMultiKindRows = $derived(this.#slice(this.sortedMultiKindRows))
+
+  /**
+   * A multi-kind row's kind, SINGULAR — a row is one Deployment, not
+   * "Deployments". The navigator names the kind in the plural because it
+   * names a list; this names an object.
+   *
+   * Falls back to the plural, then to the raw id, for a kind the catalogue no
+   * longer serves. A raw id is ugly and honest; a blank cell would imply the
+   * row has no kind.
+   */
+  #multiKindLabel = (kindId: string): string => {
+    const kind = this.kinds.find((entry) => entry.id === kindId)
+    return kind?.singular || kind?.title || kindId
+  }
+
+  /**
+   * How many of the chosen kinds print a column of this name.
+   *
+   * WHAT IT DECIDES is whether the column is worth a default position. With
+   * four kinds on screen the merged set runs to sixteen columns, twelve of
+   * which exactly one kind fills — so a Pod's STATUS ends up behind a
+   * horizontal scroll while two Deployment-only columns sit in front of it,
+   * blank on every row that is not a Deployment.
+   */
+  multiKindColumnSources = (name: string): number =>
+    this.multiKindTables.filter((table) =>
+      (table.columns ?? []).some((column) => column.name === name),
+    ).length
+
+  /** Whether a multi-kind row's kind carries namespaces — for its row key and
+      for opening it. Absent from the catalogue is treated as namespaced,
+      which is the safe guess: a wrong `false` drops the namespace and opens
+      the wrong object. */
+  multiKindNamespaced = (kindId: string): boolean =>
+    this.kinds.find((kind) => kind.id === kindId)?.namespaced ?? true
+
+  /** A multi-kind row's kind title, for the Kind column. */
+  multiKindTitle = (kindId: string): string => this.#multiKindLabel(kindId)
+
   /** Rows of the current page, per view. */
   readonly pagedPods = $derived(this.#slice(this.sortedPods))
   readonly pagedNodes = $derived(this.#slice(this.sortedNodes))
   readonly pagedWorkloads = $derived(this.#slice(this.sortedWorkloads))
   readonly pagedEvents = $derived(this.#slice(this.sortedEvents))
   readonly pagedNamespaces = $derived(this.#slice(this.sortedNamespaces))
+
+  /** The merged tables, sorted and paged like any other. */
+  readonly sortedFleetPods = $derived(sortRows(this.visibleFleetPods, this.sort, FLEET_POD_SORT))
+  readonly sortedFleetWorkloads = $derived(
+    sortRows(this.visibleFleetWorkloads, this.sort, FLEET_WORKLOAD_SORT),
+  )
+  readonly sortedFleetEvents = $derived(
+    sortRows(this.visibleFleetEvents, this.sort, FLEET_EVENT_SORT),
+  )
+  /**
+   * The merged generic table, sorted by whichever column was clicked.
+   *
+   * The same positional-id rule the single-cluster table follows, against the
+   * MERGED columns — which is the whole reason mergeFleetTable re-indexes
+   * cells rather than concatenating rows: sorting on "c2" here has to mean
+   * one thing across every cluster.
+   */
+  readonly sortedFleetTableRows = $derived.by(() => {
+    const state = this.sort
+    const columns = fleet.table.columns
+    const index = state ? /^c(\d+)$/.exec(state.columnId)?.[1] : undefined
+    if (!state || index === undefined) return this.visibleFleetTableRows
+
+    const column = columns[Number(index)]
+    if (!column) return this.visibleFleetTableRows
+
+    const cell = (row: FleetRow<TableRow>): string => row.cells?.[Number(index)] ?? ''
+    let accessor: (row: FleetRow<TableRow>) => string | number | null
+    if (column.type === 'integer' || column.type === 'number') {
+      accessor = (row) => {
+        const parsed = Number.parseFloat(cell(row))
+        return Number.isNaN(parsed) ? null : parsed
+      }
+    } else if (column.type === 'date') {
+      accessor = (row) => parseAgeSeconds(cell(row))
+    } else {
+      accessor = cell
+    }
+    return sortRows(this.visibleFleetTableRows, state, { [state.columnId]: accessor })
+  })
+
+  readonly pagedFleetTableRows = $derived(this.#slice(this.sortedFleetTableRows))
+  readonly pagedFleetPods = $derived(this.#slice(this.sortedFleetPods))
+  readonly pagedFleetWorkloads = $derived(this.#slice(this.sortedFleetWorkloads))
+  readonly pagedFleetEvents = $derived(this.#slice(this.sortedFleetEvents))
   readonly sortedApplications = $derived(
     sortRows(this.visibleApplications, this.sort, APPLICATION_SORT),
   )
@@ -605,7 +1488,7 @@ export class ClusterSession {
 
   /** How many of a finding's listed objects are snoozed. */
   snoozedSubjectCount = (finding: Finding): number =>
-    finding.subjects.filter(
+    (finding.subjects ?? []).filter(
       (subject) =>
         preferences.snoozedUntil(this.cluster.id, finding.id, subject.namespace, subject.name) > 0,
     ).length
@@ -619,9 +1502,9 @@ export class ClusterSession {
    * finding whose greater part was never seen.
    */
   isFullySnoozed = (finding: Finding): boolean =>
-    finding.subjects.length > 0 &&
+    (finding.subjects?.length ?? 0) > 0 &&
     !finding.truncated &&
-    this.snoozedSubjectCount(finding) === finding.subjects.length
+    this.snoozedSubjectCount(finding) === (finding.subjects?.length ?? 0)
 
   /**
    * How many findings need attention, from the last assessment.
@@ -665,6 +1548,44 @@ export class ClusterSession {
     total: this.pods.length,
     unhealthy: this.pods.filter((pod) => !pod.isHealthy).length,
     restarts: this.pods.reduce((sum, pod) => sum + pod.restarts, 0),
+  })
+
+  /**
+   * The ticked rows as a bulk action's plan needs them.
+   *
+   * Resolved against the rows held NOW rather than remembered at tick time:
+   * a row deleted by somebody else between the tick and the action drops
+   * out here instead of being sent to the cluster by name alone, and the
+   * count the action bar shows is of objects that still exist. Every fact
+   * on an item is a quotation of a field the row already carries — the
+   * controller a pod's "Controlled By" names, a workload's desired count, a
+   * node's cordoned flag — so planning costs no read at all. See $lib/bulk.
+   */
+  readonly bulkItems = $derived.by((): BulkItem[] => {
+    const kind = this.selectedKind
+    const keys = this.selection.keys
+    if (!kind || keys.size === 0) return []
+
+    switch (this.viewMode) {
+      case 'pods':
+        return this.pods
+          .filter((pod) => keys.has(rowKey(pod.namespace, pod.name)))
+          .map((pod) => podItem(kind, pod))
+      case 'workloads':
+        return this.workloads
+          .filter((workload) => keys.has(rowKey(workload.namespace, workload.name)))
+          .map((workload) => workloadItem(kind, workload))
+      case 'nodes':
+        return this.nodes.filter((node) => keys.has(node.name)).map((node) => nodeItem(kind, node))
+      case 'table':
+        return (this.table?.rows ?? [])
+          .filter(
+            (row) => row.name && keys.has(rowKey(kind.namespaced ? row.namespace : '', row.name)),
+          )
+          .map((row) => tableRowItem(kind, row))
+      default:
+        return []
+    }
   })
 
   /** Loads the navigator tree and namespace list, then the default view. */
@@ -730,6 +1651,7 @@ export class ClusterSession {
     this.selectedKindId = kindId
     this.page = 1
     this.closeDetail()
+    this.selection.clear()
     await this.refresh()
   }
 
@@ -796,6 +1718,7 @@ export class ClusterSession {
       }
       this.page = 1
       this.closeDetail()
+      this.selection.clear()
       await this.refresh()
     }
 
@@ -845,6 +1768,7 @@ export class ClusterSession {
     // navigated away from, and leaving it there over a list of something else
     // is a panel describing an object nothing on screen refers to.
     this.closeDetail()
+    if (changed) this.selection.clear()
 
     if (changed) await this.refresh()
   }
@@ -855,6 +1779,62 @@ export class ClusterSession {
     this.namespace = namespace
     preferences.setClusterNamespace(this.cluster.id, namespace)
     this.page = 1
+    this.selection.clear()
+    await this.refresh()
+  }
+
+  /**
+   * What a saved view would capture, and what one is compared against.
+   *
+   * The four things a view holds and nothing else — see $lib/savedViews for
+   * why the sort, the page and the columns are deliberately not among them.
+   */
+  readonly viewState = $derived<ViewState>({
+    kindId: this.selectedKindId,
+    namespace: this.namespace,
+    search: this.typedSearch,
+    statusFilters: this.podStatusFilters,
+  })
+
+  /**
+   * Opens a saved view.
+   *
+   * ONE RELOAD, like browseKind, and for the same reason: setting the kind
+   * and then the namespace loads the new kind across the old namespace first,
+   * which is a flash of the wrong list and, on a large cluster, an expensive
+   * one.
+   *
+   * The search is set through the field's own path rather than assigned, so
+   * the box and the term the table filters by cannot disagree — and the chips
+   * are replaced rather than merged: a view is the whole question, not an
+   * amendment to whatever was already pressed.
+   */
+  applyView = async (view: SavedView): Promise<void> => {
+    const changed = view.kindId !== this.selectedKindId || view.namespace !== this.namespace
+
+    this.selectedKindId = view.kindId
+    this.namespace = view.namespace
+    preferences.setClusterNamespace(this.cluster.id, view.namespace)
+    this.podStatusFilters = [...view.statusFilters]
+    this.setSearch(view.search)
+    this.page = 1
+    this.closeDetail()
+    if (changed) this.selection.clear()
+
+    if (changed) await this.refresh()
+  }
+
+  /**
+   * Changes what the overview's upgrade-impact findings are checked against,
+   * and reloads. `null` returns to the default (the next minor).
+   *
+   * Not remembered across tabs or sessions like the namespace filter is:
+   * comparing against a specific future version is a question about this
+   * visit, and a choice made checking one cluster has no bearing on another.
+   */
+  setUpgradeTarget = async (minor: string | null): Promise<void> => {
+    if (minor === this.upgradeTarget) return
+    this.upgradeTarget = minor
     await this.refresh()
   }
 
@@ -888,6 +1868,59 @@ export class ClusterSession {
     }, SEARCH_DEBOUNCE_MS)
   }
 
+  /**
+   * Toggles one status quick-filter chip on the Pods page.
+   *
+   * Resets to the first page, for the same reason `setSearch` does: the
+   * visible rows just changed, so wherever the operator was pointing may no
+   * longer exist. Not persisted anywhere — see `preferences.svelte.ts` for
+   * what IS — because a chip is a "right now" question about what is broken,
+   * not a standing preference about how to view Pods.
+   */
+  togglePodStatusFilter = (id: string): void => {
+    this.podStatusFilters = this.podStatusFilters.includes(id)
+      ? this.podStatusFilters.filter((existing) => existing !== id)
+      : [...this.podStatusFilters, id]
+    this.page = 1
+  }
+
+  /** Toggles one quick-filter chip on a merged table. Same page reset, same
+      reasons, as the pod chips. */
+  /**
+   * Adds or removes one cluster from the merged table's selection.
+   *
+   * Resets the page for the same reason toggleFleetChip does: page 4 of a
+   * list that just lost two clusters is a page that may no longer exist.
+   */
+  toggleFleetCluster = (cluster: string): void => {
+    this.fleetClusters = toggleClusterSelection(this.fleetClusters, cluster, fleet.openClusters())
+    this.page = 1
+  }
+
+  toggleFleetChip = (tab: FleetChipTab, id: string): void => {
+    const active = this.fleetChips[tab]
+    this.fleetChips = {
+      ...this.fleetChips,
+      [tab]: active.includes(id) ? active.filter((existing) => existing !== id) : [...active, id],
+    }
+    this.page = 1
+  }
+
+  /**
+   * Switches which merged table is showing, and reads it.
+   *
+   * Through this session's own refresh rather than the fleet store's, so
+   * the read lands under this tab's generation guard and reports into its
+   * error banner — the same path the poll takes, which is the only other
+   * caller.
+   */
+  selectFleetTab = async (tab: FleetTab): Promise<void> => {
+    if (tab === fleet.tab) return
+    fleet.tab = tab
+    this.page = 1
+    await this.refresh()
+  }
+
   /** Moves to a page, clamped to the range that exists. */
   goToPage = (page: number): void => {
     this.page = Math.min(Math.max(1, page), this.pageCount)
@@ -901,7 +1934,7 @@ export class ClusterSession {
    * longer exists.
    */
   toggleSort = (columnId: string): void => {
-    const current = this.sorts[this.selectedKindId]
+    const current = this.sorts[this.sortKey]
     const next: SortState | null =
       !current || current.columnId !== columnId
         ? { columnId, direction: 'asc' }
@@ -911,9 +1944,9 @@ export class ClusterSession {
 
     const sorts = { ...this.sorts }
     if (next) {
-      sorts[this.selectedKindId] = next
+      sorts[this.sortKey] = next
     } else {
-      delete sorts[this.selectedKindId]
+      delete sorts[this.sortKey]
     }
     this.sorts = sorts
     this.page = 1
@@ -938,7 +1971,76 @@ export class ClusterSession {
     const error = toApiError(cause)
     this.error = error
     if (error.code === 'cluster_not_found') this.onVanished?.(error)
+    this.#recordFailure(error)
     return error
+  }
+
+  /**
+   * When this cluster stopped answering, or null while it is.
+   *
+   * THE TAB USED TO REPORT `cluster.isReachable`, WHICH IS A FACT ABOUT THE
+   * PAST: it means "a round trip completed once and told us the server
+   * version", and nothing ever unsets it. A laptop that changes VPN keeps a
+   * green dot, the word "reachable" in the status bar, and — on a watched
+   * kind — a list of rows served from the in-memory store, because that read
+   * never touches the network. Every surface an operator can see says the
+   * cluster is fine while nothing can reach it.
+   *
+   * This is the other half: what the LAST read actually did. The first
+   * failure's time is kept rather than the most recent one, so the interface
+   * can say how long it has been out rather than merely that it is.
+   */
+  unreachableSince = $state<number | null>(null)
+
+  /** Whether the cluster is answering right now. */
+  readonly answering = $derived(this.unreachableSince === null)
+
+  /**
+   * Marks the cluster silent, if this failure is a failure of the network.
+   *
+   * ONLY A TRANSPORT FAILURE COUNTS. An account that may not list one kind is
+   * a perfectly reachable cluster refusing one request, and painting the tab
+   * red for it would send somebody to check a VPN over a permission — the
+   * same split classifyRead makes on the Go side, for the same reason. A
+   * cancelled request is nobody's fault and is not a verdict either.
+   */
+  #recordFailure(error: ApiError): void {
+    if (error.code !== 'unreachable') return
+    // The FIRST failure's time, kept across the ones that follow it.
+    this.unreachableSince ??= Date.now()
+  }
+
+  /**
+   * Records a read that PROVABLY reached the API server.
+   *
+   * NOT EVERY SUCCESS QUALIFIES, which is the asymmetry that makes this a
+   * second method rather than a null argument to the one above. A pod list on
+   * a watched kind is answered from an in-memory store, so it succeeds just
+   * as happily with the network gone — clearing on it would undo the
+   * assessment's verdict on the very same tick that raised it. A failure is
+   * evidence wherever it comes from; a success is only evidence from a read
+   * that had to leave the machine.
+   */
+  #recordAnswered(): void {
+    this.unreachableSince = null
+  }
+
+  /**
+   * Files a heartbeat's outcome, for the tabs that are not in front.
+   *
+   * A background tab's views are not mounted, so nothing polls it and its dot
+   * is a claim about the last time somebody looked — see $stores/workspace,
+   * which owns the heartbeat, and App.svelte, which mounts one workspace at a
+   * time and moves the refresh timer with it. Public because the heartbeat is
+   * the workspace's job rather than this session's: only the workspace knows
+   * which tab is in front.
+   */
+  noteLiveness = (error: ApiError | null): void => {
+    if (error === null) {
+      this.#recordAnswered()
+      return
+    }
+    this.#recordFailure(error)
   }
 
   /** Reloads whichever view is active. */
@@ -961,6 +2063,13 @@ export class ClusterSession {
       this.status = 'ready'
       this.lastRefreshedAt = new Date()
       this.error = null
+
+      // ONLY THE OVERVIEW'S OWN FETCH COUNTS AS CONTACT. On every other view
+      // #fetch runs the assessment alongside (and records it there); on this
+      // one #fetch IS the assessment, so its success is the network read that
+      // proves the cluster is there. Any other view's rows may have come from
+      // a watch store — see #recordAnswered.
+      if (this.viewMode === 'overview') this.#recordAnswered()
     } catch (cause) {
       if (request !== this.#request) return
       this.status = 'error'
@@ -1009,16 +2118,52 @@ export class ClusterSession {
    * operator is looking at, which is fetched separately and has its own.
    */
   async #refreshAssessment(): Promise<void> {
+    // GUARDED BY A GENERATION, for the same reason the workload meters are —
+    // and with more at stake. This runs on every tick alongside the rows, so
+    // a slow assessment overlaps the next one, and there is nothing in the
+    // response that says which tick asked for it. An older answer landing
+    // last did three things, all of them silent: the navigator badge went
+    // back to an earlier count, the timeline recorded an assessment out of
+    // order, and #adopt REWOUND the baseline it diffs against — so the next
+    // tick found findings "new" that had already been announced, and the
+    // alert sounded a second time for a problem nobody had fixed.
+    //
+    // The overview view bumps the same counter when it adopts its own fetch
+    // (see #assign), so a side-channel read issued before a view switch
+    // cannot overwrite the fresher assessment that switch produced.
+    const generation = ++this.#assessmentGeneration
+
     try {
-      this.#adopt(await getOverview(this.cluster.id))
-    } catch {
+      const overview = await getOverview(this.cluster.id)
+      if (generation !== this.#assessmentGeneration) return
+      this.#adopt(overview)
+      // THE ONE READ THAT ALWAYS TOUCHES THE NETWORK. A pod list on a watched
+      // cluster is served from the in-memory store and cannot tell anybody
+      // whether the API server is still there; this runs on every tick
+      // whatever is on screen, so it is what the tab's dot is entitled to
+      // believe. The Go side makes the same call authoritative for the
+      // assessment itself — see OverviewService.assess.
+      this.#recordAnswered()
+    } catch (cause) {
+      // A superseded failure is not evidence either: reporting it would mark
+      // the tab unreachable moments after a newer read proved otherwise, and
+      // would clear the baseline a newer assessment had just established.
+      if (generation !== this.#assessmentGeneration) return
+      this.#recordFailure(toApiError(cause))
       // The next cycle tries again. A missed assessment is a stale badge for
       // one interval, not something to interrupt anyone over.
+      //
+      // The timeline is told so EXPLICITLY rather than by silence: a refresh
+      // that failed carries no findings, and anything reading that as an
+      // assessment would report every outstanding problem in the cluster
+      // clearing in the same instant. Passing null keeps the baseline the
+      // next successful assessment is compared against — see diffFindings.
+      timeline.recordFindings(this.cluster.id, null)
     }
   }
 
   /**
-   * Takes a new assessment, sounding anything it raised.
+   * Takes a new assessment, raising anything it added.
    *
    * "New" is measured against the previous assessment rather than against
    * everything ever seen, so a problem that clears and comes back is
@@ -1029,25 +2174,66 @@ export class ClusterSession {
    * a cluster that has been broken since Tuesday is not news happening now,
    * and greeting an operator with a chord of every finding at once is how a
    * feature like this gets switched off in its first minute.
+   *
+   * ONE DIFF FEEDS ALL THREE — the sound, the desktop notification and the
+   * timeline. `diffFindings` ($lib/timeline) is that diff, and it is the only
+   * one: this method used to hand-roll a second comparison over a Set of ids,
+   * which meant two baselines that could drift and three surfaces that could
+   * disagree about the instant a finding arrived. It also carries the rule
+   * this is easiest to get wrong about, so it is worth not re-deriving: a
+   * null baseline announces nothing, and a refresh that produced no
+   * assessment is passed null rather than an empty set.
    */
   #adopt(overview: Overview): void {
-    const previous = this.#lastFindingIds
-    const current = new Set(
-      overview.findings.filter((finding) => finding.severity !== 'info').map((finding) => finding.id),
+    const previous = this.#lastFindings
+    const previousUnavailable = this.#lastUnavailable
+
+    // Info findings are outside this entirely. They are worth reading and are
+    // never worth interrupting anybody over, so keeping them out of the
+    // baseline keeps the diff about the things that can raise something.
+    const current = new Map(
+      (overview.findings ?? [])
+        .filter((finding) => finding.severity !== 'info')
+        .map((finding) => [finding.id, finding]),
     )
-    this.#lastFindingIds = current
+    const diff = diffFindings(previous, current)
+    this.#lastFindings = diff.next
+    this.#lastUnavailable = [...(overview.unavailable ?? [])]
+
     this.overview = overview
     this.#retainNodeUsage(overview)
+    // The timeline is handed the WHOLE assessment rather than this diff: it
+    // records what cleared as well, and it renders info findings that never
+    // reach the baseline above. It runs the same `diffFindings` against its
+    // own copy of the same data, which is why the two cannot disagree.
+    timeline.recordFindings(this.cluster.id, overview.findings)
 
-    if (previous === null) return
+    // AND THE EVENTS, from the same assessment and therefore on every tick
+    // whatever view is on screen. This is what makes the navigator's count
+    // true from the first refresh instead of staying empty until somebody
+    // opened a page that happened to fetch events — the whole record used to
+    // be a function of browsing history.
+    //
+    // It costs no request. The assessment gathers events regardless, because
+    // the event findings are derived from them; they simply never crossed the
+    // bridge. What it costs is bridge payload, which is why `TimelineEvent`
+    // is a narrowing of the row the Events page renders rather than the row
+    // itself.
+    //
+    // The unavailable list is passed SEPARATELY and always, because an empty
+    // event list means two different things: a quiet cluster, and one whose
+    // events this account may not read. Only `overview.unavailable` tells
+    // them apart, and the panel says which.
+    timeline.noteEventSource(
+      this.cluster.id,
+      !(overview.unavailable ?? []).includes(EVENTS_SOURCE),
+    )
+    timeline.recordEvents(this.cluster.id, overview.events ?? [])
 
     // Snoozed findings are silent by definition, and so is un-snoozing one:
-    // the id was in the previous set throughout, because that set is not
+    // the id was in the baseline throughout, because the baseline is not
     // filtered by snoozing.
-    const raised = overview.findings.filter(
-      (finding) =>
-        finding.severity !== 'info' && !previous.has(finding.id) && !this.isFullySnoozed(finding),
-    )
+    const raised = diff.appeared.filter((finding) => !this.isFullySnoozed(finding))
     if (raised.length === 0) return
 
     // One sound for the batch, at the worst severity in it. Six pods failing
@@ -1060,6 +2246,24 @@ export class ClusterSession {
         : 'warning'
       void alertPlayer.play(preferences.alertSoundFor(worst))
     }
+
+    // And the desktop, for the operator who is not looking at the window.
+    // Every rule about whether one is posted — critical only, snoozed
+    // excluded, one per batch, at most one a minute — is in $lib/notify, and
+    // the two arguments it cannot work out for itself are handed over here:
+    // whether the operator asked for this, and whether this assessment read
+    // the same sources as the one it is being compared against.
+    void notifications.raise({
+      clusterId: this.cluster.id,
+      enabled: preferences.desktopNotificationsEnabled,
+      // The UNFILTERED diff, with the snooze rule handed over rather than
+      // applied first: the sound and the notification snooze on the same
+      // fact but are separate decisions, and each keeps its own rule where
+      // it can be argued with.
+      appeared: diff.appeared,
+      comparable: sourcesAreComparable(previousUnavailable, overview.unavailable ?? []),
+      isSnoozed: (finding) => this.isFullySnoozed(finding),
+    })
   }
 
   /** Issues the call the active view needs. */
@@ -1077,16 +2281,101 @@ export class ClusterSession {
     if (this.viewMode !== 'overview') void this.#refreshAssessment()
 
     switch (this.viewMode) {
+      case 'timeline':
+        // NOTHING, AND NOW GENUINELY NOTHING. This view briefly fetched
+        // events on its own tick, to close a real gap: events were recorded
+        // only while the Events page was open, so opening the Timeline first
+        // showed nothing and the record a cluster produced depended on which
+        // pages somebody had visited. That fixed the PAGE and did nothing for
+        // the navigator's count, which stayed empty on every other view for
+        // exactly the same reason.
+        //
+        // The events now ride the assessment (#adopt), which runs on every
+        // tick whatever is on screen — the Go side was gathering them anyway,
+        // because the event findings are derived from them. So the fetch here
+        // would be a second request for something this tab already has, and
+        // the property this view's doc claims for itself is true again:
+        // everything in it crossed the bridge for another reason.
+        return Promise.resolve(null)
       case 'overview':
-        return getOverview(id)
+        // The explicit target only applies to the view an operator is
+        // actually looking at. #refreshAssessment (below) always asks for
+        // the default, so a comparison chosen here never changes the
+        // navigator badge or the alert a different tab's poll would raise.
+        return this.upgradeTarget
+          ? getOverviewForTarget(id, this.upgradeTarget)
+          : getOverview(id)
+      case 'fleet':
+        // Every open cluster, one call, at this tab's cadence — and only
+        // while this view is the one on screen, because this switch is the
+        // only thing that ever calls it. See $stores/fleet.
+        return fleet.refresh(namespace)
+      case 'rbac':
+        // NOTHING, DELIBERATELY. The RBAC explorer's reads are made by the
+        // panel when somebody presses something, never by this tick: a
+        // decision re-fetched on a timer would still be a decision shown
+        // from an earlier instant, and a permission revoked between two
+        // ticks would keep reading as granted until the next one. The
+        // assessment above still runs, so the navigator badge stays current
+        // while this view is open.
+        return Promise.resolve(null)
+      case 'multi-kind': {
+        // ONE REQUEST PER KIND, in parallel, because Kubernetes has no
+        // multi-kind list call — `kubectl get pod,deploy,svc` is three
+        // requests and so is this. Parallel rather than sequential: the kinds
+        // are independent, and a slow CRD must not hold the rest of the table
+        // behind it.
+        //
+        // A kind that fails takes the whole tick with it, deliberately. A
+        // multi-kind table quietly missing one of the kinds its own header
+        // names would be answering a question nobody asked — and the count,
+        // the search and the sort would all be wrong in the same silent
+        // direction, which is the failure the truncation notice exists for.
+        //
+        // The cap on how many kinds can be here is MAX_MULTI_KINDS, and it
+        // is a cap on THIS: the multiplier on every refresh tick.
+        const kinds = preferences.multiKindSelectionFor(id)
+        if (kinds.length === 0) return Promise.resolve([])
+        return Promise.all(
+          kinds.map((kindId) =>
+            listTable(id, kindId, namespace, this.annotationKeys, this.columnExpressions),
+          ),
+        )
+      }
+      case 'helm':
+        // NOTHING EITHER, and for a reason of its own rather than the RBAC
+        // one. A Helm listing is a metadata LIST OF SECRETS, and issuing one
+        // every ten seconds for as long as somebody leaves the page open is
+        // six `list secrets` lines a minute in their audit log — the exact
+        // pattern Kubernetes' own Secret good-practices page tells cluster
+        // operators to alert on, with the bytes removed and the shape intact.
+        // Releases change on deploy cadence, not on a ten-second one. The
+        // page reads when it opens and when somebody presses its own Refresh;
+        // a write PodSteer made drops the Go cache, so the next look is fresh
+        // without anything here asking. See decision 6 in
+        // podsteer/business-docs.
+        return Promise.resolve(null)
+      case 'security':
+        // NOTHING, and for both of the reasons above at once. The static
+        // posture findings ride the assessment that runs under every view
+        // anyway — this tick would be asking a second time for something the
+        // tab already has — and the scanner half is a CLUSTER-WIDE list of
+        // VulnerabilityReports, which on a timer is the Helm page's audit
+        // problem over a bigger collection. The page reads once when it
+        // opens; $stores/vulnerabilities holds it, and the Go adapter holds
+        // it behind that.
+        return Promise.resolve(null)
+      // Every list carries the kind's annotation projection — the keys on
+      // its custom columns — and nothing else of the annotation map. See
+      // $lib/customColumns and the client's listNamespaceSummaries note.
       case 'pods':
-        return listPods(id, namespace)
+        return listPods(id, namespace, this.annotationKeys, this.columnExpressions)
       case 'nodes':
-        return listNodes(id)
+        return listNodes(id, this.annotationKeys, this.columnExpressions)
       case 'events':
-        return listEvents(id, namespace)
+        return listEvents(id, namespace, this.annotationKeys, this.columnExpressions)
       case 'namespaces':
-        return listNamespaceSummaries(id)
+        return listNamespaceSummaries(id, this.annotationKeys, this.columnExpressions)
       case 'applications':
         return listApplications(id, namespace)
       case 'workloads': {
@@ -1106,10 +2395,38 @@ export class ClusterSession {
           .catch(() => {
             if (generation === this.#usageGeneration) this.workloadUsage = {}
           })
-        return listWorkloads(id, kind, namespace)
+        return listWorkloads(id, kind, namespace, this.annotationKeys, this.columnExpressions)
       }
       default:
-        return listTable(id, this.selectedKindId, namespace)
+        return listTable(id, this.selectedKindId, namespace, this.annotationKeys, this.columnExpressions)
+    }
+  }
+
+  /**
+   * The label and annotation keys the current view's rows carry — what the
+   * column picker offers, so a column is chosen from keys this cluster
+   * actually uses rather than typed from memory.
+   *
+   * A method rather than a derived: it walks every row's metadata, and the
+   * menu is opened far less often than the list refreshes. Over the filtered
+   * rows, not the page, so a key on row 40 of 25-per-page is still offered.
+   */
+  metadataKeysOnScreen = (): MetadataKeys => {
+    switch (this.viewMode) {
+      case 'pods':
+        return keysOnScreen(this.visiblePods)
+      case 'nodes':
+        return keysOnScreen(this.visibleNodes)
+      case 'workloads':
+        return keysOnScreen(this.visibleWorkloads)
+      case 'events':
+        return keysOnScreen(this.visibleEvents)
+      case 'namespaces':
+        return keysOnScreen(this.visibleNamespaces)
+      case 'table':
+        return keysOnScreen(this.visibleTableRows)
+      default:
+        return { labels: [], annotations: [] }
     }
   }
 
@@ -1134,7 +2451,37 @@ export class ClusterSession {
 
     switch (this.viewMode) {
       case 'overview':
+        // Bumped so that an assessment issued by a previous tick — while
+        // another view was on screen — cannot land afterwards and undo this
+        // one. This path has its own guard against staleness already, in
+        // refresh()'s #request; the counter is what makes the two agree.
+        this.#assessmentGeneration++
         this.#adopt(rows as Overview)
+        break
+      case 'timeline':
+        // Nothing to hold: this view draws $stores/timeline, and every entry
+        // in it was recorded from a read something else made — the events and
+        // the findings from the assessment, the writes as they happen.
+        break
+      case 'fleet':
+        // Nothing to hold: the merged rows are the workspace's, in
+        // $stores/fleet, and the fetch folded them in itself.
+        break
+      case 'rbac':
+        // Nothing to hold either, and for a different reason: the panel owns
+        // its own answers, because it is the thing that asked for them.
+        break
+      case 'helm':
+        // Nothing to hold, for the same reason as RBAC: the page owns the one
+        // listing it asked for, and this tick never asked for anything.
+        break
+      case 'multi-kind':
+        this.multiKindTables = rows as ResourceTable[]
+        break
+      case 'security':
+        // Nothing to hold: the findings live on the assessment, which the
+        // overview's own case adopts, and the scanner read lives in
+        // $stores/vulnerabilities where the page put it.
         break
       case 'pods':
         this.pods = rows as Pod[]
@@ -1150,7 +2497,7 @@ export class ClusterSession {
         break
       case 'applications': {
         const inventory = rows as ApplicationInventory
-        this.applications = inventory.applications
+        this.applications = inventory.applications ?? []
         this.unlabelled = inventory.unlabelled
         break
       }
@@ -1162,7 +2509,37 @@ export class ClusterSession {
     }
 
     this.#retainUsage()
+    this.#recordTimeline()
     this.#refreshSelection()
+  }
+
+  /**
+   * Files what this refresh carried on the session timeline.
+   *
+   * COSTS NOTHING ON THE WIRE, which is the whole reason the timeline is
+   * built here rather than in Go: the pod assessment rides every row of the
+   * pod list, so it was already fetched and already discarded. Same trade as
+   * `#retainUsage` above.
+   *
+   * A view that did not fetch pods passes null rather than an empty list.
+   * The row buffers are mutually exclusive — a poll on the Nodes page leaves
+   * `pods` empty — and an empty list read as an assessment would announce
+   * every pod in the cluster recovering the moment somebody changed view.
+   *
+   * EVENTS ARE NOT FILED HERE ANY MORE, or rather not only here: they ride
+   * the assessment and are recorded in `#adopt`, which runs on every tick
+   * whatever view is open. The Events page still files the rows it fetched,
+   * because its read is NAMESPACE-scoped where the assessment's is
+   * cluster-wide against a per-query cap — so on a cluster busy enough to hit
+   * that cap, the page open on one namespace sees events the cluster-wide
+   * read truncated away. Filing both is a superset of either, and an event
+   * already recorded is upserted rather than duplicated.
+   */
+  #recordTimeline(): void {
+    timeline.recordPodFindings(this.cluster.id, this.viewMode === 'pods' ? this.pods : null)
+    if (this.viewMode === 'events') {
+      timeline.recordEvents(this.cluster.id, this.events)
+    }
   }
 
   /**
@@ -1242,7 +2619,7 @@ export class ClusterSession {
   #retainNodeUsage(overview: Overview): void {
     const at = Date.now()
 
-    for (const load of overview.nodeLoads) {
+    for (const load of overview.nodeLoads ?? []) {
       // An unmeasured node is skipped rather than recorded as zero: a cluster
       // with no metrics-server would otherwise accumulate a confident flat
       // line along the axis.
@@ -1253,6 +2630,22 @@ export class ClusterSession {
         memoryBytes: load.usageMemoryBytes,
       })
     }
+  }
+
+  /**
+   * One node's share of the work, from the last assessment.
+   *
+   * THE PANEL'S ONLY SOURCE OF WHAT PODS RESERVED. The assessment computes it
+   * for every node on every poll whatever view is open — the same figures the
+   * overview's load grid draws — so the node panel reads them rather than
+   * summing a second time over a pod list it would have to fetch.
+   *
+   * Null while nothing has been assessed yet, which the panel says out loud:
+   * "no reserved figure" and "nothing reserved" are different facts.
+   */
+  nodeLoadFor(name: string | undefined): NodeLoad | null {
+    if (!name) return null
+    return this.overview?.nodeLoads?.find((load) => load.name === name) ?? null
   }
 
   /**
@@ -1403,6 +2796,12 @@ export class ClusterSession {
     workload?: Workload,
     node?: Node,
   ): Promise<void> => {
+    // Recorded here, and only here, so a click, a followed reference (via
+    // openObject, which sets selectedKindId and then calls this) and a click
+    // from the Recent section itself all count as "opened" the same way —
+    // there is exactly one place an object becomes recently opened.
+    this.#recordRecent(this.selectedKindId, name, namespace)
+
     this.selectedName = name
     this.selectedNamespace = namespace
     this.selectedPod = pod ?? this.#findPod(name, namespace)
@@ -1433,6 +2832,68 @@ export class ClusterSession {
     this.secretsRevealed = false
 
     await this.#loadManifest(name, namespace)
+  }
+
+  /**
+   * Opens one object's drawer with one of its own controls already engaged —
+   * what a row menu's items do.
+   *
+   * The same `openDetail` an ordinary row click makes, with the request set
+   * FIRST so it is in place before the drawer reacts to the new selection.
+   * Setting it after would leave one frame in which the drawer has opened,
+   * reset itself to the Overview tab, and not yet been told what was asked
+   * for — visible as a flicker, and worse if the object it opened on had
+   * changed in between.
+   */
+  openDetailFor = async (
+    intent: DetailIntent,
+    name: string,
+    namespace: string,
+    pod?: Pod,
+    workload?: Workload,
+    node?: Node,
+  ): Promise<void> => {
+    this.detailIntent = intent
+    await this.openDetail(name, namespace, pod, workload, node)
+  }
+
+  /**
+   * Hands the pending request over and forgets it.
+   *
+   * TAKEN, NOT READ, and consumed exactly once: a request left standing
+   * would be applied again to the next object opened by an ordinary click,
+   * so somebody who used the row menu to delete one pod would find the
+   * delete dialog waiting on the next pod they merely looked at.
+   */
+  takeDetailIntent = (): DetailIntent | null => {
+    const intent = this.detailIntent
+    this.detailIntent = null
+    return intent
+  }
+
+  /**
+   * Records an object as opened, most recent first, deduplicated by identity.
+   *
+   * Identity is kind + namespace + name, not name alone: a ConfigMap and a
+   * Secret can share a name in the same namespace, and two namespaces
+   * routinely hold pods with the same name — collapsing those would reopen
+   * the wrong object from Recent.
+   */
+  #recordRecent(kindId: string, name: string, namespace: string): void {
+    const withoutExisting = this.recentObjects.filter(
+      (entry) => !(entry.kindId === kindId && entry.name === name && entry.namespace === namespace),
+    )
+    this.recentObjects = [{ kindId, name, namespace }, ...withoutExisting].slice(
+      0,
+      MAX_RECENT_OBJECTS,
+    )
+  }
+
+  /** Empties the Recent section. Nothing else can un-forget an object once
+      this runs — that is the same trade Data → local history's "Don't
+      record" makes, and it is the point of a Clear control. */
+  clearRecents = (): void => {
+    this.recentObjects = []
   }
 
   /**
@@ -1508,6 +2969,9 @@ export class ClusterSession {
 
   /** Closes the detail drawer. */
   closeDetail = (): void => {
+    // Any request that never reached the drawer goes with it, so it cannot
+    // surface on whatever is opened next.
+    this.detailIntent = null
     this.selectedName = null
     this.selectedNamespace = ''
     this.selectedPod = null
@@ -1569,6 +3033,16 @@ export class ClusterSession {
     // it re-read ConfigMaps it already has.
     usageHistory.forget(this.cluster.id)
     forgetConfigMaps(this.cluster.id)
+    forgetVulnerabilities(this.cluster.id)
+    // The timeline goes with the tab, like the Recent section below and for
+    // the same reason: it is made of object names, it was never written
+    // anywhere, and a reconnect starts a fresh record rather than resuming
+    // one from a session that ended.
+    timeline.forget(this.cluster.id)
+    // Recent objects are in-memory only and scoped to this connection — see
+    // recentObjects above. A reconnect to the same cluster starts the list
+    // over rather than resurrecting names from a session that ended.
+    this.recentObjects = []
   }
 
   /** Scales a workload to the specified number of replicas. */
@@ -1580,28 +3054,173 @@ export class ClusterSession {
     }
   }
 
-  /** Updates a resource with the provided YAML manifest. */
-  updateResource = async (manifest: string): Promise<void> => {
-    try {
-      await updateResource(this.cluster.id, manifest)
-    } catch (cause) {
-      this.#fail(cause)
+  /**
+   * Reads one autoscaler-serving kind's table for a namespace, sharing the
+   * read across every call this session makes for that namespace and kind —
+   * see `#autoscalerTables`.
+   */
+  #autoscalerTable(namespace: string, kindId: string): Promise<ResourceTable> {
+    const key = `${namespace}/${kindId}`
+    const held = this.#autoscalerTables.get(key)
+    if (held) return held
+
+    const read = listTable(this.cluster.id, kindId, namespace)
+    this.#autoscalerTables.set(key, read)
+    // A refused or failed read must not be handed to the next caller — the
+    // account may be granted the permission it lacked a moment later, or the
+    // cluster blip may already be over. Dropping the entry is enough: nothing
+    // here waits on `read` before returning it to its own caller.
+    read.catch(() => this.#autoscalerTables.delete(key))
+    return read
+  }
+
+  /**
+   * Whether an autoscaler manages a workload's replica count — asked by the
+   * Scale dialog when it opens, never on a keystroke in the field it warns
+   * above.
+   *
+   * Reads the HorizontalPodAutoscaler table always, and the ScaledObject
+   * table only when this cluster's catalog carries a `keda.sh` one. A cluster
+   * with no KEDA installed is not asked for it at all: that is not "no KEDA
+   * autoscaler", it is a request for a kind the cluster does not serve, and
+   * making it would turn an ordinary cluster into a failed check.
+   *
+   * A FAILED READ IS `'unknown'`, NEVER `'known'` WITH AN EMPTY LIST — the
+   * same distinction `domain.MetricsStatus` draws for the overview (see
+   * CLAUDE.md). Telling an operator nothing manages their workload when the
+   * honest answer is "could not check" would let them scale over an
+   * autoscaler they were never told about.
+   */
+  autoscalersFor = async (
+    kind: string,
+    namespace: string,
+    name: string,
+  ): Promise<AutoscalerCheck> => {
+    const keda = this.kinds.find((entry) => entry.group === 'keda.sh' && entry.kind === 'ScaledObject')
+    const sources: { kindId: string; hint: 'hpa' | 'keda' }[] = [{ kindId: HPA_KIND_ID, hint: 'hpa' }]
+    if (keda) sources.push({ kindId: keda.id, hint: 'keda' })
+
+    const reads = await Promise.all(
+      sources.map(async (source) => {
+        try {
+          const table = await this.#autoscalerTable(namespace, source.kindId)
+          return { ok: true as const, autoscalers: findAutoscalers(table, source.hint, { kind, name }) }
+        } catch (cause) {
+          return { ok: false as const, reason: toApiError(cause).message }
+        }
+      }),
+    )
+
+    const failure = reads.find((read) => !read.ok)
+    if (failure && !failure.ok) return { status: 'unknown', reason: failure.reason }
+
+    return {
+      status: 'known',
+      autoscalers: foldKedaAutoscalers(reads.flatMap((read) => (read.ok ? read.autoscalers : []))),
     }
+  }
+
+  /**
+   * Applies manifest to the cluster — the generic path, any kind — creating
+   * or replacing the object it names.
+   *
+   * RETHROWS on failure, unlike most write methods here (scaleWorkload,
+   * say): the YAML editor's footer needs the actual ApiError to tell a
+   * conflict — the object changed on the cluster since the manifest was
+   * read — from every other failure, and needs the outcome itself to say
+   * "Applied" or "Created". session.error is set first regardless, so
+   * anything reading it generically still sees the same failure.
+   */
+  updateResource = async (manifest: string): Promise<ApplyOutcome> => {
+    try {
+      return await updateResource(this.cluster.id, manifest)
+    } catch (cause) {
+      throw this.#fail(cause)
+    }
+  }
+
+  /**
+   * Validates manifest against the cluster without applying it — the same
+   * generic path as updateResource, with the API server's dry run. Rethrows
+   * for the same reason updateResource does.
+   */
+  validateResource = async (manifest: string): Promise<ApplyOutcome> => {
+    try {
+      return await validateResource(this.cluster.id, manifest)
+    } catch (cause) {
+      throw this.#fail(cause)
+    }
+  }
+
+  /**
+   * Re-reads the currently open object's manifest, unconditionally.
+   *
+   * Used after a successful apply — so the NEXT apply carries the
+   * resourceVersion this one just produced, rather than the one the draft
+   * was opened with, which would otherwise fail as a conflict for a reason
+   * nothing on screen explains — and by the conflict banner's Reload
+   * action, where discarding what is on screen for what the cluster has now
+   * is the entire point.
+   */
+  reloadManifest = async (): Promise<void> => {
+    if (!this.selectedName) return
+    await this.#loadManifest(this.selectedName, this.selectedNamespace)
   }
 }
 
 /**
- * Filters rows by a search term across the fields a projector exposes.
+ * Filters rows by a parsed query — see `$lib/query` for the grammar
+ * (substring by default, plus regex, negation and label selectors).
  *
- * Case-insensitive substring matching rather than fuzzy: an operator searching
- * a pod list is usually pasting part of a name they already have, and fuzzy
- * matching would bury the exact hit among approximations.
+ * `text` projects the fields a plain substring search always compared
+ * against, joined into the one string `matches` tests a substring or regex
+ * term against — the concatenation IS the "row.text" the query language
+ * matches over. `labels` is omitted for every kind whose DTO does not carry
+ * one (Nodes, Namespaces, Events, Applications, every generic table row);
+ * `matches` already treats an absent label map as "this row has no labels"
+ * rather than as a reason to special-case the call site.
+ *
+ * The query is parsed once by the caller (`session.query`) and passed in
+ * already-parsed, not re-parsed per row.
+ *
+ * `cluster` is which cluster the row came from, for a `cluster:` term. Every
+ * row in PodSteer belongs to one — the tab's own for its lists, the row's
+ * own for a merged table — so it is always supplied: typing `cluster:prod`
+ * over prod's own pod list shows the list, not an empty table.
  */
-function filterRows<T>(rows: T[], search: string, project: (row: T) => (string | undefined)[]): T[] {
-  const term = search.trim().toLowerCase()
-  if (!term) return rows
+function filterRows<T>(
+  rows: T[],
+  query: Query,
+  text: (row: T) => (string | undefined)[],
+  labels?: (row: T) => { [key: string]: string | undefined } | null,
+  cluster?: (row: T) => string | undefined,
+): T[] {
+  if (query.terms.length === 0) return rows
 
   return rows.filter((row) =>
-    project(row).some((field) => field?.toLowerCase().includes(term)),
+    matches(query, {
+      text: text(row).filter((field): field is string => Boolean(field)).join(' '),
+      labels: toLabelRecord(labels?.(row)),
+      cluster: cluster?.(row),
+    } satisfies Row),
   )
+}
+
+/**
+ * A nil Go map marshals to `null` for the WHOLE map, never per key, so a
+ * present key's value is always a string — the generated `| undefined` on
+ * each value is the binding generator being conservative about index access,
+ * not a real possibility. This narrows back to what `Row.labels` (`$lib/
+ * query`) expects, in the one place every label map passes through on its
+ * way into a search.
+ */
+function toLabelRecord(
+  labels: { [key: string]: string | undefined } | null | undefined,
+): Record<string, string> | undefined {
+  if (!labels) return undefined
+  const record: Record<string, string> = {}
+  for (const [key, value] of Object.entries(labels)) {
+    if (value !== undefined) record[key] = value
+  }
+  return record
 }

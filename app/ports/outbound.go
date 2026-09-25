@@ -44,6 +44,17 @@ type KubeconfigPort interface {
 	// wrapping ErrKubeconfigConflict when the incoming config names one that
 	// already exists.
 	Merge(ctx context.Context, raw string) (domain.KubeconfigMerge, error)
+
+	// KubeconfigSources reports the composed loading list, in precedence
+	// order: the explicit or default chain, then the directory the
+	// environment names, then the operator's own sources.
+	//
+	// A REPORT AND NOT A SETTING. It is derived on every call from the
+	// environment plus the stored sources, so the pane showing it can say
+	// which entry contributed which context and which the merge shadowed —
+	// facts only the thing that performs the merge is in a position to state.
+	// An entry whose path does not exist is reported missing, never dropped.
+	KubeconfigSources(ctx context.Context) ([]domain.KubeconfigEntry, error)
 }
 
 // ClusterPort reads cluster-scoped facts from an API server.
@@ -53,10 +64,15 @@ type ClusterPort interface {
 	ServerVersion(ctx context.Context, id domain.ClusterID) (domain.ServerVersion, error)
 
 	// ListNamespaces returns every namespace visible to the credentials.
-	ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error)
+	//
+	// projection names the annotation keys each namespace should carry —
+	// see domain.Projection. The zero value carries none, and is what every
+	// caller that is not the namespace list view passes.
+	ListNamespaces(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Namespace, error)
 
-	// ListNodes returns the cluster's nodes.
-	ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error)
+	// ListNodes returns the cluster's nodes, each carrying the annotations
+	// projection asks for.
+	ListNodes(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Node, error)
 
 	// ListPersistentVolumes returns the cluster's provisioned volumes.
 	ListPersistentVolumes(ctx context.Context, id domain.ClusterID) ([]domain.PersistentVolume, error)
@@ -76,10 +92,19 @@ type ClusterPort interface {
 type WorkloadPort interface {
 	// ListPods returns pods in the given namespace, or across every namespace
 	// when it is domain.NamespaceAll.
-	ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error)
+	//
+	// projection names the annotation keys each pod should carry — see
+	// domain.Projection. THE PROJECTION IS PART OF THE READ: two calls with
+	// different projections are different reads and are not coalesced with
+	// each other, so an operator who has put an annotation on a column pays
+	// one list per refresh beside the assessment's own instead of sharing
+	// it. Labels are unaffected and always carried.
+	ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error)
 
-	// ListWorkloads returns controllers of the given kind.
-	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error)
+	// ListWorkloads returns controllers of the given kind, each carrying the
+	// annotations projection asks for on top of the GitOps keys every row
+	// carries anyway.
+	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Workload, error)
 
 	// PodGraphSources reads what one pod's dependency map is drawn from.
 	//
@@ -106,13 +131,33 @@ type WorkloadPort interface {
 
 	// ListPodsForWorkload returns all pods owned by a specific workload.
 	ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error)
+
+	// DrainCandidates returns the pods on a node with the extra facts a
+	// drain plan needs — whether each is a mirror pod the API server cannot
+	// delete, and whether it holds local storage a plan should not discard
+	// without being told to. See domain.DrainCandidate.
+	//
+	// Reuses the same field-selected listing as ListPodsOnNode rather than
+	// filtering a cluster-wide list, for the same reason: "what is on this
+	// machine" costs one indexed request, not every pod in the cluster.
+	DrainCandidates(ctx context.Context, id domain.ClusterID, nodeName string) ([]domain.DrainCandidate, error)
+
+	// RolloutHistory returns the recorded revisions of a Deployment,
+	// StatefulSet or DaemonSet's pod template, newest first — a
+	// Deployment's ReplicaSets or a StatefulSet/DaemonSet's
+	// ControllerRevisions, resolved by ownerReference and never by label
+	// selector, mirroring ListPodsForWorkload's own rule. Only those three
+	// kinds carry a rollout history; the application layer rejects any
+	// other kind before this is reached.
+	RolloutHistory(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string) ([]domain.Revision, error)
 }
 
 // EventPort reads Kubernetes Events.
 type EventPort interface {
 	// ListEvents returns events in the given namespace, or across every
-	// namespace when it is domain.NamespaceAll.
-	ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Event, error)
+	// namespace when it is domain.NamespaceAll, each carrying the
+	// annotations projection asks for.
+	ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Event, error)
 
 	// ListEventsForResource returns events for a specific resource.
 	ListEventsForResource(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind, name string) ([]domain.Event, error)
@@ -157,6 +202,92 @@ type MetricsPort interface {
 	// application has been open, and a cluster that already keeps months of
 	// the same figures should be pointed at rather than competed with.
 	DiscoverMetricsBackend(ctx context.Context, id domain.ClusterID) (domain.MetricsBackend, error)
+
+	// ListMetricsBackends returns every monitoring service that could answer
+	// PromQL in the cluster, best first.
+	//
+	// THE SAME DISCOVERY, WITHOUT THE VERDICT. DiscoverMetricsBackend is the
+	// head of this list, and both are served from one cached answer — so
+	// offering an operator the candidates PodSteer did not pick costs nothing
+	// beyond the discovery that had already been made.
+	//
+	// It exists because ranking picks a default and a default is not a
+	// choice: a cluster running two monitoring stacks, or a Thanos querier
+	// beside the Prometheus it fronts, has a right answer nothing here can
+	// know. What the operator picks from is what was FOUND — never a URL they
+	// typed, which would be a new outbound destination and a second
+	// credential at rest. See ADR 7 and domain.PreferredBackend.
+	//
+	// Finding nothing, and being refused the look, are both ordinary and both
+	// return an empty list rather than an error.
+	ListMetricsBackends(ctx context.Context, id domain.ClusterID) ([]domain.MetricsBackend, error)
+
+	// DiscoverKubeStateMetrics looks for kube-state-metrics in the cluster.
+	//
+	// The same contract as DiscoverMetricsBackend, and separate from it
+	// because they are separate things: Prometheus stores series, and
+	// kube-state-metrics produces the object-state series that a great many
+	// of them are. Finding nothing — and being refused the look — are both
+	// ordinary and both return a zero KubeStateMetrics.
+	//
+	// PODSTEER NEVER READS WHAT IT FINDS. It exists so an operator can be
+	// told why the Deployment and Job gauges in their Grafana exist while
+	// PodSteer's own figures come from the metrics API and its own samples,
+	// which is a question about where numbers come from rather than a source
+	// of any number here.
+	DiscoverKubeStateMetrics(ctx context.Context, id domain.ClusterID) (domain.KubeStateMetrics, error)
+}
+
+// MetricsQueryPort sends PromQL PodSteer composed to a monitoring backend
+// discovered in a cluster.
+//
+// A PORT OF ITS OWN RATHER THAN TWO MORE METHODS ON MetricsPort, and the
+// reason is `podsteer mcp`: this is the one interface in the whole outbound
+// surface that makes a request whose CONTENT PodSteer wrote, to a system that
+// logs it under the operator's identity, and it narrows by interface so a
+// composition that must not be able to do that cannot NAME it. The Helm port
+// is split for the same reason and the rule is the same one.
+//
+// EVERYTHING HERE IS A GET, THROUGH THE API SERVER'S SERVICE PROXY. No new
+// outbound host is contacted, no second credential is stored, and the webview
+// CSP is untouched — the socket is the one the kubeconfig already opened for
+// that tab. A POST is refused rather than merely unused: posting to the
+// service proxy is the RBAC verb `create` on services/proxy, a DIFFERENT
+// permission from the `get` every proxying account already holds, so a
+// form-body query would fail for exactly the tightly-permissioned accounts
+// this application is careful about. That is why an oversized node filter is
+// refused (domain.ErrQueryTooLong) rather than moved into a body.
+//
+// Three failures are ordinary rather than exceptional and each has its own
+// sentinel: ErrForbidden (the account may not proxy — routine, and cached by
+// the implementation because an account that may never proxy never will be
+// able to), ErrMetricsQueryRejected (the backend's own words, verbatim) and
+// ErrMetricsQueryTooLarge (an answer larger than the implementation will
+// read, refused undecoded).
+type MetricsQueryPort interface {
+	// QueryNodes asks a backend which nodes it holds series for, as an
+	// instant query, and returns the names.
+	//
+	// The expression is domain.NodeProbeExpression and is not the caller's to
+	// choose. It exists so an aggregate is never drawn from a backend that
+	// answers for other clusters — see domain.VerifyBackendNodes — and using
+	// the metric and the label the charts themselves depend on is what makes
+	// the check unable to pass while the feature would fail.
+	QueryNodes(ctx context.Context, id domain.ClusterID, backend domain.MetricsBackend) ([]string, error)
+
+	// QueryRange evaluates one expression over a range at a step.
+	//
+	// The expression comes from domain.ComposeExpression and nowhere else:
+	// there is no query box, no URL to type, and no path by which a string
+	// the operator wrote reaches here.
+	QueryRange(
+		ctx context.Context,
+		id domain.ClusterID,
+		backend domain.MetricsBackend,
+		expression string,
+		start, end time.Time,
+		step time.Duration,
+	) ([]domain.PromSeries, error)
 }
 
 // HistoryPort stores and reads the samples PodSteer takes of a cluster.
@@ -189,8 +320,10 @@ type HistoryPort interface {
 // browsable the moment discovery notices them.
 type ResourcePort interface {
 	// ListTable returns objects of the given kind as a table, with the columns
-	// the API server itself prints.
-	ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName) (domain.ResourceTable, error)
+	// the API server itself prints. Each row also carries the object's labels
+	// and the annotations projection asks for, read from the metadata the
+	// server attaches to the row — never from a further request per object.
+	ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName, projection domain.Projection) (domain.ResourceTable, error)
 
 	// CountResources reports how many objects of kind exist in namespace.
 	//
@@ -207,6 +340,25 @@ type ResourcePort interface {
 	// GetManifest returns one object serialised as YAML, for the detail view.
 	GetManifest(ctx context.Context, ref domain.ResourceRef, revealSecrets bool) (string, error)
 
+	// ObjectGraphSources reads what one object's neighbourhood map is drawn
+	// from: its ownerReference chain upward, whatever its own spec names, and
+	// — only for a kind Kubernetes answers cheaply for — what it selects.
+	//
+	// BOUNDED BY CONSTRUCTION, and that is the contract rather than an
+	// implementation detail. Upward is capped at domain.ObjectOwnerDepth hops
+	// and terminates on a cycle; outward is capped at a small number of
+	// narrowed reads; downward is attempted ONLY where the answer is one list
+	// of one kind in one namespace that the API server itself indexes. No
+	// implementation may sweep the namespace looking for children — a request
+	// per kind per open drawer is the polling storm the read cache exists to
+	// prevent — and where the answer would need one, the map says so instead
+	// (domain.DownwardBound).
+	//
+	// Gathers rather than assembles: which field names what is a rule, and
+	// rules live in the domain. Individual sources degrade on their own, and
+	// ObjectGraphInput.Unreadable names what was missing.
+	ObjectGraphSources(ctx context.Context, ref domain.ResourceRef) (domain.ObjectGraphInput, error)
+
 	// RevealSecretKey returns the decoded value of ONE key of one Secret.
 	//
 	// One key, never the whole Secret, and never as a side effect of anything
@@ -218,6 +370,176 @@ type ResourcePort interface {
 	// else's dashboard. Narrowing the call to a deliberate act keeps each
 	// audit entry meaningful.
 	RevealSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string) (string, error)
+
+	// ListVulnerabilitySummaries returns the severity counts a vulnerability
+	// scanner already running in the cluster has recorded for the workloads
+	// in one namespace, keyed by "Kind/name".
+	//
+	// A DISCOVERED ADD-ON, QUOTED AND NEVER QUERIED — the same relationship
+	// DiscoverMetricsBackend has with a monitoring stack. No scanner
+	// installed, an account that may not read its reports, and a namespace
+	// nothing has been scanned in are all ordinary answers and none is an
+	// error. PodSteer scans nothing itself.
+	//
+	// IT RETURNS A LISTING RATHER THAN A SLICE, AND THAT IS THE CONTRACT.
+	// Those ordinary answers used to be one empty slice between them, which
+	// made an absent summary mean four different things at once — no scanner,
+	// no permission, nothing found, or not read. On a SECURITY signal that is
+	// the one ambiguity that cannot stand: a workload with no chip must not be
+	// readable as clean when nobody looked. The listing says which it is, and
+	// Complete() is the question a caller has to ask before treating an
+	// absence as an answer.
+	//
+	// It is deliberately not part of any list call. The pod list must never
+	// wait on it, must never be short of a row because of it, and must never
+	// ask for it on a refresh tick — see the adapter's own cache.
+	ListVulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.VulnerabilityListing, error)
+
+	// InspectTLSSecret parses one Secret's certificate material, on explicit
+	// request.
+	//
+	// The same discipline as RevealSecretKey and for the same reason: the
+	// certificate is public material, but it lives inside the same Secret as
+	// the private key, and reading that object is reading that object
+	// whichever half was wanted. One deliberate act, never a side effect of
+	// GetManifest or anything that runs when a pane opens.
+	InspectTLSSecret(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (domain.CertificateChain, error)
+}
+
+// RBACPort answers the Kubernetes authorization review APIs and reads the
+// binding graph behind them.
+//
+// EVERY METHOD IS A READ, and the two review methods are reads that happen to
+// be POSTs: a SubjectAccessReview and its relatives are created rather than
+// fetched because the question IS the request body, but nothing is persisted
+// and no object exists afterwards. A 403 on any of them is an ordinary answer
+// about this account rather than a fault — see domain.ReviewStatus, which is
+// modelled on domain.MetricsStatus for exactly that reason.
+//
+// THE API SERVER DECIDES. These methods carry its answer across unaltered;
+// nothing in PodSteer evaluates rules to reach a verdict about what an
+// account may do. See app/domain/rbac.go for where that line is drawn and
+// what is on the other side of it.
+type RBACPort interface {
+	// SubjectRules asks what the CURRENT credentials may do in one namespace,
+	// through SelfSubjectRulesReview — one request for the whole answer.
+	//
+	// The namespace is required by that API and a blank one is read as the
+	// default namespace, because a rules review has no cluster-wide form: the
+	// question "what may I do here" has to name a here.
+	SubjectRules(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.RulesReview, error)
+
+	// AccessReview asks whether one specific action is permitted.
+	//
+	// WHICH OF TWO APIS IT REACHES is decided by the request's subject: an
+	// unnamed subject is the caller's own question and goes to
+	// SelfSubjectAccessReview, which any authenticated account may ask; a
+	// named user, group or service account goes to SubjectAccessReview, which
+	// is privileged and routinely refused. Both answer in the same shape.
+	AccessReview(ctx context.Context, id domain.ClusterID, request domain.AccessRequest) (domain.AccessOutcome, error)
+
+	// RoleRules returns one Role or ClusterRole's own rules.
+	RoleRules(ctx context.Context, id domain.ClusterID, target domain.RoleTarget) ([]domain.PolicyRule, error)
+
+	// ListBindings returns every RoleBinding in the cluster and every
+	// ClusterRoleBinding, with the subjects each carries.
+	//
+	// TWO LISTS, CLUSTER-WIDE, AND DELIBERATELY NOT NARROWED. A ClusterRole
+	// is referenced by ClusterRoleBindings and by RoleBindings in any
+	// namespace at all, so a lookup scoped to one namespace would report a
+	// widely granted role as bound to nobody. It is bounded by WHEN it runs
+	// instead: once, when the panel is opened, and never on a refresh tick.
+	//
+	// Which of them actually reference a given role is a rule with cases
+	// worth arguing about, so it is domain.BindingsReferencing's decision
+	// rather than this method's.
+	ListBindings(ctx context.Context, id domain.ClusterID) ([]domain.RoleBindingRef, error)
+}
+
+// HelmPort reads what Helm has installed in a cluster, from the LABELS on its
+// release Secrets and never from their contents.
+//
+// A PORT OF ITS OWN RATHER THAN A WIDENING OF ResourcePort, and the reason is
+// worth honouring rather than tidying away. `podsteer mcp` narrows by
+// INTERFACE — it is handed reading interfaces that structurally cannot name a
+// write or a Secret reveal (see app/adapters/mcp/server.go) — so what an
+// agent can reach is decided by which method sits on which type. Listing
+// releases is a thing that might one day be offered to an agent; reading a
+// release PAYLOAD, which is Secret material under ADR 3's whole reveal
+// discipline, is not. Those two must therefore be separable at the type
+// level, and folding the list onto ResourcePort beside RevealSecretKey and
+// InspectTLSSecret would make that impossible without a second, narrower
+// interface declared later to undo it.
+//
+// FOR THIS INCREMENT IT CARRIES THE LIST AND NOTHING ELSE. The payload read
+// is a separate change with its own controls, and this interface is where it
+// will go — which is the other half of why the port exists now.
+//
+// A 403 IS NOT AN ERROR FROM THIS PORT. It is a forbidden listing, reported
+// on the returned domain.HelmListing and cached WITH its refusal, because
+// `list secrets` is exactly the permission this feature's likeliest readers
+// do not hold: a refusal must never render as "no Helm here", and an account
+// that may never list something must not have that retried into its audit log
+// on every page open.
+type HelmPort interface {
+	// ListHelmReleases returns the releases Helm has stored in one namespace,
+	// or cluster-wide when the namespace selects every namespace.
+	//
+	// NOT ON THE REFRESH TICK, EVER. Releases change on deploy cadence rather
+	// than on a ten-second one, so the adapter caches this for minutes and
+	// refreshes it on three events only: opening the page, an explicit
+	// refresh, and a write PodSteer itself made. A navigator entry on the
+	// ordinary poll would issue a metadata LIST of Secrets every ten seconds
+	// — the Secrets doctrine's own audit signature with the bytes removed and
+	// the pattern intact.
+	//
+	// It reads through the METADATA client, so no Secret's contents cross the
+	// wire: names, labels and managedFields only.
+	//
+	// refresh BYPASSES THE CACHE for this one call and replaces what it held.
+	// It is a parameter rather than a separate method because it changes
+	// nothing about what is read or how — only whether a held answer is
+	// reused — and because the alternative shape, a Forget followed by a
+	// List, is two calls with a window between them in which another caller
+	// repopulates the entry. It is set by exactly one thing: the operator
+	// pressing Refresh. Nothing on a timer may pass true, and nothing on a
+	// timer may call this method at all.
+	ListHelmReleases(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, refresh bool) (domain.HelmListing, error)
+
+	// ReadHelmRelease reads and decodes ONE revision of ONE release.
+	//
+	// THIS IS THE ONE METHOD ON THIS PORT THAT READS SECRET CONTENTS, and it
+	// is the reason the port exists as its own type rather than as a
+	// widening of ResourcePort: `podsteer mcp` narrows by INTERFACE, so a
+	// list tool could one day be offered to an agent while this method never
+	// is, and the two have to be separable at the type level. Anything that
+	// hands this interface WHOLE to something narrow has undone that.
+	//
+	// IT IS RevealSecretKey'S ACT AND INHERITS ITS DISCIPLINE, not a
+	// summary of it: an explicit per-revision click, never on render and
+	// never on a tick, with one audit line naming cluster, namespace,
+	// release and revision — and never a value. A caller that reached this
+	// from a $effect, a poll or a page load has broken the rule the whole
+	// feature was permitted under.
+	//
+	// NOTHING HERE IS CACHED, deliberately and unlike ListHelmReleases. A
+	// held payload is Secret material sitting in a process for minutes after
+	// somebody stopped looking at it, and the read is one GET made because
+	// somebody pressed something — the case a cache exists for (a repeated
+	// unasked-for read) cannot arise.
+	//
+	// The RENDERED MANIFEST comes back with every Secret document in it
+	// already masked, in the adapter, before it crosses this boundary.
+	// Values and notes do not and cannot be: a chart puts a password in its
+	// values and PodSteer cannot know which key that is, so they arrive
+	// whole and it is the CALLER that owes them the reveal discipline.
+	//
+	// A missing revision is ports.ErrNotFound wrapped alongside
+	// domain.ErrHelmRevisionNotFound; a Secret that is not the release asked
+	// for, or will not decode, is ports.ErrHelmPayloadUnreadable; one that
+	// expands past the ceiling is ports.ErrHelmPayloadTooLarge and is
+	// REFUSED rather than truncated.
+	ReadHelmRelease(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, release string, revision int) (domain.HelmReleaseDetail, error)
 }
 
 // PortForwardPort opens local ports onto container ports.
@@ -236,6 +558,18 @@ type PortForwardPort interface {
 	// selector is the pod's own labels, kept so a replacement can be found
 	// when the pod goes away. Empty disables reconnection.
 	StartPortForward(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, pod, podUID string, localPort, remotePort int, portName, protocol string, selector map[string]string) (domain.Forward, error)
+
+	// ServiceForwardTarget resolves a Service into the pod and port a forward
+	// can be made to, since the API server forwards to pods and only to pods.
+	//
+	// SEPARATE FROM StartPortForward, NOT FOLDED INTO IT. Resolution reads two
+	// objects and can fail in four ways an operator can act on — no selector,
+	// no such port, an ambiguous choice, a named targetPort no pod declares —
+	// and each of those deserves its own sentence before anything is bound.
+	// The forward that follows is the ordinary pod forward, which is what
+	// makes the Service's selector carry through to the supervisor and the
+	// forward outlive the pod it landed on.
+	ServiceForwardTarget(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, service, wantedPort string) (domain.ServiceForwardTarget, error)
 	// StopPortForward closes a forward and WAITS for its port to be released,
 	// so a caller may immediately rebind it.
 	StopPortForward(id string) error
@@ -243,6 +577,145 @@ type PortForwardPort interface {
 	ListPortForwards() []domain.Forward
 	// StopAllPortForwards tears everything down, for shutdown.
 	StopAllPortForwards()
+	// ProbeLocalPort reports whether a TCP port on THIS machine — not the
+	// cluster — is free to bind, refusing anything outside 1-65535.
+	//
+	// Lives beside the transport rather than in the UI layer because binding
+	// is the only truthful way to answer: a stale process, a container
+	// runtime's proxy or a leaked Docker Desktop port all show as bound to
+	// nothing a port list would show. Offered so the operator can be told
+	// before Start is pressed, rather than after the forward fails.
+	ProbeLocalPort(port int) (bool, error)
+	// FreeLocalPort asks the operating system for a TCP port nothing is
+	// using, so the UI can offer one instead of asking the operator to guess.
+	//
+	// The same race StartPortForward's zero-port case accepts applies here:
+	// nothing holds the port between this call and a later bind, so this is
+	// a proposal, not a reservation.
+	FreeLocalPort() (int, error)
+}
+
+// NodeShellPort creates and tears down node shells — privileged pods that
+// enter a node's host namespaces, the way `kubectl node-shell` and Lens do.
+//
+// Deliberately shaped like PortForwardPort, because a node shell has the same
+// leak to avoid: the pod is a resource PodSteer created, so the record of it
+// and the thing that deletes it must never part company. Start creates the
+// pod and returns once it is running; Stop deletes it; and everything still
+// running is listed so the activity surface can show it with a stop control
+// and StopAll can remove it on shutdown.
+type NodeShellPort interface {
+	// StartNodeShell creates a privileged pod pinned to nodeName that runs a
+	// login shell in the node's host namespaces, waits for it to be running,
+	// and returns the descriptor. It does NOT open the terminal — that is the
+	// caller's exec/attach session, kept separate so the transport and the
+	// record cannot drift.
+	StartNodeShell(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, nodeName, image string) (domain.NodeShell, error)
+	// StopNodeShell deletes the pod behind one node shell and forgets it.
+	// Idempotent: stopping one already gone is not an error, since the
+	// terminal session ending and an explicit stop can both reach it.
+	StopNodeShell(id string) error
+	// ListNodeShells reports what node shells are running right now — the live
+	// registry, so the activity list shows only pods that still exist.
+	ListNodeShells() []domain.NodeShell
+	// StopAllNodeShells deletes every node-shell pod, for shutdown.
+	StopAllNodeShells()
+}
+
+// ClusterShellPort creates and tears down in-cluster shells — ordinary,
+// unprivileged pods in a namespace that a terminal session attaches to.
+//
+// DELIBERATELY THE SAME SHAPE AS NodeShellPort, because the leak to avoid is
+// identical: the pod is a resource PodSteer created, so the record of it and
+// the thing that deletes it must never part company. Start creates the pod and
+// returns once it is running; Stop deletes it; everything still running is
+// listed so the activity surface can show it with a stop control and StopAll
+// can remove it on shutdown.
+//
+// What it is NOT, in both directions: not the ephemeral debug container
+// (ManagementPort.AddEphemeralContainer), which is injected into somebody
+// else's pod and which Kubernetes will not remove; and not the node shell,
+// which is privileged and enters a node's host namespaces. This is a vantage
+// point inside the cluster's network, and it is admissible where those are
+// not.
+type ClusterShellPort interface {
+	// StartClusterShell creates an unprivileged pod running a shell in
+	// namespace, waits for it to be running, and returns the descriptor. It
+	// does NOT open the terminal — that is the caller's attach session, kept
+	// separate so the transport and the record cannot drift.
+	StartClusterShell(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, image string) (domain.ClusterShell, error)
+	// FindClusterShells reports the pods PodSteer created for in-cluster
+	// shells in namespace, whatever state they are in, EXCLUDING the ones
+	// this process is already tracking.
+	//
+	// Every candidate carries its phase verbatim rather than a verdict: the
+	// decision about which of them may be offered belongs to
+	// domain.PlanClusterShellReuse, and this reports what the cluster said.
+	// The exclusion is what keeps two panes from attaching to one pod and
+	// then racing to delete it — a shell this process already owns is already
+	// visible in the activity list.
+	FindClusterShells(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterShellCandidate, error)
+	// AdoptClusterShell takes responsibility for an EXISTING pod — the reuse
+	// path — and returns the descriptor, so it is deleted on session end
+	// exactly as a created one is. It refuses a pod that is not running, and
+	// one that is not PodSteer's: attaching to an arbitrary pod by name is a
+	// different act with a different guard.
+	AdoptClusterShell(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string) (domain.ClusterShell, error)
+	// StopClusterShell deletes the pod behind one shell and forgets it.
+	// Idempotent: stopping one already gone is not an error, since the
+	// terminal session ending and an explicit stop can both reach it.
+	StopClusterShell(id string) error
+	// ListClusterShells reports what is running right now — the live
+	// registry, so the activity list shows only pods that still exist.
+	ListClusterShells() []domain.ClusterShell
+	// StopAllClusterShells deletes every in-cluster shell pod, for shutdown.
+	StopAllClusterShells()
+}
+
+// LocalShellPort runs a shell on the OPERATOR'S OWN MACHINE, not in a cluster.
+//
+// Every other terminal port here reaches the API server. This one does not: it
+// starts the operator's login shell, or a coding agent they already have, on
+// the machine PodSteer is running on, with an environment that names the same
+// kubeconfig PodSteer reads and the context of the tab in front.
+//
+// Three properties are part of the contract rather than of one implementation:
+//
+//   - NOTHING IS EVER INSTALLED. Agents are FOUND on the adopted PATH and
+//     offered; a binary that is not there is not offered and never obtained.
+//   - THE READ-ONLY GUARD DOES NOT APPLY. That guard governs PodSteer's own
+//     writes to a cluster. A shell the operator opened on their own machine
+//     with their own credentials is outside what this application can police,
+//     and an implementation must not pretend otherwise.
+//   - THE KUBECONFIG IS READ, NEVER WRITTEN. In particular current-context is
+//     untouched; the open tab's context is stated to the operator, not pinned.
+//
+// Shaped like NodeShellPort because the leak to avoid is the same: PodSteer
+// started a process, so the record and the thing that kills it are created and
+// destroyed together, everything live is listable, and StopAll ends the lot on
+// shutdown.
+type LocalShellPort interface {
+	// LocalShellSupported reports whether this platform can open one, and the
+	// sentence to show when it cannot.
+	LocalShellSupported() (bool, string)
+	// DetectAgents reports the coding agents present on the adopted PATH, in a
+	// fixed preference order that does not depend on the shape of that PATH.
+	DetectAgents() []domain.CodingAgent
+	// StartLocalShell opens a pseudo-terminal, streams its output to out, and
+	// calls onExit exactly once after the process has exited and been reaped.
+	StartLocalShell(spec domain.LocalShellSpec, out io.Writer, onExit func(reason string)) (domain.LocalShell, error)
+	// WriteLocalShell sends keystrokes to a session.
+	WriteLocalShell(id string, data []byte) error
+	// ResizeLocalShell resizes the pseudo-terminal, which is what makes a
+	// full-screen program redraw at the pane's size.
+	ResizeLocalShell(id string, cols, rows uint16) error
+	// StopLocalShell ends one session and WAITS for the process to be gone.
+	// Idempotent: a closing pane and a shutdown can both reach it.
+	StopLocalShell(id string) error
+	// ListLocalShells reports what is running right now.
+	ListLocalShells() []domain.LocalShell
+	// StopAllLocalShells ends every session, for shutdown.
+	StopAllLocalShells()
 }
 
 // TerminalSize represents a terminal window size.
@@ -272,9 +745,8 @@ type ManagementPort interface {
 	// error occurs). The caller must drain the channel.
 	//
 	// If containerName is empty, logs are streamed from the first container.
-	// If tailLines is 0, all available logs are streamed.
-	// If follow is true, the stream remains open for new log lines.
-	StreamLogs(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, containerName string, follow bool, tailLines int64, out chan<- string) error
+	// See domain.LogOptions for what each field of opts does.
+	StreamLogs(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, containerName string, opts domain.LogOptions, out chan<- string) error
 
 	// DeleteResource deletes a single resource. It returns nil if the resource
 	// was deleted or already absent; a non-nil error otherwise.
@@ -290,10 +762,174 @@ type ManagementPort interface {
 	// not support this operation.
 	RestartRollout(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string) error
 
-	// UpdateResource applies a YAML manifest to the cluster, creating or
-	// updating the resource. The manifest must be valid YAML for a Kubernetes
-	// object; the kind and namespace in the manifest override the parameters.
-	UpdateResource(ctx context.Context, id domain.ClusterID, manifest string) error
+	// TriggerCronJob creates a Job from a CronJob's template right now, the
+	// way `kubectl create job --from=cronjob/NAME` does: labels and
+	// annotations copied from spec.jobTemplate, the manual-instantiate
+	// annotation added, and an owner reference back to the CronJob so its
+	// controller adopts the Job, counts it as active, and applies history
+	// limits to it exactly as it would a scheduled run.
+	//
+	// A suspended CronJob may still be triggered — kubectl allows it, and an
+	// operator reaching for this wants exactly one run regardless of the
+	// schedule. Returns the created Job's name, so the caller can show it.
+	TriggerCronJob(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (string, error)
+
+	// SuspendWorkload sets or clears spec.suspend on a CronJob or a Job —
+	// pausing a CronJob's schedule, or pausing a running Job's pods. Only
+	// those two kinds support it; the application layer rejects any other
+	// kind before this is reached.
+	SuspendWorkload(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, suspend bool) error
+
+	// UpdateResource applies a YAML manifest of ANY kind — built-in or
+	// custom — to the cluster, through the dynamic client rather than a
+	// fixed set of typed kinds. The manifest must be valid YAML/JSON for a
+	// single Kubernetes object carrying apiVersion, kind and metadata.name;
+	// a namespaced kind must also carry metadata.namespace, since there is no
+	// separate namespace parameter to fall back to. Returns
+	// domain.ErrInvalidManifest, wrapped, for any of those.
+	//
+	// THIS IS THE EDITOR'S VERB. The manifest is a draft of a LIVE object and
+	// must carry the resourceVersion it was read at; the write is a PUT under
+	// that optimistic lock, and a stale version comes back as
+	// ports.ErrConflict (HTTP 409). Replacing the object whole is the point:
+	// deleting a line in a full-object editor has to delete the field, which
+	// is the one thing an editor can honestly promise.
+	//
+	// A MANIFEST WITH NO resourceVersion IS REFUSED, with ErrInvalidManifest.
+	// It used to fall back to Create, and on AlreadyExists it fetched the live
+	// object solely to steal its resourceVersion and then replaced it — so
+	// pasting a Deployment that omitted spec.replicas over one an HPA had
+	// scaled reset the replica count and deleted every field the paste did not
+	// mention. Declared intent belongs to ApplyResource.
+	//
+	// dryRun asks the API server to validate the request (admission, schema,
+	// webhooks) without persisting anything, via the DryRun=All option —
+	// nothing here diffs the manifest itself. The returned ApplyOutcome
+	// reports what happened: whether the object was created, and any warning
+	// the API server attached to the request.
+	UpdateResource(ctx context.Context, id domain.ClusterID, manifest string, dryRun bool) (domain.ApplyOutcome, error)
+
+	// ApplyResource applies a manifest as DECLARED INTENT, through server-side
+	// apply.
+	//
+	// THE OTHER WRITE VERB, for a manifest somebody wrote or pasted rather
+	// than a draft of a live object: the Create dialog, Duplicate, a dropped
+	// file. Those name the fields they care about and say nothing about the
+	// rest, and the rest is LEFT ALONE — which is what `kubectl apply` does
+	// and what a full replace does not.
+	//
+	// A CONFLICT IS AN OUTCOME, NOT AN ERROR. Where another field manager owns
+	// something this manifest would change, the server refuses, nothing is
+	// written, and ApplyOutcome.Conflicts names the fields and their owners
+	// for the interface to render. ApplyOutcome.Refused reports it. An error
+	// return means the request failed, not that it was declined.
+	//
+	// Nothing here forces ownership away from another manager. Taking a field
+	// is a decision an operator makes with the owner's name in front of them.
+	ApplyResource(ctx context.Context, id domain.ClusterID, manifest string, options domain.ApplyOptions) (domain.ApplyOutcome, error)
+
+	// FieldOwnership decodes an object's metadata.managedFields into the
+	// readable ledger behind the YAML tab's managed-fields view.
+	//
+	// NO CLUSTER, NO CONTEXT, NO ClusterID, and the signature is the
+	// documentation: the manifest is already in hand, so this transforms
+	// bytes the operator is looking at and talks to nothing. It is on this
+	// port rather than a read port because the vocabulary it produces —
+	// manager names, manager kinds, field paths — is the apply path's, and
+	// the decoded paths are generated by the same library the API server
+	// writes a conflict message with, so the two can never spell a field
+	// differently.
+	//
+	// An object with no managedFields returns an empty ledger, not an error:
+	// plenty of objects predate server-side apply.
+	FieldOwnership(manifest string) (domain.FieldOwnership, error)
+
+	// SetImage sets one container's image on a Deployment, StatefulSet or
+	// DaemonSet — the three controller kinds whose pod template sits at
+	// spec.template, which is what the patch this sends targets. Only those
+	// three kinds support it; the application layer rejects any other kind
+	// before this is reached, mirroring SuspendWorkload's own kind check.
+	//
+	// A STRATEGIC MERGE PATCH, not a JSON merge patch: spec.template.spec.
+	// containers is a list, and a JSON merge patch replaces a list wholesale
+	// — sending one container would delete every other one in the pod. The
+	// strategic merge patch instead merges list entries by their `name` key,
+	// which is what lets this name one container and leave the rest of the
+	// template untouched, the same way `kubectl set image` does.
+	//
+	// initContainer redirects the patch to spec.template.spec.initContainers
+	// instead, for the same container-by-name merge.
+	SetImage(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name, container, image string, initContainer bool) error
+
+	// ContainerResizeSpec reads one container's declared CPU and memory and
+	// its resizePolicy, for planning an in-place change. Read from the pod
+	// rather than from a list row: the projection carries usage, not requests,
+	// and the policy — which decides whether applying a change restarts the
+	// container — is not in it at all.
+	ContainerResizeSpec(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string) (domain.ContainerResize, error)
+
+	// ResizePod changes a running container's CPU and memory in place, through
+	// the pods/resize subresource — the only door: a pod's containers are
+	// otherwise immutable, and patching the pod itself is refused.
+	//
+	// A cluster without the subresource (older than 1.33, or the feature gate
+	// off) answers 404, which this must report as
+	// ErrResizeUnsupported rather than as a missing pod.
+	//
+	// It does NOT wait for the resize to be applied and does not report that
+	// it was: the kubelet may apply it now, defer it, or call it infeasible,
+	// and which of those happened is a condition on the pod that the
+	// assessment already reads.
+	ResizePod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, plan domain.ResizePlan) error
+
+	// PromoteRollout advances a paused Argo Rollouts Rollout by one step, the
+	// way `kubectl argo rollouts promote NAME` does.
+	//
+	// A MERGE PATCH OF NAMED FIELDS, never an apply: the fields promoting
+	// touches live in spec AND status, the controller owns and is rewriting
+	// status concurrently, and UpdateResource's full replace would send a
+	// stale copy of it back. Which patch is sent depends on what is holding
+	// the Rollout, and that decision is domain.PlanRolloutPromote's — the
+	// adapter reads the live object immediately beforehand so the plan is
+	// made from the step the Rollout is on now, not the one the drawer
+	// fetched.
+	//
+	// Only the plugin's DEFAULT promote is offered. Its --full and
+	// --skip-current-step variants are different acts with different blast
+	// radii, and a button whose behaviour depends on an invisible flag is not
+	// one to put on a production cluster.
+	PromoteRollout(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) error
+
+	// AbortRollout tells the Argo Rollouts controller to abandon the update
+	// in progress, the way `kubectl argo rollouts abort NAME` does.
+	//
+	// It is not the reverse of a promote: traffic returns to the stable
+	// ReplicaSet, but the spec is unchanged, so the Rollout stays Degraded
+	// against the revision that was being deployed until something changes
+	// its template.
+	AbortRollout(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) error
+
+	// SetSecretKey writes one key of one Secret, leaving every other key
+	// untouched.
+	//
+	// The same deliberate, audited act as RevealSecretKey, in the other
+	// direction: it exists so an operator can fix a value they have already
+	// looked at without hand-rolling base64, and every call is one line in a
+	// cluster's audit log naming the key — never the value. Refuses with
+	// domain.ErrInvalidKey when key is empty or not
+	// `[-._a-zA-Z0-9]+`, before any request reaches the cluster.
+	SetSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string, value []byte) error
+
+	// SetConfigMapKey writes one key of one ConfigMap, leaving every other
+	// key untouched.
+	//
+	// Unlike SetSecretKey this reads the object first: a ConfigMap key can
+	// live in `data` (text) or `binaryData` (base64), and a text write that
+	// merged into `data` while the key already lived in `binaryData` would
+	// silently duplicate it under a new field rather than editing it in
+	// place. Refuses with domain.ErrInvalidKey for that case, and for the
+	// same key-format check SetSecretKey makes.
+	SetConfigMapKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key, value string) error
 
 	// ExecInPod executes a command in a pod container.
 	// Stdin, stdout, and stderr are streamed through the provided readers/writers.
@@ -306,6 +942,168 @@ type ManagementPort interface {
 	// The sizeQueue delivers resize events to the running process. The session
 	// runs until the context is cancelled, the command exits, or an error occurs.
 	ExecInPodWithTTY(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, command []string, stdin io.Reader, stdout, stderr io.Writer, sizeQueue TerminalSizeQueue) error
+
+	// AttachToPod connects to a container's own running process — PID 1,
+	// whatever the image's ENTRYPOINT/CMD started — rather than spawning a
+	// new one the way ExecInPod and ExecInPodWithTTY do. It is the only way
+	// to interact with a process that reads stdin, and to see its live
+	// stdout without a separate log stream.
+	//
+	// The pod is read once before the attach request is made, so a container
+	// whose own spec does not declare both tty and stdin is refused locally
+	// with domain.ErrContainerNotAttachable, naming the fields to change,
+	// rather than failing on the server once the PTY negotiation begins.
+	//
+	// The sizeQueue delivers resize events exactly as ExecInPodWithTTY's
+	// does. The session runs until the context is cancelled, the attached
+	// process exits, or an error occurs.
+	AttachToPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, stdin io.Reader, stdout, stderr io.Writer, sizeQueue TerminalSizeQueue) error
+
+	// AddEphemeralContainer adds an ephemeral debug container to a running
+	// pod through the pods/ephemeralcontainers subresource, the way
+	// `kubectl debug -it POD --image=… --target=CONTAINER` does. It returns
+	// the generated container name, so the caller can wait for it and open a
+	// terminal into it.
+	//
+	// The write is a strategic merge patch of spec.ephemeralContainers, which
+	// merges the list by container name and so ADDS the new container without
+	// clobbering any already present — a pod can carry several debug
+	// containers from several investigations, and losing an earlier one would
+	// be losing evidence. An ephemeral container CANNOT be removed once added;
+	// it stays in the pod's spec until the pod is deleted, which is
+	// Kubernetes' behaviour and what the dialog offering this states plainly.
+	//
+	// A cluster whose API server does not serve the subresource — one older
+	// than 1.23, or with the feature gate off — is reported as
+	// ErrEphemeralContainersUnsupported rather than a generic failure.
+	AddEphemeralContainer(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName string, spec domain.DebugContainerSpec) (string, error)
+
+	// WaitForEphemeralContainerRunning blocks until the named ephemeral
+	// container reports Running in the pod's ephemeralContainerStatuses, or a
+	// bounded timeout elapses — polling the pod's status rather than sleeping
+	// a guessed interval, because an image pull can take seconds and a shell
+	// opened before the container is up fails with nothing to say. A container
+	// that reaches a terminated state instead is reported as an error naming
+	// why, rather than waited on until the timeout.
+	WaitForEphemeralContainerRunning(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string) error
+	// CopyFromPod streams a tar archive of one file or directory out of a
+	// container, exactly as `kubectl cp pod:path .` does: it runs
+	// `tar cf - -C <dir> <base>` over a non-TTY exec session and writes the
+	// command's stdout to out, unmodified. Nothing is written to disk here
+	// — unpacking, with every check on where an entry may land, is the
+	// ArchivePort's job, so that the process reading the stream and the
+	// rules governing it can be tested apart.
+	//
+	// remotePath must satisfy domain.SplitRemotePath. Stderr from tar is
+	// captured: on failure it is carried in the returned error verbatim
+	// (wrapping ErrCommandFailed), and a container with no tar binary at
+	// all is reported as ErrTarMissing rather than as an opaque exit code.
+	CopyFromPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName, remotePath string, out io.Writer) error
+
+	// CopyToPod streams a tar archive INTO a container, as `kubectl cp
+	// . pod:dir` does: it runs `tar xf - -C <dir>` over a non-TTY exec
+	// session with in as the command's stdin. The archive is packed by the
+	// ArchivePort from a path the operator chose; this only carries it.
+	// Failures are reported exactly as CopyFromPod's are.
+	CopyToPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName, remoteDir string, in io.Reader) error
+
+	// ListDirectory lists one directory inside a container.
+	//
+	// THE BROWSER HALF OF FILE COPY, and it sits here rather than on an
+	// inspection port because it is the same act with the same tooling
+	// requirements as the two above: one exec, one container, one path. It
+	// RECURSES INTO NOTHING and FOLLOWS NOTHING — a symlink is reported as a
+	// symlink, and following it is a navigation the operator performs.
+	//
+	// A container with no shell is ports.ErrShellMissing, which is the third
+	// sibling of ErrTarMissing and means the same kind of thing: the image
+	// has no tool, and nothing is wrong.
+	ListDirectory(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName, remoteDir string) (domain.DirectoryListing, error)
+
+	// CordonNode marks a node schedulable or unschedulable, without touching
+	// anything already running on it — cordoning removes the node from
+	// consideration for NEW pods only. A merge patch of spec.unschedulable,
+	// the same field `kubectl cordon`/`uncordon` sets.
+	CordonNode(ctx context.Context, id domain.ClusterID, name string, cordon bool) error
+
+	// EvictPod evicts one pod through the policy/v1 Eviction subresource,
+	// never a plain delete: an eviction is the one request a
+	// PodDisruptionBudget can refuse, which is the entire reason the
+	// subresource exists rather than every drain just deleting pods
+	// directly. A refusal is reported as ErrDisruptionBudget.
+	//
+	// gracePeriodSeconds is passed to the eviction's DeleteOptions; negative
+	// means "use the pod's own terminationGracePeriodSeconds".
+	EvictPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string, gracePeriodSeconds int) error
+
+	// DrainNode cordons a node, plans the drain with domain.PlanDrain, and —
+	// if the plan is runnable — evicts every pod it allows, retrying only a
+	// PodDisruptionBudget refusal until opts.Timeout elapses.
+	//
+	// Always returns a report, even when the returned error is non-nil:
+	// cordoned, refused and partially evicted are all outcomes worth
+	// showing exactly as they happened. Wraps ErrDrainRefused when the plan
+	// is not runnable, in which case the node was cordoned but nothing was
+	// evicted.
+	DrainNode(ctx context.Context, id domain.ClusterID, name string, opts domain.DrainOptions) (domain.DrainReport, error)
+
+	// RollbackWorkload rolls a Deployment, StatefulSet or DaemonSet back to
+	// a previously recorded revision, the way `kubectl rollout undo
+	// --to-revision` does. Only those three kinds support it; the
+	// application layer rejects any other kind before this is reached,
+	// mirroring SetImage's own kind check.
+	//
+	// For a Deployment this copies the target ReplicaSet's spec.template
+	// onto the Deployment via a strategic merge patch of spec.template —
+	// the same field SetImage patches — plus a `kubernetes.io/change-cause`
+	// annotation naming the rollback, and ONLY when the Deployment already
+	// carries a change-cause annotation today: a rollback must not start a
+	// convention the operator never opted into. For a StatefulSet or
+	// DaemonSet this applies the target ControllerRevision's own patch data
+	// onto the object as a strategic merge patch, letting the API server do
+	// the same reconstruction `kubectl rollout undo` relies on rather than
+	// this process re-implementing strategic-merge-patch semantics by hand.
+	//
+	// Refuses with domain.ErrInvalidRevision when toRevision is not
+	// positive, or names the revision already current — there being nothing
+	// for it to do is a different problem from toRevision naming no
+	// revision at all, which is ports.ErrNotFound.
+	//
+	// dryRun asks the API server to validate the request via DryRun=All
+	// without persisting anything, the same convention UpdateResource's own
+	// dry run uses.
+	RollbackWorkload(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string, toRevision int64, dryRun bool) (domain.RollbackOutcome, error)
+}
+
+// ArchivePort is the LOCAL side of a file copy: the tar stream a container
+// produces is unpacked into a directory the operator chose, and the tar
+// stream a container receives is packed from a path they chose.
+//
+// A port rather than a helper the application calls directly, for the usual
+// reason the arrows point inward — and for one specific to this feature.
+// Everything that decides what a stream from a container may do to the
+// operator's machine lives behind this interface: an entry may not escape the
+// chosen directory, a symlink may not point outside it, setuid bits are never
+// preserved, and TransferLimits are enforced as the bytes arrive. Those are
+// the properties SECURITY.md promises, and a fake implementation here is
+// what lets ManagementService's orchestration be tested without touching a
+// filesystem while the real one is tested on nothing but a temp directory.
+type ArchivePort interface {
+	// Extract unpacks the tar stream r into dest, an existing directory,
+	// applying every rule above. progress, when non-nil, is called with the
+	// number of file-content bytes written by each write; it is how the UI
+	// shows a transfer moving. Refuses with domain.ErrUnsafeArchiveEntry or
+	// domain.ErrTransferTooLarge, leaving whatever had already landed in
+	// place rather than attempting to undo a partial extraction.
+	Extract(ctx context.Context, r io.Reader, dest string, limits domain.TransferLimits, progress func(int64)) (domain.TransferSummary, error)
+
+	// Pack writes source — one file or a directory tree — to w as a tar
+	// stream whose entries are rooted at source's own base name, so the
+	// container unpacks `nginx.conf` or `config/…`, never the operator's
+	// full local path. Symlinks are never followed: one pointing inside the
+	// selection is archived as a link, one pointing outside is left out and
+	// named in the summary's Notes. The same limits apply as on Extract.
+	Pack(ctx context.Context, w io.Writer, source string, limits domain.TransferLimits, progress func(int64)) (domain.TransferSummary, error)
 }
 
 // EventPublisher delivers domain events to whatever is observing the
@@ -318,4 +1116,113 @@ type ManagementPort interface {
 type EventPublisher interface {
 	// Publish delivers event to all observers.
 	Publish(ctx context.Context, event domain.DomainEvent)
+}
+
+// InspectPort answers the two questions an operator asks ON REQUEST about
+// something already on screen: can this be reached, and what is this image.
+//
+// A PORT OF ITS OWN RATHER THAN THREE MORE METHODS ON ResourcePort, because
+// everything behind it shares one rule the polled ports do not: nothing here
+// ever runs on a refresh tick. A probe opens a socket or runs a command in
+// somebody's container, and an image report costs a GET of a pod and a GET of
+// a node — all of which are fine as answers to a button and none of which are
+// fine ten seconds later, unasked, for as long as a pane stays open. Keeping
+// them behind one interface is what makes that rule visible to anything
+// wiring them, the same way BrowseAPI.ObjectGraph's own comment makes it for
+// the dependency map.
+type InspectPort interface {
+	// ProbeFromHere performs plan from THIS MACHINE, reaching the cluster the
+	// only way this process reaches anything: through the API server named in
+	// the kubeconfig. A Service is probed through the API server's own
+	// service proxy; a pod through an ephemeral port-forward this call opens
+	// and tears down again before returning, whatever the outcome.
+	//
+	// A target that refuses a connection is an ORDINARY ANSWER carried in the
+	// observation, never an error. An error here means the probe could not be
+	// performed at all — the cluster was unreachable, the account may not
+	// proxy, the forward never came up.
+	ProbeFromHere(ctx context.Context, id domain.ClusterID, plan domain.ProbePlan) (domain.ProbeObservation, error)
+
+	// ProbeFromPod performs plan from INSIDE a container the operator chose,
+	// as one bounded exec of domain.ProbeCommand. Nothing is created: no pod,
+	// no sidecar, no file. A container with no tool to probe with wraps
+	// ErrProbeToolMissing, which is a fact about that image and not about the
+	// target.
+	ProbeFromPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, plan domain.ProbePlan) (domain.ProbeObservation, error)
+
+	// ImageFacts gathers what Kubernetes reports about one container's image:
+	// the pod's own view of it, and the image list of the node that pulled
+	// it. It reads no registry and no pull Secret — see domain.ImageReport
+	// for why that is a decision rather than an omission. A node that cannot
+	// be read is reported inside the facts rather than failing the call: an
+	// account without `get nodes` should still see the digest and the
+	// references, and a refusal is not an absence.
+	ImageFacts(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string) (domain.ImageFacts, error)
+}
+
+// SettingsPort is the backend-owned settings, as they live on disk.
+//
+// A port because the settings are STORAGE — a file, with a version, a format
+// and failure modes of its own — and because the application layer has no
+// business knowing which of those it is. What it needs is a value it can read
+// and a way to change one field of it without racing another change.
+//
+// ONE WRITER, ONE VALUE. There is no Save taking a whole settings value:
+// every mutation goes through Update, which does the read, the change, the
+// validation and the write inside one lock. A Save would let two callers each
+// read, each change a different field, and each write the whole document back
+// — with the second silently discarding the first's change, which is exactly
+// the bug the retention setting had when it was written with os.WriteFile.
+type SettingsPort interface {
+	// Load returns a copy of the current settings. Never fails on a missing
+	// or unreadable file: those produce the defaults, and State says so.
+	Load(ctx context.Context) (domain.Settings, error)
+
+	// Update applies mutate to the current settings and writes the whole
+	// document atomically, returning the result.
+	//
+	// mutate runs under the store's lock, so it must not call back into the
+	// store and must not block. A mutate that returns an error leaves the
+	// stored value untouched and nothing is written.
+	//
+	// Wraps ErrSettingsReadOnly when this process does not write settings at
+	// all, and ErrSettingsFromFuture when the file on disk was written by a
+	// newer PodSteer — in both cases before mutate is called, so a caller
+	// cannot mistake a refusal for a change that did not take.
+	Update(ctx context.Context, mutate func(*domain.Settings) error) (domain.Settings, error)
+
+	// State reports where the settings live and whether a change made now
+	// would reach the disk.
+	State() domain.SettingsState
+}
+
+// VendorCLIPort drives a cloud CLI the operator already has.
+//
+// SEPARATE FROM EVERYTHING ELSE HERE, because it is the only port whose
+// implementer starts a program on the operator's machine. Narrowing by
+// interface is already load-bearing in this application — HelmPort exists as
+// its own type so the MCP server can be handed a listing and never a payload
+// read — and a port that can run a binary is the one most worth keeping out of
+// surfaces that are handed readers.
+//
+// It reaches no cluster and holds no client. See decision 12 for what it is
+// allowed to do and, more importantly, what it refuses.
+type VendorCLIPort interface {
+	// Providers reports every CLI the shipped table describes and whether its
+	// binary is on PATH. No process is started: opening a dialog is not a
+	// request to run anything.
+	Providers() []domain.VendorCLIStatus
+
+	// ListClusters runs one CLI's listing command. A CLI that DECLINES —
+	// not signed in, session expired — is a listing with that status and its
+	// own words, not an error: only a failure to run it is an error.
+	ListClusters(ctx context.Context, provider string) (domain.VendorClusterList, error)
+
+	// WriteKubeconfig has the CLI write an entry for one cluster and returns
+	// the text it wrote. Into a file PodSteer owns and deletes, never the
+	// operator's own — these CLIs set current-context when they write one.
+	WriteKubeconfig(ctx context.Context, provider string, cluster domain.VendorCluster) (string, error)
+
+	// Cancel stops a run in the air, if there is one.
+	Cancel(provider string)
 }

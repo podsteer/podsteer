@@ -17,7 +17,7 @@ what is wrong. PodSteer reads the cluster and tells you — findings ranked and
 grouped, capacity measured against what pods actually reserved, and every custom
 resource your operators install browsable without an update here.
 
-It is built on [Wails](https://wails.io) v2: a Go backend talking to the
+It is built on [Wails](https://v3.wails.io) v3: a Go backend talking to the
 operating system's own webview, rather than a bundled Chromium. There is no
 second browser engine in the process tree, which is where most of an
 Electron-based client's memory and startup time go.
@@ -97,10 +97,12 @@ downloads with a little more context.
 
 ## Requirements
 
-- Go 1.26+
+- Go 1.27+ (the version `go.mod` pins, and the toolchain whose own macOS
+  floor the darwin build tracks — see the note in the Makefile)
 - Node.js 20+
-- The [Wails CLI](https://wails.io/docs/gettingstarted/installation):
-  `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
+- The [Wails v3 CLI](https://v3.wails.io), pinned to the beta this repository
+  builds against:
+  `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.25`
 - A kubeconfig at `$KUBECONFIG` or `~/.kube/config`
 
 &nbsp;
@@ -128,9 +130,36 @@ save and rebuilds the Go side on change, rather than repackaging each time. On
 macOS, `make open` launches the built `.app` the way Finder would, with its own
 Dock icon.
 
-A locally built app is self-signed by Wails, so macOS runs it without
-complaint. Downloaded release artefacts are a different matter — see
+A locally built `.app` is ad-hoc signed by `make dev` and unsigned by
+`make build`, which macOS accepts for something built on the machine running
+it. Downloaded release artefacts are a different matter — see
 [docs/RELEASING.md](docs/RELEASING.md#code-signing).
+
+&nbsp;
+
+🔝 [back to top](#podsteer)
+
+&nbsp;
+
+## Asking about your cluster from a coding agent
+
+The same binary is a [Model Context Protocol](https://modelcontextprotocol.io)
+server, so the agent you already use can read your clusters through PodSteer:
+
+```sh
+podsteer mcp
+```
+
+Point your agent's MCP configuration at that command — it starts the server
+itself and talks to it over stdin and stdout. No port is opened, nothing is
+served over HTTP, and nothing PodSteer operates is contacted.
+
+Every tool is **read-only**: lists, manifests, bounded log reads, events, the
+cluster and pod assessments, the dependency map and the RBAC reviews. There is
+no delete, scale, apply, exec or port-forward, and no tool that reveals a
+Secret's values. It reads your own kubeconfig with your own credentials, so it
+can see exactly what your account can see and nothing more — a refusal comes
+back as a refusal rather than as an empty list.
 
 &nbsp;
 
@@ -208,6 +237,7 @@ Everything is optional and prefixed `PODSTEER_`:
 | Variable                    | Default                         | Purpose                                         |
 | :---                        | :---                            | :---                                            |
 | `PODSTEER_KUBECONFIG`       | `$KUBECONFIG`, `~/.kube/config` | Alternative kubeconfig                          |
+| `PODSTEER_KUBECONFIG_DIR`   | unset                           | Directory of kubeconfigs, merged in after       |
 | `PODSTEER_QPS`              | `50`                            | Sustained request rate                          |
 | `PODSTEER_BURST`            | `100`                           | Burst allowance                                 |
 | `PODSTEER_REQUEST_TIMEOUT`  | `30s`                           | Per-call deadline                               |
@@ -215,6 +245,8 @@ Everything is optional and prefixed `PODSTEER_`:
 | `PODSTEER_LOG_SOURCE`       | `false`                         | Include source file and line                    |
 | `PODSTEER_UPDATE_CHECK`     | `true`                          | `false` disables the update check machine-wide  |
 | `PODSTEER_LIVE_WATCH`       | `true`                          | `false` re-lists pods instead of watching them  |
+| `PODSTEER_COPY_MAX_BYTES`   | `1073741824`                    | Ceiling on one file copy to or from a container |
+| `PODSTEER_COPY_MAX_ENTRIES` | `100000`                        | Ceiling on entries in one such copy             |
 
 &nbsp;
 
@@ -284,8 +316,6 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 [Website](https://podsteer.com) &nbsp;|&nbsp; [LinkedIn](https://www.linkedin.com/company/podsteer) &nbsp;|&nbsp; [BlueSky](https://bsky.app/profile/podsteer.com) &nbsp;|&nbsp; [GitHub](https://github.com/podsteer)
 
-A [Cloudresty](https://cloudresty.com/) project
-
-<sub>&copy; PodSteer</sub>
+<sub>&copy; PodSteer - A [Cloudresty](https://cloudresty.com/) project</sub>
 
 &nbsp;

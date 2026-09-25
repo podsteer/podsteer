@@ -32,14 +32,41 @@
  * somebody typed into a production container — and it is not going to disk.
  */
 
-/** Identifies a session by what it is attached to, not by who opened it. */
+/**
+ * Identifies a session by what it is attached to, not by who opened it.
+ *
+ * `mode` defaults to 'shell' and is folded into the key only for 'attach', so
+ * every existing shell key is unchanged. It has to be part of the key at
+ * all: Shell and Attach are two different sessions against the same
+ * container — one starts a new process, the other connects to the running
+ * one — and without this a mode switch would either collide with, or
+ * silently reattach to, a session opened in the other mode.
+ */
 export function sessionKey(
   clusterId: string,
   namespace: string,
   podName: string,
   container: string,
+  mode: 'shell' | 'attach' | 'debug' | 'nodeshell' | 'clustershell' | 'local' = 'shell',
 ): string {
-  return `${clusterId}/${namespace}/${podName}/${container}`
+  const base = `${clusterId}/${namespace}/${podName}/${container}`
+  // 'shell' keeps the bare key every existing session used; every other mode
+  // — attach, and the debug, node-shell, in-cluster-shell and local variants —
+  // takes a suffix, so two sessions against the same target never collide or
+  // silently reattach.
+  return mode === 'shell' ? base : `${base}/${mode}`
+}
+
+/**
+ * Keys a LOCAL shell, which has no pod and no container to be identified by.
+ *
+ * The cluster tab and the agent are what distinguish one from another: a plain
+ * shell and a coding agent opened against the same tab are two different
+ * processes, and a remount must re-attach to the one it left rather than to
+ * whichever was opened first.
+ */
+export function localSessionKey(clusterId: string, agent: string | null): string {
+  return sessionKey(clusterId, '', agent ?? '', '', 'local')
 }
 
 interface Held {

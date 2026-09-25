@@ -1,0 +1,59 @@
+# Wails v3 project configuration.
+#
+# DELIBERATELY SMALL. A `wails3 init` project drives everything through a
+# tree of Taskfiles; PodSteer drives everything through its Makefile and CI,
+# and that did not change with the framework. So this file carries only the
+# two things the v3 CLI genuinely reads on our behalf:
+#
+#   info      — the product identity `wails3 generate icons` and the packaging
+#               assets are named from. The version here is NOT what the running
+#               application reports: that comes from -ldflags at build time (see
+#               the Makefile's VERSION), because a working tree must not claim
+#               to be a release.
+#   dev_mode  — what `wails3 dev` watches and what it runs, which is how
+#               `make dev` gets a Go rebuild on change. The commands are this
+#               project's own, not the template's tasks.
+version: '3'
+
+info:
+  companyName: "PodSteer"
+  productName: "PodSteer"
+  productIdentifier: "com.podsteer.desktop"
+  description: "A fast, native Kubernetes client."
+  copyright: "Copyright © 2026 PodSteer. Apache-2.0 licensed."
+  comments: "A fast, native Kubernetes client."
+  version: "0.0.0"
+
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir:
+      - .git
+      - .claude
+      - node_modules
+      - web
+      - build/bin
+      # Build output the frontend build writes into the Go tree; watching it
+      # would restart the backend every time Vite emits a bundle.
+      - app/adapters/assets/dist
+    file:
+      - .DS_Store
+      - .gitignore
+      - .gitkeep
+      - "*_test.go"
+    watched_extension:
+      - "*.go"
+    git_ignore: true
+  executes:
+    # Rebuild the Go side (and, on macOS, the .dev.app bundle it needs for a
+    # bundle identifier) whenever a .go file changes.
+    - cmd: make dev-build
+      type: blocking
+    # Vite, serving the frontend that FRONTEND_DEVSERVER_URL points the
+    # webview at. `wails3 dev` exports that variable for us.
+    - cmd: npm --prefix web run dev
+      type: background
+    - cmd: make dev-run
+      type: primary

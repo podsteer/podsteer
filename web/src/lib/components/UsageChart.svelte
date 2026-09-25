@@ -44,7 +44,7 @@
      * undeclared limit reads as "the limit is nothing", the opposite of what
      * an absent one means.
      */
-    markers?: { value: number; label: string; tone: 'warn' | 'critical' }[]
+    markers?: { value: number; label: string; tone: 'neutral' | 'warn' | 'critical' }[]
     /** Formats a value for the axis and the tooltip. */
     format: (value: number) => string
   }
@@ -172,13 +172,22 @@
     const line = theme.getPropertyValue('--primary').trim() || '#7aa2f7'
     const warn = theme.getPropertyValue('--gauge-warn').trim() || '#e0a458'
     const critical = theme.getPropertyValue('--gauge-critical').trim() || '#e06c75'
+    // A NEUTRAL LINE IS NOT A THRESHOLD. A node's requests are a fact about
+    // what the scheduler reserved, not a level anything should stay under, and
+    // drawing them in the warning colour would tell somebody a perfectly
+    // ordinary node is in trouble.
+    const neutral = ink
 
     // The figure is in the label, not only on the axis. A dashed line marked
     // "Limit" still leaves the reading to be taken off the y axis by eye,
     // which is the work the line was drawn to save.
     const marks = lines.map((line) => ({
       yAxis: line.value,
-      lineStyle: { color: line.tone === 'critical' ? critical : warn, type: 'dashed' },
+      lineStyle: {
+        color: line.tone === 'critical' ? critical : line.tone === 'warn' ? warn : neutral,
+        type: 'dashed',
+        opacity: line.tone === 'neutral' ? 0.6 : 1,
+      },
       label: {
         formatter: `${line.label} ${format(line.value)}`,
         color: ink,

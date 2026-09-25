@@ -20,23 +20,54 @@
     inside it, selection is the unambiguous gesture.
 -->
 <script lang="ts">
+  import { copyText } from '$lib/clipboard'
   import { flash } from '$lib/flash.svelte'
   import { onMount, onDestroy } from 'svelte'
   import { Terminal } from '@xterm/xterm'
   import { FitAddon } from '@xterm/addon-fit'
   import { SearchAddon } from '@xterm/addon-search'
   import { SerializeAddon } from '@xterm/addon-serialize'
+  import { Unicode11Addon } from '@xterm/addon-unicode11'
   import { WebLinksAddon } from '@xterm/addon-web-links'
-  import { Copy, Check, Maximize2, RotateCw, ChevronUp, ChevronDown } from '@lucide/svelte'
-  import { StartSession, Write, Resize, StopSession } from '$lib/wailsjs/go/wails/TerminalAPI'
-  import { EventsOn } from '$lib/wailsjs/runtime/runtime'
+  import { Copy, Check, Maximize2, RotateCw, ChevronUp, ChevronDown, Bug } from '@lucide/svelte'
+  import {
+    StartSession,
+    StartAttachSession,
+    StartDebugSession,
+    StartNodeShellSession,
+    StartClusterShellSession,
+    AttachClusterShellSession,
+    StartLocalSession,
+    StartAgentSession,
+    Write,
+    Resize,
+    StopSession,
+  } from '$bindings/terminalapi'
+  import { subscribe } from '$lib/api/client'
   import { terminalTheme, onThemeChange } from '$lib/terminalTheme'
+  import { TERMINAL_FONT_STACK } from '$lib/terminalFont'
   import { matchFractions } from '$lib/terminalSearch'
-  import { terminalSessions, sessionKey } from '$stores/terminalSessions.svelte'
+  import { terminalSessions, sessionKey, localSessionKey } from '$stores/terminalSessions.svelte'
+  import { localShellNotice } from '$lib/localShell'
   import PaneToolbar from './PaneToolbar.svelte'
   import ToolbarButton from './ToolbarButton.svelte'
   import ToolbarSearch from './ToolbarSearch.svelte'
   import '@xterm/xterm/css/xterm.css'
+
+  /**
+   * A container option for the selector, carrying just enough of the DTO
+   * (`app/adapters/wails/dto.go`'s Container) to decide whether Attach makes
+   * sense — see the mode select below.
+   */
+  interface ContainerOption {
+    name: string
+    /** Quotes the container's own spec.tty && spec.stdin. See mode below. */
+    tty: boolean
+  }
+
+  /** A session's mode: a new process (Shell) or the container's own (Attach). */
+  type SessionMode = 'shell' | 'attach'
+
 
   interface Props {
     clusterId: string
@@ -44,7 +75,69 @@
     podName: string
     containerName: string
     /** Every container in the pod, for the selector. */
-    containers?: string[]
+    containers?: ContainerOption[]
+    /**
+     * True when this cluster is marked read-only in PodSteer.
+     *
+     * An interactive shell can mutate the cluster as freely as any other
+     * write — see CLAUDE.md's read-only section — so this refuses to open
+     * one at all rather than opening a session that would fail on its first
+     * keystroke. The backend refuses the same way (ExecInPodWithTTY and
+     * AttachToPod), which is the actual guard; this is what keeps the pane
+     * from starting a connection it already knows will be refused.
+     */
+    readOnly?: boolean
+    /**
+     * What kind of session this pane opens.
+     *
+     * 'container' is the ordinary pod terminal (Shell / Attach). 'debug' adds
+     * an ephemeral debug container to the pod and opens a shell into it;
+     * 'nodeshell' creates a privileged pod on a node and attaches to a host
+     * shell. 'clustershell' creates an ordinary, unprivileged pod in a
+     * namespace — or attaches to one PodSteer already has there — so the
+     * cluster's network can be reached from inside it. 'local' is the odd one
+     * out and reaches no cluster at all: it runs the operator's own login
+     * shell, or a coding agent they already have, on THIS machine. All four
+     * special variants reuse everything else about this component — the
+     * buffer, the toolbar, search, copy-on-select — and differ only in how the
+     * session is started.
+     */
+    variant?: 'container' | 'debug' | 'nodeshell' | 'local' | 'clustershell'
+    /** debug: the container whose process namespace to share (--target). */
+    debugTarget?: string
+    /** debug: the image to run. */
+    debugImage?: string
+    /** debug: the command, already split; empty means the image's default. */
+    debugCommand?: string[]
+    /** nodeshell: the node to run on. */
+    nodeName?: string
+    /** nodeshell: the namespace the pod is created in. */
+    nodeShellNamespace?: string
+    /** nodeshell: the image the pod runs. */
+    nodeShellImage?: string
+    /**
+     * clustershell: the image a NEW pod runs. Empty when `podName` names a pod
+     * PodSteer already has — that pod's image is whatever it was created with,
+     * and sending one here would claim something about a pod this pane did not
+     * create. `namespace` and `podName` are the ordinary props: `podName`
+     * empty means create, and a name means attach.
+     */
+    clusterShellImage?: string
+    /** local: the coding agent to run, or null for the operator's login shell. */
+    agent?: string | null
+    /** local: whether the agent was asked to keep to read-only kubectl. */
+    agentReadOnly?: boolean
+    /** local: the object open in the drawer, named in the agent's first prompt. */
+    subject?: { kind: string; namespace: string; name: string }
+    /**
+     * Offered on the container terminal's toolbar, beside Shell/Attach, to
+     * start a debug container — the drawer wires it to the debug dialog. Absent
+     * on the debug and node-shell variants, which have nothing to debug into.
+     */
+    ondebug?: () => void
+    /** Called after a session is successfully started (not on a re-attach) —
+     * the node-shell overlay uses it to refresh the activity list. */
+    onstarted?: () => void
     /** Offered when the pane can still be made bigger. */
     onmaximize?: () => void
   }
@@ -55,16 +148,68 @@
     podName,
     containerName,
     containers = [],
+    readOnly = false,
+    variant = 'container',
+    debugTarget = '',
+    debugImage = '',
+    debugCommand = [],
+    nodeName = '',
+    nodeShellNamespace = '',
+    nodeShellImage = '',
+    clusterShellImage = '',
+    agent = null,
+    agentReadOnly = false,
+    subject = { kind: '', namespace: '', name: '' },
+    ondebug,
+    onstarted,
     onmaximize,
   }: Props = $props()
+
+  const READ_ONLY_REASON =
+    'This cluster is marked read-only in PodSteer. Change that under Organise.'
+
+  const ATTACH_NOTE =
+    "Attached to the container's main process. Ctrl+P, Ctrl+Q would detach in Docker; " +
+    'here, closing the pane detaches; Ctrl+C is sent to the process.'
+
+  const DEBUG_NOTE =
+    'This ephemeral debug container cannot be removed once added — Kubernetes keeps it in ' +
+    "the pod's spec until the pod is deleted. Closing this pane ends the shell, not the container."
+
+  const NODE_SHELL_NOTE =
+    'You are root on the node, in its host namespaces. This pod is deleted when you close ' +
+    'this pane; it also self-destructs after one hour as a backstop.'
+
+  const CLUSTER_SHELL_NOTE =
+    'An ordinary, unprivileged pod in this namespace — you see the cluster network as a ' +
+    'workload does, with the namespace’s default service account. This pod is deleted when ' +
+    'you close this pane; it also self-destructs after one hour as a backstop.'
+
+  /**
+   * The local pane's own note, which has to say the read-only guard does not
+   * apply here — see localShellNotice for why saying it matters.
+   */
+  const localNote = $derived(localShellNotice(clusterId))
 
   // Seeded by the effect below; reading the prop here would capture only its
   // initial value and leave the selector stale after switching pods.
   let activeContainer = $state('')
+  /**
+   * Shell starts a new process in the container; Attach connects to its own
+   * running one (PID 1) instead — the only way to interact with a process
+   * that reads stdin, and to see its live stdout without a separate log
+   * stream. Offered only when the active container's own spec declares both
+   * tty and stdin (see attachAvailable below) — the same fields
+   * AttachToPod refuses on server-side, checked here first so the control
+   * simply is not there for a container it would refuse.
+   */
+  let mode = $state<SessionMode>('shell')
 
   $effect(() => {
     activeContainer = containerName
   })
+
+  const attachAvailable = $derived(containers.find((c) => c.name === activeContainer)?.tty ?? false)
 
   let terminalContainer: HTMLDivElement
   let terminal: Terminal | null = null
@@ -116,11 +261,26 @@
     initTerminal()
 
     unsubscribe = [
-      EventsOn('terminal:data', handleTerminalData),
-      EventsOn('terminal:exit', handleTerminalExit),
+      subscribe<{ sessionId: string; data: string }>('terminal:data', handleTerminalData),
+      subscribe<{ sessionId: string; reason?: string }>('terminal:exit', handleTerminalExit),
     ]
 
-    startSession()
+    if (readOnly && variant !== 'local') {
+      // No PTY, no goroutine, no exec call at all — the same fast-fail
+      // TerminalAPI.StartSession makes server-side, taken before ever
+      // reaching it. See the readOnly prop's own doc comment.
+      //
+      // The local variant is EXEMPT, deliberately. That guard is about
+      // PodSteer's writes to a cluster; this pane starts a process on the
+      // operator's own machine with their own credentials, which is not
+      // something this application can or should police. The backend makes no
+      // such check either — see TerminalAPI.StartLocalSession — and the note
+      // above the buffer says so.
+      connectionState = 'disconnected'
+      terminal?.writeln(`\x1b[33m${READ_ONLY_REASON}\x1b[0m`)
+    } else {
+      startSession()
+    }
 
     const resizeObserver = new ResizeObserver(() => fitAddon?.fit())
     resizeObserver.observe(terminalContainer)
@@ -146,8 +306,7 @@
       cursorBlink: true,
       cursorStyle: 'block',
       fontSize: 13,
-      fontFamily:
-        '"JetBrains Mono", "Fira Code", "Cascadia Code", Monaco, Menlo, "Ubuntu Mono", monospace',
+      fontFamily: TERMINAL_FONT_STACK,
       fontWeight: '400',
       fontWeightBold: '700',
       lineHeight: 1.2,
@@ -163,6 +322,19 @@
     terminal.loadAddon(searchAddon)
     terminal.loadAddon(serializeAddon)
     terminal.loadAddon(new WebLinksAddon())
+
+    // WIDTH, NOT RENDERING. xterm.js decides how many cells a character
+    // occupies from a built-in table that stops at Unicode 6, where most
+    // emoji, the CJK ranges added since and the Nerd Font Private Use Area are
+    // all still one cell wide. A prompt that draws a two-cell glyph in a
+    // one-cell slot leaves the rest of the line shifted by one, and every
+    // redraw of it smears — the classic broken-prompt symptom, and the half a
+    // font alone does not fix. The addon replaces that table with Unicode 11's.
+    //
+    // activeVersion is the switch; loading the addon only makes '11' available
+    // to select. It needs allowProposedApi above, which is why that is set.
+    terminal.loadAddon(new Unicode11Addon())
+    terminal.unicode.activeVersion = '11'
 
     terminal.open(terminalContainer)
     fitAddon.fit()
@@ -186,6 +358,18 @@
   }
 
   /**
+   * Which selection the chip belongs to.
+   *
+   * The copy is asynchronous now (see $lib/clipboard), and a terminal
+   * selection changes as fast as somebody can drag — so without this a slow
+   * answer about an abandoned selection could raise a chip over the one that
+   * replaced it, saying a word was copied that was not. Bumped on entry to
+   * the handler below, checked after the await, and nothing is drawn for a
+   * token that is no longer the current one.
+   */
+  let selectionToken = 0
+
+  /**
    * Copies whatever was just selected, and marks where to show the chip.
    *
    * ONE HANDLER FOR EVERY GESTURE. Double-click gives a word, triple-click a
@@ -197,13 +381,13 @@
    * nothing.
    */
   function showSelection(): void {
+    const mine = ++selectionToken
+
     const text = terminal?.getSelection() ?? ''
     if (text.trim() === '' || searching) {
       selection = null
       return
     }
-
-    void navigator.clipboard.writeText(text).catch(() => {})
 
     // Positioned from the live DOM selection rather than from xterm's row and
     // column, which would need converting through the font metrics to get back
@@ -212,6 +396,8 @@
     // and copyAll() calls terminal.selectAll() programmatically, which fires
     // this handler with xterm holding a selection and the DOM holding none.
     // LogViewer guards the same API correctly; this one did not.
+    // MEASURED BEFORE THE COPY IS AWAITED: a rectangle read after an await is
+    // read against whatever the selection has become in the meantime.
     const live = window.getSelection()
     const box = live && live.rangeCount > 0 ? live.getRangeAt(0).getBoundingClientRect() : null
     const pane = terminalContainer.getBoundingClientRect()
@@ -220,14 +406,27 @@
       return
     }
 
-    selection = {
-      text,
+    const at = {
       x: Math.min(Math.max(box.right - pane.left, 8), pane.width - 8),
       y: Math.max(box.top - pane.top - 6, 4),
     }
 
-    if (clearChip !== null) window.clearTimeout(clearChip)
-    clearChip = window.setTimeout(() => (selection = null), 1800)
+    // THE CHIP IS THE CONFIRMATION, so it waits for one. It reads "Copied"
+    // beside text the operator is about to paste somewhere, and copy-on-select
+    // gives them no button to press again — so a chip raised on a copy that
+    // silently did nothing is the worst version of this control.
+    void copyText(text).then((ok) => {
+      if (mine !== selectionToken) return
+      if (!ok) {
+        selection = null
+        return
+      }
+
+      selection = { text, ...at }
+
+      if (clearChip !== null) window.clearTimeout(clearChip)
+      clearChip = window.setTimeout(() => (selection = null), 1800)
+    })
   }
 
   /** Copies the whole scrollback, for when the selection is the wrong tool. */
@@ -239,8 +438,10 @@
     const all = terminal.getSelection()
     terminal.clearSelection()
 
-    await navigator.clipboard.writeText(all).catch(() => {})
-    copiedAll.show()
+    // `.catch(() => {})` used to sit here, which made the chip appear whether
+    // or not anything was copied — the same falsehood the row menu told. See
+    // $lib/clipboard.
+    if (await copyText(all)) copiedAll.show()
 
     // Selection is a visible thing in a terminal; putting it back is politer
     // than leaving the whole buffer highlighted.
@@ -333,21 +534,85 @@
     connectionState = 'connecting'
 
     try {
-      const id = await StartSession(
-        clusterId,
-        namespace,
-        podName,
-        activeContainer,
-        terminal.cols,
-        terminal.rows,
-      )
+      const id = await startForVariant(terminal.cols, terminal.rows)
       sessionId = id
       connectionState = 'connected'
       terminal.focus()
+      // A newly created node-shell pod (or debug container) now exists on the
+      // cluster; let whoever is listing them know so it appears at once rather
+      // than on the next poll.
+      onstarted?.()
+
+      // ADOPTING A SHELL SOMEBODY LEFT RUNNING OPENS ON AN EMPTY PANE, and
+      // this says why rather than leaving it looking broken. attach replays
+      // nothing the shell printed before now, and the Go side deliberately
+      // does NOT press enter for an adopted shell the way it does for one it
+      // just created: that shell may hold a half-typed line, and a carriage
+      // return would run it. So the operator presses it, knowing what for.
+      if (variant === 'clustershell' && podName !== '') {
+        terminal.writeln(
+          '\x1b[2mAttached to a shell that was already running. ' +
+            'Press Enter for a prompt — what it printed before now is not replayed.\x1b[0m',
+        )
+      }
     } catch (err) {
       connectionState = 'error'
-      terminal.writeln(`\x1b[31mFailed to start terminal session: ${err}\x1b[0m`)
+      terminal.writeln(`\x1b[31mFailed to start ${sessionLabel()} session: ${err}\x1b[0m`)
     }
+  }
+
+  /**
+   * Starts the right kind of session for this pane's variant, returning its id.
+   *
+   * The debug and node-shell starts do more work server-side than a plain
+   * exec — adding a container and waiting for it, creating a pod and waiting
+   * for it — so this call can take a few seconds, which is why the pane shows
+   * "Connecting…" until it returns.
+   */
+  function startForVariant(cols: number, rows: number): Promise<string> {
+    switch (variant) {
+      case 'debug':
+        return StartDebugSession(clusterId, namespace, podName, debugTarget, debugImage, debugCommand, cols, rows)
+      case 'nodeshell':
+        return StartNodeShellSession(clusterId, nodeShellNamespace, nodeName, nodeShellImage, cols, rows)
+      case 'clustershell':
+        // Two calls rather than one with an optional pod, because they are two
+        // acts: one CREATES a pod and the other ADOPTS one PodSteer already
+        // has — which is signing up to delete it — and each is guarded and
+        // audited on its own in ManagementService.
+        return podName === ''
+          ? StartClusterShellSession(clusterId, namespace, clusterShellImage, cols, rows)
+          : AttachClusterShellSession(clusterId, namespace, podName, cols, rows)
+      case 'local':
+        // Two calls rather than one with a nullable argument: an agent session
+        // carries a prompt and a read-only request a plain shell has no notion
+        // of, and the backend refuses an empty agent id outright.
+        return agent === null
+          ? StartLocalSession(clusterId, cols, rows)
+          : StartAgentSession(
+              clusterId,
+              agent,
+              subject.kind,
+              subject.namespace,
+              subject.name,
+              agentReadOnly,
+              cols,
+              rows,
+            )
+      default:
+        return mode === 'attach'
+          ? StartAttachSession(clusterId, namespace, podName, activeContainer, cols, rows)
+          : StartSession(clusterId, namespace, podName, activeContainer, cols, rows)
+    }
+  }
+
+  /** Names this pane's session, for the failure message. */
+  function sessionLabel(): string {
+    if (variant === 'debug') return 'debug'
+    if (variant === 'nodeshell') return 'node shell'
+    if (variant === 'clustershell') return 'in-cluster shell'
+    if (variant === 'local') return agent === null ? 'local shell' : agent
+    return mode === 'attach' ? 'attach' : 'terminal'
   }
 
   function handleTerminalData(event: { sessionId: string; data: string }): void {
@@ -376,6 +641,9 @@
   }
 
   async function reconnect(): Promise<void> {
+    // Exempt for the same reason the first start is: a local shell is not
+    // governed by the cluster's read-only setting.
+    if (readOnly && variant !== 'local') return
     terminalSessions.forget(currentKey())
     if (sessionId) {
       await StopSession(sessionId).catch(() => {})
@@ -388,6 +656,15 @@
 
   async function switchContainer(next: string): Promise<void> {
     activeContainer = next
+    // The new container may not support Attach even if the old one did —
+    // falling back here means reconnect() below asks StartSession, never a
+    // StartAttachSession the backend would refuse.
+    if (!(containers.find((c) => c.name === next)?.tty ?? false)) mode = 'shell'
+    await reconnect()
+  }
+
+  async function switchMode(next: SessionMode): Promise<void> {
+    mode = next
     await reconnect()
   }
 
@@ -405,7 +682,20 @@
 
   /** The key this component's session is filed under. */
   function currentKey(): string {
-    return sessionKey(clusterId, namespace, podName, activeContainer)
+    // Each variant keys on what actually identifies its session: a container
+    // terminal on its container and mode, a debug shell on the pod, a node
+    // shell on the node. Distinct keys keep the maximise/remount handover from
+    // ever re-attaching one to another.
+    if (variant === 'debug') return sessionKey(clusterId, namespace, podName, '', 'debug')
+    if (variant === 'nodeshell') return sessionKey(clusterId, nodeShellNamespace, nodeName, '', 'nodeshell')
+    // An in-cluster shell keys on its NAMESPACE and pod. The pod name is empty
+    // on a pane that created one, which is right: that pane is the only one
+    // for that namespace at a time, and two panes attached to the same named
+    // pod is the case reuse already refuses by excluding what this process
+    // owns.
+    if (variant === 'clustershell') return sessionKey(clusterId, namespace, podName, '', 'clustershell')
+    if (variant === 'local') return localSessionKey(clusterId, agent)
+    return sessionKey(clusterId, namespace, podName, activeContainer, mode)
   }
 
   /**
@@ -462,21 +752,77 @@
       {/if}
     </span>
 
-    {#if containers.length > 1}
-      <div class="mx-1 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
-      <select
-        value={activeContainer}
-        onchange={(event) => void switchContainer(event.currentTarget.value)}
-        aria-label="Container"
-        class="field h-7 shrink-0 px-1.5 text-body-small"
-      >
-        {#each containers as container (container)}
-          <option value={container}>{container}</option>
-        {/each}
-      </select>
+    {#if variant === 'container'}
+      {#if containers.length > 1}
+        <div class="mx-1 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+        <select
+          value={activeContainer}
+          onchange={(event) => void switchContainer(event.currentTarget.value)}
+          disabled={readOnly}
+          aria-label="Container"
+          title={readOnly ? READ_ONLY_REASON : undefined}
+          class="field h-7 shrink-0 px-1.5 text-body-small disabled:opacity-38"
+        >
+          {#each containers as container (container.name)}
+            <option value={container.name}>{container.name}</option>
+          {/each}
+        </select>
+      {:else}
+        <span class="shrink-0 truncate pl-1 text-body-small text-on-surface-variant">
+          {activeContainer}
+        </span>
+      {/if}
+
+      {#if attachAvailable}
+        <!--
+          Offered only for a container whose own spec declares both tty and
+          stdin — the same fields AttachToPod refuses on without, checked here
+          first so the control is simply absent rather than present and
+          failing.
+        -->
+        <div class="mx-1 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+        <select
+          value={mode}
+          onchange={(event) => void switchMode(event.currentTarget.value as SessionMode)}
+          disabled={readOnly}
+          aria-label="Session mode"
+          title={readOnly
+            ? READ_ONLY_REASON
+            : 'Shell starts a new process in the container; Attach connects to its own running one'}
+          class="field h-7 shrink-0 px-1.5 text-body-small disabled:opacity-38"
+        >
+          <option value="shell">Shell</option>
+          <option value="attach">Attach</option>
+        </select>
+      {/if}
+
+      {#if ondebug}
+        <!--
+          Debug sits beside Shell/Attach because it is the third way into this
+          pod: a `kubectl debug` ephemeral container with its own tools. It
+          opens its own dialog (image, target) rather than switching this
+          session, because it changes the pod rather than reconnecting.
+        -->
+        <div class="mx-1 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+        <ToolbarButton
+          icon={Bug}
+          label="Debug with an ephemeral container"
+          title={readOnly ? READ_ONLY_REASON : 'Add an ephemeral debug container (kubectl debug)'}
+          disabled={readOnly}
+          onclick={() => ondebug?.()}
+        />
+      {/if}
     {:else}
       <span class="shrink-0 truncate pl-1 text-body-small text-on-surface-variant">
-        {activeContainer}
+        {#if variant === 'debug'}
+          Debug container
+        {:else if variant === 'local'}
+          {agent === null ? 'Your shell' : agent} · {clusterId || 'no cluster'}
+        {:else if variant === 'clustershell'}
+          In-cluster shell · {podName || namespace}
+        {:else}
+          Node shell · {nodeName}
+        {/if}
       </span>
     {/if}
 
@@ -532,7 +878,12 @@
       <ToolbarButton
         icon={RotateCw}
         label="Reconnect"
-        title={connectionState === 'connected' ? 'Reconnect this session' : 'Start a new session'}
+        title={readOnly && variant !== 'local'
+          ? READ_ONLY_REASON
+          : connectionState === 'connected'
+            ? 'Reconnect this session'
+            : 'Start a new session'}
+        disabled={readOnly && variant !== 'local'}
         onclick={() => void reconnect()}
       />
       {#if onmaximize}
@@ -545,6 +896,58 @@
       {/if}
     {/snippet}
   </PaneToolbar>
+
+  {#if variant === 'container' && mode === 'attach'}
+    <!--
+      A banner, not something written into the buffer: the buffer is the
+      attached process's own terminal, and this is PodSteer's own note about
+      it, not a line that process printed.
+    -->
+    <p
+      class="shrink-0 border-b border-outline-variant/60 bg-surface-container-low px-3 py-1
+             text-body-small text-on-surface-variant"
+    >
+      {ATTACH_NOTE}
+    </p>
+  {:else if variant === 'debug'}
+    <p
+      class="shrink-0 border-b border-outline-variant/60 bg-surface-container-low px-3 py-1
+             text-body-small text-on-surface-variant"
+    >
+      {DEBUG_NOTE}
+    </p>
+  {:else if variant === 'nodeshell'}
+    <p
+      class="shrink-0 border-b border-gauge-warn/40 bg-notice-warn px-3 py-1
+             text-body-small text-on-surface-variant"
+    >
+      {NODE_SHELL_NOTE}
+    </p>
+  {:else if variant === 'clustershell'}
+    <!-- The neutral banner, not the node shell's warning ground: nothing here
+         is privileged, and colouring it as though it were would make the two
+         read as the same act. -->
+    <p
+      class="shrink-0 border-b border-outline-variant/60 bg-surface-container-low px-3 py-1
+             text-body-small text-on-surface-variant"
+    >
+      {CLUSTER_SHELL_NOTE}
+    </p>
+  {:else if variant === 'local'}
+    <!--
+      A banner rather than a line in the buffer, like the attach note: the
+      buffer belongs to the operator's shell, and this is PodSteer's own
+      statement about the pane. The one-line notice naming the context IS
+      written into the buffer, by the Go side, before the shell starts — that
+      one is about the session, this one is about the surface.
+    -->
+    <p
+      class="shrink-0 border-b border-outline-variant/60 bg-surface-container-low px-3 py-1
+             text-body-small text-on-surface-variant"
+    >
+      {localNote}
+    </p>
+  {/if}
 
   <!--
     `bg-surface-container-lowest` matches what terminalTheme hands xterm, so the
@@ -580,7 +983,7 @@
                py-0.5 text-label-small text-on-surface shadow-sm"
         style="left: {selection.x}px; top: {selection.y}px"
       >
-        <Check class="size-3 text-gauge-normal" strokeWidth={2.5} />
+        <Check class="size-3 text-gauge-normal-ink" strokeWidth={2.5} />
         Copied
       </div>
     {/if}

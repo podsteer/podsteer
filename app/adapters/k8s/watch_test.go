@@ -24,6 +24,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // richPod carries every field a real one does that this package might read,
@@ -47,7 +49,14 @@ func richPod(name string) *corev1.Pod {
 			Finalizers:        []string{"kubernetes"},
 		},
 		Spec: corev1.PodSpec{
-			NodeName:     "node-1",
+			NodeName: "node-1",
+			// The host namespaces and the securityContext below are read by
+			// mapPod for the posture findings, so they belong in this fixture:
+			// the contract test is only as good as the fields it carries, and
+			// a stripper that nils one of these would otherwise pass.
+			HostNetwork:  true,
+			HostPID:      true,
+			HostIPC:      true,
 			NodeSelector: map[string]string{"disk": "ssd"},
 			Tolerations:  []corev1.Toleration{{Key: "spot"}},
 			Volumes:      []corev1.Volume{{Name: "config"}},
@@ -57,12 +66,23 @@ func richPod(name string) *corev1.Pod {
 				Command: []string{"/bin/sh"},
 				Args:    []string{"-c", "sleep"},
 				Env:     []corev1.EnvVar{{Name: "SECRET", Value: "x"}},
+				TTY:     true,
+				Stdin:   true,
 				Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")},
 					Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m")},
 				},
 				VolumeMounts:  []corev1.VolumeMount{{Name: "config", MountPath: "/etc"}},
 				LivenessProbe: &corev1.Probe{InitialDelaySeconds: 10},
+				SecurityContext: &corev1.SecurityContext{
+					Privileged:               boolPtr(true),
+					AllowPrivilegeEscalation: boolPtr(true),
+					RunAsNonRoot:             boolPtr(false),
+					RunAsUser:                ptrTo(int64(0)),
+					Capabilities: &corev1.Capabilities{
+						Add: []corev1.Capability{"SYS_ADMIN", "NET_BIND_SERVICE"},
+					},
+				},
 			}},
 		},
 		Status: corev1.PodStatus{
@@ -95,11 +115,21 @@ func TestStrippingAPodChangesNothingThisApplicationReads(t *testing.T) {
 		t.Fatalf("stripPod() error = %v", err)
 	}
 
-	want, err := mapPod("dev", original)
+	// Mapped UNDER A PROJECTION, because annotations are now something
+	// mapPod reads — and the projection deliberately names the one
+	// annotation the store strips beside an ordinary one. The domain
+	// refuses the former (see domain.NewProjection), which is exactly what
+	// keeps the two copies equal below. Remove that refusal and this fails,
+	// as it should: a column of the last-applied manifest would read blank
+	// on a cluster the watch is serving and the whole manifest on one it is
+	// not.
+	projection := contractProjection()
+
+	want, err := mapPod("dev", original, projection)
 	if err != nil {
 		t.Fatalf("mapPod(original) error = %v", err)
 	}
-	got, err := mapPod("dev", stripped.(*corev1.Pod))
+	got, err := mapPod("dev", stripped.(*corev1.Pod), projection)
 	if err != nil {
 		t.Fatalf("mapPod(stripped) error = %v", err)
 	}
@@ -107,6 +137,15 @@ func TestStrippingAPodChangesNothingThisApplicationReads(t *testing.T) {
 	if !reflect.DeepEqual(want, got) {
 		t.Fatalf("stripping changed what the application sees:\n original: %+v\n stripped: %+v", want, got)
 	}
+	if got.Annotations()["keep"] != "this" {
+		t.Fatalf("the projected annotation did not survive the store: %v", got.Annotations())
+	}
+}
+
+// contractProjection is what every stripping contract test maps under: an
+// ordinary annotation the fixtures carry, plus the one the store removes.
+func contractProjection() domain.Projection {
+	return domain.NewProjection([]string{"keep", corev1.LastAppliedConfigAnnotation})
 }
 
 func TestStrippingActuallyRemovesTheBulk(t *testing.T) {
@@ -313,7 +352,7 @@ func TestNarrowingTheStoreToOneNamespace(t *testing.T) {
 		}(),
 	}
 
-	all, err := mapWatchedPods("dev", watched, "")
+	all, err := mapWatchedPods("dev", watched, "", domain.Projection{})
 	if err != nil {
 		t.Fatalf("mapWatchedPods() error = %v", err)
 	}
@@ -321,7 +360,7 @@ func TestNarrowingTheStoreToOneNamespace(t *testing.T) {
 		t.Fatalf("mapped %d pods, want the 2 that map", len(all))
 	}
 
-	web, err := mapWatchedPods("dev", watched, "web")
+	web, err := mapWatchedPods("dev", watched, "web", domain.Projection{})
 	if err != nil {
 		t.Fatalf("mapWatchedPods() error = %v", err)
 	}
@@ -392,16 +431,19 @@ func TestStrippingAControllerChangesNothingThisApplicationReads(t *testing.T) {
 			t.Fatalf("stripReplicaSet() error = %v", err)
 		}
 
-		want, err := mapReplicaSet("dev", original)
+		want, err := mapReplicaSet("dev", original, contractProjection())
 		if err != nil {
 			t.Fatalf("mapReplicaSet(original) error = %v", err)
 		}
-		got, err := mapReplicaSet("dev", stripped.(*appsv1.ReplicaSet))
+		got, err := mapReplicaSet("dev", stripped.(*appsv1.ReplicaSet), contractProjection())
 		if err != nil {
 			t.Fatalf("mapReplicaSet(stripped) error = %v", err)
 		}
 		if !reflect.DeepEqual(want, got) {
 			t.Fatalf("stripping changed what the application sees:\n want: %+v\n got:  %+v", want, got)
+		}
+		if got.Annotations()["keep"] != "this" {
+			t.Fatalf("the projected annotation did not survive the store: %v", got.Annotations())
 		}
 	})
 
@@ -413,11 +455,11 @@ func TestStrippingAControllerChangesNothingThisApplicationReads(t *testing.T) {
 			t.Fatalf("stripJob() error = %v", err)
 		}
 
-		want, err := mapJob("dev", original)
+		want, err := mapJob("dev", original, contractProjection())
 		if err != nil {
 			t.Fatalf("mapJob(original) error = %v", err)
 		}
-		got, err := mapJob("dev", stripped.(*batchv1.Job))
+		got, err := mapJob("dev", stripped.(*batchv1.Job), contractProjection())
 		if err != nil {
 			t.Fatalf("mapJob(stripped) error = %v", err)
 		}
@@ -587,5 +629,75 @@ func TestASupervisorLeavesACondemnedStoreCondemned(t *testing.T) {
 	}
 	if store.get() != watchDegraded {
 		t.Fatalf("a condemned store was promoted: %v", store.get())
+	}
+}
+
+// TestAStalledStoreNeverPublishesAnOlderVersion pins the ordering inside
+// kindWatch.stall.
+//
+// `supervise` reads the state and then the version, and promotes as soon as
+// the reflector has moved past what it reads. If the flip to `starting`
+// happened before the version were recorded, a reader landing between the two
+// would see whatever the version was BEFORE this stall — and on a second
+// stall that is a version the reflector has long since passed, so supervise
+// promotes a store that is still stalled. Nothing demotes it again, because
+// supervise skips a serving store.
+//
+// EACH ROUND USES A FRESH STORE THAT STALLS EXACTLY ONCE, and that is what
+// makes this sound rather than merely suggestive. `stalled` goes sentinel →
+// "100" and never moves again, and the state goes serving → starting and
+// never moves again, so a reader that sees `starting` and then reads the
+// SENTINEL can only have done so because the flip was published before the
+// version. There is no interleaving of resets for it to straddle.
+//
+// A FIRST ATTEMPT AT THIS FAILED ON CI WITH THE FIX IN PLACE, and the reason
+// is worth keeping: it stalled and promoted ONE store in a loop, so the
+// reader's own two-step read could straddle a promotion — see `starting` from
+// one round and the version from the next — and report a violation that had
+// not happened. It could not distinguish the two orders it was meant to
+// judge, which makes a test worse than none.
+func TestAStalledStoreNeverPublishesAnOlderVersion(t *testing.T) {
+	const sentinel = "before-any-stall"
+	const rounds = 3000
+
+	caught := 0
+	for range rounds {
+		store := &kindWatch{}
+		store.stalled.Store(ptrTo(sentinel))
+		store.set(watchServing)
+
+		var stale atomic.Bool
+		ready := make(chan struct{})
+		done := make(chan struct{})
+
+		go func() {
+			defer close(done)
+			close(ready)
+			// What supervise does: read the state, then the version. The
+			// state flips once, so the first observation of `starting` is the
+			// only one that can say anything.
+			for range 4096 {
+				if watchState(store.state.Load()) != watchStarting {
+					continue
+				}
+				if version := store.stalled.Load(); version != nil && *version == sentinel {
+					stale.Store(true)
+				}
+				return
+			}
+		}()
+
+		<-ready
+		store.stall("100")
+		<-done
+
+		if stale.Load() {
+			caught++
+		}
+	}
+
+	if caught != 0 {
+		t.Fatalf("a starting store published the version from before its own stall in %d of %d rounds — "+
+			"supervise would promote it while it is still behind", caught, rounds)
 	}
 }

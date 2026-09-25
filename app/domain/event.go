@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"maps"
 	"strings"
 	"time"
 )
@@ -53,6 +54,17 @@ type EventSpec struct {
 	// an event list sorts by — a warning that fired once an hour ago matters
 	// less than one still firing now.
 	LastSeen time.Time
+	// Labels are the event object's own labels. Almost always empty — an
+	// Event is written by a controller, not by a person — but a custom
+	// column has to be able to say so rather than be unavailable here.
+	Labels map[string]string
+	// Annotations are the event's annotations, populated SELECTIVELY by the
+	// adapter — only the keys a Projection asked for. See Projection.
+	Annotations map[string]string
+	// Custom holds the operator's own JSONPath columns, keyed by the
+	// interface's column id and already rendered as text. Nil when none were
+	// asked for, which is every read but a list view's.
+	Custom map[string]string
 }
 
 // Event is a Kubernetes Event as observed at a point in time.
@@ -72,6 +84,9 @@ type Event struct {
 	count        int32
 	firstSeen    time.Time
 	lastSeen     time.Time
+	labels       map[string]string
+	annotations  map[string]string
+	custom       map[string]string
 }
 
 // NewEvent validates spec and returns the corresponding Event.
@@ -102,6 +117,9 @@ func NewEvent(spec EventSpec) (Event, error) {
 		count:        spec.Count,
 		firstSeen:    spec.FirstSeen.UTC(),
 		lastSeen:     spec.LastSeen.UTC(),
+		labels:       maps.Clone(spec.Labels),
+		annotations:  maps.Clone(spec.Annotations),
+		custom:       maps.Clone(spec.Custom),
 	}, nil
 }
 
@@ -140,6 +158,17 @@ func (e Event) FirstSeen() time.Time { return e.firstSeen }
 
 // LastSeen returns when the event most recently occurred, in UTC.
 func (e Event) LastSeen() time.Time { return e.lastSeen }
+
+// Labels returns a copy of the event object's labels.
+func (e Event) Labels() map[string]string { return maps.Clone(e.labels) }
+
+// Annotations returns a copy of the projected annotations — only the keys
+// that were asked for when the event was read. See EventSpec.Annotations.
+func (e Event) Annotations() map[string]string { return maps.Clone(e.annotations) }
+
+// Custom returns a copy of the operator's own JSONPath column values, keyed
+// by column id.
+func (e Event) Custom() map[string]string { return maps.Clone(e.custom) }
 
 // IsWarning reports whether the event describes something going wrong.
 func (e Event) IsWarning() bool { return e.eventType == EventWarning }

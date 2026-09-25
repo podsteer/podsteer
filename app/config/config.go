@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/podsteer/podsteer/app/domain"
 )
 
 // envPrefix namespaces every PodSteer environment variable.
@@ -28,6 +30,20 @@ type Config struct {
 	Kubernetes KubernetesConfig
 	// Log controls diagnostics.
 	Log LogConfig
+	// FileCopy caps a file copy to or from a container.
+	FileCopy FileCopyConfig
+}
+
+// FileCopyConfig caps one file copy in either direction.
+//
+// A stream from a container is unbounded by construction, so a ceiling
+// exists whether or not anybody sets one; these only move it. See
+// domain.TransferLimits for why the defaults are what they are.
+type FileCopyConfig struct {
+	// MaxBytes is the most file content one transfer may carry.
+	MaxBytes int64
+	// MaxEntries is the most archive entries one transfer may carry.
+	MaxEntries int
 }
 
 // AppConfig identifies the application.
@@ -54,6 +70,14 @@ type KubernetesConfig struct {
 	// KubeconfigPath overrides the kubeconfig location. Empty means the
 	// standard resolution order: $KUBECONFIG, then ~/.kube/config.
 	KubeconfigPath string
+	// KubeconfigDir, when set, names a directory whose kubeconfig files are
+	// merged into the loading precedence AFTER KubeconfigPath (or, when that
+	// is unset, after whatever $KUBECONFIG/~/.kube/config already resolved
+	// to) — one file per cluster, the shape `--kubeconfig-dir` in Radar and a
+	// synced Lens folder both support, for an operator who would otherwise
+	// maintain $KUBECONFIG as a path list by hand. Empty means no directory
+	// is read. See app/adapters/k8s/client.go for what gets skipped and why.
+	KubeconfigDir string
 	// QPS is the sustained request rate allowed per cluster.
 	QPS float32
 	// Burst is how far a momentary spike may exceed QPS.
@@ -121,6 +145,10 @@ func Default() Config {
 		Log: LogConfig{
 			Level: slog.LevelInfo,
 		},
+		FileCopy: FileCopyConfig{
+			MaxBytes:   domain.DefaultTransferMaxBytes,
+			MaxEntries: domain.DefaultTransferMaxEntries,
+		},
 	}
 }
 
@@ -133,6 +161,10 @@ func Load() (Config, error) {
 
 	if value, ok := lookup("KUBECONFIG"); ok {
 		cfg.Kubernetes.KubeconfigPath = value
+	}
+
+	if value, ok := lookup("KUBECONFIG_DIR"); ok {
+		cfg.Kubernetes.KubeconfigDir = value
 	}
 
 	if value, ok := lookup("QPS"); ok {
@@ -182,6 +214,22 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("%sLOG_SOURCE: %q is not a boolean", envPrefix, value)
 		}
 		cfg.Log.AddSource = enabled
+	}
+
+	if value, ok := lookup("COPY_MAX_BYTES"); ok {
+		limit, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || limit <= 0 {
+			return Config{}, fmt.Errorf("%sCOPY_MAX_BYTES: %q is not a positive integer of bytes", envPrefix, value)
+		}
+		cfg.FileCopy.MaxBytes = limit
+	}
+
+	if value, ok := lookup("COPY_MAX_ENTRIES"); ok {
+		limit, err := strconv.Atoi(value)
+		if err != nil || limit <= 0 {
+			return Config{}, fmt.Errorf("%sCOPY_MAX_ENTRIES: %q is not a positive integer", envPrefix, value)
+		}
+		cfg.FileCopy.MaxEntries = limit
 	}
 
 	return cfg, nil

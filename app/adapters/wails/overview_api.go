@@ -63,3 +63,27 @@ func (o *OverviewAPI) GetOverview(clusterID string) (Overview, error) {
 
 	return toOverview(overview), nil
 }
+
+// GetOverviewForTarget assesses a connected cluster the way GetOverview does,
+// but scores the upgrade-impact findings against a chosen Kubernetes minor
+// rather than the default of the next one — what the overview header's
+// "check against" selector calls when an operator picks a different target.
+//
+// targetMinor is e.g. "1.33". An empty string asks for the default, the same
+// as GetOverview.
+func (o *OverviewAPI) GetOverviewForTarget(clusterID string, targetMinor string) (Overview, error) {
+	ctx, cancel := o.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return Overview{}, apiError(o.logger, "GetOverviewForTarget", err)
+	}
+
+	overview, err := o.overview.OverviewForTarget(ctx, id, targetMinor)
+	if err != nil {
+		return Overview{}, apiError(o.logger, "GetOverviewForTarget", err)
+	}
+
+	return toOverview(overview), nil
+}

@@ -59,4 +59,87 @@ var (
 	// and either is worth saying rather than rendering nothing and letting it
 	// read as "this variable is blank".
 	ErrSecretKeyNotFound = errors.New("secret key not found")
+
+	// ErrUnsupportedWorkloadKind is returned when an operation is attempted
+	// against a WorkloadKind that does not support it — suspending a
+	// Deployment, say. The application layer checks this before an adapter is
+	// ever reached, mirroring how ScaleWorkload validates its replica count.
+	ErrUnsupportedWorkloadKind = errors.New("unsupported workload kind")
+
+	// ErrInvalidKey is returned when a Secret or ConfigMap data key is empty,
+	// contains characters Kubernetes does not allow in one, or — for a
+	// ConfigMap — names a key that currently holds binary data rather than
+	// text.
+	//
+	// The application layer checks the format before an adapter is ever
+	// reached, mirroring ErrUnsupportedWorkloadKind above; the binaryData
+	// case can only be checked in the adapter, because it requires reading
+	// the object first.
+	ErrInvalidKey = errors.New("invalid key")
+
+	// ErrInvalidImageReference is returned when SetImage is asked to write an
+	// image string that does not look like an image reference — empty,
+	// containing whitespace, or an empty tag — checked by
+	// ValidImageReference. Caught in the application layer before an adapter
+	// is ever reached, mirroring ErrInvalidKey above.
+	ErrInvalidImageReference = errors.New("invalid image reference")
+
+	// ErrNotTLSSecret reports that InspectTLSSecret was asked to parse a
+	// Secret that is neither type kubernetes.io/tls nor carries a tls.crt
+	// key by convention — there is no certificate here to inspect at all.
+	ErrNotTLSSecret = errors.New("secret is not a TLS secret")
+
+	// ErrInvalidCertificate reports that certificate material could not be
+	// parsed as PEM-encoded X.509 — a Secret whose tls.crt or ca.crt holds
+	// something else, or nothing.
+	ErrInvalidCertificate = errors.New("invalid certificate data")
+
+	// ErrContainerNotAttachable reports that AttachToPod was asked to attach
+	// to a container whose own spec does not declare both a tty and stdin.
+	// Kubernetes' attach subresource accepts the request regardless and only
+	// fails once the PTY negotiation begins, with a server error that names
+	// neither the pod nor the reason — so this is checked locally, before any
+	// request reaches the cluster, and says exactly what the container needs.
+	ErrContainerNotAttachable = errors.New("container has no tty; attach needs `tty: true` and `stdin: true` on the container")
+
+	// ErrInvalidManifest reports that a manifest offered to UpdateResource
+	// could not be applied as written: it is not valid YAML/JSON for a
+	// Kubernetes object, it is missing apiVersion, kind or metadata.name, it
+	// names a namespaced kind with no metadata.namespace, or it contains more
+	// than one object. Checked before any request reaches the cluster, the
+	// same way ErrInvalidKey is checked before SetSecretKey ever dials out.
+	ErrInvalidManifest = errors.New("invalid manifest")
+
+	// ErrForceUnconfirmed reports that a forced apply arrived with nothing
+	// confirmed.
+	//
+	// FORCE IS A PRECONDITION, NEVER A RETRY. Taking a field from another
+	// manager is only a decision if somebody read who holds it; a force with
+	// an empty confirmed set is an interface turning "the server declined"
+	// into "press again", which is the one thing this must not become.
+	// Refused in the application service, before any request leaves.
+	ErrForceUnconfirmed = errors.New("a forced apply must carry the conflicts that were confirmed")
+
+	// ErrInvalidRevision reports that RollbackWorkload was asked for a
+	// revision number that is not positive, or — checked in the adapter,
+	// which is the only layer that knows which revision is presently live —
+	// names the revision already current. Rolling back to the current
+	// revision is not a malformed request in the way an unknown revision is
+	// (that is ports.ErrNotFound), but there is nothing for it to do, and
+	// running it anyway would create a needless new ReplicaSet or
+	// ControllerRevision.
+	ErrInvalidRevision = errors.New("invalid revision")
+
+	// ErrInvalidAccessRequest reports that an access review named no verb, or
+	// nothing to act on — neither a resource nor a non-resource path. The API
+	// server would answer such a request with a flat "no", which reads as a
+	// denial of something rather than as the malformed question it is, so it
+	// is refused locally before it reaches the cluster.
+	ErrInvalidAccessRequest = errors.New("invalid access request")
+
+	// ErrInvalidRoleTarget reports that a role inspection named no role, or
+	// named a namespaced Role without the namespace that identifies it —
+	// `Role/edit` exists in a great many namespaces at once, so a blank one
+	// does not name an object.
+	ErrInvalidRoleTarget = errors.New("invalid role target")
 )

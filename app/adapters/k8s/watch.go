@@ -227,6 +227,27 @@ type kindWatch struct {
 	stalled atomic.Pointer[string]
 }
 
+// stall stops the store serving and records where its reflector had reached.
+//
+// THE VERSION IS RECORDED BEFORE THE STATE FLIPS, AND THAT ORDER IS THE POINT.
+// `supervise` reads the state and then the version, and promotes the store the
+// moment the reflector has moved past what it reads. Done the other way round
+// — flip, then record — a supervise tick landing between the two statements on
+// a SECOND stall reads the PREVIOUS stall's version, finds the reflector long
+// past it, and promotes the store back to serving while it is still stalled.
+// Nothing demotes it again either: supervise skips a serving store, so it
+// would go on answering reads from a mirror that is behind until some later
+// stall happened to fire.
+//
+// Recording first means an observer that sees `starting` cannot see a version
+// older than the stall that put it there. Writing the version when the CAS
+// then fails is harmless: the store was already not serving, and a newer
+// version only delays a promotion, which is the safe direction.
+func (w *kindWatch) stall(version string) {
+	w.stalled.Store(&version)
+	w.state.CompareAndSwap(int32(watchServing), int32(watchStarting))
+}
+
 func (k *kindWatch) get() watchState  { return watchState(k.state.Load()) }
 func (k *kindWatch) set(s watchState) { k.state.Store(int32(s)) }
 
@@ -403,10 +424,19 @@ func (m *watchManager) run(ctx context.Context, id domain.ClusterID, store *kind
 		// list this exists to avoid, silently and for as long as the tab
 		// stayed open. The version reached is recorded here and `supervise`
 		// promotes the store back when the reflector moves past it.
-		version := informer.LastSyncResourceVersion()
-		if store.state.CompareAndSwap(int32(watchServing), int32(watchStarting)) {
-			store.stalled.Store(&version)
-		}
+		//
+		// THE VERSION IS RECORDED BEFORE THE STATE FLIPS, AND THAT ORDER IS
+		// THE FIX. `supervise` reads the state and then the version, and
+		// promotes as soon as the reflector has moved past what it reads. Set
+		// the other way round — flip, then record — a supervise tick landing
+		// between the two statements on a SECOND stall reads the PREVIOUS
+		// stall's version, finds the reflector long past it, and promotes the
+		// store back to serving while it is still stalled. Nothing demotes it
+		// again either: supervise skips a serving store, so it would go on
+		// answering reads from a mirror that is behind until some later stall
+		// happened to fire. Recording first means a reader that sees
+		// `starting` cannot see a version older than this stall.
+		store.stall(informer.LastSyncResourceVersion())
 	})
 
 	// PUBLISHED BEFORE ANYTHING CAN FLIP THE STATE. A reader takes the

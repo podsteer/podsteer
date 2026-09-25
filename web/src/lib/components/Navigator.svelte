@@ -20,13 +20,39 @@
   import { ALL_NAMESPACES, type ResourceKind } from '$lib/api/client'
   import {
     APPLICATIONS_KIND_ID,
+    FLEET_KIND_ID,
+    HELM_KIND_ID,
+    MULTI_KIND_ID,
+    SECURITY_KIND_ID,
     OVERVIEW_KIND_ID,
+    RBAC_KIND_ID,
+    TIMELINE_KIND_ID,
     type ClusterSession,
+    type RecentObject,
   } from '$stores/session.svelte'
   import { clampNavigatorWidth, preferences } from '$stores/preferences.svelte'
+  import { timeline } from '$stores/timeline.svelte'
+  import { workspace } from '$stores/workspace.svelte'
+  import { formatBadgeCount } from '$lib/format'
+  import { kindSetMatches } from '$lib/kindSets'
   import { categoryMeta, iconForKind } from '$lib/kindIcons'
   import Select from './Select.svelte'
-  import { Blocks, ChevronDown, LayoutDashboard, AlertTriangle } from '@lucide/svelte'
+  import {
+    Blocks,
+    ChevronDown,
+    ShieldCheck,
+    KeyRound,
+    Clock,
+    Layers,
+    Rows3,
+    Bookmark,
+    LayoutDashboard,
+    AlertTriangle,
+    Package,
+    Star,
+    History,
+    X,
+  } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -67,6 +93,27 @@
 
   const onOverview = $derived(session.selectedKindId === OVERVIEW_KIND_ID)
   const onApplications = $derived(session.selectedKindId === APPLICATIONS_KIND_ID)
+  const onFleet = $derived(session.selectedKindId === FLEET_KIND_ID)
+  const onRBAC = $derived(session.selectedKindId === RBAC_KIND_ID)
+  const onTimeline = $derived(session.selectedKindId === TIMELINE_KIND_ID)
+
+  /** How much this tab has recorded, for the badge beside Timeline. */
+  const timelineCount = $derived(timeline.forCluster(session.cluster.id).length)
+  const onHelm = $derived(session.selectedKindId === HELM_KIND_ID)
+  const onMultiKind = $derived(session.selectedKindId === MULTI_KIND_ID)
+
+  /**
+   * The kind sets the operator kept, and which one is on screen.
+   *
+   * Applied against THIS cluster's catalogue, so a set naming a kind this
+   * cluster does not serve shows what it can rather than refusing — see
+   * preferences.applyKindSet.
+   */
+  const keptSets = $derived(preferences.pinnedKindSets)
+  const chosenKinds = $derived(preferences.multiKindSelectionFor(session.cluster.id))
+  const onSecurity = $derived(session.selectedKindId === SECURITY_KIND_ID)
+  /** How many tabs the merged view would merge — the badge on its row. */
+  const openClusters = $derived(workspace.sessions.length)
 
   /**
    * Kinds grouped by category and then by who publishes them.
@@ -126,6 +173,47 @@
    */
   function ungroupedIn(section: { groups: { name: string; kinds: ResourceKind[] }[] | null }) {
     return section.groups?.find((group) => group.name === '')?.kinds ?? []
+  }
+
+  /**
+   * The operator's pinned kinds for this cluster, resolved to catalog entries
+   * and in the order pinned.
+   *
+   * A pinned id the cluster no longer serves — an operator uninstalled — is
+   * SKIPPED here, not dropped from preferences: the pin may come back the
+   * next time that operator is reinstalled, and nothing about pinning it said
+   * "forget this if it ever goes away for a moment".
+   */
+  const pinnedKinds = $derived.by(() => {
+    const byId = new Map(session.kinds.map((kind) => [kind.id, kind]))
+    return preferences
+      .pinnedKindsFor(session.cluster.id)
+      .map((id) => byId.get(id))
+      .filter((kind): kind is ResourceKind => kind !== undefined)
+  })
+
+  /** The catalog entry a recently opened object was opened under, or
+      undefined if that kind is no longer served — the glyph then falls back
+      to the generic package icon iconForKind already uses for that case. */
+  function kindFor(recent: RecentObject): ResourceKind | undefined {
+    return session.kinds.find((kind) => kind.id === recent.kindId)
+  }
+
+  /**
+   * Reopens a recent object.
+   *
+   * THROUGH openObject, NOT openDetail DIRECTLY — Recent spans every kind at
+   * once, unlike a table row's own click handler, which only ever opens a row
+   * of the kind already on screen. openObject is what the rest of the app
+   * already uses to jump to an object of a DIFFERENT kind (DetailDrawer's
+   * followed references, OverviewView's findings): it switches the selected
+   * kind and namespace first, so the manifest fetched is the one that was
+   * actually asked for, and its own last step is exactly the openDetail call
+   * every other open in the app goes through.
+   */
+  async function openRecent(recent: RecentObject): Promise<void> {
+    const kind = kindFor(recent)
+    await session.openObject(recent.kindId, recent.name, recent.namespace, kind?.namespaced ?? true)
   }
 
   // --- Resize logic ---
@@ -195,6 +283,74 @@
   }
 </script>
 
+<!--
+  One kind's row, shared by every place a kind is listed: ungrouped kinds,
+  subgrouped kinds, flat categories, and the Pinned section. Three copies of
+  this markup existed before the star affordance was added, and a fourth was
+  about to — a snippet is what stops the four from quietly drifting apart the
+  way the thresholdGroup comment in SettingsDialog.svelte warns about.
+-->
+{#snippet kindRow(kind: ResourceKind)}
+  {@const selected = kind.id === session.selectedKindId}
+  {@const KindIcon = iconForKind(kind)}
+  {@const pinned = preferences.isKindPinned(session.cluster.id, kind.id)}
+  <li class="group/item relative">
+    <button
+      type="button"
+      onclick={() => session.selectKind(kind.id)}
+      aria-current={selected ? 'page' : undefined}
+      title={kind.group ? `${kind.kind} · ${kind.group}/${kind.version}` : kind.kind}
+      class="flex w-full items-center gap-2 rounded-sm py-[5px] pr-7 pl-2 text-left
+             transition-all duration-100 ease-standard
+             {selected
+               ? 'bg-primary/12 text-primary'
+               : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+    >
+      <span class="w-1.5 shrink-0" aria-hidden="true"></span>
+      <KindIcon
+        class="size-4 shrink-0 transition-colors duration-100
+               {selected ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+        strokeWidth={1.8}
+      />
+      <span class="flex-1 truncate text-body-medium">{kind.title}</span>
+      {#if !kind.namespaced}
+        <span
+          class="rounded bg-surface-container-high px-1 py-px text-label-small uppercase
+                 text-on-surface-variant/50"
+          title="Cluster-scoped"
+        >
+          C
+        </span>
+      {/if}
+    </button>
+
+    <!--
+      Pin / unpin. A SIBLING of the row button rather than nested inside it —
+      a button cannot contain another button — positioned over the row's own
+      trailing edge the same way ClusterTabs' tab-close control sits over its
+      tab. Hover/focus-revealed when unpinned, same as that close control;
+      left visible, filled, once pinned, so a glance down the pinned rows
+      themselves still shows which ones they are without hovering each one.
+    -->
+    <button
+      type="button"
+      onclick={() =>
+        pinned
+          ? preferences.unpinKind(session.cluster.id, kind.id)
+          : preferences.pinKind(session.cluster.id, kind.id)}
+      aria-pressed={pinned}
+      aria-label="{pinned ? 'Unpin' : 'Pin'} {kind.title}"
+      title="{pinned ? 'Unpin' : 'Pin'} {kind.title}"
+      class="state-layer absolute top-1/2 right-0.5 grid size-6 -translate-y-1/2 place-items-center
+             rounded-full text-on-surface-variant/60 transition-opacity duration-100
+             hover:bg-surface-container-high hover:text-on-surface
+             {pinned ? 'opacity-100' : 'opacity-0 group-hover/item:opacity-100 focus-visible:opacity-100'}"
+    >
+      <Star class="size-3.5 {pinned ? 'fill-current text-primary' : ''}" strokeWidth={1.8} />
+    </button>
+  </li>
+{/snippet}
+
 <nav
   class="relative flex shrink-0 flex-col border-r border-outline-variant/60 bg-surface-container-low"
   style="width: {draggedWidth ?? preferences.navigatorWidth}px"
@@ -225,8 +381,200 @@
 
   <!-- Resource tree -->
   <div class="min-h-0 flex-1 overflow-y-auto py-1.5">
-    <!-- The dashboard is pinned above the categories rather than filed inside
-         one: it is not a kind, and it is where an operator starts. The badge
+    <!-- Every open cluster's pods, workloads or events in one table, and the
+         first thing in the tree because it is the only entry that is not
+         about the cluster whose tab this is. Above the rule for that reason:
+         everything below answers for one cluster. It is not a kind and no
+         single cluster could serve it — see FLEET_KIND_ID. The badge is how
+         many tabs it merges; one is honest, if not much of a merge. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(FLEET_KIND_ID)}
+        aria-current={onFleet ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onFleet
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <Layers
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onFleet ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">All clusters</span>
+        <span
+          class="rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small
+                 tabular-nums text-on-surface-variant/70"
+          title="{openClusters} open cluster{openClusters === 1 ? '' : 's'}"
+        >
+          {openClusters}
+        </span>
+      </button>
+    </div>
+
+    <div class="mx-3 my-1.5 h-px bg-outline-variant/40" aria-hidden="true"></div>
+
+    <!-- Pinned kinds, with Recent below them: what THIS operator reaches for,
+         above everything the cluster happens to contain, so a cluster with
+         sixty custom resources still opens on the handful they work with.
+         Both are chosen by use rather than by category, which is why they
+         share a band of their own. Rendered in the order pinned — see
+         preferences.pinKind — and skipped, not removed, for a kind this
+         cluster no longer serves (see the comment on `pinnedKinds` above). -->
+    {#if pinnedKinds.length > 0}
+      {@const open = preferences.isSectionExpanded('Pinned')}
+      <div class="px-1.5 pb-1">
+        <button
+          type="button"
+          onclick={() => preferences.toggleSection('Pinned')}
+          aria-expanded={open}
+          class="state-layer group flex w-full items-center gap-2 rounded-sm px-2 py-1.5
+                 text-on-surface-variant transition-colors duration-100 hover:bg-surface-container"
+        >
+          <ChevronDown
+            class="size-3.5 shrink-0 text-on-surface-variant/60 transition-transform duration-150 ease-standard
+                   {open ? '' : '-rotate-90'}"
+            strokeWidth={2.5}
+          />
+          <Star class="size-4 shrink-0 text-on-surface-variant/70" strokeWidth={1.8} />
+          <span class="flex-1 truncate text-left text-body-small font-semibold uppercase tracking-wider">
+            Pinned
+          </span>
+          <span
+            class="rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small
+                   tabular-nums text-on-surface-variant/70"
+          >
+            {pinnedKinds.length}
+          </span>
+        </button>
+        <!-- The SAME rail the categories put their kinds behind, and it has to
+             be: kindRow's leading spacer is sized against this wrapper's left
+             padding, so rendering it without one puts every pinned row half a
+             unit left of the identical row under Workloads. -->
+        {#if open}
+          <div class="mt-0.5 border-l border-outline-variant/30 pl-2">
+            <ul>
+              {#each pinnedKinds as kind (kind.id)}
+                {@render kindRow(kind)}
+              {/each}
+            </ul>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Recent objects: the last twelve opened in the detail drawer for THIS
+         cluster, most recent first. Kept in memory on the session rather than
+         in preferences — see ClusterSession.recentObjects for why object
+         names are never written to disk. -->
+    {#if session.recentObjects.length > 0}
+      {@const open = preferences.isSectionExpanded('Recent')}
+      <div class="px-1.5 pb-1">
+        <!-- The toggle, Clear and the count are siblings rather than nested:
+             a button inside a button is not valid, and the toggle and Clear do
+             genuinely different things to the same section. Clear stays
+             reachable while the section is folded, because wanting the list
+             gone is not a reason to have to open it first.
+
+             It is an ICON rather than an icon and the word, so this header
+             ends the way the other five do — with the count in the same badge
+             at the same edge. A labelled control there made Recent the one
+             section whose right-hand column said something else, and the label
+             is carried by the tooltip and the accessible name instead. -->
+        <!-- pl-0.5 pr-2, and the asymmetry is arithmetic rather than taste.
+             Every other section's badge sits INSIDE its header button, so it
+             lands 14px from the section's right edge: 6px of wrapper padding
+             plus the button's own 8px. This badge is a SIBLING of the button —
+             it has to be, since Clear cannot nest inside it — so it collects
+             only the wrapper's 6px and this row's own padding. At px-0.5 that
+             came to 8px and put the badge six pixels right of the column the
+             other five form. pr-2 restores the 8px the button would have
+             contributed; pl-0.5 keeps the left edge where it already matched,
+             the toggle's own px-1.5 supplying the rest. -->
+        <div class="flex items-center gap-1 pl-0.5 pr-2">
+          <button
+            type="button"
+            onclick={() => preferences.toggleSection('Recent')}
+            aria-expanded={open}
+            class="state-layer group flex min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 py-1.5
+                   text-on-surface-variant transition-colors duration-100 hover:bg-surface-container"
+          >
+            <ChevronDown
+              class="size-3.5 shrink-0 text-on-surface-variant/60 transition-transform duration-150 ease-standard
+                     {open ? '' : '-rotate-90'}"
+              strokeWidth={2.5}
+            />
+            <History class="size-4 shrink-0 text-on-surface-variant/70" strokeWidth={1.8} />
+            <span class="flex-1 truncate text-left text-body-small font-semibold uppercase tracking-wider">
+              Recent
+            </span>
+          </button>
+          <button
+            type="button"
+            onclick={() => session.clearRecents()}
+            aria-label="Clear recently opened objects"
+            title="Clear recently opened"
+            class="state-layer grid size-5 shrink-0 place-items-center rounded-sm
+                   text-on-surface-variant/70 transition-colors duration-100
+                   hover:bg-surface-container hover:text-on-surface"
+          >
+            <X class="size-3.5" strokeWidth={2} />
+          </button>
+          <span
+            class="shrink-0 rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small
+                   tabular-nums text-on-surface-variant/70"
+          >
+            {session.recentObjects.length}
+          </span>
+        </div>
+        {#if open}
+          <div class="mt-0.5 border-l border-outline-variant/30 pl-2">
+            <ul>
+              {#each session.recentObjects as recent (`${recent.kindId}|${recent.namespace}|${recent.name}`)}
+                {@const RecentIcon = iconForKind(kindFor(recent) ?? { kind: '' })}
+                <li>
+                  <button
+                    type="button"
+                    onclick={() => void openRecent(recent)}
+                    title={recent.namespace ? `${recent.name} — ${recent.namespace}` : recent.name}
+                    class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
+                           text-on-surface-variant transition-all duration-100 ease-standard
+                           hover:bg-surface-container hover:text-on-surface"
+                  >
+                    <span class="w-1.5 shrink-0" aria-hidden="true"></span>
+                    <RecentIcon
+                      class="size-4 shrink-0 text-on-surface-variant/60 transition-colors duration-100
+                             group-hover/item:text-on-surface-variant"
+                      strokeWidth={1.8}
+                    />
+                    <span class="min-w-0 flex-1 truncate text-body-medium">{recent.name}</span>
+                    {#if recent.namespace}
+                      <span class="shrink-0 truncate text-label-small text-on-surface-variant/50">
+                        {recent.namespace}
+                      </span>
+                    {/if}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Only when there is something above it to separate. An operator with
+         nothing pinned and nothing opened yet sees one list, not a rule with
+         a gap over it. -->
+    {#if pinnedKinds.length > 0 || session.recentObjects.length > 0}
+      <div class="mx-3 my-1.5 h-px bg-outline-variant/40" aria-hidden="true"></div>
+    {/if}
+
+    <!-- The dashboard opens the cluster's own band — everything from here to
+         Custom Resources answers for this cluster, in the order an operator
+         reads it: the verdict, what changed, what is deployed, then the
+         objects themselves. It is not a kind, and it is where they start. The badge
          carries the assessment's own verdict, so the sidebar answers "is
          anything wrong" from any view. -->
     <div class="px-1.5 pb-1">
@@ -261,15 +609,48 @@
       </button>
     </div>
 
-    {#if session.kinds.length === 0}
-      <div class="flex flex-col items-center gap-2 px-4 py-8">
-        <div class="size-8 animate-pulse rounded-full bg-surface-container-high"></div>
-        <p class="text-body-small text-on-surface-variant/70">Loading resources…</p>
-      </div>
-    {/if}
+    <!-- What changed in this cluster while the tab has been open. Pinned
+         beside the other two that are not kinds, and for the same reason:
+         there is nothing to GET called a timeline — see TIMELINE_KIND_ID.
+         It is the only entry here that costs no request at all, because
+         every entry in it was recorded from a read something else made. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(TIMELINE_KIND_ID)}
+        aria-current={onTimeline ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onTimeline
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <Clock
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onTimeline ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">Timeline</span>
+        {#if timelineCount > 0}
+          <!-- Capped by formatBadgeCount. This is the one badge in the
+               navigator that can reach four digits — every other counts kinds
+               or open clusters — because it counts entries bounded by
+               MAX_ENTRIES_PER_CLUSTER rather than by anything in the cluster,
+               and a sidebar that widens because a cluster got busy is worse
+               than a number that stops being exact. -->
+          <span
+            class="shrink-0 rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small
+                   tabular-nums text-on-surface-variant/70"
+            title="{timelineCount} recorded this session"
+          >
+            {formatBadgeCount(timelineCount)}
+          </span>
+        {/if}
+      </button>
+    </div>
 
-    <!-- Applications, pinned beside the dashboard for the same reason: there
-         is no object called an application. It is a grouping of what is
+    <!-- Applications closes the three views that are not kinds, before the
+         categories that are: there is no object called an application. It is a grouping of what is
          there by the labels Kubernetes recommends they carry, so it belongs
          with the other view that is not a kind rather than filed among the
          kinds. -->
@@ -296,6 +677,13 @@
         <span class="flex-1 truncate text-body-medium">Applications</span>
       </button>
     </div>
+
+    {#if session.kinds.length === 0}
+      <div class="flex flex-col items-center gap-2 px-4 py-8">
+        <div class="size-8 animate-pulse rounded-full bg-surface-container-high"></div>
+        <p class="text-body-small text-on-surface-variant/70">Loading resources…</p>
+      </div>
+    {/if}
 
 
     {#each sections as section (section.category)}
@@ -350,38 +738,7 @@
               -->
               <ul>
                 {#each ungroupedIn(section) as kind (kind.id)}
-                  {@const selected = kind.id === session.selectedKindId}
-                  {@const KindIcon = iconForKind(kind)}
-                  <li>
-                    <button
-                      type="button"
-                      onclick={() => session.selectKind(kind.id)}
-                      aria-current={selected ? 'page' : undefined}
-                      title={kind.group ? `${kind.kind} · ${kind.group}/${kind.version}` : kind.kind}
-                      class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
-                             transition-all duration-100 ease-standard
-                             {selected
-                               ? 'bg-primary/12 text-primary'
-                               : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
-                    >
-                      <span class="w-1.5 shrink-0" aria-hidden="true"></span>
-                      <KindIcon
-                        class="size-4 shrink-0 transition-colors duration-100
-                               {selected ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
-                        strokeWidth={1.8}
-                      />
-                      <span class="flex-1 truncate text-body-medium">{kind.title}</span>
-                      {#if !kind.namespaced}
-                        <span
-                          class="rounded bg-surface-container-high px-1 py-px text-label-small uppercase
-                                 text-on-surface-variant/50"
-                          title="Cluster-scoped"
-                        >
-                          C
-                        </span>
-                      {/if}
-                    </button>
-                  </li>
+                  {@render kindRow(kind)}
                 {/each}
               </ul>
 
@@ -419,38 +776,7 @@
                 {#if groupOpen}
                   <ul class="ml-1.5 border-l border-outline-variant/20 pl-1.5">
                     {#each group.kinds as kind (kind.id)}
-                  {@const selected = kind.id === session.selectedKindId}
-                  {@const KindIcon = iconForKind(kind)}
-                  <li>
-                    <button
-                      type="button"
-                      onclick={() => session.selectKind(kind.id)}
-                      aria-current={selected ? 'page' : undefined}
-                      title={kind.group ? `${kind.kind} · ${kind.group}/${kind.version}` : kind.kind}
-                      class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
-                             transition-all duration-100 ease-standard
-                             {selected
-                               ? 'bg-primary/12 text-primary'
-                               : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
-                    >
-                      <span class="w-1.5 shrink-0" aria-hidden="true"></span>
-                      <KindIcon
-                        class="size-4 shrink-0 transition-colors duration-100
-                               {selected ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
-                        strokeWidth={1.8}
-                      />
-                      <span class="flex-1 truncate text-body-medium">{kind.title}</span>
-                      {#if !kind.namespaced}
-                        <span
-                          class="rounded bg-surface-container-high px-1 py-px text-label-small uppercase
-                                 text-on-surface-variant/50"
-                          title="Cluster-scoped"
-                        >
-                          C
-                        </span>
-                      {/if}
-                    </button>
-                  </li>
+                      {@render kindRow(kind)}
                     {/each}
                   </ul>
                 {/if}
@@ -458,38 +784,7 @@
             {:else}
               <ul>
                 {#each section.kinds as kind (kind.id)}
-                {@const selected = kind.id === session.selectedKindId}
-                {@const KindIcon = iconForKind(kind)}
-                <li>
-                  <button
-                    type="button"
-                    onclick={() => session.selectKind(kind.id)}
-                    aria-current={selected ? 'page' : undefined}
-                    title={kind.group ? `${kind.kind} · ${kind.group}/${kind.version}` : kind.kind}
-                    class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[5px] text-left
-                           transition-all duration-100 ease-standard
-                           {selected
-                             ? 'bg-primary/12 text-primary'
-                             : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
-                  >
-                    <span class="w-1.5 shrink-0" aria-hidden="true"></span>
-                    <KindIcon
-                      class="size-4 shrink-0 transition-colors duration-100
-                             {selected ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
-                      strokeWidth={1.8}
-                    />
-                    <span class="flex-1 truncate text-body-medium">{kind.title}</span>
-                    {#if !kind.namespaced}
-                      <span
-                        class="rounded bg-surface-container-high px-1 py-px text-label-small uppercase
-                               text-on-surface-variant/50"
-                        title="Cluster-scoped"
-                      >
-                        C
-                      </span>
-                    {/if}
-                  </button>
-                </li>
+                  {@render kindRow(kind)}
                 {/each}
               </ul>
             {/if}
@@ -497,6 +792,174 @@
         {/if}
       </div>
     {/each}
+
+    <div class="mx-3 my-1.5 h-px bg-outline-variant/40" aria-hidden="true"></div>
+
+    <!-- What Helm has installed here, in a band of its own below the kinds:
+         it is a view of what somebody INSTALLED rather than of what the
+         cluster holds, which is a different question from any category above
+         it. A pseudo-entry for the reason the others are: there is no object
+         to GET called a Helm release — it is a set of Secrets Helm labelled, read back by
+         those labels — so a catalogue entry would offer it to every consumer
+         that expects to be able to fetch what it names. See HELM_KIND_ID.
+
+         It also fetches NOTHING on the refresh tick, and the page owns its
+         own Refresh: a metadata LIST of Secrets on a ten-second timer is the
+         audit pattern the Secrets doctrine exists to prevent. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(HELM_KIND_ID)}
+        aria-current={onHelm ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onHelm
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <Package
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onHelm ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">Helm</span>
+      </button>
+    </div>
+
+    <!-- Several kinds at once, directly under Helm: like Helm it is a READING
+         of things already here rather than a category of them, and it is a
+         pseudo-entry for the plainest version of the reason — it is several
+         kinds, and there is nothing to GET called "pods and deployments".
+
+         It answers the largest measured request in this category (k9s #771,
+         141 reactions): "what does this application consist of" is a question
+         about Deployments AND Services AND ConfigMaps at once. See
+         MULTI_KIND_ID. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(MULTI_KIND_ID)}
+        aria-current={onMultiKind ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onMultiKind
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <Rows3
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onMultiKind ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">Multi-kind</span>
+      </button>
+
+      <!--
+        THE SETS SOMEBODY KEPT, indented under the view they open. This is the
+        half that answers "what does this application consist of" — the set is
+        named once and reached in one click, instead of rebuilding the chip row
+        on every visit. OpenShift's Search page calls the same idea "Add to
+        navigation"; the shelf is capped so the navigator cannot become a list
+        of them.
+
+        A set is NOT keyed by cluster (see $lib/kindSets), so the same entry
+        appears on every tab and applies what this cluster actually serves.
+      -->
+      {#each keptSets as set (set.id)}
+        {@const current = onMultiKind && kindSetMatches(set, chosenKinds)}
+        <div class="group/set flex items-center">
+          <button
+            type="button"
+            onclick={() => {
+              preferences.applyKindSet(
+                session.cluster.id,
+                set.kinds,
+                session.kinds.map((kind) => kind.id),
+              )
+              void session.selectKind(MULTI_KIND_ID)
+            }}
+            aria-current={current ? 'page' : undefined}
+            class="flex min-w-0 flex-1 items-center gap-2 rounded-sm py-1 pr-1 pl-8 text-left
+                   transition-colors duration-100
+                   {current
+                     ? 'text-primary'
+                     : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+          >
+            <Bookmark class="size-3 shrink-0 opacity-70" strokeWidth={2} />
+            <span class="flex-1 truncate text-body-small">{set.name}</span>
+          </button>
+          <button
+            type="button"
+            class="state-layer mr-2 grid size-5 shrink-0 place-items-center rounded-full
+                   text-on-surface-variant/60 opacity-0 transition-opacity
+                   group-hover/set:opacity-100 hover:bg-on-surface/10 hover:text-on-surface"
+            aria-label="Forget the set {set.name}"
+            onclick={() => preferences.deleteKindSet(set.id)}
+          >
+            <X class="size-3" strokeWidth={2.5} />
+          </button>
+        </div>
+      {/each}
+    </div>
+
+    <!-- Security posture, directly under Helm and above the rule: like Helm
+         it is a READING of things already here rather than a list of them —
+         the privileges workloads take, and whatever a scanner the operator
+         installed has written down. A pseudo-entry for the same reason: there
+         is no object to GET called "posture".
+
+         Named "Security", which is a promise a page reading one optional
+         operator cannot keep on its own — so the page's first job is to say
+         what it does and does not cover, in words, rather than to render
+         empty and let the absence make the claim. See SecurityView. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(SECURITY_KIND_ID)}
+        aria-current={onSecurity ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onSecurity
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <ShieldCheck
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onSecurity ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">Security</span>
+      </button>
+    </div>
+
+    <div class="mx-3 my-1.5 h-px bg-outline-variant/40" aria-hidden="true"></div>
+
+    <!-- The RBAC explorer, last and alone: it is the only entry that asks
+         about the OPERATOR rather than about the cluster, and a question
+         about yourself does not belong among the things you are looking at.
+         "What may this kubeconfig do here" is asked of the review APIs and is
+         not an object anything can GET, so it is a pseudo-entry
+         rather than an entry in domain/catalog.go. Roles and ClusterRoles
+         themselves stay where they are, under Access Control. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.selectKind(RBAC_KIND_ID)}
+        aria-current={onRBAC ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onRBAC
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <KeyRound
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onRBAC ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium font-medium">Permissions</span>
+      </button>
+    </div>
   </div>
 
   <!-- Resize handle -->

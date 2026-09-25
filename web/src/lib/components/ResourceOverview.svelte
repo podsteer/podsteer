@@ -7,34 +7,79 @@
 -->
 <script lang="ts">
   import { parse } from 'yaml'
-  import type { NamespaceSummary, Node, Pod, Workload } from '$lib/api/client'
+  import type { NamespaceSummary, Node, NodeLoad, Pod, Workload } from '$lib/api/client'
+  import type { GitOpsManagement } from '$lib/gitops'
   import DetailSection from './DetailSection.svelte'
   import DetailList, { type DetailRow } from './DetailList.svelte'
+  import { describeCron } from '$lib/cronDescription'
+  import { lastUpdated, objectVersion } from '$lib/objectVersion'
   import ContainerDetail from './ContainerDetail.svelte'
   import UsageChart from './UsageChart.svelte'
   import MetricsBackendNote from './MetricsBackendNote.svelte'
   import NodePods from './NodePods.svelte'
   import NamespaceContents from './NamespaceContents.svelte'
   import WorkloadUsage from './WorkloadUsage.svelte'
+  import CertificateInspector from './CertificateInspector.svelte'
+  import ReachabilityPanel from './ReachabilityPanel.svelte'
+  import ServicePorts from './ServicePorts.svelte'
+  import ImagePanel from './ImagePanel.svelte'
+  import { isProbeableKind } from '$lib/reachability'
+  import GitOpsDetail from './GitOpsDetail.svelte'
+  import { gitOpsPanelFor } from '$lib/gitops/panel'
+  import OperatorDetail from './OperatorDetail.svelte'
+  import { operatorPanelFor } from '$lib/operators/panel'
+  import StandardApiDetail from './StandardApiDetail.svelte'
+  import { standardPanelFor } from '$lib/standardapis/panel'
   import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
+  import { capacityNote } from '$lib/nodeCapacity'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
   import { podTemplateOf } from '$lib/podTemplate'
-  import { classifyConditions, type ConditionRef } from '$lib/api/client'
+  import { classifyConditions, setConfigMapKey, type ConditionRef } from '$lib/api/client'
   import { ingressAddresses, ingressCertificates, ingressRoutes, isOpenable } from '$lib/ingress'
   import { isCordoned, nodeTaints } from '$lib/taints'
-  import { BrowserOpenURL } from '$lib/wailsjs/runtime/runtime'
+  import { Browser } from '@wailsio/runtime'
   import type { UsageSample } from '$stores/session.svelte'
+  import { secretReveals } from '$stores/secretReveals.svelte'
+  import { dataEntries } from '$lib/objectData'
 
   interface Props {
     manifest: string | null
+    /**
+     * The GitOps controller holding this object's spec, when one does.
+     *
+     * Passed down rather than resolved here: a pod carries no marker of its
+     * own, so answering it costs a read, and the drawer has already made it.
+     */
+    management?: GitOpsManagement | null
     selectedPod?: Pod | null
     selectedWorkload?: Workload | null
     kind?: string
+    /**
+     * The open object's API group, alongside its kind.
+     *
+     * Needed by the sections a Kind alone cannot select: "Application" is a
+     * kind in argoproj.io, app.k8s.io and core.oam.dev, and only the first
+     * carries the status the GitOps panel reads; "Certificate" is a kind in
+     * cert-manager.io and in cert.gardener.cloud with a different spec
+     * entirely. See $lib/gitops/panel and $lib/operators/panel.
+     */
+    group?: string
     /** The open object's recent usage, accumulated while the drawer is open. */
     usage?: UsageSample[]
     /** The node the drawer is open on, when it is a node. */
     selectedNode?: Node | null
+    /**
+     * That node's share of the work, from the assessment.
+     *
+     * THE REQUESTS COME FROM HERE AND NOWHERE ELSE. A node object says what
+     * the kubelet allocates and metrics-server says what it is consuming;
+     * what the pods on it RESERVED is a sum over those pods, which the
+     * overview already computes on every poll for every node. Recomputing it
+     * in the panel would be a second implementation of the one number the
+     * scheduler actually decides on.
+     */
+    nodeLoad?: NodeLoad | null
     /**
      * The namespace row the drawer is open on, when it is a namespace.
      *
@@ -64,6 +109,21 @@
     /** Follows a reference to the object it names. */
     onopen?: OpenObject
     /**
+     * The group's name when this cluster is marked production, else null,
+     * and whether writes are refused for it.
+     *
+     * Only the Argo Rollouts panel reads them — it is the one panel here that
+     * offers a write — but they are passed to the pane rather than held by
+     * it, for the same reason every other dialog takes them: the source of
+     * truth is the group's current setting, which an operator can change in
+     * Organise while this drawer is open.
+     */
+    productionGroup?: string | null
+    isReadOnly?: boolean
+    readOnlyReason?: string
+    /** Re-reads the open object after a panel wrote to it. */
+    onchanged?: () => void
+    /**
      * Filters the application to a namespace.
      *
      * A namespace is not opened the way an object is — following one narrows
@@ -85,17 +145,24 @@
   }
 
   let {
+    management = null,
     manifest,
     selectedPod,
     selectedNode,
     selectedNamespaceRow,
     selectedWorkload,
     kind,
+    group,
     usage = [],
+    nodeLoad = null,
     backend,
     clusterId,
     canOpen,
     onopen,
+    productionGroup = null,
+    isReadOnly = false,
+    readOnlyReason = '',
+    onchanged,
     onnamespace,
     onbrowse,
     tick,
@@ -156,7 +223,17 @@
   const cronRows = $derived.by<DetailRow[]>(() => {
     if (kind !== 'CronJob') return []
 
-    const rows: DetailRow[] = [{ label: 'Schedule', value: spec.schedule ?? '—' }]
+    // The expression as written, and what it means beside it — muted and
+    // outside the value, so Copy still takes the expression. Absent for a
+    // shape the describer will not vouch for, rather than a guess.
+    const described = describeCron(spec.schedule)
+    const rows: DetailRow[] = [
+      {
+        label: 'Schedule',
+        value: spec.schedule ?? '—',
+        suffix: described ? `(${described})` : undefined,
+      },
+    ]
     if (spec.timeZone) rows.push({ label: 'Time zone', value: spec.timeZone })
 
     // Said out loud and coloured, because a suspended CronJob looks identical
@@ -291,7 +368,7 @@
       info: `${route.pathType} path to ${route.backend}${route.secure ? ', TLS terminated here' : ', not encrypted'}`,
       // Opened in the real browser, not the webview: this is somebody else's
       // site, and loading it inside the application would replace PodSteer.
-      onclick: isOpenable(route) ? () => BrowserOpenURL(route.url) : undefined,
+      onclick: isOpenable(route) ? () => void Browser.OpenURL(route.url) : undefined,
       external: isOpenable(route),
       tone: route.secure ? undefined : ('warn' as const),
     })),
@@ -312,26 +389,175 @@
   )
 
   const isIngress = $derived(kind === 'Ingress')
+  const isService = $derived(kind === 'Service')
+
+  /**
+   * The GitOps controller whose object this is, if it is one.
+   *
+   * Selected by group AND kind, never by kind alone — see $lib/gitops/panel.
+   * Null everywhere else, and on a cluster running neither controller this
+   * can never be anything else: the kinds only reach the navigator when
+   * discovery found their groups.
+   */
+  const gitOpsPanel = $derived(gitOpsPanelFor(group, kind))
+
+  /**
+   * The operator whose custom resource this is, if it is one.
+   *
+   * The same mechanism as the GitOps panel above and selected the same way,
+   * by group AND kind — see $lib/operators/panel. Null on every cluster that
+   * does not run these operators, because their kinds only reach the
+   * navigator when discovery found their groups.
+   */
+  const operatorPanel = $derived(operatorPanelFor(group, kind))
+
+  /**
+   * The standard Kubernetes API whose object this is, if it is one.
+   *
+   * The third family selected the same way, by group AND kind — see
+   * $lib/standardapis/panel. Gateway API ships as CRDs and reaches the
+   * navigator only where somebody installed it; resource.k8s.io and
+   * admissionregistration.k8s.io are in-tree but gated, and reach it only
+   * where the gate is on. Null everywhere else.
+   */
+  const standardPanel = $derived(standardPanelFor(group, kind))
+
+  /**
+   * Whether the GitOps panel renders the conditions itself.
+   *
+   * Argo CD's conditions carry a type and a message and NO status, so the
+   * generic list below would print "undefined · message" for every one of
+   * them. Flux's are ordinary metav1 conditions and stay on the generic
+   * path, where the domain colours them.
+   */
+  const conditionsOwned = $derived(gitOpsPanel === 'argo-application')
+
+  /**
+   * Whether this Secret carries certificate material worth offering to
+   * inspect.
+   *
+   * kubernetes.io/tls is the declared type, but cert-manager and other
+   * issuers routinely write a tls.crt into an otherwise-Opaque Secret too —
+   * see app/adapters/k8s/tls.go, which accepts either. Read straight off the
+   * already-fetched manifest: this is a QUOTATION (does the key exist at
+   * all), not a verdict, so it belongs here rather than in a round trip.
+   */
+  const hasCertificate = $derived(
+    kind === 'Secret' &&
+      (parsedManifest?.type === 'kubernetes.io/tls' || 'tls.crt' in (parsedManifest?.data ?? {})),
+  )
+
+  /**
+   * A Secret's or ConfigMap's own keys, on the object's own panel.
+   *
+   * THE WRITE PATH FOR THIS HAS EXISTED SINCE #37 AND WAS REACHABLE FROM ONE
+   * PLACE: an environment variable's row inside a pod. So an operator who
+   * opened the Secret itself — the obvious place to change a key — found the
+   * YAML tab, where `data` is base64 and every value is masked, and was left
+   * hand-encoding a string to change a password. k9s's most-requested open
+   * issue is exactly this (#1017, 42 reactions) and every competitor has it.
+   *
+   * The doctrine does not move an inch to get it. A Secret's values are still
+   * masked on render — the manifest already carries `<hidden, N bytes>`,
+   * which is what these rows quote — reading one key is still a deliberate,
+   * audited act through RevealSecretKey, and editing is still offered only
+   * after the value is on screen, because writing over something nobody has
+   * looked at is the mistake the ordering exists to prevent.
+   *
+   * A ConfigMap is not a Secret and is not treated as one: its values are
+   * already in the manifest in the clear, so there is nothing to reveal and
+   * the editor is offered straight away.
+   */
+  const dataKind = $derived(kind === 'Secret' ? 'secret' : kind === 'ConfigMap' ? 'configmap' : '')
+
+  /** The key this cluster, namespace and object hold a revealed value under. */
+  function secretRevealKey(name: string, key: string): string {
+    return `${clusterId ?? ''}/${metadata.namespace ?? ''}/${name}/${key}`
+  }
+
+  const dataRows = $derived.by<DetailRow[]>(() => {
+    if (!dataKind) return []
+    const name = String(metadata.name ?? '')
+    const namespace = String(metadata.namespace ?? '')
+    if (!clusterId || !name || !namespace) return []
+
+    return dataEntries(kind ?? '', parsedManifest).map((entry) => {
+      if (entry.kind === 'binary') {
+        return {
+          label: entry.key,
+          value: entry.display,
+          info: 'Binary data is listed by size and has no editor here: a text box over base64 is how a keystore acquires a stray newline.',
+        }
+      }
+
+      if (entry.kind === 'text') {
+        return {
+          label: entry.key,
+          value: entry.display,
+          edit: isReadOnly
+            ? undefined
+            : {
+                onSave: async (value: string) => {
+                  await setConfigMapKey(clusterId, namespace, name, entry.key, value)
+                  onchanged?.()
+                },
+              },
+        }
+      }
+
+      const held = secretRevealKey(name, entry.key)
+      const shown = secretReveals.at(held)
+      return {
+        label: entry.key,
+        // The masked placeholder is the API server's own byte count, which
+        // says something true about a value nobody has asked to see.
+        value: shown.error || shown.value || entry.display,
+        tone: shown.error ? ('critical' as const) : undefined,
+        action: shown.value
+          ? { label: 'Hide value', kind: 'hide' as const, onclick: () => secretReveals.hide(held) }
+          : {
+              label: 'Reveal value',
+              kind: 'reveal' as const,
+              onclick: () => void secretReveals.reveal(held, clusterId, namespace, name, entry.key),
+            },
+        // ONLY ONCE REVEALED, and absent rather than present-and-disabled,
+        // for the reason ContainerDetail gives: an explanation nobody reads
+        // is not a guard. secretReveals.write enforces it again below.
+        edit:
+          shown.value && !isReadOnly
+            ? {
+                onSave: async (value: string) => {
+                  await secretReveals.write(held, clusterId, namespace, name, entry.key, value)
+                  onchanged?.()
+                },
+              }
+            : undefined,
+      }
+    })
+  })
 
   /** Whether the panel is showing a pod. */
   const isPodPanel = $derived(kind === 'Pod' || !!selectedPod)
 
   /**
-   * A kind with no purpose-built sections at all — a CRD, or anything served
-   * by the generic table.
+   * Whether a reachability probe is worth offering here.
    *
-   * Its panel is otherwise Identity, Labels and Annotations, all collapsed,
-   * which opens on three closed headers and nothing else and reads as a panel
-   * that failed to load.
+   * Only the three kinds with an address to aim at — see $lib/reachability,
+   * which also decides which vantages each one can honestly answer from.
    */
-  const isGenericKind = $derived(
-    !isPodPanel &&
-      !isWorkload &&
-      !isIngress &&
-      !selectedNode &&
-      !selectedNamespaceRow &&
-      kind !== 'Namespace',
-  )
+  const canProbe = $derived(isProbeableKind(kind) && !!clusterId && !!metadata.name)
+
+  /**
+   * Every container of an open pod, in the order the panel lists them, for
+   * the image pane's own selector. Init and ephemeral containers included:
+   * an init container that cannot pull its image is exactly the case
+   * somebody opens that pane for, and its image appears nowhere else.
+   */
+  const imageContainerNames = $derived([
+    ...containers.map((container: { name?: string }) => container.name ?? ''),
+    ...initContainers.map((container: { name?: string }) => container.name ?? ''),
+    ...ephemeralContainers.map((container: { name?: string }) => container.name ?? ''),
+  ].filter(Boolean))
 
   /**
    * Whether this kind's conditions are its verdict or its receipts.
@@ -346,8 +572,6 @@
     !isPodPanel && (kind !== 'Namespace' || conditions.length > 0),
   )
 
-  /** Whether this kind has anything above Identity to look at. */
-  const identityLeads = $derived(isGenericKind)
 
   /**
    * The kind, for the section ids that now differ by it.
@@ -373,6 +597,26 @@
   const podTemplate = $derived(isWorkload ? podTemplateOf(parsedManifest, kind) : null)
 
   const templateContainers = $derived(podTemplate?.spec?.containers ?? [])
+
+  /**
+   * The template, shaped like the pod it describes — for the downward API.
+   *
+   * The labels, annotations and namespace are exactly what the next pod will
+   * carry, so an env var reading them resolves; the name, uid, node and
+   * addresses do not exist until the pod does, and stay as the path.
+   */
+  const templatePod = $derived(
+    podTemplate
+      ? {
+          metadata: {
+            namespace: metadata.namespace,
+            labels: podTemplate.metadata?.labels,
+            annotations: podTemplate.metadata?.annotations,
+          },
+          spec: podTemplate.spec,
+        }
+      : null,
+  )
   const templateInitContainers = $derived(podTemplate?.spec?.initContainers ?? [])
   const templateVolumes = $derived(podTemplate?.spec?.volumes ?? [])
 
@@ -403,7 +647,25 @@
       })
     }
 
-    rows.push({ label: 'Created', value: formatAge(metadata.creationTimestamp) })
+    // Which build this is. The label an author set when there is one, the
+    // main container's image tag otherwise — and the row says which, on
+    // hover, because the two are different claims.
+    const version = objectVersion(metadata, isWorkload ? templateContainers : containers)
+    if (version) rows.push({ label: 'Version', value: version.version, info: version.source })
+
+    rows.push({
+      label: 'Created',
+      value: formatAge(metadata.creationTimestamp),
+      title: metadata.creationTimestamp,
+    })
+    const updated = lastUpdated(metadata.managedFields, metadata.creationTimestamp)
+    if (updated) {
+      rows.push({
+        label: 'Updated',
+        value: formatAge(updated),
+        info: `${updated} — the last change to its spec or metadata, from managedFields; status updates are not counted`,
+      })
+    }
     rows.push({ label: 'UID', value: metadata.uid ?? '—' })
     return rows
   })
@@ -466,12 +728,44 @@
     return rows
   })
 
-  const replicaRows = $derived<DetailRow[]>([
-    { label: 'Desired', value: String(status.replicas ?? replicas) },
-    { label: 'Ready', value: String(status.readyReplicas ?? 0) },
-    { label: 'Available', value: String(status.availableReplicas ?? 0) },
-    { label: 'Updated', value: String(status.updatedReplicas ?? 0) },
-  ])
+  /**
+   * Desired against what exists, in each controller's own vocabulary.
+   *
+   * A DAEMONSET HAS NO REPLICAS. It runs one pod per eligible node and
+   * reports `desiredNumberScheduled`, `numberReady`, `numberAvailable` and
+   * `updatedNumberScheduled` — reading the Deployment fields off it printed
+   * zero across the board for a DaemonSet running on eighteen nodes.
+   *
+   * And DESIRED IS THE SPEC. `status.replicas` is how many pods exist, which
+   * runs above the target during every rolling update; showing it as
+   * "desired" made a surge look like a change of intent.
+   */
+  const replicaRows = $derived<DetailRow[]>(
+    kind === 'DaemonSet'
+      ? [
+          { label: 'Desired', value: String(status.desiredNumberScheduled ?? 0) },
+          { label: 'Current', value: String(status.currentNumberScheduled ?? 0) },
+          { label: 'Ready', value: String(status.numberReady ?? 0) },
+          { label: 'Available', value: String(status.numberAvailable ?? 0) },
+          { label: 'Updated', value: String(status.updatedNumberScheduled ?? 0) },
+          ...(status.numberMisscheduled
+            ? [
+                {
+                  label: 'Misscheduled',
+                  value: String(status.numberMisscheduled),
+                  tone: 'warn' as const,
+                },
+              ]
+            : []),
+        ]
+      : [
+          { label: 'Desired', value: String(spec.replicas ?? status.replicas ?? replicas) },
+          { label: 'Current', value: String(status.replicas ?? 0) },
+          { label: 'Ready', value: String(status.readyReplicas ?? 0) },
+          { label: 'Available', value: String(status.availableReplicas ?? 0) },
+          { label: 'Updated', value: String(status.updatedReplicas ?? 0) },
+        ],
+  )
 
   // The rolling-update numbers only exist for a rolling update; on a Recreate
   // strategy they are not zero, they are inapplicable, so the rows are absent
@@ -739,13 +1033,30 @@
   const conditionRows = $derived(
     (conditions as Record<string, string>[]).map((condition, index) => {
       const explanation = [condition.reason, condition.message].filter(Boolean).join(' — ')
+      // The verdict on its own line and the why beneath it, so the column
+      // scans as True/False and the explanation is there to read.
       return {
         label: condition.type,
-        value: explanation ? `${condition.status} · ${explanation}` : condition.status,
+        value: condition.status,
+        detail: explanation || undefined,
         tone: (conditionTones[index] || undefined) as 'warn' | 'critical' | undefined,
       }
     }),
   )
+
+  /**
+   * What the domain made of the Ready condition, for the Flux panel's chip.
+   *
+   * Looked up by index in the tones above rather than decided again in the
+   * panel, so Ready=False is read in exactly one place. Undefined until the
+   * answer arrives, which leaves the chip uncoloured — the safe failure.
+   */
+  const readyTone = $derived.by(() => {
+    if (!gitOpsPanel) return undefined
+    const index = (conditions as { type?: string }[]).findIndex((condition) => condition.type === 'Ready')
+    if (index === -1) return undefined
+    return (conditionTones[index] || undefined) as 'warn' | 'critical' | undefined
+  })
 
   /**
    * What the container boxes belong to, so two pods cannot share one.
@@ -812,7 +1123,7 @@
               class="rounded-sm border p-3 {finding.severity === 'critical'
                 ? 'border-error/40 bg-error-container/20'
                 : finding.severity === 'warning'
-                  ? 'border-gauge-warn/40 bg-gauge-warn/10'
+                  ? 'border-gauge-warn/40 bg-notice-warn'
                   : 'border-outline-variant bg-surface-container-low'}"
             >
               <p class="text-body-medium font-medium text-on-surface">{finding.title}</p>
@@ -899,48 +1210,77 @@
         id="usage"
         title="Usage"
         hint="CPU {selectedNode.cpu} · Memory {selectedNode.memory}"
+        help="node-capacity"
       >
         <div class="flex flex-col gap-4">
-          {#each [{ metric: 'cpu' as const, label: 'CPU', allocatable: selectedNode.allocatableCpu }, { metric: 'memory' as const, label: 'Memory', allocatable: selectedNode.allocatableMemory }] as track (track.metric)}
+          <!--
+            THE THREE FIGURES TOGETHER, which is the whole point of this
+            section and was the one thing it did not do. Usage against
+            allocatable was here; requests against allocatable were on the
+            cluster overview; and the comparison that explains a cluster which
+            refuses to schedule while looking idle — reserved 95%, using 8% —
+            was on neither surface. See $lib/nodeCapacity.
+          -->
+          {#each [{ metric: 'cpu' as const, label: 'CPU', dimension: 'CPU', used: selectedNode.cpu, allocatable: selectedNode.allocatableCpu, requested: nodeLoad?.cpuAmount ?? '', requestedValue: (nodeLoad?.requestedCpuMilli ?? 0) / 1000, format: formatCores }, { metric: 'memory' as const, label: 'Memory', dimension: 'memory', used: selectedNode.memory, allocatable: selectedNode.allocatableMemory, requested: nodeLoad?.memoryAmount ?? '', requestedValue: nodeLoad?.requestedMemoryBytes ?? 0, format: formatBytes }] as track (track.metric)}
+            {@const allocatableValue = parseQuantity(track.allocatable) ?? 0}
+            {@const usedValue = parseQuantity(track.used) ?? 0}
+            {@const note = nodeLoad
+              ? capacityNote(track.requestedValue, usedValue, allocatableValue, track.dimension)
+              : null}
             <div class="flex flex-col gap-1">
-              <p class="flex items-baseline justify-between text-body-small text-on-surface-variant">
+              <p class="flex items-baseline justify-between gap-3 text-body-small text-on-surface-variant">
                 <span>{track.label}</span>
                 <span class="tabular-nums">
-                  {track.metric === 'cpu' ? selectedNode.cpu : selectedNode.memory}
-                  of {track.allocatable}
+                  using {track.used}{#if nodeLoad}
+                    · {track.requested} reserved{/if} · {track.allocatable} allocatable
                 </span>
               </p>
               <UsageChart
                 samples={usage}
                 metric={track.metric}
                 markers={[
-                  { value: parseQuantity(track.allocatable) ?? 0, label: 'Allocatable', tone: 'critical' },
+                  ...(nodeLoad && track.requestedValue > 0
+                    ? [
+                        {
+                          value: track.requestedValue,
+                          label: 'Requested',
+                          tone: 'neutral' as const,
+                        },
+                      ]
+                    : []),
+                  { value: allocatableValue, label: 'Allocatable', tone: 'critical' as const },
                 ]}
-                format={track.metric === 'cpu' ? formatCores : formatBytes}
+                format={track.format}
               />
+              {#if note}
+                <!-- Said only when the three numbers disagree in a way
+                     somebody would act on. A note beside every figure on
+                     every node is one nobody reads by the third node. -->
+                <p
+                  class="text-body-small leading-relaxed {note.tone === 'warn'
+                    ? 'text-gauge-warn-ink'
+                    : 'text-on-surface-variant/70'}"
+                >
+                  {note.text}
+                </p>
+              {/if}
             </div>
           {/each}
+          {#if !nodeLoad}
+            <!-- The requests are the assessment's, and it has not answered
+                 yet for this cluster. Said rather than left as a silently
+                 missing line, because "no reserved figure" and "nothing
+                 reserved" are different facts. -->
+            <p class="text-body-small text-on-surface-variant/60">
+              What the pods here have reserved comes from the cluster assessment, which has not
+              answered yet.
+            </p>
+          {/if}
           <MetricsBackendNote {backend} />
         </div>
       </DetailSection>
     {/if}
 
-    <!--
-      What is on the node, which is the second thing a node panel is opened to
-      answer. Below usage because "how full is it" comes first and this is the
-      detail behind that number; above identity because a machine's labels
-      matter less than its tenants.
-    -->
-    {#if selectedNode && clusterId}
-      <NodePods {clusterId} nodeName={selectedNode.name} {onopen} />
-    {/if}
-
-    <!--
-      What is in a namespace, for the same reason and in the same place: the
-      panel's own labels matter less than its contents, and "is this namespace
-      empty" is the question that decides whether anything else here is worth
-      reading.
-    -->
     <!--
       A namespace's usage, on the same terms as a node's: the row carries the
       figures, the series comes from what the list has been recording since
@@ -976,7 +1316,7 @@
 
           <!-- Against the pods that could be measured. See WorkloadUsage. -->
           {#if selectedNamespaceRow.measuredPods < selectedNamespaceRow.measurablePods}
-            <p class="text-body-small text-gauge-warn">
+            <p class="text-body-small text-gauge-warn-ink">
               Summed over {selectedNamespaceRow.measuredPods} of {selectedNamespaceRow.measurablePods}
               running pods — the rest reported no usage, so this is less than the whole.
             </p>
@@ -985,10 +1325,6 @@
           <MetricsBackendNote {backend} />
         </div>
       </DetailSection>
-    {/if}
-
-    {#if kind === 'Namespace' && clusterId && metadata.name}
-      <NamespaceContents {clusterId} namespace={metadata.name} {onbrowse} />
     {/if}
 
     <!--
@@ -1045,26 +1381,69 @@
       </DetailSection>
     {/if}
 
-    <!-- Pod-specific sections -->
-    {#if kind === 'Pod' || selectedPod}
+    <!--
+      THE MANIFEST'S OWN ORDER FROM HERE DOWN: metadata, then what the object
+      was told to be (spec), then what it reports back (status). Only the two
+      sections above — what is wrong, and what it is using — come first, since
+      neither is a field in the manifest and each is the reason the pane was
+      opened.
 
-      <!-- Status -->
-      <DetailSection level="h3" id="status" title="Status" hint={status.phase ?? ''}>
-        <DetailList rows={statusRows} />
+      Metadata sat in a footer below everything for a while, on the argument
+      that it was a lookup and interrupted the flow from usage to containers.
+      It is back at the top because the panel is a READING of the manifest,
+      and every other reading of one — `kubectl describe`, Lens and FreeLens's
+      metadata block, Headlamp's main info section, the YAML tab beside this
+      one — puts name, labels and annotations first. Keeping that order is what
+      lets somebody move between this tab and the YAML without re-orienting.
+      Labels and annotations stay collapsed by default, so the cost is two
+      header lines. Name, namespace, labels, annotations is the order a
+      manifest is WRITTEN in; `kubectl get -o yaml` sorts keys alphabetically,
+      which is a serialiser's order rather than anybody's reading one.
+    -->
+    <DetailSection level="h3" id="identity" title="Identity">
+      <DetailList rows={basicRows} />
+    </DetailSection>
+
+    {#if labels.length > 0}
+      <DetailSection level="h3" id="labels" title="Labels" defaultOpen={false} hint={String(labels.length)}>
+        <DetailList rows={pairRows(labels)} />
       </DetailSection>
+    {/if}
 
+    {#if annotations.length > 0}
+      <!-- An annotation routinely holds an entire serialised manifest, which
+           is the case the list's clipping exists for: one line each, and the
+           one somebody wants opens. -->
+      <DetailSection level="h3" id="annotations" title="Annotations" defaultOpen={false} hint={String(annotations.length)}>
+        <DetailList rows={pairRows(annotations)} />
+      </DetailSection>
+    {/if}
 
-      <!--
-        Scheduling, when anything constrains it. A pod with no selector, no
-        toleration and no spread rule has an empty section, and an empty
-        section that says "no constraints" is a row of nothing.
-      -->
-      {#if schedulingRows.length > 0}
-        <DetailSection level="h3" id="scheduling" title="Scheduling" defaultOpen={false} hint={String(schedulingRows.length)}>
-          <DetailList rows={schedulingRows} />
-        </DetailSection>
-      {/if}
+    <!--
+      A Secret's or ConfigMap's own keys.
 
+      Straight after the metadata, where `data` sits in a written manifest:
+      for these two kinds it IS the object, and there is no spec between.
+    -->
+    {#if dataRows.length > 0}
+      <DetailSection
+        level="h3"
+        id="data"
+        title="Data"
+        hint={String(dataRows.length)}
+        help="object-data"
+      >
+        <DetailList rows={dataRows} />
+        {#if isReadOnly}
+          <p class="mt-2 text-body-small text-on-surface-variant">{readOnlyReason}</p>
+        {/if}
+      </DetailSection>
+    {/if}
+
+    <!-- Pod-specific sections: spec.containers, ephemeralContainers,
+         initContainers, volumes, then the scheduling fields, in the order a
+         pod manifest is written. -->
+    {#if kind === 'Pod' || selectedPod}
       <!-- Containers -->
       {#if containers.length > 0}
         <DetailSection level="h3" id="containers" title="Containers" hint={String(containers.length)}>
@@ -1078,6 +1457,7 @@
             -->
             {#each containers as container (`${containerScope}/${container.name}`)}
               <ContainerDetail
+                {management}
                 spec={container}
                 status={statusFor(container.name)}
                 clusterId={selectedPod?.clusterId ?? ''}
@@ -1088,6 +1468,9 @@
                 pod={parsedManifest}
                 {canOpen}
                 {onopen}
+                {isReadOnly}
+                {productionGroup}
+                onchanged={() => onchanged?.()}
               />
             {/each}
           </div>
@@ -1105,6 +1488,7 @@
           <div class="flex flex-col">
             {#each ephemeralContainers as container (`${containerScope}/${container.name}`)}
               <ContainerDetail
+                {management}
                 spec={container}
                 status={statusFor(container.name)}
                 clusterId={selectedPod?.clusterId ?? ''}
@@ -1115,6 +1499,10 @@
                 pod={parsedManifest}
                 {canOpen}
                 {onopen}
+                {isReadOnly}
+                {productionGroup}
+                onchanged={() => onchanged?.()}
+                resizable={false}
               />
             {/each}
           </div>
@@ -1129,6 +1517,7 @@
           <div class="flex flex-col">
             {#each initContainers as container (`${containerScope}/${container.name}`)}
               <ContainerDetail
+                {management}
                 spec={container}
                 status={statusFor(container.name)}
                 clusterId={selectedPod?.clusterId ?? ''}
@@ -1139,6 +1528,9 @@
                 pod={parsedManifest}
                 {canOpen}
                 {onopen}
+                {isReadOnly}
+                {productionGroup}
+                onchanged={() => onchanged?.()}
               />
             {/each}
           </div>
@@ -1151,20 +1543,33 @@
           <DetailList rows={volumeRows} />
         </DetailSection>
       {/if}
+
+      <!--
+        Scheduling, when anything constrains it. A pod with no selector, no
+        toleration and no spread rule has an empty section, and an empty
+        section that says "no constraints" is a row of nothing.
+      -->
+      {#if schedulingRows.length > 0}
+        <DetailSection level="h3" id="scheduling" title="Scheduling" defaultOpen={false} hint={String(schedulingRows.length)}>
+          <DetailList rows={schedulingRows} />
+        </DetailSection>
+      {/if}
     {/if}
 
     <!-- Deployment/StatefulSet-specific sections -->
     <!--
       Replicas, and it is the most-read section a controller has: desired
-      against ready is the question the panel was opened with. It sat below
-      Identity and Labels, which is a lookup people do occasionally.
+      against ready is the question the panel was opened with. First in the
+      spec, as `spec.replicas` is first in the manifest.
 
       A ReplicaSet is included now. It has the same desired and ready numbers
       as the Deployment above it and was excluded for no reason anybody
       recorded.
     -->
     {#if selectedWorkload && kind !== 'Job' && kind !== 'CronJob'}
-      <DetailSection level="h3" id="replicas" title="Replicas">
+      <!-- "Pods" for a DaemonSet, which has no replica count: one pod per
+           eligible node is the whole of its spec. -->
+      <DetailSection level="h3" id="replicas" title={kind === 'DaemonSet' ? 'Pods' : 'Replicas'}>
         <DetailList rows={replicaRows} />
       </DetailSection>
 
@@ -1173,6 +1578,18 @@
           <DetailList rows={strategyRows} />
         </DetailSection>
       {/if}
+    {/if}
+
+    <!--
+      A CRONJOB'S SCHEDULE IS ITS IDENTITY, and it appeared nowhere: not the
+      expression, not whether it is suspended, not when it last ran. Between
+      runs that left the panel showing usage of nothing, a template, and some
+      metadata.
+    -->
+    {#if cronRows.length > 0}
+      <DetailSection level="h3" id="schedule" title="Schedule" hint={spec.schedule ?? ''}>
+        <DetailList rows={cronRows} />
+      </DetailSection>
     {/if}
 
     <!--
@@ -1201,8 +1618,10 @@
         <div class="flex flex-col">
           {#each templateContainers as container, index (container.name ?? index)}
             <ContainerDetail
+              {management}
               spec={container}
               context="template"
+              pod={templatePod}
               clusterId={clusterId ?? ''}
               namespace={metadata.namespace ?? ''}
               {canOpen}
@@ -1211,15 +1630,8 @@
           {/each}
         </div>
 
-        <!--
-          Said once, under the containers rather than beside every value: what
-          a pod ends up with is not always what its controller asked for, and
-          the difference is invisible from here.
-        -->
-        <p class="mt-4 text-body-small text-on-surface-variant/60">
-          What the next pod will be given. A running pod may differ — from an
-          older revision, or from a webhook that adds to the spec on the way in.
-        </p>
+        <!-- That a running pod may differ from its template is said in the
+             drawer's help (object-details) rather than under every template. -->
       </DetailSection>
 
       {#if templateInitContainers.length > 0}
@@ -1233,8 +1645,10 @@
           <div class="flex flex-col">
             {#each templateInitContainers as container, index (container.name ?? index)}
               <ContainerDetail
+                {management}
                 spec={container}
                 context="template"
+                pod={templatePod}
                 clusterId={clusterId ?? ''}
                 namespace={metadata.namespace ?? ''}
                 {canOpen}
@@ -1261,27 +1675,66 @@
     {/if}
 
     <!--
-      A CRONJOB'S SCHEDULE IS ITS IDENTITY, and it appeared nowhere: not the
-      expression, not whether it is suspended, not when it last ran. Between
-      runs that left the panel showing usage of nothing, a template, and some
-      metadata.
+      WHAT THE GITOPS CONTROLLER SAYS, in its own words, and the objects it
+      says it manages — quoted from the one manifest already here, never
+      inferred from labels and never re-read from the cluster. The
+      bottom-up question ("who manages THIS object") is the badge in the
+      drawer's header; this is the top-down one. See $lib/gitops/panel.
     -->
-    {#if cronRows.length > 0}
-      <DetailSection level="h3" id="schedule" title="Schedule" hint={spec.schedule ?? ''}>
-        <DetailList rows={cronRows} />
-      </DetailSection>
+    {#if gitOpsPanel}
+      <GitOpsDetail
+        panel={gitOpsPanel}
+        manifest={parsedManifest}
+        namespace={metadata.namespace ?? ''}
+        {readyTone}
+        {canOpen}
+        {onopen}
+      />
     {/if}
 
-    <!-- A Job's progress, which is the whole of what a Job is. -->
-    {#if jobRows.length > 0}
-      <DetailSection
-        level="h3"
-        id="job-progress"
-        title="Progress"
-        hint="{status.succeeded ?? 0}/{spec.completions ?? 1}"
-      >
-        <DetailList rows={jobRows} />
-      </DetailSection>
+    <!--
+      WHAT THE OPERATOR'S CONTROLLER SAYS, in its own words — the typed
+      panels PodSteer ships in place of the extension API it deliberately
+      does not have. Quoted from the one manifest already here; the single
+      exception is a cert-manager Certificate's expiry, which is a comparison
+      against the clock and is asked of the Go domain. See
+      $lib/operators/panel.
+    -->
+    {#if operatorPanel}
+      <OperatorDetail
+        panel={operatorPanel}
+        manifest={parsedManifest}
+        namespace={metadata.namespace ?? ''}
+        name={metadata.name ?? ''}
+        {readyTone}
+        {canOpen}
+        {onopen}
+        clusterId={clusterId ?? ''}
+        {productionGroup}
+        {isReadOnly}
+        {readOnlyReason}
+        {onchanged}
+      />
+    {/if}
+
+    <!--
+      WHAT ONE OF KUBERNETES' OWN NEWER APIS DECLARES — Gateway API, device
+      allocation, admission policies. Quoted from the one manifest already
+      here, with no exception at all: a route's parent, a claim's holder and a
+      binding's policy render as followable nodes by Kind, and none of them is
+      fetched to see what it said back. The Conditions section below still
+      renders the object's own top-level conditions, coloured by the domain —
+      this panel says what the generic table and that list cannot. See
+      $lib/standardapis/panel.
+    -->
+    {#if standardPanel}
+      <StandardApiDetail
+        panel={standardPanel}
+        manifest={parsedManifest}
+        namespace={metadata.namespace ?? ''}
+        {canOpen}
+        {onopen}
+      />
     {/if}
 
     <!--
@@ -1312,10 +1765,71 @@
         hint={String(certificateRows.length)}
       >
         <DetailList rows={certificateRows} />
-        <p class="mt-3 text-body-small text-on-surface-variant/60">
-          Which Secret terminates which hosts. What the certificate itself says — who
-          issued it, when it expires — is inside that Secret and is not read here.
-        </p>
+      </DetailSection>
+    {/if}
+
+    <!--
+      A SERVICE'S PORTS, AND A FORWARD ONTO ONE. The only place in the panel
+      that offers to forward something that is not a pod — see the component
+      for why that is a translation PodSteer performs rather than something
+      Kubernetes does. Keyed on the object so switching Services starts the
+      section over rather than drawing one Service's forward under another's
+      name.
+    -->
+    {#if isService && clusterId && metadata.name}
+      {#key `${clusterId}|${metadata.namespace}|${metadata.name}`}
+        <ServicePorts
+          manifest={parsedManifest}
+          clusterId={clusterId ?? ''}
+          namespace={metadata.namespace ?? ''}
+          name={metadata.name}
+        />
+      {/key}
+    {/if}
+
+    {#if kind === 'Pod' || selectedPod}
+      <!-- Status -->
+      <DetailSection level="h3" id="status" title="Status" hint={status.phase ?? ''}>
+        <DetailList rows={statusRows} />
+      </DetailSection>
+    {/if}
+
+    <!-- A Job's progress, which is the whole of what a Job is. -->
+    {#if jobRows.length > 0}
+      <DetailSection
+        level="h3"
+        id="job-progress"
+        title="Progress"
+        hint="{status.succeeded ?? 0}/{spec.completions ?? 1}"
+      >
+        <DetailList rows={jobRows} />
+      </DetailSection>
+    {/if}
+
+    <!--
+      CONDITIONS ARE NOT ONE THING, but they have one place: at the head of
+      status, where the manifest keeps them. What differs by kind is whether
+      they open.
+
+      On a pod they are a transcript that Status and the findings above
+      already summarise — receipts, worth keeping and worth keeping out of the
+      way, so closed. On a controller they are the ROLLOUT VERDICT:
+      ReplicaFailure carries the quota message that explains a stuck rollout
+      and nothing else in this panel does. On a node they are the kubelet's
+      own alarms. And on a custom resource they are usually the whole of its
+      status — a cert-manager Certificate or a Flux Kustomization says
+      Ready=False with a message, and that is the entire reason somebody
+      opened the panel. Those open.
+    -->
+    {#if conditions.length > 0 && !conditionsOwned}
+      <DetailSection
+        level="h3"
+        id="{conditionsKey}-conditions"
+        title="Conditions"
+        defaultOpen={conditionsLead}
+        hint={String(conditions.length)}
+      >
+        <DetailList rows={conditionRows} />
       </DetailSection>
     {/if}
 
@@ -1331,68 +1845,74 @@
     {/if}
 
     <!--
-      CONDITIONS ARE NOT ONE THING, which is why they are not in one place.
-
-      On a pod they are a transcript that Status and the findings above
-      already summarise — receipts, worth keeping and worth keeping out of the
-      way. On a controller they are the ROLLOUT VERDICT: ReplicaFailure
-      carries the quota message that explains a stuck rollout and nothing else
-      in this panel does. On a node they are the kubelet's own alarms. And on
-      a custom resource they are usually the whole of its status — a
-      cert-manager Certificate or a Flux Kustomization says Ready=False with a
-      message, and that is the entire reason somebody opened the panel.
+      NOT IN THE MANIFEST. What runs on a node and what a namespace holds are
+      relationships the API server has to be asked about, and the certificate,
+      reachability and image panels each go and find something out on request.
+      None of them is a field of this object, so none of them interrupts its
+      reading order; they follow it.
     -->
-    {#if conditions.length > 0 && conditionsLead}
-      <DetailSection level="h3" id="{conditionsKey}-conditions" title="Conditions" hint={String(conditions.length)}>
-        <DetailList rows={conditionRows} />
-      </DetailSection>
+
+    <!--
+      What is on the node — the detail behind the usage figures at the top,
+      read from the pod list rather than from this Node object, which is why
+      it sits with the other sections the manifest does not contain.
+    -->
+    {#if selectedNode && clusterId}
+      <NodePods {clusterId} nodeName={selectedNode.name} {onopen} />
+    {/if}
+
+    {#if kind === 'Namespace' && clusterId && metadata.name}
+      <NamespaceContents {clusterId} namespace={metadata.name} {onbrowse} />
     {/if}
 
     <!--
-      REFERENCE, IN A FIXED FOOTER, ON EVERY KIND.
-      
-      These sat at the very bottom once, were moved up here because "which one
-      is this" meant scrolling past everything, and are back at the bottom
-      because that diagnosis solved a real problem on the wrong axis. What
-      makes a section findable is being in the SAME PLACE on every kind, not
-      being early; and the drawer's header already answers which object this
-      is, in the two lines above the tabs.
-      
-      What the middle position cost was the reading order: on every pod open,
-      three closed headers sat between the usage chart and the status and
-      containers people came for, interrupting the flow from "what is it
-      doing" to "what was it told to be" in order to optimise a lookup that
-      happens occasionally.
+      A SECRET'S OWN CERTIFICATE, ON REQUEST — the read the Ingress panel
+      above deliberately does not perform. Keyed on the Secret's identity so
+      switching to a different one starts the section over rather than
+      showing a stale chain under a new name; see CertificateInspector's own
+      header comment for why nothing here is fetched until asked.
     -->
-    <DetailSection level="h3" id="identity" title="Identity" defaultOpen={identityLeads}>
-      <DetailList rows={basicRows} />
-    </DetailSection>
-
-    {#if labels.length > 0}
-      <DetailSection level="h3" id="labels" title="Labels" defaultOpen={false} hint={String(labels.length)}>
-        <DetailList rows={pairRows(labels)} />
-      </DetailSection>
+    {#if hasCertificate && clusterId && metadata.name}
+      {#key `${clusterId}|${metadata.namespace}|${metadata.name}`}
+        <CertificateInspector {clusterId} namespace={metadata.namespace ?? ''} name={metadata.name} />
+      {/key}
     {/if}
 
-    {#if annotations.length > 0}
-      <!-- An annotation routinely holds an entire serialised manifest, which
-           is the case the list's clipping exists for: one line each, and the
-           one somebody wants opens. -->
-      <DetailSection level="h3" id="annotations" title="Annotations" defaultOpen={false} hint={String(annotations.length)}>
-        <DetailList rows={pairRows(annotations)} />
-      </DetailSection>
+    <!--
+      CAN THIS ACTUALLY BE REACHED, AND FROM WHERE. Every other section above
+      quotes what the object declares; this is the only one that goes and
+      finds out, which is why it never runs on its own — see the panel's own
+      header. Keyed on the object so switching rows starts over rather than
+      showing one Service's answer under another's name.
+    -->
+    {#if canProbe}
+      {#key `${clusterId}|${metadata.namespace}|${kind}|${metadata.name}`}
+        <ReachabilityPanel
+          kind={kind ?? ''}
+          manifest={parsedManifest}
+          clusterId={clusterId ?? ''}
+          probePod={isPodPanel ? (metadata.name ?? '') : ''}
+          probeContainer={isPodPanel ? (imageContainerNames[0] ?? '') : ''}
+          {isReadOnly}
+          {readOnlyReason}
+        />
+      {/key}
     {/if}
 
-    {#if conditions.length > 0 && !conditionsLead}
-      <DetailSection
-        level="h3"
-        id="{conditionsKey}-conditions"
-        title="Conditions"
-        defaultOpen={false}
-        hint={String(conditions.length)}
-      >
-        <DetailList rows={conditionRows} />
-      </DetailSection>
+    <!--
+      WHAT THIS CONTAINER'S IMAGE IS, without pulling it. On request, like the
+      certificate above and for a related reason: it costs a GET of the pod
+      and a GET of its node, and neither belongs on a refresh tick.
+    -->
+    {#if isPodPanel && clusterId && metadata.name && imageContainerNames.length > 0}
+      {#key `${clusterId}|${metadata.namespace}|${metadata.name}`}
+        <ImagePanel
+          {clusterId}
+          namespace={metadata.namespace ?? ''}
+          podName={metadata.name}
+          containers={imageContainerNames}
+        />
+      {/key}
     {/if}
 
   {/if}

@@ -10,10 +10,17 @@
  *
  * So the boundary is computed, never asserted:
  *
- *   • Go — the union of `go list -deps` across all three release platforms.
- *     Running it once on the host is the trap: `go-webview2` and two others
- *     are reached only under GOOS=windows, so a macOS-generated inventory is
- *     missing modules the Windows binary actually contains.
+ *   • Go — SHIPPED is the union of `go list -deps` across all three release
+ *     platforms. Running it once on the host is the trap: the Windows toast
+ *     stack and two others are reached only under GOOS=windows, so a
+ *     macOS-generated inventory is missing modules the Windows binary actually
+ *     contains. BUILD is the union of `go list -deps -test` minus that — every
+ *     module a build or a test on a release platform compiles, and nothing
+ *     else. Modules the graph mentions that neither reaches are GRAPH-ONLY and
+ *     are counted, not classified. `./scope.mjs` holds that split and
+ *     explains why membership replaced the earlier test, which asked whether a
+ *     module happened to be in the local module cache — a question about the
+ *     machine rather than about the build.
  *   • npm — the `--omit=dev` tree, cross-checked against what `web/src`
  *     actually imports. The cross-check exists because a package imported by
  *     shipped source but declared as a devDependency would otherwise vanish
@@ -27,6 +34,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { reconcile } from './classify.mjs'
+import { partitionGoModules } from './scope.mjs'
 
 /** Files a licence is conventionally kept in, in order of preference. */
 const LICENCE_FILES = [
@@ -56,9 +64,11 @@ const NOTICE_FILES = ['NOTICE', 'NOTICE.txt', 'NOTICE.md']
 const PLATFORMS = [
   { GOOS: 'darwin', GOARCH: 'arm64', tags: [] },
   { GOOS: 'windows', GOARCH: 'amd64', tags: [] },
-  // Ubuntu ships webkit2gtk 4.1 only; the Linux build opts in, and the tag
-  // changes which files — and therefore which imports — are in scope.
-  { GOOS: 'linux', GOARCH: 'amd64', tags: ['webkit2_41'] },
+  // No webkit2_41 tag any more: Wails v2 defaulted to webkit2gtk 4.0 and the
+  // Linux build had to opt in, which changed which files — and therefore which
+  // imports — were in scope. v3 targets 4.1 directly, so there is one Linux
+  // build and no tag to keep in step with the Makefile's.
+  { GOOS: 'linux', GOARCH: 'amd64', tags: [] },
 ]
 
 const MODULE_TEMPLATE = '{{if not .Standard}}{{with .Module}}{{.Path}}@{{.Version}}{{end}}{{end}}'
@@ -149,7 +159,14 @@ function goMainModule(repoRoot) {
 }
 
 /**
- * Lists the modules linked into the binary for one platform.
+ * Lists the modules the build reaches for one platform.
+ *
+ * With `includeTests`, `-test` is added and the answer widens to everything a
+ * build OR a test compiles. Called both ways per platform: without it the
+ * result is what the binary links, which is the shipped set and is unchanged
+ * by any of this; with it, the reachable set that build scope is computed
+ * from. Nothing else about the invocation differs, so the two answers describe
+ * the same tree and can be compared.
  *
  * CGO_ENABLED=1 is explicit and required. Cross-GOOS invocations default it to
  * 0, which drops every `import "C"` file from build-constraint evaluation and
@@ -157,8 +174,9 @@ function goMainModule(repoRoot) {
  * darwin and linux. `go list` never invokes a C compiler, so no cross
  * toolchain is needed to ask the question.
  */
-function goModulesFor(repoRoot, platform, mainModule) {
+function goModulesFor(repoRoot, platform, mainModule, includeTests = false) {
   const args = ['list', '-deps']
+  if (includeTests) args.push('-test')
   if (platform.tags.length > 0) args.push('-tags', platform.tags.join(','))
   args.push('-f', MODULE_TEMPLATE, './...')
 
@@ -273,7 +291,7 @@ function importedPackages(webRoot) {
       const path = join(dir, entry.name)
       if (entry.isDirectory()) {
         // Generated bindings are not a dependency; they are our own output.
-        if (entry.name !== 'wailsjs' && entry.name !== 'node_modules') walk(path)
+        if (entry.name !== 'bindings' && entry.name !== 'node_modules') walk(path)
         continue
       }
       if (!/\.(svelte|ts|js|mjs)$/.test(entry.name)) continue
@@ -341,35 +359,54 @@ export function collect(repoRoot) {
 
   const mainModule = goMainModule(repoRoot)
 
-  const shippedGo = new Set()
+  // Two listings per platform, differing only in `-test`: what the binary
+  // links, and everything a build or a test compiles. Unioned across platforms
+  // before either is used, because a module reached on one platform alone is
+  // still reached — that is the go-webview2 lesson, and under v3 it is the
+  // Windows toast stack.
+  const linkedGo = new Set()
+  const reachedGo = new Set()
   const perPlatform = {}
   for (const platform of PLATFORMS) {
-    const modules = goModulesFor(repoRoot, platform, mainModule)
-    perPlatform[`${platform.GOOS}/${platform.GOARCH}`] = modules.size
-    for (const entry of modules) shippedGo.add(entry)
+    const linked = goModulesFor(repoRoot, platform, mainModule)
+    const reached = goModulesFor(repoRoot, platform, mainModule, true)
+    // The reported count stays the LINKED one: it answers "how much does the
+    // binary for this platform carry", which is what a reader of the report is
+    // asking, and it is the number the shipped inventory is built from.
+    perPlatform[`${platform.GOOS}/${platform.GOARCH}`] = linked.size
+    for (const entry of linked) linkedGo.add(entry)
+    for (const entry of reached) reachedGo.add(entry)
   }
 
-  // Everything in the build list that no platform's binary reaches: test
-  // helpers, tooling, indirect modules pruned by the compiler.
-  const allGoModules = new Set(
+  // The whole module GRAPH — requirements of our requirements, most of which
+  // no build path imports.
+  const graphGo = new Set(
     run('go', ['list', '-m', '-f', '{{.Path}}@{{.Version}}', 'all'], { cwd: repoRoot })
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line && !line.startsWith(`${mainModule}@`)),
   )
 
-  // `go list -m all` reports the whole module GRAPH, which includes modules
-  // Go never downloads because nothing in any build path imports them. They
-  // have no source on this machine, so they cannot be classified — and they
-  // do not need to be: an unfetched module is neither shipped nor executed.
-  // Counting them as UNKNOWN would fail the policy on fifteen packages that
-  // do not participate in anything.
-  const unfetchedGo = []
-  const buildGo = []
-  for (const entry of allGoModules) {
-    if (shippedGo.has(entry)) continue
-    if (existsSync(goModuleDir(modCache, entry))) buildGo.push(entry)
-    else unfetchedGo.push(entry)
+  const {
+    shipped: shippedGo,
+    build: buildGo,
+    graphOnly: graphOnlyGo,
+  } = partitionGoModules({ graph: graphGo, linked: linkedGo, reached: reachedGo })
+
+  // Everything classified must have source on this machine to classify FROM.
+  // The predicate this replaced used cache presence as the classifier itself,
+  // so a module missing from a cold cache quietly became unclassified and the
+  // gate passed without ever reading its licence. Now the same situation is an
+  // error with something to do about it.
+  const uncached = [...shippedGo, ...buildGo].filter(
+    (entry) => !existsSync(goModuleDir(modCache, entry)),
+  )
+  if (uncached.length > 0) {
+    throw new Error(
+      'These Go modules participate in a build or test but are not in the module ' +
+        `cache, so their licences cannot be read: ${uncached.join(', ')}. ` +
+        'Run `go mod download` and try again.',
+    )
   }
 
   // --- npm -----------------------------------------------------------------
@@ -388,8 +425,8 @@ export function collect(repoRoot) {
   const unresolved = [...imported].filter((name) => !fullTree.has(name))
 
   const packages = applyNoticeSources(repoRoot, [
-    ...[...shippedGo].sort().map((entry) => goPackage(modCache, entry, 'shipped')),
-    ...buildGo.sort().map((entry) => goPackage(modCache, entry, 'build')),
+    ...shippedGo.map((entry) => goPackage(modCache, entry, 'shipped')),
+    ...buildGo.map((entry) => goPackage(modCache, entry, 'build')),
     ...[...shippedTree.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([name, entry]) => npmPackage(name, entry, 'shipped')),
@@ -406,7 +443,7 @@ export function collect(repoRoot) {
     perPlatform,
     mislabelled,
     unresolved,
-    unfetchedGo,
+    graphOnlyGo,
   }
 }
 
@@ -419,6 +456,16 @@ export function collect(repoRoot) {
  * is that it comes from a SIBLING ALREADY IN THIS INVENTORY: same project, same
  * licence, same holder, and a file we can point at rather than prose somebody
  * typed out. `build/licences/notice-sources.json` records which, and why.
+ *
+ * The sibling may be in ANOTHER ECOSYSTEM, named by `inheritsFromEcosystem`.
+ * That is not a loosening: one repository routinely publishes both a Go module
+ * and an npm package under one licence held by one project, and Wails is
+ * exactly that — `@wailsio/runtime` is built out of the same tree as
+ * `github.com/wailsapp/wails/v3` and ships no licence file of its own. Refusing
+ * to look across the boundary would force one of the two alternatives this
+ * mechanism exists to avoid: prose typed out from memory, or a false claim that
+ * no notice exists. The default is still the target's own ecosystem, so an
+ * entry meaning a sibling package says so by omission.
  *
  * Three things make it fail rather than fudge:
  *
@@ -447,22 +494,27 @@ function applyNoticeSources(root, packages) {
       )
     }
 
-    const donor = byName.get(`${source.ecosystem}:${source.inheritsFrom}`)
+    const donorEcosystem = source.inheritsFromEcosystem ?? source.ecosystem
+    const donorKey = `${donorEcosystem}:${source.inheritsFrom}`
+    const donor = byName.get(donorKey)
     if (!donor) {
       throw new Error(
-        `${key} inherits its notice from ${source.inheritsFrom}, which is not in the ` +
+        `${key} inherits its notice from ${donorKey}, which is not in the ` +
           `dependency tree — the entry is stale`,
       )
     }
     if (!donor.text) {
-      throw new Error(`${key} inherits its notice from ${source.inheritsFrom}, which has none`)
+      throw new Error(`${key} inherits its notice from ${donorKey}, which has none`)
     }
 
     target.text = donor.text
     target.copyright = donor.copyright
     // Recorded on the entry so the inventory says where the text came from
-    // rather than implying the package shipped it.
-    target.noticeFrom = source.inheritsFrom
+    // rather than implying the package shipped it. Qualified by ecosystem when
+    // the donor is in another one, so the Credits pane cannot read
+    // "@wailsio/runtime inherits from github.com/wailsapp/wails/v3" as a
+    // package name it could look up beside it.
+    target.noticeFrom = donorEcosystem === target.ecosystem ? source.inheritsFrom : donorKey
   }
 
   return packages

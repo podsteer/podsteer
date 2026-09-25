@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"k8s.io/client-go/transport/spdy"
 
 	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/ports"
 )
 
 // forwardReadyTimeout bounds how long a forward may take to come up.
@@ -140,6 +142,11 @@ const reconnectBackoff = 3 * time.Second
 // return is the leak this whole design exists to avoid.
 const reconnectWindow = 2 * time.Minute
 
+// findReplacementTimeout bounds one search for a replacement pod. It is the
+// ceiling on the read, not on the wait for a stop: a deliberate stop cancels
+// it early — see findReplacementPod.
+const findReplacementTimeout = 10 * time.Second
+
 // superviseForward keeps a forward alive across the death of its pod.
 //
 // THE MOST-REQUESTED BEHAVIOUR IN THE CATEGORY AND THE ONE NOBODY SHIPS.
@@ -169,7 +176,21 @@ func (a *Adapter) superviseForward(entry *forwarder, current attempt, portName s
 			// The attempt ended on its own: the pod went away. Not an error
 			// to report — it is the case this exists for.
 		case err := <-current.failed:
-			_ = err
+			// RECORDED, NOT DISCARDED. This channel exists to carry the reason
+			// a forward died and the value was being thrown away one screen
+			// below a comment arguing that silent forward death is the flaw in
+			// every other client. A pod that rolled, a `pods/portforward`
+			// permission withdrawn and a cluster that went away all produced
+			// an identical vanishing row and an empty log.
+			//
+			// A log line rather than a raised error, deliberately: the
+			// reconnect below is the response, and interrupting somebody
+			// reading another cluster because a forward is re-establishing
+			// itself would be worse than the silence this replaces.
+			a.logger.Info("port-forward dropped; reconnecting",
+				slog.String("cluster", string(entry.snapshot().ClusterID)),
+				slog.String("forward", entry.snapshot().ID),
+				slog.String("error", err.Error()))
 			<-current.done
 		}
 
@@ -203,7 +224,7 @@ func (a *Adapter) reconnect(entry *forwarder, forward domain.Forward, portName s
 		case <-time.After(reconnectBackoff):
 		}
 
-		replacement, err := a.findReplacementPod(forward)
+		replacement, err := a.findReplacementPod(entry, forward)
 		if err != nil || replacement == "" {
 			continue
 		}
@@ -226,34 +247,86 @@ func (a *Adapter) reconnect(entry *forwarder, forward domain.Forward, portName s
 	return attempt{}, false
 }
 
-// findReplacementPod returns a running pod matching the forward's selector.
+// findReplacementPod returns a pod this forward may rebind to.
 //
-// Matched on the pod's OWN labels, which for a ReplicaSet's pods include
-// pod-template-hash — so a replacement is a sibling of the same revision, not
-// a pod of whatever rolled out since. Silently moving a forward onto
-// different code would be worse than not reconnecting at all.
-func (a *Adapter) findReplacementPod(forward domain.Forward) (string, error) {
-	if len(forward.Selector) == 0 {
-		return "", nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+// THE ORIGINAL POD FIRST, AND IT IS THE COMMON CASE. A forward drops for two
+// reasons and only one of them is a dead pod: the SPDY connection also goes
+// when an idle timeout on a load balancer fires, when the API server restarts
+// or rolls, and when the operator's VPN re-keys. This function used to skip
+// forward.Pod outright, so for a single-replica workload — one Deployment
+// replica, a StatefulSet member, a bare pod — there was no sibling to find and
+// the perfectly healthy pod on the other side was the one candidate excluded.
+// The forward then showed "Reconnecting" for two minutes and vanished, which
+// is precisely the failure this file's header claims to fix.
+//
+// A SIBLING SECOND, matched on the pod's OWN labels — which for a ReplicaSet's
+// pods include pod-template-hash — so a replacement is of the same revision,
+// not a pod of whatever rolled out since. Silently moving a forward onto
+// different code would be worse than not reconnecting at all. The original is
+// held to that same test when a selector exists: a StatefulSet member keeps
+// its name across a re-creation, so a name match alone would let `db-0` come
+// back at a new revision under a forward that was pointed at the old one.
+//
+// TERMINATING PODS ARE NOT CANDIDATES, either. A pod keeps its Ready
+// condition through its grace period, so a rollout offered one that was
+// already shutting down — a forward that establishes and dies seconds later.
+func (a *Adapter) findReplacementPod(entry *forwarder, forward domain.Forward) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), findReplacementTimeout)
 	defer cancel()
 
-	pods, err := a.ListPods(ctx, forward.ClusterID, forward.Namespace)
+	// A DELIBERATE STOP MUST NOT WAIT OUT THIS READ. Disconnecting a cluster
+	// stops its forwards and WAITS for them (stopPortForwardsFor), and a
+	// supervisor parked in a ten-second list would block the disconnect for
+	// as long as it takes. The watcher ends with this call either way.
+	watching := make(chan struct{})
+	defer close(watching)
+	go func() {
+		select {
+		case <-entry.stop:
+			cancel()
+		case <-watching:
+		}
+	}()
+
+	// THE UNEXPORTED READ, DELIBERATELY, and it is defence in depth rather
+	// than the fix. Invalidate stops this cluster's forwards before it drops
+	// anything, so a supervisor is not supposed to be able to run against a
+	// disconnected cluster at all — but the exported ListPods reaches
+	// watches.ensure and the read cache, and the read cache DETACHES its
+	// shared fetch from whoever started it, so a read already in flight when
+	// the stop lands keeps running: it outlives the cancel above, and its
+	// clientFor can rebuild a client Invalidate has just discarded, executing
+	// the operator's credential plugin once more.
+	//
+	// Going straight to the narrow list closes that: nothing here ensures a
+	// watch, the client is resolved once at the top, and cancelling the
+	// context genuinely aborts the request rather than orphaning it. The
+	// coalescing given up is worth nothing on this path anyway — the search
+	// runs once every three seconds, which is longer than readTTL.
+	pods, err := a.listPods(ctx, forward.ClusterID, forward.Namespace, domain.Projection{})
 	if err != nil {
 		return "", err
 	}
 
+	sibling := ""
 	for _, pod := range pods {
-		if pod.Name() == forward.Pod || !pod.IsReady() || !pod.OccupiesNode() {
+		if pod.Terminating() || !pod.IsReady() || !pod.OccupiesNode() {
 			continue
 		}
-		if matchesSelector(pod.Labels(), forward.Selector) {
-			return pod.Name(), nil
+		sameRevision := len(forward.Selector) == 0 || matchesSelector(pod.Labels(), forward.Selector)
+		if pod.Name() == forward.Pod {
+			if sameRevision {
+				return pod.Name(), nil
+			}
+			continue
+		}
+		// Kept, not returned: the scan carries on in case the original pod is
+		// further down the list, and it is the better answer.
+		if sibling == "" && len(forward.Selector) > 0 && sameRevision {
+			sibling = pod.Name()
 		}
 	}
-	return "", nil
+	return sibling, nil
 }
 
 // matchesSelector reports whether labels carry every pair the selector names.
@@ -311,6 +384,48 @@ func (a *Adapter) StopAllPortForwards() {
 	}
 	a.forwards.mu.Unlock()
 
+	stopForwards(entries)
+}
+
+// stopPortForwardsFor tears down one cluster's forwards and waits for them.
+//
+// THE FORWARD GOES WITH THE CONNECTION, and that is what makes Invalidate's
+// ordering comment true rather than nearly true. A supervisor whose pod has
+// died calls findReplacementPod every three seconds for two minutes, and that
+// goes through the EXPORTED ListPods — which on an unregistered cluster
+// rebuilds the client (re-executing the credential plugin), ensures a watch
+// set of three reflectors, and repopulates the read cache. That is precisely
+// the resurrection Invalidate exists to prevent, arriving through a door
+// Invalidate was not watching: the forward built its own transport at dial
+// time, so nothing it holds is invalidated by dropping the cached client.
+//
+// Waiting rather than signalling is the same promise StopPortForward makes:
+// once this returns, no goroutine of this cluster's is left to ensure
+// anything, so the factory and the watch can be torn down behind it.
+func (a *Adapter) stopPortForwardsFor(id domain.ClusterID) {
+	a.forwards.mu.Lock()
+	entries := make([]*forwarder, 0, len(a.forwards.byID))
+	for forwardID, entry := range a.forwards.byID {
+		// ClusterID is the one field of a forward the supervisor never
+		// rewrites — a replacement pod is found in the same cluster or not at
+		// all — so reading it off the snapshot is stable.
+		if entry.snapshot().ClusterID != id {
+			continue
+		}
+		entries = append(entries, entry)
+		delete(a.forwards.byID, forwardID)
+	}
+	a.forwards.mu.Unlock()
+
+	stopForwards(entries)
+}
+
+// stopForwards ends each supervisor and waits for it, outside any lock.
+//
+// Outside the registry's lock deliberately: a supervisor giving up deletes
+// its own entry, which needs that mutex, so holding it across the wait is a
+// deadlock.
+func stopForwards(entries []*forwarder) {
 	for _, entry := range entries {
 		close(entry.stop)
 		<-entry.done
@@ -334,7 +449,7 @@ func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 // discovering it afterwards. There is an unavoidable race between this and
 // binding it, which is why the forward reports the port it actually bound
 // rather than trusting this one.
-func FreeLocalPort() (int, error) {
+func (a *Adapter) FreeLocalPort() (int, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, err
@@ -346,6 +461,34 @@ func FreeLocalPort() (int, error) {
 		return 0, errors.New("could not read the chosen port")
 	}
 	return address.Port, nil
+}
+
+// ProbeLocalPort reports whether a TCP port on this machine — never the
+// cluster, which is the mistake the name invites — is free to bind.
+//
+// BINDING IS THE ANSWER, not a heuristic about the ephemeral range: a stale
+// process, a container runtime's proxy or a port Docker Desktop leaked all
+// show as bound to nothing a process list would name, and only actually
+// trying to listen catches them. The listener is closed immediately, so the
+// probe itself never holds the port anybody was asking about — and, exactly
+// as with FreeLocalPort, there is a race between this answer and whatever the
+// operator does next: this exists to catch a collision before Start is
+// pressed, not to reserve anything.
+func (a *Adapter) ProbeLocalPort(port int) (bool, error) {
+	if port < 1 || port > 65535 {
+		return false, fmt.Errorf("probing local port %d: %w", port, ports.ErrInvalidPort)
+	}
+
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		// Not free — and deliberately not surfaced as a call failure. Whether
+		// the refusal was "already in use" or "permission denied" (a port
+		// below 1024 without privilege), the practical answer an operator
+		// needs is the same one: they cannot bind here.
+		return false, nil
+	}
+	_ = listener.Close()
+	return true, nil
 }
 
 // forwardableProtocol reports whether a container port can be forwarded.

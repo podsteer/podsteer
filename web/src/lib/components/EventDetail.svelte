@@ -152,7 +152,7 @@
          icon, in the severity's colour and weight. -->
     <div class="flex items-start gap-3">
       <Icon
-        class="mt-0.5 size-5 shrink-0 {isWarning ? 'text-gauge-warn' : 'text-on-surface-variant/50'}"
+        class="mt-0.5 size-5 shrink-0 {isWarning ? 'text-gauge-warn-ink' : 'text-on-surface-variant/50'}"
         strokeWidth={isWarning ? 2.75 : 1.75}
       />
       <div class="min-w-0">

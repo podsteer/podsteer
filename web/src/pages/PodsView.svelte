@@ -6,17 +6,35 @@
   what "healthy" means.
 -->
 <script lang="ts">
-  import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import DataTable, { ROW_MENU_COLUMN, type Column } from '$lib/components/DataTable.svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
   import MeterBar from '$lib/components/MeterBar.svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import { formatAge, podStatusLabel, podTone } from '$lib/format'
   import { preferences } from '$stores/preferences.svelte'
   import { cpuMeter, cpuTitle, memoryMeter, memoryTitle } from '$lib/meter'
-  import type { ClusterSession } from '$stores/session.svelte'
+  import { POD_STATUS_CHIPS } from '$lib/podStatusFilters'
+  import { type RowAction } from '$lib/components/RowMenu.svelte'
+  import RowMenuCell from '$lib/components/RowMenuCell.svelte'
+  import { copyText } from '$lib/clipboard'
+  import { rowActionsFor, toRowActions } from '$lib/rowActions'
+  import { organisation } from '$stores/organisation.svelte'
+  import CustomCells from '$lib/components/CustomCells.svelte'
+  import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
+  import RowSelect from '$lib/components/RowSelect.svelte'
+  import { rowKey } from '$lib/bulk'
+  import { isControlColumn } from '$lib/fixedColumns'
+  import { get as kubectlGet } from '$lib/kubectl'
+  import type { ClusterSession, DetailIntent } from '$stores/session.svelte'
   import type { Pod } from '$lib/api/client'
-  import { Box, CircleDot, TriangleAlert, Plug, Loader } from '@lucide/svelte'
+  import { Box, CircleDot, TriangleAlert, Plug, Loader, ShieldAlert } from '@lucide/svelte'
   import { forwards } from '$stores/forwards.svelte'
+  import {
+    ensureVulnerabilities,
+    vulnerabilitiesFor,
+    vulnerabilityReadFor,
+  } from '$stores/vulnerabilities.svelte'
 
   interface Props {
     session: ClusterSession
@@ -24,7 +42,41 @@
 
   let { session }: Props = $props()
 
+  /**
+   * Whether this cluster is marked read-only, read fresh so a change in
+   * Organise takes effect at once — the same pattern the drawer and the node
+   * list use. It disables the menu's write items; the backend refuses them
+   * regardless (see ManagementService), so this is the first line, not the
+   * last.
+   */
+  const placement = $derived(organisation.placementOf(session.cluster.id))
+  const isReadOnly = $derived(
+    organisation.settingsFor(placement.project, placement.group).readOnly,
+  )
+
+  /**
+   * How many of the search-filtered pods each chip would add, in one pass —
+   * six separate `.filter(...).length` calls would be six passes over the
+   * same rows for six numbers that were always going to be read together.
+   *
+   * Counted against `session.searchedPods` (search applied, chips not yet)
+   * rather than `session.visiblePods`, so a chip that is not selected still
+   * shows what selecting it would add instead of counting against a list its
+   * own selection has already shrunk.
+   */
+  const chipCounts = $derived.by(() => {
+    const counts: Record<string, number> = {}
+    for (const chip of POD_STATUS_CHIPS) counts[chip.id] = 0
+    for (const pod of session.searchedPods) {
+      for (const chip of POD_STATUS_CHIPS) {
+        if (chip.predicate(pod)) counts[chip.id]++
+      }
+    }
+    return counts
+  })
+
   const COLUMNS: Column[] = [
+    { id: 'select', label: 'Select', width: 40, pinned: true, select: true },
     { id: 'status', label: 'Status', width: 44, icon: CircleDot },
     { id: 'name', label: 'Name', width: 320, pinned: true },
     { id: 'namespace', label: 'Namespace', width: 150 },
@@ -38,6 +90,22 @@
     { id: 'ip', label: 'IP', width: 120, defaultHidden: true },
     { id: 'age', label: 'Age', width: 80, numeric: true },
   ]
+
+  /** The built-in columns, then the operator's own — see $lib/customColumns —
+      and the row menu last, because it is the end of the row. */
+  /**
+   * How much of the scanner's answer this list actually has.
+   *
+   * Read here rather than per row: it qualifies every mark in the list, and the
+   * only row it is about is the one that ISN'T marked.
+   */
+  const scannerRead = $derived(vulnerabilityReadFor(session.cluster.id, session.namespace))
+
+  const columns = $derived<Column[]>([
+    ...COLUMNS,
+    ...toColumns(session.customColumns),
+    ROW_MENU_COLUMN,
+  ])
 
   /**
    * The findings worth marking a row for.
@@ -59,194 +127,431 @@
    * When they do not, the fill answers a question the thresholds are not
    * about, so the lines are left unmarked and only the colour carries them.
    */
+  /**
+   * What every pod row offers from its menu.
+   *
+   * Each write item OPENS THE POD and engages the drawer's own control for
+   * it — see $lib/rowActions and ClusterSession.detailIntent. Nothing is
+   * confirmed or written here: Evict reaches EvictDialog, which says a
+   * PodDisruptionBudget may refuse it, and Delete reaches DeleteDialog,
+   * which types the object's name on a production cluster. Logs and Terminal
+   * open the tab an operator opened the pod for, rather than a second log
+   * viewer living in a table row.
+   */
+  function actionsFor(pod: Pod): RowAction[] {
+    const open = (intent: DetailIntent) => () =>
+      void session.openDetailFor(intent, pod.name, pod.namespace, pod)
+
+    return toRowActions(
+      rowActionsFor('Pod'),
+      {
+        overview: open({ tab: 'overview' }),
+        logs: open({ tab: 'logs' }),
+        terminal: open({ tab: 'terminal' }),
+        evict: open({ action: 'evict' }),
+        delete: open({ action: 'delete' }),
+        kubectl: () => copyText(kubectlGet(session.cluster.id, 'pods', pod.name, pod.namespace)),
+      },
+      isReadOnly,
+    )
+  }
+
   const byLimit = $derived(preferences.podMeasure === 'limits')
+
+  /**
+   * Asks once for what a scanner already in the cluster found.
+   *
+   * ON OPENING THE VIEW AND ON CHANGING NAMESPACE, never on the refresh tick:
+   * the store reads each cluster-and-namespace at most once for the life of
+   * the tab, and Go holds it for ten minutes behind that. The pod list does
+   * not wait for it and does not change if it never answers — see
+   * $stores/vulnerabilities.
+   */
+  $effect(() => {
+    ensureVulnerabilities(session.cluster.id, session.namespace)
+  })
+
+  /**
+   * Which rows are on screen, in display order — what a shift-click ranges
+   * across and the header checkbox selects. Published from here because only
+   * the view knows the page it is drawing; see $lib/selection.
+   */
+  $effect(() => {
+    session.selection.visible = session.pagedPods.map((pod) => rowKey(pod.namespace, pod.name))
+    return () => {
+      session.selection.visible = []
+    }
+  })
+
+  /** Whether an operator has not hidden this column — the same rule
+      ColumnMenu and DataTable itself apply, repeated here rather than asked
+      of either: the export has to decide it independently of what is
+      currently mounted, from the same preferences they both read. */
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[session.selectedKindId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /**
+   * The pod list's CSV export.
+   *
+   * Every field here is the same text its cell shows — a status word rather
+   * than the bare phase, a meter's underlying quantity with its unit rather
+   * than the percentage, an age already coarsened — never a number the
+   * operator would have to re-derive what the column meant.
+   */
+  function exportCSV(): CSVExport {
+    // The tick box and the row menu are controls, not columns with text in
+    // them: exported, each would be a heading over a column of empty cells.
+    const visible = columns.filter((column) => !isControlColumn(column) && isColumnVisible(column))
+
+    function cell(pod: Pod, id: string): string {
+      const custom = parseCustomColumnId(id)
+      if (custom) return customCell(pod, custom)
+      switch (id) {
+        case 'status':
+          return podStatusLabel(pod)
+        case 'name':
+          return pod.name
+        case 'namespace':
+          return pod.namespace
+        case 'cpu':
+          return pod.cpu
+        case 'memory':
+          return pod.memory
+        case 'ready':
+          return pod.ready
+        case 'restarts':
+          return String(pod.restarts)
+        case 'controlledBy':
+          return pod.controlledBy || '—'
+        case 'node':
+          return pod.nodeName || '—'
+        case 'qos':
+          return pod.qosClass || '—'
+        case 'ip':
+          return pod.podIp || '—'
+        case 'age':
+          return formatAge(pod.ageSeconds)
+        default:
+          return ''
+      }
+    }
+
+    return {
+      columns: visible.map((column) => column.label),
+      rows: session.sortedPods.map((pod) => visible.map((column) => cell(pod, column.id))),
+    }
+  }
 </script>
 
-<DataTable
-  kindId={session.selectedKindId}
-  columns={COLUMNS}
-  isEmpty={session.pagedPods.length === 0}
-  sort={session.sort}
-  onsort={session.toggleSort}
->
-  {#snippet empty()}
-    <EmptyState
-      title="No pods here"
-      description={session.search
-        ? `Nothing matches "${session.search}".`
-        : 'This namespace is not running any pods you can see.'}
-    />
-  {/snippet}
+<div class="flex min-h-0 flex-1 flex-col">
+  <!--
+    Status quick-filters. Each one SELECTS on a field the domain already
+    computed — see $lib/podStatusFilters for exactly which — never a new
+    comparison made here. Chips OR together (any one matching is enough) and
+    AND with the text search above, same as k9s's "/-l label" and every
+    competitor's status filter.
 
-  {#snippet rows(isVisible)}
-    {#each session.pagedPods as pod (pod.namespace + '/' + pod.name)}
-      {@const selected =
-        session.selectedName === pod.name && session.selectedNamespace === pod.namespace}
-      <tr
-        class="group cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
-               {selected ? 'bg-primary/8' : 'hover:bg-surface-container-low'}"
-        onclick={() => session.openDetail(pod.name, pod.namespace, pod)}
+    Not a <PaneToolbar>: that shell is for the full-height text panes (YAML,
+    logs), and this is a row of toggles above a table, closer kin to
+    OverviewView's trend tabs than to a find box. The pressed/unpressed
+    colours are lifted from ToolbarToggle regardless, so a chip on and a
+    toolbar icon on read as the same state.
+  -->
+  <div
+    class="flex flex-wrap items-center gap-1.5 border-b border-outline-variant/40
+           bg-surface-container-low/40 px-4 py-2"
+  >
+    {#each POD_STATUS_CHIPS as chip (chip.id)}
+      {@const pressed = session.podStatusFilters.includes(chip.id)}
+      {@const count = chipCounts[chip.id]}
+      <button
+        type="button"
+        onclick={() => session.togglePodStatusFilter(chip.id)}
+        aria-pressed={pressed}
+        title="{pressed ? 'Showing only' : 'Show only'} {chip.label.toLowerCase()} pods"
+        class="rounded-full border px-2.5 py-1 text-label-small transition-colors duration-100
+               {pressed
+                 ? 'border-primary/40 bg-primary/14 text-primary'
+                 : 'border-outline-variant/50 text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
       >
-        {#if isVisible('status')}
-          <td class="overflow-hidden py-1.5 pr-3 pl-5">
-            <StatusIndicator
-              tone={podTone(pod)}
-              label={podStatusLabel(pod)}
-              icon={Box}
-              pulse={pod.phase === 'Terminating'}
-            />
-          </td>
-        {/if}
-        <td class="px-3 py-1.5" title={pod.name}>
-          <span class="flex items-center gap-2">
-            <span class="truncate font-medium text-on-surface">{pod.name}</span>
-            <!--
-              A mark for a pod the assessment has something to say about, so
-              the findings are reachable without opening every row to check.
-
-              INFO FINDINGS ARE EXCLUDED. A mutable tag or a Burstable QoS is
-              worth reading once you are looking at a pod and is not worth a
-              mark on a list — half a real cluster would carry one, and a mark
-              most rows have is not a mark. What survives is the class this
-              column cannot already show: a pod that looks fine and is not,
-              like one whose probes will restart it or whose deletion is
-              wedged.
-            -->
-            <!--
-              WHICH POD HOLDS THE FORWARD. Not decoration: a forward survives
-              its pod being deleted by moving to a replacement, so the row
-              holding it afterwards is not the row it was started from — and
-              with several replicas of one workload there was nothing at all
-              to tell them apart.
-
-              The port is in the mark rather than only in a tooltip, because
-              the question being asked is "which of these is on 59595".
-            -->
-            {#each forwards.forPod(session.cluster.id, pod.namespace, pod.name) as forward (forward.id)}
-              <span
-                class="inline-flex shrink-0 items-center gap-1 rounded bg-primary/12 px-1.5
-                       text-body-small text-primary"
-                title="{forward.address} → container port {forward.remotePort}"
-              >
-                {#if forward.reconnecting}
-                  <Loader class="size-3 animate-spin" strokeWidth={2} />
-                {:else}
-                  <Plug class="size-3" strokeWidth={2} />
-                {/if}
-                {forward.localPort}
-              </span>
-            {/each}
-
-            {#if alarming(pod).length > 0}
-              <TriangleAlert
-                class="size-3.5 shrink-0 text-gauge-warn"
-                strokeWidth={2.2}
-                aria-label="{alarming(pod).length} findings"
-              />
-            {/if}
+        {chip.label}
+        {#if count > 0}
+          <span class="tabular-nums {pressed ? 'text-primary/70' : 'text-on-surface-variant/60'}">
+            {count}
           </span>
-        </td>
-        {#if isVisible('namespace')}
-          <td class="truncate px-3 py-1.5">
-            <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-small text-on-surface-variant">
-              {pod.namespace}
+        {/if}
+      </button>
+    {/each}
+  </div>
+
+  <DataTable
+    kindId={session.selectedKindId}
+    {columns}
+    isEmpty={session.pagedPods.length === 0}
+    sort={session.sort}
+    onsort={session.toggleSort}
+    exportRows={exportCSV}
+    selectAll={{
+      checked: session.selection.allVisibleSelected,
+      indeterminate: session.selection.someVisibleSelected,
+      ontoggle: () => session.selection.toggleAllVisible(),
+    }}
+  >
+    {#snippet notice()}
+      {#if scannerRead?.truncated}
+        <!--
+          THE ONE CASE WHERE A MISSING MARK IS A CLAIM. Every other row here
+          is undecorated because the scanner found nothing, or because there
+          is no scanner — neither of which says anything false. A read that
+          stopped at its ceiling is different: some workloads below have
+          findings nobody has been shown, and an unmarked row would be read as
+          a clean one. Outside the scrolling region, like the generic table's,
+          because a caveat that scrolls away from the rows it qualifies is not
+          a caveat.
+        -->
+        <p
+          class="border-b border-outline-variant/60 px-3 py-2 text-body-medium text-gauge-warn-ink"
+          role="status"
+        >
+          Vulnerability marks are incomplete: {scannerRead.read.toLocaleString()} reports read{
+            scannerRead.remaining > 0
+              ? ` of ${(scannerRead.read + scannerRead.remaining).toLocaleString()}`
+              : ''
+          }, stopping at {scannerRead.cap.toLocaleString()}. A row without a mark may still have
+          findings.
+        </p>
+      {/if}
+    {/snippet}
+
+    {#snippet empty()}
+      <EmptyState
+        title="No pods here"
+        description={session.search
+          ? `Nothing matches "${session.search}".`
+          : 'This namespace is not running any pods you can see.'}
+      />
+    {/snippet}
+
+    {#snippet rows(isVisible)}
+      {#each session.pagedPods as pod (pod.namespace + '/' + pod.name)}
+        {@const selected =
+          session.selectedName === pod.name && session.selectedNamespace === pod.namespace}
+        {@const key = rowKey(pod.namespace, pod.name)}
+        {@const ticked = session.selection.has(key)}
+        <!-- The state grounds are OPAQUE tokens rather than the translucent
+             `bg-primary/8` they used to be: the pinned columns inherit this
+             row's own colour, and a translucent one lets the cells scrolling
+             underneath show through them. See the row grounds in app.css. -->
+        <tr
+          class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
+                 {selected
+            ? 'bg-row-open'
+            : ticked
+              ? 'bg-row-ticked'
+              : 'bg-surface hover:bg-surface-container-low'}"
+          aria-selected={ticked}
+          onclick={() => session.openDetail(pod.name, pod.namespace, pod)}
+        >
+          <RowSelect
+            selected={ticked}
+            label={pod.name}
+            ontoggle={(range) => session.selection.toggle(key, range)}
+          />
+          {#if isVisible('status')}
+            <td class="overflow-hidden py-1.5 pr-3 pl-5">
+              <StatusIndicator
+                tone={podTone(pod)}
+                label={podStatusLabel(pod)}
+                icon={Box}
+                pulse={pod.phase === 'Terminating'}
+              />
+            </td>
+          {/if}
+          <td class="px-3 py-1.5" title={pod.name}>
+            <span class="flex items-center gap-2">
+              <span class="truncate font-medium text-on-surface">{pod.name}</span>
+              <!--
+                A mark for a pod the assessment has something to say about, so
+                the findings are reachable without opening every row to check.
+
+                INFO FINDINGS ARE EXCLUDED. A mutable tag or a Burstable QoS is
+                worth reading once you are looking at a pod and is not worth a
+                mark on a list — half a real cluster would carry one, and a mark
+                most rows have is not a mark. What survives is the class this
+                column cannot already show: a pod that looks fine and is not,
+                like one whose probes will restart it or whose deletion is
+                wedged.
+              -->
+              <!--
+                WHICH POD HOLDS THE FORWARD. Not decoration: a forward survives
+                its pod being deleted by moving to a replacement, so the row
+                holding it afterwards is not the row it was started from — and
+                with several replicas of one workload there was nothing at all
+                to tell them apart.
+
+                The port is in the mark rather than only in a tooltip, because
+                the question being asked is "which of these is on 59595".
+              -->
+              {#each forwards.forPod(session.cluster.id, pod.namespace, pod.name) as forward (forward.id)}
+                <span
+                  class="inline-flex shrink-0 items-center gap-1 rounded bg-primary/12 px-1.5
+                         text-body-small text-primary"
+                  title={forward.reconnecting
+                  ? `Waiting for a replacement pod — was ${forward.address}`
+                  : `${forward.address} → container port ${forward.remotePort}`}
+                >
+                  {#if forward.reconnecting}
+                    <Loader class="size-3 animate-spin" strokeWidth={2} />
+                  {:else}
+                    <Plug class="size-3" strokeWidth={2} />
+                  {/if}
+                  {forward.localPort}
+                </span>
+              {/each}
+
+              {#if alarming(pod).length > 0}
+                <TriangleAlert
+                  class="size-3.5 shrink-0 text-gauge-warn-ink"
+                  strokeWidth={2.2}
+                  aria-label="{alarming(pod).length} findings"
+                />
+              {/if}
+
+              <!--
+                WHAT A SCANNER ALREADY IN THE CLUSTER FOUND, and nothing else.
+                Absent entirely where none is installed, which is most
+                clusters, and absent per row where nothing has been scanned —
+                the read that fills these in is separate, bounded and cached,
+                and the list is drawn without waiting for it. Critical and
+                high only: a mark carrying five numbers is not a mark, and the
+                panel behind the row has the whole summary.
+
+                Zero of both is still shown, because "scanned, and clean" and
+                "not scanned" are different facts and no mark at all already
+                means the second.
+              -->
+              {#if vulnerabilitiesFor(session.cluster.id, session.namespace, pod)}
+                {@const found = vulnerabilitiesFor(session.cluster.id, session.namespace, pod)!}
+                <span
+                  class="inline-flex shrink-0 items-center gap-1 rounded px-1.5 text-body-small
+                         {found.critical > 0
+                           ? 'bg-error-container text-on-error-container'
+                           : found.high > 0
+                             ? 'bg-warning-container text-on-warning-container'
+                             : 'bg-surface-container-high text-on-surface-variant'}"
+                  title="{found.critical} critical, {found.high} high, {found.medium} medium, {found.low} low across {found.reports} scanned {found.reports === 1 ? 'container' : 'containers'}"
+                >
+                  <ShieldAlert class="size-3" strokeWidth={2} />
+                  {found.critical}/{found.high}
+                </span>
+              {/if}
             </span>
           </td>
-        {/if}
-        <!--
-          THE DASH IS AMBIGUOUS WITHOUT hasMetrics, and the flag was already
-          here. `pod.cpu` formats to "—" both when nothing measured the pod and
-          when the pod genuinely used no measurable CPU — so an unmeasured
-          cluster and an idle one looked identical, which is what made a fresh
-          cluster read as a broken application.
+          {#if isVisible('namespace')}
+            <td class="truncate px-3 py-1.5">
+              <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-medium text-on-surface-variant">
+                {pod.namespace}
+              </span>
+            </td>
+          {/if}
+          <!--
+            THE DASH IS AMBIGUOUS WITHOUT hasMetrics, and the flag was already
+            here. `pod.cpu` formats to "—" both when nothing measured the pod and
+            when the pod genuinely used no measurable CPU — so an unmeasured
+            cluster and an idle one looked identical, which is what made a fresh
+            cluster read as a broken application.
 
-          The tooltip carries the distinction rather than the cell: fifteen rows
-          each saying "no metrics" is noise, and the explanation of WHY belongs
-          once, in the notice above the table.
+            The tooltip carries the distinction rather than the cell: fifteen rows
+            each saying "no metrics" is noise, and the explanation of WHY belongs
+            once, in the notice above the table.
 
-          THE METER DIVIDES BY THE POD'S REQUEST, not by its limit and not by
-          its node. It is the question the rest of PodSteer is built around —
-          how much of what you reserved you are actually using — and it is the
-          one a pod list can answer that `kubectl top` cannot. A pod declaring
-          no request has no denominator, so it SAYS SO where the bar would be
-          rather than being metered against something invented for it.
-        -->
-        {#if isVisible('cpu')}
-          {@const cpu = cpuMeter(pod, byLimit)}
-          <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
-            <MeterBar
-              label={pod.cpu}
-              scope="pods"
-              name="CPU"
-              valueWidth="7ch"
-              percent={cpu.percent}
-              measured={pod.hasMetrics}
-              thresholds={cpu.thresholds}
-              absent={cpu.absent}
-              severity={cpu.severity}
-              title={cpuTitle(pod)}
-            />
-          </td>
-        {/if}
-        {#if isVisible('memory')}
-          {@const memory = memoryMeter(pod, byLimit)}
-          <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
-            <MeterBar
-              label={pod.memory}
-              scope="pods"
-              name="Memory"
-              percent={memory.percent}
-              measured={pod.hasMetrics}
-              thresholds={memory.thresholds}
-              absent={memory.absent}
-              severity={memory.severity}
-              title={memoryTitle(pod)}
-            />
-          </td>
-        {/if}
-        {#if isVisible('ready')}
-          <td
-            class="truncate px-3 py-1.5 text-right tabular-nums
-                   {pod.readyContainers === pod.totalContainers
-                     ? 'text-on-surface-variant'
-                     : 'text-warning font-medium'}"
-          >
-            {pod.ready}
-          </td>
-        {/if}
-        {#if isVisible('restarts')}
-          <td
-            class="truncate px-3 py-1.5 text-right tabular-nums
-                   {pod.restarts > 0 ? 'text-warning font-medium' : 'text-on-surface-variant'}"
-          >
-            {pod.restarts}
-          </td>
-        {/if}
-        {#if isVisible('controlledBy')}
-          <td class="truncate px-3 py-1.5 text-on-surface-variant" title={pod.controlledBy}>
-            {pod.controlledBy || '—'}
-          </td>
-        {/if}
-        {#if isVisible('node')}
-          <td class="truncate px-3 py-1.5 text-on-surface-variant" title={pod.nodeName}>
-            {pod.nodeName || '—'}
-          </td>
-        {/if}
-        {#if isVisible('qos')}
-          <td class="truncate px-3 py-1.5 text-on-surface-variant">{pod.qosClass || '—'}</td>
-        {/if}
-        {#if isVisible('ip')}
-          <td class="truncate px-3 py-1.5 text-on-surface-variant" data-selectable>
-            {pod.podIp || '—'}
-          </td>
-        {/if}
-        {#if isVisible('age')}
-          <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
-            {formatAge(pod.ageSeconds)}
-          </td>
-        {/if}
-        <td></td>
-      </tr>
-    {/each}
-  {/snippet}
-</DataTable>
+            THE METER DIVIDES BY THE POD'S REQUEST, not by its limit and not by
+            its node. It is the question the rest of PodSteer is built around —
+            how much of what you reserved you are actually using — and it is the
+            one a pod list can answer that `kubectl top` cannot. A pod declaring
+            no request has no denominator, so it SAYS SO where the bar would be
+            rather than being metered against something invented for it.
+          -->
+          {#if isVisible('cpu')}
+            {@const cpu = cpuMeter(pod, byLimit)}
+            <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
+              <MeterBar
+                label={pod.cpu}
+                scope="pods"
+                name="CPU"
+                valueWidth="7ch"
+                percent={cpu.percent}
+                measured={pod.hasMetrics}
+                thresholds={cpu.thresholds}
+                absent={cpu.absent}
+                severity={cpu.severity}
+                title={cpuTitle(pod)}
+              />
+            </td>
+          {/if}
+          {#if isVisible('memory')}
+            {@const memory = memoryMeter(pod, byLimit)}
+            <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
+              <MeterBar
+                label={pod.memory}
+                scope="pods"
+                name="Memory"
+                percent={memory.percent}
+                measured={pod.hasMetrics}
+                thresholds={memory.thresholds}
+                absent={memory.absent}
+                severity={memory.severity}
+                title={memoryTitle(pod)}
+              />
+            </td>
+          {/if}
+          {#if isVisible('ready')}
+            <td
+              class="truncate px-3 py-1.5 text-right tabular-nums
+                     {pod.readyContainers === pod.totalContainers
+                       ? 'text-on-surface-variant'
+                       : 'text-warning font-medium'}"
+            >
+              {pod.ready}
+            </td>
+          {/if}
+          {#if isVisible('restarts')}
+            <td
+              class="truncate px-3 py-1.5 text-right tabular-nums
+                     {pod.restarts > 0 ? 'text-warning font-medium' : 'text-on-surface-variant'}"
+            >
+              {pod.restarts}
+            </td>
+          {/if}
+          {#if isVisible('controlledBy')}
+            <td class="truncate px-3 py-1.5 text-on-surface-variant" title={pod.controlledBy}>
+              {pod.controlledBy || '—'}
+            </td>
+          {/if}
+          {#if isVisible('node')}
+            <td class="truncate px-3 py-1.5 text-on-surface-variant" title={pod.nodeName}>
+              {pod.nodeName || '—'}
+            </td>
+          {/if}
+          {#if isVisible('qos')}
+            <td class="truncate px-3 py-1.5 text-on-surface-variant">{pod.qosClass || '—'}</td>
+          {/if}
+          {#if isVisible('ip')}
+            <td class="truncate px-3 py-1.5 text-on-surface-variant" data-selectable>
+              {pod.podIp || '—'}
+            </td>
+          {/if}
+          {#if isVisible('age')}
+            <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+              {formatAge(pod.ageSeconds)}
+            </td>
+          {/if}
+          <CustomCells specs={session.customColumns} row={pod} {isVisible} />
+          <RowMenuCell actions={actionsFor(pod)} label={pod.name} />
+        </tr>
+      {/each}
+    {/snippet}
+  </DataTable>
+</div>

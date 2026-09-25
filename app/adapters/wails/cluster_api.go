@@ -1,12 +1,14 @@
 package wails
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
@@ -14,9 +16,9 @@ import (
 
 // ClusterAPI exposes the cluster use cases to the frontend.
 //
-// Wails binds this struct's exported methods as `ClusterAPI.ListClusters()`
-// and so on, generating matching TypeScript. Method names and signatures are
-// therefore public API.
+// Registered as a Wails service, which binds every exported method as
+// `ClusterAPI.ListClusters()` and so on and generates matching TypeScript from
+// the source. Method names and signatures are therefore public API.
 //
 // Every method that touches a cluster takes its id: the UI holds one tab per
 // connected cluster and the backend keeps no notion of which one is in front.
@@ -24,6 +26,23 @@ type ClusterAPI struct {
 	clusters ports.ClusterService
 	app      *App
 	logger   *slog.Logger
+
+	// mu guards connecting.
+	mu sync.Mutex
+	// connecting holds one entry per connect ATTEMPT that is still in the
+	// air, so CancelConnect can stop it. See Connect.
+	connecting map[domain.ClusterID]*connectAttempt
+}
+
+// connectAttempt is one in-flight Connect, and the handle that stops it.
+//
+// A POINTER, AND COMPARED BY IDENTITY when it is removed, because two attempts
+// for the same cluster can overlap: an operator who clicks Connect, cancels,
+// and clicks again before the first call has unwound would otherwise have the
+// FIRST attempt's cleanup delete the SECOND attempt's entry, leaving a
+// connection nothing can cancel.
+type connectAttempt struct {
+	cancel context.CancelFunc
 }
 
 // NewClusterAPI returns the bound cluster API.
@@ -40,9 +59,10 @@ func NewClusterAPI(clusters ports.ClusterService, app *App, logger *slog.Logger)
 	}
 
 	return &ClusterAPI{
-		clusters: clusters,
-		app:      app,
-		logger:   logger.With(slog.String("api", "cluster")),
+		clusters:   clusters,
+		app:        app,
+		logger:     logger.With(slog.String("api", "cluster")),
+		connecting: make(map[domain.ClusterID]*connectAttempt),
 	}, nil
 }
 
@@ -67,6 +87,14 @@ func (c *ClusterAPI) ListClusters() ([]Cluster, error) {
 //
 // Connecting an already open cluster refreshes it rather than failing, so the
 // frontend can call this to reconnect a tab whose credentials expired.
+//
+// EVERY ATTEMPT IS CANCELLABLE AND NONE OF THEM WAIT FOR EACH OTHER. Wails
+// runs each call on its own goroutine, so several clusters were always able to
+// connect at once; what was missing was a way to STOP one. A cluster behind a
+// link that drops packets rather than refusing them takes the full request
+// timeout to fail, and until it did, the operator had a control they could not
+// take back. The attempt is registered here and CancelConnect below is what
+// takes it back.
 func (c *ClusterAPI) Connect(clusterID string) (Cluster, error) {
 	ctx, cancel := c.app.requestContext()
 	defer cancel()
@@ -76,12 +104,59 @@ func (c *ClusterAPI) Connect(clusterID string) (Cluster, error) {
 		return Cluster{}, apiError(c.logger, "Connect", err)
 	}
 
+	attempt := &connectAttempt{cancel: cancel}
+	c.beginConnect(id, attempt)
+	defer c.endConnect(id, attempt)
+
 	cluster, err := c.clusters.Connect(ctx, id)
 	if err != nil {
 		return Cluster{}, apiError(c.logger, "Connect", err)
 	}
 
 	return toCluster(cluster), nil
+}
+
+// CancelConnect stops a connect attempt that is still in the air.
+//
+// NOTHING IN FLIGHT IS NOT AN ERROR. The attempt may have finished between the
+// operator pressing the control and this call arriving — a race the UI should
+// not have to handle, and one where the honest answer is that there is nothing
+// left to stop. Reported the same way Disconnect reports a cluster that is
+// already gone.
+func (c *ClusterAPI) CancelConnect(clusterID string) error {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(c.logger, "CancelConnect", err)
+	}
+
+	c.mu.Lock()
+	attempt := c.connecting[id]
+	c.mu.Unlock()
+
+	if attempt == nil {
+		return nil
+	}
+
+	c.logger.Info("connect cancelled by the operator", slog.String("cluster", id.String()))
+	attempt.cancel()
+	return nil
+}
+
+// beginConnect records an attempt so it can be cancelled.
+func (c *ClusterAPI) beginConnect(id domain.ClusterID, attempt *connectAttempt) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.connecting[id] = attempt
+}
+
+// endConnect forgets an attempt, and ONLY if it is still the current one —
+// see connectAttempt for the overlap this protects against.
+func (c *ClusterAPI) endConnect(id domain.ClusterID, attempt *connectAttempt) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.connecting[id] == attempt {
+		delete(c.connecting, id)
+	}
 }
 
 // Disconnect closes a cluster, for when the operator closes its tab.
@@ -104,6 +179,48 @@ func (c *ClusterAPI) Disconnect(clusterID string) error {
 	}
 
 	return nil
+}
+
+// Ping reports whether a connected cluster is still answering.
+//
+// Returns nothing on success: the caller wants the error or its absence, and
+// handing back the version would invite somebody to display a fact this call
+// makes no promise to keep current.
+func (c *ClusterAPI) Ping(clusterID string) error {
+	ctx, cancel := c.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(c.logger, "Ping", err)
+	}
+
+	if err := c.clusters.Ping(ctx, id); err != nil {
+		return apiError(c.logger, "Ping", err)
+	}
+	return nil
+}
+
+// Distribution is one mark the table can produce, so the frontend can resolve
+// an id it remembered against a context on a previous run.
+type Distribution struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	// Hosted reports a managed control plane — somebody else runs it.
+	Hosted bool `json:"hosted"`
+}
+
+// Distributions returns every mark PodSteer can identify a cluster as.
+//
+// READ ONCE AND CACHED BY THE CALLER. It touches no cluster and no file: the
+// table is compiled into the binary.
+func (c *ClusterAPI) Distributions() ([]Distribution, error) {
+	found := domain.Distributions()
+	out := make([]Distribution, 0, len(found))
+	for _, mark := range found {
+		out = append(out, Distribution{ID: mark.ID, Label: mark.Label, Hosted: mark.Hosted})
+	}
+	return out, nil
 }
 
 // Connections returns the open clusters, in the order they were opened.
@@ -145,7 +262,10 @@ func (c *ClusterAPI) ListNamespaces(clusterID string) ([]Namespace, error) {
 // Separate from ListNamespaces, which feeds the namespace filter and must stay
 // a cheap read of names: this one lists every pod in the cluster to count
 // them, and only the namespace list view is worth that.
-func (c *ClusterAPI) ListNamespaceSummaries(clusterID string) ([]NamespaceSummary, error) {
+//
+// annotationKeys names the annotations each row should carry — the same
+// projection WorkloadAPI.ListPods takes, for the same reason.
+func (c *ClusterAPI) ListNamespaceSummaries(clusterID string, annotationKeys []string, expressions []CustomExpression) ([]NamespaceSummary, error) {
 	ctx, cancel := c.app.requestContext()
 	defer cancel()
 
@@ -154,7 +274,7 @@ func (c *ClusterAPI) ListNamespaceSummaries(clusterID string) ([]NamespaceSummar
 		return nil, apiError(c.logger, "ListNamespaceSummaries", err)
 	}
 
-	summaries, err := c.clusters.ListNamespaceSummaries(ctx, id)
+	summaries, err := c.clusters.ListNamespaceSummaries(ctx, id, projectionFor(annotationKeys, expressions))
 	if err != nil {
 		return nil, apiError(c.logger, "ListNamespaceSummaries", err)
 	}
@@ -164,7 +284,9 @@ func (c *ClusterAPI) ListNamespaceSummaries(clusterID string) ([]NamespaceSummar
 
 // ListNodes returns the nodes of a connected cluster, with usage where the
 // cluster provides metrics.
-func (c *ClusterAPI) ListNodes(clusterID string) ([]Node, error) {
+//
+// annotationKeys is the same projection ListNamespaceSummaries takes.
+func (c *ClusterAPI) ListNodes(clusterID string, annotationKeys []string, expressions []CustomExpression) ([]Node, error) {
 	ctx, cancel := c.app.requestContext()
 	defer cancel()
 
@@ -173,7 +295,7 @@ func (c *ClusterAPI) ListNodes(clusterID string) ([]Node, error) {
 		return nil, apiError(c.logger, "ListNodes", err)
 	}
 
-	nodes, err := c.clusters.ListNodes(ctx, id)
+	nodes, err := c.clusters.ListNodes(ctx, id, projectionFor(annotationKeys, expressions))
 	if err != nil {
 		return nil, apiError(c.logger, "ListNodes", err)
 	}
@@ -234,25 +356,50 @@ func (c *ClusterAPI) AddKubeconfig(raw string) (KubeconfigMerge, error) {
 	return toKubeconfigMerge(merge), nil
 }
 
+// SetReadOnly marks a connected cluster read-only in PodSteer, or lifts the
+// mark.
+//
+// A LOCAL GUARD, NOT A PERMISSION. The frontend calls this right after a
+// successful Connect and again whenever the group setting or the cluster's
+// group changes, and every write in ManagementService refuses while it is
+// set — but the flag lives here, in this process's memory, set by this
+// client. RBAC is what actually decides what the credentials behind this
+// connection may do; see SECURITY.md, "What PodSteer can do".
+func (c *ClusterAPI) SetReadOnly(clusterID string, readOnly bool) error {
+	ctx, cancel := c.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(c.logger, "SetReadOnly", err)
+	}
+
+	if err := c.clusters.SetReadOnly(ctx, id, readOnly); err != nil {
+		return apiError(c.logger, "SetReadOnly", err)
+	}
+	return nil
+}
+
 // ReadKubeconfigFile opens a native file picker and returns what was chosen.
 //
 // The file is read HERE rather than handed to the frontend as a path, because
 // the webview cannot open files — and should not be able to. An empty string
 // means the operator cancelled, which is not an error.
 func (c *ClusterAPI) ReadKubeconfigFile() (string, error) {
-	runtimeCtx, ok := c.app.runtimeContext()
+	wailsApp, ok := c.app.wailsApp()
 	if !ok {
 		return "", apiError(c.logger, "ReadKubeconfigFile",
 			errors.New("the window is not ready"))
 	}
 
-	path, err := wailsruntime.OpenFileDialog(runtimeCtx, wailsruntime.OpenDialogOptions{
-		Title: "Choose a kubeconfig",
-		Filters: []wailsruntime.FileFilter{
+	path, err := wailsApp.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title:          "Choose a kubeconfig",
+		CanChooseFiles: true,
+		Filters: []application.FileFilter{
 			{DisplayName: "Kubeconfig (*.yaml, *.yml, *.conf, config)", Pattern: "*.yaml;*.yml;*.conf;config"},
 			{DisplayName: "All files", Pattern: "*"},
 		},
-	})
+	}).PromptForSingleSelection()
 	if err != nil {
 		return "", apiError(c.logger, "ReadKubeconfigFile", err)
 	}

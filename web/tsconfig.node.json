@@ -8,5 +8,5 @@
     "strict": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "svelte.config.js"]
+  "include": ["vite.config.ts", "svelte.config.js", "src/**/*.node.test.ts"]
 }

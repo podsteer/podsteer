@@ -64,12 +64,12 @@ func NewWorkloadService(deps WorkloadServiceDeps) (*WorkloadService, error) {
 // Sorted by namespace then name so the table is stable between refreshes: the
 // API server returns pods in etcd key order, which shifts as objects come and
 // go and would make rows jump under the cursor.
-func (s *WorkloadService) ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error) {
+func (s *WorkloadService) ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("listing pods: %w", err)
 	}
 
-	pods, err := s.workloads.ListPods(ctx, id, namespace)
+	pods, err := s.workloads.ListPods(ctx, id, namespace, projection)
 	if err != nil {
 		return nil, fmt.Errorf("listing pods in %q of %q: %w", namespace, id, err)
 	}
@@ -88,12 +88,12 @@ func (s *WorkloadService) ListPods(ctx context.Context, id domain.ClusterID, nam
 
 // ListWorkloads returns controllers of the given kind, sorted by namespace
 // then name.
-func (s *WorkloadService) ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error) {
+func (s *WorkloadService) ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Workload, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("listing %ss: %w", kind, err)
 	}
 
-	workloads, err := s.workloads.ListWorkloads(ctx, id, kind, namespace)
+	workloads, err := s.workloads.ListWorkloads(ctx, id, kind, namespace, projection)
 	if err != nil {
 		return nil, fmt.Errorf("listing %ss in %q of %q: %w", kind, namespace, id, err)
 	}
@@ -126,12 +126,15 @@ func (s *WorkloadService) WorkloadConsumption(ctx context.Context, id domain.Clu
 		return nil, fmt.Errorf("reading %s usage: %w", kind, err)
 	}
 
-	workloads, err := s.workloads.ListWorkloads(ctx, id, kind, namespace)
+	// No projection on either read: the sums never look at an annotation,
+	// and the empty projection is what lets these coalesce with the
+	// assessment's own lists in the same tick.
+	workloads, err := s.workloads.ListWorkloads(ctx, id, kind, namespace, domain.Projection{})
 	if err != nil {
 		return nil, fmt.Errorf("listing %ss in %q of %q: %w", kind, namespace, id, err)
 	}
 
-	pods, err := s.workloads.ListPods(ctx, id, namespace)
+	pods, err := s.workloads.ListPods(ctx, id, namespace, domain.Projection{})
 	if err != nil {
 		return nil, fmt.Errorf("listing pods in %q of %q: %w", namespace, id, err)
 	}
@@ -144,7 +147,7 @@ func (s *WorkloadService) WorkloadConsumption(ctx context.Context, id domain.Clu
 		// the ordinary state of a CronJob between runs and a Deployment
 		// scaled to zero, so the two would be indistinguishable. An error
 		// puts a dash and a reason on screen; a silent zero is a lie.
-		found, err := s.workloads.ListWorkloads(ctx, id, hop, namespace)
+		found, err := s.workloads.ListWorkloads(ctx, id, hop, namespace, domain.Projection{})
 		if err != nil {
 			return nil, fmt.Errorf("listing %ss in %q of %q: %w", hop, namespace, id, err)
 		}
@@ -258,7 +261,7 @@ func (s *WorkloadService) ListApplications(ctx context.Context, id domain.Cluste
 
 	objects := make([]domain.ApplicationObject, 0)
 
-	pods, err := s.workloads.ListPods(ctx, id, namespace)
+	pods, err := s.workloads.ListPods(ctx, id, namespace, domain.Projection{})
 	if err != nil {
 		return domain.ApplicationInventory{}, fmt.Errorf(
 			"listing pods in %q of %q: %w", namespace, id, err)
@@ -276,7 +279,7 @@ func (s *WorkloadService) ListApplications(ctx context.Context, id domain.Cluste
 	}
 
 	for _, kind := range domain.WorkloadKinds() {
-		workloads, err := s.workloads.ListWorkloads(ctx, id, kind, namespace)
+		workloads, err := s.workloads.ListWorkloads(ctx, id, kind, namespace, domain.Projection{})
 		if err != nil {
 			// One kind an account may not list must not empty the page: an
 			// application is still found through its other members.
@@ -353,6 +356,49 @@ func (s *WorkloadService) ListPodsOnNode(ctx context.Context, id domain.ClusterI
 		return nil, fmt.Errorf("listing pods on node %q of %q: %w", nodeName, id, err)
 	}
 	return pods, nil
+}
+
+// DrainCandidates returns the pods on a node with the extra facts a drain
+// plan needs.
+//
+// Lives here beside ListPodsOnNode rather than on ManagementService: it is a
+// read, and ManagementAPI's PlanDrain preview borrows it through this
+// service — via the same registry check as every other read here — so a
+// preview asked for after a cluster disconnects fails the same ordinary way
+// a pod list would, rather than reaching an adapter with no client to use.
+func (s *WorkloadService) DrainCandidates(ctx context.Context, id domain.ClusterID, nodeName string) ([]domain.DrainCandidate, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return nil, fmt.Errorf("listing drain candidates: %w", err)
+	}
+
+	candidates, err := s.workloads.DrainCandidates(ctx, id, nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("listing drain candidates on node %q of %q: %w", nodeName, id, err)
+	}
+	return candidates, nil
+}
+
+// RolloutHistory returns the recorded revisions of a Deployment,
+// StatefulSet or DaemonSet's pod template, newest first.
+//
+// Only those three kinds support it, checked HERE rather than left to the
+// adapter — mirroring SetImage's own kind check — so an unsupported kind
+// never costs a round trip to the cluster to be told no.
+func (s *WorkloadService) RolloutHistory(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string) ([]domain.Revision, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return nil, fmt.Errorf("listing rollout history: %w", err)
+	}
+
+	if kind != domain.WorkloadDeployment && kind != domain.WorkloadStatefulSet && kind != domain.WorkloadDaemonSet {
+		return nil, fmt.Errorf("%w: rollout history is only available for Deployments, StatefulSets and DaemonSets, got %s",
+			domain.ErrUnsupportedWorkloadKind, kind)
+	}
+
+	revisions, err := s.workloads.RolloutHistory(ctx, id, kind, namespace, name)
+	if err != nil {
+		return nil, fmt.Errorf("listing rollout history for %s/%s in %q of %q: %w", kind, name, namespace, id, err)
+	}
+	return revisions, nil
 }
 
 // ListPodsForWorkload returns all pods owned by a specific workload.

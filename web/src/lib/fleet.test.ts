@@ -1,0 +1,498 @@
+import { describe, expect, it } from 'vitest'
+import type { K8sEvent, Pod, TableColumn, TableRow, Workload } from './api/client'
+import {
+  fleetRowTarget,
+  flattenFleet,
+  hasClusterTerm,
+  includesCluster,
+  matchesChips,
+  mergeFleet,
+  mergeFleetTable,
+  stripModel,
+  stripScrollState,
+  toggleClusterSelection,
+  toggleClusterTerm,
+  WORKLOAD_CHIPS,
+  type ClusterAnswer,
+  type ClusterRead,
+} from './fleet'
+
+/** A read of one cluster with the given verdict and rows. */
+function read<T>(
+  cluster: string,
+  status: ClusterRead<T>['status'],
+  items: T[] = [],
+  extra: Partial<Pick<ClusterRead<T>, 'reason' | 'missing'>> = {},
+): ClusterRead<T> {
+  return { cluster, status, reason: extra.reason ?? '', missing: extra.missing ?? [], items }
+}
+
+/** A pod with only the fields these rules read. */
+function pod(name: string, namespace = 'default'): Pod {
+  return { name, namespace } as Pod
+}
+
+describe('mergeFleet', () => {
+  it('keeps clusters in the order they answered and stamps nothing itself', () => {
+    const merged = mergeFleet<Pod>(
+      [],
+      [read('prod', 'ok', [pod('api-0')]), read('dev', 'ok', [pod('api-0')])],
+      1_000,
+    )
+
+    expect(merged.map((answer) => answer.cluster)).toEqual(['prod', 'dev'])
+    expect(merged[0]).toMatchObject({ status: 'ok', rowsAt: 1_000, stale: false })
+    expect(merged[0].rows).toEqual([pod('api-0')])
+  })
+
+  it('keeps the rows a slow cluster last showed, marked stale, until it answers', () => {
+    const first = mergeFleet<Pod>([], [read('prod', 'ok', [pod('api-0')])], 1_000)
+    const second = mergeFleet(first, [read('prod', 'slow')], 11_000)
+
+    expect(second[0]).toMatchObject({ status: 'slow', stale: true, rowsAt: 1_000 })
+    expect(second[0].rows).toEqual([pod('api-0')])
+
+    // A late answer with rows replaces them.
+    const third = mergeFleet(second, [read('prod', 'slow', [pod('api-1')])], 21_000)
+    expect(third[0]).toMatchObject({ status: 'slow', stale: false, rowsAt: 21_000 })
+    expect(third[0].rows).toEqual([pod('api-1')])
+  })
+
+  it('keeps the rows an unreachable cluster last showed, marked stale', () => {
+    const first = mergeFleet<Pod>([], [read('prod', 'ok', [pod('api-0')])], 1_000)
+    const second = mergeFleet(
+      first,
+      [read('prod', 'unreachable', [], { reason: 'The cluster did not respond' })],
+      11_000,
+    )
+
+    expect(second[0]).toMatchObject({ status: 'unreachable', stale: true })
+    expect(second[0].rows).toEqual([pod('api-0')])
+  })
+
+  it('shows nothing for a refused or failed cluster, whatever it showed before', () => {
+    const first = mergeFleet<Pod>([], [read('prod', 'ok', [pod('api-0')])], 1_000)
+
+    for (const status of ['forbidden', 'failed'] as const) {
+      const next = mergeFleet(first, [read('prod', status, [], { reason: 'no' })], 11_000)
+      expect(next[0]).toMatchObject({ status, stale: false, rowsAt: null })
+      expect(next[0].rows).toEqual([])
+    }
+  })
+
+  it('is not stale on the first slow read, when there was nothing to keep', () => {
+    const merged = mergeFleet<Pod>([], [read('prod', 'slow')], 1_000)
+    expect(merged[0]).toMatchObject({ status: 'slow', stale: false, rowsAt: null })
+  })
+
+  it('drops a cluster the read no longer includes — its tab closed', () => {
+    const first = mergeFleet<Pod>(
+      [],
+      [read('prod', 'ok', [pod('api-0')]), read('dev', 'ok', [pod('api-0')])],
+      1_000,
+    )
+    const second = mergeFleet(first, [read('prod', 'ok', [pod('api-0')])], 2_000)
+
+    expect(second.map((answer) => answer.cluster)).toEqual(['prod'])
+  })
+
+  it('carries a partial answer with what it is missing', () => {
+    const merged = mergeFleet<Workload>(
+      [],
+      [read('prod', 'partial', [{ name: 'web' } as Workload], { missing: ['CronJob'], reason: 'RBAC' })],
+      1_000,
+    )
+    expect(merged[0]).toMatchObject({ status: 'partial', missing: ['CronJob'], reason: 'RBAC' })
+    expect(merged[0].rows).toHaveLength(1)
+  })
+})
+
+describe('flattenFleet', () => {
+  it('stamps every row with its cluster and keeps cluster order', () => {
+    const answers = mergeFleet<Pod>(
+      [],
+      [read('prod', 'ok', [pod('api-0'), pod('api-1')]), read('dev', 'ok', [pod('api-0')])],
+      0,
+    )
+
+    const rows = flattenFleet(answers)
+    expect(rows.map((row) => `${row.cluster}/${row.namespace}/${row.name}`)).toEqual([
+      'prod/default/api-0',
+      'prod/default/api-1',
+      'dev/default/api-0',
+    ])
+  })
+
+  it('does not lose a cluster whose rows are stale', () => {
+    const first = mergeFleet<Pod>([], [read('prod', 'ok', [pod('api-0')])], 0)
+    const second = mergeFleet(first, [read('prod', 'slow')], 10_000)
+    expect(flattenFleet(second)).toHaveLength(1)
+  })
+})
+
+describe('stripModel', () => {
+  const answer = (
+    status: ClusterAnswer<Pod>['status'],
+    rows: Pod[],
+    overrides: Partial<ClusterAnswer<Pod>> = {},
+  ): ClusterAnswer<Pod> => ({
+    cluster: 'prod',
+    status,
+    reason: '',
+    missing: [],
+    rows,
+    rowsAt: 0,
+    stale: false,
+    ...overrides,
+  })
+
+  it('gives each status its tone and word, in tab order', () => {
+    const strip = stripModel(
+      [
+        answer('ok', [pod('a')]),
+        { ...answer('forbidden', []), cluster: 'dev', rowsAt: null },
+        { ...answer('slow', []), cluster: 'edge', rowsAt: null },
+      ],
+      5_000,
+    )
+
+    expect(strip.map((entry) => entry.cluster)).toEqual(['prod', 'dev', 'edge'])
+    expect(strip[0]).toMatchObject({ tone: 'success', label: 'Read', rows: 1, ageSeconds: 5 })
+    expect(strip[1]).toMatchObject({ tone: 'warning', label: 'Forbidden', rows: 0, ageSeconds: null })
+    expect(strip[2]).toMatchObject({ tone: 'info', label: 'Slow', rows: 0 })
+  })
+
+  it('says why, and how old the rows shown are, in the title', () => {
+    const [refused] = stripModel(
+      [answer('forbidden', [], { reason: 'Your account is not allowed to perform this operation', rowsAt: null })],
+      0,
+    )
+    expect(refused.title).toBe('prod — Your account is not allowed to perform this operation')
+
+    const [slow] = stripModel([answer('slow', [pod('a')], { stale: true, rowsAt: 0 })], 12_000)
+    expect(slow.title).toBe('prod — still reading; showing 1 row from 12s ago')
+
+    const [partial] = stripModel(
+      [answer('partial', [pod('a'), pod('b')], { missing: ['CronJob', 'Job'], reason: 'RBAC' })],
+      0,
+    )
+    expect(partial.title).toBe('prod — 2 rows; CronJob, Job not read: RBAC')
+  })
+})
+
+describe('fleetRowTarget', () => {
+  it('opens a pod as a Pod in its own cluster', () => {
+    const row = { name: 'api-0', namespace: 'shop', cluster: 'prod' } as Pod & { cluster: string }
+    expect(fleetRowTarget('pods', row)).toEqual({
+      cluster: 'prod',
+      kind: 'Pod',
+      name: 'api-0',
+      namespace: 'shop',
+    })
+  })
+
+  it("opens a workload as the row's own kind", () => {
+    const row = { kind: 'CronJob', name: 'nightly', namespace: 'batch', cluster: 'dev' } as Workload & {
+      cluster: string
+    }
+    expect(fleetRowTarget('workloads', row)).toEqual({
+      cluster: 'dev',
+      kind: 'CronJob',
+      name: 'nightly',
+      namespace: 'batch',
+    })
+  })
+
+  it('opens an event as itself, not as the object it is about', () => {
+    const row = {
+      name: 'api-0.17c2',
+      namespace: 'shop',
+      involvedName: 'api-0',
+      cluster: 'prod',
+    } as K8sEvent & { cluster: string }
+    expect(fleetRowTarget('events', row)).toEqual({
+      cluster: 'prod',
+      kind: 'Event',
+      name: 'api-0.17c2',
+      namespace: 'shop',
+    })
+  })
+})
+
+describe('chips', () => {
+  it('OR across the selected chips and pass everything with none selected', () => {
+    const rolling = { isHealthy: true, isRolling: true, suspended: false } as Workload
+    const broken = { isHealthy: false, isRolling: false, suspended: false } as Workload
+    const fine = { isHealthy: true, isRolling: false, suspended: false } as Workload
+
+    expect(matchesChips(fine, WORKLOAD_CHIPS, [])).toBe(true)
+    expect(matchesChips(fine, WORKLOAD_CHIPS, ['unhealthy'])).toBe(false)
+    expect(matchesChips(broken, WORKLOAD_CHIPS, ['unhealthy'])).toBe(true)
+    expect(matchesChips(rolling, WORKLOAD_CHIPS, ['unhealthy', 'rolling'])).toBe(true)
+  })
+})
+
+describe('the cluster: term a strip chip toggles', () => {
+  it('adds the term, then removes exactly it', () => {
+    expect(toggleClusterTerm('', 'prod')).toBe('cluster:prod')
+    expect(toggleClusterTerm('web cluster:prod', 'prod')).toBe('web')
+    expect(toggleClusterTerm('web', 'prod')).toBe('web cluster:prod')
+    expect(hasClusterTerm('web cluster:prod', 'prod')).toBe(true)
+    expect(hasClusterTerm('web cluster:production', 'prod')).toBe(false)
+  })
+
+  it('quotes a name with a space, and parses back as one term', () => {
+    expect(toggleClusterTerm('', 'my cluster')).toBe('cluster:"my cluster"')
+    expect(hasClusterTerm('cluster:"my cluster"', 'my cluster')).toBe(true)
+  })
+})
+
+describe('mergeFleetTable', () => {
+  const column = (name: string, type = 'string'): TableColumn =>
+    ({ name, type, priority: 0, description: '', wide: false }) as TableColumn
+
+  const row = (name: string, cells: string[]): TableRow =>
+    ({ name, namespace: 'shop', cells, labels: {}, annotations: {} }) as TableRow
+
+  const answer = (cluster: string, rows: TableRow[]): ClusterAnswer<TableRow> => ({
+    cluster,
+    status: 'ok',
+    reason: '',
+    missing: [],
+    rows,
+    rowsAt: 1,
+    stale: false,
+  })
+
+  it('keeps every cluster in the first answerer\'s column order', () => {
+    const merged = mergeFleetTable(
+      [answer('a', [row('one', ['one', 'Ready'])]), answer('b', [row('two', ['two', 'Ready'])])],
+      { a: [column('Name'), column('Status')], b: [column('Name'), column('Status')] },
+    )
+
+    expect(merged.columns.map((c) => c.name)).toEqual(['Name', 'Status'])
+    expect(merged.rows.map((r) => r.cluster)).toEqual(['a', 'b'])
+  })
+
+  it('unions a column the second cluster prints and the first does not', () => {
+    // A CRD at two versions prints two different sets, which is the case this
+    // tab exists for.
+    const merged = mergeFleetTable(
+      [answer('old', [row('one', ['one', 'Ready'])]), answer('new', [row('two', ['two', 'Ready', '5m'])])],
+      {
+        old: [column('Name'), column('Status')],
+        new: [column('Name'), column('Status'), column('Age')],
+      },
+    )
+
+    expect(merged.columns.map((c) => c.name)).toEqual(['Name', 'Status', 'Age'])
+    // The older cluster's row has nothing to put there, and says nothing.
+    expect(merged.rows[0].cells).toEqual(['one', 'Ready', ''])
+    expect(merged.rows[1].cells).toEqual(['two', 'Ready', '5m'])
+  })
+
+  it('RE-INDEXES cells rather than trusting their position', () => {
+    // THE TRAP THIS EXISTS FOR. `cells[1]` is Status on one cluster and Age on
+    // the other; a merge that concatenated rows would print an age under
+    // "Status" for half the table and look entirely plausible.
+    const merged = mergeFleetTable(
+      [answer('a', [row('one', ['one', 'Ready', '5m'])]), answer('b', [row('two', ['two', '9m', 'Ready'])])],
+      {
+        a: [column('Name'), column('Status'), column('Age')],
+        b: [column('Name'), column('Age'), column('Status')],
+      },
+    )
+
+    expect(merged.columns.map((c) => c.name)).toEqual(['Name', 'Status', 'Age'])
+    expect(merged.rows[0].cells).toEqual(['one', 'Ready', '5m'])
+    expect(merged.rows[1].cells).toEqual(['two', 'Ready', '9m'])
+  })
+
+  it('drops a cell whose column the cluster did not declare', () => {
+    // A printer that returned more cells than columns is malformed; the extra
+    // has no heading to sit under and is not invented one.
+    const merged = mergeFleetTable([answer('a', [row('one', ['one', 'Ready', 'extra'])])], {
+      a: [column('Name'), column('Status')],
+    })
+
+    expect(merged.rows[0].cells).toEqual(['one', 'Ready'])
+  })
+
+  it('answers empty for clusters that contributed nothing', () => {
+    const merged = mergeFleetTable([answer('a', [])], { a: [] })
+    expect(merged).toEqual({ columns: [], rows: [] })
+  })
+
+  it('keeps a cluster whose rows are stale, with its own columns', () => {
+    // A slow cluster shows what it last had; its columns are what it last
+    // printed, which is what those cells are positioned against.
+    const stale: ClusterAnswer<TableRow> = {
+      ...answer('slow', [row('kept', ['kept', 'Ready'])]),
+      status: 'slow',
+      stale: true,
+    }
+    const merged = mergeFleetTable([answer('a', [row('one', ['one', 'Ready'])]), stale], {
+      a: [column('Name'), column('Status')],
+      slow: [column('Name'), column('Status')],
+    })
+
+    expect(merged.rows.map((r) => r.name)).toEqual(['one', 'kept'])
+  })
+})
+
+describe('selecting which clusters the merged table shows', () => {
+  const open = ['alpha', 'beta', 'gamma']
+
+  it('shows every cluster when nothing is selected', () => {
+    // The resting state, and the one an operator already has: no chip
+    // pressed, every cluster in the table.
+    expect(includesCluster([], 'alpha')).toBe(true)
+    expect(includesCluster([], 'anything')).toBe(true)
+  })
+
+  it('isolates the first cluster pressed', () => {
+    expect(toggleClusterSelection([], 'beta', open)).toEqual(['beta'])
+    expect(includesCluster(['beta'], 'beta')).toBe(true)
+    expect(includesCluster(['beta'], 'alpha')).toBe(false)
+  })
+
+  it('ADDS the second, which is the bug this closes', () => {
+    // Through the search box this produced `cluster:beta cluster:gamma`,
+    // ANDed by the query language, matching no row — while both chips
+    // rendered pressed over the empty table.
+    const both = toggleClusterSelection(['beta'], 'gamma', open)
+
+    expect(both).toEqual(['beta', 'gamma'])
+    expect(includesCluster(both, 'beta')).toBe(true)
+    expect(includesCluster(both, 'gamma')).toBe(true)
+    expect(includesCluster(both, 'alpha')).toBe(false)
+  })
+
+  it('removes one that is pressed again', () => {
+    expect(toggleClusterSelection(['beta', 'gamma'], 'gamma', open)).toEqual(['beta'])
+  })
+
+  it('collapses to nothing when every cluster is selected', () => {
+    // "All of them" and "none of them" show the same table, so they must not
+    // be two states that look different — every chip lit means the same rows
+    // as no chip lit, and the unlit row is the honest one.
+    expect(toggleClusterSelection(['alpha', 'beta'], 'gamma', open)).toEqual([])
+  })
+
+  it('drops a cluster whose tab was closed', () => {
+    // Its chip is gone and its rows with it; leaving the id in would filter
+    // the table down to a cluster that is no longer there.
+    expect(toggleClusterSelection(['alpha', 'beta'], 'beta', ['alpha', 'gamma'])).toEqual(['alpha'])
+  })
+
+  it('leaves a typed cluster: term alone', () => {
+    // The search box keeps its own narrowing; the chips no longer write to
+    // it, so the two never fight over the same string.
+    expect(hasClusterTerm('web cluster:prod', 'prod')).toBe(true)
+    expect(toggleClusterSelection([], 'prod', ['prod'])).toEqual([])
+  })
+})
+
+describe('the strip that scrolls instead of wrapping', () => {
+  it('says nothing is hidden when everything fits', () => {
+    const state = stripScrollState({ scrollWidth: 400, clientWidth: 400, scrollLeft: 0 })
+
+    expect(state).toEqual({ overflowing: false, atStart: true, atEnd: true })
+  })
+
+  it('reports more to the right when parked at the left', () => {
+    const state = stripScrollState({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 0 })
+
+    expect(state).toEqual({ overflowing: true, atStart: true, atEnd: false })
+  })
+
+  it('reports both directions in the middle', () => {
+    const state = stripScrollState({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 300 })
+
+    expect(state).toEqual({ overflowing: true, atStart: false, atEnd: false })
+  })
+
+  it('reports the end reached', () => {
+    const state = stripScrollState({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 800 })
+
+    expect(state.atEnd).toBe(true)
+    expect(state.atStart).toBe(false)
+  })
+
+  it('tolerates a fractional scroll position', () => {
+    // A trackpad and a non-integer device pixel ratio both produce these. An
+    // exact comparison leaves an arrow pointing at nothing on a strip that
+    // has in fact scrolled all the way back.
+    expect(stripScrollState({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 0.4 }).atStart).toBe(
+      true,
+    )
+    expect(
+      stripScrollState({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 799.6 }).atEnd,
+    ).toBe(true)
+  })
+
+  it('treats a sub-pixel difference as fitting', () => {
+    // Rounding inside the layout engine, not a chip hidden off the edge.
+    const state = stripScrollState({ scrollWidth: 400.5, clientWidth: 400, scrollLeft: 0 })
+
+    expect(state.overflowing).toBe(false)
+  })
+})
+
+describe('a chip for a cluster that is not answering', () => {
+  const answered = (cluster: string, rows: number): ClusterAnswer<string> => ({
+    cluster,
+    status: 'ok',
+    reason: '',
+    missing: [],
+    rows: Array.from({ length: rows }, (_, index) => `row-${index}`),
+    rowsAt: 1_000_000,
+    stale: false,
+  })
+
+  it('reports ok when nothing says otherwise', () => {
+    const [chip] = stripModel([answered('dev', 188)], 1_000_000)
+
+    expect(chip?.status).toBe('ok')
+    expect(chip?.stale).toBe(false)
+  })
+
+  it('OVERRIDES a confident read from a cluster nothing can reach', () => {
+    // THE BUG. On a watched kind the backend answers from an in-memory store
+    // without touching the network, so a cluster whose VPN had gone away kept
+    // returning `188` with an ok verdict — a green chip and a confident count
+    // for a cluster that was not there.
+    const [chip] = stripModel([answered('dev', 188)], 1_000_000, new Set(['dev']))
+
+    expect(chip?.status).toBe('unreachable')
+    expect(chip?.tone).toBe('error')
+    expect(chip?.rows).toBe(188)
+    expect(chip?.stale).toBe(true)
+  })
+
+  it('claims no age for rows whose age nobody knows', () => {
+    // A read served from a store is stamped with the moment it was served,
+    // so "0s ago" would be the store's answer rather than the cluster's.
+    const [chip] = stripModel([answered('dev', 188)], 1_000_000, new Set(['dev']))
+
+    expect(chip?.ageSeconds).toBeNull()
+    expect(chip?.title).toContain('read before it stopped')
+  })
+
+  it('does not claim stale rows when there are none', () => {
+    const [chip] = stripModel([{ ...answered('dev', 0) }], 1_000_000, new Set(['dev']))
+
+    expect(chip?.stale).toBe(false)
+    expect(chip?.title).toBe('dev — not answering')
+  })
+
+  it('leaves the clusters that are answering alone', () => {
+    const chips = stripModel(
+      [answered('dev', 188), answered('prod', 84)],
+      1_000_000,
+      new Set(['dev']),
+    )
+
+    expect(chips.map((chip) => chip.status)).toEqual(['unreachable', 'ok'])
+  })
+})

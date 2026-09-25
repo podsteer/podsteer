@@ -22,6 +22,17 @@ type ClusterService interface {
 	// connected cluster is not an error — it refreshes it.
 	Connect(ctx context.Context, id domain.ClusterID) (domain.Cluster, error)
 
+	// Ping asks a connected cluster whether it is still answering.
+	//
+	// THE ONE READ THAT PROVES CONTACT AND COSTS ALMOST NOTHING. It reads
+	// /version: no RBAC applies to it, it returns a few dozen bytes, and it
+	// cannot be served from a watch store — which every list on a watched
+	// cluster can, so a list that succeeds says nothing about the network.
+	// It exists for the tabs that are not in front: their views are not
+	// mounted and therefore do not poll, so without this a cluster that went
+	// away is discovered only when somebody clicks its tab.
+	Ping(ctx context.Context, id domain.ClusterID) error
+
 	// Disconnect closes a connection and releases everything cached for it.
 	Disconnect(ctx context.Context, id domain.ClusterID) error
 
@@ -33,11 +44,13 @@ type ClusterService interface {
 	ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error)
 
 	// ListNamespaceSummaries returns the same namespaces with what is running
-	// in each — the list view, where ListNamespaces serves the filter.
-	ListNamespaceSummaries(ctx context.Context, id domain.ClusterID) ([]domain.NamespaceSummary, error)
+	// in each — the list view, where ListNamespaces serves the filter. Each
+	// carries the annotations projection asks for; see domain.Projection.
+	ListNamespaceSummaries(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.NamespaceSummary, error)
 
-	// ListNodes returns the nodes of a connected cluster.
-	ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error)
+	// ListNodes returns the nodes of a connected cluster, each carrying the
+	// annotations projection asks for.
+	ListNodes(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Node, error)
 
 	// PreviewKubeconfig reports what adding raw to the kubeconfig would
 	// change, without touching the file.
@@ -45,6 +58,16 @@ type ClusterService interface {
 
 	// AddKubeconfig adds raw to the kubeconfig and reports what changed.
 	AddKubeconfig(ctx context.Context, raw string) (domain.KubeconfigMerge, error)
+
+	// SetReadOnly marks a connected cluster read-only, or lifts the mark.
+	//
+	// The policy originates on the client: OrganiseDialog's toggle calls this
+	// right after Connect succeeds, and again whenever the group setting or
+	// the cluster's group changes. It is a guard against the frontend's own
+	// bugs, never a permission — see ports.ErrReadOnly, which every write in
+	// ManagementService returns while the mark is set. Fails with
+	// domain.ErrClusterNotConnected wrapped if id is not currently open.
+	SetReadOnly(ctx context.Context, id domain.ClusterID, readOnly bool) error
 }
 
 // NavigationService describes what a connected cluster can show.
@@ -61,11 +84,13 @@ type NavigationService interface {
 // WorkloadService is the use-case surface for reading workloads.
 type WorkloadService interface {
 	// ListPods returns pods in the given namespace of a connected cluster,
-	// enriched with metrics where the cluster provides them.
-	ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Pod, error)
+	// enriched with metrics where the cluster provides them, each carrying
+	// the annotations projection asks for — see domain.Projection.
+	ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error)
 
-	// ListWorkloads returns controllers of the given kind.
-	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) ([]domain.Workload, error)
+	// ListWorkloads returns controllers of the given kind, each carrying the
+	// annotations projection asks for.
+	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Workload, error)
 
 	// PodGraph returns the dependency chain around one pod, from whatever
 	// routes to it down to its containers and what it consumes.
@@ -82,6 +107,23 @@ type WorkloadService interface {
 
 	// ListPodsForWorkload returns all pods owned by a specific workload.
 	ListPodsForWorkload(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) ([]domain.Pod, error)
+
+	// RolloutHistory returns the recorded revisions of a Deployment,
+	// StatefulSet or DaemonSet's pod template, newest first. Only those
+	// three kinds carry a rollout history; any other kind is refused with
+	// domain.ErrUnsupportedWorkloadKind before the port below is reached.
+	RolloutHistory(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, name string) ([]domain.Revision, error)
+
+	// DrainCandidates returns the pods on a node with the extra facts a
+	// drain plan needs. See WorkloadPort.DrainCandidates.
+	//
+	// Lives here rather than on ManagementService: it is a read like
+	// ListPodsOnNode beside it, not a write, and ManagementAPI borrows it —
+	// through this service, not the outbound port directly, so a drain
+	// preview fails the same way every other read does against a cluster
+	// that has since been disconnected — to build the preview PlanDrain
+	// shows before a drain runs.
+	DrainCandidates(ctx context.Context, id domain.ClusterID, nodeName string) ([]domain.DrainCandidate, error)
 
 	// WorkloadUsage sums what a controller's pods are consuming, against what
 	// they reserved and what they will be stopped at.
@@ -103,11 +145,45 @@ type WorkloadService interface {
 // EventService is the use-case surface for reading Kubernetes Events.
 type EventService interface {
 	// ListEvents returns events most-recent first, since an event list is
-	// almost always read from the top.
-	ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Event, error)
+	// almost always read from the top, each carrying the annotations
+	// projection asks for.
+	ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Event, error)
 
 	// ListEventsForResource returns events for a specific resource.
 	ListEventsForResource(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind, name string) ([]domain.Event, error)
+}
+
+// FleetService is the use-case surface for reading across several open
+// clusters at once — the merged Pods, Workloads and Events tables.
+//
+// Every read answers PER CLUSTER and never fails because one cluster did: a
+// refused, unreachable or slow cluster is reported in its own ClusterRead
+// beside the others' rows, so the table renders whatever did answer. The one
+// error is naming a cluster that is not open, which fails the whole call with
+// domain.ErrClusterNotConnected wrapped — the caller asked for something that
+// does not exist. Results follow the registry's tab order whatever order the
+// ids came in, and a repeated id is read once.
+//
+// Each cluster's share is the same read its own tab makes, through
+// WorkloadService and EventService, so the adapter's read cache coalesces a
+// fleet read with the tab's poll when the two land in the same tick.
+type FleetService interface {
+	// ListPods lists pods in the given namespace of each cluster.
+	ListPods(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Pod], error)
+
+	// ListWorkloads lists every controller kind in domain.FleetWorkloadKinds
+	// in the given namespace of each cluster. A cluster that refuses some
+	// kinds and serves others is reported Partial, naming the kinds missing.
+	ListWorkloads(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Workload], error)
+
+	// ListEvents lists events in the given namespace of each cluster.
+	ListEvents(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Event], error)
+
+	// ListTable lists one arbitrary kind, named by its GROUP and RESOURCE
+	// rather than by a kind id, in the given namespace of each cluster. A
+	// cluster that does not serve the kind answers Unserved, which is an
+	// ordinary answer and not a failure.
+	ListTable(ctx context.Context, ids []domain.ClusterID, group, resource string, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.ResourceTable], error)
 }
 
 // OverviewService is the use-case surface for the cluster dashboard.
@@ -124,6 +200,15 @@ type OverviewService interface {
 	// returned as an error. An error means the whole assessment failed, which
 	// in practice means the cluster is not connected.
 	Overview(ctx context.Context, id domain.ClusterID) (domain.Overview, error)
+
+	// OverviewForTarget assesses a connected cluster the same way, but scores
+	// the upgrade-impact findings against a specific Kubernetes minor rather
+	// than the default of the next one after the cluster's current version —
+	// what the overview's "check against" selector asks for. targetMinor is
+	// e.g. "1.33"; an unparseable or out-of-range one degrades to no
+	// upgrade-impact findings rather than an error, the same way an unknown
+	// version degrades everywhere else in this package.
+	OverviewForTarget(ctx context.Context, id domain.ClusterID, targetMinor string) (domain.Overview, error)
 }
 
 // HistoryService is the use-case surface for a cluster's recorded history.
@@ -152,11 +237,129 @@ type HistoryService interface {
 	SetSamplingInterval(interval time.Duration) error
 }
 
+// RBACService is the use-case surface for the RBAC explorer.
+//
+// Three questions, three calls, and every one of them a read that runs
+// because somebody pressed something — none of it is on the refresh tick, and
+// none of it is cached. An allow or deny decision must never be shown from a
+// previous instant: a permission revoked a minute ago has to stop reading as
+// granted, which a cached answer cannot promise.
+//
+// The statuses on the returned values do the work an error would otherwise
+// do badly. An account not permitted to ask a review is the ordinary case
+// here rather than an exceptional one, and it is reported in the result so
+// the rest of the panel still renders — the same shape domain.MetricsStatus
+// gives the overview.
+type RBACService interface {
+	// SubjectRules answers "what can this kubeconfig actually do here" for
+	// one namespace of a connected cluster.
+	SubjectRules(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.SubjectRules, error)
+
+	// CanI answers one access review, for the current account or for a named
+	// user, group or service account.
+	//
+	// The API server's own allowed, denied and reason are carried across
+	// verbatim. Refuses with domain.ErrInvalidAccessRequest, wrapped, when
+	// the request names no verb or nothing to act on, before any request
+	// reaches the cluster.
+	CanI(ctx context.Context, id domain.ClusterID, request domain.AccessRequest) (domain.AccessDecision, error)
+
+	// InspectRole reads one Role or ClusterRole, finds the bindings that
+	// reference it, and assesses what its rules permit.
+	//
+	// ONE CALL FOR THE WHOLE PANEL — the role, two binding lists and the
+	// assessment — so opening it is a bounded, countable three requests
+	// rather than a fan-out that grows with the cluster. The role and the
+	// bindings report separately: an account may read a ClusterRole without
+	// being able to list the bindings to it, and one refusal must not blank
+	// the half that answered.
+	InspectRole(ctx context.Context, id domain.ClusterID, target domain.RoleTarget) (domain.RoleInspection, error)
+}
+
+// HelmService is the use-case surface for the Helm page.
+//
+// ONE READ, AND IT IS NOT ON THE REFRESH TICK. The list is made when the page
+// is opened, when somebody presses Refresh, and after a write PodSteer itself
+// made — never on a timer. That is a product rule as much as a performance
+// one: a `list secrets` every ten seconds for as long as a page is left open
+// is the audit signature ADR 6 exists to avoid, with the bytes removed and
+// the pattern intact.
+//
+// Being refused is an ordinary answer here rather than a fault, and more so
+// than anywhere else in the application: many engineers deliberately hold no
+// Secret access at all, and a metadata read does not help them because the
+// metadata client narrows the RESPONSE and not the verb. So a 403 becomes a
+// domain.HelmListStatus on the result rather than an error on the call, and
+// the pane says which of "you may not list Secrets here" and "Helm has
+// installed nothing here" happened — the two must never collapse.
+type HelmService interface {
+	// ListReleases returns what Helm has installed, in one namespace or
+	// cluster-wide when the namespace selects every namespace.
+	//
+	// The freshness of the answer is stated on it (domain.HelmListing.ListedAt)
+	// because the adapter caches it for minutes: a cached answer that does
+	// not say how old it is is a cache that lies. refresh is what the page's
+	// own Refresh control sets, and it is the ONLY thing that sets it — it
+	// bypasses that cache for one call, which is what makes the stated age
+	// beside it actionable rather than decorative.
+	ListReleases(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, refresh bool) (domain.HelmListing, error)
+
+	// ReadRelease reads ONE revision of ONE release, because somebody
+	// clicked.
+	//
+	// THE SECOND ACT OF THIS FEATURE AND A COMPLETELY DIFFERENT ONE FROM THE
+	// FIRST. ListReleases transfers no Secret contents at all; this reads a
+	// release payload whole, which is the act ADR 3 governs — so it is
+	// shaped exactly like RevealSecretKey: explicit, per-revision, never on
+	// render, never on a tick, and audited by cluster, namespace, release
+	// and revision with no value in the line.
+	//
+	// The rendered manifest arrives with its Secret documents already
+	// masked. The VALUES and the NOTES do not: a chart puts a password in
+	// its values and nothing here can know which key that is, so the caller
+	// owes both of them the re-hideable, expiring, hidden-on-blur reveal the
+	// doctrine requires — notes included, because a NOTES template is
+	// rendered from the same values and routinely prints one back.
+	ReadRelease(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, release string, revision int) (domain.HelmReleaseDetail, error)
+}
+
+// InspectService is the use-case surface for the on-request inspections: a
+// reachability probe, and a container image report.
+//
+// EVERY METHOD HERE IS THE CONSEQUENCE OF A BUTTON, and nothing on this
+// surface may ever be called by the refresh tick — see ports.InspectPort,
+// where the same rule is stated for the driven side, and BrowseAPI.ObjectGraph
+// for the precedent. A probe opens a socket or runs a command in somebody's
+// container; a repeated one would be a stream of execs in an audit log nobody
+// asked for.
+type InspectService interface {
+	// ProbeFromHere probes subject from THIS MACHINE, through the API server
+	// named in the kubeconfig and through nothing else. Refuses with a
+	// domain.ErrProbe… sentinel when the subject cannot be probed from here —
+	// an Ingress host, a headless Service, a UDP port — each of which is a
+	// fact the caller renders where a result would have gone.
+	ProbeFromHere(ctx context.Context, id domain.ClusterID, subject domain.ProbeSubject) (domain.ProbeResult, error)
+
+	// ProbeFromPod probes subject from inside a container the operator chose,
+	// as one bounded exec. Refused on a cluster marked read-only, and audited
+	// by cluster, namespace, pod, container and target — never by output.
+	// Wraps ErrProbeToolMissing when the container has nothing to probe with.
+	ProbeFromPod(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string, subject domain.ProbeSubject) (domain.ProbeResult, error)
+
+	// ImageReport describes one container's image using only what Kubernetes
+	// reports: the resolved reference and digest, the size and names recorded
+	// by the node that pulled it, and whether the pull needed credentials. It
+	// reads no registry and no pull Secret, and the report says so — see
+	// domain.ImageDetailBounded.
+	ImageReport(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, podName, containerName string) (domain.ImageReport, error)
+}
+
 // ResourceService is the use-case surface for the generic browsing path.
 type ResourceService interface {
 	// ListTable returns objects of the given kind as a table. The kind is
 	// named by its ResourceKind.ID, which is what the navigator hands back.
-	ListTable(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName) (domain.ResourceTable, error)
+	// Each row carries its labels and the annotations projection asks for.
+	ListTable(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, projection domain.Projection) (domain.ResourceTable, error)
 
 	// NamespaceInventory reports what one namespace holds, kind by kind.
 	//
@@ -169,6 +372,152 @@ type ResourceService interface {
 	// GetManifest returns one object as YAML.
 	GetManifest(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, name string, revealSecrets bool) (string, error)
 
+	// ObjectGraph returns the neighbourhood of one object of ANY kind: the
+	// subject in the middle, what its spec names below it, what owns it above.
+	//
+	// The third map shape, beside a pod's chain and a workload's fan. Those
+	// two stay separate because the subject decides the structure; this one
+	// covers everything the generic table lists — a Service, a ConfigMap, a
+	// PVC, a CRD instance — where the only structure that holds is "some
+	// objects are named by this one and some name it".
+	ObjectGraph(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, name string) (domain.PodGraph, error)
+
 	// RevealSecretKey returns one decoded Secret value, on explicit request.
 	RevealSecretKey(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name, key string) (string, error)
+
+	// InspectTLSSecret returns one Secret's parsed certificate chain, on
+	// explicit request — the certificate equivalent of RevealSecretKey.
+	InspectTLSSecret(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (domain.CertificateChain, error)
+
+	// VulnerabilitySummaries returns what a vulnerability scanner already
+	// running in the cluster has recorded about one namespace's workloads.
+	//
+	// An empty answer is the ordinary one — most clusters run no scanner —
+	// and is never an error. See ports.ResourcePort for why this is not part
+	// of any list call.
+	VulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.VulnerabilityListing, error)
+}
+
+// SettingsService is the use-case surface for the backend-owned settings.
+//
+// Deliberately NOT a generic "write this settings value" call. Each method
+// changes one thing, and each is a read-modify-write inside the store's lock,
+// so two panes changing two different settings cannot each write a whole
+// document and have the second discard the first. It is also what keeps the
+// bound surface honest: there is no method here that could carry an object
+// name or a credential into the file, because there is no method here that
+// takes a whole document.
+type SettingsService interface {
+	// State reports where the settings live and whether a change made now
+	// would reach the disk. The pane shows this as one line when it says
+	// anything but "writable".
+	State(ctx context.Context) (domain.SettingsState, error)
+
+	// KubeconfigSources reports the composed loading list in precedence
+	// order, each entry carrying where it came from, whether it is present,
+	// and which contexts it contributed.
+	KubeconfigSources(ctx context.Context) ([]domain.KubeconfigEntry, error)
+
+	// AddKubeconfigSource appends a file or folder to the operator's own
+	// source list. A path already listed is not added twice.
+	AddKubeconfigSource(ctx context.Context, source domain.KubeconfigSource) error
+
+	// RemoveKubeconfigSource drops the source with the given path. Removing
+	// one that is not there succeeds: the list ends up as asked.
+	RemoveKubeconfigSource(ctx context.Context, path string) error
+
+	// MoveKubeconfigSource shifts a source by delta places within the list,
+	// clamped to its ends. Order is precedence, so this is the control that
+	// decides which of two sources defining the same context name wins.
+	MoveKubeconfigSource(ctx context.Context, path string, delta int) error
+
+	// Cluster reports one cluster's per-cluster switches, defaults included.
+	//
+	// TOTAL: a cluster with no stored entry reports the defaults rather than
+	// an error or an empty value, because that is what having no entry means.
+	// A caller can therefore act on the answer without deciding what absence
+	// implies — which for a setting that governs whether anything is sent to
+	// a monitoring stack is the difference between off and undefined.
+	Cluster(ctx context.Context, id domain.ClusterID) (domain.ClusterSettings, error)
+
+	// SetMetricsQuery records whether a discovered monitoring backend may be
+	// queried for one cluster, which one answers, and on what terms.
+	//
+	// THERE IS DELIBERATELY NO SetNodeHistory BESIDE IT. Turning node history
+	// off erases the node history already recorded, so the setting and the
+	// prune are one act and belong on HistoryService, where SetRetention
+	// already pairs the two. A setter here would be a way to change the
+	// policy without the erasure it implies.
+	SetMetricsQuery(ctx context.Context, id domain.ClusterID, query domain.MetricsQuerySettings) error
+
+	// SetProxy records the proxy PodSteer's own outbound calls go through,
+	// and releases the cached clients so it applies to the clusters already
+	// open rather than only to the next one.
+	//
+	// REFUSES rather than normalises: this is the interface's write path, and
+	// a URL that carries credentials is refused outright rather than written
+	// to a file.
+	SetProxy(ctx context.Context, proxy domain.ProxySettings) error
+
+	// Proxy reports the proxy setting as it currently stands, so the pane can
+	// open on what is in force rather than on a default it guessed.
+	Proxy(ctx context.Context) (domain.ProxySettings, error)
+}
+
+// MetricsQueryUseCase answers a chart's request for a longer series out of a
+// monitoring backend the cluster already runs.
+//
+// THE FIRST INBOUND PORT THAT SENDS SOMETHING PODSTEER COMPOSED TO A SYSTEM
+// THAT IS NOT THE API SERVER'S OWN OBJECT STORE, and it is a port of its own
+// for that reason rather than a method on the history service beside it. The
+// two answer the same question about a cluster and are emphatically not
+// interchangeable: one is PodSteer's own record, derived from the overview,
+// and the other is somebody else's measurement taken at somebody else's
+// interval. A caller holding both interfaces cannot accidentally treat one as
+// a continuation of the other.
+//
+// NOTHING HERE MAY BE CALLED FROM A REFRESH TICK. That is a rule about
+// callers and it is stated on the port because the port is where a new caller
+// reads what it is allowed to do: a query happens when somebody opens a chart,
+// changes its range, or presses the control — the same shape
+// BrowseAPI.ObjectGraph and the reachability probes already have.
+type MetricsQueryUseCase interface {
+	// Series answers for one metric at one scope over a window.
+	//
+	// A STATUS, NOT AN ERROR, for every outcome that is a fact about
+	// somebody's cluster: not enabled, nothing discovered, forbidden,
+	// unreachable, rejected, too large, unverified, answered, and —
+	// separately from answered — answered with no matching series. An error
+	// is returned only when the request could not be shaped at all.
+	Series(
+		ctx context.Context,
+		id domain.ClusterID,
+		metric domain.MetricID,
+		scope domain.MetricScope,
+		window time.Duration,
+	) (domain.BackendSeriesResult, error)
+}
+
+// VendorCLIService is what the frontend asks about cloud CLIs.
+//
+// THE FRONTEND NEVER SENDS A CLUSTER NAME BACK. It chooses by an opaque id the
+// last listing issued, and the service turns that into the cluster the CLI
+// itself printed. That is stronger than validating what came back, because
+// there is nothing to validate: a selection the service never issued, or one
+// from a listing since superseded, is refused rather than checked.
+type VendorCLIService interface {
+	// Providers reports the CLIs in the table and whether each is installed.
+	Providers(ctx context.Context) []domain.VendorCLIStatus
+
+	// ListClusters asks one CLI what it can see, and remembers the answer so
+	// a selection can be made against it.
+	ListClusters(ctx context.Context, provider string) (domain.VendorClusterList, error)
+
+	// KubeconfigFor has the CLI write an entry for a cluster the last listing
+	// issued, and returns the text — which the caller then adds through the
+	// same path as a pasted kubeconfig.
+	KubeconfigFor(ctx context.Context, provider, selection string) (string, error)
+
+	// Cancel stops a listing or a write that is still running.
+	Cancel(ctx context.Context, provider string) error
 }

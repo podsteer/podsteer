@@ -22,6 +22,8 @@
   import type { Snippet } from 'svelte'
   import { preferences } from '$stores/preferences.svelte'
   import { ChevronRight } from '@lucide/svelte'
+  import HelpButton from './HelpButton.svelte'
+  import type { HelpTopicId } from '$lib/help'
 
   interface Props {
     /** Names what the section holds. */
@@ -72,6 +74,16 @@
      * expanded.
      */
     onopen?: () => void
+    /**
+     * A help topic for the (?) beside the heading, for a section whose rules
+     * are not self-evident from its rows.
+     *
+     * Most sections need none: a list of labels and values explains itself.
+     * The ones that do are the ones where what is NOT shown carries meaning —
+     * a masked Secret value, a figure measured somewhere unexpected — and for
+     * those the panel used to grow a paragraph. See $lib/help.
+     */
+    help?: HelpTopicId
     children: Snippet
   }
 
@@ -82,6 +94,7 @@
     hint = '',
     level = 'h4',
     onopen,
+    help: topic,
     children,
   }: Props = $props()
 
@@ -100,13 +113,21 @@
     the target. A chevron-sized hit area on a row this wide is a control that
     is technically present and practically missed.
   -->
+  <!--
+    The heading is a row, not a single control, so a section that carries help
+    can put the (?) at the end of the same line. The fold button keeps the
+    whole remaining width: a chevron-sized hit area on a row this wide is a
+    control that is technically present and practically missed, and that is
+    the reason the button wraps the heading in the first place.
+  -->
+  <div class="flex items-baseline gap-1 border-b border-outline-variant/40 pb-1.5">
   <svelte:element this={level} class="contents">
     <button
       type="button"
       onclick={() => preferences.setSectionOpen(id, !open)}
       aria-expanded={open}
-      class="group flex w-full items-baseline gap-2 border-b border-outline-variant/40 pb-1.5
-             text-left text-title-medium font-semibold text-on-surface"
+      class="group flex min-w-0 flex-1 items-baseline gap-2 text-left text-title-medium
+             font-semibold text-on-surface"
     >
       <ChevronRight
         class="size-4 shrink-0 self-center text-on-surface-variant transition-transform
@@ -125,14 +146,22 @@
           that difference, not a number somebody liked.
         -->
         <span
-          class="ml-auto shrink-0 pr-[3px] pl-3 text-body-medium font-normal
-                 text-on-surface-variant/70"
+          class="ml-auto shrink-0 pl-3 text-body-medium font-normal text-on-surface-variant/70
+                 {topic ? '' : 'pr-[3px]'}"
         >
           {hint}
         </span>
       {/if}
     </button>
   </svelte:element>
+
+  {#if topic}
+    <!-- A SIBLING OF THE FOLD BUTTON, NEVER INSIDE IT: a button within a
+         button is invalid markup and the inner one never receives the
+         click. -->
+    <HelpButton topic={topic} about={title} />
+  {/if}
+  </div>
 
   {#if open}
     {@render children()}

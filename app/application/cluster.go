@@ -56,6 +56,32 @@ type ClusterInvalidator interface {
 	Invalidate(id domain.ClusterID)
 }
 
+// Invalidators fans one invalidation out to several holders, in order.
+//
+// A DISCONNECT HAS MORE THAN ONE THING TO RELEASE, and they are not all in
+// the adapter: the Kubernetes adapter holds the clients, the watch and the
+// per-cluster caches, and OverviewService holds the last assessment. Both are
+// stale in exactly the same way and for exactly the same reason — a
+// kubeconfig context routinely gets re-pointed at a different cluster between
+// a disconnect and the reconnect — so both are released from the one hook
+// Disconnect already calls, rather than by a second hook somebody has to
+// remember to add a service to.
+//
+// Composed once, in the composition root, and never mutated afterwards: a
+// slice appended to after the application is running would be read from
+// Disconnect while it grew.
+type Invalidators []ClusterInvalidator
+
+// Invalidate releases id from every holder. A nil member is skipped, so a
+// service that was not wired costs the caller no branch of its own.
+func (is Invalidators) Invalidate(id domain.ClusterID) {
+	for _, invalidator := range is {
+		if invalidator != nil {
+			invalidator.Invalidate(id)
+		}
+	}
+}
+
 type ClusterService struct {
 	kubeconfig  ports.KubeconfigPort
 	cluster     ports.ClusterPort
@@ -134,10 +160,20 @@ func (s *ClusterService) ListClusters(ctx context.Context) ([]domain.Cluster, er
 
 	// Report clusters already open as reachable, carrying the version they
 	// reported, so the picker distinguishes open from merely configured.
+	//
+	// AND IDENTIFY THE REST FROM THEIR ADDRESS ALONE. Most contexts in a
+	// kubeconfig are not open, and the list is exactly where an operator wants
+	// to know which of a dozen near-identical names is the managed one — so a
+	// mark is worked out from what a kubeconfig can offer, which is the API
+	// server's host. It is the weakest rung of the ladder in
+	// domain/distribution.go and it is free: no cluster is contacted, and one
+	// that is open keeps the better answer its version gave it.
 	for i, cluster := range clusters {
 		if open, err := s.registry.Get(cluster.ID()); err == nil {
 			clusters[i] = open
+			continue
 		}
+		clusters[i] = cluster.Identify(nil, "")
 	}
 
 	s.logger.DebugContext(ctx, "listed clusters",
@@ -160,22 +196,39 @@ func (s *ClusterService) Connect(ctx context.Context, id domain.ClusterID) (doma
 
 	version, err := s.cluster.ServerVersion(ctx, id)
 	if err != nil {
-		// The operator needs to know the attempt failed even though the caller
-		// also gets the error, because a failed connect leaves the UI showing
-		// whatever it was showing before.
-		s.events.Publish(ctx, domain.ClusterUnreachable{
-			ClusterID: id,
-			Reason:    err.Error(),
-			At:        s.now(),
-		})
-		s.logger.WarnContext(ctx, "cluster unreachable",
-			slog.String("cluster", id.String()),
-			slog.String("error", err.Error()))
+		// A CANCELLED ATTEMPT IS NOT AN UNREACHABLE CLUSTER, and saying so
+		// would be worse than saying nothing: the operator stopped this
+		// themselves, and an alert telling them the cluster cannot be reached
+		// is a claim nobody made and nobody checked. A DEADLINE is different —
+		// the request ran its full length and the cluster never answered,
+		// which is exactly what unreachable means — so only cancellation is
+		// excluded here.
+		cancelled := errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+
+		if !cancelled {
+			// The operator needs to know the attempt failed even though the
+			// caller also gets the error, because a failed connect leaves the
+			// UI showing whatever it was showing before.
+			s.events.Publish(ctx, domain.ClusterUnreachable{
+				ClusterID: id,
+				Reason:    err.Error(),
+				At:        s.now(),
+			})
+			s.logger.WarnContext(ctx, "cluster unreachable",
+				slog.String("cluster", id.String()),
+				slog.String("error", err.Error()))
+		}
 
 		return domain.Cluster{}, fmt.Errorf("connecting to %q: %w", id, err)
 	}
 
-	connected := cluster.WithVersion(version)
+	// IDENTIFIED HERE BECAUSE THE VERSION IS HERE AND COSTS NOTHING MORE. A
+	// managed control plane decorates its version string, so most clusters
+	// are identified by a read that has already happened; the rest fall back
+	// to the API server's address, which the kubeconfig gave us. Node
+	// evidence refines it later, from a list something else was making
+	// anyway — see OverviewService.
+	connected := cluster.WithVersion(version).Identify(nil, "")
 	s.registry.Open(connected)
 
 	// Discovery is best-effort. A cluster whose CRDs cannot be listed — RBAC
@@ -229,13 +282,32 @@ func (s *ClusterService) Connections(_ context.Context) ([]domain.Cluster, error
 	return s.registry.All(), nil
 }
 
+// Ping reads the cluster's version and reports only whether it answered.
+//
+// The version itself is discarded on purpose: this is not a refresh of what
+// PodSteer knows about the cluster, it is the question "is anything there".
+// Answering it with the smallest call the API server serves keeps a
+// heartbeat over several open clusters cheap enough to run on a slow clock.
+func (s *ClusterService) Ping(ctx context.Context, id domain.ClusterID) error {
+	if _, err := s.registry.Get(id); err != nil {
+		return fmt.Errorf("pinging cluster: %w", err)
+	}
+
+	if _, err := s.cluster.ServerVersion(ctx, id); err != nil {
+		return fmt.Errorf("pinging cluster %q: %w", id, err)
+	}
+	return nil
+}
+
 // ListNamespaces returns the namespaces of a connected cluster, sorted by name.
 func (s *ClusterService) ListNamespaces(ctx context.Context, id domain.ClusterID) ([]domain.Namespace, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("listing namespaces: %w", err)
 	}
 
-	namespaces, err := s.cluster.ListNamespaces(ctx, id)
+	// The filter wants names only, so no projection — which also keeps this
+	// read coalesced with the assessment's.
+	namespaces, err := s.cluster.ListNamespaces(ctx, id, domain.Projection{})
 	if err != nil {
 		return nil, fmt.Errorf("listing namespaces of %q: %w", id, err)
 	}
@@ -258,7 +330,7 @@ func (s *ClusterService) ListNamespaces(ctx context.Context, id domain.ClusterID
 // shows, and it answers nothing: the questions actually asked of one are
 // whether a namespace is still in use, whether anything in it is broken, and
 // which of them is holding the cluster.
-func (s *ClusterService) ListNamespaceSummaries(ctx context.Context, id domain.ClusterID) ([]domain.NamespaceSummary, error) {
+func (s *ClusterService) ListNamespaceSummaries(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.NamespaceSummary, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("summarising namespaces: %w", err)
 	}
@@ -270,7 +342,10 @@ func (s *ClusterService) ListNamespaceSummaries(ctx context.Context, id domain.C
 
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.Go(func() error {
-		result, err := s.cluster.ListNamespaces(groupCtx, id)
+		// The projection applies to the namespaces, which are the rows; the
+		// pods below are only counted, so they carry none and stay coalesced
+		// with the assessment's cluster-wide read.
+		result, err := s.cluster.ListNamespaces(groupCtx, id, projection)
 		if err != nil {
 			return fmt.Errorf("listing namespaces of %q: %w", id, err)
 		}
@@ -278,7 +353,7 @@ func (s *ClusterService) ListNamespaceSummaries(ctx context.Context, id domain.C
 		return nil
 	})
 	group.Go(func() error {
-		result, err := s.workloads.ListPods(groupCtx, id, domain.NamespaceAll)
+		result, err := s.workloads.ListPods(groupCtx, id, domain.NamespaceAll, domain.Projection{})
 		if err != nil {
 			return fmt.Errorf("listing pods of %q: %w", id, err)
 		}
@@ -328,12 +403,32 @@ func (s *ClusterService) AddKubeconfig(
 	return merge, nil
 }
 
-func (s *ClusterService) ListNodes(ctx context.Context, id domain.ClusterID) ([]domain.Node, error) {
+// SetReadOnly marks id read-only, or lifts the mark, for every write
+// ManagementService enforces against it.
+//
+// Requiring id to be open — the same registry.Get check every other
+// per-cluster method here makes — is what keeps a stale call from a closed
+// tab from planting a flag for a cluster nothing is connected to: the very
+// thing Registry.Close already clears would otherwise be re-set moments
+// later by a request that started before the tab closed.
+func (s *ClusterService) SetReadOnly(ctx context.Context, id domain.ClusterID, readOnly bool) error {
+	if _, err := s.registry.Get(id); err != nil {
+		return fmt.Errorf("setting read-only policy: %w", err)
+	}
+
+	s.registry.SetReadOnly(id, readOnly)
+	s.logger.InfoContext(ctx, "read-only policy changed",
+		slog.String("cluster", id.String()),
+		slog.Bool("readOnly", readOnly))
+	return nil
+}
+
+func (s *ClusterService) ListNodes(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Node, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("listing nodes: %w", err)
 	}
 
-	nodes, err := s.cluster.ListNodes(ctx, id)
+	nodes, err := s.cluster.ListNodes(ctx, id, projection)
 	if err != nil {
 		return nil, fmt.Errorf("listing nodes of %q: %w", id, err)
 	}

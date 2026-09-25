@@ -1,0 +1,1065 @@
+<!--
+  The merged tables: every open cluster's pods, workloads or events in one
+  list, with a column saying which cluster each row came from.
+
+  Nothing is decided here. Each row is the same DTO that cluster's own list
+  renders, so the status word, the ready count and the meters are Go's — and
+  so is the verdict on a cluster that did not answer (app/domain/fleet.go),
+  which the strip above the table repeats without paraphrase. This component
+  draws the strip, the chips and the three tables, and hands a click to the
+  workspace, which knows how to open an object in another tab.
+-->
+<script lang="ts">
+  import DataTable, { type Column } from '$lib/components/DataTable.svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
+  import MeterBar from '$lib/components/MeterBar.svelte'
+  import StatusIndicator from '$lib/components/StatusIndicator.svelte'
+  import EmptyState from '$lib/components/EmptyState.svelte'
+  import { formatAge, podStatusLabel, podTone, type Tone } from '$lib/format'
+  import { preferences } from '$stores/preferences.svelte'
+  import { cpuMeter, cpuTitle, memoryMeter, memoryTitle } from '$lib/meter'
+  import { POD_STATUS_CHIPS } from '$lib/podStatusFilters'
+  import {
+    EVENT_CHIPS,
+    FLEET_TABS,
+    WORKLOAD_CHIPS,
+    fleetRowTarget,
+    stripScrollState,
+    type FleetChip,
+    type FleetChipTab,
+    type FleetRow,
+    type FleetTab,
+  } from '$lib/fleet'
+  import { iconForKind } from '$lib/kindIcons'
+  import { fleet, type FleetKind } from '$stores/fleet.svelte'
+  import { workspace } from '$stores/workspace.svelte'
+  import { resourceOf } from '$lib/kubectl'
+  import { fleetTableId, type ClusterSession } from '$stores/session.svelte'
+  import type { K8sEvent, Pod, TableRow, Workload } from '$lib/api/client'
+  import {
+    Activity,
+    Box,
+    ChevronLeft,
+    ChevronRight,
+    CircleDot,
+    Server,
+    TriangleAlert,
+  } from '@lucide/svelte'
+
+  interface Props {
+    session: ClusterSession
+  }
+
+  let { session }: Props = $props()
+
+  /** The same denominator the pod list is set to. */
+  const byLimit = $derived(preferences.podMeasure === 'limits')
+
+  /** The table showing, for column preferences and the sort — see fleetTableId. */
+  const tableId = $derived(fleetTableId(fleet.tab))
+
+  const openCount = $derived(workspace.sessions.length)
+
+  /** The first read has not landed: there is no strip to draw yet. */
+  const reading = $derived(fleet.status === 'loading' && fleet.strip.length === 0)
+
+  // The Cluster column sits between the status mark and the name, before
+  // anything else, because it is the one column that did not exist on the
+  // single-cluster list and the one question every row of this table has
+  // to answer first.
+  const POD_COLUMNS: Column[] = [
+    { id: 'status', label: 'Status', width: 44, icon: CircleDot },
+    { id: 'cluster', label: 'Cluster', width: 190 },
+    { id: 'name', label: 'Name', width: 300, pinned: true },
+    { id: 'namespace', label: 'Namespace', width: 150 },
+    { id: 'cpu', label: 'CPU', width: 220, minWidth: 200 },
+    { id: 'memory', label: 'Memory', width: 220, minWidth: 200 },
+    { id: 'ready', label: 'Ready', width: 80, numeric: true },
+    { id: 'restarts', label: 'Restarts', width: 90, numeric: true },
+    { id: 'controlledBy', label: 'Controlled By', width: 200, defaultHidden: true },
+    { id: 'node', label: 'Node', width: 180 },
+    { id: 'age', label: 'Age', width: 80, numeric: true },
+  ]
+
+  // No usage meters. A controller's figures are the sum over its pods and
+  // cost the namespace's pods and metrics per cluster on every tick — the
+  // single-cluster list pays that for one cluster; paying it for every open
+  // one would turn the one-request-per-cluster-per-kind rule into a storm.
+  const WORKLOAD_COLUMNS: Column[] = [
+    { id: 'status', label: 'Status', width: 44, icon: CircleDot },
+    { id: 'cluster', label: 'Cluster', width: 190 },
+    { id: 'kind', label: 'Kind', width: 130 },
+    { id: 'name', label: 'Name', width: 300, pinned: true },
+    { id: 'namespace', label: 'Namespace', width: 150 },
+    { id: 'ready', label: 'Ready', width: 90, numeric: true },
+    { id: 'images', label: 'Images', width: 300 },
+    { id: 'age', label: 'Age', width: 80, numeric: true },
+  ]
+
+  const EVENT_COLUMNS: Column[] = [
+    { id: 'type', label: 'Type', width: 44, icon: CircleDot },
+    { id: 'cluster', label: 'Cluster', width: 190 },
+    { id: 'reason', label: 'Reason', width: 200, pinned: true },
+    { id: 'object', label: 'Object', width: 300 },
+    { id: 'namespace', label: 'Namespace', width: 160 },
+    { id: 'message', label: 'Message', width: 520 },
+    { id: 'count', label: 'Count', width: 96, numeric: true },
+    { id: 'age', label: 'Last seen', width: 116, numeric: true },
+  ]
+
+  /**
+   * Every kind any open cluster serves, once, for the picker.
+   *
+   * KEYED BY GROUP AND RESOURCE, not by kind id, because that is what the
+   * read takes and because two clusters serving one CRD at different versions
+   * are one entry here rather than two. The title comes from the first
+   * cluster that offered it; they agree in practice, and where they do not,
+   * one of them is what the operator saw in the navigator.
+   *
+   * Sorted by title so a list of two hundred entries can be scanned.
+   */
+  const fleetKinds = $derived.by(() => {
+    const seen = new Map<string, FleetKind>()
+    for (const open of workspace.sessions) {
+      for (const kind of open.kinds) {
+        const key = `${kind.group}/${resourceOf(kind)}`
+        if (!seen.has(key)) {
+          seen.set(key, {
+            group: kind.group,
+            resource: resourceOf(kind),
+            kind: kind.kind,
+            title: kind.title,
+          })
+        }
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.title.localeCompare(b.title))
+  })
+
+  /** What the picker's select is bound to: "group/resource", or "". */
+  const chosenKindKey = $derived(
+    fleet.tableKind ? `${fleet.tableKind.group}/${fleet.tableKind.resource}` : '',
+  )
+
+  function chooseKind(key: string): void {
+    const kind = fleetKinds.find((entry) => `${entry.group}/${entry.resource}` === key) ?? null
+    fleet.chooseKind(kind)
+    // Read at once rather than at the next tick: the operator just asked a
+    // question, and a table that stays empty until the refresh comes round
+    // reads as a kind with nothing in it.
+    void session.refresh()
+  }
+
+  /**
+   * The merged table's columns, as DataTable wants them.
+   *
+   * Positional ids ("c0"), like the single-cluster generic table — and here
+   * the position is the MERGED one, which is what mergeFleetTable exists to
+   * make meaningful across clusters. The Cluster column is first, as on every
+   * other merged table.
+   */
+  const TABLE_CLUSTER_COLUMN: Column = { id: 'cluster', label: 'Cluster', width: 190, pinned: true }
+
+  const tableColumns = $derived<Column[]>([
+    TABLE_CLUSTER_COLUMN,
+    ...fleet.table.columns.map((column, index) => ({
+      id: `c${index}`,
+      label: column.name,
+      width: index === 0 ? 300 : column.type === 'date' ? 100 : 170,
+      numeric: column.type === 'integer' || column.type === 'number',
+      pinned: index === 0,
+      defaultHidden: column.wide,
+    })),
+  ])
+
+  /**
+   * How many of the search-filtered rows each chip would add, in one pass —
+   * counted against the searched rows rather than the visible ones, for the
+   * reason PodsView gives: an unselected chip must show what selecting it
+   * would add, not a count its own absence has already shrunk.
+   */
+  function countChips<T>(rows: readonly T[], chips: readonly FleetChip<T>[]): Record<string, number> {
+    const counts: Record<string, number> = {}
+    for (const chip of chips) counts[chip.id] = 0
+    for (const row of rows) {
+      for (const chip of chips) {
+        if (chip.predicate(row)) counts[chip.id]++
+      }
+    }
+    return counts
+  }
+
+  const podChipCounts = $derived(countChips(session.searchedFleetPods, POD_STATUS_CHIPS))
+  const workloadChipCounts = $derived(countChips(session.searchedFleetWorkloads, WORKLOAD_CHIPS))
+  const eventChipCounts = $derived(countChips(session.searchedFleetEvents, EVENT_CHIPS))
+
+  /** The row's cluster becomes the tab in front; the row becomes the drawer. */
+  function open(row: FleetRow<Pod> | FleetRow<Workload> | FleetRow<K8sEvent>): void {
+    void workspace.openInCluster(fleetRowTarget(fleet.tab, row))
+  }
+
+  /**
+   * Opening a row of the generic table.
+   *
+   * Its own function because the KIND is not the row's: a typed row knows
+   * what it is, and a table row is whatever kind the picker asked for, which
+   * is the one thing the drawer needs to resolve it. Nothing is guessed from
+   * a column called "Kind" — see GenericTableView for the same refusal.
+   */
+  function openTableRow(row: FleetRow<TableRow>): void {
+    const kind = fleet.tableKind
+    if (!kind) return
+    void workspace.openInCluster({
+      cluster: row.cluster,
+      kind: kind.kind,
+      name: row.name,
+      namespace: row.namespace,
+    })
+  }
+
+  /**
+   * A strip chip narrows the table to the clusters selected.
+   *
+   * IT USED TO WRITE A `cluster:` TERM INTO THE SEARCH BOX, which made the
+   * filter visible and editable there — a good property, paid for with a
+   * broken one: query terms are ANDed, so a second pressed chip matched no
+   * row at all and the table emptied while both chips stayed lit. A row of
+   * toggles has to be able to hold two. See $lib/fleet.
+   *
+   * A typed `cluster:` term still narrows the table exactly as it did; what
+   * moved is only what the chips write.
+   */
+  function toggleCluster(cluster: string): void {
+    session.toggleFleetCluster(cluster)
+  }
+
+  /**
+   * The strip scrolls sideways rather than wrapping.
+   *
+   * WRAPPING WAS NOT SQUEEZING — nothing was ever truncated — but a chip is
+   * about 200px and the view tabs take the first 300 of the same line, so
+   * six clusters became two rows on a wide window and three on a laptop,
+   * and twenty became eight. The toolbar grew downwards and pushed the table
+   * off the screen it exists to show.
+   *
+   * WHAT SCROLLING COSTS, AND WHAT PAYS FOR IT. The strip's contract is that
+   * "a cluster that did not answer is a chip here, never an empty table", and
+   * a chip scrolled out of sight is exactly that empty table again. So two
+   * things sit outside the scrolling region and can never be scrolled away:
+   * the count of clusters that did not answer, and the arrows that say there
+   * is more in a direction. macOS hides scrollbars at rest, so without the
+   * arrows a full row and a cut-off row look identical — which is the whole
+   * failure being avoided.
+   */
+  let strip = $state<HTMLElement | null>(null)
+  let overflowing = $state(false)
+  let atStart = $state(true)
+  let atEnd = $state(true)
+
+  function measureStrip(): void {
+    if (!strip) return
+    ;({ overflowing, atStart, atEnd } = stripScrollState(strip))
+  }
+
+  $effect(() => {
+    // Read the length so a cluster opening or closing re-measures; the
+    // observer below only fires for the element's own box.
+    fleet.strip.length
+    const element = strip
+    if (!element) return
+
+    measureStrip()
+    const observer = new ResizeObserver(measureStrip)
+    observer.observe(element)
+    for (const child of element.children) observer.observe(child)
+    return () => observer.disconnect()
+  })
+
+  /**
+   * Fades the chips themselves at whichever edge has more beyond it.
+   *
+   * A MASK RATHER THAN A GRADIENT OVERLAY, which is not a detail: an overlay
+   * has to be painted in the toolbar's own colour to be invisible, and the
+   * toolbar is translucent, so the "matching" colour would be a guess that is
+   * wrong on any background it is ever put on. A mask fades the content to
+   * transparent and lets whatever is behind show through unchanged.
+   */
+  const stripMask = $derived.by(() => {
+    if (!overflowing) return ''
+    const stops = [
+      atStart ? 'black 0' : 'transparent 0, black 2.5rem',
+      atEnd ? 'black 100%' : 'black calc(100% - 2.5rem), transparent 100%',
+    ].join(', ')
+    const gradient = `linear-gradient(to right, ${stops})`
+    return `mask-image: ${gradient}; -webkit-mask-image: ${gradient};`
+  })
+
+  /** Scrolls by most of a screenful, leaving one chip as the overlap that
+      says where you were — the same rule a page-down key follows. */
+  function scrollStrip(direction: -1 | 1): void {
+    strip?.scrollBy({ left: direction * strip.clientWidth * 0.8, behavior: 'smooth' })
+  }
+
+  /**
+   * Brings the first cluster that did not answer into view.
+   *
+   * The summary is a button rather than a label because knowing two clusters
+   * are unhappy without being able to reach them is half an answer, and on a
+   * strip of twenty the chip may be a long way to the right.
+   */
+  function scrollToDegraded(): void {
+    const first = fleet.strip.findIndex((entry) => entry.status !== 'ok')
+    if (first < 0) return
+    strip?.children[first]?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+  }
+
+  /** The same colour rule WorkloadsView draws with. */
+  function workloadTone(workload: Workload): Tone {
+    if (workload.suspended) return 'neutral'
+    if (!workload.isHealthy) return workload.readyCount === 0 ? 'error' : 'warning'
+    if (workload.isRolling) return 'info'
+    return 'success'
+  }
+
+  /** The findings worth marking a row for — severity is Go's judgement; this
+      only decides which of them earns a glyph. Same rule as PodsView. */
+  function alarming(pod: Pod) {
+    return (pod.findings ?? []).filter((finding) => finding.severity !== 'info')
+  }
+
+  /**
+   * The clusters whose share of the merged table stopped at its cap.
+   *
+   * Only the clusters actually on screen: a selection narrowed to two must
+   * not carry a caveat about a third the operator cannot see. See
+   * $stores/fleet.tableTruncated.
+   */
+  const truncatedClusters = $derived(
+    Object.keys(fleet.tableTruncated)
+      .filter(
+        (id) =>
+          session.selectedFleetClusters.length === 0 ||
+          session.selectedFleetClusters.includes(id),
+      )
+      .sort(),
+  )
+
+  /** The cap those reads stopped at, grouped for reading. */
+  const truncatedCap = $derived(
+    (fleet.tableTruncated[truncatedClusters[0]] ?? 0).toLocaleString(),
+  )
+
+  /** "prod-eu stopped at 1,000 rows." / "a, b stopped at 1,000 rows each." */
+  const truncatedSentence = $derived(
+    truncatedClusters.length === 1
+      ? `${truncatedClusters[0]} stopped at ${truncatedCap} rows.`
+      : `${truncatedClusters.join(', ')} each stopped at ${truncatedCap} rows.`,
+  )
+
+  /** Same rule ColumnMenu and DataTable apply, keyed by the table showing. */
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[tableId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /** Why the table is empty, in words that say which of the three reasons. */
+  function emptyDescription(noun: string): string {
+    if (session.search) return `Nothing matches "${session.search}".`
+    if (fleet.degraded > 0) return 'Some clusters did not answer — the strip above says which, and why.'
+    // A NARROWED TABLE IS NOT AN EMPTY FLEET. Saying "across your 6 open
+    // clusters" while five of them are deselected names a search nobody made.
+    const selected = session.selectedFleetClusters
+    if (selected.length > 0) {
+      const chosen = `${selected.length} selected cluster${selected.length === 1 ? '' : 's'}`
+      return `No ${noun} in this namespace across the ${chosen}.`
+    }
+    const clusters = `${openCount} open cluster${openCount === 1 ? '' : 's'}`
+    return `No ${noun} in this namespace across your ${clusters}.`
+  }
+
+  /**
+   * The merged table's CSV export: the same text each cell shows, with the
+   * cluster as a column like any other — a spreadsheet of every cluster's
+   * pods with no column saying whose is the wrong file to hand somebody.
+   */
+  function exportCSV(): CSVExport {
+    switch (fleet.tab) {
+      case 'pods': {
+        const visible = POD_COLUMNS.filter(isColumnVisible)
+        const cell = (pod: FleetRow<Pod>, id: string): string => {
+          switch (id) {
+            case 'status':
+              return podStatusLabel(pod)
+            case 'cluster':
+              return pod.cluster
+            case 'name':
+              return pod.name
+            case 'namespace':
+              return pod.namespace
+            case 'cpu':
+              return pod.cpu
+            case 'memory':
+              return pod.memory
+            case 'ready':
+              return pod.ready
+            case 'restarts':
+              return String(pod.restarts)
+            case 'controlledBy':
+              return pod.controlledBy || '—'
+            case 'node':
+              return pod.nodeName || '—'
+            case 'age':
+              return formatAge(pod.ageSeconds)
+            default:
+              return ''
+          }
+        }
+        return {
+          columns: visible.map((column) => column.label),
+          rows: session.sortedFleetPods.map((pod) => visible.map((column) => cell(pod, column.id))),
+        }
+      }
+      case 'workloads': {
+        const visible = WORKLOAD_COLUMNS.filter(isColumnVisible)
+        const cell = (workload: FleetRow<Workload>, id: string): string => {
+          switch (id) {
+            case 'status':
+              return workload.status
+            case 'cluster':
+              return workload.cluster
+            case 'kind':
+              return workload.kind
+            case 'name':
+              return workload.name
+            case 'namespace':
+              return workload.namespace
+            case 'ready':
+              return workload.ready
+            case 'images':
+              return (workload.images ?? []).join(', ')
+            case 'age':
+              return formatAge(workload.ageSeconds)
+            default:
+              return ''
+          }
+        }
+        return {
+          columns: visible.map((column) => column.label),
+          rows: session.sortedFleetWorkloads.map((workload) =>
+            visible.map((column) => cell(workload, column.id)),
+          ),
+        }
+      }
+      case 'kinds': {
+        const visible = tableColumns.filter(isColumnVisible)
+        return {
+          columns: visible.map((column) => column.label),
+          rows: session.sortedFleetTableRows.map((row) =>
+            visible.map((column) => {
+              if (column.id === 'cluster') return row.cluster
+              const index = /^c(\d+)$/.exec(column.id)?.[1]
+              return index === undefined ? '' : (row.cells?.[Number(index)] ?? '')
+            }),
+          ),
+        }
+      }
+      case 'events': {
+        const visible = EVENT_COLUMNS.filter(isColumnVisible)
+        const cell = (event: FleetRow<K8sEvent>, id: string): string => {
+          switch (id) {
+            case 'type':
+              return event.type
+            case 'cluster':
+              return event.cluster
+            case 'reason':
+              return event.reason
+            case 'object':
+              return event.involvedObject
+            case 'namespace':
+              return event.namespace
+            case 'message':
+              return event.message
+            case 'count':
+              return String(event.count)
+            case 'age':
+              return formatAge(event.ageSeconds)
+            default:
+              return ''
+          }
+        }
+        return {
+          columns: visible.map((column) => column.label),
+          rows: session.sortedFleetEvents.map((event) =>
+            visible.map((column) => cell(event, column.id)),
+          ),
+        }
+      }
+    }
+  }
+</script>
+
+<!-- One chip per quick filter of the table showing. The pressed colours are
+     ToolbarToggle's, as on PodsView, so a chip on and a toolbar icon on read
+     as the same state. -->
+{#snippet chipRow(
+  tab: FleetChipTab,
+  chips: readonly { id: string; label: string }[],
+  counts: Record<string, number>,
+  noun: string,
+)}
+  {#each chips as chip (chip.id)}
+    {@const pressed = session.fleetChips[tab].includes(chip.id)}
+    {@const count = counts[chip.id]}
+    <button
+      type="button"
+      onclick={() => session.toggleFleetChip(tab, chip.id)}
+      aria-pressed={pressed}
+      title="{pressed ? 'Showing only' : 'Show only'} {chip.label.toLowerCase()} {noun}"
+      class="rounded-full border px-2.5 py-1 text-label-small transition-colors duration-100
+             {pressed
+               ? 'border-primary/40 bg-primary/14 text-primary'
+               : 'border-outline-variant/50 text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+    >
+      {chip.label}
+      {#if count > 0}
+        <span class="tabular-nums {pressed ? 'text-primary/70' : 'text-on-surface-variant/60'}">
+          {count}
+        </span>
+      {/if}
+    </button>
+  {/each}
+{/snippet}
+
+<div class="flex min-h-0 flex-1 flex-col">
+  <!--
+    Which table, then which clusters. The strip is the feature's contract
+    made visible: one chip per open cluster, in tab order, carrying Go's
+    verdict on that cluster's read — read, partial, slow, forbidden,
+    unreachable, failed — and, in its tooltip, the reason in the backend's
+    own words and how old the rows shown are. A cluster that did not answer
+    is a chip here, never an empty table or a spinner over the others.
+  -->
+  <div
+    class="flex items-center gap-2 border-b border-outline-variant/40
+           bg-surface-container-low/40 px-4 py-2"
+  >
+    <div
+      role="tablist"
+      aria-label="Merged table"
+      class="flex shrink-0 items-center gap-0.5 rounded-full bg-surface-container p-0.5"
+    >
+      {#each FLEET_TABS as tab (tab.id)}
+        {@const active = fleet.tab === tab.id}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={active}
+          onclick={() => void session.selectFleetTab(tab.id)}
+          class="rounded-full px-3 py-1 text-label-medium transition-colors duration-100
+                 {active
+                   ? 'bg-primary/14 text-primary'
+                   : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'}"
+        >
+          {tab.label}
+        </button>
+      {/each}
+    </div>
+
+    <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+
+    {#if fleet.strip.length === 0}
+      <span class="text-body-small text-on-surface-variant/70">
+        {reading
+          ? `Reading ${openCount} cluster${openCount === 1 ? '' : 's'}…`
+          : 'No clusters read yet'}
+      </span>
+    {/if}
+
+    <!--
+      The scrolling region, and the two things that must never scroll with it.
+      See measureStrip in the script for why the arrows and the summary sit
+      outside it rather than inside.
+    -->
+    <div class="relative flex min-w-0 flex-1 items-center">
+      {#if overflowing && !atStart}
+        <!-- tabindex -1 rather than focusable: tabbing through the chips
+             scrolls them into view on its own, so these would be two extra
+             stops that do nothing a keyboard user needs. -->
+        <button
+          type="button"
+          tabindex="-1"
+          aria-hidden="true"
+          onclick={() => scrollStrip(-1)}
+          class="absolute left-0 z-10 flex h-6 w-6 items-center justify-center rounded-full
+                 bg-surface-container-high/90 text-on-surface-variant shadow-level-1
+                 hover:text-on-surface"
+        >
+          <ChevronLeft class="size-4" strokeWidth={2} />
+        </button>
+      {/if}
+
+      <div
+        bind:this={strip}
+        onscroll={measureStrip}
+        style={stripMask}
+        class="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-0.5
+               [-ms-overflow-style:none] [scrollbar-width:none]
+               [&::-webkit-scrollbar]:hidden"
+      >
+        {#each fleet.strip as entry (entry.cluster)}
+          {@const pressed = session.selectedFleetClusters.includes(entry.cluster)}
+          <button
+            type="button"
+            onclick={() => toggleCluster(entry.cluster)}
+            aria-pressed={pressed}
+            title={entry.title}
+            class="flex max-w-72 shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1
+                   text-label-small transition-colors duration-100
+                   {pressed
+                     ? 'border-primary/40 bg-primary/14 text-primary'
+                     : 'border-outline-variant/50 text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+          >
+            <StatusIndicator
+              tone={entry.tone}
+              label={entry.label}
+              icon={Server}
+              pulse={entry.status === 'slow'}
+            />
+            <span class="truncate">{entry.cluster}</span>
+            <!-- The count when there are rows to count; otherwise the verdict,
+                 because "0" under a forbidden cluster reads as "no pods". -->
+            {#if entry.rows > 0 || entry.status === 'ok'}
+              <span
+                class="tabular-nums {pressed ? 'text-primary/70' : 'text-on-surface-variant/60'}"
+              >
+                {entry.rows}{entry.stale ? '*' : ''}
+              </span>
+            {:else}
+              <span class="lowercase {pressed ? 'text-primary/70' : 'text-on-surface-variant/60'}">
+                {entry.label}
+              </span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+
+      {#if overflowing && !atEnd}
+        <button
+          type="button"
+          tabindex="-1"
+          aria-hidden="true"
+          onclick={() => scrollStrip(1)}
+          class="absolute right-0 z-10 flex h-6 w-6 items-center justify-center rounded-full
+                 bg-surface-container-high/90 text-on-surface-variant shadow-level-1
+                 hover:text-on-surface"
+        >
+          <ChevronRight class="size-4" strokeWidth={2} />
+        </button>
+      {/if}
+    </div>
+
+    <!--
+      OUTSIDE THE SCROLLER, ALWAYS. This is the sentence the strip exists to
+      say, and a strip that can hide it has stopped saying it.
+    -->
+    {#if fleet.degraded > 0}
+      <button
+        type="button"
+        onclick={scrollToDegraded}
+        title="Show the clusters that did not answer in full"
+        class="flex shrink-0 items-center gap-1.5 rounded-full border border-gauge-warn/40
+               px-2.5 py-1 text-label-small text-gauge-warn-ink transition-colors duration-100
+               hover:bg-notice-warn"
+      >
+        <TriangleAlert class="size-3.5 shrink-0" strokeWidth={2} />
+        {fleet.degraded} not answering
+      </button>
+    {/if}
+  </div>
+
+  <!-- Quick filters, per table. Each SELECTS on a field Go already put on
+       the row — see $lib/podStatusFilters and $lib/fleet — never a new
+       comparison made here. -->
+  <div
+    class="flex flex-wrap items-center gap-1.5 border-b border-outline-variant/40
+           bg-surface-container-low/40 px-4 py-2"
+  >
+    {#if fleet.tab === 'pods'}
+      {@render chipRow('pods', POD_STATUS_CHIPS, podChipCounts, 'pods')}
+    {:else if fleet.tab === 'workloads'}
+      {@render chipRow('workloads', WORKLOAD_CHIPS, workloadChipCounts, 'workloads')}
+    {:else if fleet.tab === 'events'}
+      {@render chipRow('events', EVENT_CHIPS, eventChipCounts, 'events')}
+    {:else}
+      <!-- A PICKER RATHER THAN CHIPS. There are no quick filters for a kind
+           nobody wrote code for — a chip is a claim about health, and these
+           columns are whatever the CRD's author chose to print — and there is
+           a question this tab cannot answer without: WHICH kind. -->
+      <label class="flex items-center gap-2 text-body-medium text-on-surface-variant">
+        Kind
+        <select
+          value={chosenKindKey}
+          onchange={(event) => chooseKind(event.currentTarget.value)}
+          class="field h-8 min-w-56 px-2 text-body-medium"
+        >
+          <option value="">Choose a kind…</option>
+          {#each fleetKinds as kind (kind.group + '/' + kind.resource)}
+            <option value="{kind.group}/{kind.resource}">
+              {kind.title}{kind.group ? ` · ${kind.group}` : ''}
+            </option>
+          {/each}
+        </select>
+      </label>
+
+      {#if fleet.tableKind}
+        <span class="text-body-small text-on-surface-variant/70">
+          Read from every open cluster that has it. A cluster without it is marked
+          <span class="text-on-surface-variant">Not installed</span> rather than empty.
+        </span>
+      {/if}
+    {/if}
+  </div>
+
+  {#if fleet.tab === 'pods'}
+    <DataTable
+      kindId={tableId}
+      columns={POD_COLUMNS}
+      isEmpty={session.pagedFleetPods.length === 0}
+      sort={session.sort}
+      onsort={session.toggleSort}
+      exportRows={exportCSV}
+    >
+      {#snippet empty()}
+        <EmptyState
+          title={reading ? 'Reading clusters…' : 'No pods across your clusters'}
+          description={reading ? undefined : emptyDescription('pods')}
+        />
+      {/snippet}
+
+      {#snippet rows(isVisible)}
+        {#each session.pagedFleetPods as pod (pod.cluster + '/' + pod.namespace + '/' + pod.name)}
+          <tr
+            class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
+                   hover:bg-surface-container-low"
+            onclick={() => open(pod)}
+          >
+            {#if isVisible('status')}
+              <td class="overflow-hidden py-1.5 pr-3 pl-5">
+                <StatusIndicator
+                  tone={podTone(pod)}
+                  label={podStatusLabel(pod)}
+                  icon={Box}
+                  pulse={pod.phase === 'Terminating'}
+                />
+              </td>
+            {/if}
+            {#if isVisible('cluster')}
+              <td class="truncate px-3 py-1.5 text-on-surface-variant" title={pod.cluster}>
+                {pod.cluster}
+              </td>
+            {/if}
+            <td class="px-3 py-1.5" title={pod.name}>
+              <span class="flex items-center gap-2">
+                <span class="truncate font-medium text-on-surface">{pod.name}</span>
+                {#if alarming(pod).length > 0}
+                  <TriangleAlert
+                    class="size-3.5 shrink-0 text-gauge-warn-ink"
+                    strokeWidth={2.2}
+                    aria-label="{alarming(pod).length} findings"
+                  />
+                {/if}
+              </span>
+            </td>
+            {#if isVisible('namespace')}
+              <td class="truncate px-3 py-1.5">
+                <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-medium text-on-surface-variant">
+                  {pod.namespace}
+                </span>
+              </td>
+            {/if}
+            {#if isVisible('cpu')}
+              {@const cpu = cpuMeter(pod, byLimit)}
+              <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
+                <MeterBar
+                  label={pod.cpu}
+                  scope="pods"
+                  name="CPU"
+                  valueWidth="7ch"
+                  percent={cpu.percent}
+                  measured={pod.hasMetrics}
+                  thresholds={cpu.thresholds}
+                  absent={cpu.absent}
+                  severity={cpu.severity}
+                  title={cpuTitle(pod)}
+                />
+              </td>
+            {/if}
+            {#if isVisible('memory')}
+              {@const memory = memoryMeter(pod, byLimit)}
+              <td class="overflow-hidden px-3 py-1.5 text-on-surface-variant">
+                <MeterBar
+                  label={pod.memory}
+                  scope="pods"
+                  name="Memory"
+                  percent={memory.percent}
+                  measured={pod.hasMetrics}
+                  thresholds={memory.thresholds}
+                  absent={memory.absent}
+                  severity={memory.severity}
+                  title={memoryTitle(pod)}
+                />
+              </td>
+            {/if}
+            {#if isVisible('ready')}
+              <td
+                class="truncate px-3 py-1.5 text-right tabular-nums
+                       {pod.readyContainers === pod.totalContainers
+                         ? 'text-on-surface-variant'
+                         : 'text-warning font-medium'}"
+              >
+                {pod.ready}
+              </td>
+            {/if}
+            {#if isVisible('restarts')}
+              <td
+                class="truncate px-3 py-1.5 text-right tabular-nums
+                       {pod.restarts > 0 ? 'text-warning font-medium' : 'text-on-surface-variant'}"
+              >
+                {pod.restarts}
+              </td>
+            {/if}
+            {#if isVisible('controlledBy')}
+              <td class="truncate px-3 py-1.5 text-on-surface-variant" title={pod.controlledBy}>
+                {pod.controlledBy || '—'}
+              </td>
+            {/if}
+            {#if isVisible('node')}
+              <td class="truncate px-3 py-1.5 text-on-surface-variant" title={pod.nodeName}>
+                {pod.nodeName || '—'}
+              </td>
+            {/if}
+            {#if isVisible('age')}
+              <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+                {formatAge(pod.ageSeconds)}
+              </td>
+            {/if}
+          </tr>
+        {/each}
+      {/snippet}
+    </DataTable>
+  {:else if fleet.tab === 'workloads'}
+    <DataTable
+      kindId={tableId}
+      columns={WORKLOAD_COLUMNS}
+      isEmpty={session.pagedFleetWorkloads.length === 0}
+      sort={session.sort}
+      onsort={session.toggleSort}
+      exportRows={exportCSV}
+    >
+      {#snippet empty()}
+        <EmptyState
+          title={reading ? 'Reading clusters…' : 'No workloads across your clusters'}
+          description={reading ? undefined : emptyDescription('workloads')}
+        />
+      {/snippet}
+
+      {#snippet rows(isVisible)}
+        {#each session.pagedFleetWorkloads as workload (workload.cluster + '/' + workload.kind + '/' + workload.namespace + '/' + workload.name)}
+          {@const KindIcon = iconForKind({ kind: workload.kind })}
+          <tr
+            class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
+                   hover:bg-surface-container-low"
+            onclick={() => open(workload)}
+          >
+            {#if isVisible('status')}
+              <td class="overflow-hidden py-1.5 pr-3 pl-5">
+                <StatusIndicator
+                  tone={workloadTone(workload)}
+                  label={workload.status}
+                  icon={KindIcon}
+                  pulse={workload.isRolling}
+                />
+              </td>
+            {/if}
+            {#if isVisible('cluster')}
+              <td class="truncate px-3 py-1.5 text-on-surface-variant" title={workload.cluster}>
+                {workload.cluster}
+              </td>
+            {/if}
+            {#if isVisible('kind')}
+              <td class="truncate px-3 py-1.5 text-on-surface-variant">{workload.kind}</td>
+            {/if}
+            <td class="px-3 py-1.5" title={workload.name}>
+              <span class="truncate font-medium text-on-surface">{workload.name}</span>
+            </td>
+            {#if isVisible('namespace')}
+              <td class="truncate px-3 py-1.5">
+                <span class="rounded bg-surface-container-high px-1.5 py-0.5 text-body-medium text-on-surface-variant">
+                  {workload.namespace}
+                </span>
+              </td>
+            {/if}
+            {#if isVisible('ready')}
+              <td
+                class="truncate px-3 py-1.5 text-right tabular-nums
+                       {workload.isHealthy ? 'text-on-surface-variant' : 'text-warning font-medium'}"
+              >
+                {workload.ready}
+              </td>
+            {/if}
+            {#if isVisible('images')}
+              <td class="truncate px-3 py-1.5 text-on-surface-variant" title={(workload.images ?? []).join('\n')}>
+                {(workload.images ?? []).join(', ')}
+              </td>
+            {/if}
+            {#if isVisible('age')}
+              <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+                {formatAge(workload.ageSeconds)}
+              </td>
+            {/if}
+          </tr>
+        {/each}
+      {/snippet}
+    </DataTable>
+  {:else if fleet.tab === 'kinds'}
+    <DataTable
+      kindId={tableId}
+      columns={tableColumns}
+      isEmpty={session.pagedFleetTableRows.length === 0}
+      sort={session.sort}
+      onsort={session.toggleSort}
+      exportRows={exportCSV}
+    >
+      {#snippet notice()}
+        {#if truncatedClusters.length > 0}
+          <!--
+            NAMED, NOT COUNTED, and the same rule the strip already keeps: a
+            cluster whose share of this table is a prefix is a fact about THAT
+            cluster, and a merged table that says only "some rows are missing"
+            leaves the operator unable to tell which cluster to go and look at.
+          -->
+          <p
+            class="border-b border-outline-variant/60 px-3 py-2 text-body-medium text-gauge-warn-ink"
+            role="status"
+          >
+            {truncatedSentence} The search, the sort and the count below describe what was
+            read, not what those clusters hold.
+          </p>
+        {/if}
+      {/snippet}
+
+      {#snippet empty()}
+        <EmptyState
+          title={!fleet.tableKind
+            ? 'Choose a kind'
+            : reading
+              ? 'Reading clusters…'
+              : `No ${fleet.tableKind.title.toLowerCase()} across your clusters`}
+          description={!fleet.tableKind
+            ? 'Any kind any open cluster serves — including a custom resource only some of them have.'
+            : reading
+              ? undefined
+              : emptyDescription(fleet.tableKind.title.toLowerCase())}
+        />
+      {/snippet}
+
+      {#snippet rows(isVisible)}
+        {#each session.pagedFleetTableRows as row (row.cluster + '/' + row.namespace + '/' + row.name)}
+          <tr
+            class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
+                   hover:bg-surface-container-low"
+            onclick={() => openTableRow(row)}
+          >
+            {#if isVisible('cluster')}
+              <td class="truncate py-1.5 pr-3 pl-5 text-on-surface-variant" title={row.cluster}>
+                {row.cluster}
+              </td>
+            {/if}
+            {#each fleet.table.columns as column, index (column.name)}
+              {#if isVisible(`c${index}`)}
+                <td
+                  class="truncate px-3 py-1.5 {index === 0
+                    ? 'font-medium text-on-surface'
+                    : 'text-on-surface-variant'} {column.type === 'integer' ||
+                  column.type === 'number'
+                    ? 'text-right tabular-nums'
+                    : ''}"
+                  title={row.cells?.[index] ?? ''}
+                >
+                  {row.cells?.[index] ?? ''}
+                </td>
+              {/if}
+            {/each}
+          </tr>
+        {/each}
+      {/snippet}
+    </DataTable>
+  {:else}
+    <DataTable
+      kindId={tableId}
+      columns={EVENT_COLUMNS}
+      isEmpty={session.pagedFleetEvents.length === 0}
+      sort={session.sort}
+      onsort={session.toggleSort}
+      exportRows={exportCSV}
+    >
+      {#snippet empty()}
+        <EmptyState
+          title={reading ? 'Reading clusters…' : 'No events across your clusters'}
+          description={reading ? undefined : emptyDescription('events')}
+        />
+      {/snippet}
+
+      {#snippet rows(isVisible)}
+        {#each session.pagedFleetEvents as event (event.cluster + '/' + event.namespace + '/' + event.name)}
+          <tr
+            class="group/row cursor-pointer border-t border-outline-variant/25 transition-colors duration-75
+                   hover:bg-surface-container-low"
+            onclick={() => open(event)}
+          >
+            {#if isVisible('type')}
+              <td class="overflow-hidden py-1.5 pr-3 pl-5">
+                <StatusIndicator
+                  tone={event.isWarning ? 'warning' : 'neutral'}
+                  label={event.type}
+                  icon={Activity}
+                />
+              </td>
+            {/if}
+            {#if isVisible('cluster')}
+              <td class="truncate px-3 py-1.5 text-on-surface-variant" title={event.cluster}>
+                {event.cluster}
+              </td>
+            {/if}
+            <td class="px-3 py-1.5" title={event.reason}>
+              <span class="truncate font-medium text-on-surface">{event.reason}</span>
+            </td>
+            {#if isVisible('object')}
+              <td class="truncate px-3 py-1.5 text-on-surface-variant" title={event.involvedObject}>
+                {event.involvedObject}
+              </td>
+            {/if}
+            {#if isVisible('namespace')}
+              <td class="truncate px-3 py-1.5 text-on-surface-variant">{event.namespace}</td>
+            {/if}
+            {#if isVisible('message')}
+              <td class="truncate px-3 py-1.5 text-on-surface-variant" title={event.message} data-selectable>
+                {event.message}
+              </td>
+            {/if}
+            {#if isVisible('count')}
+              <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+                {event.count}
+              </td>
+            {/if}
+            {#if isVisible('age')}
+              <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+                {formatAge(event.ageSeconds)}
+              </td>
+            {/if}
+          </tr>
+        {/each}
+      {/snippet}
+    </DataTable>
+  {/if}
+</div>

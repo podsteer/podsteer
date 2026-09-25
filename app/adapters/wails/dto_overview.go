@@ -356,6 +356,25 @@ func toReleaseSupport(support domain.ReleaseSupport) ReleaseSupport {
 	return out
 }
 
+// UpgradeSummary is the one-line version of what the upgrade-impact findings
+// found, for the overview header's "check against" selector — the findings
+// themselves are already in Overview.Findings, this only saves the frontend
+// from filtering and counting them by category.
+type UpgradeSummary struct {
+	// TargetMinor is the Kubernetes minor the assessment was made against,
+	// e.g. "1.33". Empty means no target could be placed at all — Version
+	// was unparseable — which the UI reads differently from "assessed and
+	// found nothing".
+	TargetMinor string `json:"targetMinor"`
+	// Count is how many upgrade-impact findings were raised, at any
+	// severity.
+	Count int `json:"count"`
+}
+
+func toUpgradeSummary(upgrade domain.UpgradeSummary) UpgradeSummary {
+	return UpgradeSummary{TargetMinor: upgrade.TargetMinor, Count: upgrade.Count}
+}
+
 // NodeLoad is one node's share of the work.
 type NodeLoad struct {
 	Name         string `json:"name"`
@@ -383,6 +402,14 @@ type NodeLoad struct {
 	UsageCPUMilli    int64 `json:"usageCpuMilli"`
 	UsageMemoryBytes int64 `json:"usageMemoryBytes"`
 	UsageMeasured    bool  `json:"usageMeasured"`
+	// What the pods here RESERVED, raw, for the same reason the usage above
+	// is raw: a chart plots numbers, and the node panel draws the requests as
+	// a line beside the usage it is nothing like. The formatted CPUAmount and
+	// MemAmount below are the same two figures for a table cell — kept, and
+	// not replaced by these, because a browser formatting a quantity is how
+	// two surfaces come to disagree about what 1.5 cores looks like.
+	RequestedCPUMilli    int64 `json:"requestedCpuMilli"`
+	RequestedMemoryBytes int64 `json:"requestedMemoryBytes"`
 	// The amounts and the shares, formatted here rather than by the browser,
 	// so a node's row reads the same way a capacity track does: the quantity,
 	// then what proportion of the node it is.
@@ -445,6 +472,9 @@ func toNodeLoads(loads []domain.NodeLoad) []NodeLoad {
 			UsageCPUMilli:    load.Usage.CPUMilli,
 			UsageMemoryBytes: load.Usage.MemoryBytes,
 			UsageMeasured:    load.Usage.Measured,
+
+			RequestedCPUMilli:    load.CPUMilli,
+			RequestedMemoryBytes: load.MemoryBytes,
 		})
 	}
 	return out
@@ -550,6 +580,14 @@ type Overview struct {
 	Workloads   []WorkloadKindSummary `json:"workloads"`
 	Namespaces  []NamespaceLoad       `json:"namespaces"`
 	Restarts    []RestartHotspot      `json:"restarts"`
+	// Events are the Kubernetes Events this assessment read, for the session
+	// timeline. NEVER NULL — see TimelineEvent for why they are here and why
+	// they are not the `Event` the Events page renders.
+	//
+	// An empty list is not evidence that nothing happened: an assessment that
+	// could not read events leaves this empty and names "events" in
+	// Unavailable, and only that field tells the two apart.
+	Events []TimelineEvent `json:"events"`
 	// Unavailable names data sources that could not be read, so the UI can
 	// say "no metrics" instead of quietly showing zeroes.
 	Unavailable []string `json:"unavailable"`
@@ -565,21 +603,139 @@ type Overview struct {
 	// a system that already keeps months of the same figures PodSteer keeps
 	// minutes of, instead of presenting its own window as the whole picture.
 	Backend MetricsBackend `json:"backend"`
+	// KubeState names a kube-state-metrics installation found in this
+	// cluster, when one was found — empty otherwise, which is the ordinary
+	// case.
+	//
+	// It changes nothing PodSteer measures either, and unlike Backend it is
+	// not even a candidate for being read: it is a scrape endpoint, and the
+	// note built on it says in as many words that the figures on this screen
+	// come from the metrics API and from PodSteer's own samples instead.
+	KubeState KubeStateMetrics `json:"kubeState"`
 	// Counts the findings by severity, so the header does not have to.
 	CriticalCount int `json:"criticalCount"`
 	WarningCount  int `json:"warningCount"`
 	InfoCount     int `json:"infoCount"`
+	// Upgrade summarises the upgrade-impact findings against Support.Minor's
+	// next release, or whatever minor the "check against" selector chose —
+	// see GetOverviewForTarget.
+	Upgrade UpgradeSummary `json:"upgrade"`
+	// KnownMinors is every minor the support-window table has an entry for,
+	// oldest first — what the "check against" selector offers, bounded to
+	// versions this build can actually reason about instead of a free-text
+	// field that could ask about one neither table has heard of.
+	KnownMinors []string `json:"knownMinors"`
+}
+
+// TimelineEvent is a Kubernetes Event as the SESSION TIMELINE records it, and
+// deliberately not as the Events page renders it.
+//
+// A DELIBERATE NARROWING, because this rides the assessment and the
+// assessment crosses the bridge on every tick whatever view is on screen —
+// unlike Event, which crosses only while somebody is looking at the page that
+// asked for it. The fields here are exactly the ones the recorder reads: the
+// namespace and name are the Event object's identity, so re-reading a
+// surviving event updates the entry it already produced instead of adding
+// another; the count is the API server's own, which is what makes one entry
+// stand for however many occurrences it folded in; and the reason, message,
+// involved kind and involved name are what a row puts on screen.
+//
+// What is dropped is what nothing reads: labels and annotations (two maps per
+// row, and an Event is written by a controller rather than by a person),
+// InvolvedObject (which is InvolvedKind and InvolvedName joined), Source,
+// Type (IsWarning is the same fact, already decided), and the two formatted
+// timestamps plus the age — the timeline stamps entries with when PodSteer
+// OBSERVED them, because a list sorted on the cluster's clock and the
+// laptop's at once orders a write made a second ago below an event dated
+// before the tab opened.
+//
+// NOTHING IS CAPPED HERE. The only bound is the one the Kubernetes adapter
+// already puts on a single event query, which is the same bound the Events
+// page and the event findings are subject to — so the timeline sees exactly
+// what the assessment saw, and a shorter cap on this side would be an entry
+// the timeline never saw and could therefore never show.
+type TimelineEvent struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Reason    string `json:"reason"`
+	Message   string `json:"message"`
+	// InvolvedKind and InvolvedName are the object the row is filed against.
+	InvolvedKind string `json:"involvedKind"`
+	InvolvedName string `json:"involvedName"`
+	IsWarning    bool   `json:"isWarning"`
+	Count        int32  `json:"count"`
+}
+
+// toTimelineEvents narrows the assessment's events for the bridge.
+//
+// Built with make so an assessment that read no events answers with an empty
+// array rather than null, which is what every other list on this struct does
+// and what the recorder expects to iterate.
+func toTimelineEvents(events []domain.Event) []TimelineEvent {
+	out := make([]TimelineEvent, 0, len(events))
+	for _, event := range events {
+		out = append(out, TimelineEvent{
+			Namespace:    event.Namespace().String(),
+			Name:         event.Name(),
+			Reason:       event.Reason(),
+			Message:      event.Message(),
+			InvolvedKind: event.InvolvedKind(),
+			InvolvedName: event.InvolvedName(),
+			IsWarning:    event.IsWarning(),
+			Count:        event.Count(),
+		})
+	}
+	return out
 }
 
 // MetricsBackend is a monitoring system found running in the cluster.
 type MetricsBackend struct {
-	// Kind is "prometheus", or empty when nothing was found.
+	// Kind is "prometheus" or "victoriametrics", or empty when nothing was
+	// found.
 	Kind string `json:"kind"`
-	// Label is what to show a person, e.g. "Prometheus in monitoring".
+	// Label is what to show a person, e.g. "VictoriaMetrics in monitoring".
+	// It NAMES THE PRODUCT that was found, because telling somebody they run
+	// Prometheus when they run VictoriaMetrics sends them looking for
+	// something that is not there.
 	Label     string `json:"label"`
 	Namespace string `json:"namespace"`
 	Service   string `json:"service"`
 	Port      string `json:"port"`
+	// Prefix is the path the query API is mounted under, empty for
+	// Prometheus and a single-node VictoriaMetrics. Carried across so a
+	// consumer never has to re-derive it from the kind — and it is not the
+	// kind that decides it, since VictoriaMetrics has one value for each of
+	// its two deployment shapes.
+	Prefix string `json:"prefix"`
+}
+
+// KubeStateMetrics is a kube-state-metrics installation found in the cluster.
+//
+// No proxy target and no query surface, deliberately — see
+// domain.KubeStateMetrics. What crosses the bridge is what a person needs to
+// go and look at it.
+type KubeStateMetrics struct {
+	// Found reports whether anything was discovered. A boolean rather than
+	// leaving the frontend to test Service for emptiness, so "is it there"
+	// is answered by the same rule on both sides of the bridge.
+	Found bool `json:"found"`
+	// Label is what to show a person, e.g. "kube-state-metrics in monitoring".
+	Label     string `json:"label"`
+	Namespace string `json:"namespace"`
+	Service   string `json:"service"`
+	// Port may be empty: a service whose metrics port this build does not
+	// recognise is still kube-state-metrics, and nothing here connects to it.
+	Port string `json:"port"`
+}
+
+func toKubeStateMetrics(state domain.KubeStateMetrics) KubeStateMetrics {
+	return KubeStateMetrics{
+		Found:     state.Found(),
+		Label:     state.Describe(),
+		Namespace: string(state.Namespace),
+		Service:   state.Service,
+		Port:      state.Port,
+	}
 }
 
 func toMetricsBackend(backend domain.MetricsBackend) MetricsBackend {
@@ -589,7 +745,18 @@ func toMetricsBackend(backend domain.MetricsBackend) MetricsBackend {
 		Namespace: string(backend.Namespace),
 		Service:   backend.Service,
 		Port:      backend.Port,
+		Prefix:    backend.Prefix,
 	}
+}
+
+// sources renders the unavailable-source list as an empty array rather than
+// null when nothing failed, which is also the truthful encoding: "nothing
+// could not be read" is a fact about the assessment, not the absence of one.
+func sources(names []string) []string {
+	if names == nil {
+		return []string{}
+	}
+	return names
 }
 
 func toOverview(overview domain.Overview) Overview {
@@ -610,13 +777,23 @@ func toOverview(overview domain.Overview) Overview {
 			ByMemory: toConsumers(overview.Consumers.ByMemory, false),
 			Measured: overview.Consumers.Measured,
 		},
-		Pods:        toPodSummary(overview.Pods),
-		Workloads:   toWorkloadSummaries(overview.Workloads),
-		Namespaces:  toNamespaceLoads(overview.Namespaces, overview.Capacity),
-		Restarts:    toRestartHotspots(overview.Restarts),
-		Unavailable: overview.Unavailable,
+		Pods:       toPodSummary(overview.Pods),
+		Workloads:  toWorkloadSummaries(overview.Workloads),
+		Namespaces: toNamespaceLoads(overview.Namespaces, overview.Capacity),
+		Restarts:   toRestartHotspots(overview.Restarts),
+		Events:     toTimelineEvents(overview.Events),
+		// NEVER NULL ON THE WIRE. A nil slice marshals as `null`, and both
+		// readers of this field test its length on every render — the
+		// overview's "assessed without …" line, and the notification rule
+		// that compares one refresh's source set with the last. `toFindings`
+		// and the rest of this file already build their slices with `make`
+		// for the same reason; this one was the exception.
+		Unavailable: sources(overview.Unavailable),
 		Metrics:     string(overview.Metrics),
 		Backend:     toMetricsBackend(overview.Backend),
+		KubeState:   toKubeStateMetrics(overview.KubeState),
+		Upgrade:     toUpgradeSummary(overview.Upgrade),
+		KnownMinors: domain.KnownMinors(),
 	}
 
 	for _, finding := range overview.Findings {

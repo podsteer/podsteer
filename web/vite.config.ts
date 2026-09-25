@@ -8,6 +8,21 @@ import tailwindcss from '@tailwindcss/vite'
 const EMBED_DIR = fileURLToPath(new URL('../app/adapters/assets/dist', import.meta.url))
 
 /**
+ * Absolute path of the generated Wails bindings, behind the `$bindings` alias.
+ *
+ * `wails3 generate bindings` mirrors the Go IMPORT PATH under its output
+ * directory — one folder per bound package — so the real location is
+ * `src/lib/bindings/github.com/podsteer/podsteer/app/adapters/wails`. There is
+ * no flag to flatten it, and there should not be: a project binding two
+ * packages needs the distinction. The alias is what keeps that path out of
+ * every import line, and it is declared identically here, in vitest.config.ts
+ * and in tsconfig.json, the same way `$lib` already is.
+ */
+const BINDINGS_DIR = fileURLToPath(
+  new URL('./src/lib/bindings/github.com/podsteer/podsteer/app/adapters/wails', import.meta.url),
+)
+
+/**
  * Keeps the embed directory tracked in git.
  *
  * `//go:embed all:dist` fails to compile if the directory does not exist, so a
@@ -44,6 +59,7 @@ export default defineConfig({
       $lib: fileURLToPath(new URL('./src/lib', import.meta.url)),
       $stores: fileURLToPath(new URL('./src/stores', import.meta.url)),
       $pages: fileURLToPath(new URL('./src/pages', import.meta.url)),
+      $bindings: BINDINGS_DIR,
     },
   },
 
@@ -58,8 +74,8 @@ export default defineConfig({
     target: 'es2020',
 
     // Sourcemaps would roughly double the embedded payload, and the binary
-    // size is part of the point of this project. `wails dev` serves from the
-    // dev server with maps, which is where debugging actually happens.
+    // size is part of the point of this project. `make dev` serves from the
+    // Vite dev server with maps, which is where debugging actually happens.
     sourcemap: false,
 
     reportCompressedSize: false,
@@ -71,9 +87,14 @@ export default defineConfig({
   },
 
   server: {
-    // Wails discovers this automatically via "frontend:dev:serverUrl": "auto",
-    // but pinning the port keeps the dev URL predictable when attaching a
-    // browser devtools session alongside the desktop window.
+    // The port `make dev` passes to `wails3 dev`, which turns it into the
+    // FRONTEND_DEVSERVER_URL the Go side reads. The two have to agree, and
+    // this is one of the two places the number is written — the Makefile's
+    // `dev` target is the other.
+    //
+    // strictPort stays false so a port already in use falls back rather than
+    // failing the whole loop; `wails3 dev` checks the port is free before it
+    // starts anything, so the fallback is a nicety rather than a trap.
     port: 5173,
     strictPort: false,
   },
@@ -89,7 +110,7 @@ export default defineConfig({
  * adapters/k8s" being the other — and a policy that permits arbitrary outbound
  * WebSockets from the webview does not keep it.
  *
- * Stripped at build rather than removed from index.html, because `wails dev`
+ * Stripped at build rather than removed from index.html, because `make dev`
  * genuinely needs it and a policy nobody can develop under gets loosened back.
  * `app/adapters/assets/csp_test.go` asserts the result on the embedded bundle,
  * so the two cannot drift apart unnoticed.

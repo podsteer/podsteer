@@ -107,6 +107,13 @@ type Container struct {
 	// ready=false is a readiness problem, started=false is a startup problem,
 	// and they are investigated in different places.
 	Started bool
+	// TTY and Stdin quote the container's own spec.tty and spec.stdin —
+	// whether it allocates a pseudo-terminal and keeps standard input open.
+	// Both must be true before Attach (connecting to the container's own
+	// running process, as opposed to Shell, which starts a new one) can
+	// behave interactively; ManagementPort.AttachToPod refuses otherwise.
+	TTY   bool
+	Stdin bool
 	// LastTermination is how this container's previous life ended, when there
 	// was one. See Termination — it is the only record of it that exists.
 	LastTermination Termination
@@ -115,6 +122,9 @@ type Container struct {
 	// somebody wrote. Two pods can name the same tag and hold different
 	// digests, and this is the only field that says so.
 	ImageID string
+	// Security quotes the container's own securityContext — the fields a
+	// posture check reads, and nothing else. See ContainerSecurity.
+	Security ContainerSecurity
 	// Usage is what this container is measuring right now, when anything
 	// measured it. The pod's total is the sum of these, and this is the half
 	// that says which container the total came from.
@@ -255,10 +265,21 @@ type PodSpec struct {
 	NodeName string
 	// PodIP is the pod's cluster IP, empty before it is assigned.
 	PodIP string
+	// Security is the pod-level securityContext a posture check reads — the
+	// namespaces it shares with its node. See PodSecurity.
+	Security PodSecurity
 	// Containers are the pod's containers.
 	Containers []Container
 	// Labels are the pod's labels.
 	Labels map[string]string
+	// Annotations are the pod's annotations, populated SELECTIVELY by the
+	// adapter — only the keys a Projection asked for. See Projection for why
+	// the whole map never travels.
+	Annotations map[string]string
+	// Custom holds the operator's own JSONPath columns, keyed by the
+	// interface's column id and already rendered as text. Nil when none were
+	// asked for, which is every read but a list view's.
+	Custom map[string]string
 	// Owners are the pod's owner references. The controlling one is what the
 	// "Controlled By" column shows.
 	Owners []OwnerReference
@@ -314,24 +335,27 @@ func (c PodCondition) True() bool { return c.Status == "True" }
 // The value is a read-only snapshot: it is never written back to the cluster,
 // so it carries observed status rather than desired spec.
 type Pod struct {
-	uid        string
-	name       string
-	namespace  NamespaceName
-	clusterID  ClusterID
-	phase      PodPhase
-	nodeName   string
-	podIP      string
-	containers []Container
-	labels     map[string]string
-	owners     []OwnerReference
-	qosClass   QoSClass
-	usage      Metrics
-	reason     string
-	message    string
-	createdAt  time.Time
-	deletedAt  time.Time
-	finalizers []string
-	conditions []PodCondition
+	uid         string
+	name        string
+	namespace   NamespaceName
+	clusterID   ClusterID
+	phase       PodPhase
+	nodeName    string
+	podIP       string
+	security    PodSecurity
+	containers  []Container
+	labels      map[string]string
+	annotations map[string]string
+	custom      map[string]string
+	owners      []OwnerReference
+	qosClass    QoSClass
+	usage       Metrics
+	reason      string
+	message     string
+	createdAt   time.Time
+	deletedAt   time.Time
+	finalizers  []string
+	conditions  []PodCondition
 }
 
 // NewPod validates spec and returns the corresponding Pod.
@@ -366,24 +390,27 @@ func NewPod(spec PodSpec) (Pod, error) {
 	}
 
 	return Pod{
-		uid:        spec.UID,
-		name:       name,
-		namespace:  spec.Namespace,
-		clusterID:  spec.ClusterID,
-		phase:      phase,
-		nodeName:   spec.NodeName,
-		podIP:      spec.PodIP,
-		containers: containers,
-		labels:     maps.Clone(spec.Labels),
-		owners:     slices.Clone(spec.Owners),
-		qosClass:   spec.QoSClass,
-		usage:      spec.Usage,
-		reason:     strings.TrimSpace(spec.Reason),
-		message:    strings.TrimSpace(spec.Message),
-		createdAt:  spec.CreatedAt.UTC(),
-		deletedAt:  spec.DeletedAt.UTC(),
-		finalizers: slices.Clone(spec.Finalizers),
-		conditions: slices.Clone(spec.Conditions),
+		uid:         spec.UID,
+		name:        name,
+		namespace:   spec.Namespace,
+		clusterID:   spec.ClusterID,
+		phase:       phase,
+		nodeName:    spec.NodeName,
+		podIP:       spec.PodIP,
+		security:    spec.Security,
+		containers:  containers,
+		labels:      maps.Clone(spec.Labels),
+		annotations: maps.Clone(spec.Annotations),
+		custom:      maps.Clone(spec.Custom),
+		owners:      slices.Clone(spec.Owners),
+		qosClass:    spec.QoSClass,
+		usage:       spec.Usage,
+		reason:      strings.TrimSpace(spec.Reason),
+		message:     strings.TrimSpace(spec.Message),
+		createdAt:   spec.CreatedAt.UTC(),
+		deletedAt:   spec.DeletedAt.UTC(),
+		finalizers:  slices.Clone(spec.Finalizers),
+		conditions:  slices.Clone(spec.Conditions),
 	}, nil
 }
 
@@ -408,6 +435,9 @@ func (p Pod) NodeName() string { return p.nodeName }
 // PodIP returns the pod's cluster IP, empty before it is assigned.
 func (p Pod) PodIP() string { return p.podIP }
 
+// Security quotes the pod-level namespaces it shares with its node.
+func (p Pod) Security() PodSecurity { return p.security }
+
 // Containers returns a copy of the pod's containers, preserving immutability.
 func (p Pod) Containers() []Container {
 	return append([]Container(nil), p.containers...)
@@ -415,6 +445,14 @@ func (p Pod) Containers() []Container {
 
 // Labels returns a copy of the pod's labels, preserving immutability.
 func (p Pod) Labels() map[string]string { return maps.Clone(p.labels) }
+
+// Annotations returns a copy of the projected annotations — only the keys
+// that were asked for when the pod was read. See PodSpec.Annotations.
+func (p Pod) Annotations() map[string]string { return maps.Clone(p.annotations) }
+
+// Custom returns a copy of the operator's own JSONPath column values, keyed
+// by column id.
+func (p Pod) Custom() map[string]string { return maps.Clone(p.custom) }
 
 // Owners returns a copy of the pod's owner references.
 func (p Pod) Owners() []OwnerReference { return slices.Clone(p.owners) }

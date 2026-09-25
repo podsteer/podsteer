@@ -39,7 +39,7 @@ func (a *Adapter) PodGraphSources(ctx context.Context, id domain.ClusterID, name
 		return domain.GraphInput{}, classify(fmt.Sprintf("reading pod %q", podName), err)
 	}
 
-	pod, err := mapPod(id, raw)
+	pod, err := mapPod(id, raw, domain.Projection{})
 	if err != nil {
 		return domain.GraphInput{}, fmt.Errorf("mapping pod %q: %w", podName, err)
 	}

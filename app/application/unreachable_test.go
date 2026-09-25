@@ -24,6 +24,11 @@ type goneCluster struct {
 	// recoverAfter, when positive, makes the Nth assessment and everything
 	// after it succeed — the blip that retrying is meant to ride out.
 	recoverAfter int64
+	// servedFromCache makes every read EXCEPT the version succeed, which is
+	// what a cluster with live watches looks like the moment its network goes
+	// away: the informer stores answer from memory until their reflectors
+	// notice, and only /version actually leaves the machine.
+	servedFromCache bool
 }
 
 func (g *goneCluster) fail() error {
@@ -35,6 +40,9 @@ func (g *goneCluster) fail() error {
 func (g *goneCluster) err(counts bool) error {
 	if counts {
 		g.assessments.Add(1)
+	}
+	if g.servedFromCache && !counts {
+		return nil
 	}
 	if g.recoverAfter > 0 && g.assessments.Load() >= g.recoverAfter {
 		return nil
@@ -53,11 +61,11 @@ func (g *goneCluster) ServerVersion(context.Context, domain.ClusterID) (domain.S
 	return domain.ServerVersion{}, nil
 }
 
-func (g *goneCluster) ListNamespaces(context.Context, domain.ClusterID) ([]domain.Namespace, error) {
+func (g *goneCluster) ListNamespaces(context.Context, domain.ClusterID, domain.Projection) ([]domain.Namespace, error) {
 	return nil, g.err(false)
 }
 
-func (g *goneCluster) ListNodes(context.Context, domain.ClusterID) ([]domain.Node, error) {
+func (g *goneCluster) ListNodes(context.Context, domain.ClusterID, domain.Projection) ([]domain.Node, error) {
 	return nil, g.err(false)
 }
 
@@ -73,11 +81,11 @@ func (g *goneCluster) DiscoverCustomKinds(context.Context, domain.ClusterID) ([]
 	return nil, g.err(false)
 }
 
-func (g *goneCluster) ListPods(context.Context, domain.ClusterID, domain.NamespaceName) ([]domain.Pod, error) {
+func (g *goneCluster) ListPods(context.Context, domain.ClusterID, domain.NamespaceName, domain.Projection) ([]domain.Pod, error) {
 	return nil, g.err(false)
 }
 
-func (g *goneCluster) ListWorkloads(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName) ([]domain.Workload, error) {
+func (g *goneCluster) ListWorkloads(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, domain.Projection) ([]domain.Workload, error) {
 	return nil, g.err(false)
 }
 
@@ -85,7 +93,7 @@ func (g *goneCluster) ListPodsForWorkload(context.Context, domain.ClusterID, dom
 	return nil, g.err(false)
 }
 
-func (g *goneCluster) ListEvents(context.Context, domain.ClusterID, domain.NamespaceName) ([]domain.Event, error) {
+func (g *goneCluster) ListEvents(context.Context, domain.ClusterID, domain.NamespaceName, domain.Projection) ([]domain.Event, error) {
 	return nil, g.err(false)
 }
 
@@ -113,12 +121,36 @@ func (g *goneCluster) ListPodsOnNode(context.Context, domain.ClusterID, string) 
 	return nil, g.err(false)
 }
 
+func (g *goneCluster) DrainCandidates(context.Context, domain.ClusterID, string) ([]domain.DrainCandidate, error) {
+	return nil, g.err(false)
+}
+
 func (g *goneCluster) NodeFilesystems(context.Context, domain.ClusterID) (map[string]domain.NodeFilesystems, error) {
 	return nil, g.err(false)
 }
 
 func (g *goneCluster) DiscoverMetricsBackend(context.Context, domain.ClusterID) (domain.MetricsBackend, error) {
 	return domain.MetricsBackend{}, g.err(false)
+}
+
+func (g *goneCluster) ListMetricsBackends(context.Context, domain.ClusterID) ([]domain.MetricsBackend, error) {
+	return nil, g.err(false)
+}
+
+func (g *goneCluster) DiscoverKubeStateMetrics(context.Context, domain.ClusterID) (domain.KubeStateMetrics, error) {
+	return domain.KubeStateMetrics{}, g.err(false)
+}
+
+func (g *goneCluster) ServedAPIs(context.Context, domain.ClusterID) ([]domain.APIGroupVersion, error) {
+	return nil, g.err(false)
+}
+
+func (g *goneCluster) APIWriters(context.Context, domain.ClusterID, domain.ResourceKind, int) (domain.APIUsage, error) {
+	return domain.APIUsage{}, g.err(false)
+}
+
+func (g *goneCluster) RolloutHistory(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string) ([]domain.Revision, error) {
+	return nil, g.err(false)
 }
 
 func goneService(t *testing.T, cluster *goneCluster) *application.OverviewService {
@@ -130,6 +162,7 @@ func goneService(t *testing.T, cluster *goneCluster) *application.OverviewServic
 		Workloads: cluster,
 		Events:    cluster,
 		Metrics:   cluster,
+		APIs:      cluster,
 		Registry:  registry,
 	})
 	if err != nil {
@@ -227,5 +260,31 @@ func TestCancellationIsNotRetried(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Errorf("a cancelled request took %s; it should abandon immediately", elapsed)
+	}
+}
+
+// THE SECOND HALF OF THE SAME BUG, and the one live watches introduced.
+//
+// The rule used to be a ratio — every read failed, and all of them on
+// transport — which was sound while every read went to the API server. A
+// watched kind is answered from an in-memory store instead, so after the VPN
+// goes away the pod and node lists keep succeeding for as long as the
+// reflector takes to notice, one read fails, the assessment degrades around
+// it, and the dashboard reports a healthy cluster nothing can reach.
+//
+// /version always leaves the machine. A transport failure on it is the
+// answer, whatever the stores are still willing to say.
+func TestVersionUnreachableIsAnErrorEvenWhenCachesStillAnswer(t *testing.T) {
+	t.Parallel()
+
+	service := goneService(t, &goneCluster{servedFromCache: true})
+
+	overview, err := service.Overview(context.Background(), domain.ClusterID("dev"))
+	if err == nil {
+		t.Fatalf("cluster unreachable but the assessment succeeded; health = %q, unavailable = %v",
+			overview.Health, overview.Unavailable)
+	}
+	if !errors.Is(err, ports.ErrUnreachable) {
+		t.Errorf("error = %v, want one wrapping ErrUnreachable", err)
 	}
 }

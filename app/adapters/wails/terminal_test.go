@@ -1,9 +1,15 @@
 package wails
 
 import (
+	"context"
+	"errors"
+	"io"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/podsteer/podsteer/app/application"
+	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
 )
 
@@ -111,4 +117,415 @@ func TestSizeQueueDropsWhenFull(t *testing.T) {
 	if got == nil || got.Width != 1 {
 		t.Fatalf("Next() = %v, want the first size", got)
 	}
+}
+
+// stubManagementPort is a minimal stand-in for ports.ManagementPort, local to
+// this package: application_test's own fake is unexported and lives in a
+// different package. ExecInPodWithTTY errors loudly if reached at all, since
+// the one thing the test below asserts is that a refused session never gets
+// there.
+type stubManagementPort struct{}
+
+var _ ports.ManagementPort = (*stubManagementPort)(nil)
+
+func (stubManagementPort) StreamLogs(context.Context, domain.ClusterID, domain.NamespaceName, string, string, domain.LogOptions, chan<- string) error {
+	return nil
+}
+func (stubManagementPort) DeleteResource(context.Context, domain.ResourceRef) error { return nil }
+func (stubManagementPort) ScaleWorkload(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, int32) error {
+	return nil
+}
+func (stubManagementPort) RestartRollout(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string) error {
+	return nil
+}
+func (stubManagementPort) ApplyResource(context.Context, domain.ClusterID, string, domain.ApplyOptions) (domain.ApplyOutcome, error) {
+	return domain.ApplyOutcome{}, nil
+}
+
+func (stubManagementPort) FieldOwnership(string) (domain.FieldOwnership, error) {
+	return nil, nil
+}
+
+func (stubManagementPort) UpdateResource(context.Context, domain.ClusterID, string, bool) (domain.ApplyOutcome, error) {
+	return domain.ApplyOutcome{}, nil
+}
+func (stubManagementPort) ExecInPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, bool) error {
+	return nil
+}
+func (stubManagementPort) ExecInPodWithTTY(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []string, io.Reader, io.Writer, io.Writer, ports.TerminalSizeQueue) error {
+	return errors.New("ExecInPodWithTTY reached: a refused StartSession must never get this far")
+}
+func (stubManagementPort) AttachToPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, io.Reader, io.Writer, io.Writer, ports.TerminalSizeQueue) error {
+	return errors.New("AttachToPod reached: a refused StartAttachSession must never get this far")
+}
+func (stubManagementPort) AddEphemeralContainer(context.Context, domain.ClusterID, domain.NamespaceName, string, domain.DebugContainerSpec) (string, error) {
+	return "", errors.New("AddEphemeralContainer reached: a refused StartDebugSession must never get this far")
+}
+func (stubManagementPort) WaitForEphemeralContainerRunning(context.Context, domain.ClusterID, domain.NamespaceName, string, string) error {
+	return errors.New("WaitForEphemeralContainerRunning reached: a refused StartDebugSession must never get this far")
+}
+
+// stubNodeShellPort is a stand-in for ports.NodeShellPort, local to this
+// package. StartNodeShell errors loudly if reached, since the read-only tests
+// assert that a refused StartNodeShellSession never creates a pod.
+type stubNodeShellPort struct{}
+
+var _ ports.NodeShellPort = (*stubNodeShellPort)(nil)
+
+func (stubNodeShellPort) StartNodeShell(context.Context, domain.ClusterID, domain.NamespaceName, string, string) (domain.NodeShell, error) {
+	return domain.NodeShell{}, errors.New("StartNodeShell reached: a refused StartNodeShellSession must never get this far")
+}
+func (stubNodeShellPort) StopNodeShell(string) error         { return nil }
+func (stubNodeShellPort) ListNodeShells() []domain.NodeShell { return nil }
+func (stubNodeShellPort) StopAllNodeShells()                 {}
+
+// stubLocalShellPort is a stand-in for ports.LocalShellPort. It starts no
+// process: it records the spec it was handed and reports a session, which is
+// everything the tests here need — whether a local session is refused, and
+// what environment the spec carries.
+type stubLocalShellPort struct {
+	mu      sync.Mutex
+	started []domain.LocalShellSpec
+	stopped []string
+	agents  []domain.CodingAgent
+	// startErr makes every start fail, standing in for the platform that has
+	// no pseudo-terminal and the machine with no shell to run.
+	startErr error
+}
+
+// errRefusedLocalShell is the sentence a platform without a pseudo-terminal
+// answers with, quoted here so the test asserts it travels rather than
+// asserting on a message it invented itself.
+var errRefusedLocalShell = errors.New("a local shell needs a pseudo-terminal, which this build does not provide")
+
+var _ ports.LocalShellPort = (*stubLocalShellPort)(nil)
+
+func (s *stubLocalShellPort) LocalShellSupported() (bool, string) { return true, "" }
+
+func (s *stubLocalShellPort) DetectAgents() []domain.CodingAgent { return s.agents }
+
+func (s *stubLocalShellPort) StartLocalShell(spec domain.LocalShellSpec, _ io.Writer, _ func(string)) (domain.LocalShell, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.startErr != nil {
+		return domain.LocalShell{}, s.startErr
+	}
+	s.started = append(s.started, spec)
+	return domain.LocalShell{ID: "shell-1", Context: spec.Context, Agent: spec.Agent}, nil
+}
+
+func (s *stubLocalShellPort) WriteLocalShell(string, []byte) error          { return nil }
+func (s *stubLocalShellPort) ResizeLocalShell(string, uint16, uint16) error { return nil }
+
+func (s *stubLocalShellPort) StopLocalShell(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopped = append(s.stopped, id)
+	return nil
+}
+
+func (s *stubLocalShellPort) ListLocalShells() []domain.LocalShell { return nil }
+func (s *stubLocalShellPort) StopAllLocalShells()                  {}
+
+func (s *stubLocalShellPort) starts() []domain.LocalShellSpec {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]domain.LocalShellSpec(nil), s.started...)
+}
+func (stubManagementPort) ListDirectory(context.Context, domain.ClusterID, domain.NamespaceName, string, string, string) (domain.DirectoryListing, error) {
+	return domain.DirectoryListing{}, nil
+}
+
+func (stubManagementPort) CopyFromPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, string, io.Writer) error {
+	return nil
+}
+func (stubManagementPort) CopyToPod(context.Context, domain.ClusterID, domain.NamespaceName, string, string, string, io.Reader) error {
+	return errors.New("CopyToPod reached: a refused StartUpload must never get this far")
+}
+
+// TestStartSessionRefusesOnReadOnlyCluster pins the fast path CLAUDE.md's
+// read-only section promises: an interactive shell refuses synchronously,
+// before a PTY is allocated or a goroutine started, rather than opening a
+// session that fails on its first keystroke.
+func TestStartSessionRefusesOnReadOnlyCluster(t *testing.T) {
+	t.Parallel()
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly("prod", true)
+
+	management, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: stubManagementPort{},
+		Registry:   registry,
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, &stubLocalShellPort{}, NewApp(nil, 0), nil)
+	if err != nil {
+		t.Fatalf("NewTerminalAPI() error = %v", err)
+	}
+
+	sessionID, err := terminal.StartSession("prod", "default", "web-0", "app", 80, 24)
+	if err == nil {
+		t.Fatal("StartSession() error = nil, want a read-only refusal")
+	}
+	if !strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("StartSession() error = %q, want it classified read_only", err)
+	}
+	if sessionID != "" {
+		t.Fatalf("StartSession() session id = %q, want empty on refusal", sessionID)
+	}
+
+	terminal.mu.Lock()
+	live := len(terminal.sessions)
+	terminal.mu.Unlock()
+	if live != 0 {
+		t.Fatalf("live sessions = %d, want 0 — a refused start must never allocate one", live)
+	}
+}
+
+// TestStartSessionAllowsOnOrdinaryCluster is the other half: the guard must
+// not refuse a cluster nothing marked, and StartSession has to get far enough
+// to try opening a stream — asserted by watching stubManagementPort get past
+// the read-only gate, since a fully connected session needs a live Wails
+// runtime this test does not have.
+func TestStartSessionAllowsOnOrdinaryCluster(t *testing.T) {
+	t.Parallel()
+
+	registry := application.NewRegistry()
+	// Marked, but a different cluster — the guard has to be per-cluster.
+	registry.SetReadOnly("prod", true)
+
+	management, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: stubManagementPort{},
+		Registry:   registry,
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, &stubLocalShellPort{}, NewApp(nil, 0), nil)
+	if err != nil {
+		t.Fatalf("NewTerminalAPI() error = %v", err)
+	}
+
+	// No Wails runtime is running, so the call fails past the read-only
+	// check — at "application is shutting down" — rather than succeeding.
+	// That failure is what proves the guard let it through: a read-only
+	// refusal never reaches that line at all.
+	_, err = terminal.StartSession("staging", "default", "web-0", "app", 80, 24)
+	if err == nil {
+		t.Fatal("StartSession() error = nil, want a failure reaching for the (absent) Wails runtime")
+	}
+	if strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("StartSession() error = %q, an unmarked cluster must not be refused as read-only", err)
+	}
+}
+
+// TestStartAttachSessionRefusesOnReadOnlyCluster is StartSession's own
+// read-only test, mirrored for the attach path: attaching can type into the
+// container's process as freely as an interactive shell can, so it gets the
+// identical synchronous refusal — before a PTY is allocated or a goroutine
+// started — rather than opening a session that fails on its first keystroke.
+func TestStartAttachSessionRefusesOnReadOnlyCluster(t *testing.T) {
+	t.Parallel()
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly("prod", true)
+
+	management, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: stubManagementPort{},
+		Registry:   registry,
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, &stubLocalShellPort{}, NewApp(nil, 0), nil)
+	if err != nil {
+		t.Fatalf("NewTerminalAPI() error = %v", err)
+	}
+
+	sessionID, err := terminal.StartAttachSession("prod", "default", "web-0", "app", 80, 24)
+	if err == nil {
+		t.Fatal("StartAttachSession() error = nil, want a read-only refusal")
+	}
+	if !strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("StartAttachSession() error = %q, want it classified read_only", err)
+	}
+	if sessionID != "" {
+		t.Fatalf("StartAttachSession() session id = %q, want empty on refusal", sessionID)
+	}
+
+	terminal.mu.Lock()
+	live := len(terminal.sessions)
+	terminal.mu.Unlock()
+	if live != 0 {
+		t.Fatalf("live sessions = %d, want 0 — a refused start must never allocate one", live)
+	}
+}
+
+// TestStartAttachSessionAllowsOnOrdinaryCluster is the other half, mirroring
+// TestStartSessionAllowsOnOrdinaryCluster: the guard must not refuse a
+// cluster nothing marked, so the call has to get far enough to try opening a
+// stream — asserted the same way, by watching it fail past the read-only
+// gate rather than at it, since a fully connected session needs a live Wails
+// runtime this test does not have.
+func TestStartAttachSessionAllowsOnOrdinaryCluster(t *testing.T) {
+	t.Parallel()
+
+	registry := application.NewRegistry()
+	// Marked, but a different cluster — the guard has to be per-cluster.
+	registry.SetReadOnly("prod", true)
+
+	management, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: stubManagementPort{},
+		Registry:   registry,
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, &stubLocalShellPort{}, NewApp(nil, 0), nil)
+	if err != nil {
+		t.Fatalf("NewTerminalAPI() error = %v", err)
+	}
+
+	_, err = terminal.StartAttachSession("staging", "default", "web-0", "app", 80, 24)
+	if err == nil {
+		t.Fatal("StartAttachSession() error = nil, want a failure reaching for the (absent) Wails runtime")
+	}
+	if strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("StartAttachSession() error = %q, an unmarked cluster must not be refused as read-only", err)
+	}
+}
+
+// TestStartDebugSessionRefusesOnReadOnlyCluster mirrors the shell and attach
+// read-only tests for the debug path: adding an ephemeral container mutates
+// the pod, so it must be refused synchronously — before any container is
+// added or session allocated. stubManagementPort.AddEphemeralContainer errors
+// loudly if reached, which is the proof it was not.
+func TestStartDebugSessionRefusesOnReadOnlyCluster(t *testing.T) {
+	t.Parallel()
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly("prod", true)
+
+	management, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: stubManagementPort{},
+		Registry:   registry,
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, &stubLocalShellPort{}, NewApp(nil, 0), nil)
+	if err != nil {
+		t.Fatalf("NewTerminalAPI() error = %v", err)
+	}
+
+	sessionID, err := terminal.StartDebugSession("prod", "default", "web-0", "app", "busybox:1.37", []string{"sh"}, 80, 24)
+	if err == nil {
+		t.Fatal("StartDebugSession() error = nil, want a read-only refusal")
+	}
+	if !strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("StartDebugSession() error = %q, want it classified read_only", err)
+	}
+	if sessionID != "" {
+		t.Fatalf("StartDebugSession() session id = %q, want empty on refusal", sessionID)
+	}
+
+	terminal.mu.Lock()
+	live := len(terminal.sessions)
+	terminal.mu.Unlock()
+	if live != 0 {
+		t.Fatalf("live sessions = %d, want 0 — a refused debug start must never allocate one", live)
+	}
+}
+
+// TestStartNodeShellSessionRefusesOnReadOnlyCluster is the same for the node
+// shell: creating a privileged pod is a write, refused before the pod is
+// created. stubNodeShellPort.StartNodeShell errors loudly if reached.
+func TestStartNodeShellSessionRefusesOnReadOnlyCluster(t *testing.T) {
+	t.Parallel()
+
+	registry := application.NewRegistry()
+	registry.SetReadOnly("prod", true)
+
+	management, err := application.NewManagementService(application.ManagementServiceDeps{
+		Management: stubManagementPort{},
+		Registry:   registry,
+	})
+	if err != nil {
+		t.Fatalf("NewManagementService() error = %v", err)
+	}
+
+	terminal, err := NewTerminalAPI(management, stubNodeShellPort{}, &stubLocalShellPort{}, NewApp(nil, 0), nil)
+	if err != nil {
+		t.Fatalf("NewTerminalAPI() error = %v", err)
+	}
+
+	sessionID, err := terminal.StartNodeShellSession("prod", "kube-system", "node-1", "docker.io/library/alpine:3.20", 80, 24)
+	if err == nil {
+		t.Fatal("StartNodeShellSession() error = nil, want a read-only refusal")
+	}
+	if !strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("StartNodeShellSession() error = %q, want it classified read_only", err)
+	}
+	if sessionID != "" {
+		t.Fatalf("StartNodeShellSession() session id = %q, want empty on refusal", sessionID)
+	}
+
+	terminal.mu.Lock()
+	live := len(terminal.sessions)
+	terminal.mu.Unlock()
+	if live != 0 {
+		t.Fatalf("live sessions = %d, want 0 — a refused node-shell start must never allocate one", live)
+	}
+}
+
+// The write operations added after this stub was written. Every one is a
+// no-op: the terminal tests only need a ManagementPort that compiles and that
+// answers ReadOnly through the service, never one that performs a write.
+func (stubManagementPort) TriggerCronJob(context.Context, domain.ClusterID, domain.NamespaceName, string) (string, error) {
+	return "", nil
+}
+func (stubManagementPort) SuspendWorkload(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, bool) error {
+	return nil
+}
+func (stubManagementPort) PromoteRollout(context.Context, domain.ClusterID, domain.NamespaceName, string) error {
+	return nil
+}
+func (stubManagementPort) AbortRollout(context.Context, domain.ClusterID, domain.NamespaceName, string) error {
+	return nil
+}
+func (stubManagementPort) SetSecretKey(context.Context, domain.ClusterID, domain.NamespaceName, string, string, []byte) error {
+	return nil
+}
+func (stubManagementPort) SetConfigMapKey(context.Context, domain.ClusterID, domain.NamespaceName, string, string, string) error {
+	return nil
+}
+func (stubManagementPort) CordonNode(context.Context, domain.ClusterID, string, bool) error {
+	return nil
+}
+func (stubManagementPort) EvictPod(context.Context, domain.ClusterID, domain.NamespaceName, string, int) error {
+	return nil
+}
+func (stubManagementPort) DrainNode(context.Context, domain.ClusterID, string, domain.DrainOptions) (domain.DrainReport, error) {
+	return domain.DrainReport{}, nil
+}
+func (stubManagementPort) ContainerResizeSpec(context.Context, domain.ClusterID, domain.NamespaceName, string, string) (domain.ContainerResize, error) {
+	return domain.ContainerResize{}, nil
+}
+
+func (stubManagementPort) ResizePod(context.Context, domain.ClusterID, domain.NamespaceName, string, domain.ResizePlan) error {
+	return nil
+}
+
+func (stubManagementPort) SetImage(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, string, string, bool) error {
+	return nil
+}
+func (stubManagementPort) RollbackWorkload(context.Context, domain.ClusterID, domain.WorkloadKind, domain.NamespaceName, string, int64, bool) (domain.RollbackOutcome, error) {
+	return domain.RollbackOutcome{}, nil
 }

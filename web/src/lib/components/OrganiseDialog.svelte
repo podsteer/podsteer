@@ -28,8 +28,18 @@
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { modal } from '$lib/modal'
   import Button from './Button.svelte'
-  import { DEFAULT_PROJECT_ID, organisation } from '$stores/organisation.svelte'
+  import Checkbox from './Checkbox.svelte'
+  import Select from './Select.svelte'
+  import {
+    DEFAULT_PROJECT_ID,
+    ENVIRONMENTS,
+    GROUP_COLOURS,
+    organisation,
+    type Environment,
+  } from '$stores/organisation.svelte'
+  import { groupBgClass, GROUP_COLOUR_LABELS } from '$lib/groupColour'
   import { workspace } from '$stores/workspace.svelte'
+  import DialogHeader from './DialogHeader.svelte'
   import {
     ChevronUp,
     ChevronDown,
@@ -39,6 +49,7 @@
     Pencil,
     Plus,
     Trash2,
+    X,
   } from '@lucide/svelte'
 
   interface Props {
@@ -147,10 +158,41 @@
     if (event.key === 'Escape') cancelRename()
   }
 
+  /**
+   * The read-only toggle's full explanation.
+   *
+   * Said in exactly these terms because "read-only" alone invites reading it
+   * as a permission PodSteer grants, which it is not: RBAC is the only thing
+   * that actually decides what these credentials may do, and this is a guard
+   * against clicking the wrong button on the right cluster, not against a
+   * credential that should not have write access at all.
+   */
+  const READ_ONLY_EXPLANATION =
+    'PodSteer will refuse to change anything in these clusters. This is a guard against your own mistakes, not a permission — RBAC still decides what your credentials may do.'
+
+  /** Changes one setting for a group, then re-pushes read-only to every open
+   * cluster: cheap, and the only way this cannot miss a cluster whose group
+   * just changed underneath it. See workspace.syncAllReadOnly. */
+  function changeGroupSettings(
+    projectId: string,
+    groupId: string,
+    patch: { environment?: Environment; colour?: (typeof GROUP_COLOURS)[number] | '' },
+  ): void {
+    organisation.setGroupSettings(projectId, groupId, patch)
+  }
+
+  function toggleReadOnly(projectId: string, groupId: string, readOnly: boolean): void {
+    organisation.setGroupSettings(projectId, groupId, { readOnly })
+    workspace.syncAllReadOnly()
+  }
+
   function remove(row: Row): void {
     if (row.kind === 'project') organisation.removeProject(row.id)
     else organisation.removeGroup(row.id)
     confirmDelete = null
+    // Whatever fell back to a Default group may now be read-only, or may
+    // have just stopped being — see workspace.syncAllReadOnly.
+    workspace.syncAllReadOnly()
   }
 
   function openMenu(row: Row, event: MouseEvent, alreadyOpen: boolean): void {
@@ -261,6 +303,9 @@
       organisation.placeProjectBefore(dragging.id, target.id)
     } else if (target.kind === 'project') {
       organisation.moveGroupToProject(dragging.id, target.id)
+      // The group's own settings travel with it, but any OPEN cluster inside
+      // it still needs the backend told — see workspace.syncAllReadOnly.
+      workspace.syncAllReadOnly()
     } else {
       organisation.placeGroupBefore(dragging.id, target.id)
     }
@@ -345,8 +390,8 @@
       use:modal
       aria-label="Projects and groups"
     >
-    <h2 class="text-headline-small text-on-surface">Projects and groups</h2>
-    <p class="mt-1 text-body-small text-on-surface-variant">
+    <DialogHeader title="Projects and groups" help="organise" {onclose} />
+    <p class="mt-1 text-body-medium text-on-surface-variant">
       A project is a system; a group inside it is usually an environment. Drag a row to reorder it,
       or drop a group on a project to move it there. Every context starts in
       {organisation.defaultProjectName} › {organisation.defaultGroupNameFor(DEFAULT_PROJECT_ID)}.
@@ -358,7 +403,7 @@
          up 48px high beside a 32px button — every control in the application
          is h-8, and this one was half again as tall as the thing next to it. -->
     <div class="mt-5">
-      <label for="new-project-name" class="text-body-small text-on-surface-variant">
+      <label for="new-project-name" class="text-body-medium text-on-surface-variant">
         Project name
       </label>
       <div class="mt-1.5 flex items-center gap-2">
@@ -374,7 +419,7 @@
       </div>
     </div>
     {#if newProjectError}
-      <p class="mt-1.5 text-body-small text-error">{newProjectError}</p>
+      <p class="mt-1.5 text-body-medium text-error">{newProjectError}</p>
     {/if}
 
     <!-- The tree -->
@@ -430,12 +475,12 @@
                      something missing, not as something fixed. It can be
                      renamed — it cannot be moved or deleted, because it is
                      where everything falls back to. -->
-                <span class="shrink-0 text-body-small text-on-surface-variant/50">
+                <span class="shrink-0 text-body-medium text-on-surface-variant/50">
                   fallback · always first
                 </span>
               {/if}
 
-              <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant">
+              <span class="shrink-0 text-body-medium tabular-nums text-on-surface-variant">
                 {project.count}
                 {project.count === 1 ? 'cluster' : 'clusters'}
               </span>
@@ -545,12 +590,12 @@
                   </span>
 
                   {#if group.isDefault}
-                    <span class="shrink-0 text-body-small text-on-surface-variant/50">
+                    <span class="shrink-0 text-body-medium text-on-surface-variant/50">
                       fallback · always first
                     </span>
                   {/if}
 
-                  <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant/70">
+                  <span class="shrink-0 text-body-medium tabular-nums text-on-surface-variant">
                     {group.count}
                   </span>
 
@@ -582,15 +627,27 @@
                              border-outline-variant bg-surface-container-highest py-1 shadow-level-2"
                     >
                       {#if movingGroup === group.id && !group.isDefault}
-                        <p class="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider
-                                  text-on-surface-variant/60">
+                        <!-- THE HEADING IS WHAT SAYS WHAT CHOOSING ONE DOES,
+                             and inside a menu it was read by nothing: a menu
+                             exposes only its items, so this list announced as
+                             a row of bare project names with no indication
+                             that picking one MOVES the group. Labelling the
+                             group with it is the fix ColumnMenu records for a
+                             list of checkboxes. -->
+                        <p
+                          id="move-group-{group.id}"
+                          class="px-3 pb-1 pt-2 text-label-small font-semibold uppercase tracking-wider
+                                 text-on-surface-variant"
+                        >
                           Move to project
                         </p>
+                        <div role="group" aria-labelledby="move-group-{group.id}">
                         {#each tree as target (target.id)}
                           <button type="button" role="menuitem"
                             disabled={target.id === project.id}
                             onclick={() => {
                               organisation.moveGroupToProject(group.id, target.id)
+                              workspace.syncAllReadOnly()
                               closeMenu()
                             }}
                             class="state-layer flex w-full items-center gap-2.5 px-3 py-2 text-left
@@ -598,12 +655,13 @@
                                    disabled:pointer-events-none disabled:opacity-35">
                             <span class="truncate">{target.name}</span>
                             {#if target.id === project.id}
-                              <span class="ml-auto shrink-0 text-body-small text-on-surface-variant/50">
+                              <span class="ml-auto shrink-0 text-body-medium text-on-surface-variant/50">
                                 current
                               </span>
                             {/if}
                           </button>
                         {/each}
+                        </div>
                       {:else}
                         <button type="button" role="menuitem"
                           onclick={() => startRename(grow, group.name)}
@@ -646,6 +704,81 @@
                   {/if}
                 {/if}
               </li>
+
+              <!--
+                Guardrails, ALWAYS shown — including for the Default group,
+                which has no menu of its own to hide them in. One row per
+                group rather than behind an overflow item: an environment
+                and a read-only flag change what PodSteer will let somebody
+                do to real clusters, and that belongs where it is seen every
+                time this dialog is open, not one click deeper.
+              -->
+              <li class="mb-1 flex flex-wrap items-center gap-x-4 gap-y-1.5 py-1 pr-2 pl-9 text-body-medium">
+                <div class="flex items-center gap-1.5">
+                  <span class="text-on-surface-variant">Environment</span>
+                  <Select
+                    label="Environment for {group.name}"
+                    accessibleName="Environment for {group.name}"
+                    value={group.settings.environment}
+                    options={ENVIRONMENTS}
+                    compact
+                    onchange={(value) =>
+                      changeGroupSettings(project.id, group.id, { environment: value as Environment })}
+                  />
+                </div>
+
+                <div
+                  role="radiogroup"
+                  aria-label="Colour for {group.name}"
+                  class="flex items-center gap-1.5"
+                >
+                  {#each GROUP_COLOURS as colour (colour)}
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={group.settings.colour === colour}
+                      aria-label={GROUP_COLOUR_LABELS[colour]}
+                      title={GROUP_COLOUR_LABELS[colour]}
+                      onclick={() => changeGroupSettings(project.id, group.id, { colour })}
+                      class="size-4 shrink-0 rounded-full {groupBgClass(colour)}
+                             ring-offset-2 ring-offset-surface-container-high transition-transform
+                             duration-100 hover:scale-110
+                             {group.settings.colour === colour ? 'ring-2 ring-on-surface' : ''}"
+                    ></button>
+                  {/each}
+                  {#if group.settings.colour}
+                    <button
+                      type="button"
+                      onclick={() => changeGroupSettings(project.id, group.id, { colour: '' })}
+                      aria-label="Clear the colour for {group.name}"
+                      title="No colour"
+                      class="state-layer grid size-4 shrink-0 place-items-center rounded-full border
+                             border-dashed border-on-surface-variant/40 text-on-surface-variant/50
+                             hover:text-on-surface-variant"
+                    >
+                      <X class="size-2.5" strokeWidth={2.5} />
+                    </button>
+                  {/if}
+                </div>
+
+                <!--
+                  "Read-only" alone would read as a permission PodSteer
+                  grants. It is not one — RBAC still decides what the
+                  credentials can do — and the full copy says so, both in the
+                  accessible name and in the tooltip, rather than only where
+                  a mouse happens to hover.
+                -->
+                <Checkbox
+                  checked={group.settings.readOnly}
+                  onchange={(next) => toggleReadOnly(project.id, group.id, next)}
+                  ariaLabel="Read-only for {group.name}: {READ_ONLY_EXPLANATION}"
+                  title={READ_ONLY_EXPLANATION}
+                  dense
+                  class="ml-auto text-on-surface-variant"
+                >
+                  Read-only
+                </Checkbox>
+              </li>
             {/each}
 
             <!-- Add a group to this project -->
@@ -667,7 +800,7 @@
                   <Button variant="filled" onclick={() => addGroup(project.id)}>Add</Button>
                 </div>
                 {#if newGroupError}
-                  <p class="mt-1 text-body-small text-error">{newGroupError}</p>
+                  <p class="mt-1 text-body-medium text-error">{newGroupError}</p>
                 {/if}
               {:else}
                 <button
@@ -691,7 +824,7 @@
     </div>
 
     {#if renameError}
-      <p class="mt-1.5 text-body-small text-error">{renameError}</p>
+      <p class="mt-1.5 text-body-medium text-error">{renameError}</p>
     {/if}
 
     <div class="mt-5 flex shrink-0 justify-end">

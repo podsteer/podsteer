@@ -10,11 +10,13 @@
   never as an error.
 -->
 <script lang="ts">
-  import { ListEventsForResource } from '$lib/wailsjs/go/wails/BrowseAPI'
-  import type { wails } from '$lib/wailsjs/go/models'
+  import { ListEventsForResource } from '$bindings/browseapi'
+  import type * as wails from '$bindings/models'
   import { formatAge } from '$lib/format'
   import { toApiError } from '$lib/api/errors'
   import { AlertTriangle, Activity } from '@lucide/svelte'
+  import { timeline } from '$stores/timeline.svelte'
+  import StatusIndicator from './StatusIndicator.svelte'
 
   interface Props {
     clusterId: string
@@ -39,8 +41,18 @@
     void ListEventsForResource(target.clusterId, target.namespace, target.kind, target.name)
       .then((result) => {
         if (!current) return
-        events = result
+        // No events is the ordinary answer for a quiet object, not an
+        // absence of the list itself — see the module comment.
+        const list = result ?? []
+        events = list
         status = 'ready'
+        // Filed on the session timeline on the way past. This is a read of
+        // ONE object's events, so it reaches what the assessment's
+        // cluster-wide read may have truncated at its per-query cap — and it
+        // already crossed the bridge for this pane, so the Timeline tab
+        // beside it costs no read of its own. An event both sources carried
+        // is upserted, not duplicated. See $stores/timeline.
+        timeline.recordEvents(target.clusterId, list)
       })
       .catch((cause) => {
         if (!current) return
@@ -77,12 +89,19 @@
     <ul class="divide-y divide-outline-variant/40">
       {#each events as event (event.namespace + '/' + event.name)}
         <li class="flex gap-3 px-4 py-3">
-          <span
-            class="mt-1.5 size-2 shrink-0 rounded-full {event.isWarning
-              ? 'bg-warning'
-              : 'bg-outline-variant'}"
-            aria-hidden="true"
-          ></span>
+          <!--
+            WHETHER THIS IS A WARNING WAS A COLOUR AND NOTHING ELSE. The dot
+            carried aria-hidden, and no other part of the row said "Warning" —
+            so a red/green colour-blind operator and a screen reader both got
+            a list in which every event looked alike. The events PAGE has done
+            this correctly all along, one directory away, by passing the
+            event's own type as the indicator's label; this is that.
+          -->
+          <StatusIndicator
+            class="mt-1.5 shrink-0"
+            tone={event.isWarning ? 'warning' : 'neutral'}
+            label={event.type}
+          />
 
           <div class="min-w-0 flex-1">
             <div class="flex items-baseline justify-between gap-3">

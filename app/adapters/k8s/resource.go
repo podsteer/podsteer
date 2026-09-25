@@ -29,7 +29,12 @@ const tableMediaType = "application/json;as=Table;v=v1;g=meta.k8s.io"
 const tableListLimit = 1000
 
 // ListTable returns objects of the given kind rendered as a table.
-func (a *Adapter) ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName) (domain.ResourceTable, error) {
+//
+// projection names the annotation keys each row carries; labels are always
+// carried. Both are read from the metadata the server already attaches to
+// every row (see includeObject below), so a custom column costs no request
+// beyond the one list this always made.
+func (a *Adapter) ListTable(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, namespace domain.NamespaceName, projection domain.Projection) (domain.ResourceTable, error) {
 	op := fmt.Sprintf("listing %s in %q of %q", kind.Resource, namespace, id)
 
 	set, err := a.factory.clientsFor(id)
@@ -46,10 +51,25 @@ func (a *Adapter) ListTable(ctx context.Context, id domain.ClusterID, kind domai
 	// metadata. Without it a row is only rendered cells, and PodSteer would
 	// have to guess which column holds the name in order to link the row —
 	// a guess that breaks on any CRD whose printer puts the name elsewhere.
+	// The same attachment carries the labels and annotations, which is what
+	// lets a custom column on a CRD read them without a GET per row.
+	//
+	// A JSONPATH COLUMN ASKS FOR THE WHOLE OBJECT INSTEAD, and that is the
+	// only thing it costs. `Object` attaches each row's complete object where
+	// `Metadata` attaches only its metadata — the same one list, the same one
+	// request, a larger response — so an expression can reach spec and status
+	// while the server's own printer columns keep working exactly as before.
+	// The bytes stay between here and the API server: what crosses to the
+	// interface is still a table of rendered cells. See customColumns.
+	include := "Metadata"
+	if projection.NeedsWholeObject() {
+		include = "Object"
+	}
+
 	body, err := restClient.Get().
 		AbsPath(resourcePath(kind, namespace, "")).
 		SetHeader("Accept", tableMediaType).
-		Param("includeObject", "Metadata").
+		Param("includeObject", include).
 		Param("limit", fmt.Sprint(tableListLimit)).
 		DoRaw(ctx)
 	if err != nil {
@@ -61,7 +81,7 @@ func (a *Adapter) ListTable(ctx context.Context, id domain.ClusterID, kind domai
 		return domain.ResourceTable{}, fmt.Errorf("%s: decoding table: %w", op, err)
 	}
 
-	return mapTable(kind, &table)
+	return mapTable(kind, &table, projection)
 }
 
 // GetManifest returns one object serialised as YAML.
@@ -149,7 +169,7 @@ func resourcePath(kind domain.ResourceKind, namespace domain.NamespaceName, name
 }
 
 // mapTable translates a server-printed table into the domain projection.
-func mapTable(kind domain.ResourceKind, table *metav1.Table) (domain.ResourceTable, error) {
+func mapTable(kind domain.ResourceKind, table *metav1.Table, projection domain.Projection) (domain.ResourceTable, error) {
 	columns := make([]domain.TableColumn, 0, len(table.ColumnDefinitions))
 	for _, definition := range table.ColumnDefinitions {
 		columns = append(columns, domain.TableColumn{
@@ -169,30 +189,59 @@ func mapTable(kind domain.ResourceKind, table *metav1.Table) (domain.ResourceTab
 			cells = append(cells, renderCell(cell))
 		}
 
-		name, namespace := rowIdentity(row)
+		metadata := rowMetadata(row, projection)
 		rows = append(rows, domain.TableRow{
-			Name:      name,
-			Namespace: namespace,
-			Cells:     cells,
+			Name:        metadata.name,
+			Namespace:   metadata.namespace,
+			Cells:       cells,
+			Labels:      metadata.labels,
+			Annotations: metadata.annotations,
+			Custom:      metadata.custom,
 		})
 	}
 
-	return domain.NewResourceTable(kind, columns, rows), nil
+	mapped := domain.NewResourceTable(kind, columns, rows)
+
+	// TRUNCATION IS SAID, NOT LEFT TO BE INFERRED. A capped list comes back
+	// looking exactly like a complete one, so every question the interface
+	// answers from it is wrong in the same silent direction — the search
+	// misses a match past the cut, the sort names the wrong newest, the count
+	// is a floor shown as a total.
+	//
+	// Continue is the API server's own answer: it is set when a limit stopped
+	// the read and empty when the collection ended. The row count is checked
+	// as well because a fake client that honours neither returns everything
+	// in one page — the same belt-and-braces the deprecation scan uses, and
+	// the reason truncation is observable in a test at all.
+	if table.Continue != "" || len(table.Rows) > tableListLimit {
+		mapped = mapped.WithTruncation(tableListLimit)
+	}
+	return mapped, nil
 }
 
-// rowIdentity extracts a row's name and namespace from its attached metadata.
+// tableRowMetadata is what a row's attached PartialObjectMetadata yields.
+type tableRowMetadata struct {
+	name        string
+	namespace   domain.NamespaceName
+	labels      map[string]string
+	annotations map[string]string
+	custom      map[string]string
+}
+
+// rowMetadata extracts a row's identity, labels and projected annotations
+// from its attached metadata.
 //
-// Falls back to the empty string rather than failing: a row whose object could
+// Falls back to the zero value rather than failing: a row whose object could
 // not be decoded is still worth displaying, it just cannot be clicked through
-// to a detail view.
-func rowIdentity(row *metav1.TableRow) (string, domain.NamespaceName) {
+// to a detail view and its custom columns read blank.
+func rowMetadata(row *metav1.TableRow, projection domain.Projection) tableRowMetadata {
 	if len(row.Object.Raw) == 0 {
-		return "", domain.NamespaceAll
+		return tableRowMetadata{namespace: domain.NamespaceAll}
 	}
 
 	var partial metav1.PartialObjectMetadata
 	if err := json.Unmarshal(row.Object.Raw, &partial); err != nil {
-		return "", domain.NamespaceAll
+		return tableRowMetadata{namespace: domain.NamespaceAll}
 	}
 
 	namespace, err := domain.NewNamespaceName(partial.Namespace)
@@ -200,7 +249,34 @@ func rowIdentity(row *metav1.TableRow) (string, domain.NamespaceName) {
 		namespace = domain.NamespaceAll
 	}
 
-	return partial.Name, namespace
+	return tableRowMetadata{
+		name:        partial.Name,
+		namespace:   namespace,
+		labels:      partial.Labels,
+		annotations: projection.Annotations(partial.Annotations),
+		custom:      rowExpressions(row, projection),
+	}
+}
+
+// rowExpressions evaluates the operator's JSONPath columns against a row's
+// attached object.
+//
+// DECODED AS GENERIC DATA, not into a typed object: a table row can be any
+// kind, including a CRD this build has never heard of, which is the whole
+// reason the generic list exists. The same raw bytes were already decoded
+// once as PartialObjectMetadata above; decoding them again as a map is the
+// price of not requiring a Go type per kind, and it happens only for the
+// rows of a list that actually has an expression on it.
+func rowExpressions(row *metav1.TableRow, projection domain.Projection) map[string]string {
+	if !projection.NeedsWholeObject() || len(row.Object.Raw) == 0 {
+		return nil
+	}
+
+	var object map[string]any
+	if err := json.Unmarshal(row.Object.Raw, &object); err != nil {
+		return nil
+	}
+	return customColumns(projection, object)
 }
 
 // renderCell converts a table cell to its display string.
@@ -295,8 +371,42 @@ func maskSecretData(object any) {
 		}
 
 		for key, value := range values {
+			// A NON-STRING SCALAR IS STILL MASKED, and it used to be
+			// SKIPPED — which was a hole in this function long before the
+			// Helm pane reached it, so the fix hardens the Secrets YAML tab
+			// as well as the Helm manifest that now shares this code.
+			//
+			// The API server rejects a Secret whose value is not a string,
+			// so on a live object this cannot happen. It can and does happen
+			// on a manifest that was never accepted: Helm writes a release
+			// Secret BEFORE it applies what it rendered, so a `failed`
+			// revision's stored manifest routinely holds exactly the object
+			// the API server refused — and an unquoted `stringData: {pin:
+			// 483920}` parses as a number, which the old `continue` left
+			// sitting in the clear. What a chart's author meant by it is
+			// their business; leaving it visible was ours.
+			//
+			// A MAP OR A LIST IS LEFT ALONE, which is the one shape not
+			// masked here. It is not a value at all — no encoding of a
+			// Secret's data has that shape — so replacing it would be
+			// rewriting a structure rather than hiding a value, and the
+			// placeholder would claim something about bytes that nothing
+			// measured. It stays visible for the same reason a ConfigMap
+			// does: this function hides Secret VALUES and does not guess at
+			// arbitrary structures.
+			switch value.(type) {
+			case map[string]any, []any:
+				continue
+			}
+
 			encoded, isString := value.(string)
 			if !isString {
+				// A scalar that is not a string: masked, and honestly
+				// labelled. Its length in the source text is not something
+				// this function can recover — YAML `483920` has already
+				// become a number — so it says unreadable rather than
+				// inventing a byte count.
+				values[key] = "<hidden, unreadable>"
 				continue
 			}
 

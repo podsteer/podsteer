@@ -95,7 +95,7 @@
     <p class="py-2 text-body-small text-on-surface-variant/70">Counting what is in here…</p>
   {:else if failure}
     <p class="py-2 text-body-small text-error">{failure}</p>
-  {:else if inventory && inventory.counts.length === 0}
+  {:else if inventory && (inventory.counts ?? []).length === 0}
     <p class="py-2 text-body-small text-on-surface-variant/70">
       Nothing of the {inventory.empty} kinds counted is in this namespace.
     </p>
@@ -104,7 +104,7 @@
          the panel. See detail-grid in app.css. -->
     <div class="relative">
       <dl class="detail-grid" bind:this={pane}>
-      {#each inventory.counts as count (count.kindId)}
+      {#each inventory.counts ?? [] as count (count.kindId)}
         <dt class="min-w-0 truncate text-body-medium text-on-surface">
           {#if onbrowse}
             <button
@@ -124,7 +124,7 @@
                that may not list Secrets holds an unknown number of them, and
                a zero there would report an empty namespace as fact. -->
           {#if count.unreadable}
-            <span class="text-body-small text-gauge-warn">{count.unreadable}</span>
+            <span class="text-body-small text-gauge-warn-ink">{count.unreadable}</span>
           {:else}
             {count.count}
           {/if}

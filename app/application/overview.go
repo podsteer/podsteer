@@ -9,9 +9,43 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
 )
+
+// APIInspector answers the two questions the upgrade-impact findings need.
+//
+// Defined here, at the consumer, the same way ResourceCounter used to be:
+// what the overview needs from Kubernetes discovery and object metadata is
+// narrower than any one outbound port, so the interface is shaped by this
+// use case rather than borrowed from one. The k8s adapter satisfies it
+// without being told to.
+type APIInspector interface {
+	// ServedAPIs returns every group/version discovery reports the cluster
+	// currently serves.
+	ServedAPIs(ctx context.Context, id domain.ClusterID) ([]domain.APIGroupVersion, error)
+	// APIWriters scans up to limit objects of kind and reports who last
+	// wrote each one through kind's own API version, per
+	// metadata.managedFields — never a count of objects, which a deprecated
+	// version and its replacement would report identically since Kubernetes
+	// stores one copy of an object and serves it through every version it
+	// offers.
+	APIWriters(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, limit int) (domain.APIUsage, error)
+}
+
+// apiWriterScanLimit bounds how many objects a single deprecated resource is
+// scanned for writers, so a v1beta1 Events list on an old, busy cluster
+// cannot turn into a full scan of everything the cluster has ever logged.
+const apiWriterScanLimit = 2000
+
+// apiWriterConcurrency caps how many deprecated group/versions are scanned
+// for writers at once, the same way NamespaceInventory bounds its per-kind
+// counts — a cluster can have several upgrade-candidate entries served at
+// once, and firing every scan unbounded would multiply the request burst by
+// however many the table happens to name.
+const apiWriterConcurrency = 4
 
 // OverviewServiceDeps are the collaborators the overview needs.
 //
@@ -28,6 +62,9 @@ type OverviewServiceDeps struct {
 	// Metrics reads usage. Required, but every call may report
 	// ErrMetricsUnavailable and the overview degrades when it does.
 	Metrics ports.MetricsPort
+	// APIs answers what the cluster serves and who is still writing through
+	// a deprecated version of it — required for the upgrade-impact findings.
+	APIs APIInspector
 	// Registry tracks open connections. Required.
 	Registry *Registry
 	// Logger receives diagnostics. Optional; defaults to slog.Default.
@@ -62,6 +99,7 @@ type OverviewService struct {
 	workloads ports.WorkloadPort
 	events    ports.EventPort
 	metrics   ports.MetricsPort
+	apis      APIInspector
 	registry  *Registry
 	logger    *slog.Logger
 
@@ -86,6 +124,8 @@ func NewOverviewService(deps OverviewServiceDeps) (*OverviewService, error) {
 		return nil, errors.New("application: OverviewService requires an EventPort")
 	case deps.Metrics == nil:
 		return nil, errors.New("application: OverviewService requires a MetricsPort")
+	case deps.APIs == nil:
+		return nil, errors.New("application: OverviewService requires an APIInspector")
 	case deps.Registry == nil:
 		return nil, errors.New("application: OverviewService requires a Registry")
 	}
@@ -100,6 +140,7 @@ func NewOverviewService(deps OverviewServiceDeps) (*OverviewService, error) {
 		workloads: deps.Workloads,
 		events:    deps.Events,
 		metrics:   deps.Metrics,
+		apis:      deps.APIs,
 		registry:  deps.Registry,
 		logger:    logger.With(slog.String("service", "overview")),
 	}, nil
@@ -129,6 +170,28 @@ var controllerKinds = []domain.WorkloadKind{
 // screen precisely because something is wrong.
 func (s *OverviewService) Overview(ctx context.Context, id domain.ClusterID) (domain.Overview, error) {
 	return s.OverviewWithin(ctx, id, overviewFreshness)
+}
+
+// OverviewForTarget assesses a connected cluster against a specific upgrade
+// target — the minor a "check against" selector in the UI chose — rather
+// than the default of the next minor after the cluster's current version.
+//
+// Deliberately NOT cached or coalesced like Overview/OverviewWithin below:
+// this is an occasional, operator-initiated comparison, not the polling path
+// the dashboard and the history sampler share, and folding it into the same
+// cache would risk a later DEFAULT-target poll being served the assessment
+// made for whatever version the operator was comparing against a moment
+// earlier. The cost is a full re-assessment on every call, which is the
+// right trade for a control nobody clicks on every refresh tick.
+func (s *OverviewService) OverviewForTarget(
+	ctx context.Context,
+	id domain.ClusterID,
+	targetMinor string,
+) (domain.Overview, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return domain.Overview{}, err
+	}
+	return s.assessWithRetry(ctx, id, targetMinor)
 }
 
 // OverviewWithin returns an assessment no older than maxAge, running one only
@@ -181,7 +244,9 @@ func (s *OverviewService) OverviewWithin(
 	s.inflight[id] = call
 	s.mu.Unlock()
 
-	call.overview, call.err = s.assessWithRetry(ctx, id)
+	// "" asks for the default target (the next minor after the cluster's
+	// current version) — see assess.
+	call.overview, call.err = s.assessWithRetry(ctx, id, "")
 
 	s.mu.Lock()
 	delete(s.inflight, id)
@@ -196,6 +261,21 @@ func (s *OverviewService) OverviewWithin(
 	close(call.done)
 	return call.overview, call.err
 }
+
+// Invalidate drops a cluster's held assessment, for a disconnect.
+//
+// IT SATISFIES ClusterInvalidator, and is wired beside the Kubernetes
+// adapter's own Invalidate so a disconnect drops this cache too. Reading the
+// registry was not enough on its own: the check at the top of OverviewWithin
+// only forgets when somebody READS a cluster that is no longer registered,
+// and a disconnect followed by a reconnect of the same context name inside
+// the freshness window never produces such a read — the first read after the
+// reconnect finds the cluster registered again and is served the PREVIOUS
+// connection's assessment. That matters because re-pointing a kubeconfig
+// context at a different cluster is routine: the sampler would write one
+// sample of the old cluster into the new one's history file, and the
+// dashboard would show the old cluster's verdict for a shorter window.
+func (s *OverviewService) Invalidate(id domain.ClusterID) { s.forget(id) }
 
 // forget drops a cluster's held assessment.
 func (s *OverviewService) forget(id domain.ClusterID) {
@@ -228,12 +308,16 @@ const assessBackoff = 400 * time.Millisecond
 // cancelled request are all answers — repeating them wastes the operator's time
 // and, for ErrForbidden, hammers an API server that has already said no. The
 // transport failure is the one that is plausibly transient.
-func (s *OverviewService) assessWithRetry(ctx context.Context, id domain.ClusterID) (domain.Overview, error) {
+func (s *OverviewService) assessWithRetry(
+	ctx context.Context,
+	id domain.ClusterID,
+	targetMinor string,
+) (domain.Overview, error) {
 	var err error
 
 	for attempt := 1; attempt <= assessAttempts; attempt++ {
 		var overview domain.Overview
-		overview, err = s.assess(ctx, id)
+		overview, err = s.assess(ctx, id, targetMinor)
 		if err == nil {
 			if attempt > 1 {
 				s.logger.InfoContext(ctx, "cluster answered on retry",
@@ -272,7 +356,11 @@ func (s *OverviewService) assessWithRetry(ctx context.Context, id domain.Cluster
 }
 
 // assess performs the assessment itself, unconditionally.
-func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (domain.Overview, error) {
+//
+// targetMinor selects what UpgradeImpact assesses against; "" asks
+// domain.NewOverview for its own default (the next minor after the
+// cluster's current version).
+func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID, targetMinor string) (domain.Overview, error) {
 
 	var (
 		mu          sync.Mutex
@@ -290,7 +378,11 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 		// fact is how they come to disagree.
 		metricsStatus = domain.MetricsMeasuredOK
 
-		version    domain.ServerVersion
+		version domain.ServerVersion
+		// versionErr is the /version read's own outcome, kept apart from the
+		// others because it is the only read that proves anything about the
+		// network. See the check after wg.Wait().
+		versionErr error
 		nodes      []domain.Node
 		pods       []domain.Pod
 		workloads  []domain.Workload
@@ -301,9 +393,20 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 		podUsage  map[string]domain.PodUsage
 		nodeDisks map[string]domain.NodeFilesystems
 		backend   domain.MetricsBackend
+		kubeState domain.KubeStateMetrics
 		volumes   []domain.PersistentVolume
 		claims    []domain.PersistentVolumeClaim
 		measured  bool
+
+		// servedAPIs, apisKnown and apiUsage feed UpgradeImpact. servedAPIs
+		// is read below, outside `run`: a discovery failure must not print
+		// as an "Unavailable" source the way a metrics or events failure
+		// does, because APIsKnown already carries the distinction the UI
+		// needs — "not assessed" rather than one more line in a list nobody
+		// reading it would connect to an upgrade check.
+		servedAPIs []domain.APIGroupVersion
+		apisKnown  bool
+		apiUsage   = make(map[string]domain.APIUsage)
 	)
 
 	// degrade records a source that could not be read. A failure here is not
@@ -352,23 +455,30 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 	run("version", func() error {
 		result, err := s.cluster.ServerVersion(ctx, id)
 		version = result
+		// Written without the mutex like every other source's result: each
+		// closure owns its own variables and wg.Wait() below is the
+		// happens-before edge for all of them.
+		versionErr = err
 		return err
 	})
 
+	// Every list here carries the empty projection: the assessment reads no
+	// annotations, and the empty projection is what lets these reads
+	// coalesce with the open list view's in the same tick.
 	run("nodes", func() error {
-		result, err := s.cluster.ListNodes(ctx, id)
+		result, err := s.cluster.ListNodes(ctx, id, domain.Projection{})
 		nodes = result
 		return err
 	})
 
 	run("pods", func() error {
-		result, err := s.workloads.ListPods(ctx, id, domain.NamespaceAll)
+		result, err := s.workloads.ListPods(ctx, id, domain.NamespaceAll, domain.Projection{})
 		pods = result
 		return err
 	})
 
 	run("namespaces", func() error {
-		result, err := s.cluster.ListNamespaces(ctx, id)
+		result, err := s.cluster.ListNamespaces(ctx, id, domain.Projection{})
 		namespaces = result
 		return err
 	})
@@ -388,7 +498,7 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 	})
 
 	run("events", func() error {
-		result, err := s.events.ListEvents(ctx, id, domain.NamespaceAll)
+		result, err := s.events.ListEvents(ctx, id, domain.NamespaceAll, domain.Projection{})
 		events = result
 		return err
 	})
@@ -444,12 +554,93 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 		mu.Unlock()
 	})
 
+	// kube-state-metrics rides the assessment on exactly the same terms, and
+	// deliberately not through `run` for the same reason: not having it is
+	// the ordinary state of a cluster, and being refused the look is the
+	// ordinary state of an account. Neither belongs in the list of sources
+	// that failed, and neither changes a single number on this screen — the
+	// note exists so an operator can be told where their Grafana's object
+	// gauges come from and where PodSteer's own figures do not.
+	wg.Go(func() {
+		result, err := s.metrics.DiscoverKubeStateMetrics(ctx, id)
+		if err != nil {
+			s.logger.Debug("kube-state-metrics discovery skipped",
+				slog.String("cluster", string(id)),
+				slog.String("error", err.Error()))
+			return
+		}
+		mu.Lock()
+		kubeState = result
+		mu.Unlock()
+	})
+
+	// UPGRADE-IMPACT DISCOVERY AND WRITER SCANS. Not run through `run`: a
+	// failure here must not print as an "Unavailable" source the way a
+	// metrics or events failure does — apisKnown already carries the fact
+	// the UI needs (Upgrade stays zero, TargetMinor == ""), and a line
+	// reading "served APIs" in a list built for pods and events would name
+	// an implementation detail nobody opening this screen recognises.
+	wg.Go(func() {
+		served, err := s.apis.ServedAPIs(ctx, id)
+		if err != nil {
+			s.logger.DebugContext(ctx, "served APIs unavailable",
+				slog.String("cluster", string(id)),
+				slog.String("error", err.Error()))
+			return
+		}
+
+		mu.Lock()
+		servedAPIs = served
+		apisKnown = true
+		mu.Unlock()
+
+		// Bounded to exactly the served group/versions the deprecation table
+		// could ever flag — see domain.UpgradeCandidates. A cluster's served
+		// APIs routinely number in the dozens once CRDs are counted, and
+		// this must never become "scan everything served": one bounded
+		// writer scan per candidate entry, and nothing for the rest.
+		//
+		// SetLimit(4) rather than one goroutine per candidate outright: a
+		// cluster can carry several upgrade-candidate entries served at
+		// once (a whole flowcontrol.apiserver.k8s.io chain, say), and firing
+		// every scan unbounded would multiply the request burst by however
+		// many the table happens to name for this cluster.
+		group, groupCtx := errgroup.WithContext(ctx)
+		group.SetLimit(apiWriterConcurrency)
+		for _, dep := range domain.UpgradeCandidates(served) {
+			kind := dep.ResourceKind()
+			group.Go(func() error {
+				usage, err := s.apis.APIWriters(groupCtx, id, kind, apiWriterScanLimit)
+				if err != nil {
+					// A count failing for one deprecated group/version (an
+					// account without `list` on it, say) is not a source
+					// the rest of the overview depends on. UpgradeImpact
+					// already treats an absent key as "not checked" rather
+					// than "no writers", so the failure is simply left out
+					// of the map rather than returned — every candidate
+					// gets its own chance regardless of whether another one
+					// failed.
+					s.logger.DebugContext(ctx, "upgrade-impact writer scan unavailable",
+						slog.String("cluster", string(id)),
+						slog.String("kind", kind.ID()),
+						slog.String("error", err.Error()))
+					return nil
+				}
+				mu.Lock()
+				apiUsage[kind.ID()] = usage
+				mu.Unlock()
+				return nil
+			})
+		}
+		_ = group.Wait()
+	})
+
 	// One goroutine per controller kind, each appending under the lock. The
 	// order they finish in does not matter: the assessment sorts everything it
 	// reports.
 	for _, kind := range controllerKinds {
 		run("workloads/"+string(kind), func() error {
-			result, err := s.workloads.ListWorkloads(ctx, id, kind, domain.NamespaceAll)
+			result, err := s.workloads.ListWorkloads(ctx, id, kind, domain.NamespaceAll, domain.Projection{})
 			if err != nil {
 				return err
 			}
@@ -462,15 +653,37 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 
 	wg.Wait()
 
+	// THE VERSION READ IS THE LIVENESS PROBE, NOT ONE SOURCE AMONG MANY.
+	//
+	// The ratio rule below was written when every source here was a network
+	// read, so "all of them failed on transport" and "the cluster is gone"
+	// were the same sentence. LIVE WATCHES BROKE THAT PREMISE: a watched kind
+	// is answered from an in-memory store without touching the network, so
+	// pods and nodes go on succeeding for as long as the reflector takes to
+	// notice its stream is dead — up to its whole watch timeout. The ratio
+	// then reads one failure out of a dozen, degrades around it, and hands
+	// back a confident overview of a cluster nothing can reach. That is how a
+	// laptop that changed VPN kept a green tab, the word "reachable" in the
+	// status bar and a full pod list.
+	//
+	// /version is the one read that always goes to the API server and asks
+	// nothing of RBAC, so a TRANSPORT failure on it is not a degraded source
+	// — it is the answer. Only ErrUnreachable counts: a 403, a bad
+	// kubeconfig or a cancelled request all say the cluster was reached, or
+	// that nobody tried.
+	if errors.Is(versionErr, ports.ErrUnreachable) {
+		return domain.Overview{}, fmt.Errorf("assessing %q: %w", id, ports.ErrUnreachable)
+	}
+
 	// EVERY READ FAILED, AND ALL OF THEM ON TRANSPORT. That is not a degraded
 	// assessment, it is the absence of one, and returning it as an overview is
 	// what produced a green "No problems found" on a cluster the laptop could
 	// no longer reach.
 	//
-	// The ratio matters rather than any single call: one source failing this
-	// way is a flaky endpoint, and the assessment should still degrade around
-	// it as it always has. All of them failing this way is the cluster being
-	// gone.
+	// Kept alongside the version check rather than replaced by it: this one
+	// needs no source to be privileged, and it still catches the case where
+	// the version read fails some other way while everything else fails on
+	// transport.
 	if attempted > 0 && unreachable == attempted {
 		return domain.Overview{}, fmt.Errorf("assessing %q: %w", id, ports.ErrUnreachable)
 	}
@@ -496,6 +709,11 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID) (doma
 		MetricsMeasured: measured,
 		Metrics:         metricsStatus,
 		Backend:         backend,
+		KubeState:       kubeState,
+		ServedAPIs:      servedAPIs,
+		APIsKnown:       apisKnown,
+		APIUsage:        apiUsage,
+		TargetVersion:   targetMinor,
 		Now:             time.Now().UTC(),
 	})
 

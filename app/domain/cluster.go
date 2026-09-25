@@ -115,6 +115,10 @@ type ClusterSpec struct {
 	AuthInfo string
 	// IsCurrent marks the context selected by `current-context`.
 	IsCurrent bool
+	// Source is the kubeconfig file this context was read from, as client-go
+	// reports it. Descriptive only, and a path on this machine — never a
+	// file's contents.
+	Source KubeconfigLocation
 }
 
 // Cluster is a Kubernetes cluster PodSteer can talk to, as described by one
@@ -128,7 +132,9 @@ type Cluster struct {
 	defaultNamespace NamespaceName
 	authInfo         string
 	isCurrent        bool
+	source           KubeconfigLocation
 	version          ServerVersion
+	distribution     Distribution
 }
 
 // NewCluster validates spec and returns the corresponding Cluster.
@@ -146,6 +152,7 @@ func NewCluster(spec ClusterSpec) (Cluster, error) {
 		defaultNamespace: spec.DefaultNamespace,
 		authInfo:         strings.TrimSpace(spec.AuthInfo),
 		isCurrent:        spec.IsCurrent,
+		source:           spec.Source,
 	}, nil
 }
 
@@ -165,6 +172,20 @@ func (c Cluster) AuthInfo() string { return c.authInfo }
 // IsCurrent reports whether this is the kubeconfig's current context.
 func (c Cluster) IsCurrent() bool { return c.isCurrent }
 
+// Source returns the kubeconfig file this context came from.
+//
+// It exists so the cluster picker can say WHICH file contributed a context
+// when several are merged — the explicit one, a folder the environment names,
+// or a source the operator added — and so a context defined in two of them can
+// be shown against the path that actually won. client-go's merge keeps the
+// first file's definition and says nothing about it otherwise, which turns a
+// duplicated context name into a cluster that connects to somewhere the
+// operator was not expecting, with no way to see why.
+//
+// A path on this machine and never a file's contents. Empty when the
+// configuration did not come from a file at all.
+func (c Cluster) Source() KubeconfigLocation { return c.source }
+
 // Version returns the observed API server version. It is the zero value until
 // the cluster has been reached.
 func (c Cluster) Version() ServerVersion { return c.version }
@@ -182,6 +203,40 @@ func (c Cluster) IsReachable() bool { return !c.version.IsZero() }
 func (c Cluster) WithVersion(version ServerVersion) Cluster {
 	c.version = version
 	return c
+}
+
+// Distribution reports what this cluster turned out to be, or the zero value
+// when nothing identified it. See distribution.go.
+func (c Cluster) Distribution() Distribution { return c.distribution }
+
+// WithDistribution returns a copy carrying a mark.
+//
+// A VALUE RATHER THAN A MUTATION, like WithVersion above and for the same
+// reason: a Cluster already handed to another goroutine must not change under
+// it.
+func (c Cluster) WithDistribution(distribution Distribution) Cluster {
+	c.distribution = distribution
+	return c
+}
+
+// Identify works out what this cluster is from what is known about it now.
+//
+// CALLED WHEREVER MORE BECOMES KNOWN, and safe to call repeatedly: the ranking
+// in IdentifyDistribution is fixed rather than last-write-wins, so a second
+// call with more evidence can only improve the answer. A call that identifies
+// nothing leaves whatever was there — a mark from the kubeconfig is better
+// than no mark, and a mark stored from a previous run is better still.
+func (c Cluster) Identify(nodeLabels map[string]string, providerID string) Cluster {
+	found := IdentifyDistribution(DistributionInput{
+		Host:       c.server.Host(),
+		GitVersion: c.version.GitVersion,
+		NodeLabels: nodeLabels,
+		ProviderID: providerID,
+	})
+	if found.IsZero() {
+		return c
+	}
+	return c.WithDistribution(found)
 }
 
 // IsZero reports whether the cluster is unset.

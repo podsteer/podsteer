@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1312,6 +1313,78 @@ func TestEventFindingsIgnoreOldEvents(t *testing.T) {
 	}
 }
 
+// The assessment carries the events it read, so the session timeline can
+// record what HAPPENED rather than only what was concluded.
+//
+// The two are not the same set and this test is the difference: a Normal
+// event produces no finding at all, and a warning older than the window is
+// deliberately ignored by eventFindings — yet both are things that occurred
+// while somebody was watching, and both belong on the timeline. Deriving the
+// timeline from Findings instead would silently drop them.
+func TestOverviewCarriesEveryEventItRead(t *testing.T) {
+	t.Parallel()
+
+	newEvent := func(name, reason string, eventType domain.EventType, ago time.Duration) domain.Event {
+		t.Helper()
+		event, err := domain.NewEvent(domain.EventSpec{
+			Name: name, Namespace: "default", ClusterID: "dev",
+			Type: eventType, Reason: reason, Message: "something happened",
+			InvolvedKind: "Pod", InvolvedName: "api-1", Count: 2,
+			FirstSeen: overviewNow.Add(-ago), LastSeen: overviewNow.Add(-ago),
+		})
+		if err != nil {
+			t.Fatalf("building event: %v", err)
+		}
+		return event
+	}
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: "dev",
+		Events: []domain.Event{
+			newEvent("a.1", "Scheduled", domain.EventNormal, time.Minute),
+			newEvent("a.2", "FailedMount", domain.EventWarning, 2*time.Hour),
+			newEvent("a.3", "BackOff", domain.EventWarning, time.Minute),
+		},
+		Now: overviewNow,
+	})
+
+	if len(overview.Events) != 3 {
+		t.Fatalf("events = %d, want all 3 carried through", len(overview.Events))
+	}
+	names := make([]string, 0, len(overview.Events))
+	for _, event := range overview.Events {
+		names = append(names, event.Name())
+	}
+	if !slices.Equal(names, []string{"a.1", "a.2", "a.3"}) {
+		t.Errorf("events = %v, want them verbatim and in order", names)
+	}
+
+	// And only one of the three was worth a finding, which is the point.
+	if _, ok := findingByTitle(overview.Findings, "BackOff"); !ok {
+		t.Errorf("findings = %v, want BackOff", titles(overview.Findings))
+	}
+}
+
+// An assessment that could not read events carries none — and says so
+// separately, because empty is not the same fact as refused.
+func TestOverviewCarriesNoEventsWhenTheReadFailed(t *testing.T) {
+	t.Parallel()
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID:   "dev",
+		Unavailable: []string{"events"},
+		Now:         overviewNow,
+	})
+
+	if len(overview.Events) != 0 {
+		t.Errorf("events = %d, want none", len(overview.Events))
+	}
+	if !slices.Contains(overview.Unavailable, "events") {
+		t.Errorf("unavailable = %v, want it to name events — otherwise an empty "+
+			"list reads as nothing having happened", overview.Unavailable)
+	}
+}
+
 // Critical findings must sort above warnings, and bigger problems above
 // smaller ones of the same severity — the list is read top-down under
 // pressure.
@@ -1918,5 +1991,59 @@ func TestPressureFindingIsSilentWhereNothingReportsIt(t *testing.T) {
 
 	if _, ok := findingByTitle(overview.Findings, "Work is waiting, not running"); ok {
 		t.Error("a node that reports no pressure at all produced a pressure finding")
+	}
+}
+
+// THE AGE IS THE OLDEST OCCURRENCE, NOT THE NEWEST.
+//
+// The field's own contract is that it "separates 'started during this
+// rollout' from 'broken since Tuesday'". It was computed as now minus the
+// NEWEST occurrence, so a warning recurring every few seconds for half an
+// hour reported itself as seconds old — the distinction inverted on exactly
+// the events that have one worth drawing.
+func TestAnEventFindingsAgeIsItsOldestOccurrence(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	recurring := func(name string, first, last time.Time) domain.Event {
+		event, err := domain.NewEvent(domain.EventSpec{
+			Name:         name,
+			Namespace:    domain.NamespaceName("web"),
+			ClusterID:    domain.ClusterID("dev"),
+			Reason:       "BackOff",
+			Message:      "Back-off restarting failed container",
+			Type:         domain.EventWarning,
+			InvolvedKind: "Pod",
+			InvolvedName: name,
+			FirstSeen:    first,
+			LastSeen:     last,
+			Count:        12,
+		})
+		if err != nil {
+			t.Fatalf("NewEvent() error = %v", err)
+		}
+		return event
+	}
+
+	overview := domain.NewOverview(domain.OverviewInput{
+		ClusterID: domain.ClusterID("dev"),
+		Events: []domain.Event{
+			recurring("api-1", now.Add(-30*time.Minute), now.Add(-5*time.Second)),
+			recurring("api-2", now.Add(-12*time.Minute), now.Add(-2*time.Second)),
+		},
+	})
+
+	var found *domain.Finding
+	for i := range overview.Findings {
+		if overview.Findings[i].ID == "event:BackOff" {
+			found = &overview.Findings[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("no finding was raised for a recurring warning event")
+	}
+	if found.OldestSeconds < 1700 {
+		t.Errorf("OldestSeconds = %d, want about 1800 — the first occurrence, not the last",
+			found.OldestSeconds)
 	}
 }

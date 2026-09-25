@@ -7,15 +7,29 @@
 -->
 <script lang="ts">
   import ClusterTabs from '$lib/components/ClusterTabs.svelte'
+  import CommandPalette from '$lib/components/CommandPalette.svelte'
+  import ShortcutSheet from '$lib/components/ShortcutSheet.svelte'
+  import HelpPanel from '$lib/components/HelpPanel.svelte'
   import Splash from '$lib/components/Splash.svelte'
   import StatusBar from '$lib/components/StatusBar.svelte'
   import ClusterView from '$pages/ClusterView.svelte'
   import ClusterWorkspace from '$pages/ClusterWorkspace.svelte'
-  import { workspace } from '$stores/workspace.svelte'
+  import { HEARTBEAT_INTERVAL_MS, workspace } from '$stores/workspace.svelte'
+  import { preferences } from '$stores/preferences.svelte'
+  import { windowState } from '$stores/windowState.svelte'
   import { loadAppInfo } from '$stores/system.svelte'
   import { updates } from '$stores/updates.svelte'
   import { alertPlayer } from '$stores/alerts.svelte'
+  import { notifications } from '$stores/notifications.svelte'
+  import { onNotificationActivated } from '$lib/api/client'
+  import { OVERVIEW_KIND_ID } from '$stores/session.svelte'
   import { forwards } from '$stores/forwards.svelte'
+  import { nodeShells } from '$stores/nodeShells.svelte'
+  import { clusterShells } from '$stores/clusterShells.svelte'
+  import { shortcutSheet } from '$stores/shortcutSheet.svelte'
+  import { palette } from '$stores/palette.svelte'
+  import { isTypingTarget } from '$lib/shortcuts'
+  import { shortcut } from '$stores/shortcuts.svelte'
 
   /**
    * The shortest time the splash stays up. Initialisation is faster than this
@@ -30,6 +44,10 @@
   // Discover clusters once when the shell mounts, and release every tab's
   // timer and the event subscription when it goes away.
   $effect(() => {
+    // The window's own state is polled from here rather than from the store's
+    // constructor, so importing a module never opens a socket — see
+    // windowState.start.
+    windowState.start()
     void loadAppInfo()
     // Ask what is already forwarded. Nothing survives a restart of the
     // application — every forward is a goroutine in this process — but a
@@ -37,11 +55,39 @@
     // would otherwise show a Forward button for a port that is already open.
     void forwards.refresh()
     const unwatchForwards = forwards.watch()
+    // Node shells the same way, and for the same reason: a window reopened over
+    // a running backend must show what is still running so it can be stopped.
+    void nodeShells.refresh()
+    const unwatchNodeShells = nodeShells.watch()
+    // In-cluster shells beside them, for the same reason: a window reopened
+    // over a running backend must show every pod PodSteer still owns so it
+    // can be stopped, whether or not this window is the one that opened it.
+    void clusterShells.refresh()
+    const unwatchClusterShells = clusterShells.watch()
     // Audio output is only allowed to start from a user gesture, and a context
     // created before one exists stays suspended for the life of the process.
     // Arming here means the first click or keypress of the session wakes it,
     // so an alert never arrives to find the speaker asleep.
     alertPlayer.arm()
+    // What the platform will do about desktop notifications, asked once so
+    // the first critical finding of a session does not have to wait on a
+    // round trip to find out. It asks for no permission — that happens when
+    // the operator turns the preference on, because on macOS it is a visible
+    // system prompt.
+    void notifications.probe()
+    // Clicking one raises the window in Go, before this fires; what is left
+    // here is going to the place the finding is. The tab first and then its
+    // overview, which is the same order workspace.openInCluster uses and for
+    // the same reason: a session that has never been shown is not loaded
+    // until it is focused.
+    const unwatchNotifications = onNotificationActivated((event) => {
+      if (event.clusterId === '') return
+      void (async () => {
+        await workspace.focus(event.clusterId)
+        const session = workspace.sessions.find((entry) => entry.cluster.id === event.clusterId)
+        await session?.selectKind(OVERVIEW_KIND_ID)
+      })()
+    })
     // The update check, on its own delay and off the startup path entirely.
     // Nothing here waits for it, and it does nothing at all when the operator
     // has switched it off — see updates.svelte.ts.
@@ -60,6 +106,9 @@
       })
     return () => {
       unwatchForwards()
+      unwatchNodeShells()
+      unwatchClusterShells()
+      unwatchNotifications()
       updates.stop()
       workspace.dispose()
     }
@@ -73,28 +122,72 @@
    * should be. Moving between tabs has to work from the picker too, or the one
    * tab you cannot leave by keyboard is the one you start on.
    *
+   * Every combo below is matched against $lib/shortcuts rather than a literal
+   * key check, so this handler and ShortcutSheet.svelte can never disagree
+   * about what ⌘] does or how it is spelled on this platform.
+   *
    * ⌘] / ⌘[ move between tabs, the picker counting as the first.
+   * ⌘1…9 jumps straight to the Nth open cluster tab.
    * ⌘N goes to the picker, which is where a new cluster is opened from.
+   * ⌘/ opens the shortcut sheet, and so does a bare "?" — but only when focus
+   * is not inside a text field, or typing a literal question mark into the
+   * search box or the YAML editor would pop it open instead.
+   * ⌘⇧P / ⌘P opens the command palette — also global, for the same reason:
+   * jumping to another kind, cluster or object cannot depend on which tab
+   * happens to be in front when the operator reaches for it.
    */
   function onKeydown(event: KeyboardEvent): void {
-    if (!(event.metaKey || event.ctrlKey)) return
-
-    switch (event.key) {
-      case ']':
-        event.preventDefault()
-        workspace.cycleTab(1)
-        break
-      case '[':
-        event.preventDefault()
-        workspace.cycleTab(-1)
-        break
-      case 'n':
-      case 'N':
-        event.preventDefault()
-        workspace.showPicker()
-        break
+    if (shortcut('command-palette').matches(event)) {
+      event.preventDefault()
+      palette.show()
+      return
+    }
+    if (shortcut('next-tab').matches(event)) {
+      event.preventDefault()
+      workspace.cycleTab(1)
+      return
+    }
+    if (shortcut('previous-tab').matches(event)) {
+      event.preventDefault()
+      workspace.cycleTab(-1)
+      return
+    }
+    if (shortcut('switch-tab').matches(event)) {
+      event.preventDefault()
+      const target = workspace.sessions[Number(event.key) - 1]
+      if (target) void workspace.focus(target.cluster.id)
+      return
+    }
+    if (shortcut('new-cluster').matches(event)) {
+      event.preventDefault()
+      workspace.showPicker()
+      return
+    }
+    if (
+      shortcut('shortcut-sheet').matches(event) ||
+      (event.key === '?' && !isTypingTarget(event.target))
+    ) {
+      event.preventDefault()
+      shortcutSheet.show()
     }
   }
+  /**
+   * The heartbeat for the tabs that are not in front.
+   *
+   * HERE RATHER THAN IN ClusterWorkspace, which is the whole point: that
+   * component is mounted for one session at a time and takes its refresh
+   * timer with it, so anything living there can only ever ask about the tab
+   * somebody is already looking at. This outlives every tab switch.
+   *
+   * Off when refresh is manual — see Workspace.startHeartbeat.
+   */
+  $effect(() => {
+    workspace.startHeartbeat(
+      preferences.effectiveIntervalMs === 0 ? 0 : HEARTBEAT_INTERVAL_MS,
+    )
+    return () => workspace.stopHeartbeat()
+  })
+
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -130,3 +223,11 @@
     <Splash />
   {/if}
 </div>
+
+<ShortcutSheet open={shortcutSheet.open} onclose={shortcutSheet.hide} />
+<CommandPalette open={palette.open} onclose={palette.hide} />
+
+<!-- Mounted once, driven by $stores/help: every (?) in the application opens
+     THIS panel with a different topic in it. Last, so it is the outermost
+     layer — it opens over a dialog, never under one. -->
+<HelpPanel />

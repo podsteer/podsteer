@@ -80,11 +80,58 @@ jobs:
           curl -fsSL --retry 3 --retry-delay 5 -o "$asset" "$url"
           sha256=$(sha256sum "$asset" | cut -d' ' -f1)
 
+          # THE CASK'S macOS FLOOR IS DERIVED, not maintained by hand, for the
+          # reason `version` and `sha256` are: a number a human has to remember
+          # to change is one that goes stale, and this one already did. It read
+          # `">= :high_sierra"` — macOS 10.13 — for long enough to be corrected
+          # by hand once, and the application's floor has moved twice since.
+          #
+          # Read from LSMinimumSystemVersion in the bundle Homebrew is about to
+          # serve, which is the same number LaunchServices reads before opening
+          # it. The application's own build asserts that plist against the
+          # lowest slice of its binary ("Verify The macOS Minimum Is Stated
+          # Once" in ci-cd.yaml), so trusting it here needs no Mach-O parsing
+          # on a Linux runner.
+          #
+          # plistlib rather than a grep: it reads the binary plist format too,
+          # so a future build that ships one does not silently produce an empty
+          # match and a cask claiming whatever the fallback was.
+          #
+          # The format is chosen rather than sniffed, and that is not padding.
+          # plistlib decides by looking for an `<?xml` declaration, and every
+          # bundle PodSteer shipped up to v0.2.0 began at `<!DOCTYPE` instead,
+          # which it rejects outright. The declaration is there from this
+          # release on; choosing the format keeps this readable against the
+          # artefacts that already exist, which is the only way to test it.
+          minimum=$(unzip -p "$asset" "PodSteer.app/Contents/Info.plist" | python3 -c 'import plistlib, sys; raw = sys.stdin.buffer.read(); fmt = plistlib.FMT_XML if raw.lstrip()[:1] == b"<" else plistlib.FMT_BINARY; print(plistlib.loads(raw, fmt=fmt)["LSMinimumSystemVersion"])')
+          major=${minimum%%.*}
+
+          # AN EXPLICIT TABLE THAT FAILS ON A MISS, rather than a default. A
+          # wrong symbol here is a cask that installs onto machines which
+          # cannot run the application, which is the exact failure this exists
+          # to stop — so an unrecognised version stops the release instead.
+          # macOS numbering jumps from 15 to 26; 16 to 25 are not versions.
+          case "$major" in
+            11) macos_symbol="big_sur" ;;
+            12) macos_symbol="monterey" ;;
+            13) macos_symbol="ventura" ;;
+            14) macos_symbol="sonoma" ;;
+            15) macos_symbol="sequoia" ;;
+            26) macos_symbol="tahoe" ;;
+            *)
+              echo "::error::No Homebrew symbol known for macOS $minimum (major $major)."
+              echo "::error::Add it to the table in this workflow rather than guessing."
+              exit 1
+              ;;
+          esac
+          echo "The bundle declares macOS $minimum, which is :$macos_symbol"
+
           {
             echo "skip=false"
             echo "tag=$tag"
             echo "version=$version"
             echo "sha256=$sha256"
+            echo "macos_symbol=$macos_symbol"
           } >> "$GITHUB_OUTPUT"
 
       # A GITHUB APP RATHER THAN A PERSONAL ACCESS TOKEN, and the reason is the
@@ -133,13 +180,21 @@ jobs:
         if: steps.release.outputs.skip == 'false'
         run: |
           cask=tap/Casks/podsteer.rb
-          # Only the two lines that change per release. A regenerated file
+          # Only the three lines that change per release. A regenerated file
           # would drop the caveats and the zap list, which are prose rather
           # than release metadata.
           sed -i -E \
             -e 's|^  version ".*"$|  version "${{ steps.release.outputs.version }}"|' \
             -e 's|^  sha256 ".*"$|  sha256 "${{ steps.release.outputs.sha256 }}"|' \
+            -e 's|^  depends_on macos: :.*$|  depends_on macos: :${{ steps.release.outputs.macos_symbol }}|' \
             "$cask"
+
+          # A rewrite that matched nothing is a rewrite that did not happen,
+          # and the cask would ship the previous floor without saying so.
+          if ! grep -q '^  depends_on macos: :${{ steps.release.outputs.macos_symbol }}$' "$cask"; then
+            echo "::error::The depends_on line was not rewritten; the cask's shape must have changed."
+            exit 1
+          fi
           git -C tap diff -- Casks/podsteer.rb
 
       - name: Verify The Cask Still Parses

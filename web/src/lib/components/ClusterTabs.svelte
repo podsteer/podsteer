@@ -31,22 +31,40 @@
   sidebar's text sits in below it, rather than an arbitrary one.
 
   The traffic lights' vertical position is native AppKit chrome fixed by
-  `mac.TitleBarHiddenInset()` — nothing in this file's CSS can move them.
-  Wails v2 has no supported API for it (see wailsapp/wails#4227, open as of
-  this writing); the only real fix is repositioning the NSWindow's standard
-  window buttons from native Go/Cgo code, which this app does not currently
-  have any of.
+  `application.MacTitleBarHiddenInset` — nothing in this file's CSS can move
+  them, and Wails still exposes no supported API for it in v3 (see
+  wailsapp/wails#4227). The fix is repositioning the NSWindow's standard window
+  buttons from native Go/Cgo code, which `app/adapters/macwindow` does; the
+  offset it applies is `trafficLightVerticalNudge` in `app/cmd/main.go`, and it
+  is tuned against the height this bar renders at.
 -->
 <script lang="ts">
-  import { isMac, accelerator } from '$lib/platform'
+  import { isMac } from '$lib/platform'
+  import { shortcut } from '$stores/shortcuts.svelte'
   import { workspace } from '$stores/workspace.svelte'
+  import type { ClusterSession } from '$stores/session.svelte'
+  import { organisation } from '$stores/organisation.svelte'
+  import { groupBgClass } from '$lib/groupColour'
   import { preferences, THEME_LABELS } from '$stores/preferences.svelte'
   import { windowState } from '$stores/windowState.svelte'
+  import { settingsDialog } from '$stores/settingsDialog.svelte'
+  import { palette } from '$stores/palette.svelte'
   import SettingsDialog from './SettingsDialog.svelte'
   import UpdateBadge from './UpdateBadge.svelte'
-  import { Home, Server, Plus, X, RefreshCw, Moon, Sun, Monitor, Settings } from '@lucide/svelte'
-
-  let settingsOpen = $state(false)
+  import {
+    Home,
+    Server,
+    Plus,
+    X,
+    RefreshCw,
+    Moon,
+    Sun,
+    Monitor,
+    Settings,
+    Lock,
+    LockOpen,
+    Search,
+  } from '@lucide/svelte'
 
   /**
    * Cmd+, opens Settings, which is the macOS convention every application
@@ -55,19 +73,38 @@
    *
    * Handled here rather than in the workspace because Settings is
    * application-wide: it must open from the cluster picker as well, where no
-   * workspace is mounted.
+   * workspace is mounted. Matched against $lib/shortcuts so this handler and
+   * ShortcutSheet.svelte cannot disagree about what the combo is.
+   *
+   * Visibility lives in $stores/settingsDialog, not a local `let` here, so
+   * the command palette — a sibling of this bar, not a descendant of it —
+   * can open the same dialog from its own "Open Settings" command.
    */
   function onKeydown(event: KeyboardEvent): void {
-    if (!(event.metaKey || event.ctrlKey)) return
-    if (event.key !== ',') return
+    if (!shortcut('settings').matches(event)) return
 
     event.preventDefault()
-    settingsOpen = !settingsOpen
+    settingsDialog.toggle()
   }
 
-  /** Dot colour by connection health, so a dead tab is visible at a glance. */
-  function toneFor(reachable: boolean): string {
-    return reachable ? 'bg-success' : 'bg-error'
+  /**
+   * Dot colour by connection health, so a dead tab is visible at a glance.
+   *
+   * IT READS THE SESSION, NOT THE CLUSTER. `cluster.isReachable` means "a
+   * round trip completed once" and nothing ever unsets it — a laptop that
+   * changes network keeps a green dot for as long as the tab is open. What
+   * this needs is whether the cluster is answering NOW, which is what the
+   * session records on every tick. See ClusterSession.unreachableSince.
+   */
+  function toneFor(session: ClusterSession): string {
+    if (!session.cluster.isReachable) return 'bg-error'
+    return session.answering ? 'bg-success' : 'bg-error'
+  }
+
+  /** The word beside the dot, in the tooltip and the accessible name. */
+  function healthWord(session: ClusterSession): string {
+    if (!session.cluster.isReachable) return 'not reachable'
+    return session.answering ? 'reachable' : 'not answering'
   }
 
   /**
@@ -123,17 +160,35 @@
   <div class="flex min-w-0 flex-1 items-stretch gap-0.5 overflow-x-auto">
     {#each workspace.sessions as session (session.cluster.id)}
       {@const active = session.cluster.id === workspace.activeClusterId}
+      {@const placement = organisation.placementOf(session.cluster.id)}
+      {@const settings = organisation.settingsFor(placement.project, placement.group)}
+      {@const group = organisation.groupNameOf(session.cluster.id)}
 
       <div class="group relative flex items-center" role="presentation">
+        <!-- THE GROUP IS IN THE ACCESSIBLE NAME BECAUSE ITS DOT IS NOT
+             READABLE. The coloured dot below stands for the group, is
+             aria-hidden, and had no textual equivalent anywhere on the tab
+             bar — so which group a tab belongs to was recoverable only by
+             opening the picker. The environment word was already carried
+             there for exactly this reason, which is what made the omission
+             visible. -->
         <button
           type="button"
           onclick={() => workspace.focus(session.cluster.id)}
-          title="{session.cluster.id} — {session.cluster.host} — {session.cluster.isReachable
-            ? 'reachable'
-            : 'not reachable'}"
-          aria-label="{session.cluster.id}, {session.cluster.isReachable
-            ? 'reachable'
-            : 'not reachable'}"
+          title="{session.cluster.id} — {session.cluster.host} — {healthWord(
+            session,
+          )}{settings.environment ? ` — ${settings.environment}` : ''}{settings.readOnly
+            ? workspace.readOnlyEnforced(session.cluster.id)
+              ? ' — read-only'
+              : ' — read-only, but PodSteer could not tell the backend: write controls are still disabled here, the second guard is not in force'
+            : ''}"
+          aria-label="{session.cluster.id}, {healthWord(session)}{group
+            ? `, ${group}`
+            : ''}{settings.environment ? `, ${settings.environment}` : ''}{settings.readOnly
+            ? workspace.readOnlyEnforced(session.cluster.id)
+              ? ', read-only'
+              : ', read-only but not enforced by the backend'
+            : ''}"
           aria-current={active ? 'page' : undefined}
           class="no-drag flex h-full max-w-52 items-center gap-2 pl-3 pr-7
                  text-label-medium transition-all duration-150 ease-standard
@@ -154,10 +209,59 @@
             accessible name and its tooltip.
           -->
           <span
-            class="size-1.5 shrink-0 rounded-full {toneFor(session.cluster.isReachable)}"
+            class="size-1.5 shrink-0 rounded-full {toneFor(session)}"
             aria-hidden="true"
           ></span>
+          <!-- The group's own colour, a second dot rather than an underline:
+               the underline already means "this tab is active", and reusing
+               it for something unrelated would make the active tab of an
+               uncoloured group look like it lost its colour rather than
+               never having had one. -->
+          {#if settings.colour}
+            <span
+              class="size-1.5 shrink-0 rounded-full {groupBgClass(settings.colour)}"
+              aria-hidden="true"
+            ></span>
+          {/if}
           <span class="truncate">{session.cluster.id}</span>
+          <!-- Only production gets a chip here — every other environment is
+               colour alone, which is what keeps a tab that has to fit eight
+               of them on a laptop screen from growing a label per cluster.
+               Production earns the exception: it is the one guardrail an
+               operator must be able to read without opening the picker. -->
+          {#if settings.environment === 'production'}
+            <span
+              class="shrink-0 rounded-full bg-error/15 px-1 py-px text-label-small font-semibold
+                     tracking-wide text-error uppercase"
+            >
+              prod
+            </span>
+          {/if}
+          <!--
+            AN OPEN PADLOCK WHEN THE GUARD DID NOT GET INSTALLED. The mark
+            says "PodSteer will refuse writes here"; pushing that to the
+            backend can fail, and its failure is deliberately swallowed
+            (see workspace.syncReadOnly). The frontend's own disabling of
+            write controls is unaffected and still holds — what is missing is
+            the second line — so the icon changes rather than disappearing,
+            and the title says which of the two it means.
+          -->
+          {#if settings.readOnly}
+            {@const enforced = workspace.readOnlyEnforced(session.cluster.id)}
+            {#if enforced}
+              <Lock
+                class="size-3 shrink-0 {active ? 'text-on-surface-variant' : 'text-on-surface-variant/60'}"
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+            {:else}
+              <LockOpen
+                class="size-3 shrink-0 text-gauge-warn-ink"
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+            {/if}
+          {/if}
         </button>
 
         <!-- Close button -->
@@ -194,9 +298,27 @@
 
   <div class="mx-1 h-5 w-px shrink-0 self-center bg-outline-variant/60" aria-hidden="true"></div>
 
-  <!-- Between the separator and Refresh, and ABSENT unless there is genuinely
-       a newer release. See UpdateBadge.svelte for why the quiet states show
-       nothing at all. -->
+  <!-- Command palette: global search across kinds and open clusters — works
+       from any tab and from the picker, which is why it lives in this bar
+       rather than in ClusterWorkspace's own toolbar (that one remounts per
+       tab; this control must not). ⌘K stays "focus the table search" —
+       this is a different box for a different question, so it gets its own
+       glyph rather than sharing the search icon SearchField already owns. -->
+  <button
+    type="button"
+    onclick={palette.show}
+    aria-label="Command palette"
+    title="Search kinds, objects and clusters  {shortcut('command-palette').keys}"
+    class="state-layer no-drag grid size-8 shrink-0 self-center place-items-center rounded-full
+           text-on-surface-variant transition-colors duration-100
+           hover:bg-surface-container-high hover:text-on-surface"
+  >
+    <Search class="size-4" strokeWidth={1.8} />
+  </button>
+
+  <!-- Between the palette button and Refresh, and ABSENT unless there is
+       genuinely a newer release. See UpdateBadge.svelte for why the quiet
+       states show nothing at all. -->
   <UpdateBadge />
 
   <!-- Refresh: acts on whichever tab is in front. Nothing to refresh on the
@@ -206,7 +328,7 @@
     onclick={() => void workspace.active?.refresh()}
     disabled={!workspace.active}
     aria-label="Refresh"
-    title="Refresh  ⌘R"
+    title="Refresh  {shortcut('refresh').keys}"
     class="state-layer no-drag grid size-8 shrink-0 self-center place-items-center rounded-full
            text-on-surface-variant transition-colors duration-100
            hover:bg-surface-container-high hover:text-on-surface
@@ -244,9 +366,9 @@
   <!-- Settings -->
   <button
     type="button"
-    onclick={() => (settingsOpen = true)}
+    onclick={settingsDialog.show}
     aria-label="Settings"
-    title="Settings  {accelerator(',')}"
+    title="Settings  {shortcut('settings').keys}"
     class="state-layer no-drag grid size-8 shrink-0 self-center place-items-center rounded-full
            text-on-surface-variant transition-colors duration-100
            hover:bg-surface-container-high hover:text-on-surface"
@@ -256,7 +378,7 @@
 </div>
 
 <SettingsDialog
-  open={settingsOpen}
-  onclose={() => (settingsOpen = false)}
+  open={settingsDialog.open}
+  onclose={settingsDialog.hide}
   onrefresh={() => void workspace.active?.refresh()}
 />

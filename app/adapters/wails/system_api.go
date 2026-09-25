@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"github.com/podsteer/podsteer/app/adapters/notices"
 )
@@ -36,6 +38,25 @@ type SystemAPI struct {
 	info   AppInfo
 	app    *App
 	logger *slog.Logger
+
+	// chooseSavePath opens the native save dialog and returns the operator's
+	// choice, or "" if they cancelled.
+	//
+	// A field rather than a direct call to the Wails save dialog, so a
+	// test can stub the chosen path instead of popping a real dialog — which
+	// would hang `go test` waiting for an operator who is not there.
+	chooseSavePath func(suggestedName string) (string, error)
+
+	// chooseDirectory and chooseFile are the open-directory and open-file
+	// dialogs behind ChooseDirectory and ChooseFile, seams for the same
+	// reason chooseSavePath is one.
+	chooseDirectory func(title string) (string, error)
+	chooseFile      func(title string) (string, error)
+
+	// chooseTextPath is the open dialog behind ReadTextFile — filtered to the
+	// documents PodSteer imports, where chooseFile is deliberately unfiltered
+	// because anything at all can be copied into a container.
+	chooseTextPath func(title string) (string, error)
 }
 
 // NewSystemAPI returns the bound system API.
@@ -47,7 +68,7 @@ func NewSystemAPI(name, version string, app *App, logger *slog.Logger) (*SystemA
 		logger = slog.Default()
 	}
 
-	return &SystemAPI{
+	s := &SystemAPI{
 		info: AppInfo{
 			Name:     name,
 			Version:  version,
@@ -56,7 +77,12 @@ func NewSystemAPI(name, version string, app *App, logger *slog.Logger) (*SystemA
 		},
 		app:    app,
 		logger: logger.With(slog.String("api", "system")),
-	}, nil
+	}
+	s.chooseSavePath = s.showSaveDialog
+	s.chooseDirectory = s.showDirectoryDialog
+	s.chooseFile = s.showOpenDialog
+	s.chooseTextPath = s.showTextOpenDialog
+	return s, nil
 }
 
 // Info returns the running application's identity.
@@ -125,6 +151,266 @@ func (s *SystemAPI) LicenceText(textID string) (string, error) {
 	return text, nil
 }
 
+// saveDialogFor describes the save dialog for one suggested filename.
+//
+// DERIVED FROM THE EXTENSION rather than fixed, because SaveTextFile now
+// writes three different things and a dialog restricted to CSV would have
+// appended `.csv` to the other two — macOS's save panel treats a filter as
+// the extension it will enforce, so a settings document would have arrived as
+// `podsteer-settings-….json.csv` and failed to import. The log download was
+// already going out through the CSV filter for the same reason; this fixes
+// that at the same time as making room for the settings file.
+//
+// Anything unrecognised gets an unrestricted dialog rather than a guess: the
+// operator named the file, and second-guessing them costs more than the tidy
+// filter is worth.
+func saveDialogFor(suggestedName string) (title string, filters []application.FileFilter) {
+	switch strings.ToLower(filepath.Ext(suggestedName)) {
+	case ".csv":
+		return "Export CSV", []application.FileFilter{
+			{DisplayName: "CSV (*.csv)", Pattern: "*.csv"},
+		}
+	case ".json":
+		return "Export", []application.FileFilter{
+			{DisplayName: "JSON (*.json)", Pattern: "*.json"},
+		}
+	case ".log":
+		return "Download logs", []application.FileFilter{
+			{DisplayName: "Log (*.log)", Pattern: "*.log"},
+			{DisplayName: "All files", Pattern: "*"},
+		}
+	default:
+		return "Save", nil
+	}
+}
+
+// showSaveDialog is chooseSavePath's real implementation: the native save
+// dialog, seeded with the suggested filename and filtered by its extension.
+func (s *SystemAPI) showSaveDialog(suggestedName string) (string, error) {
+	wailsApp, ok := s.app.wailsApp()
+	if !ok {
+		return "", fmt.Errorf("the window is not running")
+	}
+
+	title, filters := saveDialogFor(suggestedName)
+
+	return wailsApp.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+		Title:    title,
+		Filename: suggestedName,
+		Filters:  filters,
+	}).PromptForSingleSelection()
+}
+
+// SaveTextFile opens a native save dialog seeded with suggestedName and
+// writes content to wherever the operator chose.
+//
+// This is the one place PodSteer writes a file the OPERATOR picked the
+// location for, rather than one of the fixed per-user paths — history and
+// display preferences — everything else in SECURITY.md enumerates. The write
+// happens here, in Go, because the webview cannot touch the filesystem and
+// should not be able to: handing the frontend a path instead would mean
+// trusting whatever content it sent, unauthenticated, to land wherever it
+// said.
+//
+// An empty returned path means the operator cancelled the dialog, which is
+// not an error — see ReadKubeconfigFile for the same convention on the way
+// in.
+func (s *SystemAPI) SaveTextFile(suggestedName, content string) (string, error) {
+	if strings.TrimSpace(suggestedName) == "" {
+		return "", apiError(s.logger, "SaveTextFile", errEmptySuggestedName)
+	}
+
+	path, err := s.chooseSavePath(suggestedName)
+	if err != nil {
+		return "", apiError(s.logger, "SaveTextFile", err)
+	}
+	if path == "" {
+		return "", nil
+	}
+
+	// 0o600: the export can hold whatever the cluster returned, including
+	// values another local account has no business reading — the same reasoning
+	// behind every other write in SECURITY.md's enumeration.
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		return "", apiError(s.logger, "SaveTextFile", err)
+	}
+
+	return path, nil
+}
+
+// showDirectoryDialog is chooseDirectory's real implementation: the native
+// folder picker, allowed to create a folder on the way, because "a new
+// folder for this download" is the commonest answer to the question.
+func (s *SystemAPI) showDirectoryDialog(title string) (string, error) {
+	wailsApp, ok := s.app.wailsApp()
+	if !ok {
+		return "", fmt.Errorf("the window is not running")
+	}
+
+	// Wails v3 has ONE open dialog where v2 had two functions, so which of
+	// the two this is comes from the flags rather than from the name. Both
+	// are spelled out: leaving CanChooseFiles unset is what keeps this a
+	// folder picker, and an unset flag is easy to read as an oversight.
+	return wailsApp.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title:                title,
+		CanChooseDirectories: true,
+		CanChooseFiles:       false,
+		CanCreateDirectories: true,
+	}).PromptForSingleSelection()
+}
+
+// showOpenDialog is chooseFile's real implementation: the native file
+// picker, unfiltered, because anything can be copied into a container.
+func (s *SystemAPI) showOpenDialog(title string) (string, error) {
+	wailsApp, ok := s.app.wailsApp()
+	if !ok {
+		return "", fmt.Errorf("the window is not running")
+	}
+
+	return wailsApp.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title:          title,
+		CanChooseFiles: true,
+	}).PromptForSingleSelection()
+}
+
+// showTextOpenDialog is chooseTextPath's real implementation: the native file
+// picker, filtered to the two document kinds PodSteer reads back — a settings
+// file is JSON, a manifest to diff against is YAML — and still offering
+// everything, because an operator who renamed either should not be told it
+// does not exist.
+func (s *SystemAPI) showTextOpenDialog(title string) (string, error) {
+	wailsApp, ok := s.app.wailsApp()
+	if !ok {
+		return "", fmt.Errorf("the window is not running")
+	}
+
+	return wailsApp.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title:          title,
+		CanChooseFiles: true,
+		Filters: []application.FileFilter{
+			{DisplayName: "Documents (*.json, *.yaml, *.yml)", Pattern: "*.json;*.yaml;*.yml"},
+			{DisplayName: "All files", Pattern: "*"},
+		},
+	}).PromptForSingleSelection()
+}
+
+// maxTextFileBytes caps what ReadTextFile will hand the webview.
+//
+// A settings document is a few kilobytes; a megabyte is already two orders
+// past anything PodSteer writes. The cap is not a security boundary — the
+// operator picked the file — it is a refusal to marshal an arbitrarily large
+// string across the bridge and into a JSON parser running in the UI thread,
+// which is how "I chose the wrong file" becomes "the window froze".
+const maxTextFileBytes = 1 << 20
+
+// TextFile is a file the operator chose, as the webview receives it.
+//
+// THE BASE NAME TRAVELS AND THE PATH DOES NOT. A name is what the person who
+// picked it recognises — "deployment.yaml" beside a diff, the settings file
+// they just imported — and it is already on their screen in the picker they
+// used. The directories above it are not: they carry user names, project
+// names and client names, and SECURITY.md's rule about local paths is that
+// PodSteer names what moved and never where it lives.
+type TextFile struct {
+	// Name is the file's base name, for showing back to the operator. Empty
+	// when the dialog was cancelled.
+	Name string `json:"name"`
+	// Content is the whole file. Empty when the dialog was cancelled.
+	Content string `json:"content"`
+}
+
+// ReadTextFile opens a native file picker and returns what the chosen file
+// contains.
+//
+// The file is read HERE rather than handed to the frontend as a path, for the
+// same reason ReadKubeconfigFile is: the webview cannot open files and should
+// not be able to. That is also why this exists rather than ChooseFile being
+// reused — ChooseFile returns a PATH, which is only ever useful to a Go method
+// that will act on it, and nothing in the webview can turn one into content.
+//
+// An empty Content means the operator cancelled, which is not an error — the
+// same convention as ChooseDirectory and ReadKubeconfigFile. An empty FILE is
+// refused instead of being returned as a cancellation, because the two would
+// otherwise be indistinguishable to the caller.
+func (s *SystemAPI) ReadTextFile(title string) (TextFile, error) {
+	if strings.TrimSpace(title) == "" {
+		title = "Choose a file"
+	}
+
+	path, err := s.chooseTextPath(title)
+	if err != nil {
+		return TextFile{}, apiError(s.logger, "ReadTextFile", err)
+	}
+	if path == "" {
+		return TextFile{}, nil
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return TextFile{}, apiError(s.logger, "ReadTextFile", err)
+	}
+	if info.Size() > maxTextFileBytes {
+		return TextFile{}, apiError(s.logger, "ReadTextFile", fmt.Errorf(
+			"%w: that file is %d bytes; PodSteer reads at most %d",
+			errUnreadableTextFile, info.Size(), maxTextFileBytes))
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return TextFile{}, apiError(s.logger, "ReadTextFile", err)
+	}
+	if len(content) == 0 {
+		return TextFile{}, apiError(s.logger, "ReadTextFile", fmt.Errorf("%w: that file is empty",
+			errUnreadableTextFile))
+	}
+
+	// The PATH is not logged, and neither is the content. What was chosen is
+	// the operator's business and the reason for it is on screen in front of
+	// them; SECURITY.md's file-transfer rule — one line naming what moved,
+	// never a local path — is the same rule.
+	s.logger.Debug("read a text file", slog.Int("bytes", len(content)))
+
+	return TextFile{Name: filepath.Base(path), Content: string(content)}, nil
+}
+
+// ChooseDirectory opens the native folder picker and returns the operator's
+// choice — the destination of a download, or a folder to upload.
+//
+// The path is returned to the frontend rather than acted on here, unlike
+// SaveTextFile, because the thing that will use it — FileCopyAPI — is a
+// transfer the operator has yet to start and may still change their mind
+// about. Handing a path back is safe in this direction: the frontend can
+// only ever pass it to a Go method that checks it is a directory and writes
+// nothing but what the container sent through the ArchivePort's rules. An
+// empty path means the operator cancelled, which is not an error.
+func (s *SystemAPI) ChooseDirectory(title string) (string, error) {
+	if strings.TrimSpace(title) == "" {
+		title = "Choose a folder"
+	}
+
+	path, err := s.chooseDirectory(title)
+	if err != nil {
+		return "", apiError(s.logger, "ChooseDirectory", err)
+	}
+	return path, nil
+}
+
+// ChooseFile opens the native file picker and returns the operator's
+// choice — a file to upload into a container. The same conventions as
+// ChooseDirectory: the path is only ever consumed by FileCopyAPI, which
+// reads it through the ArchivePort, and "" means cancelled.
+func (s *SystemAPI) ChooseFile(title string) (string, error) {
+	if strings.TrimSpace(title) == "" {
+		title = "Choose a file"
+	}
+
+	path, err := s.chooseFile(title)
+	if err != nil {
+		return "", apiError(s.logger, "ChooseFile", err)
+	}
+	return path, nil
+}
+
 // allowedURLSchemes are the only schemes OpenURL will hand to the OS.
 //
 // http/https cover ordinary links; mailto covers "share by email", which
@@ -159,12 +445,18 @@ func (s *SystemAPI) OpenURL(raw string) error {
 			errInvalidURL, raw))
 	}
 
-	ctx, ok := s.app.runtimeContext()
+	wailsApp, ok := s.app.wailsApp()
 	if !ok {
 		return apiError(s.logger, "OpenURL", fmt.Errorf("%w: the window is not running",
 			errInvalidURL))
 	}
 
-	wailsruntime.BrowserOpenURL(ctx, parsed.String())
+	// Wails v3 reports whether the OS accepted the hand-off; v2's
+	// BrowserOpenURL returned nothing at all. The refusal is surfaced rather
+	// than dropped — a link that silently does nothing is indistinguishable
+	// from one this method rejected, and the two need different fixes.
+	if err := wailsApp.Browser.OpenURL(parsed.String()); err != nil {
+		return apiError(s.logger, "OpenURL", err)
+	}
 	return nil
 }

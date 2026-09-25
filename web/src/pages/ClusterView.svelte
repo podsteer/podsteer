@@ -42,15 +42,29 @@
   import MoveClusterMenu from '$lib/components/MoveClusterMenu.svelte'
   import { formatConnection, formatConnectionTitle } from '$lib/format'
   import { clusterActivity } from '$stores/activity.svelte'
+  import { organiseDialog } from '$stores/organiseDialog.svelte'
   import { groupKey, organisation } from '$stores/organisation.svelte'
+  import { groupBgClass } from '$lib/groupColour'
+  import { visibleClusters } from '$lib/clusterPins'
+  import { preferences } from '$stores/preferences.svelte'
+  import { distributions } from '$lib/api/client'
+  import {
+    loadDistributionTable,
+    markFor,
+    rememberedMark,
+    type ClusterMark,
+  } from '$lib/clusterDistribution'
   import { workspace } from '$stores/workspace.svelte'
   import {
     Server,
     FolderTree,
     Layers,
     ChevronDown,
+    CircleStop,
+    FileCog,
     Globe,
     GripVertical,
+    Pin,
     Plug,
     Plus,
     Star,
@@ -58,7 +72,11 @@
     User,
   } from '@lucide/svelte'
 
-  let organiseOpen = $state(false)
+  // Organise's visibility lives in $stores/organiseDialog, not a local
+  // `let` — the command palette needs to open the SAME dialog from any tab,
+  // not only from this page, which a variable local to this component could
+  // never do. See that module's own comment.
+  const organiseOpen = $derived(organiseDialog.open)
   let addOpen = $state(false)
 
   /**
@@ -85,6 +103,27 @@
     const clock = setInterval(() => (now = Date.now()), 1000)
     return () => clearInterval(clock)
   })
+
+  /**
+   * The label table, read once. See $lib/clusterDistribution.
+   */
+  let tableLoaded = $state(false)
+  $effect(() => {
+    void loadDistributionTable(distributions).then(() => (tableLoaded = true))
+  })
+
+  /**
+   * What was learned about a context on a previous run.
+   *
+   * The backend answers for a cluster it can identify NOW — from a version
+   * string when it is open, from an address when it is not — and this fills
+   * the gap for everything else. Reading `tableLoaded` is what redraws the
+   * list once the labels arrive.
+   */
+  function remembered(clusterId: string) {
+    void tableLoaded
+    return rememberedMark(preferences.rememberedDistribution(clusterId))
+  }
 
   /** The cluster currently being dragged, if any. */
   let draggingId = $state<string | null>(null)
@@ -148,6 +187,15 @@
 
   /** What has been typed into the filter. */
   let filter = $state('')
+  /**
+   * Whether the page is narrowed to the pinned clusters.
+   *
+   * NOT PERSISTED, unlike the pins themselves. Which clusters somebody works
+   * with is a standing fact; whether they are looking at only those right now
+   * is a question about this visit, and a picker that opened tomorrow still
+   * hiding most of the kubeconfig would be a puzzle rather than a preference.
+   */
+  let pinnedOnly = $state(false)
   let searchField = $state<{ focus: () => void } | undefined>()
 
   /**
@@ -161,10 +209,16 @@
    * remembers "the staging one in ParliTrack" is remembering the grouping.
    */
   const matches = $derived.by(() => {
-    const term = filter.trim().toLowerCase()
-    if (!term) return workspace.clusters
+    // Pinned first, and narrowed to the pinned ones when the toggle is on —
+    // before the text filter, so the two compose rather than fight. See
+    // $lib/clusterPins for why the toggle shows everything when nothing is
+    // pinned at all.
+    const ordered = visibleClusters(workspace.clusters, preferences.pinnedClusters, pinnedOnly)
 
-    return workspace.clusters.filter((cluster) => {
+    const term = filter.trim().toLowerCase()
+    if (!term) return ordered
+
+    return ordered.filter((cluster) => {
       const at = organisation.placementOf(cluster.id)
       const haystack = [
         cluster.id,
@@ -241,6 +295,9 @@
       const at = organisation.placementOf(clusterId)
       if (at.project !== projectId || at.group !== groupId) {
         organisation.place(clusterId, projectId, groupId)
+        // The destination group's read-only setting may differ from the
+        // group this cluster just left — see workspace.syncReadOnly.
+        void workspace.syncReadOnly(clusterId)
       }
     }
     endDrag()
@@ -293,6 +350,28 @@
   information, and letting the grid grow with the window turns three cards
   into three very wide cards with the same content strung across them.
 -->
+<!--
+  What a cluster turned out to be. Nothing at all when nothing identified it:
+  a hedge in that space — "Unknown", "Other" — reads as information.
+
+  Hosted and self-hosted are told apart by weight rather than by a second word:
+  a managed control plane gets a filled chip, one somebody here runs gets an
+  outline. It is the distinction being drawn, and it costs no width.
+-->
+{#snippet distributionMark(mark: ClusterMark | null)}
+  {#if mark}
+    <span
+      title={`${mark.label} — ${mark.evidence}`}
+      class="shrink-0 rounded-full px-1.5 py-0.5 text-label-small font-medium
+             {mark.hosted
+        ? 'bg-surface-container-high text-on-surface-variant'
+        : 'border border-outline-variant/60 text-on-surface-variant/80'}"
+    >
+      {mark.label}
+    </span>
+  {/if}
+{/snippet}
+
 <div class="mx-auto w-full max-w-6xl px-8 py-10">
   <!-- Header -->
   <div class="mb-8 flex items-start justify-between gap-4">
@@ -341,8 +420,32 @@
           onnext={openOnlyMatch}
           class="w-72"
         />
+
+        <!-- Pinned only. Disabled rather than hidden when nothing is pinned:
+             a control that appears once you have used a feature is one nobody
+             discovers, and the title says what it is for. -->
+        <button
+          type="button"
+          onclick={() => (pinnedOnly = !pinnedOnly)}
+          aria-pressed={pinnedOnly}
+          disabled={preferences.pinnedClusters.length === 0}
+          title={preferences.pinnedClusters.length === 0
+            ? 'Pin a cluster to filter by it'
+            : pinnedOnly
+              ? 'Show every cluster'
+              : 'Show only pinned clusters'}
+          class="state-layer inline-flex h-9 shrink-0 items-center gap-1.5 rounded-sm border
+                 px-3 text-label-large transition-colors duration-100
+                 disabled:pointer-events-none disabled:opacity-40
+                 {pinnedOnly
+            ? 'border-primary/40 bg-primary/[0.06] text-primary'
+            : 'border-outline-variant text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+        >
+          <Pin class="size-4 {pinnedOnly ? 'fill-current' : ''}" strokeWidth={1.8} />
+          Pinned
+        </button>
       {/if}
-      <Button variant="tonal" onclick={() => (organiseOpen = true)}>
+      <Button variant="tonal" onclick={organiseDialog.show}>
         <FolderTree class="size-4" strokeWidth={1.8} />
         Organise
       </Button>
@@ -410,13 +513,13 @@
               <h3 class="truncate text-title-medium font-semibold text-on-surface">
                 {project.name}
               </h3>
-              <span class="shrink-0 rounded-full bg-surface-container-high px-2 py-0.5 text-[11px]
+              <span class="shrink-0 rounded-full bg-surface-container-high px-2 py-0.5 text-label-small
                            tabular-nums text-on-surface-variant/60">
                 {project.clusterCount}
               </span>
               {#if projectCollapsed && projectOpen > 0}
                 <!-- The one fact you would have to expand to learn. -->
-                <span class="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[11px]
+                <span class="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-label-small
                              font-medium text-primary">
                   {projectOpen} open
                 </span>
@@ -461,12 +564,12 @@
                       <h4 class="truncate text-title-small font-medium text-on-surface">
                         {group.name}
                       </h4>
-                      <span class="shrink-0 rounded-full bg-surface-container-high px-2 py-0.5 text-[11px]
+                      <span class="shrink-0 rounded-full bg-surface-container-high px-2 py-0.5 text-label-small
                                    tabular-nums text-on-surface-variant/60">
                         {group.clusters.length}
                       </span>
                       {#if groupCollapsed && openCount(group.clusters) > 0}
-                        <span class="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[11px]
+                        <span class="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-label-small
                                      font-medium text-primary">
                           {openCount(group.clusters)} open
                         </span>
@@ -528,6 +631,18 @@
                                    transition-all duration-150 hover:border-outline hover:shadow-sm
                                    {open ? 'border-primary/30 bg-primary/[0.03]' : ''}"
                           >
+                            <!-- The group's own colour, an edge rather than a
+                                 fill: it marks which group this cluster is
+                                 in without competing with the reachability
+                                 and open-state colours already on the card. -->
+                            {#if group.settings.colour}
+                              <span
+                                class="absolute inset-y-0 left-0 w-1 rounded-l-sm {groupBgClass(
+                                  group.settings.colour,
+                                )}"
+                                aria-hidden="true"
+                              ></span>
+                            {/if}
                             <div class="mb-3 flex gap-3">
                             <div class="grid size-9 shrink-0 place-items-center rounded-sm
                                         {open ? 'bg-primary/10' : 'bg-surface-container-high'}">
@@ -563,9 +678,28 @@
                                   {cluster.id}
                                 </h5>
                                 {#if open}
-                                  <span class="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px]
+                                  <span class="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-label-small
                                                font-medium text-primary">
                                     open
+                                  </span>
+                                {/if}
+                                <!-- WHAT THIS CLUSTER IS: EKS, k3s, whichever.
+                                     The distinction a list of near-identical
+                                     context names least often carries and an
+                                     operator most often wants — which of these
+                                     is managed, and which is the one somebody
+                                     here runs. Absent entirely when nothing
+                                     identified it, because a hedge in that
+                                     space reads as information. -->
+                                {@render distributionMark(markFor(cluster, remembered))}
+                                {#if group.settings.environment}
+                                  <span
+                                    class="shrink-0 rounded-full px-1.5 py-0.5 text-label-small font-medium
+                                           {group.settings.environment === 'production'
+                                      ? 'bg-error/15 text-error'
+                                      : 'bg-surface-container-high text-on-surface-variant'}"
+                                  >
+                                    {group.settings.environment}
                                   </span>
                                 {/if}
                               </div>
@@ -580,6 +714,25 @@
                                 <Globe class="size-3 shrink-0" strokeWidth={1.8} />
                                 <span class="truncate">{cluster.host}</span>
                               </p>
+                              <!-- WHICH FILE this context came from. Several
+                                   are merged — your kubeconfig, a folder the
+                                   environment names, and anything added under
+                                   Settings → Kubeconfig — and client-go keeps
+                                   the FIRST definition of a name, so without
+                                   this a context defined twice is a tab that
+                                   connects somewhere unexpected with the right
+                                   name on it. Only shown when there is one:
+                                   a configuration that came from no file has
+                                   nothing to say here. -->
+                              {#if cluster.source}
+                                <p class="flex items-center gap-1.5 truncate text-body-small
+                                          text-on-surface-variant/70">
+                                  <FileCog class="size-3 shrink-0" strokeWidth={1.8} />
+                                  <span class="truncate" title={cluster.source}>
+                                    {cluster.source}
+                                  </span>
+                                </p>
+                              {/if}
                             </div>
 
                             <!-- The star belongs to identity, so it stays in
@@ -653,6 +806,47 @@
                                   <GripVertical class="size-4" strokeWidth={1.8} />
                                 </div>
 
+                                <!-- Pin. A PIN RATHER THAN A STAR, though the
+                                     navigator calls the same act pinning and
+                                     draws a star for it: this card already
+                                     has a filled star, and it means something
+                                     else entirely — that this is the
+                                     kubeconfig's current context. Two stars
+                                     on one card, meaning two different
+                                     things, is worse than two glyphs for one
+                                     idea across two screens.
+
+                                     Filled once pinned, so a glance down the
+                                     page shows which they are without
+                                     hovering each card — the same rule the
+                                     navigator's pin follows. -->
+                                <button
+                                  type="button"
+                                  onclick={(event) => {
+                                    event.stopPropagation()
+                                    preferences.toggleClusterPin(cluster.id)
+                                  }}
+                                  aria-pressed={preferences.isClusterPinned(cluster.id)}
+                                  aria-label="{preferences.isClusterPinned(cluster.id)
+                                    ? 'Unpin'
+                                    : 'Pin'} {cluster.id}"
+                                  title={preferences.isClusterPinned(cluster.id)
+                                    ? 'Unpin from the top of this group'
+                                    : 'Pin to the top of this group'}
+                                  class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                                         transition-colors duration-150 hover:text-on-surface
+                                         {preferences.isClusterPinned(cluster.id)
+                                    ? 'text-primary'
+                                    : 'text-on-surface-variant'}"
+                                >
+                                  <Pin
+                                    class="size-4.5 {preferences.isClusterPinned(cluster.id)
+                                      ? 'fill-current'
+                                      : ''}"
+                                    strokeWidth={1.8}
+                                  />
+                                </button>
+
                                 <MoveClusterMenu clusterId={cluster.id} />
 
                                 <!-- Connecting is what the whole card already
@@ -678,6 +872,15 @@
                                     <Unplug class="size-4.5" strokeWidth={1.8} />
                                   </button>
                                 {:else}
+                                  <!-- WHILE THIS ONE IS CONNECTING IT BECOMES
+                                       THE WAY OUT. A cluster that answers
+                                       neither yes nor no holds the attempt for
+                                       the whole request timeout, and a control
+                                       that only starts things leaves the
+                                       operator watching it. Nothing about any
+                                       OTHER card changes: connecting one
+                                       cluster used to disable the control on
+                                       all of them. -->
                                   <button
                                     type="button"
                                     onclick={(event) => {
@@ -688,21 +891,27 @@
                                       // there", this is "connect this one",
                                       // and it mirrors Disconnect rather than
                                       // duplicating the card.
-                                      void workspace.open(cluster.id, false)
+                                      if (workspace.isConnecting(cluster.id)) {
+                                        void workspace.stopConnecting(cluster.id)
+                                      } else {
+                                        void workspace.open(cluster.id, false)
+                                      }
                                     }}
-                                    disabled={workspace.connectingTo !== null}
-                                    aria-label="Connect to {cluster.id}"
-                                    title={workspace.connectingTo === cluster.id ? 'Connecting…' : 'Connect'}
+                                    aria-label={workspace.isConnecting(cluster.id)
+                                      ? `Stop connecting to ${cluster.id}`
+                                      : `Connect to ${cluster.id}`}
+                                    title={workspace.isConnecting(cluster.id)
+                                      ? 'Connecting… — stop'
+                                      : 'Connect'}
                                     class="state-layer grid size-8 shrink-0 place-items-center rounded-full
                                            text-on-surface-variant transition-colors duration-150
                                            hover:text-primary disabled:pointer-events-none disabled:opacity-40"
                                   >
-                                    <Plug
-                                      class="size-4.5 {workspace.connectingTo === cluster.id
-                                        ? 'animate-pulse text-primary'
-                                        : ''}"
-                                      strokeWidth={1.8}
-                                    />
+                                    {#if workspace.isConnecting(cluster.id)}
+                                      <CircleStop class="size-4.5 animate-pulse text-primary" strokeWidth={1.8} />
+                                    {:else}
+                                      <Plug class="size-4.5" strokeWidth={1.8} />
+                                    {/if}
                                   </button>
                                 {/if}
                               </div>
@@ -735,5 +944,5 @@
   {/if}
 </div>
 
-<OrganiseDialog open={organiseOpen} onclose={() => (organiseOpen = false)} />
+<OrganiseDialog open={organiseOpen} onclose={organiseDialog.hide} />
 <AddClusterDialog open={addOpen} onclose={() => (addOpen = false)} />

@@ -8,6 +8,7 @@
   no room below it for a dropdown to open into.
 -->
 <script lang="ts">
+  import { copyText } from '$lib/clipboard'
   import { flash } from '$lib/flash.svelte'
   import { menuKeys } from '$lib/menuKeys'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
@@ -72,8 +73,10 @@
   }
 
   async function copyLink(): Promise<void> {
-    await navigator.clipboard.writeText(SHARE_URL)
-    copied.show(() => (open = false))
+    // Closing is deferred to the confirmation's own expiry, so a copy that
+    // failed leaves the menu open with its item unchanged rather than
+    // closing as though something had happened. See $lib/clipboard.
+    if (await copyText(SHARE_URL)) copied.show(() => (open = false))
   }
 
   function onWindowPointerDown(event: PointerEvent): void {

@@ -43,8 +43,14 @@ func TestProbeKillsAfterCountsTheWholeFailureBudget(t *testing.T) {
 func TestAssessPodPredictsALivenessProbeAboutToKillASlowStart(t *testing.T) {
 	t.Parallel()
 
-	// Budget is 10 + 3×10 = 40s. The container took 36s to come up, which is
-	// 90% of it — healthy right now, one slow start from a boot loop.
+	// Budget is 10 + 3×10 = 40s, and this container has been trying for 36s
+	// of it WITHOUT BECOMING READY — one slow start from a boot loop.
+	//
+	// Not ready is the whole condition. StartedAt to now is uptime, and read
+	// as startup time it fired on every healthy container in the last fifth
+	// of its budget: every container between 48 and 60 seconds old under the
+	// defaults, on every rollout, claiming it "took 52s to come up" when it
+	// had been serving for fifty of them.
 	spec := newPodSpec()
 	spec.NodeName = "node-1"
 	spec.Containers = []domain.Container{{
@@ -66,6 +72,22 @@ func TestAssessPodPredictsALivenessProbeAboutToKillASlowStart(t *testing.T) {
 	if !strings.Contains(finding.Advice, "startupProbe") {
 		t.Errorf("advice = %q, want it to name the actual fix", finding.Advice)
 	}
+
+	if !strings.Contains(finding.Detail, "not become ready") {
+		t.Errorf("detail = %q; it must say what is known — how long it has been trying — "+
+			"rather than how long it took, which nothing here records", finding.Detail)
+	}
+
+	// A CONTAINER THAT IS READY IS NOT FLAGGED, whatever its uptime. The pod
+	// records that it is ready and not WHEN it became ready, so how long it
+	// took cannot be asked — and a finding with no evidence behind it is
+	// worse than none, because it appears and clears on every rollout.
+	spec.Containers[0].Ready = true
+	up, _ := domain.NewPod(spec)
+	if _, ok := findingTitled(domain.AssessPod(up, assessNow), "close to killing"); ok {
+		t.Error("a container that is already ready was flagged for a slow start")
+	}
+	spec.Containers[0].Ready = false
 
 	// A container with a startupProbe is already protected — the liveness
 	// probe does not run until it passes — so the same timings are fine.

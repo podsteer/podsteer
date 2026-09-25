@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+    The Windows application manifest, compiled into the .syso by
+    `wails3 generate syso` and linked into podsteer.exe.
+
+    Under Wails v2 the CLI supplied a default manifest and PodSteer never had
+    one of its own. v3 leaves the file to the project, so this is that default
+    written down: per-monitor DPI awareness (without it the window is blurry on
+    a scaled display, which is most of them), the common-controls dependency,
+    and asInvoker — PodSteer never needs elevation, and requesting it would put
+    a UAC prompt in front of a Kubernetes client for no reason.
+-->
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+    <assemblyIdentity type="win32" name="com.podsteer.desktop" version="1.0.0.0" processorArchitecture="*"/>
+    <dependency>
+        <dependentAssembly>
+            <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
+        </dependentAssembly>
+    </dependency>
+    <asmv3:application>
+        <asmv3:windowsSettings>
+            <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+            <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">permonitorv2,permonitor</dpiAwareness>
+        </asmv3:windowsSettings>
+    </asmv3:application>
+    <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+        <security>
+            <requestedPrivileges>
+                <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+            </requestedPrivileges>
+        </security>
+    </trustInfo>
+</assembly>

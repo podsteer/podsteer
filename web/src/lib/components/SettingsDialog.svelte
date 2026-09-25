@@ -27,11 +27,16 @@
     THEME_PREFERENCES,
     THEME_LABELS,
     THRESHOLD_SCOPES,
+    TIMELINE_CLUSTER_LIMITS,
+    TIMELINE_OBJECT_LIMITS,
     USAGE_WINDOWS,
     type PageSize,
     type PodMeasure,
     type ThresholdScope,
+    type TimelineClusterLimit,
+    type TimelineObjectLimit,
   } from '$stores/preferences.svelte'
+  import { timeline } from '$stores/timeline.svelte'
 
   /**
    * What each scope governs, in the operator's terms.
@@ -63,8 +68,9 @@
     RETENTION_OPTIONS,
     SAMPLING_INTERVALS,
   } from '$stores/history.svelte'
-  import { accelerator } from '$lib/platform'
+  import { shortcut } from '$stores/shortcuts.svelte'
   import { updates } from '$stores/updates.svelte'
+  import { notifications } from '$stores/notifications.svelte'
   import Button from './Button.svelte'
   import CreditsPane from './CreditsPane.svelte'
   import {
@@ -74,9 +80,34 @@
     SILENT,
     alertPlayer,
   } from '$stores/alerts.svelte'
+  import Radio from './Radio.svelte'
+  import Checkbox from './Checkbox.svelte'
   import Select from './Select.svelte'
   import GaugeTrack from './GaugeTrack.svelte'
-  import { RefreshCw, Palette, Database, Scale, Bell, Gauge, Play, X } from '@lucide/svelte'
+  import SettingsTransfer from './SettingsTransfer.svelte'
+  import ShortcutSettings from './ShortcutSettings.svelte'
+  import KubeconfigSources from './KubeconfigSources.svelte'
+  import ClusterSettingsPane from './ClusterSettingsPane.svelte'
+  import TerminalImagesPane from './TerminalImagesPane.svelte'
+  import HelpButton from './HelpButton.svelte'
+  import ProxyPane from './ProxyPane.svelte'
+  import { kubeconfigSources } from '$stores/kubeconfigSources.svelte'
+  import {
+    ArrowLeftRight,
+    Bell,
+    Database,
+    FolderCog,
+    Gauge,
+    Globe,
+    Keyboard,
+    Palette,
+    Play,
+    RefreshCw,
+    Scale,
+    Server,
+    SquareTerminal,
+    X,
+  } from '@lucide/svelte'
 
   /**
    * The values a threshold may take, every five per cent.
@@ -106,6 +137,15 @@
     })),
   ]
 
+  const TIMELINE_CLUSTER_OPTIONS = TIMELINE_CLUSTER_LIMITS.map((limit) => ({
+    value: String(limit),
+    label: `${limit.toLocaleString()} entries`,
+  }))
+  const TIMELINE_OBJECT_OPTIONS = TIMELINE_OBJECT_LIMITS.map((limit) => ({
+    value: String(limit),
+    label: `${limit.toLocaleString()} entries`,
+  }))
+
   interface Props {
     open: boolean
     onclose: () => void
@@ -121,6 +161,33 @@
     { id: 'thresholds', label: 'Thresholds', icon: Gauge },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'data', label: 'Data', icon: Database },
+    // Beside Data because both are about this machine's own disk: one is what
+    // PodSteer writes there, the other what it reads from there.
+    { id: 'kubeconfig', label: 'Kubeconfig', icon: FolderCog },
+    // After Kubeconfig, which is where the contexts these are keyed by come
+    // from — and not in Organise, where the read-only mark lives: that is a
+    // GROUP flag guarding against this interface's own bugs, while these are
+    // per-cluster facts the Go process acts on without a window.
+    { id: 'clusters', label: 'Clusters', icon: Server },
+    // Beside the two sections about WHICH clusters, because this is the one
+    // about HOW they are reached — and it is a section rather than a line in
+    // Kubeconfig because a proxy governs every outbound call PodSteer makes,
+    // not only the ones a kubeconfig names.
+    { id: 'network', label: 'Network', icon: Globe },
+    // After Clusters because it is the other section about what PodSteer puts
+    // into a cluster rather than what it keeps on this machine — and it is a
+    // section at all because these three were persisted preferences reachable
+    // only from the dialog that used them, so the operator who most needs them
+    // (one whose clusters cannot pull from Docker Hub) met them as an
+    // ImagePullBackOff rather than as a setting.
+    { id: 'images', label: 'Terminal images', icon: SquareTerminal },
+    // Next to Data, because both are about what leaves this machine, and
+    // before Credits, which is the one section nobody browses for.
+    // After Appearance because it is the other section about how the
+    // application behaves under the operator's hands rather than about a
+    // cluster, and before the cluster-shaped ones for the same reason.
+    { id: 'keyboard', label: 'Keyboard', icon: Keyboard },
+    { id: 'transfer', label: 'Export & import', icon: ArrowLeftRight },
     { id: 'credits', label: 'Credits', icon: Scale },
   ] as const
 
@@ -144,6 +211,34 @@
   $effect(() => {
     if (open && !historySettings.loaded) void historySettings.load()
   })
+
+  /**
+   * Re-asks the platform about notifications each time Settings opens.
+   *
+   * Not cached for the session, unlike the history settings above: the
+   * operator can revoke this application's permission in their own system
+   * preferences while PodSteer is running, and a switch that kept claiming it
+   * worked would be lying about the one thing it exists to control.
+   */
+  $effect(() => {
+    if (open) void notifications.probe()
+  })
+
+  /**
+   * Records the choice, and asks the OS for permission when it is turned on.
+   *
+   * THE REQUEST BELONGS TO THIS GESTURE. On macOS it is a visible system
+   * prompt, so it has to arrive because somebody pressed On — not at startup,
+   * where nobody asked, and not on the path of an actual finding, where it
+   * would arrive at the worst possible moment. The preference is stored
+   * either way: a denial is the operating system's answer, not the
+   * operator's, and it can be granted later without them having to find this
+   * switch again.
+   */
+  function setDesktopNotifications(enabled: boolean): void {
+    preferences.setDesktopNotificationsEnabled(enabled)
+    if (enabled) void notifications.authorise()
+  }
 
   function onKeydown(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || !open) return
@@ -178,7 +273,7 @@
 
   <div>
     <h4 class="text-title-small text-on-surface">{meta.name}</h4>
-    <p class="mt-0.5 text-body-small text-on-surface-variant">{meta.detail}</p>
+    <p class="mt-0.5 text-body-medium text-on-surface-variant">{meta.detail}</p>
 
     <!--
       Only the pod list has two honest denominators to choose between, so only
@@ -188,7 +283,7 @@
     {#if scope === 'pods'}
       <div class="mt-4 rounded-xs border border-outline-variant/60 p-3">
         <p class="text-body-medium text-on-surface">What the bars measure</p>
-        <p class="mt-0.5 text-body-small text-on-surface-variant">
+        <p class="mt-0.5 text-body-medium text-on-surface-variant">
           Requests answer "did I reserve about the right amount", where a full bar is a success.
           Limits answer "how much headroom is left", where a full bar is the problem — and only
           that mode can mark the two lines on the track, because only then do the bar and the
@@ -338,7 +433,8 @@
 
     <!-- Section content -->
     <div class="flex min-w-0 flex-1 flex-col">
-      <div class="flex items-start justify-end px-4 pt-3">
+      <div class="flex items-start justify-end gap-0.5 px-4 pt-3">
+        <HelpButton topic="settings" about="Settings" />
         <button
           type="button"
           onclick={onclose}
@@ -358,30 +454,31 @@
         {#if section === 'refresh'}
           <section>
             <h3 class="text-title-medium text-on-surface">Refresh</h3>
-            <p class="mt-0.5 text-body-small text-on-surface-variant">
+            <p class="mt-0.5 text-body-medium text-on-surface-variant">
               How often the open view re-reads the cluster.
             </p>
 
-            <div class="mt-4 flex flex-col gap-1.5">
+            <!-- The role is stated because the heading above is the group's
+                 only label, and a heading is attached to nothing: without it
+                 the options are announced as loose radios with no name for
+                 what they are choosing between. -->
+            <div class="mt-4 flex flex-col gap-1.5" role="radiogroup" aria-label="Refresh interval">
               {#each REFRESH_INTERVALS as interval (interval.value)}
-                <label class="flex cursor-pointer items-center gap-3 text-body-medium text-on-surface">
-                  <input
-                    type="radio"
-                    name="refresh-interval"
-                    value={interval.value}
-                    checked={preferences.effectiveIntervalMs === interval.value}
-                    onchange={() => preferences.setRefreshInterval(interval.value)}
-                    class="accent-primary"
-                  />
+                <Radio
+                  name="refresh-interval"
+                  value={interval.value}
+                  checked={preferences.effectiveIntervalMs === interval.value}
+                  onchange={() => preferences.setRefreshInterval(interval.value)}
+                >
                   {interval.label}
-                </label>
+                </Radio>
               {/each}
             </div>
 
             <div class="mt-5 flex items-center gap-3">
               <Button variant="tonal" onclick={onrefresh}>Refresh now</Button>
-              <span class="text-body-small text-on-surface-variant/70">
-                or press {accelerator('R')} at any time
+              <span class="text-body-medium text-on-surface-variant">
+                or press {shortcut('refresh').keys} at any time
               </span>
             </div>
           </section>
@@ -389,7 +486,7 @@
           <section class="flex flex-col gap-6">
             <div>
               <h3 class="text-title-medium text-on-surface">Theme</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 System follows your desktop's own light and dark setting, and changes with it.
               </p>
 
@@ -411,7 +508,7 @@
               </div>
 
               {#if preferences.themePreference === 'system'}
-                <p class="mt-2 text-body-small text-on-surface-variant/70">
+                <p class="mt-2 text-body-medium text-on-surface-variant">
                   Currently {preferences.resolvedTheme}.
                 </p>
               {/if}
@@ -419,7 +516,7 @@
 
             <div class="border-t border-outline-variant pt-5">
               <h3 class="text-title-medium text-on-surface">Rows per page</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 Applies to every resource table.
               </p>
 
@@ -442,13 +539,13 @@
 
             <div class="border-t border-outline-variant pt-5">
               <h3 class="text-title-medium text-on-surface">Detail panel width</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 How much of the window the panel covers when an object is opened. Narrower
                 leaves more of the list readable behind it. A share rather than a size, so
                 it means the same on any screen — and the panel's own left edge can be
                 dragged to anything between, which is what these three set.
               </p>
-              <p class="mt-1 text-body-small text-on-surface-variant/70">
+              <p class="mt-1 text-body-medium text-on-surface-variant">
                 The divider between a section's two columns drags too, and moves every
                 section at once. Double-click either edge to put it back.
               </p>
@@ -475,7 +572,7 @@
                    then reads as pressed. Saying what it currently is beats
                    three unlit buttons, which look like the setting is unset. -->
               {#if !DETAIL_WIDTHS.some((choice) => matchesPreset(choice.fraction))}
-                <p class="mt-2 text-body-small text-on-surface-variant">
+                <p class="mt-2 text-body-medium text-on-surface-variant">
                   Currently {Math.round(preferences.detailWidthFraction * 100)}% of the
                   window, set by dragging the panel's edge.
                 </p>
@@ -484,7 +581,7 @@
               <!-- The clamp said out loud, because it is why a small window
                    may not visibly change when this does: a quarter of a narrow
                    laptop is already below the floor. -->
-              <p class="mt-2 text-body-small text-on-surface-variant/70">
+              <p class="mt-2 text-body-medium text-on-surface-variant">
                 Clamped either way — never under {DETAIL_MIN_REM * 16}px, which is the
                 narrowest that still fits a label and its value, and never over
                 {DETAIL_MAX_REM * 16}px or {DETAIL_MAX_SHARE * 100}% of the window,
@@ -494,28 +591,30 @@
 
             <div class="border-t border-outline-variant pt-5">
               <h3 class="text-title-medium text-on-surface">Sidebar</h3>
-              <label class="mt-3 flex cursor-pointer items-center gap-3 text-body-medium text-on-surface">
-                <input
-                  type="checkbox"
-                  checked={!preferences.navigatorCollapsed}
-                  onchange={preferences.toggleNavigator}
-                  class="accent-primary"
-                />
-                Show the resource navigator
-                <span class="text-body-small text-on-surface-variant/70">{accelerator('B')}</span>
-              </label>
+              <Checkbox
+                checked={!preferences.navigatorCollapsed}
+                onchange={preferences.toggleNavigator}
+                class="mt-3 text-body-medium text-on-surface"
+              >
+                <span class="flex items-center gap-3">
+                  Show the resource navigator
+                  <span class="text-body-medium text-on-surface-variant"
+                    >{shortcut('toggle-navigator').keys}</span
+                  >
+                </span>
+              </Checkbox>
             </div>
           </section>
         {:else if section === 'thresholds'}
           <section class="flex flex-col gap-8">
             <div>
               <h3 class="text-title-medium text-on-surface">When a bar changes colour</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 Every bar that measures how full something is uses two lines: blue below the
                 first, amber between them, red past the second. Both are marked on the track, so
                 the colour is never the only way to read it.
               </p>
-              <p class="mt-2 text-body-small text-on-surface-variant">
+              <p class="mt-2 text-body-medium text-on-surface-variant">
                 Each screen keeps its own pair. A number that is a useful early warning on a
                 dashboard you glance at can be a distraction on a list you work in all day, and
                 nothing here decides which of those you are doing. Set them all the same if that
@@ -535,7 +634,7 @@
             -->
             <div>
               <h4 class="text-title-small text-on-surface">Charts</h4>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 A drawer's chart starts with whatever usage the lists have already seen.
                 metrics-server cannot be asked for history — it keeps only the latest reading —
                 but every refresh of a list carries usage for every row in it, and this is how
@@ -561,14 +660,14 @@
                 {/each}
               </div>
 
-              <p class="mt-1.5 text-body-small text-on-surface-variant/70">
+              <p class="mt-1.5 text-body-medium text-on-surface-variant">
                 Held in memory only, never written to disk — the recorded cluster history
                 deliberately carries no object names, and a file of per-pod series would undo
                 that. Off means every chart starts empty and fills as you watch.
               </p>
             </div>
 
-            <p class="text-body-small text-on-surface-variant/70">
+            <p class="text-body-medium text-on-surface-variant">
               The two lines cannot cross: moving one past the other pushes it along rather than
               leaving a range that could never be coloured. With both off, every bar on that
               screen stays blue however full it gets.
@@ -585,14 +684,26 @@
             -->
             <div>
               <h3 class="text-title-medium text-on-surface">Tell me about new versions</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 Asks GitHub once a day whether a newer PodSteer has been released, and shows a
                 small badge beside Refresh when one has. It sends nothing about you — no version,
                 no platform, no identifier — and the comparison happens here, on the answer.
                 PodSteer never installs anything itself.
               </p>
 
-              <label class="mt-3 flex items-center justify-between gap-4">
+              <!-- `flex-row-reverse` keeps the box on the right where this row
+                   has always had it, WITHOUT giving up the wrapping label: a
+                   second <label> nested inside one is invalid, and a bare box
+                   beside a <span> would shrink the click target from the whole
+                   row to sixteen pixels. Reversing the flex direction moves
+                   the drawing and leaves the labelling alone. -->
+              <Checkbox
+                checked={preferences.updateChecksEnabled}
+                disabled={!updates.permitted}
+                onchange={(next) => preferences.setUpdateChecksEnabled(next)}
+                full
+                class="mt-3 flex-row-reverse"
+              >
                 <span class="text-body-medium text-on-surface">
                   Check for updates
                   {#if !updates.permitted}
@@ -601,35 +712,38 @@
                     </span>
                   {/if}
                 </span>
-                <input
-                  type="checkbox"
-                  checked={preferences.updateChecksEnabled}
-                  disabled={!updates.permitted}
-                  onchange={(event) =>
-                    preferences.setUpdateChecksEnabled(event.currentTarget.checked)}
-                  class="size-4 accent-primary disabled:opacity-40"
-                />
-              </label>
+              </Checkbox>
 
               <div class="mt-3 flex items-center gap-3">
                 <button
                   type="button"
                   disabled={!preferences.updateChecksEnabled || !updates.permitted || updates.checking}
                   onclick={() => void updates.refresh(true)}
-                  class="state-layer h-8 rounded-xs border border-outline px-3 text-label-large
-                         text-on-surface-variant transition-colors duration-150
+                  class="state-layer h-8 min-w-24 shrink-0 whitespace-nowrap rounded-xs border
+                         border-outline px-3 text-label-large text-on-surface-variant
+                         transition-colors duration-150
                          disabled:pointer-events-none disabled:opacity-40"
                 >
+                  <!-- nowrap + shrink-0 + a minimum width: the sentence beside
+                       it is what wraps, never the label, and swapping to
+                       "Checking…" must not resize the button under the
+                       pointer. -->
                   {updates.checking ? 'Checking…' : 'Check now'}
                 </button>
 
-                <span class="text-body-small text-on-surface-variant/80">
+                <span class="min-w-0 flex-1 text-body-medium text-on-surface-variant/80">
                   {#if !preferences.updateChecksEnabled}
                     Nothing is sent while this is off.
                   {:else if updates.status?.state === 'available'}
                     {updates.status.latest} is available.
                   {:else if updates.status?.state === 'current'}
                     You are on the latest release.
+                  {:else if updates.status?.state === 'not-comparable'}
+                    <!-- The check WORKED. This build simply carries no release
+                         version to compare, which is what a development build
+                         is — and saying "could not reach GitHub" here, as this
+                         did, reported a failure that had not happened. -->
+                    This build carries no release version, so there is nothing to compare.
                   {:else if updates.status?.state === 'unknown'}
                     Could not reach GitHub — that is not a problem with your cluster.
                   {/if}
@@ -639,7 +753,7 @@
 
             <div>
               <h3 class="text-title-medium text-on-surface">Sound on a new finding</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 Plays once when a warning or critical finding appears that was not there before.
                 A problem that persists is announced once, not on every refresh, and anything
                 snoozed stays silent.
@@ -663,15 +777,68 @@
               </div>
 
               {#if !alertPlayer.available}
-                <p class="mt-2 text-body-small text-warning">
+                <p class="mt-2 text-body-medium text-warning">
                   This machine has no audio output PodSteer can reach, so nothing will be heard.
+                </p>
+              {/if}
+            </div>
+
+            <!--
+              SEPARATE FROM THE SOUND, not a second checkbox under one "tell
+              me" heading. A sound is over in half a second and is heard only
+              by somebody at the window; a notification persists in a tray and
+              is what reaches somebody who has walked away. They are wanted on
+              different terms, and a machine can do one and not the other.
+            -->
+            <div class="border-t border-outline-variant pt-5">
+              <h3 class="text-title-medium text-on-surface">Desktop notification on a critical</h3>
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
+                Posts one notification when a CRITICAL finding appears that was not there
+                before — never for a warning, which the sound above covers, and never for
+                anything snoozed. A batch arriving together is one notification naming the
+                count, and one cluster posts at most one a minute. Clicking it brings PodSteer
+                forward on that cluster.
+              </p>
+              <p class="mt-1 text-body-medium text-on-surface-variant">
+                It names the cluster and the rule that fired, never a pod, node or namespace:
+                your operating system keeps the notifications it has shown you, so the same
+                rule applies as to anything else PodSteer writes. Do Not Disturb still decides
+                whether one is put in front of you.
+              </p>
+
+              <div class="mt-3 flex gap-2">
+                {#each [true, false] as choice (choice)}
+                  <button
+                    type="button"
+                    onclick={() => setDesktopNotifications(choice)}
+                    aria-pressed={preferences.desktopNotificationsEnabled === choice}
+                    class="state-layer h-9 min-w-24 rounded-xs border px-4 text-label-large
+                           transition-colors duration-150 ease-standard
+                           {preferences.desktopNotificationsEnabled === choice
+                             ? 'border-transparent bg-secondary-container text-on-secondary-container'
+                             : 'border-outline text-on-surface-variant'}"
+                  >
+                    {choice ? 'On' : 'Off'}
+                  </button>
+                {/each}
+              </div>
+
+              {#if notifications.capability && !notifications.capability.supported}
+                <p class="mt-2 text-body-medium text-warning">
+                  This build cannot show desktop notifications, so nothing will appear.
+                </p>
+              {:else if preferences.desktopNotificationsEnabled && notifications.capability && !notifications.capability.authorised}
+                <p class="mt-2 text-body-medium text-warning">
+                  Your operating system has not granted PodSteer permission to show
+                  notifications, so nothing will appear until you allow it in your system
+                  settings.
                 </p>
               {/if}
             </div>
 
             <div class="border-t border-outline-variant pt-5">
               <h3 class="text-title-medium text-on-surface">Sound per severity</h3>
-              <p class="mt-0.5 text-body-small text-on-surface-variant">
+              <p class="mt-0.5 text-body-medium text-on-surface-variant">
                 Choosing one plays it, and what you hear here is exactly what you will hear when
                 it fires. A batch arriving at once sounds once, at the worst severity in it.
               </p>
@@ -716,7 +883,7 @@
             <!-- Said plainly rather than discovered: an alarm somebody
                  believes is watching everything, that is watching one tab, is
                  worse than no alarm at all. -->
-            <p class="border-t border-outline-variant pt-5 text-body-small text-on-surface-variant/70">
+            <p class="border-t border-outline-variant pt-5 text-body-medium text-on-surface-variant">
               Findings are watched on the cluster whose tab is open, whichever view you are
               reading. Clusters open in other tabs are assessed when you return to them.
             </p>
@@ -725,7 +892,7 @@
         {:else if section === 'data'}
           <section>
             <h3 class="text-title-medium text-on-surface">Local history</h3>
-            <p class="mt-0.5 text-body-small leading-relaxed text-on-surface-variant">
+            <p class="mt-0.5 text-body-medium leading-relaxed text-on-surface-variant">
               Kubernetes reports only the present, so PodSteer samples each connected cluster
               while it is open and keeps the result on this machine. That is what the dashboard
               charts plot — it covers the time the application has been running, not the whole
@@ -735,22 +902,20 @@
             <h4 class="mt-4 text-label-large uppercase tracking-wider text-on-surface-variant">
               Keep for
             </h4>
-            <div class="mt-2 flex flex-col gap-1.5">
+            <div class="mt-2 flex flex-col gap-1.5" role="radiogroup" aria-label="Keep history for">
               {#each RETENTION_OPTIONS as option (option.days)}
-                <label class="flex cursor-pointer items-start gap-3">
-                  <input
-                    type="radio"
-                    name="retention"
-                    value={option.days}
-                    checked={historySettings.days === option.days}
-                    onchange={() => void historySettings.setRetention(option.days)}
-                    class="mt-1 accent-primary"
-                  />
+                <Radio
+                  name="retention"
+                  value={option.days}
+                  align="start"
+                  checked={historySettings.days === option.days}
+                  onchange={() => void historySettings.setRetention(option.days)}
+                >
                   <span class="flex flex-col">
                     <span class="text-body-medium text-on-surface">{option.label}</span>
-                    <span class="text-body-small text-on-surface-variant/70">{option.hint}</span>
+                    <span class="text-body-medium text-on-surface-variant">{option.hint}</span>
                   </span>
-                </label>
+                </Radio>
               {/each}
             </div>
 
@@ -762,37 +927,102 @@
             >
               Sample every
             </h4>
-            <div class="mt-2 flex flex-col gap-1.5" class:opacity-50={historySettings.days === 0}>
+            <div
+              class="mt-2 flex flex-col gap-1.5"
+              class:opacity-50={historySettings.days === 0}
+              role="radiogroup"
+              aria-label="Sample every"
+            >
               {#each SAMPLING_INTERVALS as option (option.seconds)}
-                <label
-                  class="flex items-start gap-3 {historySettings.days === 0
-                    ? 'cursor-default'
-                    : 'cursor-pointer'}"
+                <Radio
+                  name="sampling-interval"
+                  value={option.seconds}
+                  align="start"
+                  disabled={historySettings.days === 0}
+                  checked={historySettings.intervalSeconds === option.seconds}
+                  onchange={() => void historySettings.setInterval(option.seconds)}
                 >
-                  <input
-                    type="radio"
-                    name="sampling-interval"
-                    value={option.seconds}
-                    disabled={historySettings.days === 0}
-                    checked={historySettings.intervalSeconds === option.seconds}
-                    onchange={() => void historySettings.setInterval(option.seconds)}
-                    class="mt-1 accent-primary"
-                  />
                   <span class="flex flex-col">
                     <span class="text-body-medium text-on-surface">{option.label}</span>
-                    <span class="text-body-small text-on-surface-variant/70">{option.hint}</span>
+                    <span class="text-body-medium text-on-surface-variant">{option.hint}</span>
                   </span>
-                </label>
+                </Radio>
               {/each}
             </div>
 
             <p class="mt-5 rounded-sm border border-outline-variant/50 bg-surface-container px-3 py-2
-                      text-body-small leading-relaxed text-on-surface-variant">
+                      text-body-medium leading-relaxed text-on-surface-variant">
               Samples are capacity figures only — no object names, no logs, no manifests. They are
               written to your own configuration directory and are never sent anywhere. Choosing
               <span class="text-on-surface">Don't record</span> erases what has already been kept.
             </p>
           </section>
+
+          <!-- The timeline's two caps. Lowering one trims what is held at
+               once rather than at the next event, which on a quiet cluster
+               could be a long time coming. -->
+          <section class="mt-8">
+            <h3 class="text-title-medium text-on-surface">Session timeline</h3>
+            <p class="mt-0.5 text-body-medium leading-relaxed text-on-surface-variant">
+              What happened while a cluster's tab was open: its events, findings appearing and
+              clearing, and the changes PodSteer made. It is held in memory only and goes when the
+              tab closes. Past these limits the oldest entries make room for new ones.
+            </p>
+
+            <div class="mt-4 grid gap-4 sm:grid-cols-2">
+              <div>
+                <h4 class="text-label-large uppercase tracking-wider text-on-surface-variant">
+                  Per cluster
+                </h4>
+                <Select
+                  label="Timeline entries per cluster"
+                  value={String(preferences.timelineClusterLimit)}
+                  options={TIMELINE_CLUSTER_OPTIONS}
+                  class="mt-2 w-full"
+                  onchange={(value) => {
+                    preferences.setTimelineClusterLimit(Number(value) as TimelineClusterLimit)
+                    timeline.enforceLimits()
+                  }}
+                />
+                <p class="mt-1 text-body-medium text-on-surface-variant">
+                  Default 2,000 — a few hours of a busy cluster, about a quarter of a megabyte.
+                </p>
+              </div>
+              <div>
+                <h4 class="text-label-large uppercase tracking-wider text-on-surface-variant">
+                  Per object
+                </h4>
+                <Select
+                  label="Timeline entries per object"
+                  value={String(preferences.timelineObjectLimit)}
+                  options={TIMELINE_OBJECT_OPTIONS}
+                  class="mt-2 w-full"
+                  onchange={(value) => {
+                    preferences.setTimelineObjectLimit(Number(value) as TimelineObjectLimit)
+                    timeline.enforceLimits()
+                  }}
+                />
+                <p class="mt-1 text-body-medium text-on-surface-variant">
+                  Default 200 — so one crash-looping pod cannot crowd out everything else.
+                </p>
+              </div>
+            </div>
+          </section>
+        {:else if section === 'kubeconfig'}
+          <KubeconfigSources />
+        {:else if section === 'clusters'}
+          <ClusterSettingsPane />
+        {:else if section === 'network'}
+          <ProxyPane
+            canWrite={kubeconfigSources.settingsState?.writable ?? true}
+            readOnlyReason={kubeconfigSources.settingsState?.notice ?? ''}
+          />
+        {:else if section === 'images'}
+          <TerminalImagesPane />
+        {:else if section === 'keyboard'}
+          <ShortcutSettings />
+        {:else if section === 'transfer'}
+          <SettingsTransfer />
         {:else}
           <CreditsPane />
         {/if}

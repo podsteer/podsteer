@@ -27,6 +27,26 @@ type fakeResources struct {
 	// and any assertion about pacing passes whether or not it is paced.
 	hold chan struct{}
 
+	// chain and inspectErr shape what InspectTLSSecret answers, for the
+	// application-level tests of BrowseService.InspectTLSSecret — no cluster
+	// and no real certificate involved at this layer.
+	chain      domain.CertificateChain
+	inspectErr error
+
+	// listing and summariesErr shape what ListVulnerabilitySummaries
+	// answers. Most clusters run no scanner, so the realistic zero value is a
+	// listing that SAYS so rather than an empty slice standing for four
+	// different outcomes at once.
+	listing      domain.VulnerabilityListing
+	summariesErr error
+	// graphInput and graphErr shape what ObjectGraphSources answers, and
+	// graphRef records the reference it was asked for — which is the half of
+	// BrowseService.ObjectGraph worth asserting at this layer, since the
+	// catalogue lookup and the cluster-scoped namespace reset both land there.
+	graphInput domain.ObjectGraphInput
+	graphErr   error
+	graphRef   domain.ResourceRef
+
 	mu       sync.Mutex
 	inFlight int
 	peak     int
@@ -65,7 +85,7 @@ func (f *fakeResources) CountResources(_ context.Context, _ domain.ClusterID, ki
 	return f.counts[kind.Resource], nil
 }
 
-func (f *fakeResources) ListTable(context.Context, domain.ClusterID, domain.ResourceKind, domain.NamespaceName) (domain.ResourceTable, error) {
+func (f *fakeResources) ListTable(context.Context, domain.ClusterID, domain.ResourceKind, domain.NamespaceName, domain.Projection) (domain.ResourceTable, error) {
 	return domain.ResourceTable{}, nil
 }
 
@@ -75,6 +95,30 @@ func (f *fakeResources) GetManifest(context.Context, domain.ResourceRef, bool) (
 
 func (f *fakeResources) RevealSecretKey(context.Context, domain.ClusterID, domain.NamespaceName, string, string) (string, error) {
 	return "", nil
+}
+
+func (f *fakeResources) ObjectGraphSources(_ context.Context, ref domain.ResourceRef) (domain.ObjectGraphInput, error) {
+	f.mu.Lock()
+	f.graphRef = ref
+	f.mu.Unlock()
+
+	if f.graphErr != nil {
+		return domain.ObjectGraphInput{}, f.graphErr
+	}
+	return f.graphInput, nil
+}
+
+// chain is returned by InspectTLSSecret when it is set, so a test can shape
+// the answer without a cluster or a certificate.
+func (f *fakeResources) InspectTLSSecret(context.Context, domain.ClusterID, domain.NamespaceName, string) (domain.CertificateChain, error) {
+	if f.inspectErr != nil {
+		return domain.CertificateChain{}, f.inspectErr
+	}
+	return f.chain, nil
+}
+
+func (f *fakeResources) ListVulnerabilitySummaries(context.Context, domain.ClusterID, domain.NamespaceName) (domain.VulnerabilityListing, error) {
+	return f.listing, f.summariesErr
 }
 
 // Compile-time proof the fake still matches the port it stands in for.
@@ -221,5 +265,133 @@ func TestCountingEveryNamespaceAtOnceIsRefused(t *testing.T) {
 	}
 	if resources.calls.Load() != 0 {
 		t.Fatalf("made %d requests before refusing", resources.calls.Load())
+	}
+}
+
+func TestInspectTLSSecretPassesTheChainThrough(t *testing.T) {
+	t.Parallel()
+
+	matches := true
+	want := domain.CertificateChain{
+		Leaf:       domain.Certificate{Subject: "CN=app.example.com"},
+		KeyMatches: &matches,
+	}
+	resources := &fakeResources{chain: want}
+	service := newBrowseService(t, resources)
+
+	got, err := service.InspectTLSSecret(context.Background(), "dev", "web", "app-tls")
+	if err != nil {
+		t.Fatalf("InspectTLSSecret() error = %v", err)
+	}
+	if got.Leaf.Subject != want.Leaf.Subject {
+		t.Errorf("Leaf.Subject = %q, want %q — the use case must not reshape what the port returned", got.Leaf.Subject, want.Leaf.Subject)
+	}
+	if got.KeyMatches == nil || *got.KeyMatches != true {
+		t.Errorf("KeyMatches = %v, want a pointer to true", got.KeyMatches)
+	}
+}
+
+func TestInspectTLSSecretRefusesAnEmptyName(t *testing.T) {
+	t.Parallel()
+
+	resources := &fakeResources{}
+	service := newBrowseService(t, resources)
+
+	if _, err := service.InspectTLSSecret(context.Background(), "dev", "web", ""); err == nil {
+		t.Fatal("InspectTLSSecret() with an empty name, want an error")
+	}
+}
+
+func TestInspectTLSSecretRefusesADisconnectedCluster(t *testing.T) {
+	t.Parallel()
+
+	resources := &fakeResources{}
+	// A registry with nothing open, unlike newBrowseService's — this Secret
+	// belongs to a cluster PodSteer has not connected to.
+	registry := application.NewRegistry()
+	service, err := application.NewBrowseService(application.BrowseServiceDeps{
+		Resources: resources,
+		Events:    &fakeEvents{},
+		Registry:  registry,
+		Catalog:   domain.NewCatalog(),
+	})
+	if err != nil {
+		t.Fatalf("NewBrowseService() error = %v", err)
+	}
+
+	if _, err := service.InspectTLSSecret(context.Background(), "dev", "web", "app-tls"); err == nil {
+		t.Fatal("InspectTLSSecret() on an unconnected cluster, want an error")
+	}
+	if got := resources.calls.Load(); got != 0 {
+		t.Fatalf("reached the port %d times before checking the connection", got)
+	}
+}
+
+func TestInspectTLSSecretWrapsThePortsError(t *testing.T) {
+	t.Parallel()
+
+	resources := &fakeResources{inspectErr: domain.ErrNotTLSSecret}
+	service := newBrowseService(t, resources)
+
+	_, err := service.InspectTLSSecret(context.Background(), "dev", "web", "not-a-tls-secret")
+	if err == nil {
+		t.Fatal("InspectTLSSecret() error = nil, want the port's refusal to surface")
+	}
+}
+
+// The catalogue lookup and the cluster-scoped namespace reset both land in
+// ObjectGraph, so what it hands the port is worth asserting: a cluster-scoped
+// kind queried with a namespace produces a path that 404s, and the drawer
+// always has SOME namespace selected.
+func TestObjectGraphReadsTheKindTheCatalogueNames(t *testing.T) {
+	t.Parallel()
+
+	resources := &fakeResources{}
+	service := newBrowseService(t, resources)
+
+	if _, err := service.ObjectGraph(context.Background(), "dev", "core/v1/nodes", "web", "node-1"); err != nil {
+		t.Fatalf("ObjectGraph() error = %v", err)
+	}
+
+	resources.mu.Lock()
+	defer resources.mu.Unlock()
+
+	if resources.graphRef.Kind.Kind != "Node" {
+		t.Errorf("read kind %q, want the one the catalogue id names", resources.graphRef.Kind.Kind)
+	}
+	if !resources.graphRef.Namespace.IsAll() {
+		t.Errorf("namespace = %q, want none on a cluster-scoped kind", resources.graphRef.Namespace)
+	}
+}
+
+// An unknown catalogue id is refused rather than read: a kind nothing serves
+// has no object to draw a map around, and guessing at one would issue a read
+// against a path the cluster does not have.
+func TestObjectGraphRefusesAnUnknownKind(t *testing.T) {
+	t.Parallel()
+
+	service := newBrowseService(t, &fakeResources{})
+
+	if _, err := service.ObjectGraph(context.Background(), "dev", "example.com/v1/widgets", "shop", "left"); err == nil {
+		t.Fatal("ObjectGraph() error = nil, want a refusal naming the unknown kind")
+	}
+}
+
+// An empty name is refused before any read. The drawer can be open on a kind
+// with no row selected, and a GET of "" is a LIST of the whole collection.
+func TestObjectGraphRefusesAnEmptyName(t *testing.T) {
+	t.Parallel()
+
+	resources := &fakeResources{}
+	service := newBrowseService(t, resources)
+
+	if _, err := service.ObjectGraph(context.Background(), "dev", "core/v1/configmaps", "shop", ""); err == nil {
+		t.Fatal("ObjectGraph() error = nil, want a refusal")
+	}
+
+	resources.mu.Lock()
+	defer resources.mu.Unlock()
+	if resources.graphRef.Name != "" {
+		t.Error("a read was made for an object with no name")
 	}
 }

@@ -60,6 +60,23 @@ export function configMapData(
 }
 
 /**
+ * Forces a fresh read of one ConfigMap, discarding whatever is cached.
+ *
+ * Called after a key in it has just been written through SetConfigMapKey: the
+ * WINDOW_MS cache exists to stop one pane's twenty variables reading the same
+ * object twenty times, not to keep showing what was there before a save this
+ * pane itself just made.
+ */
+export function refreshConfigMap(
+  clusterId: string,
+  namespace: string,
+  name: string,
+): Promise<Record<string, string>> {
+  cache.delete(`${clusterId}/${namespace}/${name}`)
+  return configMapData(clusterId, namespace, name)
+}
+
+/**
  * Forgets one cluster's reads, for a tab being closed.
  *
  * Per-cluster rather than wholesale, so closing one tab does not make every

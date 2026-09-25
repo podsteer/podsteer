@@ -124,12 +124,12 @@ func (s *BrowseService) Kinds(_ context.Context, id domain.ClusterID) ([]domain.
 // Warnings are floated above Normal events within the same instant, because an
 // event list exists to answer "what is going wrong" and a burst of routine
 // Scheduled events would otherwise bury the one BackOff that matters.
-func (s *BrowseService) ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Event, error) {
+func (s *BrowseService) ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Event, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("listing events: %w", err)
 	}
 
-	events, err := s.events.ListEvents(ctx, id, namespace)
+	events, err := s.events.ListEvents(ctx, id, namespace, projection)
 	if err != nil {
 		return nil, fmt.Errorf("listing events in %q of %q: %w", namespace, id, err)
 	}
@@ -177,7 +177,7 @@ func (s *BrowseService) ListEventsForResource(ctx context.Context, id domain.Clu
 }
 
 // ListTable returns objects of the given kind as a generic table.
-func (s *BrowseService) ListTable(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName) (domain.ResourceTable, error) {
+func (s *BrowseService) ListTable(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, projection domain.Projection) (domain.ResourceTable, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return domain.ResourceTable{}, fmt.Errorf("listing resources: %w", err)
 	}
@@ -195,7 +195,7 @@ func (s *BrowseService) ListTable(ctx context.Context, id domain.ClusterID, kind
 		namespace = domain.NamespaceAll
 	}
 
-	table, err := s.resources.ListTable(ctx, id, kind, namespace)
+	table, err := s.resources.ListTable(ctx, id, kind, namespace, projection)
 	if err != nil {
 		return domain.ResourceTable{}, fmt.Errorf("listing %s in %q of %q: %w", kind.Title, namespace, id, err)
 	}
@@ -325,6 +325,42 @@ func (s *BrowseService) GetManifest(ctx context.Context, id domain.ClusterID, ki
 	return manifest, nil
 }
 
+// ObjectGraph returns the neighbourhood map of one object of any kind.
+//
+// Thin, and correctly so — the same shape as WorkloadService.PodGraph: the
+// reading is the adapter's, the rules are the domain's, and what is left here
+// is the registry check every use case does, the catalogue lookup that turns a
+// navigator id into a kind, and the join between the two.
+func (s *BrowseService) ObjectGraph(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, name string) (domain.PodGraph, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return domain.PodGraph{}, fmt.Errorf("mapping object dependencies: %w", err)
+	}
+	if name == "" {
+		return domain.PodGraph{}, fmt.Errorf("mapping object dependencies: %w", domain.ErrEmptyResourceName)
+	}
+
+	kind, err := s.catalog.Lookup(id, kindID)
+	if err != nil {
+		return domain.PodGraph{}, fmt.Errorf("mapping object dependencies: %w", err)
+	}
+	if !kind.Namespaced {
+		namespace = domain.NamespaceAll
+	}
+
+	input, err := s.resources.ObjectGraphSources(ctx, domain.ResourceRef{
+		ClusterID: id,
+		Kind:      kind,
+		Namespace: namespace,
+		Name:      name,
+	})
+	if err != nil {
+		return domain.PodGraph{}, fmt.Errorf("reading dependencies of %s/%s in %q: %w",
+			kind.Kind, name, id, err)
+	}
+
+	return domain.NewObjectGraph(input), nil
+}
+
 // RevealSecretKey returns one decoded Secret value, on explicit request.
 //
 // Deliberately not part of GetManifest, ListPods or anything else that runs
@@ -348,4 +384,64 @@ func (s *BrowseService) RevealSecretKey(ctx context.Context, id domain.ClusterID
 	}
 
 	return value, nil
+}
+
+// InspectTLSSecret parses one Secret's certificate material, on explicit
+// request.
+//
+// Deliberately not part of GetManifest or anything else that runs when a
+// pane opens — see RevealSecretKey just above. The certificate itself is
+// public material — anything terminating TLS with it hands it to every
+// client that connects — but it lives inside the same Secret as the private
+// key, and a read of that object is a read of that object regardless of
+// which half somebody wanted. So this is its own deliberate act too, gated
+// the same way and logged the same way: the Secret is named, its contents
+// never are.
+func (s *BrowseService) InspectTLSSecret(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) (domain.CertificateChain, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return domain.CertificateChain{}, fmt.Errorf("inspecting certificate: %w", err)
+	}
+	if name == "" {
+		return domain.CertificateChain{}, fmt.Errorf("inspecting certificate: %w", domain.ErrEmptyResourceName)
+	}
+
+	chain, err := s.resources.InspectTLSSecret(ctx, id, namespace, name)
+	if err != nil {
+		return domain.CertificateChain{}, fmt.Errorf("inspecting certificate of secret %q: %w", name, err)
+	}
+
+	s.logger.DebugContext(ctx, "inspected certificate",
+		slog.String("cluster", id.String()),
+		slog.String("namespace", namespace.String()),
+		slog.String("secret", name))
+
+	return chain, nil
+}
+
+// VulnerabilitySummaries returns what a scanner already running in the
+// cluster has recorded about one namespace's workloads.
+//
+// NOTHING ABOUT THE POD LIST DEPENDS ON THIS. It is called once when the pods
+// view opens, on its own, and whatever it returns is merged onto rows that
+// were already drawn — so a slow answer costs a late chip rather than a late
+// list, and no answer costs nothing at all.
+//
+// AN EMPTY RESULT IS NO LONGER THE SAME ANSWER AS "no scanner", and this
+// comment used to say it was. Both leave the rows undecorated, so the
+// distinction looked academic — until the read gained a ceiling it can
+// actually hit, at which point a third meaning arrived ("not read") that a
+// bare empty slice could not express. On a security signal an absent mark
+// must never be readable as a clean bill of health, so the listing carries
+// which of the four it is and the interface says so.
+func (s *BrowseService) VulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.VulnerabilityListing, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return domain.VulnerabilityListing{}, fmt.Errorf("reading vulnerability reports: %w", err)
+	}
+
+	listing, err := s.resources.ListVulnerabilitySummaries(ctx, id, namespace)
+	if err != nil {
+		return domain.VulnerabilityListing{}, fmt.Errorf("reading vulnerability reports in %q: %w", namespace, err)
+	}
+
+	return listing, nil
 }

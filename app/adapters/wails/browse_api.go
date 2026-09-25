@@ -76,7 +76,10 @@ func (b *BrowseAPI) ListKinds(clusterID string) ([]ResourceKind, error) {
 }
 
 // ListEvents returns a cluster's events, warnings first and most recent first.
-func (b *BrowseAPI) ListEvents(clusterID, namespace string) ([]Event, error) {
+//
+// annotationKeys names the annotations each row should carry — the same
+// projection WorkloadAPI.ListPods takes, for the same reason.
+func (b *BrowseAPI) ListEvents(clusterID, namespace string, annotationKeys []string, expressions []CustomExpression) ([]Event, error) {
 	ctx, cancel := b.app.requestContext()
 	defer cancel()
 
@@ -90,7 +93,7 @@ func (b *BrowseAPI) ListEvents(clusterID, namespace string) ([]Event, error) {
 		return nil, apiError(b.logger, "ListEvents", err)
 	}
 
-	events, err := b.events.ListEvents(ctx, id, name)
+	events, err := b.events.ListEvents(ctx, id, name, projectionFor(annotationKeys, expressions))
 	if err != nil {
 		return nil, apiError(b.logger, "ListEvents", err)
 	}
@@ -124,7 +127,10 @@ func (b *BrowseAPI) ListEventsForResource(clusterID, namespace, kind, name strin
 // ListTable returns objects of any kind as a table, with the columns the API
 // server prints. This is the generic path behind Config, Network, Storage,
 // Access Control and Custom Resources.
-func (b *BrowseAPI) ListTable(clusterID, kindID, namespace string) (ResourceTable, error) {
+//
+// annotationKeys is the same projection ListEvents takes; every row also
+// carries its labels, read from the table's own row metadata.
+func (b *BrowseAPI) ListTable(clusterID, kindID, namespace string, annotationKeys []string, expressions []CustomExpression) (ResourceTable, error) {
 	ctx, cancel := b.app.requestContext()
 	defer cancel()
 
@@ -138,7 +144,7 @@ func (b *BrowseAPI) ListTable(clusterID, kindID, namespace string) (ResourceTabl
 		return ResourceTable{}, apiError(b.logger, "ListTable", err)
 	}
 
-	table, err := b.resources.ListTable(ctx, id, kindID, name)
+	table, err := b.resources.ListTable(ctx, id, kindID, name, projectionFor(annotationKeys, expressions))
 	if err != nil {
 		return ResourceTable{}, apiError(b.logger, "ListTable", err)
 	}
@@ -192,6 +198,55 @@ func (b *BrowseAPI) ClassifyConditions(conditions []ConditionRef) []string {
 	return tones
 }
 
+// AssessCertificateRenewal says whether a cert-manager Certificate is running
+// out without being renewed.
+//
+// A PURE CALL, exactly like ClassifyConditions above and there for exactly
+// the same reason: the cert-manager panel quotes the manifest the drawer
+// already holds, and quoting needs no round trip — but status.notAfter and
+// status.renewalTime are DATES, and the question an operator opens a
+// Certificate to ask is a comparison between them, the Ready condition and
+// the clock. A comparison is a verdict; verdicts live in the domain where
+// domain.AssessCertificateRenewal's rules are argued with in a test rather
+// than discovered during an outage.
+//
+// Returns an empty list for a healthy certificate, which is the answer for
+// almost all of them.
+func (b *BrowseAPI) AssessCertificateRenewal(certificate CertificateRenewalRef) []CertificateInsight {
+	return toCertificateInsights(domain.AssessCertificateRenewal(toCertificateRenewal(certificate), time.Now()))
+}
+
+// VulnerabilitySummaries returns what a vulnerability scanner already running
+// in the cluster has recorded about one namespace's workloads.
+//
+// CALLED ON ITS OWN, NEVER FROM A LIST. The pod list is drawn without it and
+// the chips fill in when this answers; a cluster with no scanner returns a
+// listing saying so and the list is exactly what it was before this existed.
+// See ports.ResourcePort.ListVulnerabilitySummaries and the adapter's cache
+// for why this must never ride the refresh tick, and why the STATUS travels
+// with the summaries rather than an absence standing for all four outcomes.
+func (b *BrowseAPI) VulnerabilitySummaries(clusterID, namespace string) (VulnerabilityListing, error) {
+	ctx, cancel := b.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return VulnerabilityListing{}, apiError(b.logger, "VulnerabilitySummaries", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return VulnerabilityListing{}, apiError(b.logger, "VulnerabilitySummaries", err)
+	}
+
+	listing, err := b.resources.VulnerabilitySummaries(ctx, id, ns)
+	if err != nil {
+		return VulnerabilityListing{}, apiError(b.logger, "VulnerabilitySummaries", err)
+	}
+
+	return toVulnerabilityListing(listing), nil
+}
+
 // GetManifest returns one object as YAML, for the detail view.
 //
 // revealSecrets applies to core/v1 Secrets and nothing else: false replaces
@@ -219,6 +274,38 @@ func (b *BrowseAPI) GetManifest(clusterID, kindID, namespace, name string, revea
 	}
 
 	return manifest, nil
+}
+
+// ObjectGraph returns the neighbourhood map of one object of any kind.
+//
+// The third map shape, and the one that covers everything the generic table
+// lists. Bound beside GetManifest rather than beside the other two maps
+// because it is keyed the same way — by a navigator catalogue id, which is
+// what turns "whatever the drawer has open" into a kind that can be read.
+//
+// Called when a map pane opens and never on a refresh tick: a neighbourhood
+// changes when somebody changes it, and redrawing a map under a reader is
+// worse than it being a few seconds stale.
+func (b *BrowseAPI) ObjectGraph(clusterID, kindID, namespace, name string) (PodGraph, error) {
+	ctx, cancel := b.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return PodGraph{}, apiError(b.logger, "ObjectGraph", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return PodGraph{}, apiError(b.logger, "ObjectGraph", err)
+	}
+
+	graph, err := b.resources.ObjectGraph(ctx, id, kindID, ns, name)
+	if err != nil {
+		return PodGraph{}, apiError(b.logger, "ObjectGraph", err)
+	}
+
+	return toPodGraph(graph), nil
 }
 
 // RevealSecretKey returns one decoded Secret value, for a deliberate reveal.
@@ -253,4 +340,34 @@ func (b *BrowseAPI) RevealSecretKey(clusterID, namespace, name, key string) (str
 	}
 
 	return value, nil
+}
+
+// InspectTLSSecret parses one Secret's certificate material, for a
+// deliberate inspection.
+//
+// The same discipline as RevealSecretKey: nothing in PodSteer calls this
+// except a person pressing "Inspect certificate" in the Secret pane, because
+// reading a Secret is audited whichever half of it somebody wanted. The
+// private key itself never crosses this boundary — only whether it matched
+// the certificate, as a bool on the returned chain.
+func (b *BrowseAPI) InspectTLSSecret(clusterID, namespace, name string) (CertificateChainDTO, error) {
+	ctx, cancel := b.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return CertificateChainDTO{}, apiError(b.logger, "InspectTLSSecret", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return CertificateChainDTO{}, apiError(b.logger, "InspectTLSSecret", err)
+	}
+
+	chain, err := b.resources.InspectTLSSecret(ctx, id, ns, name)
+	if err != nil {
+		return CertificateChainDTO{}, apiError(b.logger, "InspectTLSSecret", err)
+	}
+
+	return toCertificateChain(chain, time.Now()), nil
 }

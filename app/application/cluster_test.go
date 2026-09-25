@@ -257,3 +257,66 @@ func TestListNamespacesSortsByNameAndTargetsActiveCluster(t *testing.T) {
 		t.Errorf("queried cluster %q, want the active %q", cluster, "dev")
 	}
 }
+
+// TestAConnectTheOperatorStoppedIsNotReportedAsUnreachable is the difference
+// between a cluster that could not be reached and one nobody waited for.
+//
+// A failed connect publishes ClusterUnreachable, which raises an alert and can
+// reach the notification centre. When the operator STOPS the attempt
+// themselves — because the cluster is behind a VPN they have not brought up
+// yet and they would rather open a different one — that alert is a claim
+// nobody made: nothing was measured, because nothing was allowed to finish.
+//
+// A DEADLINE STILL COUNTS, and the pair of assertions here is what keeps the
+// two apart: a request that ran its full length and got no answer is the
+// definition of unreachable.
+func TestAConnectTheOperatorStoppedIsNotReportedAsUnreachable(t *testing.T) {
+	t.Parallel()
+
+	kubeconfig := &fakeKubeconfig{clusters: []domain.Cluster{mustCluster(t, "dev", true)}}
+	kubernetes := &fakeKubernetes{version: domain.ServerVersion{GitVersion: "v1.31.2"}}
+	events := &recordingPublisher{}
+
+	service, registry := newClusterService(t, kubeconfig, kubernetes, events)
+
+	kubernetes.versionErr = context.Canceled
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := service.Connect(ctx, "dev"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Connect() error = %v, want it to carry the cancellation", err)
+	}
+	if _, err := registry.Get("dev"); err == nil {
+		t.Error("a cluster whose connect was stopped must not be recorded as open")
+	}
+	if recorded := events.recorded(); len(recorded) != 0 {
+		t.Fatalf("published %d events for a stopped attempt, want none: %#v", len(recorded), recorded)
+	}
+}
+
+// TestAConnectThatRanOutOfTimeIsStillUnreachable is the other half, and the
+// reason the check above tests for cancellation rather than for "not nil".
+func TestAConnectThatRanOutOfTimeIsStillUnreachable(t *testing.T) {
+	t.Parallel()
+
+	kubeconfig := &fakeKubeconfig{clusters: []domain.Cluster{mustCluster(t, "dev", true)}}
+	kubernetes := &fakeKubernetes{version: domain.ServerVersion{GitVersion: "v1.31.2"}}
+	events := &recordingPublisher{}
+
+	service, _ := newClusterService(t, kubeconfig, kubernetes, events)
+
+	kubernetes.versionErr = context.DeadlineExceeded
+
+	if _, err := service.Connect(context.Background(), "dev"); err == nil {
+		t.Fatal("Connect() error = nil, want the timeout")
+	}
+
+	recorded := events.recorded()
+	if len(recorded) != 1 {
+		t.Fatalf("published %d events, want the unreachable one", len(recorded))
+	}
+	if _, ok := recorded[0].(domain.ClusterUnreachable); !ok {
+		t.Fatalf("published %T, want domain.ClusterUnreachable", recorded[0])
+	}
+}

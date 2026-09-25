@@ -14,9 +14,19 @@
     • Usage is drawn only where it was measured. An unmeasured moment becomes a
       gap in the line, never a zero — a flat line at the bottom of the chart
       reads as an idle cluster, which is the opposite of "we could not see".
+
+  A THIRD RULE, ADDED WITH THE MONITORING-BACKEND READ (ADR 7): a series a
+  monitoring backend answered with is drawn BESIDE PodSteer's own, never
+  spliced into it and never used to fill a gap in it. One is somebody else's
+  measurement, taken at somebody else's interval through somebody else's
+  recording rules, and the other is ours — merging them is the recorded
+  mistake ADR 1 refused for kubelet readings, and it is the same mistake here.
+  So the backend line has its own series, its own dash pattern, and a legend
+  entry naming the service that answered and how far PodSteer could check that
+  it holds THIS cluster's data.
 -->
 <script lang="ts">
-  import type { Sample } from '$lib/api/client'
+  import type { BackendSeriesResult, Sample } from '$lib/api/client'
   import type { Chart } from '$lib/echarts'
   import { preferences } from '$stores/preferences.svelte'
 
@@ -26,9 +36,74 @@
     metric: 'cpu' | 'memory' | 'pods'
     /** Chart height in pixels. */
     height?: number
+    /**
+     * What a monitoring backend answered, when one was asked.
+     *
+     * NEVER MERGED INTO `samples`, and the type is deliberately a different
+     * one: this is somebody else's measurement and those are ours. It is
+     * drawn as its own line with its own legend entry naming the service
+     * that answered — see the header comment.
+     */
+    backend?: BackendSeriesResult | null
   }
 
-  let { samples, metric, height = 200 }: Props = $props()
+  let { samples, metric, height = 200, backend = null }: Props = $props()
+
+  /**
+   * What unit a backend answer must be in to belong on this chart.
+   *
+   * THE ONLY THING THAT TIES AN ANSWER TO THE METRIC IT WAS ASKED FOR. A
+   * result carries no metric of its own, so a CPU answer still in the store
+   * when the operator switches to Memory would otherwise be drawn on the
+   * memory chart — scaled by a thousand, under a legend naming the service
+   * that answered, which is the provenance failure this change exists to
+   * prevent. The store clears its result on a new question; this is the
+   * second lock on the same door, on the side that does the drawing.
+   */
+  const expectedUnit = $derived(
+    metric === 'cpu' ? 'cores' : metric === 'memory' ? 'bytes' : 'pods',
+  )
+
+  /**
+   * The backend's points, in the same unit as PodSteer's own.
+   *
+   * The expressions return CPU in cores while every sample here is in
+   * millicores, so without this the two lines sit three orders of magnitude
+   * apart on one axis and the sampled one is drawn flat along the bottom —
+   * which reads as an idle cluster, the exact misreading the gap rule above
+   * exists to prevent.
+   */
+  const backendPoints = $derived.by(() => {
+    if (backend?.status !== 'answered') return []
+    if (backend.unit !== expectedUnit) return []
+    const scale = backend.unit === 'cores' ? 1000 : 1
+
+    return (backend.series ?? []).map((series) => ({
+      label: series.label,
+      points: (series.points ?? []).map((point) => [point.at, point.value * scale]),
+    }))
+  })
+
+  /**
+   * The legend entry for the backend's line.
+   *
+   * IT NAMES THE SERVICE AND SAYS HOW FAR IT WAS CHECKED, because those are
+   * two different claims: "Prometheus in monitoring" says whose number this
+   * is, and "narrowed to this cluster" says that PodSteer had to compose a
+   * node filter to make it about this cluster at all. A line labelled only
+   * "Prometheus" would hide the second.
+   */
+  const backendLabel = $derived.by(() => {
+    if (!backend || backend.status !== 'answered') return ''
+    if (backend.unit !== expectedUnit) return ''
+    const source = backend.provenance.source || 'monitoring backend'
+    if (backend.provenance.filtered) return `${source} — narrowed to this cluster`
+    if (backend.provenance.verification === 'verified') return `${source} — verified`
+    return source
+  })
+
+  /** Whether a backend line is on the chart at all. */
+  const hasBackend = $derived(backendPoints.some((series) => series.points.length > 0))
 
   let container: HTMLDivElement | undefined = $state()
   /** The ECharts instance, once the module has loaded. */
@@ -89,7 +164,14 @@
     const ceiling = of.capacity(samples[samples.length - 1])
 
     const span = `${of.label} across ${samples.length} samples: now ${of.format(now)}, between ${of.format(low)} and ${of.format(high)}.`
-    return ceiling > 0 ? `${span} Capacity ${of.format(ceiling)}.` : span
+    const withCapacity = ceiling > 0 ? `${span} Capacity ${of.format(ceiling)}.` : span
+
+    // The second line is stated rather than left to the legend, which the
+    // canvas does not expose: somebody reading this aloud has to be told
+    // there are two measurements on the chart and whose the other one is.
+    return hasBackend
+      ? `${withCapacity} A second line, from ${backendLabel}, is drawn beside PodSteer's own samples and is a separate measurement.`
+      : withCapacity
   })
 
 
@@ -122,6 +204,10 @@
       outline: read('--outline-variant', '#49454f'),
       surface: read('--surface-container-low', '#1d1b20'),
       warning: read('--warning', '#f5c267'),
+      // A colour of its own for a measurement of its own. Reusing the
+      // sampled line's would invite exactly the reading the two-series rule
+      // forbids, whatever the legend says.
+      backend: read('--tertiary', '#7fd1b9'),
     }
     paletteCache = { theme, colours }
     return colours
@@ -148,7 +234,16 @@
 
     const series: unknown[] = [
       {
-        name: isPods ? 'Scheduled' : 'Used',
+        // NAMED FOR ITS SOURCE ONLY WHEN THERE IS A SECOND SOURCE ON THE
+        // CHART. On a cluster with nothing to compare against, "Used" is what
+        // it has always said and qualifying it would be noise; the moment a
+        // backend's line joins it, an unqualified "Used" is the ambiguity the
+        // whole provenance rule exists to remove.
+        name: hasBackend
+          ? `${isPods ? 'Scheduled' : 'Used'} — PodSteer samples`
+          : isPods
+            ? 'Scheduled'
+            : 'Used',
         type: 'line',
         smooth: 0.2,
         showSymbol: false,
@@ -170,6 +265,24 @@
         data: pair(requests),
       },
     ]
+
+    // THE BACKEND'S LINE, BESIDE OURS AND NEVER JOINED TO IT. A separate
+    // series with its own name and its own dash pattern, so that no reading
+    // of this chart can take one line as a continuation of the other. Its
+    // symbol is deliberately unlike the sampled line's: an operator glancing
+    // at a screenshot has only the shape to go on.
+    for (const answered of backendPoints) {
+      if (answered.points.length === 0) continue
+      series.push({
+        name: answered.label ? `${backendLabel} · ${answered.label}` : backendLabel,
+        type: 'line',
+        smooth: 0.2,
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 1.5, type: [6, 3], color: colours.backend },
+        data: answered.points,
+      })
+    }
 
     if (!isPods) {
       series.push({
@@ -260,6 +373,7 @@
   /** What the last draw was configured for, to decide merge vs rebuild. */
   let lastTheme = ''
   let lastMetric = ''
+  let lastHadBackend = false
 
   // Redraw when the data or the theme changes. Reading both here is what
   // registers the dependency; `preferences.resolvedTheme` is not otherwise
@@ -267,6 +381,7 @@
   // repaints when the OS flips at sunset and the preference has not changed.
   $effect(() => {
     void samples
+    void backendPoints
     const theme = preferences.resolvedTheme
     void metric
 
@@ -277,9 +392,13 @@
     // same chart with more points on it, and merging lets ECharts update the
     // series in place rather than tearing down and recreating every component
     // ten seconds after it did so last.
-    const rebuild = theme !== lastTheme || metric !== lastMetric
+    // A backend line appearing or going changes how many series the chart
+    // has, which merging cannot express — ECharts keeps the old series
+    // otherwise, and a line from a query nobody made stays on screen.
+    const rebuild = theme !== lastTheme || metric !== lastMetric || hasBackend !== lastHadBackend
     lastTheme = theme
     lastMetric = metric
+    lastHadBackend = hasBackend
 
     chart?.setOption(buildOption(), rebuild)
   })

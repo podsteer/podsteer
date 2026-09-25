@@ -9,8 +9,10 @@ function node(id: string, tier: number, extra: Partial<GraphSource['nodes'][0]> 
     name: id,
     namespace: 'default',
     tier,
+    detail: '',
     healthy: true,
     subject: false,
+    missing: false,
     ...extra,
   }
 }

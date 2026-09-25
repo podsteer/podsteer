@@ -47,7 +47,7 @@
   <button
     type="button"
     {onclick}
-    aria-pressed={selected}
+    aria-pressed={selected || undefined}
     class="state-layer w-full text-left {base} {selection} hover:shadow-level-1 {className}"
   >
     {@render children()}

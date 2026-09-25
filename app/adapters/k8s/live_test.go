@@ -51,9 +51,9 @@ func TestLiveEveryStoreAgrees(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	pods, _ := adapter.ListPods(ctx, id, domain.NamespaceAll)
-	sets, _ := adapter.ListWorkloads(ctx, id, domain.WorkloadReplicaSet, domain.NamespaceAll)
-	jobs, _ := adapter.ListWorkloads(ctx, id, domain.WorkloadJob, domain.NamespaceAll)
+	pods, _ := adapter.ListPods(ctx, id, domain.NamespaceAll, domain.Projection{})
+	sets, _ := adapter.ListWorkloads(ctx, id, domain.WorkloadReplicaSet, domain.NamespaceAll, domain.Projection{})
+	jobs, _ := adapter.ListWorkloads(ctx, id, domain.WorkloadJob, domain.NamespaceAll, domain.Projection{})
 	fmt.Printf("CLUSTER pods=%d replicasets=%d jobs=%d\n", len(pods), len(sets), len(jobs))
 
 	deadline := time.After(45 * time.Second)
@@ -73,9 +73,9 @@ func TestLiveEveryStoreAgrees(t *testing.T) {
 	}
 
 	time.Sleep(readTTL + 100*time.Millisecond)
-	storedPods, _ := adapter.ListPods(ctx, id, domain.NamespaceAll)
-	storedSets, _ := adapter.ListWorkloads(ctx, id, domain.WorkloadReplicaSet, domain.NamespaceAll)
-	storedJobs, _ := adapter.ListWorkloads(ctx, id, domain.WorkloadJob, domain.NamespaceAll)
+	storedPods, _ := adapter.ListPods(ctx, id, domain.NamespaceAll, domain.Projection{})
+	storedSets, _ := adapter.ListWorkloads(ctx, id, domain.WorkloadReplicaSet, domain.NamespaceAll, domain.Projection{})
+	storedJobs, _ := adapter.ListWorkloads(ctx, id, domain.WorkloadJob, domain.NamespaceAll, domain.Projection{})
 	fmt.Printf("STORE   pods=%d replicasets=%d jobs=%d\n", len(storedPods), len(storedSets), len(storedJobs))
 
 	if len(storedPods) != len(pods) || len(storedSets) != len(sets) || len(storedJobs) != len(jobs) {
@@ -88,7 +88,7 @@ func TestLiveEveryStoreAgrees(t *testing.T) {
 	}
 
 	// And a namespace-scoped read, which is what a controller page makes.
-	scoped, err := adapter.ListWorkloads(ctx, id, domain.WorkloadReplicaSet, "kube-system")
+	scoped, err := adapter.ListWorkloads(ctx, id, domain.WorkloadReplicaSet, "kube-system", domain.Projection{})
 	if err != nil {
 		t.Fatalf("scoped ListWorkloads() error = %v", err)
 	}

@@ -51,6 +51,59 @@
      * name.
      */
     icon?: Component
+    /**
+     * A selection column, for bulk actions.
+     *
+     * Its header is the "select all on this page" checkbox rather than a
+     * sort control, it cannot be resized, and the column chooser does not
+     * list it — there is nothing to sort by, widen or hide in a tick box.
+     * Always paired with `pinned`, since a view that offers selection
+     * offers it on every row.
+     */
+    select?: boolean
+    /**
+     * The row's own menu, for what a row can do.
+     *
+     * A REAL COLUMN, which it was not until 2026-09-06. The menu cell used to
+     * fall into the trailing elastic column by arithmetic — the header had one
+     * cell fewer than every row, and the control's width was whatever slack
+     * the table happened to have. That made the column count dishonest to
+     * anything counting cells, and left the menu neither reliably visible nor
+     * a fixed size to aim at.
+     *
+     * Declared by the view rather than added here, exactly as `select` is,
+     * because DataTable renders no cells: the view owns the row markup, so
+     * only the view knows whether its rows carry a menu at all. Must be LAST
+     * in the column list, and paired with `pinned` — there is nothing to hide
+     * in a control that is the only way to reach half a row's actions.
+     *
+     * See $lib/fixedColumns for the edge it is pinned to.
+     */
+    menu?: boolean
+  }
+
+  /**
+   * The row menu's column, shared by every view that draws one.
+   *
+   * ONE OBJECT RATHER THAN SIX COPIES, because three of its four fields have
+   * to agree with something elsewhere or the column misbehaves quietly: the
+   * id is what the fixed-edge CSS and the operator's stored width are keyed
+   * on, `pinned` is what keeps it out of the column chooser's reach, and the
+   * width is sized to the control rather than to its heading, which is not
+   * drawn. Append it LAST — after the operator's own columns — since it is
+   * the end of the row.
+   */
+  export const ROW_MENU_COLUMN: Column = {
+    id: 'menu',
+    label: 'Row menu',
+    // As narrow as this table makes a column: MIN_WIDTH is the floor every
+    // column is clamped up to, and there is no narrower honest number to
+    // write. The tick box column declares 40 and is silently widened to the
+    // same 56, which is why the two edges match on screen — declaring 40 here
+    // would render identically and describe something that never happens.
+    width: 56,
+    pinned: true,
+    menu: true,
   }
 
   /**
@@ -76,8 +129,10 @@
   import type { Component, Snippet } from 'svelte'
   import type { SortState } from '$lib/sort'
   import { preferences } from '$stores/preferences.svelte'
-  import { activeTable } from '$stores/activeTable.svelte'
+  import { activeTable, type CSVExport } from '$stores/activeTable.svelte'
+  import { edgeBoundaries, fixedPlacements } from '$lib/fixedColumns'
   import { ChevronUp, ChevronDown, ChevronsUpDown } from '@lucide/svelte'
+  import Checkbox from './Checkbox.svelte'
 
   interface Props {
     /** Identifies the kind, for persisting column preferences. */
@@ -89,13 +144,50 @@
     /** Shown instead of rows when there are none. */
     empty?: Snippet
     isEmpty?: boolean
+    /**
+     * A standing fact about the whole listing, drawn above the rows.
+     *
+     * OUTSIDE THE SCROLLING REGION, deliberately, and that is the reason it
+     * is a slot here rather than markup each view puts above the table: a
+     * caveat about what the rows ARE is worth nothing if it scrolls away from
+     * the rows it qualifies. Rendered whether or not the table is empty, for
+     * the same reason — "nothing matches" and "the read stopped early" are
+     * two facts an operator needs together, not one instead of the other.
+     */
+    notice?: Snippet
     /** The sort in effect, or null for server order. */
     sort?: SortState | null
     /** Header click: cycles the column ascending, descending, unsorted. */
     onsort?: (columnId: string) => void
+    /**
+     * Produces this table's CSV export.
+     *
+     * DataTable has no idea what a row IS — it renders whatever markup the
+     * `rows` snippet hands it — so it cannot build this itself. It only
+     * carries the reference from whichever view supplied it to the toolbar's
+     * Export CSV control, the same way it already carries `columns` there.
+     */
+    exportRows?: () => CSVExport
+    /**
+     * The state of a `select` column's header checkbox, and what clicking
+     * it does. Supplied by a view whose rows carry a RowSelect cell; a
+     * select column with none draws a disabled box.
+     */
+    selectAll?: { checked: boolean; indeterminate: boolean; ontoggle: () => void }
   }
 
-  let { kindId, columns, rows, empty, isEmpty = false, sort = null, onsort }: Props = $props()
+  let {
+    kindId,
+    columns,
+    rows,
+    empty,
+    notice,
+    isEmpty = false,
+    sort = null,
+    onsort,
+    exportRows,
+    selectAll,
+  }: Props = $props()
 
   let body = $state<HTMLTableSectionElement | null>(null)
 
@@ -161,11 +253,16 @@
   })
 
   /**
-   * Arrow keys walk the rows; Enter opens one; Escape lets go.
+   * Arrow keys walk the rows; Enter opens one; Space ticks one; Escape lets
+   * go.
    *
    * Enter clicks the row rather than calling a handler of its own, so the
    * keyboard and the mouse can never open different things — whatever a click
-   * does today is what Enter does.
+   * does today is what Enter does. Space goes the same way to the row's tick
+   * box (see RowSelect), for the same reason: one path, owned by the cell,
+   * and shift carries across so a keyboard range reads like a shift-click.
+   * A view with no tick boxes keeps Space as a second Enter, so the key does
+   * something everywhere.
    */
   function onRowKeydown(event: KeyboardEvent): void {
     const current = (event.target as HTMLElement | null)?.closest('tr')
@@ -201,10 +298,21 @@
         focus(all.length - 1)
         break
       case 'Enter':
-      case ' ':
         event.preventDefault()
         current.click()
         break
+      case ' ': {
+        event.preventDefault()
+        const box = current.querySelector<HTMLInputElement>('input[data-row-select]')
+        if (box) {
+          box.dispatchEvent(
+            new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: event.shiftKey }),
+          )
+        } else {
+          current.click()
+        }
+        break
+      }
       case 'Escape':
         event.preventDefault()
         current.blur()
@@ -240,7 +348,7 @@
    * a generic table whose columns are whatever the API server just described.
    */
   $effect(() => {
-    const token = activeTable.claim(kindId, columns)
+    const token = activeTable.claim(kindId, columns, exportRows)
     return () => activeTable.release(token)
   })
 
@@ -340,29 +448,144 @@
     event.preventDefault()
     preferences.setColumnWidth(kindId, column.id, Math.max(minWidthOf(column), width))
   }
+
+  // --- Fixed edge columns ---------------------------------------------------
+
+  /**
+   * The row-menu column, and everything before it.
+   *
+   * They are drawn separately because the ELASTIC COLUMN HAS TO SIT BETWEEN
+   * THEM. The fixed layout needs one column with no width to absorb the
+   * leftover, or the surplus is shared out over the real columns and the last
+   * one stretches; and the menu has to be at the right-hand end of the table
+   * whether or not there is any surplus, which it is not if the elastic
+   * column follows it. So the order is: every other column, the elastic one,
+   * then the menu — in the colgroup, in the header, and in each view's row
+   * (see RowMenuCell, which draws both of the last two cells for exactly this
+   * reason).
+   */
+  const menuColumn = $derived(visible.find((column) => column.menu))
+  const bodyColumns = $derived(visible.filter((column) => !column.menu))
+
+  /**
+   * Where each fixed column sits, from the widths in effect right now.
+   *
+   * Derived rather than measured: a column's width is already known here —
+   * the colgroup is written from it — and reading it back out of the DOM
+   * would be a second source of truth that disagrees for one frame after
+   * every resize.
+   */
+  const placements = $derived(
+    fixedPlacements(
+      visible.map((column) => ({
+        id: column.id,
+        width: widthOf(column),
+        select: column.select,
+        menu: column.menu,
+      })),
+      preferences.fixedEdges,
+    ),
+  )
+
+  const fixedSelect = $derived(placements.find((placement) => placement.kind === 'select'))
+  const fixedMenu = $derived(placements.find((placement) => placement.kind === 'menu'))
+
+  /** The scrollport, for how far it has been scrolled sideways. */
+  let scroller = $state<HTMLElement | null>(null)
+  /** The table itself, because it is what changes width when a column does. */
+  let grid = $state<HTMLTableElement | null>(null)
+
+  let boundaries = $state({ left: false, right: false })
+
+  function measureEdges(): void {
+    const node = scroller
+    if (!node) return
+    boundaries = edgeBoundaries(node.scrollLeft, node.scrollWidth, node.clientWidth)
+  }
+
+  /**
+   * Keeps the hairlines in step with the scroll position.
+   *
+   * THREE sources, and dropping any one of them leaves a hairline drawn over
+   * a table that no longer scrolls, or missing from one that does. Scrolling
+   * is the obvious one. The scrollport resizes when the window or the detail
+   * drawer does. And the TABLE resizes when a column is dragged, a column is
+   * hidden, or a custom column is added — none of which changes the
+   * scrollport at all, so an observer watching only that would miss every one
+   * of them.
+   *
+   * The listener is passive: it reads geometry and never prevents the scroll.
+   */
+  $effect(() => {
+    const port = scroller
+    if (!port) return
+
+    measureEdges()
+    port.addEventListener('scroll', measureEdges, { passive: true })
+
+    const observer = new ResizeObserver(measureEdges)
+    observer.observe(port)
+    if (grid) observer.observe(grid)
+
+    return () => {
+      port.removeEventListener('scroll', measureEdges)
+      observer.disconnect()
+    }
+  })
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
-  <div class="min-h-0 flex-1 overflow-auto">
+  {#if notice}{@render notice()}{/if}
+  <div class="min-h-0 flex-1 overflow-auto" bind:this={scroller}>
     {#if isEmpty}
       {#if empty}{@render empty()}{/if}
     {:else}
-      <table class="w-full table-fixed border-collapse text-body-medium">
+      <!--
+        The two data-fixed-* attributes are what switch stickiness on, and the
+        two data-scrolled-* ones are what draw the hairline. Both pairs are on
+        the TABLE rather than on the cells, because the cells are rendered by
+        each view and this component is the only thing that knows the answer.
+      -->
+      <!--
+        `data-list-table` is what the cell-alignment rule in this component's
+        stylesheet selects on. It is unconditional, unlike the two switches
+        above it, because it marks WHAT this table is rather than a state it
+        is in — and it has to be a marker rather than a bare `table` selector,
+        since these rules are `:global` and the detail panes draw tables of
+        their own that this one knows nothing about.
+      -->
+      <table
+        bind:this={grid}
+        data-list-table
+        class="w-full table-fixed border-collapse text-body-medium"
+        style="--fixed-select-offset: {fixedSelect?.offset ?? 0}px;
+               --fixed-menu-offset: {fixedMenu?.offset ?? 0}px"
+        data-fixed-select={fixedSelect ? '' : undefined}
+        data-fixed-menu={fixedMenu ? '' : undefined}
+        data-scrolled-start={boundaries.left ? '' : undefined}
+        data-scrolled-end={boundaries.right ? '' : undefined}
+      >
         <colgroup>
-          {#each visible as column (column.id)}
+          {#each bodyColumns as column (column.id)}
             <col style="width: {widthOf(column)}px" />
           {/each}
-          <!-- A final elastic column absorbs the leftover width so the fixed
-               layout does not stretch the last real column to fill it. -->
+          <!-- The elastic column absorbs the leftover width so the fixed
+               layout does not stretch the last real column to fill it. It
+               sits BEFORE the menu column so the menu is at the right-hand
+               end of the table however much slack there is. -->
           <col />
+          {#if menuColumn}
+            <col style="width: {widthOf(menuColumn)}px" />
+          {/if}
         </colgroup>
 
         <thead class="sticky top-0 z-20 bg-surface-container/95 backdrop-blur-sm">
           <tr class="text-left text-label-medium text-on-surface-variant">
-            {#each visible as column, index (column.id)}
+            {#each bodyColumns as column, index (column.id)}
               {@const active = sort?.columnId === column.id}
               <th
                 scope="col"
+                data-edge={column.select ? 'select' : undefined}
                 aria-sort={active
                   ? sort?.direction === 'asc'
                     ? 'ascending'
@@ -370,6 +593,24 @@
                   : undefined}
                 class="relative p-0 font-medium"
               >
+                {#if column.select}
+                  <!-- The page's tick box: all, some (indeterminate) or none
+                       of the rows on screen. It describes THIS page and acts
+                       on this page — see RowSelection.toggleAllVisible. -->
+                  <!-- Centred to match the row boxes below it: the select
+                       column is a control column, and a header box padded to
+                       one side sits over rows that are not. -->
+                  <span class="flex items-center justify-center py-2">
+                    <Checkbox
+                      checked={selectAll?.checked ?? false}
+                      indeterminate={selectAll?.indeterminate ?? false}
+                      disabled={!selectAll}
+                      ariaLabel="Select all rows on this page"
+                      title="Select all rows on this page"
+                      onchange={() => selectAll?.ontoggle()}
+                    />
+                  </span>
+                {:else}
                 <button
                   type="button"
                   onclick={() => onsort?.(column.id)}
@@ -432,8 +673,24 @@
                   onpointercancel={endResize}
                   ondblclick={() => resetWidth(column)}
                 ></span>
+                {/if}
               </th>
             {/each}
+
+            <!-- The elastic column's own header cell. A <td> rather than a
+                 <th>, because it heads nothing: it is the slack. It exists so
+                 the header row holds one cell per column, which is what makes
+                 the count something a reader — or a test — can rely on. -->
+            <td class="p-0"></td>
+
+            {#if menuColumn}
+              <!-- The row menu's heading. Empty on screen, because a word over
+                   a column of three dots labels nothing anybody needs, and
+                   named for anyone reading the table by its headings. -->
+              <th scope="col" data-edge="menu" class="p-0 font-medium">
+                <span class="sr-only">{menuColumn.label}</span>
+              </th>
+            {/if}
           </tr>
         </thead>
 
@@ -444,3 +701,123 @@
     {/if}
   </div>
 </div>
+
+<style>
+  /*
+    ONE RULE FOR HOW A LIST CELL POSITIONS ITS CONTENT, and it is written here
+    because the cells belong to each view: six of them draw their own <tr>,
+    and a rule applied cell by cell is a rule five of them can be written
+    without.
+
+    THE RULE: every cell in a list table centres its content, and nothing in a
+    row is aligned on a baseline. A cell is `vertical-align: middle` (below),
+    and whatever it holds lays out as a BLOCK-LEVEL flex row with
+    `items-center` — never an inline box.
+
+    Why, from the box model rather than from a screenshot. A `<td>` resolves
+    to `vertical-align: baseline` by default (the UA sheet gives it
+    `vertical-align: inherit`, and the table above it holds the initial value),
+    and under baseline alignment a cell's content is shifted so the baseline of
+    its FIRST LINE BOX sits on the row's shared baseline. That is only a shared
+    reference for things that HAVE a baseline. These columns do not:
+
+      - the name cell holds text, whose baseline sits one font-descent above
+        the bottom of its line box;
+      - the status cell holds a 16px SVG, a replaced element with no baseline
+        of its own, so one is SYNTHESISED at its bottom margin edge — meaning
+        the icon's bottom lands on the text's baseline and it rides a
+        descender's worth too high;
+      - the tick box and the row menu are boxes too, and each was positioned
+        by a third and fourth mechanism: an explicit `align-middle` on one
+        cell, and nothing at all on the other, which then also differed in
+        vertical padding.
+
+    Four cells, four quantities — a font's descent, a cell's padding, a box's
+    height, an explicit override — and they can only agree by coincidence.
+    Centring depends on ONE quantity for all of them, the row's height, which
+    is why it holds when a column is added, a font changes, or a row grows a
+    chip.
+
+    The second half is in the markup and cannot be done from here: a
+    block-level flex container has no strut and no baseline to answer to, so
+    an icon inside one is centred against the row rather than hung off a text
+    baseline the cell's own font invented. `StatusIndicator` is `flex` for that
+    reason, `RowSelect` and `RowMenuCell` wrap their controls in one, and a
+    cell holding a bare inline element would put its baseline back.
+  */
+  :global(table[data-list-table] :is(th, td)) {
+    vertical-align: middle;
+  }
+
+  /*
+    The columns that stay put, in CSS because the cells are not this
+    component's markup: every view draws its own <tr>, so these rules reach
+    them through :global and one data attribute rather than through classes
+    threaded down five levels. What DataTable owns is the pair of switches on
+    the <table> and the offsets beside them.
+
+    AN OPAQUE BACKGROUND IS NOT DECORATION HERE. A sticky cell paints only
+    what it was given, and a row's state used to be a translucent tint — so
+    without this the columns scrolling underneath show through the pinned tick
+    box and it reads as two things at once. `inherit` is what keeps that
+    colour right in every state a row can be in, hover included: it takes
+    whatever the row's own class resolved to, so a view that grows a sixth
+    state needs no change here. It works only because those tints are now
+    opaque, which is the other half of this and lives in app.css.
+
+    A header cell cannot inherit anything: a <tr> has no background of its own
+    and the band belongs to the <thead>, which scrolls sideways out from under
+    a cell that does not move with it. So they name the header ground.
+  */
+  :global(table[data-fixed-select] :is(th, td)[data-edge='select']) {
+    position: sticky;
+    left: var(--fixed-select-offset, 0px);
+  }
+
+  :global(table[data-fixed-menu] :is(th, td)[data-edge='menu']) {
+    position: sticky;
+    right: var(--fixed-menu-offset, 0px);
+  }
+
+  :global(table tbody td[data-edge]) {
+    background-color: inherit;
+    /* Above the cells scrolling past, below the header. The <thead> carries
+       its own z-index and establishes a stacking context, so this number is
+       only ever weighed against the ordinary cells beside it. */
+    z-index: 2;
+  }
+
+  :global(table thead :is(th, td)[data-edge]) {
+    background-color: var(--table-header);
+    /* A corner cell is sticky in BOTH directions, so it has to win against
+       the header cells it slides over as well as the body. This decides the
+       first; the <thead>'s own z-index decides the second for every cell in
+       it at once, which is why the two numbers do not need to agree. */
+    z-index: 10;
+  }
+
+  /*
+    The boundary, drawn only while something is passing underneath it.
+
+    An inset shadow rather than a border, because the table is
+    `border-collapse: collapse` — where a cell's border is resolved against
+    its neighbours' and painted by the TABLE, which is the one thing that does
+    not move with a cell that has been pinned. A shadow takes no part in that
+    collapse and travels with the cell.
+
+    The fade is the second half of not flickering, after the dead zone in
+    edgeBoundaries: a scroll settling a fraction of a pixel either side of the
+    threshold crosses it visibly slowly instead of blinking.
+  */
+  :global(table :is(th, td)[data-edge]) {
+    transition: box-shadow 120ms var(--ease-standard, ease);
+  }
+
+  :global(table[data-fixed-select][data-scrolled-start] :is(th, td)[data-edge='select']) {
+    box-shadow: inset -1px 0 0 var(--outline-variant);
+  }
+
+  :global(table[data-fixed-menu][data-scrolled-end] :is(th, td)[data-edge='menu']) {
+    box-shadow: inset 1px 0 0 var(--outline-variant);
+  }
+</style>

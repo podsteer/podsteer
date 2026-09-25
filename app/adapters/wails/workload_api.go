@@ -40,7 +40,11 @@ func NewWorkloadAPI(workloads ports.WorkloadService, app *App, logger *slog.Logg
 //
 // An empty namespace lists across all of them, mirroring
 // `kubectl get pods --all-namespaces`.
-func (w *WorkloadAPI) ListPods(clusterID, namespace string) ([]Pod, error) {
+//
+// annotationKeys names the annotations each row should carry — the ones the
+// operator has put on a custom column of this kind. Nothing else of the
+// annotation map crosses the bridge; see domain.Projection for why.
+func (w *WorkloadAPI) ListPods(clusterID, namespace string, annotationKeys []string, expressions []CustomExpression) ([]Pod, error) {
 	ctx, cancel := w.app.requestContext()
 	defer cancel()
 
@@ -54,7 +58,7 @@ func (w *WorkloadAPI) ListPods(clusterID, namespace string) ([]Pod, error) {
 		return nil, apiError(w.logger, "ListPods", err)
 	}
 
-	pods, err := w.workloads.ListPods(ctx, id, name)
+	pods, err := w.workloads.ListPods(ctx, id, name, projectionFor(annotationKeys, expressions))
 	if err != nil {
 		return nil, apiError(w.logger, "ListPods", err)
 	}
@@ -158,7 +162,9 @@ func (w *WorkloadAPI) WorkloadConsumption(clusterID, kind, namespace string) (ma
 // The kind arrives as its display name — "Deployment", "StatefulSet" — which
 // is what the navigator already holds, so the frontend needs no second
 // vocabulary for the same six things.
-func (w *WorkloadAPI) ListWorkloads(clusterID, kind, namespace string) ([]Workload, error) {
+//
+// annotationKeys is the same projection ListPods takes.
+func (w *WorkloadAPI) ListWorkloads(clusterID, kind, namespace string, annotationKeys []string, expressions []CustomExpression) ([]Workload, error) {
 	ctx, cancel := w.app.requestContext()
 	defer cancel()
 
@@ -172,7 +178,7 @@ func (w *WorkloadAPI) ListWorkloads(clusterID, kind, namespace string) ([]Worklo
 		return nil, apiError(w.logger, "ListWorkloads", err)
 	}
 
-	workloads, err := w.workloads.ListWorkloads(ctx, id, domain.WorkloadKind(kind), name)
+	workloads, err := w.workloads.ListWorkloads(ctx, id, domain.WorkloadKind(kind), name, projectionFor(annotationKeys, expressions))
 	if err != nil {
 		return nil, apiError(w.logger, "ListWorkloads", err)
 	}
@@ -242,6 +248,31 @@ func (w *WorkloadAPI) ListPodsOnNode(clusterID, nodeName string) ([]Pod, error) 
 	}
 
 	return toPods(pods, time.Now()), nil
+}
+
+// RolloutHistory returns the recorded revisions of a Deployment,
+// StatefulSet or DaemonSet's pod template, newest first — the History tab
+// in the drawer, and what a rollback picks a target revision from.
+func (w *WorkloadAPI) RolloutHistory(clusterID, kind, namespace, name string) ([]RevisionDTO, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(w.logger, "RolloutHistory", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return nil, apiError(w.logger, "RolloutHistory", err)
+	}
+
+	revisions, err := w.workloads.RolloutHistory(ctx, id, domain.WorkloadKind(kind), ns, name)
+	if err != nil {
+		return nil, apiError(w.logger, "RolloutHistory", err)
+	}
+
+	return toRevisions(revisions, time.Now()), nil
 }
 
 // ListPodsForWorkload returns all pods owned by a specific workload.

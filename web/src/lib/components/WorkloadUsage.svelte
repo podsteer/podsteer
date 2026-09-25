@@ -179,7 +179,7 @@
         "partial" while claiming a total that was not short.
       -->
       {#if reading.measuredPods < reading.measurablePods}
-        <p class="text-body-small text-gauge-warn">
+        <p class="text-body-small text-gauge-warn-ink">
           Summed over {reading.measuredPods} of {reading.measurablePods} running pods — the rest
           reported no usage, so this is less than the whole.
         </p>
