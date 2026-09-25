@@ -71,16 +71,31 @@ binaries.
 
 ## Status
 
-What works today: several clusters open at
-once, one per tab; an overview that assesses a cluster rather than listing it,
-with ranked findings and capacity measured against requests rather than usage;
-purpose-built views for pods, nodes, events and the six workload controllers,
-with the derived status that makes a list actually diagnostic — a crash-looping
-container, a pod stuck pulling an image, one that is terminating rather than
-merely running. Everything else in the cluster, custom resources included, is
-browsable through the API server's own table output, so a freshly installed
-operator's CRDs need no code here. Beyond reading: log streaming, an
-interactive shell, scaling, restarting, editing manifests and deleting objects.
+What works today, as of v0.3.0:
+
+- **An assessment, not a list.** Ranked findings — crash loops, OOM kills,
+  unschedulable pods, rightsizing, APIs the next Kubernetes version removes —
+  with capacity measured against requests rather than usage.
+- **Several clusters at once**, one per tab, plus an All-clusters view and a
+  Multi-kind table; cloud cluster discovery through the aws, az, gcloud or
+  doctl CLI you already use.
+- **Safe writes of any kind**: server-side apply with field conflicts named,
+  rollout history and rollback, drain with a preview, bulk actions with a
+  review step, and the kubectl equivalent of every write.
+- **GitOps and Helm**: Argo CD and Flux panels with a warning before any change
+  a controller will revert; Helm releases listed without reading Secret
+  payloads.
+- **Security**: posture findings, Trivy Operator reports quoted, and an RBAC
+  explorer answered by the API server.
+- **Shells and agents**: exec, debug containers, node and in-cluster shells, a
+  local terminal on every platform, and `podsteer mcp`, a read-only MCP server
+  for coding agents.
+- **Typed panels** for cert-manager, KEDA, External Secrets, Argo Rollouts,
+  Trivy, Karpenter, Gateway API, DRA and admission policies; every other CRD
+  browsable through the API server's own table output.
+
+[podsteer.com/features](https://podsteer.com/features/) describes each in
+full, including what it deliberately does not do.
 
 Capacity is sampled every 30 seconds while the application is open and kept
 locally, which is the only way to have a trend at all — Kubernetes reports only

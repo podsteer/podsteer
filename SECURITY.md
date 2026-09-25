@@ -109,7 +109,7 @@ Prometheus or VictoriaMetrics in your cluster **through your API server's own
 proxy**, so it is one more request to the API server your kubeconfig names
 rather than a new destination.
 
-The one exception is an **update check**, added in v0.1.2. It asks
+The one exception is an **update check**, added in v0.2.0. It asks
 `api.github.com` once a day whether a newer release has been published.
 
 **And one thing PodSteer does not do itself, but causes.** Add cluster can run
@@ -130,7 +130,7 @@ by the merge described below, with its backup and its untouched
 `current-context`. The list of CLIs is fixed inside the binary and cannot be
 pointed at another program by a setting, a file or an environment variable.
 
-**This is new in v0.1.2**, and it is called out because v0.1.0 and v0.1.1
+**This is new in v0.2.0**, and it is called out because v0.1.0 and v0.1.1
 stated the opposite here: anyone who reviewed those releases against this file
 should re-read the list below rather than assume it still applies.
 
@@ -618,8 +618,9 @@ same commitment the rest of this file makes.
 when PodSteer exits, by signalling its whole process group, and PodSteer waits
 for it to be gone rather than assuming.
 
-**Not available on Windows.** There is no pseudo-terminal for it in this build;
-the control is absent and says why, rather than failing when pressed.
+**On Windows it runs through ConPTY**, Windows' own pseudo-console, since
+v0.3.0. On a platform that genuinely cannot provide a pseudo-terminal the
+control is absent and says why, rather than failing when pressed.
 
 ## The MCP subprocess, and what it can read
 
