@@ -178,9 +178,42 @@
     memoryLimit: String((spec.resources?.limits?.memory as string) ?? ''),
   })
 
+  /**
+   * A running container's state and readiness, as one row on two lines.
+   *
+   * `started` and `ready` are separate facts and are reported separately.
+   * Started-but-not-ready is a readiness problem; not-started is a startup
+   * problem. Every other client collapses them into one word and sends
+   * people to look in the wrong place — which is why the second line says
+   * which of the two it is, rather than only "not ready".
+   */
+  const statusRow = $derived.by<DetailRow | null>(() => {
+    if (!status) return null
+    const state = status.state || 'Unknown'
+    const finished = state === 'Terminated' && status.reason === 'Completed'
+    const readiness = status.ready
+      ? 'Ready'
+      : finished
+        ? 'Finished — a completed container is not expected to be ready'
+        : state === 'Running'
+          ? status.started
+            ? 'Not ready — started, not passing its readiness check'
+            : 'Not ready — still starting'
+          : 'Not ready'
+    return {
+      label: 'Status',
+      value: status.reason ? `${state} (${status.reason})` : state,
+      detail: readiness,
+      // Amber for a container that should be serving and is not; a Job's
+      // finished container is not ready by design and is left alone.
+      tone: !status.ready && !finished ? 'warn' : undefined,
+    }
+  })
+
   const rows = $derived.by(() => {
     const image = status?.image || spec.image
     const out: DetailRow[] = [
+      ...(statusRow ? [statusRow] : []),
       { label: 'Image', value: image || '—', warning: latestTagWarning(spec.image) ?? undefined },
     ]
 
@@ -443,19 +476,9 @@
          [&:not(:first-child)]:border-outline-variant/40 [&:not(:first-child)]:pt-6"
 >
   <p class="mb-2 flex items-baseline gap-2 text-body-medium">
+    <!-- Just the name: the state and readiness that used to trail it are
+         the Status row below, on two lines of their own. -->
     <span class="font-semibold text-on-surface" data-selectable>{spec.name}</span>
-    {#if status}
-      <!--
-        `started` and `ready` are separate facts and are reported separately.
-        Started-but-not-ready is a readiness problem; not-started is a startup
-        problem. Every other client collapses them into one word and sends
-        people to look in the wrong place.
-      -->
-      <span class="text-body-small text-on-surface-variant">
-        {status.state.toLowerCase()}{status.ready ? ', ready' : status.started ? ', not ready' : ', starting'}
-        {#if status.reason}· {status.reason}{/if}
-      </span>
-    {/if}
   </p>
 
   <DetailList {rows} />

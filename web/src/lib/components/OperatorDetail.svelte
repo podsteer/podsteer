@@ -164,7 +164,8 @@
     const rows: DetailRow[] = [
       {
         label,
-        value: condition.reason ? `${condition.status} · ${condition.reason}` : condition.status,
+        value: condition.status,
+        detail: condition.reason || undefined,
         tone,
       },
     ]
@@ -242,7 +243,8 @@
       // it, which is the difference between waiting and investigating.
       rows.push({
         label: 'Issuing',
-        value: cert.issuing.reason ? `${cert.issuing.status} · ${cert.issuing.reason}` : cert.issuing.status,
+        value: cert.issuing.status,
+        detail: cert.issuing.reason || undefined,
       })
     }
 

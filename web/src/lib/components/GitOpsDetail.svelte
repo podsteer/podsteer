@@ -197,7 +197,8 @@
     if (flux.ready) {
       rows.push({
         label: 'Ready',
-        value: flux.ready.reason ? `${flux.ready.status} · ${flux.ready.reason}` : flux.ready.status,
+        value: flux.ready.status,
+        detail: flux.ready.reason || undefined,
         tone: readyTone,
       })
       if (flux.ready.message) rows.push({ label: 'Message', value: flux.ready.message, tone: readyTone })

@@ -117,7 +117,8 @@
     const rows: DetailRow[] = [
       {
         label,
-        value: condition.reason ? `${condition.status} · ${condition.reason}` : condition.status,
+        value: condition.status,
+        detail: condition.reason || undefined,
       },
     ]
     if (condition.message) rows.push({ label: `${label} message`, value: condition.message })
@@ -136,7 +137,8 @@
       const explanation = [condition.reason, condition.message].filter(Boolean).join(' — ')
       return {
         label: condition.type || 'condition',
-        value: explanation ? `${condition.status} · ${explanation}` : condition.status,
+        value: condition.status,
+        detail: explanation || undefined,
       }
     })
   }

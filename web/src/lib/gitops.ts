@@ -227,3 +227,33 @@ export function managementWarning(management: GitOpsManagement): string {
   // comes from Git.
   return `This belongs to ${above}, which is managed by ${by}. A change here stays on this object, but its replacement comes from Git — so the next rollout, restart or eviction brings back the figures Git holds.`
 }
+
+/**
+ * What a rollback does to an object a GitOps controller manages.
+ *
+ * KUBERNETES ALLOWS IT, AND THAT IS THE TRAP. The rollback succeeds, the
+ * Deployment runs the old template, and the controller then puts back what
+ * Git says — within seconds where Argo CD's self-heal is on, at Flux's next
+ * reconcile, or at the next sync otherwise. Nothing is blocked here, because
+ * there is a legitimate case (an emergency, with automated sync paused), but
+ * the sentence says what undoes it and what to do instead, which is the part
+ * the general "changes are reverted" warning leaves somebody to work out.
+ *
+ * Whether self-heal is actually on lives in the Argo CD Application, which
+ * this does not read — so the sentence covers both cases rather than
+ * guessing which one applies.
+ */
+export function rollbackWarning(management: GitOpsManagement): string {
+  if (management.through !== 'direct') return managementWarning(management)
+
+  const { owner } = management
+  const by = owner.source ? `${owner.label} — the ${owner.source} ${owner.sourceKind}` : owner.label
+
+  if (owner.tool === 'argocd') {
+    return `This is managed by ${by}. A rollback here is overwritten by the next sync from Git — within seconds if self-heal is on. To roll back for good, revert the change in Git, or use Argo CD's own rollback with automated sync turned off.`
+  }
+  if (owner.tool === 'flux') {
+    return `This is managed by ${by}. A rollback here is overwritten at its next reconcile. To roll back for good, revert the change in Git, or suspend the ${owner.sourceKind} first.`
+  }
+  return managementWarning(management)
+}

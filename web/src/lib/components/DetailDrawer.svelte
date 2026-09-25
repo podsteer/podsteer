@@ -2136,6 +2136,7 @@
             {readOnlyReason}
             reloadToken={historyReloadToken}
             onrollback={handleOpenRollback}
+            management={managedBy}
           />
         {:else}
           <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">

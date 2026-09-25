@@ -145,7 +145,7 @@
   >
     <DialogHeader title="Roll back to revision {toRevision}" help="rollback" {onclose} />
 
-    <GitOpsNotice {management} />
+    <GitOpsNotice {management} action="rollback" />
 
     {#if productionGroup}
       <p

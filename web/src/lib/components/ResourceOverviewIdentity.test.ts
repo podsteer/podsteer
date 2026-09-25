@@ -98,3 +98,24 @@ spec:
     expect(text(container)).toContain('*/5 * * * * (Every 5 minutes)')
   })
 })
+
+describe('a condition', () => {
+  it('puts its verdict on one line and the why on the next', () => {
+    const manifest = `apiVersion: apps/v1
+kind: Deployment
+metadata: { name: web, namespace: shop }
+spec: { replicas: 1, template: { spec: { containers: [{ name: web, image: shop/web:1.0 }] } } }
+status:
+  conditions:
+    - { type: Available, status: "True", reason: MinimumReplicasAvailable, message: Deployment has minimum availability. }`
+    const { container } = render(ResourceOverview, {
+      manifest,
+      kind: 'Deployment',
+      selectedWorkload: { kind: 'Deployment', name: 'web', namespace: 'shop' } as never,
+    })
+
+    const detail = container.querySelector('[data-row-detail]')
+    expect(detail?.textContent).toBe('MinimumReplicasAvailable — Deployment has minimum availability.')
+    expect(text(container)).not.toContain('True ·')
+  })
+})

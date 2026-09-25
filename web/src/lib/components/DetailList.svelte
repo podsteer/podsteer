@@ -103,6 +103,16 @@
      */
     warning?: string
     /**
+     * A second line under the value, muted — a condition's reason and message
+     * under its True or False, a container's readiness under its state.
+     *
+     * Its own line rather than joined to the value with a dot: the value is
+     * the verdict somebody scans the column for, and "True · MinimumReplicas
+     * Available — Deployment has minimum availability" made them read a
+     * sentence to find the one word. Not part of what Copy takes.
+     */
+    detail?: string
+    /**
      * The resource this row refers to, reachable from its menu.
      *
      * Distinct from `onclick`, which makes the VALUE a link and is right when
@@ -597,6 +607,15 @@
         {/if}
         {#if row.suffix}
           <span class="ml-1 text-on-surface-variant/70" data-row-suffix>{row.suffix}</span>
+        {/if}
+        {#if row.detail}
+          <!-- Always the muted colour, whatever tone the value carries: the
+               tone belongs to the verdict above, and a whole paragraph in red
+               reads as alarm rather than as the explanation it is. -->
+          <span
+            class="block text-body-small text-on-surface-variant/80 {open ? 'break-words' : 'truncate'}"
+            data-row-detail
+          >{row.detail}</span>
         {/if}
       </span>
       {/if}

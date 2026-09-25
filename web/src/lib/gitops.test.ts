@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { gitOpsOwner, revertWarning } from './gitops'
+import { gitOpsOwner, revertWarning, rollbackWarning } from './gitops'
 
 const secret = (metadata: Record<string, unknown>) => ({ apiVersion: 'v1', kind: 'Secret', metadata })
 
@@ -66,5 +66,24 @@ describe('a Secret written by External Secrets', () => {
     expect(sentence).toContain('the db-es ExternalSecret')
     expect(sentence).toContain('external secret store')
     expect(sentence).not.toContain('Git')
+  })
+})
+
+describe('rollbackWarning', () => {
+  const direct = (tool: 'argocd' | 'flux', sourceKind: string) => ({
+    owner: { tool, label: tool === 'argocd' ? 'Argo CD' : 'Flux', source: 'web', sourceKind, target: null },
+    through: 'direct' as const,
+    controller: null,
+  })
+
+  it('tells an Argo CD user the fix is in Git, or Argo CD\'s own rollback with sync off', () => {
+    const sentence = rollbackWarning(direct('argocd', 'Application'))
+    expect(sentence).toContain('overwritten by the next sync')
+    expect(sentence).toContain('revert the change in Git')
+    expect(sentence).toContain('automated sync turned off')
+  })
+
+  it('tells a Flux user to suspend the object it names', () => {
+    expect(rollbackWarning(direct('flux', 'Kustomization'))).toContain('suspend the Kustomization first')
   })
 })

@@ -1033,9 +1033,12 @@
   const conditionRows = $derived(
     (conditions as Record<string, string>[]).map((condition, index) => {
       const explanation = [condition.reason, condition.message].filter(Boolean).join(' — ')
+      // The verdict on its own line and the why beneath it, so the column
+      // scans as True/False and the explanation is there to read.
       return {
         label: condition.type,
-        value: explanation ? `${condition.status} · ${explanation}` : condition.status,
+        value: condition.status,
+        detail: explanation || undefined,
         tone: (conditionTones[index] || undefined) as 'warn' | 'critical' | undefined,
       }
     }),

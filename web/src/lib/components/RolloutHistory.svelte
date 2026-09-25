@@ -20,6 +20,8 @@
   import { formatAge } from '$lib/format'
   import { currentRevision, orderByNumberDescending } from '$lib/revisions'
   import TemplateDiff from './TemplateDiff.svelte'
+  import GitOpsNotice from './GitOpsNotice.svelte'
+  import type { GitOpsManagement } from '$lib/gitops'
   import Button from './Button.svelte'
   import Checkbox from './Checkbox.svelte'
   import { History, TriangleAlert, GitCompare } from '@lucide/svelte'
@@ -37,10 +39,25 @@
      * routinely bumps the target ReplicaSet's own revision number. */
     reloadToken: number
     onrollback: (revision: Revision) => void
+    /**
+     * The GitOps controller holding this workload, when one does — said above
+     * the list, because every "Roll back…" on it is undone by that controller
+     * and the list is where somebody decides to press one.
+     */
+    management?: GitOpsManagement | null
   }
 
-  let { clusterId, kind, namespace, name, isReadOnly, readOnlyReason, reloadToken, onrollback }: Props =
-    $props()
+  let {
+    clusterId,
+    kind,
+    namespace,
+    name,
+    isReadOnly,
+    readOnlyReason,
+    reloadToken,
+    onrollback,
+    management = null,
+  }: Props = $props()
 
   let revisions = $state<Revision[]>([])
   let status = $state<'loading' | 'ready' | 'error'>('loading')
@@ -127,6 +144,7 @@
     </div>
   {:else}
     <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
+      <GitOpsNotice {management} action="rollback" class="" />
       <ul class="flex flex-col divide-y divide-outline-variant/40 rounded-sm border border-outline-variant/60">
         {#each revisions as revision (revision.number)}
           {@const isSelected = selected.includes(revision.number)}
