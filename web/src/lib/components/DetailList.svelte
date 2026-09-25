@@ -28,7 +28,7 @@
   A real <dl>, so the pairing is in the document and not only in the grid.
 -->
 <script lang="ts">
-  import { Check, ChevronDown, ExternalLink } from '@lucide/svelte'
+  import { Check, ChevronDown, ExternalLink, TriangleAlert } from '@lucide/svelte'
   import RowMenu, { type RowAction } from './RowMenu.svelte'
   import ColumnDivider from './ColumnDivider.svelte'
   import Button from './Button.svelte'
@@ -93,6 +93,15 @@
      * a manifest is a bug this field exists to avoid.
      */
     suffix?: string
+    /**
+     * A reason this value is worth a second look, shown as an amber icon
+     * before it with the reason on hover — an image on `:latest`.
+     *
+     * An icon rather than `tone`: tone recolours the whole value and says
+     * "this value is the problem", while this says "this value is fine to
+     * read, and here is something about it".
+     */
+    warning?: string
     /**
      * The resource this row refers to, reachable from its menu.
      *
@@ -553,9 +562,19 @@
       <span
         bind:this={valueCells[index]}
         class="min-w-0 flex-1 {open ? 'break-words' : 'truncate'}"
-        title={row.info ?? row.title}
+        title={row.warning ?? row.info ?? row.title}
         data-selectable
       >
+        {#if row.warning}
+          <span
+            class="mr-1 inline-flex align-[-2px] text-gauge-warn-ink"
+            aria-label={row.warning}
+            role="img"
+            data-row-warning
+          >
+            <TriangleAlert class="size-3.5" strokeWidth={2} />
+          </span>
+        {/if}
         {#if row.onclick}
           <!-- A button, not an anchor: this navigates within the application
                and has no address. Styled as a link because that is what it

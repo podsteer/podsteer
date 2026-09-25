@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { imageTag, lastUpdated, objectVersion } from './objectVersion'
+import { imageTag, lastUpdated, latestTagWarning, objectVersion } from './objectVersion'
 
 describe('imageTag', () => {
   it.each([
@@ -57,4 +57,21 @@ describe('lastUpdated', () => {
     expect(lastUpdated([{ time: created }], created)).toBeNull()
     expect(lastUpdated(undefined, created)).toBeNull()
   })
+})
+
+describe('latestTagWarning', () => {
+  it.each(['nginx:latest', 'registry.io/team/app:latest'])('warns on %s written out', (image) => {
+    expect(latestTagWarning(image)).toContain(':latest tag')
+  })
+
+  it.each(['nginx', 'registry:5000/team/app'])('warns on %s, which pulls :latest implicitly', (image) => {
+    expect(latestTagWarning(image)).toContain('No tag')
+  })
+
+  it.each(['nginx:1.27', 'app:latest@sha256:abc', 'app@sha256:abc', '', undefined])(
+    'is quiet for %j — a version, or bytes pinned by digest',
+    (image) => {
+      expect(latestTagWarning(image)).toBeNull()
+    },
+  )
 })

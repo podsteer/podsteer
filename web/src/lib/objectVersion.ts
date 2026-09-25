@@ -94,3 +94,27 @@ export function lastUpdated(managedFields: ManagedFieldsEntry[] | undefined, cre
   if (latest && created && Date.parse(latest) <= Date.parse(created)) return null
   return latest
 }
+
+/**
+ * Why an image reference floats on `latest`, or null when it does not.
+ *
+ * TWO WAYS TO GET THERE: the tag written out, and no tag at all — which every
+ * runtime reads as `:latest`, so it is the same thing said less visibly. A
+ * digest pins the bytes whatever tag rides beside it, so a reference carrying
+ * one is never reported. Kubernetes' own configuration guidance calls this
+ * out by name: it makes the running version unknowable and a rollback
+ * meaningless, and it is why the version fallback above refuses it.
+ */
+export function latestTagWarning(image: string | undefined): string | null {
+  if (!image || image.includes('@')) return null
+  const lastSlash = image.lastIndexOf('/')
+  const colon = image.lastIndexOf(':')
+  const tag = colon > lastSlash ? image.slice(colon + 1) : ''
+  if (tag === 'latest') {
+    return 'Uses the :latest tag — not a version. Which build runs depends on when each node pulled it, and a rollback cannot return to it. Pin a version tag, or a digest.'
+  }
+  if (!tag) {
+    return 'No tag, so the runtime pulls :latest — not a version. Which build runs depends on when each node pulled it. Pin a version tag, or a digest.'
+  }
+  return null
+}

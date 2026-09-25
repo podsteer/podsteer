@@ -35,6 +35,7 @@
     type PodManifest,
   } from '$lib/container'
   import { follower, type OpenObject, type ServesKind } from '$lib/reference'
+  import { latestTagWarning } from '$lib/objectVersion'
   import type { GitOpsManagement } from '$lib/gitops'
   import { setConfigMapKey, type Container } from '$lib/api/client'
   import { forwards } from '$stores/forwards.svelte'
@@ -127,6 +128,14 @@
 
   const isTemplate = $derived(context === 'template')
 
+  /**
+   * One style for every sub-heading inside a container — its name, Ports,
+   * Resources, Environment variables — so a long template reads as blocks
+   * rather than one list. More space above than below: the gap belongs to
+   * the block ending, the heading to the one starting.
+   */
+  const SUBHEADING = 'mt-6 mb-2 text-body-medium font-semibold text-on-surface'
+
   /** Turns a reference into a click handler, or into nothing. */
   const follow = $derived(follower(canOpen, onopen))
 
@@ -170,7 +179,10 @@
   })
 
   const rows = $derived.by(() => {
-    const out: DetailRow[] = [{ label: 'Image', value: status?.image || spec.image || '—' }]
+    const image = status?.image || spec.image
+    const out: DetailRow[] = [
+      { label: 'Image', value: image || '—', warning: latestTagWarning(spec.image) ?? undefined },
+    ]
 
     if (spec.imagePullPolicy) out.push({ label: 'Pull policy', value: spec.imagePullPolicy })
 
@@ -427,11 +439,11 @@
   the section's own heading rule is not immediately followed by another.
 -->
 <div
-  class="flex flex-col [&:not(:first-child)]:mt-4 [&:not(:first-child)]:border-t
-         [&:not(:first-child)]:border-outline-variant/40 [&:not(:first-child)]:pt-4"
+  class="flex flex-col [&:not(:first-child)]:mt-6 [&:not(:first-child)]:border-t
+         [&:not(:first-child)]:border-outline-variant/40 [&:not(:first-child)]:pt-6"
 >
   <p class="mb-2 flex items-baseline gap-2 text-body-medium">
-    <span class="font-medium text-on-surface" data-selectable>{spec.name}</span>
+    <span class="font-semibold text-on-surface" data-selectable>{spec.name}</span>
     {#if status}
       <!--
         `started` and `ready` are separate facts and are reported separately.
@@ -458,7 +470,7 @@
       about, with a stop button that does nothing because there is nothing
       left to stop.
     -->
-    <p class="mt-3 mb-1 text-body-medium text-on-surface">Ports</p>
+    <p class={SUBHEADING}>Ports</p>
     <div class="flex flex-col gap-1.5">
       {#each forwardable as port, index (index)}
         {@const open = forwards.forPort(clusterId, namespace, podName, port.containerPort)}
@@ -572,7 +584,7 @@
       Absent on a read-only cluster rather than disabled, matching how the
       rest of this pane treats a write it will not make.
     -->
-    <p class="mt-3 mb-1 text-body-medium text-on-surface">Resources</p>
+    <p class={SUBHEADING}>Resources</p>
     <button
       type="button"
       onclick={() => (resizeOpen = true)}
@@ -621,7 +633,7 @@
     -->
     <!-- Weighted like a heading: in a long template it is the landmark
          somebody scrolls for, and at body weight it read as one more row. -->
-    <p class="mt-3 mb-1 text-body-medium font-semibold text-on-surface">
+    <p class={SUBHEADING}>
       Environment variables ({env.length})
     </p>
 

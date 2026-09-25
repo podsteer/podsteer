@@ -35,3 +35,37 @@ describe('a template container\'s environment', () => {
     expect(container.querySelectorAll('[data-row-suffix]')).toHaveLength(0)
   })
 })
+
+describe('a container\'s image', () => {
+  const renderImage = (image: string) =>
+    render(ContainerDetail, {
+      props: { spec: { name: 'app', image }, context: 'template', clusterId: '', namespace: 'shop' },
+    })
+
+  it('carries a warning icon on :latest', () => {
+    const { container } = renderImage('shop/web:latest')
+    expect(container.querySelector('[data-row-warning]')).not.toBeNull()
+  })
+
+  it('carries none on a version tag', () => {
+    const { container } = renderImage('shop/web:1.2.3')
+    expect(container.querySelector('[data-row-warning]')).toBeNull()
+  })
+})
+
+describe('the sub-headings inside a container', () => {
+  it('are all set bold, the container name included', () => {
+    const { container } = render(ContainerDetail, {
+      props: {
+        spec: { name: 'app', image: 'nginx:1.27', ports: [{ name: 'http', containerPort: 80 }], env: [{ name: 'A', value: '1' }] },
+        context: 'template',
+        clusterId: '',
+        namespace: 'shop',
+      },
+    })
+    const bold = [...container.querySelectorAll('.font-semibold')].map((node) => (node.textContent ?? '').trim())
+    expect(bold).toContain('app')
+    expect(bold).toContain('Ports')
+    expect(bold.some((text) => text.startsWith('Environment variables'))).toBe(true)
+  })
+})
