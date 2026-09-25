@@ -11,6 +11,8 @@
   import type { GitOpsManagement } from '$lib/gitops'
   import DetailSection from './DetailSection.svelte'
   import DetailList, { type DetailRow } from './DetailList.svelte'
+  import { describeCron } from '$lib/cronDescription'
+  import { lastUpdated, objectVersion } from '$lib/objectVersion'
   import ContainerDetail from './ContainerDetail.svelte'
   import UsageChart from './UsageChart.svelte'
   import MetricsBackendNote from './MetricsBackendNote.svelte'
@@ -221,7 +223,17 @@
   const cronRows = $derived.by<DetailRow[]>(() => {
     if (kind !== 'CronJob') return []
 
-    const rows: DetailRow[] = [{ label: 'Schedule', value: spec.schedule ?? '—' }]
+    // The expression as written, and what it means beside it — muted and
+    // outside the value, so Copy still takes the expression. Absent for a
+    // shape the describer will not vouch for, rather than a guess.
+    const described = describeCron(spec.schedule)
+    const rows: DetailRow[] = [
+      {
+        label: 'Schedule',
+        value: spec.schedule ?? '—',
+        suffix: described ? `(${described})` : undefined,
+      },
+    ]
     if (spec.timeZone) rows.push({ label: 'Time zone', value: spec.timeZone })
 
     // Said out loud and coloured, because a suspended CronJob looks identical
@@ -635,7 +647,25 @@
       })
     }
 
-    rows.push({ label: 'Created', value: formatAge(metadata.creationTimestamp) })
+    // Which build this is. The label an author set when there is one, the
+    // main container's image tag otherwise — and the row says which, on
+    // hover, because the two are different claims.
+    const version = objectVersion(metadata, isWorkload ? templateContainers : containers)
+    if (version) rows.push({ label: 'Version', value: version.version, info: version.source })
+
+    rows.push({
+      label: 'Created',
+      value: formatAge(metadata.creationTimestamp),
+      title: metadata.creationTimestamp,
+    })
+    const updated = lastUpdated(metadata.managedFields, metadata.creationTimestamp)
+    if (updated) {
+      rows.push({
+        label: 'Updated',
+        value: formatAge(updated),
+        info: `${updated} — the last change to its spec or metadata, from managedFields; status updates are not counted`,
+      })
+    }
     rows.push({ label: 'UID', value: metadata.uid ?? '—' })
     return rows
   })
@@ -698,12 +728,44 @@
     return rows
   })
 
-  const replicaRows = $derived<DetailRow[]>([
-    { label: 'Desired', value: String(status.replicas ?? replicas) },
-    { label: 'Ready', value: String(status.readyReplicas ?? 0) },
-    { label: 'Available', value: String(status.availableReplicas ?? 0) },
-    { label: 'Updated', value: String(status.updatedReplicas ?? 0) },
-  ])
+  /**
+   * Desired against what exists, in each controller's own vocabulary.
+   *
+   * A DAEMONSET HAS NO REPLICAS. It runs one pod per eligible node and
+   * reports `desiredNumberScheduled`, `numberReady`, `numberAvailable` and
+   * `updatedNumberScheduled` — reading the Deployment fields off it printed
+   * zero across the board for a DaemonSet running on eighteen nodes.
+   *
+   * And DESIRED IS THE SPEC. `status.replicas` is how many pods exist, which
+   * runs above the target during every rolling update; showing it as
+   * "desired" made a surge look like a change of intent.
+   */
+  const replicaRows = $derived<DetailRow[]>(
+    kind === 'DaemonSet'
+      ? [
+          { label: 'Desired', value: String(status.desiredNumberScheduled ?? 0) },
+          { label: 'Current', value: String(status.currentNumberScheduled ?? 0) },
+          { label: 'Ready', value: String(status.numberReady ?? 0) },
+          { label: 'Available', value: String(status.numberAvailable ?? 0) },
+          { label: 'Updated', value: String(status.updatedNumberScheduled ?? 0) },
+          ...(status.numberMisscheduled
+            ? [
+                {
+                  label: 'Misscheduled',
+                  value: String(status.numberMisscheduled),
+                  tone: 'warn' as const,
+                },
+              ]
+            : []),
+        ]
+      : [
+          { label: 'Desired', value: String(spec.replicas ?? status.replicas ?? replicas) },
+          { label: 'Current', value: String(status.replicas ?? 0) },
+          { label: 'Ready', value: String(status.readyReplicas ?? 0) },
+          { label: 'Available', value: String(status.availableReplicas ?? 0) },
+          { label: 'Updated', value: String(status.updatedReplicas ?? 0) },
+        ],
+  )
 
   // The rolling-update numbers only exist for a rolling update; on a Recreate
   // strategy they are not zero, they are inapplicable, so the rows are absent
@@ -1502,7 +1564,9 @@
       recorded.
     -->
     {#if selectedWorkload && kind !== 'Job' && kind !== 'CronJob'}
-      <DetailSection level="h3" id="replicas" title="Replicas">
+      <!-- "Pods" for a DaemonSet, which has no replica count: one pod per
+           eligible node is the whole of its spec. -->
+      <DetailSection level="h3" id="replicas" title={kind === 'DaemonSet' ? 'Pods' : 'Replicas'}>
         <DetailList rows={replicaRows} />
       </DetailSection>
 

@@ -85,12 +85,12 @@
      */
     info?: string
     /**
-     * A muted word after the value that is not part of it — "(resolved)" on
-     * an environment variable the panel worked out rather than read.
+     * Muted words after the value that are not part of it — a CronJob's
+     * schedule said in English beside the expression.
      *
      * NOT concatenated into `value`, because the value is what Copy takes and
-     * what an edit starts from: `development (resolved)` pasted into a shell
-     * is a bug this field exists to avoid.
+     * what an edit starts from: `*\/5 * * * * (Every 5 minutes)` pasted into
+     * a manifest is a bug this field exists to avoid.
      */
     suffix?: string
     /**

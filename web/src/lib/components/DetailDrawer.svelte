@@ -302,26 +302,6 @@
    */
   let managedBy = $state<GitOpsManagement | null>(null)
 
-  /**
-   * The object's `app.kubernetes.io/version` label, shown beside its name.
-   *
-   * One of Kubernetes' recommended labels, so it means the same thing on
-   * every object that carries it — and it is the answer to "which build is
-   * this" that otherwise takes opening Labels. QUOTED, never inferred: not
-   * read off an image tag, which is a different claim and often a digest.
-   * A pod carries it when its template does, which is the ordinary case.
-   */
-  const appVersion = $derived.by(() => {
-    const text = session.manifest
-    if (!text) return ''
-    try {
-      const doc = parse(text) as { metadata?: { labels?: Record<string, unknown> } } | null
-      const version = doc?.metadata?.labels?.['app.kubernetes.io/version']
-      return typeof version === 'string' ? version.trim() : ''
-    } catch {
-      return ''
-    }
-  })
 
   /**
    * Resolves it, which for most objects is not a read at all.
@@ -1671,15 +1651,7 @@
           <span class="truncate text-title-medium font-semibold text-on-surface" data-selectable>
             {session.selectedName}
           </span>
-          <!-- shrink-0: a long name truncates, the version does not — it is
-               the half that differs between two objects of the same name. -->
-          {#if appVersion}
-            <span
-              class="shrink-0 text-title-medium text-on-surface-variant"
-              title="app.kubernetes.io/version"
-              data-selectable
-            >({appVersion})</span>
-          {/if}
+
 
           <!--
             Repeated from the list, because a forward moves between pods when

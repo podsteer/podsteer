@@ -538,9 +538,10 @@ export const HELP_TOPICS = {
         ],
       },
       {
-        heading: 'The version beside the name',
+        heading: 'Version and Updated',
         body: [
-          "The object's app.kubernetes.io/version label, one of Kubernetes' recommended labels, quoted as written. It is not read from an image tag, which is a different claim — nothing checks that the two agree.",
+          "Version is the object's app.kubernetes.io/version label — one of Kubernetes' recommended labels — quoted as written. Where there is no label it falls back to the image tag of the main container (the one named like the application, not a sidecar), and hovering the row says which it is. A digest or :latest is not a version and is not shown.",
+          'Kubernetes keeps no "last updated" time, so Updated is read from managedFields: the last time anything wrote to the object\'s spec or metadata — an apply, an edit, a scale, a sync. Status updates are left out, because a controller rewrites status constantly and counting them would make everything look changed a moment ago. An object never changed since it was created has no Updated row.',
         ],
       },
       {
@@ -550,10 +551,16 @@ export const HELP_TOPICS = {
         ],
       },
       {
-        heading: 'Values marked (resolved)',
+        heading: 'Environment values that are looked up',
         body: [
-          "An environment variable taken from the pod's own fields — its namespace, a label, an annotation, a container's own request or limit — is shown as the value it gives the container, marked (resolved) so it is not mistaken for text written in the manifest. Hover it to see the path it was read from.",
-          "On a template, only what the next pod will certainly carry resolves: its labels, annotations and namespace. Its name, node and IP addresses do not exist until it is scheduled, so they stay as the path. A value read out of a ConfigMap is marked the same way.",
+          "An environment variable taken from the pod's own fields — its namespace, a label, an annotation, a container's own request or limit — is shown as the value it gives the container, and so is one read out of a ConfigMap. Hover it to see where it came from.",
+          "On a template, only what the next pod will certainly carry is looked up: its labels, annotations and namespace. Its name, node and IP addresses do not exist until it is scheduled, so they stay as the path.",
+        ],
+      },
+      {
+        heading: 'A CronJob schedule in words',
+        body: [
+          'The schedule is shown as written, with its meaning beside it. When both the day-of-month and the day-of-week are set, cron runs on either, so it is said with "or". A form PodSteer cannot describe with confidence is left without a description rather than guessed at. Times are in the CronJob\'s time zone when it sets one, and in the cluster controller\'s otherwise.',
         ],
       },
       {

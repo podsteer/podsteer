@@ -380,12 +380,10 @@
       return {
         label: variable.name,
         value: resolved ?? downward ?? formatEnvValue(variable as never, pod ?? undefined, spec.name),
-        // MARKED, because it was worked out rather than written: `development`
-        // read off the template's annotations is not the same statement as
-        // `development` typed into the manifest, and the difference matters
-        // the moment somebody edits the annotation expecting nothing else to
-        // move. The path stays one hover away.
-        suffix: resolved !== undefined || downward !== null ? '(resolved)' : undefined,
+        // NOT marked "(resolved)" on the row. It was, briefly, and a ConfigMap
+        // or a Secret is routinely shared by many workloads, so the marker was
+        // on most rows of most panels — noise that stopped meaning anything.
+        // Where the value came from stays one hover away, below.
         // Said behind the info button once a value replaces the reference to
         // it, because a resolved value no longer names where it came from —
         // and following it still goes there.
@@ -621,7 +619,11 @@
       scroll past. See container.ts for why no value from a Secret is ever
       resolved here.
     -->
-    <p class="mt-3 mb-1 text-body-medium text-on-surface">Environment ({env.length})</p>
+    <!-- Weighted like a heading: in a long template it is the landmark
+         somebody scrolls for, and at body weight it read as one more row. -->
+    <p class="mt-3 mb-1 text-body-medium font-semibold text-on-surface">
+      Environment variables ({env.length})
+    </p>
 
     <!--
       The same list as every other section, on the same grid. It used to be a
