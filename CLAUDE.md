@@ -1440,7 +1440,16 @@ expects to fetch what it names. Roles and ClusterRoles themselves are ordinary
 catalogue entries under Access Control and stay exactly where they were; this
 entry is the interrogation, not the list.
 
-**The API server decides; PodSteer only flags.** Three of the four panes are
+**One page, two dialogs.** The page is the rules review — what this
+kubeconfig may do in the tab's namespace — at full width, the way a list is.
+The other two questions are TOOLS and live where every view keeps its tools,
+in `ClusterWorkspace`'s header row: Refresh, **Can I…** (`CanIDialog`, with the
+`kubectl auth can-i` equivalent from `kubectl.authCanI`) and **Who holds a
+role** (`RoleHoldersDialog`). The page owns its reads and its dialogs through
+bindable props; the toolbar only asks. Their explanations are the `can-i` and
+`role-holders` help topics, not paragraphs on the page.
+
+**The API server decides; PodSteer only flags.** Three of the four answers are
 quotations. `SelfSubjectRulesReview` answers "what may I do in this namespace"
 in ONE request — never one access check per verb per resource — and
 `SelfSubjectAccessReview`/`SubjectAccessReview` answer one question each, with

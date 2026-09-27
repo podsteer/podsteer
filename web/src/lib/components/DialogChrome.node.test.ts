@@ -82,6 +82,8 @@ describe('the controls a dialog offers', () => {
       'CompareDialog.svelte',
       'OrganiseDialog.svelte',
       'SettingsDialog.svelte',
+      'CanIDialog.svelte',
+      'RoleHoldersDialog.svelte',
     ]
     const byName = new Map(sources(HERE).map(({ name, text }) => [name, text]))
     const silent = shouldExplain.filter((name) => {

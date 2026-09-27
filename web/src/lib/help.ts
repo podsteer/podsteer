@@ -822,6 +822,56 @@ export const HELP_TOPICS = {
       },
     ],
   },
+  'can-i': {
+    title: 'Can I…',
+    lede: 'One access review, answered by the API server: may this account — or another — do one thing.',
+    sections: [
+      {
+        heading: 'Whose answer it is',
+        body: [
+          "The API server's. PodSteer sends one access review and shows its verdict and its reason as they arrived; it never works out an answer from the rules itself. RBAC is only one of the authorizers a cluster may run, so a verdict computed from rules alone can be wrong.",
+          'Allowed and denied are not opposites. An authorizer with no opinion says neither, and that is shown as no decision rather than as a denial.',
+        ],
+      },
+      {
+        heading: 'Asking about somebody else',
+        body: [
+          'Leave the subject as This account to ask about your own credentials. Naming a user, group or service account sends a SubjectAccessReview, which most accounts may not create — being told so is an ordinary answer about the cluster, not a fault.',
+        ],
+      },
+      {
+        heading: 'Scope',
+        body: [
+          'An empty namespace asks at cluster scope: whether the action is allowed everywhere, not in the namespace your context happens to default to.',
+        ],
+      },
+    ],
+  },
+
+  'role-holders': {
+    title: 'Who holds a role',
+    lede: 'The reverse lookup: which bindings reference a Role or ClusterRole, who they grant it to, and what its rules reach.',
+    sections: [
+      {
+        heading: 'What it reads',
+        body: [
+          'The role itself, every RoleBinding and every ClusterRoleBinding in the cluster — three requests, made when you press Inspect and never on a refresh. A ClusterRole can be granted by a RoleBinding in any namespace, so narrowing the search to one namespace would report a widely granted role as held by nobody.',
+        ],
+      },
+      {
+        heading: 'The flags',
+        body: [
+          "The one verdict on this page. Wildcard verbs, resources or API groups; escalate, bind and impersonate; reading every Secret; creating pods; and bindings to cluster-admin are flagged, each saying what it permits. A role with none of them raises nothing, and says so.",
+        ],
+      },
+      {
+        heading: 'When part of it is refused',
+        body: [
+          'Reading the role and listing the bindings are separate permissions, so each half says on its own when it was refused rather than blanking the other.',
+        ],
+      },
+    ],
+  },
 } satisfies Record<string, HelpTopic>
 
 /** The ids that exist. A dialog naming anything else does not compile. */

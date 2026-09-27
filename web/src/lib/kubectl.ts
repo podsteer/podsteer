@@ -827,3 +827,47 @@ export function helmUpgrade(ctx: string, release: string, ns: string, chart: str
 export function helmHistory(ctx: string, release: string, ns: string): string {
   return ['helm', 'history', release, '-n', ns, '--kube-context', shellQuote(ctx)].join(' ')
 }
+
+/** One access question, as the Can I dialog asks it. */
+export interface CanIQuestion {
+  /** '' for the account behind this kubeconfig; else User, Group or ServiceAccount. */
+  subjectKind: string
+  subjectName: string
+  subjectNamespace: string
+  verb: string
+  group: string
+  resource: string
+  subresource: string
+  /** '' asks at cluster scope. */
+  namespace: string
+  name: string
+}
+
+/**
+ * `kubectl auth can-i` for the same question the dialog sent as an access
+ * review.
+ *
+ * Every field was TYPED by the operator, so every one goes through
+ * `shellQuote` — a resource of `*` is a glob to a shell. A cluster-scoped
+ * question is `--all-namespaces`, which is how kubectl sends an empty
+ * namespace; leaving the flag off would ask about the context's own
+ * namespace instead.
+ *
+ * EMPTY FOR A GROUP SUBJECT. kubectl impersonates a group only alongside a
+ * user (`--as-group` needs `--as`), so no command asks exactly what the
+ * dialog asked, and one that asks something else is worse than none.
+ */
+export function authCanI(ctx: string, q: CanIQuestion): string {
+  if (q.subjectKind === 'Group') return ''
+  let target = q.group ? `${q.resource}.${q.group}` : q.resource
+  if (q.name) target += `/${q.name}`
+  const parts = [...base(ctx), 'auth', 'can-i', shellQuote(q.verb), shellQuote(target)]
+  if (q.subresource) parts.push('--subresource', shellQuote(q.subresource))
+  if (q.namespace) parts.push('-n', shellQuote(q.namespace))
+  else parts.push('--all-namespaces')
+  if (q.subjectKind === 'User') parts.push('--as', shellQuote(q.subjectName))
+  if (q.subjectKind === 'ServiceAccount') {
+    parts.push('--as', shellQuote(`system:serviceaccount:${q.subjectNamespace}:${q.subjectName}`))
+  }
+  return parts.join(' ')
+}
