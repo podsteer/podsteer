@@ -44,6 +44,8 @@
   import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import { untrack } from 'svelte'
+  import StatusIndicator from '$lib/components/StatusIndicator.svelte'
+  import { CircleDot, KeyRound, Route } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -145,7 +147,34 @@
     })),
   ])
 
+  /**
+   * How much a row reaches, for its mark — red, amber or blue like every
+   * list. A PRESENTATION of what the rule says, not a verdict on the account:
+   * the API server's enumeration is quoted as it arrived, and the role
+   * dialog's flags (from the Go domain) remain the one assessment here.
+   *
+   *   critical — every verb on every resource (or every path).
+   *   warning  — a wildcard verb or resource, escalate/bind/impersonate, or
+   *              reading Secrets.
+   *   normal   — anything narrower.
+   */
+  function reach(row: PermissionRow): 'critical' | 'warning' | 'normal' {
+    const everyVerb = row.verbs.includes('*')
+    const everyTarget = row.target === '*'
+    if (everyVerb && everyTarget) return 'critical'
+    if (everyVerb || everyTarget) return 'warning'
+    if (row.verbs.some((verb) => ['escalate', 'bind', 'impersonate'].includes(verb))) return 'warning'
+    if (row.target === 'secrets' && row.verbs.some((verb) => ['get', 'list', 'watch'].includes(verb))) {
+      return 'warning'
+    }
+    return 'normal'
+  }
+
+  const TONES = { critical: 'error', warning: 'warning', normal: 'success' } as const
+  const REACH_RANK = { critical: 0, warning: 1, normal: 2 } as const
+
   const COLUMNS: Column[] = [
+    { id: 'mark', label: 'Reach', width: 44, icon: CircleDot },
     { id: 'type', label: 'Type', width: 120 },
     { id: 'target', label: 'Resource or path', width: 300, pinned: true },
     { id: 'group', label: 'API group', width: 240 },
@@ -154,6 +183,7 @@
   ]
 
   const SORT: SortAccessors<PermissionRow> = {
+    mark: (row) => REACH_RANK[reach(row)],
     type: (row) => row.type,
     target: (row) => row.target,
     group: (row) => row.group,
@@ -192,6 +222,8 @@
     const visible = COLUMNS.filter((column) => !isControlColumn(column) && isColumnVisible(column))
     const cell = (row: PermissionRow, id: string): string => {
       switch (id) {
+        case 'mark':
+          return reach(row)
         case 'type':
           return row.type
         case 'target':
@@ -250,37 +282,32 @@
 
   {#snippet rows(isVisible)}
     {#each pagedRows as row (row.key)}
+      {@const level = reach(row)}
       <tr class="border-t border-outline-variant/40 bg-surface transition-colors duration-100 hover:bg-surface-container-low">
-        {#if isVisible('type')}
-          <td class="truncate py-1.5 pr-3 pl-6 text-on-surface-variant">{row.type}</td>
+        {#if isVisible('mark')}
+          <td class="overflow-hidden py-1.5 pr-3 pl-6">
+            <StatusIndicator
+              tone={TONES[level]}
+              label={level === 'critical' ? 'Every verb on everything' : level === 'warning' ? 'Wide reach' : 'Narrow'}
+              icon={row.type === 'Resource' ? KeyRound : Route}
+            />
+          </td>
         {/if}
-        <td class="truncate px-3 py-1.5 font-mono text-body-small text-on-surface" title={row.target} data-selectable>
+        {#if isVisible('type')}
+          <td class="truncate px-3 py-1.5 text-on-surface-variant">{row.type}</td>
+        {/if}
+        <td class="truncate px-3 py-1.5 font-medium text-on-surface" title={row.target} data-selectable>
           {row.target}
         </td>
         {#if isVisible('group')}
-          <td class="truncate px-3 py-1.5 font-mono text-body-small text-on-surface-variant" title={row.group}>
-            {row.group || '—'}
-          </td>
+          <td class="truncate px-3 py-1.5 text-on-surface-variant" title={row.group}>{row.group || '—'}</td>
         {/if}
         {#if isVisible('only')}
-          <td class="truncate px-3 py-1.5 font-mono text-body-small text-on-surface-variant" title={row.only}>
-            {row.only || '—'}
-          </td>
+          <td class="truncate px-3 py-1.5 text-on-surface-variant" title={row.only}>{row.only || '—'}</td>
         {/if}
         {#if isVisible('verbs')}
-          <td class="px-3 py-1.5">
-            <span class="flex flex-wrap items-center gap-1">
-              {#each row.verbs as verb (verb)}
-                <span
-                  class="rounded-full px-2 py-0.5 font-mono text-label-small
-                         {verb === '*'
-                    ? 'bg-warning-container text-on-warning-container'
-                    : 'bg-surface-container-highest text-on-surface-variant'}"
-                >
-                  {verb}
-                </span>
-              {/each}
-            </span>
+          <td class="truncate px-3 py-1.5 text-on-surface-variant" title={row.verbs.join(', ')}>
+            {row.verbs.join(', ')}
           </td>
         {/if}
       </tr>

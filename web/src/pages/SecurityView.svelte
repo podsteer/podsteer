@@ -148,10 +148,12 @@
 
   const SEVERITY_RANK: Record<string, number> = { critical: 0, warning: 1, info: 2 }
 
-  function toneOf(severity: string): 'error' | 'warning' | 'neutral' {
+  /** The finding's own severity, in the colours every list uses: red
+      critical, amber warning, blue for a note. */
+  function toneOf(severity: string): 'error' | 'warning' | 'success' {
     if (severity === 'critical') return 'error'
     if (severity === 'warning') return 'warning'
-    return 'neutral'
+    return 'success'
   }
 
   // --- Vulnerabilities -------------------------------------------------------
@@ -218,10 +220,12 @@
   ]
 
   /** Red with a critical, amber with only highs, grey otherwise. */
-  function imageTone(row: ImageRow): 'error' | 'warning' | 'neutral' {
+  /** Red with a critical, amber with only highs, blue (normal) otherwise —
+      the colours every list uses. */
+  function imageTone(row: ImageRow): 'error' | 'warning' | 'success' {
     if (row.critical > 0) return 'error'
     if (row.high > 0) return 'warning'
-    return 'neutral'
+    return 'success'
   }
 
   const IMAGE_SORT: SortAccessors<ImageRow> = {
