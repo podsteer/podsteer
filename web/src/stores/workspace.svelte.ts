@@ -230,6 +230,32 @@ class Workspace {
   }
 
   /**
+   * Reconnects an open tab whose connection the backend no longer holds.
+   *
+   * The tab and everything on it stay; only the backend's side is made again,
+   * the same way `open` makes it — including re-asserting the read-only
+   * guard, which starts empty on every connect. Offered by the tab's banner
+   * when a read answers "no longer connected", so the way back is a button,
+   * never a restart.
+   */
+  reconnect = async (clusterId: string): Promise<void> => {
+    const session = this.sessions.find((entry) => entry.cluster.id === clusterId)
+    if (!session || this.isConnecting(clusterId)) return
+
+    this.connecting = [...this.connecting, clusterId]
+    try {
+      await connect(clusterId)
+      void this.syncReadOnly(clusterId)
+      session.error = null
+      await session.refresh()
+    } catch (cause) {
+      session.error = toApiError(cause)
+    } finally {
+      this.connecting = this.connecting.filter((id) => id !== clusterId)
+    }
+  }
+
+  /**
    * Stops a connect attempt that has not answered yet.
    *
    * The rejection lands in `open`'s catch a moment later; the flag set here is

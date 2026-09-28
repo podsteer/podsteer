@@ -9,7 +9,7 @@
 <script lang="ts">
   import { appInfo, openWebsite } from '$stores/system.svelte'
   import { workspace } from '$stores/workspace.svelte'
-  import { organisation } from '$stores/organisation.svelte'
+  import { environmentName, organisation } from '$stores/organisation.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import { shortcutSheet } from '$stores/shortcutSheet.svelte'
   import { forwards } from '$stores/forwards.svelte'
@@ -134,7 +134,7 @@
             ? 'text-error'
             : 'opacity-70'}"
         >
-          {groupSettings.environment}
+          {environmentName(groupSettings)}
         </span>
       {/if}
 

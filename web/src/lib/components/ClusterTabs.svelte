@@ -43,7 +43,7 @@
   import { shortcut } from '$stores/shortcuts.svelte'
   import { workspace } from '$stores/workspace.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
-  import { organisation } from '$stores/organisation.svelte'
+  import { environmentBadge, environmentName, organisation } from '$stores/organisation.svelte'
   import { groupBgClass } from '$lib/groupColour'
   import { preferences, THEME_LABELS } from '$stores/preferences.svelte'
   import { windowState } from '$stores/windowState.svelte'
@@ -177,14 +177,14 @@
           onclick={() => workspace.focus(session.cluster.id)}
           title="{session.cluster.id} — {session.cluster.host} — {healthWord(
             session,
-          )}{settings.environment ? ` — ${settings.environment}` : ''}{settings.readOnly
+          )}{settings.environment ? ` — ${environmentName(settings)}` : ''}{settings.readOnly
             ? workspace.readOnlyEnforced(session.cluster.id)
               ? ' — read-only'
               : ' — read-only, but PodSteer could not tell the backend: write controls are still disabled here, the second guard is not in force'
             : ''}"
           aria-label="{session.cluster.id}, {healthWord(session)}{group
             ? `, ${group}`
-            : ''}{settings.environment ? `, ${settings.environment}` : ''}{settings.readOnly
+            : ''}{settings.environment ? `, ${environmentName(settings)}` : ''}{settings.readOnly
             ? workspace.readOnlyEnforced(session.cluster.id)
               ? ', read-only'
               : ', read-only but not enforced by the backend'
@@ -224,17 +224,20 @@
             ></span>
           {/if}
           <span class="truncate">{session.cluster.id}</span>
-          <!-- Only production gets a chip here — every other environment is
-               colour alone, which is what keeps a tab that has to fit eight
-               of them on a laptop screen from growing a label per cluster.
-               Production earns the exception: it is the one guardrail an
-               operator must be able to read without opening the picker. -->
-          {#if settings.environment === 'production'}
+          <!-- The environment's mark: PRD, STG, QA, DEV or a custom one of up
+               to three letters, so eight tabs still fit a laptop screen.
+               Production keeps the alarm colour — it is the one guardrail an
+               operator must be able to read without opening the picker — and
+               the rest are quiet. "Other" has no mark. -->
+          {#if environmentBadge(settings)}
             <span
-              class="shrink-0 rounded-full bg-error/15 px-1 py-px text-label-small font-semibold
-                     tracking-wide text-error uppercase"
+              class="shrink-0 rounded-full px-1 py-px text-label-small font-semibold tracking-wide
+                     {settings.environment === 'production'
+                ? 'bg-error/15 text-error'
+                : 'bg-surface-container-highest text-on-surface-variant'}"
+              aria-hidden="true"
             >
-              prod
+              {environmentBadge(settings)}
             </span>
           {/if}
           <!--

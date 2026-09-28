@@ -478,6 +478,12 @@ export const HELP_TOPICS = {
         ],
       },
       {
+        heading: 'Environments',
+        body: [
+          'A group can say which environment it is — production, staging, QA, development, other, or a custom one you name, such as Sandbox. Its tabs carry a short mark: PRD, STG, QA, DEV, or up to three letters of your own for a custom environment, shown in capitals. Other has no mark.',
+        ],
+      },
+      {
         heading: 'Marked production',
         body: [
           'Marking a group production turns on the gates: a banner on every destructive dialog, and a type-the-name confirmation before a delete or a scale to zero.',

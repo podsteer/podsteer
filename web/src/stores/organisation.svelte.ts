@@ -47,16 +47,72 @@ export interface Project {
  * marking, and one that behaved like development would fail to guard the
  * cluster it was protecting.
  */
-export type Environment = 'production' | 'staging' | 'development' | 'other' | ''
+export type Environment =
+  | 'production'
+  | 'staging'
+  | 'qa'
+  | 'development'
+  | 'other'
+  | 'custom'
+  | ''
 
 /** Every choice the environment select offers, in the order it offers them. */
 export const ENVIRONMENTS: Array<{ value: Environment; label: string }> = [
   { value: '', label: 'Not set' },
   { value: 'production', label: 'Production' },
   { value: 'staging', label: 'Staging' },
+  { value: 'qa', label: 'QA' },
   { value: 'development', label: 'Development' },
   { value: 'other', label: 'Other' },
+  { value: 'custom', label: 'Custom' },
 ]
+
+/**
+ * The tab's short mark for each named environment.
+ *
+ * Three letters at most, so eight tabs still fit a laptop screen. `other`
+ * has none on purpose — "OTH" says nothing a reader can use — and a custom
+ * environment carries its own (`customShort`).
+ */
+const ENVIRONMENT_SHORT: Partial<Record<Environment, string>> = {
+  production: 'PRD',
+  staging: 'STG',
+  qa: 'QA',
+  development: 'DEV',
+}
+
+/** The longest a custom environment's tab mark may be. */
+export const CUSTOM_SHORT_MAX = 3
+
+/**
+ * A custom environment's tab mark, as it will be stored and shown: letters
+ * and digits only, upper case, at most three.
+ */
+export function sanitiseEnvironmentShort(input: string): string {
+  return input
+    .replace(/[^\p{L}\p{N}]/gu, '')
+    .toUpperCase()
+    .slice(0, CUSTOM_SHORT_MAX)
+}
+
+/**
+ * The mark a tab shows for a group's environment, or '' for none.
+ *
+ * A custom environment with no short form of its own falls back to the first
+ * letters of its name, so naming it "Sandbox" is enough to see SAN.
+ */
+export function environmentBadge(settings: GroupSettings): string {
+  if (settings.environment === 'custom') {
+    return sanitiseEnvironmentShort(settings.customShort || settings.customName)
+  }
+  return ENVIRONMENT_SHORT[settings.environment] ?? ''
+}
+
+/** The environment in words — "Sandbox" for a custom one — or '' when unset. */
+export function environmentName(settings: GroupSettings): string {
+  if (settings.environment === 'custom') return settings.customName.trim() || 'custom'
+  return settings.environment
+}
 
 /**
  * The fixed palette a group's colour is chosen from.
@@ -79,12 +135,22 @@ export type GroupColour = (typeof GROUP_COLOURS)[number]
  */
 export interface GroupSettings {
   environment: Environment
+  /** A custom environment's name ("Sandbox"); kept when switching away. */
+  customName: string
+  /** A custom environment's tab mark ("SBX"), sanitised; '' derives it. */
+  customShort: string
   colour: GroupColour | ''
   readOnly: boolean
 }
 
 /** What an unmarked group's settings are — every field at its "not set". */
-const NO_GROUP_SETTINGS: GroupSettings = { environment: '', colour: '', readOnly: false }
+const NO_GROUP_SETTINGS: GroupSettings = {
+  environment: '',
+  customName: '',
+  customShort: '',
+  colour: '',
+  readOnly: false,
+}
 
 /** One operator-created group, always inside exactly one project. */
 export interface Group extends GroupSettings {
@@ -306,7 +372,13 @@ class Organisation {
       (candidate) => candidate.id === groupId && candidate.projectId === projectId,
     )
     return group
-      ? { environment: group.environment, colour: group.colour, readOnly: group.readOnly }
+      ? {
+          environment: group.environment,
+          customName: group.customName,
+          customShort: group.customShort,
+          colour: group.colour,
+          readOnly: group.readOnly,
+        }
       : NO_GROUP_SETTINGS
   }
 
@@ -941,8 +1013,10 @@ function isEnvironment(value: unknown): value is Environment {
     value === '' ||
     value === 'production' ||
     value === 'staging' ||
+    value === 'qa' ||
     value === 'development' ||
-    value === 'other'
+    value === 'other' ||
+    value === 'custom'
   )
 }
 
@@ -962,6 +1036,8 @@ function isGroupColour(value: unknown): value is GroupColour | '' {
 function normaliseSettings(raw: Partial<GroupSettings> | undefined): GroupSettings {
   return {
     environment: isEnvironment(raw?.environment) ? raw.environment : '',
+    customName: typeof raw?.customName === 'string' ? raw.customName.trim().slice(0, 40) : '',
+    customShort: typeof raw?.customShort === 'string' ? sanitiseEnvironmentShort(raw.customShort) : '',
     colour: isGroupColour(raw?.colour) ? raw.colour : '',
     readOnly: raw?.readOnly === true,
   }
@@ -1215,7 +1291,7 @@ export function mergeExportedOrganisation(
 
 /** "production · red · read-only", or "not marked" when nothing is set. */
 function describeSettings(settings: GroupSettings): string {
-  const parts = [settings.environment, settings.colour, settings.readOnly ? 'read-only' : '']
+  const parts = [environmentName(settings), settings.colour, settings.readOnly ? 'read-only' : '']
   const marked = parts.filter((part) => part !== '')
   return marked.length > 0 ? marked.join(' · ') : 'not marked'
 }

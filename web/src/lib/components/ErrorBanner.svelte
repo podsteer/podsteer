@@ -13,12 +13,22 @@
     error: ApiError | null
     /** Invoked by the retry action. Omit to hide it entirely. */
     onretry?: () => void
+    /**
+     * Invoked by a Reconnect action, offered only when the backend says the
+     * cluster is no longer connected — a retry of the same read cannot help
+     * there, making the connection again can.
+     */
+    onreconnect?: () => void
+    /** Disables Reconnect while an attempt is under way. */
+    reconnecting?: boolean
     /** Invoked by the dismiss action. Omit to hide it. */
     ondismiss?: () => void
     class?: string
   }
 
-  let { error, onretry, ondismiss, class: className = '' }: Props = $props()
+  let { error, onretry, onreconnect, reconnecting = false, ondismiss, class: className = '' }: Props = $props()
+
+  const showReconnect = $derived(Boolean(onreconnect && error?.isNotConnected))
 
   const showRetry = $derived(Boolean(onretry && error?.isRetryable))
 
@@ -71,6 +81,16 @@
     </div>
 
     <div class="flex shrink-0 items-center gap-1">
+      {#if showReconnect}
+        <Button
+          variant="text"
+          class={isAlarm ? 'text-on-error-container' : ''}
+          loading={reconnecting}
+          onclick={onreconnect}
+        >
+          Reconnect
+        </Button>
+      {/if}
       {#if showRetry}
         <Button variant="text" class={isAlarm ? 'text-on-error-container' : ''} onclick={onretry}>Retry</Button>
       {/if}
