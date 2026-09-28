@@ -20,7 +20,7 @@
   },
   "description": "PodSteer frontend: Svelte 5 + Vite + Tailwind CSS with Material Design 3 tokens.",
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/svelte": "^5.4.2",
     "@types/node": "^26.4.1",
@@ -28,7 +28,7 @@
     "svelte-check": "^4.7.6",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
-    "vite": "^8.2.2",
+    "vite": "^8.3.1",
     "vitest": "^4.1.11"
   },
   "name": "podsteer-web",
