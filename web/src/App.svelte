@@ -152,6 +152,21 @@
       workspace.cycleTab(-1)
       return
     }
+    // Not while typing: ⌘⇧← and ⌘⇧→ select to the start or end of a line in
+    // every text field, and a search box that moved a tab instead would be
+    // taking a key the operator was using.
+    if (!isTypingTarget(event.target)) {
+      if (shortcut('move-tab-left').matches(event)) {
+        event.preventDefault()
+        workspace.moveActiveTab(-1)
+        return
+      }
+      if (shortcut('move-tab-right').matches(event)) {
+        event.preventDefault()
+        workspace.moveActiveTab(1)
+        return
+      }
+    }
     if (shortcut('switch-tab').matches(event)) {
       event.preventDefault()
       const target = workspace.sessions[Number(event.key) - 1]

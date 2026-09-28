@@ -145,6 +145,8 @@ function keyLabel(key: string): string {
     end: 'End',
     pageup: 'PgUp',
     pagedown: 'PgDn',
+    arrowleft: '←',
+    arrowright: '→',
   }
   if (NAMED[key]) return NAMED[key]
   if (isFunctionKey(key)) return key.toUpperCase()

@@ -117,6 +117,55 @@
    * which point `pl-3` takes over — the same inset the navigator's own
    * content uses, so "PodSteer" lines up with the sidebar text under it.
    */
+  // --- Reordering tabs by dragging ------------------------------------------
+  //
+  // HTML drag and drop, like an editor's tabs: pick one up, and a line shows
+  // which side of which tab it will land on. The keyboard's equivalent is
+  // ⌘⇧← / ⌘⇧→ (App.svelte), which moves the tab in front.
+
+  /** The tab being dragged, or null. */
+  let dragging = $state<string | null>(null)
+  /** Where it would land: beside which tab, and on which side. */
+  let dropAt = $state<{ id: string; after: boolean } | null>(null)
+
+  const DRAG_TYPE = 'application/x-podsteer-tab'
+
+  function onDragStart(event: DragEvent, id: string): void {
+    dragging = id
+    event.dataTransfer?.setData(DRAG_TYPE, id)
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+  }
+
+  function onDragOver(event: DragEvent, id: string): void {
+    if (!dragging) return
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    const after = event.clientX > box.left + box.width / 2
+    // Beside itself is nowhere, so it draws nothing.
+    dropAt = id === dragging ? null : { id, after }
+  }
+
+  function onDrop(event: DragEvent): void {
+    event.preventDefault()
+    const id = dragging
+    const target = dropAt
+    endDrag()
+    if (!id || !target) return
+    const from = workspace.sessions.findIndex((session) => session.cluster.id === id)
+    const at = workspace.sessions.findIndex((session) => session.cluster.id === target.id)
+    if (from < 0 || at < 0) return
+    // An insertion point, then corrected for the tab leaving its old place.
+    let to = target.after ? at + 1 : at
+    if (from < to) to -= 1
+    workspace.moveTab(id, to)
+  }
+
+  function endDrag(): void {
+    dragging = null
+    dropAt = null
+  }
+
   const leadingPadding = $derived(isMac && !windowState.isFullscreen ? 'pl-[100px]' : 'pl-3')
 </script>
 
@@ -164,7 +213,24 @@
       {@const settings = organisation.settingsFor(placement.project, placement.group)}
       {@const group = organisation.groupNameOf(session.cluster.id)}
 
-      <div class="group relative flex items-center" role="presentation">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="group relative flex items-center {dragging === session.cluster.id ? 'opacity-50' : ''}"
+        role="presentation"
+        draggable="true"
+        ondragstart={(event) => onDragStart(event, session.cluster.id)}
+        ondragover={(event) => onDragOver(event, session.cluster.id)}
+        ondrop={onDrop}
+        ondragend={endDrag}
+      >
+        {#if dropAt?.id === session.cluster.id}
+          <!-- Where the dragged tab will land. -->
+          <span
+            class="pointer-events-none absolute inset-y-1.5 z-10 w-0.5 rounded-full bg-primary
+                   {dropAt.after ? '-right-px' : '-left-px'}"
+            aria-hidden="true"
+          ></span>
+        {/if}
         <!-- THE GROUP IS IN THE ACCESSIBLE NAME BECAUSE ITS DOT IS NOT
              READABLE. The coloured dot below stands for the group, is
              aria-hidden, and had no textual equivalent anywhere on the tab

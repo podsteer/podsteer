@@ -445,6 +445,33 @@ class Workspace {
     else void this.focus(target)
   }
 
+  /**
+   * Moves a tab to a new position, as dragging it does.
+   *
+   * `toIndex` is where it ends up among the tabs, clamped to the strip. The
+   * order is this window's arrangement and nothing else: sessions are keyed
+   * by cluster id everywhere, so moving one changes what ⌘1–9 and the
+   * next/previous shortcuts reach, and nothing about the tab itself.
+   */
+  moveTab = (clusterId: string, toIndex: number): void => {
+    const from = this.sessions.findIndex((session) => session.cluster.id === clusterId)
+    if (from < 0) return
+    const to = Math.max(0, Math.min(toIndex, this.sessions.length - 1))
+    if (to === from) return
+    const next = [...this.sessions]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    this.sessions = next
+  }
+
+  /** Moves the tab in front one place left or right — the keyboard's drag. */
+  moveActiveTab = (delta: -1 | 1): void => {
+    if (!this.activeClusterId) return
+    const at = this.sessions.findIndex((session) => session.cluster.id === this.activeClusterId)
+    if (at < 0) return
+    this.moveTab(this.activeClusterId, at + delta)
+  }
+
   /** Releases every tab's timer and the event subscription. */
   dispose = (): void => {
     for (const session of this.sessions) session.dispose()
