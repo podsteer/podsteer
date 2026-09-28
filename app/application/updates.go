@@ -133,6 +133,31 @@ func (s *UpdateService) Check(ctx context.Context, force bool) domain.UpdateChec
 	return s.remember(result)
 }
 
+// Recall re-reads a release this machine learned about on an earlier run,
+// against the build that is running NOW, without asking anybody.
+//
+// WHY IT EXISTS: the interface asks at most once a day and remembers when it
+// last did, across restarts — but the answer lived only in this process. So a
+// relaunch inside the day skipped the check (correctly) and then had nothing
+// to show, and an update found yesterday vanished until tomorrow's check. For
+// somebody who quits PodSteer every evening that was every other day.
+//
+// It compares here rather than trusting what was stored, because the build
+// may have changed in between: yesterday's "v0.3.1 is available" is today's
+// "current" for somebody who has since upgraded. No request is made, the
+// environment switch still wins, and nothing is cached — the next real check
+// happens on the interface's own schedule.
+func (s *UpdateService) Recall(latest, url string) domain.UpdateCheck {
+	if !s.Enabled() {
+		return domain.UpdateCheck{State: domain.UpdateDisabled, Installed: s.installed}
+	}
+	result := domain.CompareVersions(s.installed, latest)
+	if result.State == domain.UpdateAvailable || result.State == domain.UpdateCurrent {
+		result.URL = url
+	}
+	return result
+}
+
 // interval is how long the last result stands.
 func (s *UpdateService) interval() time.Duration {
 	if s.haveCheck && s.last.State == domain.UpdateUnknown {

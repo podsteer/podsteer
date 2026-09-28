@@ -822,6 +822,119 @@ export const HELP_TOPICS = {
       },
     ],
   },
+  'can-i': {
+    title: 'Can I…',
+    lede: 'One access review, answered by the API server: may this account — or another — do one thing.',
+    sections: [
+      {
+        heading: 'Whose answer it is',
+        body: [
+          "The API server's. PodSteer sends one access review and shows its verdict and its reason as they arrived; it never works out an answer from the rules itself. RBAC is only one of the authorizers a cluster may run, so a verdict computed from rules alone can be wrong.",
+          'Allowed and denied are not opposites. An authorizer with no opinion says neither, and that is shown as no decision rather than as a denial.',
+        ],
+      },
+      {
+        heading: 'Asking about somebody else',
+        body: [
+          'Leave the subject as This account to ask about your own credentials. Naming a user, group or service account sends a SubjectAccessReview, which most accounts may not create — being told so is an ordinary answer about the cluster, not a fault.',
+        ],
+      },
+      {
+        heading: 'Scope',
+        body: [
+          'An empty namespace asks at cluster scope: whether the action is allowed everywhere, not in the namespace your context happens to default to.',
+        ],
+      },
+    ],
+  },
+
+  'role-holders': {
+    title: 'Who holds a role',
+    lede: 'The reverse lookup: which bindings reference a Role or ClusterRole, who they grant it to, and what its rules reach.',
+    sections: [
+      {
+        heading: 'What it reads',
+        body: [
+          'The role itself, every RoleBinding and every ClusterRoleBinding in the cluster — three requests, made when you press Inspect and never on a refresh. A ClusterRole can be granted by a RoleBinding in any namespace, so narrowing the search to one namespace would report a widely granted role as held by nobody.',
+        ],
+      },
+      {
+        heading: 'The flags',
+        body: [
+          "The one verdict on this page. Wildcard verbs, resources or API groups; escalate, bind and impersonate; reading every Secret; creating pods; and bindings to cluster-admin are flagged, each saying what it permits. A role with none of them raises nothing, and says so.",
+        ],
+      },
+      {
+        heading: 'When part of it is refused',
+        body: [
+          'Reading the role and listing the bindings are separate permissions, so each half says on its own when it was refused rather than blanking the other.',
+        ],
+      },
+    ],
+  },
+  security: {
+    title: 'Security',
+    lede: 'Two tables with different warranties: the privileges workloads take, and the vulnerabilities a scanner already recorded.',
+    sections: [
+      {
+        heading: 'Posture',
+        body: [
+          "Read from the pod specs somebody wrote: privileged containers, shared host namespaces, privilege escalation, dangerous capabilities and UID 0. PodSteer owns these rules and they do not go stale. They are reported as notes rather than failures, because every real cluster runs a privileged network or storage agent. A snooze set on the overview is shown here.",
+        ],
+      },
+      {
+        heading: 'Vulnerabilities',
+        body: [
+          'Quoted from the scanner running in the cluster — PodSteer scans nothing and sends nothing anywhere. Counts are grouped by image, since one tag bump closes every workload running it, and Unknown is its own column: some scanners file genuine highs there.',
+        ],
+      },
+      {
+        heading: 'What this page does not cover',
+        body: [
+          'Who can do what — that is the Permissions page. Volumes such as a mounted docker.sock or a hostPath, because the rule would be right on some clusters and silently blank on others. Anything through time: scanner reports expire, so the cluster does not hold the history. And a compliance score, which a few rules over one optional scanner cannot honestly produce.',
+        ],
+      },
+    ],
+  },
+  'helm-release': {
+    title: 'Helm release',
+    lede: 'One release: its history from the labels Helm writes, and one revision\'s payload when you open a tab that shows it.',
+    sections: [
+      {
+        heading: 'What each tab costs',
+        body: [
+          'Overview and Commands read nothing: every revision arrived with the list, built from labels on the release Secrets.',
+          "Values, Manifest and Notes live inside one revision's release Secret — base64'd and gzip'd. Opening one of those tabs reads that single revision, and leaves a line in the cluster's audit log exactly as revealing a Secret's key does. Choose another revision from the tab's toolbar to read that one instead; only one is held at a time.",
+        ],
+      },
+      {
+        heading: 'Values and notes hide themselves',
+        body: [
+          "Values are where a chart puts a database password, and notes are rendered from the same values. Both are put away after thirty seconds and whenever the window loses focus — dropped, not covered — so showing them again reads the revision once more. The eye control hides them sooner.",
+          'An empty values pane means the revision was installed with no overrides: everything came from the chart\'s own defaults, which are not read.',
+        ],
+      },
+      {
+        heading: 'The manifest is masked',
+        body: [
+          "A chart that renders a Secret puts base64 into the manifest, and base64 is an encoding rather than a cipher, so every Secret's values are replaced with their size before the manifest leaves the backend. Every other document is exactly as Helm rendered it.",
+        ],
+      },
+      {
+        heading: 'Chart and app version',
+        body: [
+          'They are not labels — they exist only inside the payload — which is why the list cannot show them without reading every release\'s Secret. They appear on the Overview once a payload tab has been opened.',
+        ],
+      },
+      {
+        heading: 'Commands are shown, never run',
+        body: [
+          "PodSteer does not upgrade, roll back or uninstall. Each re-renders a chart, diffs it against what is live, applies the difference and prunes what the new manifest drops — Helm's own work, and doing it approximately deletes production objects. Copy the command and run it in your own shell.",
+          'Run helm get values first: Helm does not carry values forward, and an upgrade without them reverts every value you have set. REPO and VERSION are yours to fill in — a release records the chart\'s name, never where it came from — and the chart name stays a placeholder until a payload tab has been opened.',
+        ],
+      },
+    ],
+  },
 } satisfies Record<string, HelpTopic>
 
 /** The ids that exist. A dialog naming anything else does not compile. */

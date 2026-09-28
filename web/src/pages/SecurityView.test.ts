@@ -21,6 +21,7 @@ vi.mock('$stores/vulnerabilities.svelte', () => ({
 }))
 
 import SecurityView from './SecurityView.svelte'
+import { HELP_TOPICS } from '$lib/help'
 
 const words = () => (document.body.textContent ?? '').replace(/\s+/g, ' ')
 
@@ -31,8 +32,24 @@ function session(findings: unknown[] = []) {
     kinds: [],
     selectKind: () => {},
     openObject: async () => {},
+    // What a table-bearing page reads off the session: no search, no sort,
+    // the first page.
+    selectedKindId: 'podsteer/security',
+    securityTab: 'posture',
+    namespace: '',
+    query: { terms: [] },
+    search: '',
+    sort: null,
+    toggleSort: () => {},
+    pageStart: 0,
+    standaloneCount: 0,
   } as never
 }
+
+/** The scanner half is the Vulnerabilities table. */
+const scanner = () => ({
+  session: { ...(session() as object), selectedKindId: 'podsteer/vulnerabilities', securityTab: 'vulnerabilities' } as never,
+})
 
 function summary(overrides: Record<string, unknown> = {}) {
   return {
@@ -75,7 +92,7 @@ afterEach(() => cleanup())
 describe('SecurityView — the scanner half', () => {
   it('says no scanner is installed, rather than rendering nothing', () => {
     read.mockReturnValue({ complete: false, truncated: false, status: 'not-installed', read: 0, remaining: 0, cap: 0 })
-    render(SecurityView, { session: session() })
+    render(SecurityView, scanner())
 
     const text = words()
     expect(text).toContain('No vulnerability scanner is installed')
@@ -85,7 +102,7 @@ describe('SecurityView — the scanner half', () => {
 
   it('says the read was refused, rather than showing a clean cluster', () => {
     read.mockReturnValue({ complete: false, truncated: false, status: 'forbidden', read: 0, remaining: 0, cap: 0 })
-    render(SecurityView, { session: session() })
+    render(SecurityView, scanner())
 
     const text = words()
     expect(text).toContain('may not read its reports')
@@ -94,7 +111,7 @@ describe('SecurityView — the scanner half', () => {
 
   it('says a read that failed did not complete', () => {
     read.mockReturnValue({ complete: false, truncated: false, status: '', read: 0, remaining: 0, cap: 0 })
-    render(SecurityView, { session: session() })
+    render(SecurityView, scanner())
 
     expect(words()).toContain('did not complete')
   })
@@ -102,7 +119,7 @@ describe('SecurityView — the scanner half', () => {
   it('says how much of the picture a truncated read is', () => {
     read.mockReturnValue({ complete: false, truncated: true, status: 'truncated', read: 2000, remaining: 500, cap: 2000 })
     summaries.mockReturnValue([summary({ critical: 3 })])
-    render(SecurityView, { session: session() })
+    render(SecurityView, scanner())
 
     const text = words()
     expect(text).toContain('Stopped at 2,000 reports')
@@ -120,12 +137,13 @@ describe('SecurityView — the scanner half', () => {
       summary({ subject: 'Deployment/b', critical: 2, high: 5 }),
       summary({ subject: 'Deployment/c', critical: 2, high: 5 }),
     ])
-    const { container } = render(SecurityView, { session: session() })
+    const { container } = render(SecurityView, scanner())
 
     const rows = container.querySelectorAll('tbody tr')
     expect(rows).toHaveLength(1)
 
-    const cells = [...rows[0].querySelectorAll('td')].map((cell) => cell.textContent?.trim())
+    // The first cell is the severity mark; the image and its counts follow.
+    const cells = [...rows[0].querySelectorAll('td')].slice(1).map((cell) => cell.textContent?.trim())
     expect(cells[0]).toBe('library/nginx:1.27')
     expect(cells[1]).toBe('3')
     // Two criticals, not six: summing would report a number no scanner wrote.
@@ -139,9 +157,9 @@ describe('SecurityView — the scanner half', () => {
       summary({ subject: 'Deployment/quiet', images: ['acme/quiet:1'], low: 40 }),
       summary({ subject: 'Deployment/loud', images: ['acme/loud:1'], critical: 1 }),
     ])
-    const { container } = render(SecurityView, { session: session() })
+    const { container } = render(SecurityView, scanner())
 
-    const first = container.querySelector('tbody tr td')
+    const first = container.querySelector('tbody tr td:nth-child(2)')
     expect(first?.textContent?.trim()).toBe('acme/loud:1')
   })
 
@@ -151,7 +169,7 @@ describe('SecurityView — the scanner half', () => {
     // under-report on affected clusters.
     read.mockReturnValue({ complete: true, truncated: false, status: 'complete', read: 1, remaining: 0, cap: 0 })
     summaries.mockReturnValue([summary({ unknown: 7 })])
-    const { container } = render(SecurityView, { session: session() })
+    const { container } = render(SecurityView, scanner())
 
     const headers = [...container.querySelectorAll('thead th')].map((th) => th.textContent?.trim())
     expect(headers).toContain('Unknown')
@@ -178,23 +196,30 @@ describe('SecurityView — the posture half', () => {
   it('shows only security findings, not the rest of the assessment', () => {
     render(SecurityView, {
       session: session([
-        finding(),
-        finding({ id: 'sizing/no-limits', category: 'Configuration', title: 'Containers with no memory limit' }),
+        finding({ subjects: [{ kind: 'Pod', namespace: 'platform', name: 'net-debug', detail: '' }] }),
+        finding({
+          id: 'sizing/no-limits',
+          category: 'Configuration',
+          title: 'Containers with no memory limit',
+          subjects: [{ kind: 'Pod', namespace: 'shop', name: 'web', detail: '' }],
+        }),
       ]),
     })
 
     const text = words()
     expect(text).toContain('Privileged containers')
+    // One row per workload a finding names.
+    expect(text).toContain('net-debug')
     expect(text).not.toContain('no memory limit')
   })
 })
 
 describe('SecurityView — the name', () => {
   it('names what it does not cover, so the title is not a claim', () => {
-    read.mockReturnValue({ complete: true, truncated: false, status: 'complete', read: 0, remaining: 0, cap: 0 })
-    render(SecurityView, { session: session() })
-
-    const text = words()
+    // Under the toolbar's (?) as the `security` help topic, rather than a
+    // section below two tables nobody would scroll past them to read.
+    const topic = HELP_TOPICS.security
+    const text = [topic.lede, ...topic.sections.flatMap((section) => [section.heading, ...section.body])].join(' ')
     expect(text).toContain('What this page does not cover')
     // The four the positioning work settled on.
     expect(text).toContain('Volumes')
@@ -204,9 +229,13 @@ describe('SecurityView — the name', () => {
   })
 
   it('says plainly that PodSteer scans nothing', () => {
-    read.mockReturnValue({ complete: true, truncated: false, status: 'complete', read: 0, remaining: 0, cap: 0 })
-    render(SecurityView, { session: session() })
+    // Where it matters most — the empty state of a cluster with no scanner —
+    // and in the help topic that explains the page.
+    read.mockReturnValue({ complete: false, truncated: false, status: 'not-installed', read: 0, remaining: 0, cap: 0 })
+    render(SecurityView, scanner())
+    expect(words()).toContain('not because the images are clean')
 
-    expect(words()).toContain('PodSteer scans nothing')
+    const topic = HELP_TOPICS.security.sections.flatMap((section) => section.body).join(' ')
+    expect(topic).toContain('PodSteer scans nothing')
   })
 })

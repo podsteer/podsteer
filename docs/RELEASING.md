@@ -193,12 +193,17 @@ them: under Wails v2 a build did it as a side effect, and under v3 it does not.
 
 ## Code signing
 
-The published macOS and Windows artefacts are **unsigned**. macOS will refuse
-to open the app until it is cleared in System Settings → Privacy & Security,
-and Windows SmartScreen will warn.
+**macOS artefacts are signed and notarised in CI**: a Developer ID signature
+with the hardened runtime, submitted to Apple's notary service, and the ticket
+stapled into both the `.app` and the `.dmg` — Gatekeeper opens them without a
+prompt. The certificate and the notarisation credentials are repository
+secrets; see the "macOS signing and notarisation" step in `ci-cd.yaml`.
 
-Signing needs an Apple Developer ID certificate and a Windows code-signing
-certificate held as repository secrets, plus a notarisation step for macOS.
+**Windows artefacts are unsigned**, so SmartScreen warns on first launch. That
+is a cost decision not yet taken, not an oversight: signing needs a Windows
+code-signing certificate held as a repository secret. Linux artefacts are
+unsigned zips. Every release publishes SHA-256 checksums and a CycloneDX SBOM
+to verify against.
 
 HOW the artefacts get signed is documented where it happens: the signing steps
 in `.github/workflows/ci-cd.yaml` carry the reasoning behind every flag inline —

@@ -378,6 +378,21 @@ export const MULTI_KIND_ID = 'podsteer/multi-kind'
  */
 export const SECURITY_KIND_ID = 'podsteer/security'
 
+/**
+ * The Security page's second table, as an entry of its own in the navigator's
+ * SECURITY section beside Posture (SECURITY_KIND_ID) and Permissions. The
+ * same page and the same view mode: the id only decides which table it
+ * shows, which is why sorts and column preferences stay separate per table.
+ */
+export const VULNERABILITIES_KIND_ID = 'podsteer/vulnerabilities'
+
+/** The entries the navigator's SECURITY section holds. */
+export const SECURITY_SECTION_IDS: readonly string[] = [
+  'podsteer/security',
+  'podsteer/vulnerabilities',
+  'podsteer/rbac',
+]
+
 export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
 
 /** Kind ids PodSteer renders with purpose-built columns rather than generically. */
@@ -861,7 +876,7 @@ export class ClusterSession {
     if (id === TIMELINE_KIND_ID) return 'timeline'
     if (id === HELM_KIND_ID) return 'helm'
     if (id === MULTI_KIND_ID) return 'multi-kind'
-    if (id === SECURITY_KIND_ID) return 'security'
+    if (id === SECURITY_KIND_ID || id === VULNERABILITIES_KIND_ID) return 'security'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
     if (id === RICH_KIND_IDS.events) return 'events'
@@ -904,6 +919,34 @@ export class ClusterSession {
       this.viewMode !== 'helm' &&
       this.viewMode !== 'security',
   )
+
+  /**
+   * Whether the current view draws a TABLE — the search box, the pager and
+   * the column chooser belong in the toolbar — without being a LIST.
+   *
+   * Narrower than `isList` on purpose. The Permissions page lays its rules
+   * out in the same table every list uses, so an operator navigates it the
+   * same way, but everything else `isList` switches on stays off: there is no
+   * selection for the bulk bar to act on, nothing a saved view could restore,
+   * and — the load-bearing part — nothing here is fetched on the tick. The
+   * page filters, sorts and pages its OWN rows through `query`, `sort` and
+   * `pageStart`, and reports how many survived the filter in
+   * `standaloneCount` so the pager can count them.
+   */
+  /** Which of the Security page's tables the selected entry names. */
+  readonly securityTab = $derived<'posture' | 'vulnerabilities'>(
+    this.selectedKindId === VULNERABILITIES_KIND_ID ? 'vulnerabilities' : 'posture',
+  )
+
+  readonly hasTable = $derived(
+    this.isList || this.viewMode === 'rbac' || this.viewMode === 'helm' || this.viewMode === 'security',
+  )
+
+  /**
+   * How many rows a table-bearing view that is not a list is showing, after
+   * its own filter — reported by the view, because the rows are its own.
+   */
+  standaloneCount = $state(0)
 
   /**
    * The search term parsed into a filter language query — regex, negation and
@@ -1217,11 +1260,12 @@ export class ClusterSession {
   /** Total rows after filtering, before pagination. */
   readonly visibleCount = $derived.by(() => {
     switch (this.viewMode) {
-      case 'overview':
       case 'rbac':
-      case 'timeline':
       case 'helm':
       case 'security':
+        return this.standaloneCount
+      case 'overview':
+      case 'timeline':
         return 0
       case 'pods':
         return this.visiblePods.length
@@ -2041,6 +2085,22 @@ export class ClusterSession {
       return
     }
     this.#recordFailure(error)
+  }
+
+  /**
+   * How many times somebody ASKED for a refresh — the toolbar button or its
+   * shortcut — as opposed to the timer. A view that deliberately fetches
+   * nothing on the tick (the Permissions page: an allow re-read every ten
+   * seconds would be an audit-log line every ten seconds) still owes an
+   * answer to a person pressing Refresh, and this is how it can tell the two
+   * apart.
+   */
+  manualRefreshes = $state(0)
+
+  /** A refresh a person asked for: counted, then the ordinary refresh. */
+  requestRefresh = async (): Promise<void> => {
+    this.manualRefreshes++
+    await this.refresh()
   }
 
   /** Reloads whichever view is active. */

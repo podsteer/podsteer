@@ -100,7 +100,7 @@ var (
 	// fails once the PTY negotiation begins, with a server error that names
 	// neither the pod nor the reason — so this is checked locally, before any
 	// request reaches the cluster, and says exactly what the container needs.
-	ErrContainerNotAttachable = errors.New("container has no tty; attach needs `tty: true` and `stdin: true` on the container")
+	ErrContainerNotAttachable = errors.New(`container has no tty; attach needs "tty: true" and "stdin: true" on the container`)
 
 	// ErrInvalidManifest reports that a manifest offered to UpdateResource
 	// could not be applied as written: it is not valid YAML/JSON for a

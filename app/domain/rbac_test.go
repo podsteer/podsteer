@@ -2,6 +2,7 @@ package domain_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/podsteer/podsteer/app/domain"
@@ -432,6 +433,11 @@ func TestAssessRoleGivesEveryFindingAdvice(t *testing.T) {
 	for _, finding := range findings {
 		if finding.Title == "" || finding.Detail == "" || finding.Advice == "" {
 			t.Errorf("finding %q must carry a title, a detail and advice", finding.ID)
+		}
+		// The frontend renders these fields as plain text, so a backtick
+		// meant as markdown code-span syntax shows up literally on screen.
+		if strings.ContainsRune(finding.Title, '`') || strings.ContainsRune(finding.Detail, '`') || strings.ContainsRune(finding.Advice, '`') {
+			t.Errorf("finding %q must not contain a backtick, the frontend renders it as plain text: %+v", finding.ID, finding)
 		}
 	}
 }

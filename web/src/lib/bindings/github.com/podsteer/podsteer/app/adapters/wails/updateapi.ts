@@ -32,6 +32,14 @@ export function CheckForUpdate(force: boolean): $CancellablePromise<$models.Upda
 }
 
 /**
+ * RecallUpdate re-reads a release remembered from an earlier run against
+ * the running build. It makes no request. See UpdateService.Recall.
+ */
+export function RecallUpdate(latest: string, url: string): $CancellablePromise<$models.UpdateStatus> {
+    return $Call.ByID(1493127026, latest, url);
+}
+
+/**
  * UpdateChecksPermitted reports whether this machine allows checking at all.
  * 
  * So the Settings toggle can show itself as overridden rather than pretending

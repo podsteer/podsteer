@@ -1440,7 +1440,35 @@ expects to fetch what it names. Roles and ClusterRoles themselves are ordinary
 catalogue entries under Access Control and stay exactly where they were; this
 entry is the interrogation, not the list.
 
-**The API server decides; PodSteer only flags.** Three of the four panes are
+**Permissions, Helm and Security draw the same DataTable every list does**,
+so an operator moves through them as through Pods — search, pager, column
+chooser, sorting, CSV export. They are TABLES but not LISTS:
+`session.hasTable` turns the toolbar's table controls on without `isList`'s
+selection, saved views or tick fetch, and each page filters, sorts and pages
+its own rows through the session's `query`, `sort` and `pageStart`, reporting
+the filtered count as `standaloneCount`. Their "refresh" is
+`session.manualRefreshes` — a person pressing the app's Refresh — never the
+tick.
+
+**The navigator's SECURITY section holds Posture, Vulnerabilities and
+Permissions**, drawn exactly like a catalogue category but built in
+`Navigator.svelte`, because none of the three is a kind anything can GET.
+Posture (`SECURITY_KIND_ID`) and Vulnerabilities (`VULNERABILITIES_KIND_ID`)
+are one page and one view mode; the id decides the table
+(`session.securityTab`), so sorts and column preferences stay separate. The
+section opens itself when the selection lands on one of its entries, keyed on
+the selection only, so folding it while there stays folded.
+
+**One page, two dialogs.** The page is the rules review — what this
+kubeconfig may do in the tab's namespace — at full width, the way a list is.
+The other two questions are TOOLS and live where every view keeps its tools,
+in `ClusterWorkspace`'s header row: Refresh, **Can I…** (`CanIDialog`, with the
+`kubectl auth can-i` equivalent from `kubectl.authCanI`) and **Who holds a
+role** (`RoleHoldersDialog`). The page owns its reads and its dialogs through
+bindable props; the toolbar only asks. Their explanations are the `can-i` and
+`role-holders` help topics, not paragraphs on the page.
+
+**The API server decides; PodSteer only flags.** Three of the four answers are
 quotations. `SelfSubjectRulesReview` answers "what may I do in this namespace"
 in ONE request — never one access check per verb per resource — and
 `SelfSubjectAccessReview`/`SubjectAccessReview` answer one question each, with
@@ -1604,8 +1632,13 @@ been, and points at the release pane, which is where they do appear.
 ### Reading one revision is the second act, and it is `RevealSecretKey`'s
 
 `HelmPort.ReadHelmRelease` / `HelmAPI.ReadRelease` decodes ONE revision of ONE
-release, from a click handler and from nowhere else — never on render, never
-when the drawer opens, never on the tick. It reads a Secret's contents, so it
+release, from an event handler and from nowhere else — never on render, never
+when the drawer opens, never on the tick. The drawer (DetailDrawer's shell,
+header and tablist, rebuilt in `HelmView.svelte`) opens on an **Overview built
+from labels**; choosing the Values, Manifest or Notes tab, a revision in that
+tab's toolbar, or the eye control IS the read — there is no Read button, and
+`selectTab`/`inspect`/`toggleRevealed` are the only callers of `readPayload`.
+The explanations live in the `helm-release` help topic, not on the panel. It reads a Secret's contents, so it
 inherits ADR 3's controls verbatim rather than a summary of them, and one
 audit line in `HelmService.ReadRelease` names cluster, namespace, release and
 revision and never a value. **All the Helm-format knowledge stays in the
@@ -2473,6 +2506,14 @@ never runs on the startup path, caches failures, and is off entirely under
 asserted in `app/application/updates_test.go` by counting calls to the source
 rather than by checking the returned state — the opt-out is precisely what has
 silently broken in k9s, Terraform, dotnet, JetBrains and Docker Desktop.
+
+**The once-a-day gate and the answer both survive a restart.** The interface
+persists `lastUpdateCheck` plus the release it found (`lastUpdateLatest`,
+`lastUpdateURL`, machine state, never exported); on start it hands that to
+`UpdateAPI.RecallUpdate`, which re-judges it against the running build with no
+request. Before this, a relaunch inside the day skipped the check and had
+nothing to show, so the badge appeared only every other day for anyone who
+quits PodSteer nightly. Switching the setting back on checks at once.
 
 If a future paid tier wants a client-side call, **it does not get to reuse this
 one.** That is the creep path this ADR exists to make visible.

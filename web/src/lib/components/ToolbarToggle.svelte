@@ -44,7 +44,7 @@
   aria-pressed={pressed}
   aria-label={label}
   title={title ?? label}
-  class="state-layer grid size-7 shrink-0 place-items-center rounded-sm
+  class="state-layer grid size-7 shrink-0 place-items-center rounded-full
          transition-colors duration-100
          {pressed
     ? 'bg-primary/14 text-primary'

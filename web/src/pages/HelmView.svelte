@@ -26,10 +26,10 @@
   presses Refresh, which bypasses the Go cache; a write PodSteer made drops
   that cache, so the next look is fresh without anything asking.
 
-  ONE THING ON THIS PAGE DOES READ A PAYLOAD, AND IT IS THE ONLY ONE. The
-  release pane's Read control fetches ONE revision of ONE release, on an
-  explicit click — never on render, never when the drawer opens, never on the
-  tick. That is `RevealSecretKey`'s shape rather than a gentler version of it,
+  ONE THING ON THIS PAGE DOES READ A PAYLOAD, AND IT IS THE ONLY ONE. Choosing
+  the release drawer's Values, Manifest or Notes tab fetches ONE revision of
+  ONE release — never on render, never when the drawer opens (it opens on an
+  Overview built from labels), never on the tick. That is `RevealSecretKey`'s shape rather than a gentler version of it,
   and it inherits the whole discipline: the values and the notes are
   re-hideable, expire after thirty seconds, and go on window blur, through the
   same holder a revealed Secret key uses ($stores/revealHolder). The rendered
@@ -51,12 +51,10 @@
   command somebody types is theirs.
 -->
 <script lang="ts">
-  import Button from '$lib/components/Button.svelte'
-  import Card from '$lib/components/Card.svelte'
+  import DataTable, { type Column } from '$lib/components/DataTable.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
   import KubectlHint from '$lib/components/KubectlHint.svelte'
-  import Radio from '$lib/components/Radio.svelte'
   import { toApiError, type ApiError } from '$lib/api/errors'
   import { ALL_NAMESPACES, listHelmReleases, type HelmListing, type HelmRelease } from '$lib/api/client'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
@@ -70,10 +68,40 @@
     showsEmptyCopy,
   } from '$lib/helm'
   import { helmGetValues, helmHistory, helmRollback, helmUninstall, helmUpgrade } from '$lib/kubectl'
-  import { modal } from '$lib/modal'
   import { helmPayloadKey, helmPayloads } from '$stores/helmPayloads.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
-  import { Eye, EyeOff, Package, X } from '@lucide/svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
+  import { preferences } from '$stores/preferences.svelte'
+  import { isControlColumn } from '$lib/fixedColumns'
+  import { matches } from '$lib/query'
+  import { sortRows, type SortAccessors } from '$lib/sort'
+  import { untrack, type Component } from 'svelte'
+  import {
+    CircleDot,
+    Copy,
+    Eye,
+    FileCode,
+    Info,
+    Maximize2,
+    NotebookText,
+    Package,
+    SlidersHorizontal,
+    SquareTerminal,
+    X,
+  } from '@lucide/svelte'
+  import DetailList, { type DetailRow } from '$lib/components/DetailList.svelte'
+  import DetailSection from '$lib/components/DetailSection.svelte'
+  import HelpButton from '$lib/components/HelpButton.svelte'
+  import PaneDialog from '$lib/components/PaneDialog.svelte'
+  import PaneToolbar from '$lib/components/PaneToolbar.svelte'
+  import Select from '$lib/components/Select.svelte'
+  import ToolbarButton from '$lib/components/ToolbarButton.svelte'
+  import ToolbarToggle from '$lib/components/ToolbarToggle.svelte'
+  import YamlPane from '$lib/components/YamlPane.svelte'
+  import { copyText } from '$lib/clipboard'
+  import { DETAIL_MAX_REM, DETAIL_MAX_SHARE, DETAIL_MIN_REM } from '$stores/preferences.svelte'
+  import StatusIndicator from '$lib/components/StatusIndicator.svelte'
+  import type { Tone } from '$lib/format'
 
   interface Props {
     session: ClusterSession
@@ -133,6 +161,18 @@
     void load(session.cluster.id, session.namespace, false)
   })
 
+  /**
+   * The application's Refresh re-lists, bypassing the Go cache — and only a
+   * person pressing it; the tick fetches nothing here. See RBACView.
+   */
+  let seenRefreshes = untrack(() => session.manualRefreshes)
+  $effect(() => {
+    const presses = session.manualRefreshes
+    if (presses === seenRefreshes) return
+    seenRefreshes = presses
+    void load(session.cluster.id, session.namespace, true)
+  })
+
   const view = $derived(helmState(listing?.status ?? 'listed', listing?.refusal ?? ''))
   const releases = $derived(listing?.releases ?? [])
   const isEmpty = $derived(showsEmptyCopy(listing))
@@ -154,12 +194,12 @@
   /** The namespace the page is scoped to, for display and for the commands. */
   const scope = $derived(session.namespace === ALL_NAMESPACES ? '' : session.namespace)
 
-  // --- The history drawer ----------------------------------------------------
+  // --- The release drawer ----------------------------------------------------
   //
-  // NO NEW READS. Every revision it shows already arrived on the listing —
-  // Helm writes one Secret per revision and the LIST returned all of them —
-  // so opening this costs exactly nothing, which is the same trade the session
-  // timeline makes.
+  // THE OVERVIEW COSTS NO NEW READS. Every revision it shows already arrived
+  // on the listing — Helm writes one Secret per revision and the LIST returned
+  // all of them — so opening the drawer costs exactly nothing, which is the
+  // same trade the session timeline makes.
 
   let opened = $state<HelmRelease | null>(null)
 
@@ -168,16 +208,32 @@
       the current when there is only one. */
   let target = $state(0)
 
+  type DrawerTab = 'overview' | 'values' | 'manifest' | 'notes' | 'commands'
+  let tab = $state<DrawerTab>('overview')
+
+  const TABS: { id: DrawerTab; label: string; icon: Component }[] = [
+    { id: 'overview', label: 'Overview', icon: Info },
+    { id: 'values', label: 'Values', icon: SlidersHorizontal },
+    { id: 'manifest', label: 'Manifest', icon: FileCode },
+    { id: 'notes', label: 'Notes', icon: NotebookText },
+    { id: 'commands', label: 'Commands', icon: SquareTerminal },
+  ]
+
+  function isPayloadTab(id: DrawerTab): boolean {
+    return id === 'values' || id === 'manifest' || id === 'notes'
+  }
+
   function open(release: HelmRelease): void {
+    if (opened) helmPayloads.forget(payloadKeyFor(opened.namespace, opened.name, inspecting))
     opened = release
     const history = release.revisions ?? []
     const previous = history.find((revision) => revision.revision < release.current.revision)
     target = previous?.revision ?? release.current.revision
 
-    // The pane offers the CURRENT revision to read, and reads nothing yet.
-    // Opening a drawer is not a request to decode a Secret.
+    // The drawer opens on the Overview, which is built from labels. Opening a
+    // drawer is not a request to decode a Secret.
     inspecting = release.current.revision
-    tab = 'chart'
+    tab = 'overview'
   }
 
   function close(): void {
@@ -187,17 +243,19 @@
     // nobody is looking at is holding a decoded Secret for no reason.
     if (opened) helmPayloads.forget(payloadKeyFor(opened.namespace, opened.name, inspecting))
     opened = null
+    maximized = null
   }
 
-  // --- The payload pane ------------------------------------------------------
+  // --- The payload ---------------------------------------------------------
   //
-  // THE ONE PLACE ON THIS PAGE THAT READS A SECRET'S CONTENTS. It is reached
-  // from a button's click handler and from nowhere else: no $effect, no
-  // lifecycle hook, nothing on the tick. An `$effect` that read a payload when
-  // the drawer opened would turn opening a pane into a Secret read, which is
-  // the pattern Kubernetes' own guidance tells cluster operators to alert on
-  // and the exact thing this whole feature was permitted on the condition of
-  // not doing.
+  // THE ONE PLACE ON THIS PAGE THAT READS A SECRET'S CONTENTS, and it is
+  // reached only from somebody choosing a Values, Manifest or Notes tab, a
+  // revision, or the show control — every one an event handler. No $effect,
+  // no lifecycle hook, nothing on the tick: an `$effect` that read a payload
+  // when the drawer opened would turn opening a pane into a Secret read, which
+  // is the pattern Kubernetes' own guidance tells cluster operators to alert
+  // on. Choosing the tab IS the deliberate act; a separate Read button after
+  // it only asked the same question twice.
 
   /**
    * NOTHING SURVIVES THIS COMPONENT.
@@ -207,9 +265,9 @@
    * mode, so switching to Pods with the drawer still open destroys the
    * component and `close()` never runs. The values would expire on their own
    * timer, but the masked manifest and the chart facts would sit in the
-   * singleton store until the next window blur — and SECURITY.md states, in
-   * this same change, that the payload is dropped when the drawer closes.
-   * This is what makes that sentence true rather than nearly true.
+   * singleton store until the next window blur — and SECURITY.md states that
+   * the payload is dropped when the drawer closes. This is what makes that
+   * sentence true rather than nearly true.
    *
    * An `$effect` with no reactive reads runs its teardown exactly once, on
    * destroy, which is the shape wanted here.
@@ -218,12 +276,9 @@
     return () => helmPayloads.forgetAll()
   })
 
-  /** Which revision the pane is showing, which is not the rollback target —
+  /** Which revision the payload tabs show, which is not the rollback target —
       one is what you are reading, the other is what a command would name. */
   let inspecting = $state(0)
-
-  type PayloadTab = 'values' | 'notes' | 'manifest' | 'chart'
-  let tab = $state<PayloadTab>('chart')
 
   function payloadKeyFor(namespace: string, release: string, revision: number): string {
     return helmPayloadKey(session.cluster.id, namespace, release, revision)
@@ -236,20 +291,81 @@
   const sensitive = $derived(helmPayloads.sensitiveAt(payloadKey))
   const revealed = $derived(helmPayloads.isRevealed(payloadKey))
 
-  /** Reads one revision. Only ever from a click. */
+  /** Reads one revision. Only ever from an event handler. */
   function readPayload(): void {
     if (!opened) return
     void helmPayloads.read(session.cluster.id, opened.namespace, opened.name, inspecting)
   }
 
-  /** Moves the pane to another revision, dropping whatever the previous one
-      decoded — one revision at a time is the rule, and holding the last one
-      beside the new one would quietly make it two. */
+  /**
+   * Whether showing this tab needs a read: nothing decoded yet, or — for the
+   * values and the notes — they were put away since.
+   */
+  function needsRead(id: DrawerTab): boolean {
+    if (!isPayloadTab(id) || payload.loading) return false
+    if (!payload.facts) return true
+    return id !== 'manifest' && !revealed
+  }
+
+  /** Moves to a tab. Choosing a payload tab reads the revision it shows. */
+  function selectTab(id: DrawerTab): void {
+    tab = id
+    maximized = null
+    if (needsRead(id)) readPayload()
+  }
+
+  /** Moves the payload tabs to another revision, dropping whatever the
+      previous one decoded — one revision at a time is the rule, and holding
+      the last one beside the new one would quietly make it two. */
   function inspect(revision: number): void {
     if (!opened || revision === inspecting) return
     helmPayloads.forget(payloadKeyFor(opened.namespace, opened.name, inspecting))
     inspecting = revision
-    if (tab === 'values' || tab === 'notes') tab = 'chart'
+    if (isPayloadTab(tab)) readPayload()
+  }
+
+  /** The show/hide control on Values and Notes: hiding drops them, showing
+      reads the revision again. */
+  function toggleRevealed(): void {
+    if (revealed) helmPayloads.hide(payloadKey)
+    else readPayload()
+  }
+
+  function onTabKeydown(event: KeyboardEvent): void {
+    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+    if (step === 0 && event.key !== 'Home' && event.key !== 'End') return
+    const at = TABS.findIndex((entry) => entry.id === tab)
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? TABS.length - 1
+          : (at + step + TABS.length) % TABS.length
+    event.preventDefault()
+    selectTab(TABS[next].id)
+    document.getElementById(`helm-tab-${TABS[next].id}`)?.focus()
+  }
+
+  const revisionOptions = $derived(
+    (opened?.revisions ?? []).map((revision) => ({
+      value: String(revision.revision),
+      label:
+        revision.revision === opened?.current.revision
+          ? `Revision ${revision.revision} (current)`
+          : `Revision ${revision.revision}`,
+    })),
+  )
+
+  /** Which payload pane is in the larger window, as the object panel's YAML
+      tab does it. Cleared with the drawer and on a tab change. */
+  let maximized = $state<'values' | 'manifest' | null>(null)
+
+  /** Copy's moment of acknowledgement — see ToolbarButton's `active`. */
+  let copied = $state(false)
+  async function copy(text: string): Promise<void> {
+    if (!(await copyText(text))) return
+    copied = true
+    setTimeout(() => (copied = false), 1200)
   }
 
   /** Escape belongs to the innermost open layer. See $lib/escape. */
@@ -293,10 +409,10 @@
    * The chart the upgrade command names, when it is known.
    *
    * ONLY AFTER A REVISION HAS BEEN READ. Chart name is not a label — it lives
-   * inside the release payload — so until somebody presses Read the command
-   * carries a placeholder there too, rather than a name PodSteer guessed from
-   * the release name. They are routinely the same and routinely not: one
-   * chart installs under as many release names as anybody likes.
+   * inside the release payload — so until a payload tab has been opened the
+   * command carries a placeholder there too, rather than a name PodSteer
+   * guessed from the release name. They are routinely the same and routinely
+   * not: one chart installs under as many release names as anybody likes.
    */
   const chartName = $derived(payload.facts?.chart.name ?? '')
 
@@ -306,6 +422,111 @@
   const upgradeCommand = $derived(
     opened ? helmUpgrade(session.cluster.id, opened.name, commandNamespace, chartName) : '',
   )
+
+  /** Whether any revision carries Helm's createdAt label — older Helm
+      versions never wrote it, and a column of dashes says nothing. */
+  const hasCreated = $derived((opened?.revisions ?? []).some((revision) => revision.createdAt))
+
+  /** The Overview's facts, from the listing's labels and — once a payload
+      tab has been opened — the chart the payload named. */
+  const releaseRows = $derived.by((): DetailRow[] => {
+    if (!opened) return []
+    const current = opened.current
+    const updated = current.modifiedAt || current.createdAt
+    const rows: DetailRow[] = [
+      { label: 'Status', value: current.status || 'unknown' },
+      { label: 'Revision', value: String(current.revision) },
+      { label: 'Namespace', value: opened.namespace },
+      { label: 'Updated', value: updated ? `${formatClockTime(helmTime(updated))} (${ageOf(updated)} ago)` : '—' },
+    ]
+    const facts = payload.facts
+    if (facts) {
+      rows.push(
+        { label: 'Chart', value: facts.chart.name || '—' },
+        { label: 'Chart version', value: facts.chart.version || '—' },
+        { label: 'App version', value: facts.chart.appVersion || '—' },
+      )
+      if (facts.chart.description) rows.push({ label: 'Description', value: facts.chart.description })
+    }
+    rows.push({ label: 'Secret', value: current.secretName })
+    return rows
+  })
+
+  // --- The table -----------------------------------------------------------
+
+  const COLUMNS: Column[] = [
+    { id: 'mark', label: 'Status', width: 44, icon: CircleDot },
+    { id: 'status', label: 'State', width: 140 },
+    { id: 'name', label: 'Release', width: 280, pinned: true },
+    { id: 'namespace', label: 'Namespace', width: 180 },
+    { id: 'revision', label: 'Revision', width: 110, numeric: true },
+    { id: 'history', label: 'History', width: 140 },
+    { id: 'updated', label: 'Updated', width: 120, numeric: true },
+  ]
+
+  const SORT: SortAccessors<HelmRelease> = {
+    mark: (release) => release.current.status,
+    status: (release) => release.current.status,
+    name: (release) => release.name,
+    namespace: (release) => release.namespace,
+    revision: (release) => release.current.revision,
+    history: (release) => release.revisionCount,
+    // Newest first reads as ascending age, so sort on the negated timestamp.
+    updated: (release) => -(release.current.modifiedAt || release.current.createdAt || 0),
+  }
+
+  const visibleReleases = $derived(
+    session.query.terms.length === 0
+      ? releases
+      : releases.filter((release) =>
+          matches(session.query, {
+            text: [release.name, release.namespace, release.current.status].join(' '),
+            labels: {},
+            cluster: session.cluster.id,
+          }),
+        ),
+  )
+  const sortedReleases = $derived(sortRows(visibleReleases, session.sort, SORT))
+  const pagedReleases = $derived(
+    sortedReleases.slice(session.pageStart, session.pageStart + preferences.pageSize),
+  )
+
+  $effect(() => {
+    session.standaloneCount = visibleReleases.length
+  })
+
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[session.selectedKindId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /** The CSV export, built from the listing's labels only — never a payload. */
+  function exportCSV(): CSVExport {
+    const visible = COLUMNS.filter((column) => !isControlColumn(column) && isColumnVisible(column))
+    const cell = (release: HelmRelease, id: string): string => {
+      switch (id) {
+        case 'mark':
+        case 'status':
+          return release.current.status || 'unknown'
+        case 'name':
+          return release.name
+        case 'namespace':
+          return release.namespace
+        case 'revision':
+          return String(release.current.revision)
+        case 'history':
+          return countedRevisions(release.revisionCount)
+        case 'updated':
+          return ageOf(release.current.modifiedAt || release.current.createdAt)
+        default:
+          return ''
+      }
+    }
+    return {
+      columns: visible.map((column) => column.label),
+      rows: sortedReleases.map((release) => visible.map((column) => cell(release, column.id))),
+    }
+  }
 
   /** Now, for ages — read once per render rather than per row. */
   const now = $derived.by(() => Date.now() / 1000)
@@ -322,506 +543,421 @@
    * never seen renders as itself in the neutral tone rather than being
    * refused or relabelled.
    */
-  function statusTone(status: string): string {
-    if (status === 'deployed') return 'bg-success-container text-on-success-container'
-    if (status === 'failed') return 'bg-error-container text-on-error-container'
-    if (status.startsWith('pending') || status === 'uninstalling') {
-      return 'bg-warning-container text-on-warning-container'
-    }
-    return 'bg-surface-container-high text-on-surface-variant'
+  function statusTone(status: string): Tone {
+    if (status === 'deployed') return 'success'
+    if (status === 'failed') return 'error'
+    if (status.startsWith('pending') || status === 'uninstalling') return 'warning'
+    return 'neutral'
   }
+
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
-<div class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-  <div class="mx-auto flex max-w-5xl flex-col gap-4">
-    <Card variant="outlined" class="p-4">
-      <div class="mb-3 flex flex-wrap items-start justify-between gap-2">
-        <div class="min-w-0">
-          <h2 class="text-title-medium font-semibold text-on-surface">
-            Helm releases
-            {#if scope}
-              in <span class="font-mono">{scope}</span>
-            {:else}
-              across every namespace
-            {/if}
-          </h2>
-          <p class="mt-0.5 text-body-small text-on-surface-variant/70">
-            Read from the labels Helm puts on each release Secret, through the metadata API — no
-            Secret's contents are transferred. Only Helm's <span class="font-mono">secret</span>
-            storage driver is read; a cluster running
-            <span class="font-mono">HELM_DRIVER=configmap</span> or the SQL driver keeps its
-            releases somewhere this does not look.
-          </p>
-        </div>
+<!-- THE SAME TABLE EVERY LIST USES, so a release list reads like a Pods list:
+     the toolbar's search, pager, column chooser, sorting and CSV export. It
+     is a table and not a list (`session.hasTable`): this page filters, sorts
+     and pages its own rows, and nothing here is fetched on the tick. -->
+<DataTable
+  kindId={session.selectedKindId}
+  columns={COLUMNS}
+  isEmpty={pagedReleases.length === 0}
+  sort={session.sort}
+  onsort={session.toggleSort}
+  exportRows={exportCSV}
+>
+  {#snippet notice()}
+    {#if listing?.truncated}
+      <p class="border-b border-outline-variant/60 px-6 py-2 text-body-medium text-gauge-warn-ink" role="status">
+        More release Secrets exist than were read, so this list is short.
+      </p>
+    {/if}
+    <ErrorBanner error={error} ondismiss={() => (error = null)} class="mx-6 my-3" />
+  {/snippet}
 
-        <div class="flex shrink-0 items-center gap-3">
-          <!-- The age of the answer, beside the control that replaces it. The
-               listing is held for minutes rather than polled, so a page that
-               did not say how old its answer was would be a cache that lies. -->
-          {#if listedAt}
-            <span class="text-body-small text-on-surface-variant/60">
-              as of {formatClockTime(listedAt)}
-            </span>
-          {/if}
-          <Button
-            variant="outlined"
-            {loading}
-            onclick={() => void load(session.cluster.id, session.namespace, true)}
-          >
-            Refresh
-          </Button>
-        </div>
-      </div>
+  {#snippet empty()}
+    {#if view.kind === 'unavailable'}
+      <!-- A refusal is not a fault, and it must NEVER render the zero-row
+           copy: a refused listing established nothing about the cluster. -->
+      <EmptyState title="Helm releases could not be listed" description={view.message} />
+    {:else if loading && !listing}
+      <EmptyState title="Reading Helm's labels…" description="One metadata list of release Secrets." />
+    {:else if session.search && releases.length > 0}
+      <EmptyState title="No releases match" description={`Nothing matches "${session.search}".`} />
+    {:else if isEmpty}
+      <EmptyState
+        title="No Helm releases here"
+        description={(scope
+          ? `Nothing in ${scope} was installed by Helm, or its releases are stored elsewhere.`
+          : 'Nothing in this cluster was installed by Helm, or its releases are stored elsewhere.') +
+          (argoInstalled ? ' ' + ARGO_NOTE : '')}
+      />
+    {:else}
+      <EmptyState title="Nothing read yet" description="Press Refresh to ask the cluster." />
+    {/if}
+  {/snippet}
 
-      <ErrorBanner error={error} ondismiss={() => (error = null)} class="mb-3" />
-
-      {#if view.kind === 'unavailable'}
-        <!-- A refusal is not a fault — an account configured exactly as its
-             owner intended cannot list Secrets — so it is drawn the way an
-             unreadable count is, and only a transient failure is drawn as an
-             error worth retrying. It must NEVER render the zero-row copy:
-             "Helm has installed nothing here" is a claim about the cluster,
-             and a refused listing established nothing about the cluster. -->
-        <p
-          class="rounded-sm px-3 py-2 text-body-small
-                 {view.tone === 'error'
-                   ? 'bg-error-container/40 text-on-error-container'
-                   : 'bg-surface-container text-gauge-warn-ink'}"
-        >
-          {view.message}
-        </p>
-        {#if view.retryable}
-          <div class="mt-3">
-            <Button
-              variant="outlined"
-              {loading}
-              onclick={() => void load(session.cluster.id, session.namespace, true)}
-            >
-              Try again
-            </Button>
-          </div>
+  {#snippet rows(isVisible)}
+    {#each pagedReleases as release (`${release.namespace}/${release.name}`)}
+      {@const selected = opened?.name === release.name && opened?.namespace === release.namespace}
+      <tr
+        class="group/row cursor-pointer border-t border-outline-variant/40 transition-colors duration-100
+               {selected ? 'bg-row-open-secondary' : 'bg-surface hover:bg-surface-container-low'}"
+        onclick={() => open(release)}
+      >
+        {#if isVisible('mark')}
+          <td class="overflow-hidden py-1.5 pr-3 pl-6">
+            <StatusIndicator tone={statusTone(release.current.status)} label={release.current.status || 'unknown'} icon={Package} />
+          </td>
         {/if}
-      {:else if isEmpty}
-        <EmptyState
-          title="No Helm releases here"
-          description={scope
-            ? `Nothing in ${scope} was installed by Helm, or its releases are stored elsewhere.`
-            : 'Nothing in this cluster was installed by Helm, or its releases are stored elsewhere.'}
-        />
-        {#if argoInstalled}
-          <!-- A fact about the CLUSTER, from the kinds discovery already
-               returned — never a claim about who manages which workload. -->
-          <p class="rounded-sm bg-surface-container px-3 py-2 text-body-small text-on-surface-variant">
-            {ARGO_NOTE}
-          </p>
+        {#if isVisible('status')}
+          <!-- Helm's own word, verbatim; an unseen status renders as itself. -->
+          <td class="truncate px-3 py-1.5 text-on-surface-variant">{release.current.status || 'unknown'}</td>
         {/if}
-      {:else if releases.length > 0}
-        {#if listing?.truncated}
-          <p class="mb-3 rounded-sm bg-warning-container/40 px-3 py-2 text-body-small text-on-surface">
-            More release Secrets exist than were read, so this list is short. Every revision is its
-            own Secret, so a cluster keeping a long history accumulates them quickly.
-          </p>
+        <td class="px-3 py-1.5" title={release.name}>
+          <span class="truncate font-medium text-on-surface">{release.name}</span>
+        </td>
+        {#if isVisible('namespace')}
+          <td class="truncate px-3 py-1.5 text-on-surface-variant">{release.namespace}</td>
         {/if}
-
-        <div class="overflow-x-auto">
-          <table class="w-full min-w-[40rem] border-collapse text-body-medium">
-            <thead>
-              <tr class="border-b border-outline-variant text-left text-on-surface-variant/70">
-                <th class="py-1.5 pr-4 font-medium">Release</th>
-                <th class="py-1.5 pr-4 font-medium">Namespace</th>
-                <th class="py-1.5 pr-4 font-medium">Revision</th>
-                <th class="py-1.5 pr-4 font-medium">Status</th>
-                <th class="py-1.5 pr-4 font-medium">Updated</th>
-                <th class="py-1.5 font-medium">History</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each releases as release (`${release.namespace}/${release.name}`)}
-                <tr class="border-b border-outline-variant/40">
-                  <td class="py-1.5 pr-4">
-                    <button
-                      type="button"
-                      class="state-layer cursor-pointer rounded-sm px-1 font-mono text-primary hover:underline"
-                      onclick={() => open(release)}
-                    >
-                      {release.name}
-                    </button>
-                  </td>
-                  <td class="py-1.5 pr-4 font-mono text-on-surface-variant">{release.namespace}</td>
-                  <td class="py-1.5 pr-4 tabular-nums text-on-surface">{release.current.revision}</td>
-                  <td class="py-1.5 pr-4">
-                    <!-- Helm's own word, verbatim. A status this build has
-                         never seen renders as itself in the neutral tone. -->
-                    <span class="rounded-full px-1.5 py-0.5 font-mono text-label-small {statusTone(release.current.status)}">
-                      {release.current.status || 'unknown'}
-                    </span>
-                  </td>
-                  <td class="py-1.5 pr-4 tabular-nums text-on-surface-variant">
-                    {ageOf(release.current.modifiedAt || release.current.createdAt)}
-                  </td>
-                  <td class="py-1.5 text-on-surface-variant">
-                    {countedRevisions(release.revisionCount)}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-
-        <!-- The stated cost of not reading a payload, said where the columns
-             would have been rather than left as an absence somebody has to
-             notice. -->
-        <p class="mt-3 text-body-small text-on-surface-variant/70">
-          There is no chart or app version in this table. Both live only inside a release's payload
-          — about a megabyte per release — and reading every release's payload to fill two columns
-          is exactly the bulk Secret read this page exists to avoid. Open a release and read one
-          revision to see them.
-        </p>
-      {:else if !loading}
-        <EmptyState title="Nothing read yet" description="Press Refresh to ask the cluster." />
-      {/if}
-    </Card>
-  </div>
-</div>
+        {#if isVisible('revision')}
+          <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+            {release.current.revision}
+          </td>
+        {/if}
+        {#if isVisible('history')}
+          <td class="truncate px-3 py-1.5 text-on-surface-variant">
+            {countedRevisions(release.revisionCount)}
+          </td>
+        {/if}
+        {#if isVisible('updated')}
+          <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+            {ageOf(release.current.modifiedAt || release.current.createdAt)}
+          </td>
+        {/if}
+      </tr>
+    {/each}
+  {/snippet}
+</DataTable>
 
 {#if opened}
-  <!-- The history drawer. Every row in it arrived on the listing already, so
-       opening it costs no request at all. -->
+  <!-- THE SAME PANEL AS AN OBJECT'S DETAILS — shell, header, tabs and
+       width — so a release opens like a Deployment does. What each tab
+       costs, and why nothing here performs a Helm command, is under the (?)
+       as the `helm-release` topic rather than written on every open. -->
   <button
     type="button"
-    aria-label="Close"
+    aria-label="Close release"
     tabindex="-1"
-    class="fixed inset-0 z-[60] cursor-default bg-scrim/40"
+    class="fixed inset-0 z-40 cursor-default bg-scrim/30"
     onclick={close}
   ></button>
 
   <div
-    class="fixed inset-y-0 right-0 z-[70] flex w-full max-w-xl flex-col overflow-hidden border-l
-           border-outline-variant bg-surface-container-high shadow-level-3"
+    style="width: min({DETAIL_MAX_SHARE * 100}vw, clamp({DETAIL_MIN_REM}rem, {preferences.detailWidthFraction *
+      100}vw, {DETAIL_MAX_REM}rem))"
+    class="fixed top-0 right-0 bottom-0 z-50 flex flex-col
+           border-l border-outline-variant/60 bg-surface shadow-level-3"
     role="dialog"
-    aria-modal="true"
-    use:modal
     aria-label="Helm release {opened.name}"
   >
     <header class="flex shrink-0 items-center gap-3 border-b border-outline-variant/60 px-4 py-3">
-      <Package class="size-5 shrink-0 text-on-surface-variant" strokeWidth={1.8} />
-      <div class="min-w-0">
-        <h2 class="truncate text-title-medium font-semibold text-on-surface">{opened.name}</h2>
-        <p class="text-body-small text-on-surface-variant/70">
-          Helm release in {opened.namespace}
+      <Package class="size-5 shrink-0 text-on-surface-variant/60" strokeWidth={1.8} />
+      <div class="min-w-0 flex-1">
+        <h2 class="truncate text-title-medium font-semibold text-on-surface" title={opened.name} data-selectable>
+          {opened.name}
+        </h2>
+        <p class="truncate text-body-small text-on-surface-variant/70">
+          Helm release / {opened.namespace}
         </p>
       </div>
-      <button
-        type="button"
-        onclick={close}
-        aria-label="Close"
-        title="Close"
-        class="state-layer ml-auto grid size-8 shrink-0 place-items-center rounded-full
-               text-on-surface-variant transition-colors duration-100
-               hover:bg-surface-container hover:text-on-surface"
-      >
-        <X class="size-4" strokeWidth={1.8} />
-      </button>
+      <div class="flex shrink-0 items-center gap-1">
+        <HelpButton topic="helm-release" about="the Helm release panel" />
+        <div class="mx-1 h-5 w-px bg-outline-variant/40"></div>
+        <button
+          type="button"
+          onclick={close}
+          aria-label="Close release"
+          class="state-layer grid size-8 shrink-0 place-items-center rounded-full
+                 text-on-surface-variant transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+        >
+          <X class="size-4" strokeWidth={2} />
+        </button>
+      </div>
     </header>
 
-    <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-      <h3 class="mb-1 text-label-large font-semibold text-on-surface-variant">History</h3>
-      <p class="mb-2 text-body-small text-on-surface-variant/70">
-        Every revision Helm has kept, newest first. These rows came with the list — opening this
-        cost no further read, and nothing on this table decodes a release. Inspect chooses which
-        revision the pane below is about; reading its payload is a separate, deliberate press.
-      </p>
+    <div
+      class="flex shrink-0 border-b border-outline-variant/60 bg-surface-container-low/50 px-2"
+      role="tablist"
+      aria-label="Release views"
+      tabindex={-1}
+      onkeydown={onTabKeydown}
+    >
+      {#each TABS as entry (entry.id)}
+        {@const TabIcon = entry.icon}
+        {@const active = tab === entry.id}
+        <button
+          type="button"
+          role="tab"
+          id="helm-tab-{entry.id}"
+          aria-selected={active}
+          aria-controls="helm-panel"
+          tabindex={active ? 0 : -1}
+          onclick={() => selectTab(entry.id)}
+          class="flex items-center gap-1.5 border-b-2 px-3 py-2 text-label-medium font-medium
+                 transition-colors duration-100
+                 {active
+                   ? 'border-primary text-primary'
+                   : 'border-transparent text-on-surface-variant hover:text-on-surface hover:border-outline-variant/50'}"
+        >
+          <TabIcon class="size-3.5" strokeWidth={active ? 2 : 1.8} />
+          {entry.label}
+        </button>
+      {/each}
+    </div>
 
-      <div class="overflow-x-auto">
-        <table class="w-full border-collapse text-body-medium">
-          <thead>
-            <tr class="border-b border-outline-variant text-left text-on-surface-variant/70">
-              <th class="py-1.5 pr-3 font-medium">Rev</th>
-              <th class="py-1.5 pr-3 font-medium">Status</th>
-              <th class="py-1.5 pr-3 font-medium">Created</th>
-              <th class="py-1.5 pr-3 font-medium">Updated</th>
-              <th class="py-1.5 font-medium">Secret</th>
-              <th class="py-1.5 pl-3 text-right font-medium">Payload</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each opened.revisions ?? [] as revision (revision.secretName)}
-              <tr class="border-b border-outline-variant/40">
-                <td class="py-1.5 pr-3 tabular-nums text-on-surface">
-                  <!-- Named for assistive technology because the visible
-                       content is a bare revision number, which does not say
-                       what choosing it would do — and what it does is name a
-                       revision in the rollback command shown below, never
-                       perform one. No radiogroup role on the column: these are
-                       table cells, and a role between the row and the cell
-                       breaks the table for anyone navigating it as one. -->
-                  <Radio
-                    name="helm-rollback-target"
-                    value={revision.revision}
-                    ariaLabel="Name revision {revision.revision} in the rollback command"
-                    dense
-                    checked={target === revision.revision}
-                    onchange={() => (target = revision.revision)}
-                  >
-                    {revision.revision}
-                    {#if revision.revision === opened.current.revision}
-                      <span class="ml-2 text-label-small text-on-surface-variant/60">current</span>
-                    {/if}
-                  </Radio>
-                </td>
-                <td class="py-1.5 pr-3">
-                  <span class="rounded-full px-1.5 py-0.5 font-mono text-label-small {statusTone(revision.status)}">
-                    {revision.status || 'unknown'}
-                  </span>
-                </td>
-                <td class="py-1.5 pr-3 tabular-nums text-on-surface-variant">
-                  {formatClockTime(helmTime(revision.createdAt))}
-                </td>
-                <td class="py-1.5 pr-3 tabular-nums text-on-surface-variant">
-                  <!-- An absent modifiedAt is the ORDINARY case: Helm writes
-                       the label only when a revision is updated in place. A
-                       dash, never the creation time. -->
-                  {formatClockTime(helmTime(revision.modifiedAt))}
-                </td>
-                <td class="py-1.5 font-mono text-body-small break-all text-on-surface-variant/70">
-                  {revision.secretName}
-                </td>
-                <td class="py-1.5 pl-3 text-right">
-                  <!-- Selects which revision the pane below is ABOUT. It
-                       reads nothing on its own: decoding still costs the
-                       explicit press below. -->
-                  <button
-                    type="button"
-                    class="state-layer cursor-pointer rounded-sm px-1.5 py-0.5 text-label-small
-                           {inspecting === revision.revision
-                             ? 'bg-secondary-container text-on-secondary-container'
-                             : 'text-primary hover:underline'}"
-                    onclick={() => inspect(revision.revision)}
-                  >
-                    Inspect
-                  </button>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
+    <div
+      class="flex min-h-0 flex-1 flex-col overflow-auto bg-surface-container-lowest"
+      id="helm-panel"
+      role="tabpanel"
+      aria-labelledby="helm-tab-{tab}"
+    >
+      {#if tab === 'overview'}
+        <!-- Labels only: every row arrived on the listing. -->
+        <div class="flex flex-col gap-6 p-4">
+          <DetailSection level="h3" id="helm-release" title="Release">
+            <DetailList rows={releaseRows} />
+          </DetailSection>
 
-      <!-- === The release payload ==========================================
-           EVERYTHING ABOVE THIS POINT COST NO SECRET CONTENTS AT ALL — the
-           rows came with the listing, built from the labels Helm writes.
-           Everything below reads ONE revision's Secret, on an explicit press,
-           and is governed by the doctrine that governs revealing a Secret's
-           key: one deliberate act, re-hideable, expiring, gone on blur. -->
-      <h3 class="mt-5 mb-1 text-label-large font-semibold text-on-surface-variant">
-        Revision {inspecting}
-      </h3>
-
-      {#if !payload.facts && !payload.loading && !payload.error}
-        <p class="mb-2 text-body-small text-on-surface-variant/70">
-          The chart, the values, the notes and the rendered manifest live inside this revision's
-          release Secret — about a megabyte, base64'd and gzip'd. Nothing has been read: reading it
-          is a deliberate act, one revision at a time, and it leaves a line in your cluster's audit
-          log exactly as revealing a Secret's key does.
-        </p>
-        <Button variant="filled" onclick={readPayload}>Read revision {inspecting}</Button>
-      {:else}
-        <div class="mb-2 flex flex-wrap items-center gap-2">
-          <Button variant="outlined" loading={payload.loading} onclick={readPayload}>
-            {payload.facts ? 'Read again' : `Read revision ${inspecting}`}
-          </Button>
-          {#if revealed}
-            <!-- THE RE-HIDE CONTROL, which is the one Freelens does not offer
-                 at all: once shown, its reveal cannot be undone. -->
-            <button
-              type="button"
-              class="state-layer flex cursor-pointer items-center gap-1.5 rounded-sm px-2 py-1
-                     text-label-small text-on-surface-variant hover:bg-surface-container"
-              onclick={() => helmPayloads.hide(payloadKey)}
-            >
-              <EyeOff class="size-3.5" strokeWidth={1.8} />
-              Hide values and notes
-            </button>
-          {/if}
+          <DetailSection
+            level="h3"
+            id="helm-history"
+            title="History"
+            hint={countedRevisions(opened.revisionCount)}
+          >
+            <!-- THE LIST'S OWN TABLE, drawn small: the same header band,
+                 dividers, status-icon column and row rhythm as the release
+                 list behind the panel, without sorting or resizing, which
+                 a handful of revisions has no use for. -->
+            <div class="overflow-x-auto rounded-sm border border-outline-variant/60">
+              <table class="w-full border-collapse text-body-medium">
+                <thead class="bg-surface-container/95">
+                  <tr class="text-left text-label-medium text-on-surface-variant">
+                    {#snippet head(label: string, numeric = false)}
+                      <th
+                        scope="col"
+                        class="relative px-3 py-2 font-medium {numeric ? 'text-right' : ''}
+                               after:absolute after:top-1/4 after:right-0 after:h-1/2 after:w-px
+                               after:bg-outline-variant last:after:hidden"
+                      >
+                        {label}
+                      </th>
+                    {/snippet}
+                    <th
+                      scope="col"
+                      class="relative w-11 py-2 pl-5 font-medium
+                             after:absolute after:top-1/4 after:right-0 after:h-1/2 after:w-px after:bg-outline-variant"
+                    >
+                      <CircleDot class="size-4" strokeWidth={1.8} aria-label="Status" />
+                    </th>
+                    {@render head('Revision')}
+                    {@render head('State')}
+                    {#if hasCreated}{@render head('Created', true)}{/if}
+                    {@render head('Updated', true)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each opened.revisions ?? [] as revision (revision.secretName)}
+                    <tr class="border-t border-outline-variant/40 bg-surface transition-colors duration-100 hover:bg-surface-container-low">
+                      <td class="py-1.5 pr-3 pl-5">
+                        <StatusIndicator
+                          tone={statusTone(revision.status)}
+                          label={revision.status || 'unknown'}
+                          icon={Package}
+                        />
+                      </td>
+                      <td class="px-3 py-1.5 tabular-nums text-on-surface">
+                        <span class="font-medium">{revision.revision}</span>
+                        {#if revision.revision === opened.current.revision}
+                          <span class="ml-1.5 text-body-small text-on-surface-variant/60">current</span>
+                        {/if}
+                      </td>
+                      <td class="px-3 py-1.5 text-on-surface-variant">{revision.status || 'unknown'}</td>
+                      {#if hasCreated}
+                        <td class="px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+                          {formatClockTime(helmTime(revision.createdAt))}
+                        </td>
+                      {/if}
+                      <!-- An absent modifiedAt is the ORDINARY case: Helm
+                           writes the label only when a revision is updated in
+                           place. A dash, never the creation time. -->
+                      <td class="px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+                        {formatClockTime(helmTime(revision.modifiedAt))}
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          </DetailSection>
         </div>
-
+      {:else if tab === 'commands'}
+        <!-- Shown, never run: see the `helm-release` topic. -->
+        <div class="flex flex-col gap-3 p-4">
+          <KubectlHint label="helm get values" command={valuesCommand} />
+          <KubectlHint label="helm upgrade" command={upgradeCommand} />
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center gap-3">
+              <span class="text-label-medium text-on-surface-variant" aria-hidden="true">Roll back to</span>
+              <Select
+              label="Roll back to"
+              compact
+              value={String(target)}
+              options={revisionOptions}
+                onchange={(value) => (target = Number(value))}
+                class="w-fit"
+              />
+            </div>
+            <KubectlHint label="helm rollback" command={rollbackCommand} />
+          </div>
+          <KubectlHint label="helm history" command={historyCommand} />
+          <KubectlHint label="helm uninstall" command={uninstallCommand} />
+        </div>
+      {:else}
+        {@const facts = payload.facts}
         {#if payload.error}
-          <p class="rounded-sm bg-error-container/40 px-3 py-2 text-body-small text-on-error-container">
-            {payload.error}
-          </p>
+          <div
+            class="flex items-center gap-2 border-b border-error/20 bg-error-container/50 px-4 py-2
+                   text-body-small text-on-error-container"
+            role="alert"
+          >
+            <X class="size-3.5 shrink-0 text-error" strokeWidth={2} />
+            <span data-selectable>{payload.error}</span>
+          </div>
         {/if}
 
-        {#if payload.facts}
-          {@const facts = payload.facts}
-          <!-- WHICH TAB IS OPEN WAS A COLOUR AND A BORDER. Everything about
-               this was a tab strip except the part assistive technology reads,
-               so the current tab was announced as an ordinary button
-               indistinguishable from the other three. The drawer and the fleet
-               view both do this properly; this now matches them. -->
-          <div
-            role="tablist"
-            aria-label="Release payload"
-            class="mb-2 flex flex-wrap gap-1 border-b border-outline-variant/60"
-          >
-            {#each [['chart', 'Chart'], ['values', 'Values'], ['notes', 'Notes'], ['manifest', 'Manifest']] as [id, label] (id)}
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === id}
-                class="cursor-pointer border-b-2 px-2.5 py-1.5 text-label-medium transition-colors
-                       {tab === id
-                         ? 'border-primary text-primary'
-                         : 'border-transparent text-on-surface-variant hover:text-on-surface'}"
-                onclick={() => (tab = id as PayloadTab)}
-              >
-                {label}
-              </button>
-            {/each}
-          </div>
-
-          {#if tab === 'chart'}
-            <!-- WHERE THE LIST'S TWO MISSING COLUMNS FINALLY APPEAR. Chart
-                 name, chart version and app version are not labels — they
-                 exist only in the payload — which is why the list cannot show
-                 them without reading every release's Secret on page open. -->
-            <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-body-medium">
-              <dt class="text-on-surface-variant/70">Chart</dt>
-              <dd class="font-mono text-on-surface">{facts.chart.name || '—'}</dd>
-              <dt class="text-on-surface-variant/70">Chart version</dt>
-              <dd class="font-mono text-on-surface">{facts.chart.version || '—'}</dd>
-              <dt class="text-on-surface-variant/70">App version</dt>
-              <dd class="font-mono text-on-surface">{facts.chart.appVersion || '—'}</dd>
-              {#if facts.chart.description}
-                <dt class="text-on-surface-variant/70">Description</dt>
-                <dd class="text-on-surface">{facts.chart.description}</dd>
-              {/if}
-              <dt class="text-on-surface-variant/70">Status</dt>
-              <dd class="font-mono text-on-surface">{facts.status || 'unknown'}</dd>
-              {#if facts.description}
-                <dt class="text-on-surface-variant/70">This revision</dt>
-                <dd class="text-on-surface">{facts.description}</dd>
-              {/if}
-              <dt class="text-on-surface-variant/70">Secret</dt>
-              <dd class="font-mono break-all text-on-surface-variant/70">{facts.secretName}</dd>
-            </dl>
-            <p class="mt-2 text-body-small text-on-surface-variant/70">
-              These three are the columns the release list cannot show. They exist only inside the
-              payload, so filling them on a list of forty releases would mean reading forty Secrets
-              when the page opened.
+        {#if payload.loading && !facts}
+          <p class="p-4 text-body-medium text-on-surface-variant/70" role="status">
+            Reading revision {inspecting}…
+          </p>
+        {:else if (tab === 'manifest' && facts) || (tab === 'values' && sensitive?.values)}
+          {#if maximized === tab}
+            <!-- The pane is in the dialog. Saying so beats an empty tab. -->
+            <p class="p-4 text-body-medium text-on-surface-variant/70">
+              Showing the {tab} in a larger window.
             </p>
-          {:else if tab === 'values' || tab === 'notes'}
-            <!-- THE TWO THAT ARE SECRET MATERIAL. Values are where a chart
-                 puts a database password, and notes are rendered from the
-                 same values — the commonest thing a chart's NOTES.txt does is
-                 print how to fetch the admin password, and several print it
-                 inline. Both expire after thirty seconds and go on blur. -->
-            {#if sensitive}
-              <p
-                class="mb-2 flex items-start gap-2 rounded-sm bg-warning-container/40 px-3 py-2
-                       text-body-small text-on-surface"
-              >
-                <Eye class="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
-                <span>
-                  This may contain credentials — a chart that generates a password puts it here, and
-                  a chart's notes are rendered from these same values. It hides itself after thirty
-                  seconds and whenever this window loses focus.
-                </span>
-              </p>
-              {#if tab === 'values'}
-                {#if sensitive.values}
-                  <pre class="max-h-96 overflow-auto rounded-sm bg-surface-container p-3 font-mono text-body-small whitespace-pre-wrap text-on-surface">{sensitive.values}</pre>
-                {:else}
-                  <!-- An empty `config` means installed with NO overrides,
-                       which is a real answer about the release rather than
-                       something that failed to load. -->
-                  <p class="text-body-small text-on-surface-variant/70">
-                    This revision was installed with no values of its own — everything came from the
-                    chart's own defaults, which are not read here.
-                  </p>
-                {/if}
-              {:else if sensitive.notes}
-                <pre class="max-h-96 overflow-auto rounded-sm bg-surface-container p-3 font-mono text-body-small whitespace-pre-wrap text-on-surface">{sensitive.notes}</pre>
-              {:else}
-                <p class="text-body-small text-on-surface-variant/70">This chart renders no notes.</p>
-              {/if}
-            {:else}
-              <!-- HIDDEN IS A REAL STATE AND SAYS SO. An empty tab where a
-                   value used to be would read as a release with no values,
-                   which is a different fact entirely. -->
-              <p class="text-body-small text-on-surface-variant/70">
-                Hidden. Values and notes are put away after thirty seconds and whenever this window
-                loses focus, and they are dropped rather than merely covered — showing them again
-                reads the release Secret once more.
-              </p>
-              <div class="mt-2">
-                <Button variant="outlined" loading={payload.loading} onclick={readPayload}>
-                  Show again
-                </Button>
-              </div>
-            {/if}
           {:else}
-            <!-- THE MANIFEST, AND IT ARRIVED MASKED. A chart that renders
-                 `kind: Secret` puts base64 `data:` values into this string,
-                 and base64 is an encoding rather than a cipher — so the Go
-                 adapter replaced each one with its decoded size before the
-                 string crossed the bridge, exactly as the YAML tab does. That
-                 is why this tab needs no timer. -->
-            {#if facts.maskedDocuments > 0}
-              <p class="mb-2 rounded-sm bg-surface-container px-3 py-2 text-body-small text-on-surface-variant">
-                {facts.maskedDocuments === 1
-                  ? 'One Secret in this manifest has had its values replaced with their size.'
-                  : `${facts.maskedDocuments} Secrets in this manifest have had their values replaced with their size.`}
-                A rendered chart's Secret carries base64, which is an encoding and not a cipher, so
-                nothing here is ever shown encoded. Every other document is exactly as Helm rendered
-                it.
-              </p>
-            {/if}
-            {#if facts.manifest}
-              <pre class="max-h-96 overflow-auto rounded-sm bg-surface-container p-3 font-mono text-body-small whitespace-pre text-on-surface">{facts.manifest}</pre>
-            {:else}
-              <p class="text-body-small text-on-surface-variant/70">
-                This revision rendered no manifest.
-              </p>
-            {/if}
+            <div class="flex min-h-0 flex-1 flex-col">{@render yamlSurface()}</div>
+          {/if}
+        {:else}
+          <!-- Notes, and every empty or hidden state, share one plain pane —
+               with its toolbar, so there is always a way back. -->
+          {@const text = tab === 'notes' ? (sensitive?.notes ?? '') : ''}
+          <PaneToolbar>
+            {#snippet trailing()}{@render payloadActions(text)}{/snippet}
+          </PaneToolbar>
+          {#if !facts || !sensitive}
+            <!-- HIDDEN IS A REAL STATE AND SAYS SO: an empty pane would read
+                 as a release with no values, which is a different fact. A
+                 window blur drops the whole revision, the manifest too. -->
+            <p class="p-4 text-body-medium text-on-surface-variant/70">
+              Hidden when PodSteer lost focus or after thirty seconds. Press
+              <Eye class="inline size-3.5 align-[-2px]" strokeWidth={1.8} /> to read revision {inspecting} again.
+            </p>
+          {:else if tab === 'values'}
+            <p class="p-4 text-body-medium text-on-surface-variant/70">
+              No values of its own — this revision uses the chart's defaults.
+            </p>
+          {:else if text}
+            <pre
+              class="min-h-0 flex-1 overflow-auto p-4 font-mono text-body-small whitespace-pre-wrap text-on-surface"
+              data-selectable>{text}</pre>
+          {:else}
+            <p class="p-4 text-body-medium text-on-surface-variant/70">This chart renders no notes.</p>
           {/if}
         {/if}
       {/if}
-
-      <h3 class="mt-5 mb-1 text-label-large font-semibold text-on-surface-variant">Commands</h3>
-      <p class="mb-2 text-body-small text-on-surface-variant/70">
-        PodSteer does not perform a Helm upgrade, rollback or uninstall. Each one re-renders a
-        chart, diffs it against what is live, applies the difference and prunes what the new
-        manifest drops — that is Helm's own work, and doing it approximately deletes production
-        objects. Run these in your own shell; nothing here executes them.
-      </p>
-
-      <div class="flex flex-col gap-2">
-        <KubectlHint label="helm get values" command={valuesCommand} />
-        <KubectlHint label="helm upgrade" command={upgradeCommand} />
-        <KubectlHint label="helm rollback" command={rollbackCommand} />
-        <KubectlHint label="helm history" command={historyCommand} />
-        <KubectlHint label="helm uninstall" command={uninstallCommand} />
-      </div>
-
-      <!-- THE PAIR IS THE POINT, not the upgrade on its own. Helm 3 does not
-           carry a release's values forward, so an upgrade run without them
-           reverts every value somebody ever set — in a command that reads as
-           if it only changed a version. -->
-      <p class="mt-3 text-body-small text-on-surface-variant/70">
-        Run <span class="font-mono">helm get values</span> first: it writes the values you supplied
-        to <span class="font-mono">values.yaml</span>, which the upgrade then reads. Helm does not
-        carry them forward on its own, and an upgrade without them reverts every value you have
-        set.
-      </p>
-
-      <p class="mt-2 text-body-small text-on-surface-variant/70">
-        <span class="font-mono">REPO</span> and <span class="font-mono">VERSION</span> are yours to
-        fill in. A release records the chart's name, never where it was fetched from, and PodSteer
-        reads no chart repositories{chartName ? '' : ' — and no revision has been read yet, so the chart name is a placeholder too'}.
-        The rollback command names revision {target}; pick another above to change it.
-      </p>
     </div>
   </div>
 {/if}
+
+{#snippet payloadActions(text: string)}
+  <Select
+    label="Revision"
+    compact
+    value={String(inspecting)}
+    options={revisionOptions}
+    onchange={(value) => inspect(Number(value))}
+  />
+  {#if tab !== 'manifest' || !payload.facts}
+    <!-- THE RE-HIDE CONTROL. Values and notes put themselves away after
+         thirty seconds and on blur; this does it sooner, and pressed again
+         reads the revision once more. -->
+    <ToolbarToggle
+      icon={Eye}
+      label={tab === 'manifest' ? 'Read the manifest' : 'Show values and notes'}
+      pressed={tab === 'manifest' ? false : revealed}
+      title={revealed ? 'Shown — hides after thirty seconds' : 'Hidden — press to read again'}
+      onclick={toggleRevealed}
+      disabled={payload.loading}
+    />
+  {/if}
+  <ToolbarButton
+    icon={Copy}
+    label="Copy"
+    title={copied ? 'Copied' : 'Copy'}
+    active={copied}
+    disabled={!text}
+    onclick={() => void copy(text)}
+  />
+  {#if (tab === 'values' || tab === 'manifest') && text && maximized === null}
+    <ToolbarButton
+      icon={Maximize2}
+      label="Maximize"
+      title="Open in a larger window"
+      onclick={() => (maximized = tab === 'values' ? 'values' : 'manifest')}
+    />
+  {/if}
+{/snippet}
+
+<!-- The Values or Manifest pane, in the drawer or in the larger window. -->
+{#snippet yamlSurface()}
+  {#if tab === 'manifest' && payload.facts}
+    {@const facts = payload.facts}
+    <!-- Arrived MASKED from Go: no timer of its own. -->
+    <YamlPane content={facts.manifest} readonly managedFields={false} minimap={maximized === 'manifest'}>
+      {#snippet actions()}{@render payloadActions(facts.manifest)}{/snippet}
+      {#snippet banner()}
+        {#if facts.maskedDocuments > 0}
+          <p class="border-b border-outline-variant/60 px-4 py-1.5 text-body-small text-on-surface-variant">
+            {facts.maskedDocuments === 1
+              ? 'One Secret shows its values as their size.'
+              : `${facts.maskedDocuments} Secrets show their values as their size.`}
+          </p>
+        {/if}
+      {/snippet}
+    </YamlPane>
+  {:else if tab === 'values' && sensitive?.values}
+    {@const values = sensitive.values}
+    <YamlPane content={values} readonly managedFields={false} minimap={maximized === 'values'}>
+      {#snippet actions()}{@render payloadActions(values)}{/snippet}
+    </YamlPane>
+  {/if}
+{/snippet}
+
+<!-- The same pane, given the window. Closing restores it to the drawer. If
+     the payload goes (blur, the thirty seconds) the dialog closes with it:
+     an empty larger window explains nothing. -->
+<PaneDialog
+  open={opened !== null && maximized !== null && maximized === tab &&
+    (tab === 'manifest' ? !!payload.facts : !!sensitive?.values)}
+  icon={Package}
+  kind="Helm release"
+  name={opened?.name ?? ''}
+  label={maximized === 'values' ? 'Values' : 'Manifest'}
+  help="helm-release"
+  onrestore={() => (maximized = null)}
+  onclose={() => (maximized = null)}
+>
+  {@render yamlSurface()}
+</PaneDialog>

@@ -47,6 +47,7 @@ import TimelineView from './TimelineView.svelte'
   import OverviewView from './OverviewView.svelte'
   import MultiKindView from './MultiKindView.svelte'
   import SecurityView from './SecurityView.svelte'
+  import HelpButton from '$lib/components/HelpButton.svelte'
   import NodesView from './NodesView.svelte'
   import PodsView from './PodsView.svelte'
   import WorkloadsView from './WorkloadsView.svelte'
@@ -54,7 +55,7 @@ import TimelineView from './TimelineView.svelte'
   import RBACView from './RBACView.svelte'
   import HelmView from './HelmView.svelte'
   import { fleet } from '$stores/fleet.svelte'
-  import { PanelLeft, AlertTriangle, Download, Check, Plus, Laptop } from '@lucide/svelte'
+  import { PanelLeft, AlertTriangle, Download, Check, Plus, Laptop, ShieldQuestion, UserSearch } from '@lucide/svelte'
   import { onMount } from 'svelte'
   import { sessionLauncher } from '$stores/sessionLauncher.svelte'
   import TerminalMenu from '$lib/components/TerminalMenu.svelte'
@@ -202,6 +203,14 @@ import TimelineView from './TimelineView.svelte'
    * it does to each is the plan it fetches on open.
    */
   let bulkAction = $state<BulkActionId | null>(null)
+
+  /**
+   * The Permissions page's tools. The page owns its reads and its dialogs;
+   * the toolbar only asks — the same division every view's tools follow.
+   */
+  let canIOpen = $state(false)
+  let rolesOpen = $state(false)
+
   /** The two ticked rows a diff was asked for, or null. */
   let comparing = $state<{ left: BulkItem; right: BulkItem } | null>(null)
 
@@ -327,7 +336,7 @@ import TimelineView from './TimelineView.svelte'
       preferences.toggleNavigator()
     } else if (shortcut('refresh').matches(event)) {
       event.preventDefault()
-      void session.refresh()
+      void session.requestRefresh()
     } else if (shortcut('focus-search').matches(event)) {
       event.preventDefault()
       searchField?.focus()
@@ -374,12 +383,16 @@ import TimelineView from './TimelineView.svelte'
                   : session.viewMode === 'multi-kind'
                     ? 'Multi-kind'
                     : session.viewMode === 'security'
-                      ? 'Security'
-                      : session.isList
+                      ? session.securityTab === 'posture'
+                        ? 'Posture'
+                        : 'Vulnerabilities'
+                      : session.viewMode === 'rbac'
+                        ? 'Permissions'
+                        : session.isList
                         ? (session.selectedKind?.title ?? 'Resources')
                         : session.cluster.id}
           </h2>
-          {#if session.isList}
+          {#if session.hasTable}
             <span class="rounded-full bg-surface-container-high px-2 py-0.5 text-label-small
                          tabular-nums text-on-surface-variant">
               {session.visibleCount}
@@ -395,7 +408,7 @@ import TimelineView from './TimelineView.svelte'
         </div>
       </div>
 
-      {#if session.isList}
+      {#if session.hasTable}
         <!-- Search. Bound to the TYPED text rather than the debounced term:
              the field has to keep up with the keyboard even though the table
              follows a beat behind it. -->
@@ -404,7 +417,15 @@ import TimelineView from './TimelineView.svelte'
           value={session.typedSearch}
           placeholder="Search {session.viewMode === 'fleet'
             ? 'all clusters'
-            : (session.selectedKind?.title.toLowerCase() ?? 'resources')}…"
+            : session.viewMode === 'rbac'
+              ? 'permissions'
+              : session.viewMode === 'helm'
+                ? 'releases'
+                : session.viewMode === 'security'
+                  ? session.securityTab === 'posture'
+                    ? 'findings'
+                    : 'images'
+                  : (session.selectedKind?.title.toLowerCase() ?? 'resources')}…"
           onchange={session.setSearch}
           onnext={focusFirstRow}
           invalid={Boolean(session.searchError)}
@@ -423,18 +444,21 @@ import TimelineView from './TimelineView.svelte'
             '"quoted phrases" keep spaces in one term.'}
         />
 
-        <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
-
         <!-- Saved views, immediately after the controls one captures: the
              kind is in the navigator, but the namespace, the search and the
              chips are all in this row, so the thing that keeps them belongs
-             beside them rather than in Settings. -->
-        <SavedViewsMenu
-          current={session.viewState}
-          kindTitle={(kindId) => session.kinds.find((entry) => entry.id === kindId)?.title ?? ''}
-          allNamespaces={ALL_NAMESPACES}
-          onapply={(view) => void session.applyView(view)}
-        />
+             beside them rather than in Settings. Lists only: a table page
+             that is not a list has no kind for a view to restore. -->
+        {#if session.isList}
+          <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+
+          <SavedViewsMenu
+            current={session.viewState}
+            kindTitle={(kindId) => session.kinds.find((entry) => entry.id === kindId)?.title ?? ''}
+            allNamespaces={ALL_NAMESPACES}
+            onapply={(view) => void session.applyView(view)}
+          />
+        {/if}
 
         <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
 
@@ -504,6 +528,39 @@ import TimelineView from './TimelineView.svelte'
         {/if}
       {/if}
 
+      <!-- The Permissions page's tools. Refresh re-asks the one question the
+           page answers on arrival; the other two are questions of their own,
+           each in a dialog, so the page stays the list it opens on. -->
+      {#if session.viewMode === 'security'}
+        <!-- The page's (?): what it deliberately does not cover. The two
+             tables are navigator entries now, so there is no switch here. -->
+        <div class="ms-auto flex items-center gap-2">
+          <HelpButton topic="security" about="Security" />
+        </div>
+      {/if}
+
+      {#if session.viewMode === 'rbac'}
+        <!-- On the RIGHT, beside the terminals, like every other view's tools.
+             No rule before them — they open the right-hand group rather than
+             follow anything. The wrapper takes this row's only auto margin
+             while they are shown: two auto margins would split the space and
+             strand these in the middle. -->
+        <div class="ms-auto flex items-center gap-2">
+          <ToolbarButton
+            icon={ShieldQuestion}
+            label="Can I…"
+            title="Can I… — ask whether an action is allowed"
+            onclick={() => (canIOpen = true)}
+          />
+          <ToolbarButton
+            icon={UserSearch}
+            label="Who holds a role"
+            title="Who holds a role — the bindings behind a Role or ClusterRole"
+            onclick={() => (rolesOpen = true)}
+          />
+        </div>
+      {/if}
+
       <!-- The terminals: one on THIS machine and one INSIDE the cluster.
            OUTSIDE the list-only controls above, and last in the row: both are
            scoped to the cluster TAB rather than to whatever kind is selected,
@@ -515,7 +572,12 @@ import TimelineView from './TimelineView.svelte'
            not look like one that does something. Neither entry disappears when
            it cannot be used — a disabled row carries its reason in the title,
            where an absent control would teach nothing. -->
-      <div class="ms-auto h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+      <div
+        class="{session.viewMode === 'rbac' || session.viewMode === 'security'
+          ? ''
+          : 'ms-auto'} h-5 w-px shrink-0 bg-outline-variant/60"
+        aria-hidden="true"
+      ></div>
 
       <TerminalMenu
         localSupported={localShellSupported}
@@ -544,7 +606,7 @@ import TimelineView from './TimelineView.svelte'
     {:else if session.viewMode === 'fleet'}
       <FleetView {session} />
     {:else if session.viewMode === 'rbac'}
-      <RBACView {session} />
+      <RBACView {session} bind:canIOpen bind:rolesOpen />
     {:else if session.viewMode === 'timeline'}
       <TimelineView {session} />
     {:else if session.viewMode === 'helm'}

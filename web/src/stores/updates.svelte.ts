@@ -18,7 +18,7 @@
  * bridge, and the Go service refuses independently. Both are asserted.
  */
 
-import { CheckForUpdate, UpdateChecksPermitted } from '$bindings/updateapi'
+import { CheckForUpdate, RecallUpdate, UpdateChecksPermitted } from '$bindings/updateapi'
 import type * as wails from '$bindings/models'
 import { preferences } from './preferences.svelte'
 
@@ -50,7 +50,9 @@ class Updates {
 
   /** A newer release exists and the operator has not dismissed it. */
   readonly available = $derived(
-    this.status?.state === 'available' && this.status.latest !== preferences.dismissedUpdate,
+    preferences.updateChecksEnabled &&
+      this.status?.state === 'available' &&
+      this.status.latest !== preferences.dismissedUpdate,
   )
 
   /**
@@ -61,6 +63,7 @@ class Updates {
    */
   start(): void {
     void this.#permission()
+    void this.#recall()
     if (this.#timer !== null) return
 
     this.#timer = window.setTimeout(() => {
@@ -77,6 +80,26 @@ class Updates {
     window.clearTimeout(this.#timer)
     window.clearInterval(this.#timer)
     this.#timer = null
+  }
+
+  /**
+   * Shows what an earlier run found, without asking anybody.
+   *
+   * The daily gate survives a restart and the answer used to not: a relaunch
+   * inside the day skipped the check and then had nothing to show, so an
+   * update found yesterday disappeared until the next check — every other day
+   * for somebody who quits PodSteer each evening. Go re-judges the remembered
+   * release against the running build, which may have been upgraded since.
+   */
+  async #recall(): Promise<void> {
+    if (!preferences.updateChecksEnabled || !preferences.lastUpdateLatest) return
+    try {
+      const recalled = await RecallUpdate(preferences.lastUpdateLatest, preferences.lastUpdateURL)
+      // A real check that landed first wins.
+      this.status ??= recalled
+    } catch {
+      // Nothing to show is the same as before this existed.
+    }
   }
 
   async #permission(): Promise<void> {
@@ -103,8 +126,10 @@ class Updates {
 
     if (force) this.checking = true
     try {
-      this.status = await CheckForUpdate(force)
-      preferences.markUpdateChecked(Date.now())
+      const status = await CheckForUpdate(force)
+      this.status = status
+      const found = status.state === 'available' || status.state === 'current'
+      preferences.markUpdateChecked(Date.now(), found ? status.latest : '', found ? status.url : '')
     } catch {
       // Never surfaced. Being unable to reach GitHub says nothing about the
       // cluster the operator is working on.

@@ -25,13 +25,17 @@ const ENTRIES = [
   'Overview',
   'Timeline',
   'Applications',
-  'Helm',
+  'Posture',
+  'Vulnerabilities',
   'Permissions',
+  'Helm',
 ]
 
 /** Where each entry's own label appears in the file. */
 function positionOf(label: string): number {
-  const at = NAVIGATOR.indexOf(`>${label}</span>`)
+  // A literal label, or one passed to the SECURITY section's row snippet.
+  const literal = NAVIGATOR.indexOf(`>${label}</span>`)
+  const at = literal > -1 ? literal : NAVIGATOR.indexOf(`'${label}')}`)
   expect(at, `${label} is not in the navigator`).toBeGreaterThan(-1)
   return at
 }
@@ -48,10 +52,19 @@ describe('the order of the navigator', () => {
     expect(positionOf('All clusters')).toBeLessThan(positionOf('Overview'))
   })
 
-  it('ends with Permissions, the one entry about the operator', () => {
-    const last = Math.max(...ENTRIES.map(positionOf))
+  it('ends the SECURITY section with Permissions, the one entry about the operator', () => {
+    expect(positionOf('Permissions')).toBeGreaterThan(positionOf('Vulnerabilities'))
+    expect(positionOf('Permissions')).toBeLessThan(positionOf('Helm'))
+  })
 
-    expect(positionOf('Permissions')).toBe(last)
+  it('gathers Posture, Vulnerabilities and Permissions under one SECURITY section', () => {
+    const header = NAVIGATOR.indexOf('onclick={() => preferences.toggleCategory(SECURITY_SECTION)}')
+    // Directly under the catalogue's categories, above Helm.
+    expect(header).toBeGreaterThan(NAVIGATOR.indexOf('{#each sections as section'))
+    expect(header).toBeLessThan(positionOf('Helm'))
+    for (const label of ['Posture', 'Vulnerabilities', 'Permissions']) {
+      expect(positionOf(label)).toBeGreaterThan(header)
+    }
   })
 
   it('keeps Helm below the categories it is not one of', () => {

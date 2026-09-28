@@ -109,7 +109,7 @@ Prometheus or VictoriaMetrics in your cluster **through your API server's own
 proxy**, so it is one more request to the API server your kubeconfig names
 rather than a new destination.
 
-The one exception is an **update check**, added in v0.1.2. It asks
+The one exception is an **update check**, added in v0.2.0. It asks
 `api.github.com` once a day whether a newer release has been published.
 
 **And one thing PodSteer does not do itself, but causes.** Add cluster can run
@@ -130,7 +130,7 @@ by the merge described below, with its backup and its untouched
 `current-context`. The list of CLIs is fixed inside the binary and cannot be
 pointed at another program by a setting, a file or an environment variable.
 
-**This is new in v0.1.2**, and it is called out because v0.1.0 and v0.1.1
+**This is new in v0.2.0**, and it is called out because v0.1.0 and v0.1.1
 stated the opposite here: anyone who reviewed those releases against this file
 should re-read the list below rather than assume it still applies.
 
@@ -171,7 +171,7 @@ looking. If that ever changes it will be off by default, per image, initiated by
 you, and described here before it ships.
 
 **The Helm page LISTS Secrets without reading any of them, and reads exactly
-one when you press a button.** Those are two different acts and the difference
+one when you open a tab that shows it.** Those are two different acts and the difference
 is the whole design, so they are described separately.
 
 **The list reads no payload at all.** Helm stores every release as a Secret and
@@ -193,8 +193,10 @@ pattern Kubernetes' own guidance tells cluster operators to alert on.
 **Reading one release's payload is a separate, deliberate act, and this is new.**
 A release's values, its notes, its rendered manifest and the chart it came from
 exist only inside that revision's Secret, so seeing them means reading a
-Secret's contents. PodSteer does that **only when you press the button on one
-revision** — never when the page opens, never when the release drawer opens,
+Secret's contents. PodSteer does that **only when you open the release
+drawer's Values, Manifest or Notes tab** (or pick another revision there) —
+never when the page opens, never when the release drawer opens (it opens on an
+overview built from labels),
 never on the refresh timer, and never for more than the one revision you named.
 It is the same act as revealing a Secret's key and carries the same treatment:
 
@@ -618,8 +620,9 @@ same commitment the rest of this file makes.
 when PodSteer exits, by signalling its whole process group, and PodSteer waits
 for it to be gone rather than assuming.
 
-**Not available on Windows.** There is no pseudo-terminal for it in this build;
-the control is absent and says why, rather than failing when pressed.
+**On Windows it runs through ConPTY**, Windows' own pseudo-console, since
+v0.3.0. On a platform that genuinely cannot provide a pseudo-terminal the
+control is absent and says why, rather than failing when pressed.
 
 ## The MCP subprocess, and what it can read
 

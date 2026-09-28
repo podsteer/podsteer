@@ -827,3 +827,81 @@ export function helmUpgrade(ctx: string, release: string, ns: string, chart: str
 export function helmHistory(ctx: string, release: string, ns: string): string {
   return ['helm', 'history', release, '-n', ns, '--kube-context', shellQuote(ctx)].join(' ')
 }
+
+/** One access question, as the Can I dialog asks it. */
+export interface CanIQuestion {
+  /** '' for the account behind this kubeconfig; else User, Group or ServiceAccount. */
+  subjectKind: string
+  subjectName: string
+  subjectNamespace: string
+  verb: string
+  group: string
+  resource: string
+  subresource: string
+  /** '' asks at cluster scope. */
+  namespace: string
+  name: string
+}
+
+/**
+ * `kubectl auth can-i` for the same question the dialog sent as an access
+ * review.
+ *
+ * Every field was TYPED by the operator, so every one goes through
+ * `shellQuote` — a resource of `*` is a glob to a shell. A cluster-scoped
+ * question is `--all-namespaces`, which is how kubectl sends an empty
+ * namespace; leaving the flag off would ask about the context's own
+ * namespace instead.
+ *
+ * EMPTY FOR A GROUP SUBJECT. kubectl impersonates a group only alongside a
+ * user (`--as-group` needs `--as`), so no command asks exactly what the
+ * dialog asked, and one that asks something else is worse than none.
+ */
+export function authCanI(ctx: string, q: CanIQuestion): string {
+  if (q.subjectKind === 'Group') return ''
+  let target = q.group ? `${q.resource}.${q.group}` : q.resource
+  if (q.name) target += `/${q.name}`
+  const parts = [...base(ctx), 'auth', 'can-i', shellQuote(q.verb), shellQuote(target)]
+  if (q.subresource) parts.push('--subresource', shellQuote(q.subresource))
+  if (q.namespace) parts.push('-n', shellQuote(q.namespace))
+  else parts.push('--all-namespaces')
+  if (q.subjectKind === 'User') parts.push('--as', shellQuote(q.subjectName))
+  if (q.subjectKind === 'ServiceAccount') {
+    parts.push('--as', shellQuote(`system:serviceaccount:${q.subjectNamespace}:${q.subjectName}`))
+  }
+  return parts.join(' ')
+}
+
+/**
+ * The bindings that grant a Role or ClusterRole, as one kubectl pipeline — the
+ * reverse lookup "Who holds a role" makes.
+ *
+ * kubectl has no verb for it, so this lists the bindings with the role they
+ * reference in its own columns and keeps the rows naming this one. A
+ * ClusterRole is looked for in ClusterRoleBindings AND in RoleBindings in
+ * every namespace, because a RoleBinding may grant a ClusterRole; a Role only
+ * in RoleBindings of its own namespace. `$4` and `$5` are the ROLE_KIND and
+ * ROLE columns below, and `NR==1` keeps the header.
+ *
+ * Empty for a name that could break out of the awk string. Kubernetes object
+ * names cannot contain a quote or a backslash, so that is a name no role has.
+ */
+export function roleHolders(
+  ctx: string,
+  scope: 'cluster' | 'namespace',
+  ns: string,
+  name: string,
+): string {
+  if (!name || /['"\\]/.test(name)) return ''
+  // QUOTED: `[*]` is a glob to zsh, which refuses the whole command with
+  // "no matches found" before kubectl ever sees it.
+  const columns =
+    "'custom-columns=KIND:.kind,NAMESPACE:.metadata.namespace,NAME:.metadata.name," +
+    "ROLE_KIND:.roleRef.kind,ROLE:.roleRef.name,SUBJECTS:.subjects[*].name'"
+  const kind = scope === 'cluster' ? 'ClusterRole' : 'Role'
+  const list =
+    scope === 'cluster'
+      ? [...base(ctx), 'get', 'clusterrolebindings,rolebindings', '-A']
+      : [...base(ctx, ns), 'get', 'rolebindings']
+  return `${[...list, '-o', columns].join(' ')} | awk 'NR==1 || ($4=="${kind}" && $5=="${name}")'`
+}
