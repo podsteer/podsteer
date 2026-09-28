@@ -62,6 +62,12 @@ func (a *UpdateAPI) CheckForUpdate(force bool) UpdateStatus {
 	return toUpdateStatus(result)
 }
 
+// RecallUpdate re-reads a release remembered from an earlier run against
+// the running build. It makes no request. See UpdateService.Recall.
+func (a *UpdateAPI) RecallUpdate(latest, url string) UpdateStatus {
+	return toUpdateStatus(a.updates.Recall(latest, url))
+}
+
 // UpdateChecksPermitted reports whether this machine allows checking at all.
 //
 // So the Settings toggle can show itself as overridden rather than pretending

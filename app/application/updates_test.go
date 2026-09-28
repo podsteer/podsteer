@@ -151,3 +151,45 @@ func TestADevelopmentBuildIsNeverToldToUpgrade(t *testing.T) {
 		t.Fatalf("leaked latest=%q url=%q into a development build", result.Latest, result.URL)
 	}
 }
+
+// A relaunch inside the day must still show an update found on an earlier
+// run — and must judge it against the build running now, without a request.
+func TestRecallJudgesARememberedReleaseAgainstThisBuild(t *testing.T) {
+	t.Setenv("PODSTEER_UPDATE_CHECK", "")
+	const url = "https://github.com/podsteer/podsteer/releases/tag/v0.3.1"
+
+	cases := []struct {
+		name      string
+		installed string
+		want      domain.UpdateState
+		wantURL   string
+	}{
+		{"older build is told", "v0.3.0", domain.UpdateAvailable, url},
+		{"upgraded since is current", "v0.3.1", domain.UpdateCurrent, url},
+		{"development build compares nothing", "dev", domain.UpdateNotComparable, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source := &countingSource{tag: "v9.9.9"}
+			service := application.NewUpdateService(source, tc.installed, nil)
+
+			result := service.Recall("v0.3.1", url)
+
+			if calls := source.calls.Load(); calls != 0 {
+				t.Fatalf("recall asked the source %d times", calls)
+			}
+			if result.State != tc.want || result.URL != tc.wantURL {
+				t.Fatalf("got %q %q, want %q %q", result.State, result.URL, tc.want, tc.wantURL)
+			}
+		})
+	}
+}
+
+func TestRecallRespectsTheEnvironment(t *testing.T) {
+	t.Setenv("PODSTEER_UPDATE_CHECK", "false")
+	service := application.NewUpdateService(&countingSource{}, "v0.3.0", nil)
+
+	if got := service.Recall("v0.3.1", "x").State; got != domain.UpdateDisabled {
+		t.Fatalf("state %q, want disabled", got)
+	}
+}

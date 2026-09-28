@@ -2507,6 +2507,14 @@ asserted in `app/application/updates_test.go` by counting calls to the source
 rather than by checking the returned state — the opt-out is precisely what has
 silently broken in k9s, Terraform, dotnet, JetBrains and Docker Desktop.
 
+**The once-a-day gate and the answer both survive a restart.** The interface
+persists `lastUpdateCheck` plus the release it found (`lastUpdateLatest`,
+`lastUpdateURL`, machine state, never exported); on start it hands that to
+`UpdateAPI.RecallUpdate`, which re-judges it against the running build with no
+request. Before this, a relaunch inside the day skipped the check and had
+nothing to show, so the badge appeared only every other day for anyone who
+quits PodSteer nightly. Switching the setting back on checks at once.
+
 If a future paid tier wants a client-side call, **it does not get to reuse this
 one.** That is the creep path this ADR exists to make visible.
 

@@ -700,7 +700,12 @@
               <Checkbox
                 checked={preferences.updateChecksEnabled}
                 disabled={!updates.permitted}
-                onchange={(next) => preferences.setUpdateChecksEnabled(next)}
+                onchange={(next) => {
+                  preferences.setUpdateChecksEnabled(next)
+                  // Switching it on checks now, as setUpdateChecksEnabled
+                  // promises — the daily timer may be most of a day away.
+                  if (next) void updates.refresh(false)
+                }}
                 full
                 class="mt-3 flex-row-reverse"
               >

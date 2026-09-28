@@ -639,12 +639,19 @@ interface PersistedShape {
   podMeasure: PodMeasure
   /** How much recent usage to keep for the drawer's charts, in minutes. */
   usageWindowMinutes: number
-  /** Whether to ask GitHub about newer releases. See UpdateBadge.svelte. */
   /** Which way the dependency map lays out its tiers. */
   mapOrientation: 'horizontal' | 'vertical'
+  /** Whether to ask GitHub about newer releases. See UpdateBadge.svelte. */
   updateChecksEnabled: boolean
   /** When the last check happened, so a restart does not trigger another. */
   lastUpdateCheck: number
+  /**
+   * The newest release that check found, and its page — so a restart inside
+   * the day can still show it. Re-judged in Go against the running build
+   * (`RecallUpdate`), because the build may have been upgraded since.
+   */
+  lastUpdateLatest: string
+  lastUpdateURL: string
   /** A version the operator has dismissed, so the badge stays gone. */
   dismissedUpdate: string
   /**
@@ -770,6 +777,8 @@ const DEFAULTS: PersistedShape = {
   mapOrientation: 'horizontal',
   updateChecksEnabled: true,
   lastUpdateCheck: 0,
+  lastUpdateLatest: '',
+  lastUpdateURL: '',
   dismissedUpdate: '',
   sections: {},
   // Off. An application that starts making noise nobody asked for is one
@@ -1057,6 +1066,8 @@ class Preferences {
   mapOrientation = $state<'horizontal' | 'vertical'>(DEFAULTS.mapOrientation)
   updateChecksEnabled = $state<boolean>(DEFAULTS.updateChecksEnabled)
   lastUpdateCheck = $state<number>(DEFAULTS.lastUpdateCheck)
+  lastUpdateLatest = $state<string>(DEFAULTS.lastUpdateLatest)
+  lastUpdateURL = $state<string>(DEFAULTS.lastUpdateURL)
   dismissedUpdate = $state<string>(DEFAULTS.dismissedUpdate)
 
   /** Detail-pane sections the operator has opened or closed, by id. */
@@ -1623,13 +1634,26 @@ class Preferences {
    */
   setUpdateChecksEnabled(enabled: boolean): void {
     this.updateChecksEnabled = enabled
-    if (!enabled) this.lastUpdateCheck = 0
+    if (!enabled) {
+      this.lastUpdateCheck = 0
+      this.lastUpdateLatest = ''
+      this.lastUpdateURL = ''
+    }
     this.#save()
   }
 
-  /** Records that a check just happened. */
-  markUpdateChecked(at: number): void {
+  /**
+   * Records that a check just happened, and the release it found when it
+   * found one. A check that could not complete keeps the last release known
+   * rather than forgetting it: failing to reach GitHub today does not make
+   * yesterday's release any less published.
+   */
+  markUpdateChecked(at: number, latest = '', url = ''): void {
     this.lastUpdateCheck = at
+    if (latest) {
+      this.lastUpdateLatest = latest
+      this.lastUpdateURL = url
+    }
     this.#save()
   }
 
@@ -1642,7 +1666,6 @@ class Preferences {
    */
   dismissUpdate(version: string): void {
     this.dismissedUpdate = version
-    this.#save()
     this.#save()
   }
 
@@ -2193,6 +2216,12 @@ class Preferences {
       if (typeof stored.lastUpdateCheck === 'number') {
         this.lastUpdateCheck = stored.lastUpdateCheck
       }
+      if (typeof stored.lastUpdateLatest === 'string') {
+        this.lastUpdateLatest = stored.lastUpdateLatest
+      }
+      if (typeof stored.lastUpdateURL === 'string') {
+        this.lastUpdateURL = stored.lastUpdateURL
+      }
       if (typeof stored.dismissedUpdate === 'string') {
         this.dismissedUpdate = stored.dismissedUpdate
       }
@@ -2298,6 +2327,8 @@ class Preferences {
         mapOrientation: this.mapOrientation,
         updateChecksEnabled: this.updateChecksEnabled,
         lastUpdateCheck: this.lastUpdateCheck,
+        lastUpdateLatest: this.lastUpdateLatest,
+        lastUpdateURL: this.lastUpdateURL,
         dismissedUpdate: this.dismissedUpdate,
         sections: this.sections,
         alertSoundsEnabled: this.alertSoundsEnabled,
