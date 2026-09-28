@@ -82,6 +82,7 @@
     Eye,
     FileCode,
     Info,
+    Maximize2,
     NotebookText,
     Package,
     SlidersHorizontal,
@@ -91,6 +92,7 @@
   import DetailList, { type DetailRow } from '$lib/components/DetailList.svelte'
   import DetailSection from '$lib/components/DetailSection.svelte'
   import HelpButton from '$lib/components/HelpButton.svelte'
+  import PaneDialog from '$lib/components/PaneDialog.svelte'
   import PaneToolbar from '$lib/components/PaneToolbar.svelte'
   import Select from '$lib/components/Select.svelte'
   import ToolbarButton from '$lib/components/ToolbarButton.svelte'
@@ -241,6 +243,7 @@
     // nobody is looking at is holding a decoded Secret for no reason.
     if (opened) helmPayloads.forget(payloadKeyFor(opened.namespace, opened.name, inspecting))
     opened = null
+    maximized = null
   }
 
   // --- The payload ---------------------------------------------------------
@@ -307,6 +310,7 @@
   /** Moves to a tab. Choosing a payload tab reads the revision it shows. */
   function selectTab(id: DrawerTab): void {
     tab = id
+    maximized = null
     if (needsRead(id)) readPayload()
   }
 
@@ -351,6 +355,10 @@
           : `Revision ${revision.revision}`,
     })),
   )
+
+  /** Which payload pane is in the larger window, as the object panel's YAML
+      tab does it. Cleared with the drawer and on a tab change. */
+  let maximized = $state<'values' | 'manifest' | null>(null)
 
   /** Copy's moment of acknowledgement — see ToolbarButton's `active`. */
   let copied = $state(false)
@@ -727,48 +735,70 @@
             title="History"
             hint={countedRevisions(opened.revisionCount)}
           >
-            <table class="w-full border-collapse text-body-medium">
-              <thead>
-                <tr class="text-left text-label-medium text-on-surface-variant/70">
-                  <th class="w-8 py-1.5 font-medium"><span class="sr-only">Status</span></th>
-                  <th class="py-1.5 pr-3 font-medium">Revision</th>
-                  <th class="py-1.5 pr-3 font-medium">Status</th>
-                  {#if hasCreated}<th class="py-1.5 pr-3 font-medium">Created</th>{/if}
-                  <th class="py-1.5 font-medium">Updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each opened.revisions ?? [] as revision (revision.secretName)}
-                  <tr class="border-t border-outline-variant/40">
-                    <td class="py-1.5">
-                      <StatusIndicator
-                        tone={statusTone(revision.status)}
-                        label={revision.status || 'unknown'}
-                        icon={Package}
-                      />
-                    </td>
-                    <td class="py-1.5 pr-3 tabular-nums text-on-surface">
-                      {revision.revision}
-                      {#if revision.revision === opened.current.revision}
-                        <span class="ml-1.5 text-body-small text-on-surface-variant/60">current</span>
-                      {/if}
-                    </td>
-                    <td class="py-1.5 pr-3 text-on-surface-variant">{revision.status || 'unknown'}</td>
-                    {#if hasCreated}
-                      <td class="py-1.5 pr-3 tabular-nums text-on-surface-variant">
-                        {formatClockTime(helmTime(revision.createdAt))}
-                      </td>
-                    {/if}
-                    <!-- An absent modifiedAt is the ORDINARY case: Helm
-                         writes the label only when a revision is updated in
-                         place. A dash, never the creation time. -->
-                    <td class="py-1.5 tabular-nums text-on-surface-variant">
-                      {formatClockTime(helmTime(revision.modifiedAt))}
-                    </td>
+            <!-- THE LIST'S OWN TABLE, drawn small: the same header band,
+                 dividers, status-icon column and row rhythm as the release
+                 list behind the panel, without sorting or resizing, which
+                 a handful of revisions has no use for. -->
+            <div class="overflow-x-auto rounded-sm border border-outline-variant/60">
+              <table class="w-full border-collapse text-body-medium">
+                <thead class="bg-surface-container/95">
+                  <tr class="text-left text-label-medium text-on-surface-variant">
+                    {#snippet head(label: string, numeric = false)}
+                      <th
+                        scope="col"
+                        class="relative px-3 py-2 font-medium {numeric ? 'text-right' : ''}
+                               after:absolute after:top-1/4 after:right-0 after:h-1/2 after:w-px
+                               after:bg-outline-variant last:after:hidden"
+                      >
+                        {label}
+                      </th>
+                    {/snippet}
+                    <th
+                      scope="col"
+                      class="relative w-11 py-2 pl-5 font-medium
+                             after:absolute after:top-1/4 after:right-0 after:h-1/2 after:w-px after:bg-outline-variant"
+                    >
+                      <CircleDot class="size-4" strokeWidth={1.8} aria-label="Status" />
+                    </th>
+                    {@render head('Revision')}
+                    {@render head('State')}
+                    {#if hasCreated}{@render head('Created', true)}{/if}
+                    {@render head('Updated', true)}
                   </tr>
-                {/each}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {#each opened.revisions ?? [] as revision (revision.secretName)}
+                    <tr class="border-t border-outline-variant/40 bg-surface transition-colors duration-100 hover:bg-surface-container-low">
+                      <td class="py-1.5 pr-3 pl-5">
+                        <StatusIndicator
+                          tone={statusTone(revision.status)}
+                          label={revision.status || 'unknown'}
+                          icon={Package}
+                        />
+                      </td>
+                      <td class="px-3 py-1.5 tabular-nums text-on-surface">
+                        <span class="font-medium">{revision.revision}</span>
+                        {#if revision.revision === opened.current.revision}
+                          <span class="ml-1.5 text-body-small text-on-surface-variant/60">current</span>
+                        {/if}
+                      </td>
+                      <td class="px-3 py-1.5 text-on-surface-variant">{revision.status || 'unknown'}</td>
+                      {#if hasCreated}
+                        <td class="px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+                          {formatClockTime(helmTime(revision.createdAt))}
+                        </td>
+                      {/if}
+                      <!-- An absent modifiedAt is the ORDINARY case: Helm
+                           writes the label only when a revision is updated in
+                           place. A dash, never the creation time. -->
+                      <td class="px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+                        {formatClockTime(helmTime(revision.modifiedAt))}
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
           </DetailSection>
         </div>
       {:else if tab === 'commands'}
@@ -781,6 +811,7 @@
               <span class="text-label-medium text-on-surface-variant" aria-hidden="true">Roll back to</span>
               <Select
               label="Roll back to"
+              compact
               value={String(target)}
               options={revisionOptions}
                 onchange={(value) => (target = Number(value))}
@@ -794,37 +825,6 @@
         </div>
       {:else}
         {@const facts = payload.facts}
-        {#snippet payloadActions(text: string)}
-          <Select
-            label="Revision"
-            compact
-            value={String(inspecting)}
-            options={revisionOptions}
-            onchange={(value) => inspect(Number(value))}
-          />
-          {#if tab !== 'manifest'}
-            <!-- THE RE-HIDE CONTROL. Values and notes put themselves away
-                 after thirty seconds and on blur; this does it sooner, and
-                 pressed again reads the revision once more. -->
-            <ToolbarToggle
-              icon={Eye}
-              label="Show values and notes"
-              pressed={revealed}
-              title={revealed ? 'Shown — hides after thirty seconds' : 'Hidden — press to read again'}
-              onclick={toggleRevealed}
-              disabled={payload.loading}
-            />
-          {/if}
-          <ToolbarButton
-            icon={Copy}
-            label="Copy"
-            title={copied ? 'Copied' : 'Copy'}
-            active={copied}
-            disabled={!text}
-            onclick={() => void copy(text)}
-          />
-        {/snippet}
-
         {#if payload.error}
           <div
             class="flex items-center gap-2 border-b border-error/20 bg-error-container/50 px-4 py-2
@@ -840,39 +840,29 @@
           <p class="p-4 text-body-medium text-on-surface-variant/70" role="status">
             Reading revision {inspecting}…
           </p>
-        {:else if facts && tab === 'manifest'}
-          <!-- Arrived MASKED from Go: no timer of its own. -->
-          <div class="flex min-h-0 flex-1 flex-col">
-            <YamlPane content={facts.manifest} readonly managedFields={false}>
-              {#snippet actions()}{@render payloadActions(facts.manifest)}{/snippet}
-              {#snippet banner()}
-                {#if facts.maskedDocuments > 0}
-                  <p class="border-b border-outline-variant/60 px-4 py-1.5 text-body-small text-on-surface-variant">
-                    {facts.maskedDocuments === 1
-                      ? 'One Secret shows its values as their size.'
-                      : `${facts.maskedDocuments} Secrets show their values as their size.`}
-                  </p>
-                {/if}
-              {/snippet}
-            </YamlPane>
-          </div>
-        {:else if facts && tab === 'values' && sensitive?.values}
-          <div class="flex min-h-0 flex-1 flex-col">
-            <YamlPane content={sensitive.values} readonly managedFields={false}>
-              {#snippet actions()}{@render payloadActions(sensitive.values)}{/snippet}
-            </YamlPane>
-          </div>
-        {:else if facts}
-          <!-- Notes, and every empty or hidden state, share one plain pane. -->
+        {:else if (tab === 'manifest' && facts) || (tab === 'values' && sensitive?.values)}
+          {#if maximized === tab}
+            <!-- The pane is in the dialog. Saying so beats an empty tab. -->
+            <p class="p-4 text-body-medium text-on-surface-variant/70">
+              Showing the {tab} in a larger window.
+            </p>
+          {:else}
+            <div class="flex min-h-0 flex-1 flex-col">{@render yamlSurface()}</div>
+          {/if}
+        {:else}
+          <!-- Notes, and every empty or hidden state, share one plain pane —
+               with its toolbar, so there is always a way back. -->
           {@const text = tab === 'notes' ? (sensitive?.notes ?? '') : ''}
           <PaneToolbar>
             {#snippet trailing()}{@render payloadActions(text)}{/snippet}
           </PaneToolbar>
-          {#if !sensitive}
+          {#if !facts || !sensitive}
             <!-- HIDDEN IS A REAL STATE AND SAYS SO: an empty pane would read
-                 as a release with no values, which is a different fact. -->
+                 as a release with no values, which is a different fact. A
+                 window blur drops the whole revision, the manifest too. -->
             <p class="p-4 text-body-medium text-on-surface-variant/70">
-              Hidden. Press <Eye class="inline size-3.5 align-[-2px]" strokeWidth={1.8} /> to read revision {inspecting} again.
+              Hidden when PodSteer lost focus or after thirty seconds. Press
+              <Eye class="inline size-3.5 align-[-2px]" strokeWidth={1.8} /> to read revision {inspecting} again.
             </p>
           {:else if tab === 'values'}
             <p class="p-4 text-body-medium text-on-surface-variant/70">
@@ -890,3 +880,84 @@
     </div>
   </div>
 {/if}
+
+{#snippet payloadActions(text: string)}
+  <Select
+    label="Revision"
+    compact
+    value={String(inspecting)}
+    options={revisionOptions}
+    onchange={(value) => inspect(Number(value))}
+  />
+  {#if tab !== 'manifest' || !payload.facts}
+    <!-- THE RE-HIDE CONTROL. Values and notes put themselves away after
+         thirty seconds and on blur; this does it sooner, and pressed again
+         reads the revision once more. -->
+    <ToolbarToggle
+      icon={Eye}
+      label={tab === 'manifest' ? 'Read the manifest' : 'Show values and notes'}
+      pressed={tab === 'manifest' ? false : revealed}
+      title={revealed ? 'Shown — hides after thirty seconds' : 'Hidden — press to read again'}
+      onclick={toggleRevealed}
+      disabled={payload.loading}
+    />
+  {/if}
+  <ToolbarButton
+    icon={Copy}
+    label="Copy"
+    title={copied ? 'Copied' : 'Copy'}
+    active={copied}
+    disabled={!text}
+    onclick={() => void copy(text)}
+  />
+  {#if (tab === 'values' || tab === 'manifest') && text && maximized === null}
+    <ToolbarButton
+      icon={Maximize2}
+      label="Maximize"
+      title="Open in a larger window"
+      onclick={() => (maximized = tab === 'values' ? 'values' : 'manifest')}
+    />
+  {/if}
+{/snippet}
+
+<!-- The Values or Manifest pane, in the drawer or in the larger window. -->
+{#snippet yamlSurface()}
+  {#if tab === 'manifest' && payload.facts}
+    {@const facts = payload.facts}
+    <!-- Arrived MASKED from Go: no timer of its own. -->
+    <YamlPane content={facts.manifest} readonly managedFields={false} minimap={maximized === 'manifest'}>
+      {#snippet actions()}{@render payloadActions(facts.manifest)}{/snippet}
+      {#snippet banner()}
+        {#if facts.maskedDocuments > 0}
+          <p class="border-b border-outline-variant/60 px-4 py-1.5 text-body-small text-on-surface-variant">
+            {facts.maskedDocuments === 1
+              ? 'One Secret shows its values as their size.'
+              : `${facts.maskedDocuments} Secrets show their values as their size.`}
+          </p>
+        {/if}
+      {/snippet}
+    </YamlPane>
+  {:else if tab === 'values' && sensitive?.values}
+    {@const values = sensitive.values}
+    <YamlPane content={values} readonly managedFields={false} minimap={maximized === 'values'}>
+      {#snippet actions()}{@render payloadActions(values)}{/snippet}
+    </YamlPane>
+  {/if}
+{/snippet}
+
+<!-- The same pane, given the window. Closing restores it to the drawer. If
+     the payload goes (blur, the thirty seconds) the dialog closes with it:
+     an empty larger window explains nothing. -->
+<PaneDialog
+  open={opened !== null && maximized !== null && maximized === tab &&
+    (tab === 'manifest' ? !!payload.facts : !!sensitive?.values)}
+  icon={Package}
+  kind="Helm release"
+  name={opened?.name ?? ''}
+  label={maximized === 'values' ? 'Values' : 'Manifest'}
+  help="helm-release"
+  onrestore={() => (maximized = null)}
+  onclose={() => (maximized = null)}
+>
+  {@render yamlSurface()}
+</PaneDialog>
