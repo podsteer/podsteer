@@ -281,7 +281,7 @@ import TimelineView from './TimelineView.svelte'
     const filename = buildExportFilename(
       session.viewMode === 'fleet' ? 'all-clusters' : session.cluster.id,
       kind,
-      session.namespace,
+      session.scopeNamespace,
     )
 
     try {
