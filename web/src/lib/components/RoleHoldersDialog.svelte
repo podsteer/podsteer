@@ -18,15 +18,17 @@
   import { modal } from '$lib/modal'
   import { toApiError, type ApiError } from '$lib/api/errors'
   import { inspectRole as askInspectRole, type RoleInspection } from '$lib/api/client'
+  import { roleHolders } from '$lib/kubectl'
   import { countedSubjects, distinctSubjects, pathRows, reviewState, subjectLabel, verbRows } from '$lib/rbac'
   import Button from './Button.svelte'
+  import DialogFooter from './DialogFooter.svelte'
   import DialogHeader from './DialogHeader.svelte'
   import ErrorBanner from './ErrorBanner.svelte'
   import RbacPathTable from './RbacPathTable.svelte'
   import RbacVerbTable from './RbacVerbTable.svelte'
   import ReviewNotice from './ReviewNotice.svelte'
   import Select from './Select.svelte'
-  import { AlertOctagon, AlertTriangle, Info, UserSearch } from '@lucide/svelte'
+  import { AlertOctagon, AlertTriangle, Info, UserSearch, X } from '@lucide/svelte'
 
   interface Props {
     open: boolean
@@ -45,6 +47,8 @@
   let roleNamespace = $state('')
   let roleName = $state('')
 
+  let nameInput = $state<HTMLInputElement | null>(null)
+
   let inspection = $state<RoleInspection | null>(null)
   let inspectionLoading = $state(false)
   let inspectionError = $state<ApiError | null>(null)
@@ -58,8 +62,24 @@
     }
   })
 
+  // An empty name is a question withdrawn: the answer to the last one goes
+  // with it, rather than staying under a field that no longer asks it.
+  $effect(() => {
+    if (roleName.trim() === '') {
+      inspection = null
+      inspectionError = null
+    }
+  })
+
   const canInspect = $derived(
     roleName.trim() !== '' && (roleScope === 'cluster' || roleNamespace.trim() !== ''),
+  )
+
+  /** The same lookup as a kubectl pipeline, for the footer. */
+  const command = $derived(
+    canInspect
+      ? roleHolders(clusterId, roleScope, roleScope === 'cluster' ? '' : roleNamespace.trim(), roleName.trim())
+      : '',
   )
 
   async function inspect(): Promise<void> {
@@ -134,48 +154,82 @@
     use:modal
     aria-label="Who holds a role"
   >
+    <!-- One form around the whole dialog, so Enter in a field and Inspect in
+         the footer submit the same thing while the footer stays pinned to the
+         bottom, below whatever the results scroll through. -->
+    <form
+      class="flex min-h-0 flex-1 flex-col"
+      onsubmit={(event) => {
+        event.preventDefault()
+        void inspect()
+      }}
+    >
     <div class="shrink-0 p-6 pb-4">
       <DialogHeader title="Who holds a role" icon={UserSearch} help="role-holders" {onclose} />
 
-      <form
-        class="mt-5 flex flex-wrap items-end gap-3"
-        onsubmit={(event) => {
-          event.preventDefault()
-          void inspect()
-        }}
-      >
-        <Select
-          label="Kind"
-          value={roleScope}
-          options={ROLE_SCOPES}
-          onchange={(value) => (roleScope = value as 'cluster' | 'namespace')}
-          class="w-44"
-        />
-        {#if roleScope === 'namespace'}
-          <label class="flex w-48 flex-col gap-1">
-            <span class="text-label-medium text-on-surface-variant">Namespace</span>
-            <input
-              type="text"
-              bind:value={roleNamespace}
-              autocomplete="off"
-              spellcheck="false"
-              class="field w-full px-3 py-2 text-body-medium"
-            />
-          </label>
-        {/if}
-        <label class="flex min-w-48 flex-1 flex-col gap-1">
-          <span class="text-label-medium text-on-surface-variant">Name</span>
-          <input
-            type="text"
-            bind:value={roleName}
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="cluster-admin"
-            class="field w-full px-3 py-2 text-body-medium"
+      <!-- Two rows — the kind on its own, what to look up on the next —
+           and the actions at the bottom of the dialog, where every other
+           dialog keeps its verb. -->
+      <div class="mt-5 flex flex-col gap-4">
+        <!-- A visible label over the trigger, like the text fields: Select's
+             own `label` titles its panel and is not drawn above it. -->
+        <div class="flex flex-col gap-1">
+          <span class="text-label-medium text-on-surface-variant" aria-hidden="true">Kind</span>
+          <Select
+            label="Kind"
+            value={roleScope}
+            options={ROLE_SCOPES}
+            onchange={(value) => (roleScope = value as 'cluster' | 'namespace')}
+            class="w-full"
           />
-        </label>
-        <Button type="submit" loading={inspectionLoading} disabled={!canInspect}>Inspect</Button>
-      </form>
+        </div>
+
+        <div class="flex gap-3">
+          {#if roleScope === 'namespace'}
+            <label class="flex w-1/3 flex-col gap-1">
+              <span class="text-label-medium text-on-surface-variant">Namespace</span>
+              <input
+                type="text"
+                bind:value={roleNamespace}
+                autocomplete="off"
+                spellcheck="false"
+                class="field w-full px-3 py-2 text-body-medium"
+              />
+            </label>
+          {/if}
+          <label class="flex flex-1 flex-col gap-1">
+            <span class="text-label-medium text-on-surface-variant">Name</span>
+            <!-- The search box's clear control, at a field's size: one press
+                 empties the name and, with it, the answer below. -->
+            <span class="relative flex items-center">
+              <input
+                bind:this={nameInput}
+                type="text"
+                bind:value={roleName}
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="cluster-admin"
+                class="field w-full py-2 pl-3 text-body-medium {roleName ? 'pr-10' : 'pr-3'}"
+              />
+              {#if roleName}
+                <button
+                  type="button"
+                  onclick={() => {
+                    roleName = ''
+                    nameInput?.focus()
+                  }}
+                  aria-label="Clear name"
+                  title="Clear"
+                  class="state-layer absolute right-2 grid size-6 place-items-center rounded-full
+                         text-on-surface-variant/60 transition-colors duration-100 hover:text-on-surface"
+                >
+                  <X class="size-3.5" strokeWidth={2.5} />
+                </button>
+              {/if}
+            </span>
+          </label>
+        </div>
+      </div>
 
       <ErrorBanner error={inspectionError} ondismiss={() => (inspectionError = null)} class="mt-4" />
     </div>
@@ -275,5 +329,13 @@
         {/if}
       </div>
     {/if}
+
+    <div class="shrink-0 border-t border-outline-variant/60 px-6 py-4">
+      <DialogFooter command={command} class="">
+        <Button variant="outlined" onclick={onclose}>Close</Button>
+        <Button type="submit" loading={inspectionLoading} disabled={!canInspect}>Inspect</Button>
+      </DialogFooter>
+    </div>
+    </form>
   </div>
 {/if}

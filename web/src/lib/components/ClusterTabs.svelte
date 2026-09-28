@@ -325,7 +325,7 @@
        picker, so it is disabled rather than hidden — its position stays put. -->
   <button
     type="button"
-    onclick={() => void workspace.active?.refresh()}
+    onclick={() => void workspace.active?.requestRefresh()}
     disabled={!workspace.active}
     aria-label="Refresh"
     title="Refresh  {shortcut('refresh').keys}"

@@ -186,13 +186,16 @@
       </div>
 
       <div class="mt-3 grid gap-3 sm:grid-cols-3">
-        <Select
-          label="Subject"
-          value={subjectKind}
-          options={SUBJECT_KINDS}
-          onchange={(value) => (subjectKind = value)}
-          class="w-full"
-        />
+        <div class="flex flex-col gap-1">
+          <span class="text-label-medium text-on-surface-variant" aria-hidden="true">Subject</span>
+          <Select
+            label="Subject"
+            value={subjectKind}
+            options={SUBJECT_KINDS}
+            onchange={(value) => (subjectKind = value)}
+            class="w-full"
+          />
+        </div>
         {#if subjectKind !== ''}
           {@render field('Subject name', '', subjectName, (v) => (subjectName = v))}
         {/if}

@@ -2043,6 +2043,22 @@ export class ClusterSession {
     this.#recordFailure(error)
   }
 
+  /**
+   * How many times somebody ASKED for a refresh — the toolbar button or its
+   * shortcut — as opposed to the timer. A view that deliberately fetches
+   * nothing on the tick (the Permissions page: an allow re-read every ten
+   * seconds would be an audit-log line every ten seconds) still owes an
+   * answer to a person pressing Refresh, and this is how it can tell the two
+   * apart.
+   */
+  manualRefreshes = $state(0)
+
+  /** A refresh a person asked for: counted, then the ordinary refresh. */
+  requestRefresh = async (): Promise<void> => {
+    this.manualRefreshes++
+    await this.refresh()
+  }
+
   /** Reloads whichever view is active. */
   refresh = async (): Promise<void> => {
     const request = ++this.#request

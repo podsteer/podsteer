@@ -31,6 +31,7 @@
   import { subjectRules as askSubjectRules, type SubjectRules } from '$lib/api/client'
   import { pathRows, reviewState, verbRows } from '$lib/rbac'
   import type { ClusterSession } from '$stores/session.svelte'
+  import { untrack } from 'svelte'
 
   interface Props {
     session: ClusterSession
@@ -38,16 +39,15 @@
     canIOpen?: boolean
     /** Whether the role dialog is open; the toolbar opens it. */
     rolesOpen?: boolean
-    /** Whether the rules review is in flight, for the toolbar's Refresh. */
-    loading?: boolean
   }
 
   let {
     session,
     canIOpen = $bindable(false),
     rolesOpen = $bindable(false),
-    loading = $bindable(false),
   }: Props = $props()
+
+  let loading = $state(false)
 
   let rules = $state<SubjectRules | null>(null)
   let rulesError = $state<ApiError | null>(null)
@@ -82,10 +82,18 @@
     }
   }
 
-  /** The toolbar's Refresh: the same read, asked again. */
-  export function refresh(): void {
+  /**
+   * The application's own Refresh re-asks — and ONLY a person pressing it.
+   * The tick fetches nothing here by design; `manualRefreshes` counts the
+   * presses, so this effect runs once per press and never on the timer.
+   */
+  let seenRefreshes = untrack(() => session.manualRefreshes)
+  $effect(() => {
+    const presses = session.manualRefreshes
+    if (presses === seenRefreshes) return
+    seenRefreshes = presses
     void loadRules(session.cluster.id, session.namespace)
-  }
+  })
 
   /**
    * One request when the page opens, and one more whenever the tab's
@@ -114,14 +122,6 @@
           What this kubeconfig can do in
           <span class="font-mono" data-selectable>{reviewedNamespace}</span>
         </h2>
-        {#if !session.namespace}
-          <!-- A rules review has no cluster-wide form, so on "all namespaces"
-               it names the default one — said here rather than implied. -->
-          <span class="text-body-medium text-on-surface-variant">
-            A rules review always names one namespace, so with every namespace selected it asks
-            about default.
-          </span>
-        {/if}
       </div>
       <p class="mt-1 text-body-medium text-on-surface-variant">
         The API server's own enumeration of your permissions, in one request.

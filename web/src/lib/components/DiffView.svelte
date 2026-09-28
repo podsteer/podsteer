@@ -309,7 +309,7 @@
         aria-pressed={hideUnchanged}
         aria-label="Hide unchanged lines"
         title={hideUnchanged ? 'Hiding unchanged lines — click to show everything' : 'Show unchanged lines folded'}
-        class="state-layer grid size-7 shrink-0 place-items-center rounded-sm transition-colors duration-100
+        class="state-layer grid size-7 shrink-0 place-items-center rounded-full transition-colors duration-100
                {hideUnchanged
           ? 'bg-primary/14 text-primary'
           : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
@@ -325,7 +325,7 @@
         disabled={identical}
         aria-label="Copy unified diff"
         title={copied.on ? 'Copied' : 'Copy unified diff'}
-        class="state-layer grid size-7 shrink-0 place-items-center rounded-sm transition-colors duration-100
+        class="state-layer grid size-7 shrink-0 place-items-center rounded-full transition-colors duration-100
                {copied.on ? 'text-gauge-normal-ink' : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}
                disabled:pointer-events-none disabled:opacity-30"
       >

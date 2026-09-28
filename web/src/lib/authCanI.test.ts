@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { authCanI, type CanIQuestion } from './kubectl'
+import { authCanI, roleHolders, type CanIQuestion } from './kubectl'
 
 const base: CanIQuestion = {
   subjectKind: '',
@@ -47,5 +47,28 @@ describe('authCanI', () => {
 
   it('offers nothing for a group, rather than a command asking something else', () => {
     expect(authCanI('prod', { ...base, subjectKind: 'Group', subjectName: 'devs' })).toBe('')
+  })
+})
+
+describe('roleHolders', () => {
+  it('looks for a ClusterRole in both kinds of binding, in every namespace', () => {
+    expect(roleHolders('prod', 'cluster', '', 'ops-automation')).toBe(
+      "kubectl --context prod get clusterrolebindings,rolebindings -A -o " +
+        "'custom-columns=KIND:.kind,NAMESPACE:.metadata.namespace,NAME:.metadata.name," +
+        "ROLE_KIND:.roleRef.kind,ROLE:.roleRef.name,SUBJECTS:.subjects[*].name'" +
+        ` | awk 'NR==1 || ($4=="ClusterRole" && $5=="ops-automation")'`,
+    )
+  })
+
+  it('looks for a Role only in its own namespace', () => {
+    expect(roleHolders('prod', 'namespace', 'shop', 'reader')).toContain(
+      `kubectl --context prod -n shop get rolebindings -o `,
+    )
+    expect(roleHolders('prod', 'namespace', 'shop', 'reader')).toContain(`$4=="Role" && $5=="reader"`)
+  })
+
+  it('offers nothing for a name that could break out of the filter', () => {
+    expect(roleHolders('prod', 'cluster', '', `x'; rm -rf ~; '`)).toBe('')
+    expect(roleHolders('prod', 'cluster', '', '')).toBe('')
   })
 })

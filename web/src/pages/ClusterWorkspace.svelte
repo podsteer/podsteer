@@ -54,7 +54,7 @@ import TimelineView from './TimelineView.svelte'
   import RBACView from './RBACView.svelte'
   import HelmView from './HelmView.svelte'
   import { fleet } from '$stores/fleet.svelte'
-  import { PanelLeft, AlertTriangle, Download, Check, Plus, Laptop, RefreshCw, ShieldQuestion, UserSearch } from '@lucide/svelte'
+  import { PanelLeft, AlertTriangle, Download, Check, Plus, Laptop, ShieldQuestion, UserSearch } from '@lucide/svelte'
   import { onMount } from 'svelte'
   import { sessionLauncher } from '$stores/sessionLauncher.svelte'
   import TerminalMenu from '$lib/components/TerminalMenu.svelte'
@@ -207,8 +207,6 @@ import TimelineView from './TimelineView.svelte'
    * The Permissions page's tools. The page owns its reads and its dialogs;
    * the toolbar only asks — the same division every view's tools follow.
    */
-  let rbacView = $state<{ refresh: () => void } | null>(null)
-  let rbacLoading = $state(false)
   let canIOpen = $state(false)
   let rolesOpen = $state(false)
   /** The two ticked rows a diff was asked for, or null. */
@@ -336,7 +334,7 @@ import TimelineView from './TimelineView.svelte'
       preferences.toggleNavigator()
     } else if (shortcut('refresh').matches(event)) {
       event.preventDefault()
-      void session.refresh()
+      void session.requestRefresh()
     } else if (shortcut('focus-search').matches(event)) {
       event.preventDefault()
       searchField?.focus()
@@ -517,26 +515,25 @@ import TimelineView from './TimelineView.svelte'
            page answers on arrival; the other two are questions of their own,
            each in a dialog, so the page stays the list it opens on. -->
       {#if session.viewMode === 'rbac'}
-        <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
-        <ToolbarButton
-          icon={RefreshCw}
-          label="Refresh permissions"
-          title={rbacLoading ? 'Asking the cluster…' : 'Refresh permissions'}
-          disabled={rbacLoading}
-          onclick={() => rbacView?.refresh()}
-        />
-        <ToolbarButton
-          icon={ShieldQuestion}
-          label="Can I…"
-          title="Can I… — ask whether an action is allowed"
-          onclick={() => (canIOpen = true)}
-        />
-        <ToolbarButton
-          icon={UserSearch}
-          label="Who holds a role"
-          title="Who holds a role — the bindings behind a Role or ClusterRole"
-          onclick={() => (rolesOpen = true)}
-        />
+        <!-- On the RIGHT, beside the terminals, like every other view's tools.
+             No rule before them — they open the right-hand group rather than
+             follow anything. The wrapper takes this row's only auto margin
+             while they are shown: two auto margins would split the space and
+             strand these in the middle. -->
+        <div class="ms-auto flex items-center gap-2">
+          <ToolbarButton
+            icon={ShieldQuestion}
+            label="Can I…"
+            title="Can I… — ask whether an action is allowed"
+            onclick={() => (canIOpen = true)}
+          />
+          <ToolbarButton
+            icon={UserSearch}
+            label="Who holds a role"
+            title="Who holds a role — the bindings behind a Role or ClusterRole"
+            onclick={() => (rolesOpen = true)}
+          />
+        </div>
       {/if}
 
       <!-- The terminals: one on THIS machine and one INSIDE the cluster.
@@ -550,7 +547,10 @@ import TimelineView from './TimelineView.svelte'
            not look like one that does something. Neither entry disappears when
            it cannot be used — a disabled row carries its reason in the title,
            where an absent control would teach nothing. -->
-      <div class="ms-auto h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+      <div
+        class="{session.viewMode === 'rbac' ? '' : 'ms-auto'} h-5 w-px shrink-0 bg-outline-variant/60"
+        aria-hidden="true"
+      ></div>
 
       <TerminalMenu
         localSupported={localShellSupported}
@@ -579,13 +579,7 @@ import TimelineView from './TimelineView.svelte'
     {:else if session.viewMode === 'fleet'}
       <FleetView {session} />
     {:else if session.viewMode === 'rbac'}
-      <RBACView
-        {session}
-        bind:this={rbacView}
-        bind:loading={rbacLoading}
-        bind:canIOpen
-        bind:rolesOpen
-      />
+      <RBACView {session} bind:canIOpen bind:rolesOpen />
     {:else if session.viewMode === 'timeline'}
       <TimelineView {session} />
     {:else if session.viewMode === 'helm'}

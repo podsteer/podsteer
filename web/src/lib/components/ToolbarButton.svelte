@@ -40,7 +40,7 @@
   {disabled}
   aria-label={label}
   title={title ?? label}
-  class="state-layer grid size-7 shrink-0 place-items-center rounded-sm
+  class="state-layer grid size-7 shrink-0 place-items-center rounded-full
          transition-colors duration-100
          {active
     ? 'text-gauge-normal-ink'

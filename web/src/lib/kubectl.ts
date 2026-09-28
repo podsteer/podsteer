@@ -871,3 +871,37 @@ export function authCanI(ctx: string, q: CanIQuestion): string {
   }
   return parts.join(' ')
 }
+
+/**
+ * The bindings that grant a Role or ClusterRole, as one kubectl pipeline — the
+ * reverse lookup "Who holds a role" makes.
+ *
+ * kubectl has no verb for it, so this lists the bindings with the role they
+ * reference in its own columns and keeps the rows naming this one. A
+ * ClusterRole is looked for in ClusterRoleBindings AND in RoleBindings in
+ * every namespace, because a RoleBinding may grant a ClusterRole; a Role only
+ * in RoleBindings of its own namespace. `$4` and `$5` are the ROLE_KIND and
+ * ROLE columns below, and `NR==1` keeps the header.
+ *
+ * Empty for a name that could break out of the awk string. Kubernetes object
+ * names cannot contain a quote or a backslash, so that is a name no role has.
+ */
+export function roleHolders(
+  ctx: string,
+  scope: 'cluster' | 'namespace',
+  ns: string,
+  name: string,
+): string {
+  if (!name || /['"\\]/.test(name)) return ''
+  // QUOTED: `[*]` is a glob to zsh, which refuses the whole command with
+  // "no matches found" before kubectl ever sees it.
+  const columns =
+    "'custom-columns=KIND:.kind,NAMESPACE:.metadata.namespace,NAME:.metadata.name," +
+    "ROLE_KIND:.roleRef.kind,ROLE:.roleRef.name,SUBJECTS:.subjects[*].name'"
+  const kind = scope === 'cluster' ? 'ClusterRole' : 'Role'
+  const list =
+    scope === 'cluster'
+      ? [...base(ctx), 'get', 'clusterrolebindings,rolebindings', '-A']
+      : [...base(ctx, ns), 'get', 'rolebindings']
+  return `${[...list, '-o', columns].join(' ')} | awk 'NR==1 || ($4=="${kind}" && $5=="${name}")'`
+}
