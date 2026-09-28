@@ -222,20 +222,14 @@
   exportRows={exportCSV}
 >
   {#snippet notice()}
-    <!-- What the rows ARE, outside the scrolling region so it stays with
-         them: one namespace's rules, as the API server enumerated them. -->
-    <div class="border-b border-outline-variant/60 px-6 py-2 text-body-medium text-on-surface-variant">
-      What this kubeconfig can do in
-      <span class="font-mono text-on-surface" data-selectable>{reviewedNamespace}</span>
-      — the API server's own enumeration, in one request.
-      {#if rules?.incomplete}
-        <!-- A partial list that does not say so reads as a complete one. -->
-        <span class="text-gauge-warn-ink">
-          The API server could not enumerate everything, so this list may be short.
-          {rules.incompleteReason}
-        </span>
-      {/if}
-    </div>
+    {#if rules?.incomplete}
+      <!-- Only when the answer is partial: a partial list that does not say
+           so reads as a complete one. -->
+      <p class="border-b border-outline-variant/60 px-6 py-2 text-body-medium text-gauge-warn-ink" role="status">
+        The API server could not enumerate everything, so this list may be short.
+        {rules.incompleteReason}
+      </p>
+    {/if}
     <ErrorBanner error={rulesError} ondismiss={() => (rulesError = null)} class="mx-6 my-3" />
   {/snippet}
 

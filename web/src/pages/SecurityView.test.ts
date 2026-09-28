@@ -35,6 +35,7 @@ function session(findings: unknown[] = []) {
     // What a table-bearing page reads off the session: no search, no sort,
     // the first page.
     selectedKindId: 'podsteer/security',
+    namespace: '',
     query: { terms: [] },
     search: '',
     sort: null,
@@ -138,7 +139,8 @@ describe('SecurityView — the scanner half', () => {
     const rows = container.querySelectorAll('tbody tr')
     expect(rows).toHaveLength(1)
 
-    const cells = [...rows[0].querySelectorAll('td')].map((cell) => cell.textContent?.trim())
+    // The first cell is the severity mark; the image and its counts follow.
+    const cells = [...rows[0].querySelectorAll('td')].slice(1).map((cell) => cell.textContent?.trim())
     expect(cells[0]).toBe('library/nginx:1.27')
     expect(cells[1]).toBe('3')
     // Two criticals, not six: summing would report a number no scanner wrote.
@@ -154,7 +156,7 @@ describe('SecurityView — the scanner half', () => {
     ])
     const { container } = render(SecurityView, scanner())
 
-    const first = container.querySelector('tbody tr td')
+    const first = container.querySelector('tbody tr td:nth-child(2)')
     expect(first?.textContent?.trim()).toBe('acme/loud:1')
   })
 
@@ -224,9 +226,13 @@ describe('SecurityView — the name', () => {
   })
 
   it('says plainly that PodSteer scans nothing', () => {
-    read.mockReturnValue({ complete: true, truncated: false, status: 'complete', read: 0, remaining: 0, cap: 0 })
+    // Where it matters most — the empty state of a cluster with no scanner —
+    // and in the help topic that explains the page.
+    read.mockReturnValue({ complete: false, truncated: false, status: 'not-installed', read: 0, remaining: 0, cap: 0 })
     render(SecurityView, scanner())
+    expect(words()).toContain('not because the images are clean')
 
-    expect(words()).toContain('PodSteer scans nothing')
+    const topic = HELP_TOPICS.security.sections.flatMap((section) => section.body).join(' ')
+    expect(topic).toContain('PodSteer scans nothing')
   })
 })

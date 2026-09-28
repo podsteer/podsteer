@@ -56,7 +56,7 @@
   import { matches } from '$lib/query'
   import { sortRows, type SortAccessors } from '$lib/sort'
   import type { CSVExport } from '$stores/activeTable.svelte'
-  import { ShieldAlert, CircleDot } from '@lucide/svelte'
+  import { ShieldAlert, CircleDot, Container } from '@lucide/svelte'
 
   export type SecurityTab = 'posture' | 'vulnerabilities'
 
@@ -74,11 +74,11 @@
    * at most once, so re-entering the page costs nothing.
    */
   $effect(() => {
-    ensureVulnerabilities(session.cluster.id, ALL_NAMESPACES)
+    ensureVulnerabilities(session.cluster.id, session.namespace)
   })
 
-  const read = $derived(vulnerabilityReadFor(session.cluster.id, ALL_NAMESPACES))
-  const summaries = $derived(summariesFor(session.cluster.id, ALL_NAMESPACES))
+  const read = $derived(vulnerabilityReadFor(session.cluster.id, session.namespace))
+  const summaries = $derived(summariesFor(session.cluster.id, session.namespace))
 
   // --- Posture ---------------------------------------------------------------
 
@@ -86,6 +86,11 @@
   const findings = $derived(
     (session.overview?.findings ?? []).filter((finding) => finding.category === 'Security'),
   )
+
+  /** Whether the tab is narrowed to one namespace — the navigator's filter
+      applies here as on every list. */
+  const inNamespace = (namespace: string): boolean =>
+    session.namespace === ALL_NAMESPACES || namespace === session.namespace
 
   interface PostureRow {
     key: string
@@ -104,7 +109,7 @@
   /** One row per workload a finding names: that is what gets opened and fixed. */
   const postureRows = $derived<PostureRow[]>(
     findings.flatMap((finding) =>
-      (finding.subjects ?? []).map((subject) => ({
+      (finding.subjects ?? []).filter((subject) => inNamespace(subject.namespace)).map((subject) => ({
         key: `${finding.id} ${subject.kind}/${subject.namespace}/${subject.name}`,
         finding,
         severity: finding.severity,
@@ -200,6 +205,7 @@
   })
 
   const IMAGE_COLUMNS: Column[] = [
+    { id: 'mark', label: 'Severity', width: 44, icon: CircleDot },
     { id: 'image', label: 'Image', width: 420, pinned: true },
     { id: 'workloads', label: 'Workloads', width: 120, numeric: true },
     { id: 'critical', label: 'Critical', width: 110, numeric: true },
@@ -211,7 +217,15 @@
     { id: 'unknown', label: 'Unknown', width: 110, numeric: true },
   ]
 
+  /** Red with a critical, amber with only highs, grey otherwise. */
+  function imageTone(row: ImageRow): 'error' | 'warning' | 'neutral' {
+    if (row.critical > 0) return 'error'
+    if (row.high > 0) return 'warning'
+    return 'neutral'
+  }
+
   const IMAGE_SORT: SortAccessors<ImageRow> = {
+    mark: (row) => (row.critical > 0 ? 0 : row.high > 0 ? 1 : 2),
     image: (row) => row.image,
     workloads: (row) => row.workloads,
     critical: (row) => row.critical,
@@ -289,7 +303,11 @@
     return {
       columns: visible.map((c) => c.label),
       rows: sortedImages.map((row) =>
-        visible.map((c) => String(row[c.id as keyof ImageRow])),
+        visible.map((c) =>
+          c.id === 'mark'
+            ? row.critical > 0 ? 'critical' : row.high > 0 ? 'high' : '—'
+            : String(row[c.id as keyof ImageRow]),
+        ),
       ),
     }
   }
@@ -320,15 +338,11 @@
       exportRows={exportPosture}
     >
       {#snippet notice()}
-        <div class="border-b border-outline-variant/60 px-6 py-2 text-body-medium text-on-surface-variant">
-          The privileges workloads take, read from the pod specs — reported as notes, because every
-          real cluster runs a privileged network or storage agent.
-          {#if postureTruncated}
-            <span class="text-gauge-warn-ink">
-              Some findings name more workloads than are listed here.
-            </span>
-          {/if}
-        </div>
+        {#if postureTruncated}
+          <p class="border-b border-outline-variant/60 px-6 py-2 text-body-medium text-gauge-warn-ink" role="status">
+            Some findings name more workloads than are listed here.
+          </p>
+        {/if}
       {/snippet}
 
       {#snippet empty()}
@@ -397,19 +411,15 @@
       exportRows={exportImages}
     >
       {#snippet notice()}
-        <div class="border-b border-outline-variant/60 px-6 py-2 text-body-medium text-on-surface-variant">
-          Quoted from the scanner running in this cluster — PodSteer scans nothing itself. Grouped
-          by image, because one tag bump closes every workload running it.
-          {#if read?.truncated}
-            <!-- A ceiling is a fact about the answer: below it, the list is
-                 what was read rather than what exists. -->
-            <span class="text-gauge-warn-ink">
-              Stopped at {read.cap.toLocaleString()} reports. {read.read.toLocaleString()} were read{read.remaining
-                ? `, and the server said ${read.remaining.toLocaleString()} more were withheld`
-                : ''}. What follows is that much of the picture, not all of it.
-            </span>
-          {/if}
-        </div>
+        {#if read?.truncated}
+          <!-- A ceiling is a fact about the answer: below it, the list is what
+               was read rather than what exists. -->
+          <p class="border-b border-outline-variant/60 px-6 py-2 text-body-medium text-gauge-warn-ink" role="status">
+            Stopped at {read.cap.toLocaleString()} reports. {read.read.toLocaleString()} were read{read.remaining
+              ? `, and the server said ${read.remaining.toLocaleString()} more were withheld`
+              : ''}. What follows is that much of the picture, not all of it.
+          </p>
+        {/if}
       {/snippet}
 
       {#snippet empty()}
@@ -442,10 +452,19 @@
       {#snippet rows(isVisible)}
         {#each pagedImages as row (row.image)}
           <tr class="border-t border-outline-variant/40 bg-surface transition-colors duration-100 hover:bg-surface-container-low">
-            <td class="truncate py-1.5 pr-3 pl-6 font-mono text-body-small text-on-surface" title={row.image} data-selectable>
+            {#if isVisible('mark')}
+              <td class="overflow-hidden py-1.5 pr-3 pl-6">
+                <StatusIndicator
+                  tone={imageTone(row)}
+                  label={row.critical > 0 ? 'Critical' : row.high > 0 ? 'High' : 'No critical or high'}
+                  icon={Container}
+                />
+              </td>
+            {/if}
+            <td class="truncate px-3 py-1.5 font-medium text-on-surface" title={row.image} data-selectable>
               {row.image}
             </td>
-            {#each IMAGE_COLUMNS.slice(1) as column (column.id)}
+            {#each IMAGE_COLUMNS.slice(2) as column (column.id)}
               {#if isVisible(column.id)}
                 {@const value = row[column.id as keyof ImageRow] as number}
                 <td class="truncate px-3 py-1.5 text-right tabular-nums {column.id === 'workloads' ? 'text-on-surface-variant' : countTone(column.id, value)}">

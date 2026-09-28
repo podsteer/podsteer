@@ -79,7 +79,9 @@
   import { matches } from '$lib/query'
   import { sortRows, type SortAccessors } from '$lib/sort'
   import { untrack } from 'svelte'
-  import { Eye, EyeOff, Package, X } from '@lucide/svelte'
+  import { CircleDot, Eye, EyeOff, Package, X } from '@lucide/svelte'
+  import StatusIndicator from '$lib/components/StatusIndicator.svelte'
+  import type { Tone } from '$lib/format'
 
   interface Props {
     session: ClusterSession
@@ -328,7 +330,8 @@
   // --- The table -----------------------------------------------------------
 
   const COLUMNS: Column[] = [
-    { id: 'status', label: 'Status', width: 140 },
+    { id: 'mark', label: 'Status', width: 44, icon: CircleDot },
+    { id: 'status', label: 'State', width: 140 },
     { id: 'name', label: 'Release', width: 280, pinned: true },
     { id: 'namespace', label: 'Namespace', width: 180 },
     { id: 'revision', label: 'Revision', width: 110, numeric: true },
@@ -337,6 +340,7 @@
   ]
 
   const SORT: SortAccessors<HelmRelease> = {
+    mark: (release) => release.current.status,
     status: (release) => release.current.status,
     name: (release) => release.name,
     namespace: (release) => release.namespace,
@@ -376,6 +380,7 @@
     const visible = COLUMNS.filter((column) => !isControlColumn(column) && isColumnVisible(column))
     const cell = (release: HelmRelease, id: string): string => {
       switch (id) {
+        case 'mark':
         case 'status':
           return release.current.status || 'unknown'
         case 'name':
@@ -413,14 +418,13 @@
    * never seen renders as itself in the neutral tone rather than being
    * refused or relabelled.
    */
-  function statusTone(status: string): string {
-    if (status === 'deployed') return 'bg-success-container text-on-success-container'
-    if (status === 'failed') return 'bg-error-container text-on-error-container'
-    if (status.startsWith('pending') || status === 'uninstalling') {
-      return 'bg-warning-container text-on-warning-container'
-    }
-    return 'bg-surface-container-high text-on-surface-variant'
+  function statusTone(status: string): Tone {
+    if (status === 'deployed') return 'success'
+    if (status === 'failed') return 'error'
+    if (status.startsWith('pending') || status === 'uninstalling') return 'warning'
+    return 'neutral'
   }
+
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -438,21 +442,11 @@
   exportRows={exportCSV}
 >
   {#snippet notice()}
-    <div class="border-b border-outline-variant/60 px-6 py-2 text-body-medium text-on-surface-variant">
-      Read from the labels Helm puts on each release Secret — no Secret's contents are transferred.
-      Chart and app version live only inside a release's payload; open a release and read one
-      revision to see them.
-      {#if listedAt}
-        <!-- The age of the answer: the listing is held for minutes rather
-             than polled, and a cache that cannot say its age is one that lies. -->
-        <span class="text-on-surface-variant/70">As of {formatClockTime(listedAt)}.</span>
-      {/if}
-      {#if listing?.truncated}
-        <span class="text-gauge-warn-ink">
-          More release Secrets exist than were read, so this list is short.
-        </span>
-      {/if}
-    </div>
+    {#if listing?.truncated}
+      <p class="border-b border-outline-variant/60 px-6 py-2 text-body-medium text-gauge-warn-ink" role="status">
+        More release Secrets exist than were read, so this list is short.
+      </p>
+    {/if}
     <ErrorBanner error={error} ondismiss={() => (error = null)} class="mx-6 my-3" />
   {/snippet}
 
@@ -486,19 +480,17 @@
                {selected ? 'bg-row-open-secondary' : 'bg-surface hover:bg-surface-container-low'}"
         onclick={() => open(release)}
       >
-        {#if isVisible('status')}
-          <td class="py-1.5 pr-3 pl-6">
-            <!-- Helm's own word, verbatim; an unseen status renders as itself. -->
-            <span class="rounded-full px-2 py-0.5 font-mono text-label-small {statusTone(release.current.status)}">
-              {release.current.status || 'unknown'}
-            </span>
+        {#if isVisible('mark')}
+          <td class="overflow-hidden py-1.5 pr-3 pl-6">
+            <StatusIndicator tone={statusTone(release.current.status)} label={release.current.status || 'unknown'} icon={Package} />
           </td>
         {/if}
+        {#if isVisible('status')}
+          <!-- Helm's own word, verbatim; an unseen status renders as itself. -->
+          <td class="truncate px-3 py-1.5 text-on-surface-variant">{release.current.status || 'unknown'}</td>
+        {/if}
         <td class="px-3 py-1.5" title={release.name}>
-          <span class="flex items-center gap-2">
-            <Package class="size-4 shrink-0 text-on-surface-variant" strokeWidth={1.8} />
-            <span class="truncate font-medium text-on-surface">{release.name}</span>
-          </span>
+          <span class="truncate font-medium text-on-surface">{release.name}</span>
         </td>
         {#if isVisible('namespace')}
           <td class="truncate px-3 py-1.5 text-on-surface-variant">{release.namespace}</td>
