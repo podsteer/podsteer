@@ -17,6 +17,11 @@
   (say, just Workloads) is exactly what is open next time too.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte'
+
+  /** The key the SECURITY section's fold is stored under, beside the
+      catalogue categories' own. */
+  const SECURITY_SECTION = 'podsteer:Security'
   import { ALL_NAMESPACES, type ResourceKind } from '$lib/api/client'
   import {
     APPLICATIONS_KIND_ID,
@@ -24,6 +29,8 @@
     HELM_KIND_ID,
     MULTI_KIND_ID,
     SECURITY_KIND_ID,
+    SECURITY_SECTION_IDS,
+    VULNERABILITIES_KIND_ID,
     OVERVIEW_KIND_ID,
     RBAC_KIND_ID,
     TIMELINE_KIND_ID,
@@ -41,6 +48,8 @@
     Blocks,
     ChevronDown,
     ShieldCheck,
+    ShieldAlert,
+    Bug,
     KeyRound,
     Clock,
     Layers,
@@ -112,6 +121,21 @@
   const keptSets = $derived(preferences.pinnedKindSets)
   const chosenKinds = $derived(preferences.multiKindSelectionFor(session.cluster.id))
   const onSecurity = $derived(session.selectedKindId === SECURITY_KIND_ID)
+  const onVulnerabilities = $derived(session.selectedKindId === VULNERABILITIES_KIND_ID)
+
+  /**
+   * The SECURITY section opens itself when the operator lands on one of its
+   * entries — from a link, the palette, a restored tab — so the highlighted
+   * row is never hidden inside a folded section. Keyed on the SELECTION only:
+   * folding the section while on one of its pages stays folded.
+   */
+  $effect(() => {
+    if (!SECURITY_SECTION_IDS.includes(session.selectedKindId)) return
+    untrack(() => {
+      if (!preferences.isCategoryExpanded(SECURITY_SECTION)) preferences.toggleCategory(SECURITY_SECTION)
+    })
+  })
+  const securityOpen = $derived(preferences.isCategoryExpanded(SECURITY_SECTION))
   /** How many tabs the merged view would merge — the badge on its row. */
   const openClusters = $derived(workspace.sessions.length)
 
@@ -290,6 +314,31 @@
   about to — a snippet is what stops the four from quietly drifting apart the
   way the thresholdGroup comment in SettingsDialog.svelte warns about.
 -->
+{#snippet securityRow(id: string, selected: boolean, Icon: typeof ShieldCheck, label: string)}
+  <!-- A kind row's shape, for an entry that is not a kind: same indent,
+       same icon column, same selected ground, no pin control. -->
+  <li class="group/item relative">
+    <button
+      type="button"
+      onclick={() => session.selectKind(id)}
+      aria-current={selected ? 'page' : undefined}
+      class="flex w-full items-center gap-2 rounded-sm py-[5px] pr-7 pl-2 text-left
+             transition-all duration-100 ease-standard
+             {selected
+               ? 'bg-primary/12 text-primary'
+               : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+    >
+      <span class="w-1.5 shrink-0" aria-hidden="true"></span>
+      <Icon
+        class="size-4 shrink-0 transition-colors duration-100
+               {selected ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+        strokeWidth={1.8}
+      />
+      <span class="flex-1 truncate text-body-medium">{label}</span>
+    </button>
+  </li>
+{/snippet}
+
 {#snippet kindRow(kind: ResourceKind)}
   {@const selected = kind.id === session.selectedKindId}
   {@const KindIcon = iconForKind(kind)}
@@ -902,63 +951,48 @@
       {/each}
     </div>
 
-    <!-- Security posture, directly under Helm and above the rule: like Helm
-         it is a READING of things already here rather than a list of them —
-         the privileges workloads take, and whatever a scanner the operator
-         installed has written down. A pseudo-entry for the same reason: there
-         is no object to GET called "posture".
-
-         Named "Security", which is a promise a page reading one optional
-         operator cannot keep on its own — so the page's first job is to say
-         what it does and does not cover, in words, rather than to render
-         empty and let the absence make the claim. See SecurityView. -->
-    <div class="px-1.5 pb-1">
-      <button
-        type="button"
-        onclick={() => session.selectKind(SECURITY_KIND_ID)}
-        aria-current={onSecurity ? 'page' : undefined}
-        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
-               transition-all duration-100 ease-standard
-               {onSecurity
-                 ? 'bg-primary/12 text-primary'
-                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
-      >
-        <ShieldCheck
-          class="size-4 shrink-0 transition-colors duration-100
-                 {onSecurity ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
-          strokeWidth={1.8}
-        />
-        <span class="flex-1 truncate text-body-medium font-medium">Security</span>
-      </button>
-    </div>
-
     <div class="mx-3 my-1.5 h-px bg-outline-variant/40" aria-hidden="true"></div>
 
-    <!-- The RBAC explorer, last and alone: it is the only entry that asks
-         about the OPERATOR rather than about the cluster, and a question
-         about yourself does not belong among the things you are looking at.
-         "What may this kubeconfig do here" is asked of the review APIs and is
-         not an object anything can GET, so it is a pseudo-entry
-         rather than an entry in domain/catalog.go. Roles and ClusterRoles
-         themselves stay where they are, under Access Control. -->
-    <div class="px-1.5 pb-1">
+    <!-- SECURITY: a section of its own, drawn exactly as a catalogue
+         category is, holding the three pages that READ the cluster's security
+         rather than list its objects — the privileges workloads take, what a
+         scanner recorded, and what this kubeconfig may do. Built here rather
+         than in domain/catalog.go because none of them is a kind anything can
+         GET; see SECURITY_KIND_ID, VULNERABILITIES_KIND_ID and RBAC_KIND_ID.
+         Last in the tree, and Permissions last within it: it is the one entry
+         about the operator rather than about the cluster. -->
+    <div class="px-1.5 py-0.5">
       <button
         type="button"
-        onclick={() => session.selectKind(RBAC_KIND_ID)}
-        aria-current={onRBAC ? 'page' : undefined}
-        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
-               transition-all duration-100 ease-standard
-               {onRBAC
-                 ? 'bg-primary/12 text-primary'
-                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+        onclick={() => preferences.toggleCategory(SECURITY_SECTION)}
+        aria-expanded={securityOpen}
+        class="state-layer group flex w-full items-center gap-2 rounded-sm px-2 py-1.5
+               text-on-surface-variant transition-colors duration-100 hover:bg-surface-container"
       >
-        <KeyRound
-          class="size-4 shrink-0 transition-colors duration-100
-                 {onRBAC ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
-          strokeWidth={1.8}
+        <ChevronDown
+          class="size-3.5 shrink-0 text-on-surface-variant/60 transition-transform duration-150 ease-standard
+                 {securityOpen ? '' : '-rotate-90'}"
+          strokeWidth={2.5}
         />
-        <span class="flex-1 truncate text-body-medium font-medium">Permissions</span>
+        <ShieldCheck class="size-4 shrink-0 text-on-surface-variant/70" strokeWidth={1.8} />
+        <span class="flex-1 truncate text-left text-body-small font-semibold uppercase tracking-wider">
+          Security
+        </span>
+        <span
+          class="rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small
+                 tabular-nums text-on-surface-variant/70"
+        >
+          {SECURITY_SECTION_IDS.length}
+        </span>
       </button>
+
+      {#if securityOpen}
+        <ul class="mt-0.5 border-l border-outline-variant/30 pl-2">
+          {@render securityRow(SECURITY_KIND_ID, onSecurity, ShieldAlert, 'Posture')}
+          {@render securityRow(VULNERABILITIES_KIND_ID, onVulnerabilities, Bug, 'Vulnerabilities')}
+          {@render securityRow(RBAC_KIND_ID, onRBAC, KeyRound, 'Permissions')}
+        </ul>
+      {/if}
     </div>
   </div>
 

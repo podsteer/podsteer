@@ -1448,8 +1448,16 @@ selection, saved views or tick fetch, and each page filters, sorts and pages
 its own rows through the session's `query`, `sort` and `pageStart`, reporting
 the filtered count as `standaloneCount`. Their "refresh" is
 `session.manualRefreshes` — a person pressing the app's Refresh — never the
-tick. Security shows Posture or Vulnerabilities, switched in the toolbar, with
-per-table column preferences (`<kindId>#posture`).
+tick.
+
+**The navigator's SECURITY section holds Posture, Vulnerabilities and
+Permissions**, drawn exactly like a catalogue category but built in
+`Navigator.svelte`, because none of the three is a kind anything can GET.
+Posture (`SECURITY_KIND_ID`) and Vulnerabilities (`VULNERABILITIES_KIND_ID`)
+are one page and one view mode; the id decides the table
+(`session.securityTab`), so sorts and column preferences stay separate. The
+section opens itself when the selection lands on one of its entries, keyed on
+the selection only, so folding it while there stays folded.
 
 **One page, two dialogs.** The page is the rules review — what this
 kubeconfig may do in the tab's namespace — at full width, the way a list is.

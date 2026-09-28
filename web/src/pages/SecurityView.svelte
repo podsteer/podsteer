@@ -23,8 +23,8 @@
     written by the scanner the operator chose, before this read it. See
     domain/vulnerability.go.
 
-  TWO TABLES, ONE AT A TIME — Posture and Vulnerabilities, switched from the
-  header toolbar (`ClusterWorkspace`) — each the same DataTable every list
+  TWO TABLES, ONE AT A TIME — Posture and Vulnerabilities, each its own entry
+  in the navigator's SECURITY section beside Permissions — each the same DataTable every list
   uses, with the toolbar's search, pager, column chooser, sorting and CSV
   export. A table and not a list (`session.hasTable`): the page filters, sorts
   and pages its own rows and reports the count as `standaloneCount`. Posture
@@ -58,15 +58,14 @@
   import type { CSVExport } from '$stores/activeTable.svelte'
   import { ShieldAlert, CircleDot, Container } from '@lucide/svelte'
 
-  export type SecurityTab = 'posture' | 'vulnerabilities'
-
   interface Props {
     session: ClusterSession
-    /** Which table is showing; the toolbar switches it. */
-    tab?: SecurityTab
   }
 
-  let { session, tab = $bindable('posture') }: Props = $props()
+  let { session }: Props = $props()
+
+  /** Which table is showing: the navigator entry the operator chose. */
+  const tab = $derived(session.securityTab)
 
   /**
    * One cluster-wide scanner read, when the page opens. ALL_NAMESPACES,
@@ -241,9 +240,9 @@
 
   // --- The table showing ------------------------------------------------------
 
-  /** Column preferences are kept per table, so hiding a column in one does
-      not hide a same-named column in the other. */
-  const tableKind = $derived(`${session.selectedKindId}#${tab}`)
+  /** Column preferences are kept per table — each navigator entry is its own
+      id, so hiding a column in one does not hide it in the other. */
+  const tableKind = $derived(session.selectedKindId)
 
   function search<T>(rows: T[], text: (row: T) => string[]): T[] {
     if (session.query.terms.length === 0) return rows

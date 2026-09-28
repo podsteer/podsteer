@@ -378,6 +378,21 @@ export const MULTI_KIND_ID = 'podsteer/multi-kind'
  */
 export const SECURITY_KIND_ID = 'podsteer/security'
 
+/**
+ * The Security page's second table, as an entry of its own in the navigator's
+ * SECURITY section beside Posture (SECURITY_KIND_ID) and Permissions. The
+ * same page and the same view mode: the id only decides which table it
+ * shows, which is why sorts and column preferences stay separate per table.
+ */
+export const VULNERABILITIES_KIND_ID = 'podsteer/vulnerabilities'
+
+/** The entries the navigator's SECURITY section holds. */
+export const SECURITY_SECTION_IDS: readonly string[] = [
+  'podsteer/security',
+  'podsteer/vulnerabilities',
+  'podsteer/rbac',
+]
+
 export const DEFAULT_KIND_ID = OVERVIEW_KIND_ID
 
 /** Kind ids PodSteer renders with purpose-built columns rather than generically. */
@@ -861,7 +876,7 @@ export class ClusterSession {
     if (id === TIMELINE_KIND_ID) return 'timeline'
     if (id === HELM_KIND_ID) return 'helm'
     if (id === MULTI_KIND_ID) return 'multi-kind'
-    if (id === SECURITY_KIND_ID) return 'security'
+    if (id === SECURITY_KIND_ID || id === VULNERABILITIES_KIND_ID) return 'security'
     if (id === RICH_KIND_IDS.pods) return 'pods'
     if (id === RICH_KIND_IDS.nodes) return 'nodes'
     if (id === RICH_KIND_IDS.events) return 'events'
@@ -918,6 +933,11 @@ export class ClusterSession {
    * `pageStart`, and reports how many survived the filter in
    * `standaloneCount` so the pager can count them.
    */
+  /** Which of the Security page's tables the selected entry names. */
+  readonly securityTab = $derived<'posture' | 'vulnerabilities'>(
+    this.selectedKindId === VULNERABILITIES_KIND_ID ? 'vulnerabilities' : 'posture',
+  )
+
   readonly hasTable = $derived(
     this.isList || this.viewMode === 'rbac' || this.viewMode === 'helm' || this.viewMode === 'security',
   )

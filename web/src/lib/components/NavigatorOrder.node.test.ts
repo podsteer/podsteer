@@ -26,12 +26,16 @@ const ENTRIES = [
   'Timeline',
   'Applications',
   'Helm',
+  'Posture',
+  'Vulnerabilities',
   'Permissions',
 ]
 
 /** Where each entry's own label appears in the file. */
 function positionOf(label: string): number {
-  const at = NAVIGATOR.indexOf(`>${label}</span>`)
+  // A literal label, or one passed to the SECURITY section's row snippet.
+  const literal = NAVIGATOR.indexOf(`>${label}</span>`)
+  const at = literal > -1 ? literal : NAVIGATOR.indexOf(`'${label}')}`)
   expect(at, `${label} is not in the navigator`).toBeGreaterThan(-1)
   return at
 }
@@ -52,6 +56,14 @@ describe('the order of the navigator', () => {
     const last = Math.max(...ENTRIES.map(positionOf))
 
     expect(positionOf('Permissions')).toBe(last)
+  })
+
+  it('gathers Posture, Vulnerabilities and Permissions under one SECURITY section', () => {
+    const header = NAVIGATOR.indexOf('onclick={() => preferences.toggleCategory(SECURITY_SECTION)}')
+    expect(header).toBeGreaterThan(positionOf('Helm'))
+    for (const label of ['Posture', 'Vulnerabilities', 'Permissions']) {
+      expect(positionOf(label)).toBeGreaterThan(header)
+    }
   })
 
   it('keeps Helm below the categories it is not one of', () => {

@@ -35,6 +35,7 @@ function session(findings: unknown[] = []) {
     // What a table-bearing page reads off the session: no search, no sort,
     // the first page.
     selectedKindId: 'podsteer/security',
+    securityTab: 'posture',
     namespace: '',
     query: { terms: [] },
     search: '',
@@ -46,7 +47,9 @@ function session(findings: unknown[] = []) {
 }
 
 /** The scanner half is the Vulnerabilities table. */
-const scanner = () => ({ session: session(), tab: 'vulnerabilities' as const })
+const scanner = () => ({
+  session: { ...(session() as object), selectedKindId: 'podsteer/vulnerabilities', securityTab: 'vulnerabilities' } as never,
+})
 
 function summary(overrides: Record<string, unknown> = {}) {
   return {
