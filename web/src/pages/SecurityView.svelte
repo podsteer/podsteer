@@ -56,7 +56,7 @@
   import { matches } from '$lib/query'
   import { sortRows, type SortAccessors } from '$lib/sort'
   import type { CSVExport } from '$stores/activeTable.svelte'
-  import { ShieldAlert, CircleDot, Container } from '@lucide/svelte'
+  import { ShieldAlert, CircleDot, Bug } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -460,7 +460,7 @@
                 <StatusIndicator
                   tone={imageTone(row)}
                   label={row.critical > 0 ? 'Critical' : row.high > 0 ? 'High' : 'No critical or high'}
-                  icon={Container}
+                  icon={Bug}
                 />
               </td>
             {/if}

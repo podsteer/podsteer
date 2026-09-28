@@ -25,10 +25,10 @@ const ENTRIES = [
   'Overview',
   'Timeline',
   'Applications',
-  'Helm',
   'Posture',
   'Vulnerabilities',
   'Permissions',
+  'Helm',
 ]
 
 /** Where each entry's own label appears in the file. */
@@ -52,15 +52,16 @@ describe('the order of the navigator', () => {
     expect(positionOf('All clusters')).toBeLessThan(positionOf('Overview'))
   })
 
-  it('ends with Permissions, the one entry about the operator', () => {
-    const last = Math.max(...ENTRIES.map(positionOf))
-
-    expect(positionOf('Permissions')).toBe(last)
+  it('ends the SECURITY section with Permissions, the one entry about the operator', () => {
+    expect(positionOf('Permissions')).toBeGreaterThan(positionOf('Vulnerabilities'))
+    expect(positionOf('Permissions')).toBeLessThan(positionOf('Helm'))
   })
 
   it('gathers Posture, Vulnerabilities and Permissions under one SECURITY section', () => {
     const header = NAVIGATOR.indexOf('onclick={() => preferences.toggleCategory(SECURITY_SECTION)}')
-    expect(header).toBeGreaterThan(positionOf('Helm'))
+    // Directly under the catalogue's categories, above Helm.
+    expect(header).toBeGreaterThan(NAVIGATOR.indexOf('{#each sections as section'))
+    expect(header).toBeLessThan(positionOf('Helm'))
     for (const label of ['Posture', 'Vulnerabilities', 'Permissions']) {
       expect(positionOf(label)).toBeGreaterThan(header)
     }

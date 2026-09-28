@@ -22,6 +22,13 @@
   /** The key the SECURITY section's fold is stored under, beside the
       catalogue categories' own. */
   const SECURITY_SECTION = 'podsteer:Security'
+
+  /**
+   * A folded section or group that holds the selected entry keeps the hover's
+   * grey ground, so the page on screen is always findable in the tree even
+   * when the row that names it is folded away.
+   */
+  const FOLDED_SELECTION = 'bg-surface-container text-on-surface'
   import { ALL_NAMESPACES, type ResourceKind } from '$lib/api/client'
   import {
     APPLICATIONS_KIND_ID,
@@ -737,6 +744,7 @@
 
     {#each sections as section (section.category)}
       {@const open = preferences.isCategoryExpanded(section.category)}
+      {@const holdsSelection = section.kinds.some((kind) => kind.id === session.selectedKindId)}
       {@const CategoryIcon = categoryMeta(section.category).icon}
 
       <div class="px-1.5 py-0.5">
@@ -746,7 +754,8 @@
           onclick={() => preferences.toggleCategory(section.category)}
           aria-expanded={open}
           class="state-layer group flex w-full items-center gap-2 rounded-sm px-2 py-1.5
-                 text-on-surface-variant transition-colors duration-100 hover:bg-surface-container"
+                 text-on-surface-variant transition-colors duration-100 hover:bg-surface-container
+                 {!open && holdsSelection ? FOLDED_SELECTION : ''}"
         >
           <ChevronDown
             class="size-3.5 shrink-0 text-on-surface-variant/60 transition-transform duration-150 ease-standard
@@ -794,13 +803,15 @@
               {#each section.groups.filter((group) => group.name !== '') as group (group.name)}
                 {@const groupKey = `${section.category}/${group.name}`}
                 {@const groupOpen = preferences.isCategoryExpanded(groupKey)}
+                {@const groupHolds = group.kinds.some((kind) => kind.id === session.selectedKindId)}
                 <button
                   type="button"
                   onclick={() => preferences.toggleCategory(groupKey)}
                   aria-expanded={groupOpen}
                   class="state-layer mt-0.5 flex w-full items-center gap-2 rounded-sm px-2
                          py-[5px] text-left text-on-surface-variant transition-colors duration-100
-                         hover:bg-surface-container hover:text-on-surface"
+                         hover:bg-surface-container hover:text-on-surface
+                         {!groupOpen && groupHolds ? FOLDED_SELECTION : ''}"
                 >
                   <!-- The same leading spacer every kind row carries, so this
                        chevron lands in the column their icons are in. Without
@@ -841,6 +852,52 @@
         {/if}
       </div>
     {/each}
+
+    <!-- SECURITY: a section of its own, drawn exactly as a catalogue
+         category is, holding the three pages that READ the cluster's security
+         rather than list its objects — the privileges workloads take, what a
+         scanner recorded, and what this kubeconfig may do. Built here rather
+         than in domain/catalog.go because none of them is a kind anything can
+         GET; see SECURITY_KIND_ID, VULNERABILITIES_KIND_ID and RBAC_KIND_ID.
+         Directly under the catalogue's categories, as one of them reads, and
+         Permissions last within it: the one entry about the operator rather
+         than about the cluster. -->
+    <div class="px-1.5 py-0.5">
+      <button
+        type="button"
+        onclick={() => preferences.toggleCategory(SECURITY_SECTION)}
+        aria-expanded={securityOpen}
+        class="state-layer group flex w-full items-center gap-2 rounded-sm px-2 py-1.5
+               text-on-surface-variant transition-colors duration-100 hover:bg-surface-container
+               {!securityOpen && SECURITY_SECTION_IDS.includes(session.selectedKindId)
+          ? FOLDED_SELECTION
+          : ''}"
+      >
+        <ChevronDown
+          class="size-3.5 shrink-0 text-on-surface-variant/60 transition-transform duration-150 ease-standard
+                 {securityOpen ? '' : '-rotate-90'}"
+          strokeWidth={2.5}
+        />
+        <ShieldCheck class="size-4 shrink-0 text-on-surface-variant/70" strokeWidth={1.8} />
+        <span class="flex-1 truncate text-left text-body-small font-semibold uppercase tracking-wider">
+          Security
+        </span>
+        <span
+          class="rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small
+                 tabular-nums text-on-surface-variant/70"
+        >
+          {SECURITY_SECTION_IDS.length}
+        </span>
+      </button>
+
+      {#if securityOpen}
+        <ul class="mt-0.5 border-l border-outline-variant/30 pl-2">
+          {@render securityRow(SECURITY_KIND_ID, onSecurity, ShieldAlert, 'Posture')}
+          {@render securityRow(VULNERABILITIES_KIND_ID, onVulnerabilities, Bug, 'Vulnerabilities')}
+          {@render securityRow(RBAC_KIND_ID, onRBAC, KeyRound, 'Permissions')}
+        </ul>
+      {/if}
+    </div>
 
     <div class="mx-3 my-1.5 h-px bg-outline-variant/40" aria-hidden="true"></div>
 
@@ -951,49 +1008,6 @@
       {/each}
     </div>
 
-    <div class="mx-3 my-1.5 h-px bg-outline-variant/40" aria-hidden="true"></div>
-
-    <!-- SECURITY: a section of its own, drawn exactly as a catalogue
-         category is, holding the three pages that READ the cluster's security
-         rather than list its objects — the privileges workloads take, what a
-         scanner recorded, and what this kubeconfig may do. Built here rather
-         than in domain/catalog.go because none of them is a kind anything can
-         GET; see SECURITY_KIND_ID, VULNERABILITIES_KIND_ID and RBAC_KIND_ID.
-         Last in the tree, and Permissions last within it: it is the one entry
-         about the operator rather than about the cluster. -->
-    <div class="px-1.5 py-0.5">
-      <button
-        type="button"
-        onclick={() => preferences.toggleCategory(SECURITY_SECTION)}
-        aria-expanded={securityOpen}
-        class="state-layer group flex w-full items-center gap-2 rounded-sm px-2 py-1.5
-               text-on-surface-variant transition-colors duration-100 hover:bg-surface-container"
-      >
-        <ChevronDown
-          class="size-3.5 shrink-0 text-on-surface-variant/60 transition-transform duration-150 ease-standard
-                 {securityOpen ? '' : '-rotate-90'}"
-          strokeWidth={2.5}
-        />
-        <ShieldCheck class="size-4 shrink-0 text-on-surface-variant/70" strokeWidth={1.8} />
-        <span class="flex-1 truncate text-left text-body-small font-semibold uppercase tracking-wider">
-          Security
-        </span>
-        <span
-          class="rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small
-                 tabular-nums text-on-surface-variant/70"
-        >
-          {SECURITY_SECTION_IDS.length}
-        </span>
-      </button>
-
-      {#if securityOpen}
-        <ul class="mt-0.5 border-l border-outline-variant/30 pl-2">
-          {@render securityRow(SECURITY_KIND_ID, onSecurity, ShieldAlert, 'Posture')}
-          {@render securityRow(VULNERABILITIES_KIND_ID, onVulnerabilities, Bug, 'Vulnerabilities')}
-          {@render securityRow(RBAC_KIND_ID, onRBAC, KeyRound, 'Permissions')}
-        </ul>
-      {/if}
-    </div>
   </div>
 
   <!-- Resize handle -->

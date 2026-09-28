@@ -45,7 +45,7 @@
   import type { ClusterSession } from '$stores/session.svelte'
   import { untrack } from 'svelte'
   import StatusIndicator from '$lib/components/StatusIndicator.svelte'
-  import { CircleDot, KeyRound, Route } from '@lucide/svelte'
+  import { CircleDot, KeyRound } from '@lucide/svelte'
 
   interface Props {
     session: ClusterSession
@@ -289,7 +289,7 @@
             <StatusIndicator
               tone={TONES[level]}
               label={level === 'critical' ? 'Every verb on everything' : level === 'warning' ? 'Wide reach' : 'Narrow'}
-              icon={row.type === 'Resource' ? KeyRound : Route}
+              icon={KeyRound}
             />
           </td>
         {/if}
