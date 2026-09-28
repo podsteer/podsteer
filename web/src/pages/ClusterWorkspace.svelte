@@ -46,7 +46,8 @@ import TimelineView from './TimelineView.svelte'
   import GenericTableView from './GenericTableView.svelte'
   import OverviewView from './OverviewView.svelte'
   import MultiKindView from './MultiKindView.svelte'
-  import SecurityView from './SecurityView.svelte'
+  import SecurityView, { type SecurityTab } from './SecurityView.svelte'
+  import HelpButton from '$lib/components/HelpButton.svelte'
   import NodesView from './NodesView.svelte'
   import PodsView from './PodsView.svelte'
   import WorkloadsView from './WorkloadsView.svelte'
@@ -208,6 +209,13 @@ import TimelineView from './TimelineView.svelte'
    * the toolbar only asks — the same division every view's tools follow.
    */
   let canIOpen = $state(false)
+
+  /** Which of the Security page's two tables is showing. */
+  let securityTab = $state<SecurityTab>('posture')
+  const SECURITY_TABS: { id: SecurityTab; label: string }[] = [
+    { id: 'posture', label: 'Posture' },
+    { id: 'vulnerabilities', label: 'Vulnerabilities' },
+  ]
   let rolesOpen = $state(false)
   /** The two ticked rows a diff was asked for, or null. */
   let comparing = $state<{ left: BulkItem; right: BulkItem } | null>(null)
@@ -415,7 +423,13 @@ import TimelineView from './TimelineView.svelte'
             ? 'all clusters'
             : session.viewMode === 'rbac'
               ? 'permissions'
-              : (session.selectedKind?.title.toLowerCase() ?? 'resources')}…"
+              : session.viewMode === 'helm'
+                ? 'releases'
+                : session.viewMode === 'security'
+                  ? securityTab === 'posture'
+                    ? 'findings'
+                    : 'images'
+                  : (session.selectedKind?.title.toLowerCase() ?? 'resources')}…"
           onchange={session.setSearch}
           onnext={focusFirstRow}
           invalid={Boolean(session.searchError)}
@@ -521,6 +535,39 @@ import TimelineView from './TimelineView.svelte'
       <!-- The Permissions page's tools. Refresh re-asks the one question the
            page answers on arrival; the other two are questions of their own,
            each in a dialog, so the page stays the list it opens on. -->
+      {#if session.viewMode === 'security'}
+        <!-- The Security page's two tables, switched the way the All clusters
+             view switches its merged tables — and its (?), which carries what
+             the page deliberately does not cover. -->
+        <div class="ms-auto flex items-center gap-2">
+          <div
+            role="tablist"
+            aria-label="Security table"
+            class="flex shrink-0 items-center gap-0.5 rounded-full bg-surface-container p-0.5"
+          >
+            {#each SECURITY_TABS as tab (tab.id)}
+              {@const active = securityTab === tab.id}
+              <button
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onclick={() => {
+                  securityTab = tab.id
+                  session.goToPage(1)
+                }}
+                class="rounded-full px-3 py-1 text-label-medium transition-colors duration-100
+                       {active
+                  ? 'bg-primary/14 text-primary'
+                  : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'}"
+              >
+                {tab.label}
+              </button>
+            {/each}
+          </div>
+          <HelpButton topic="security" about="Security" />
+        </div>
+      {/if}
+
       {#if session.viewMode === 'rbac'}
         <!-- On the RIGHT, beside the terminals, like every other view's tools.
              No rule before them — they open the right-hand group rather than
@@ -555,7 +602,9 @@ import TimelineView from './TimelineView.svelte'
            it cannot be used — a disabled row carries its reason in the title,
            where an absent control would teach nothing. -->
       <div
-        class="{session.viewMode === 'rbac' ? '' : 'ms-auto'} h-5 w-px shrink-0 bg-outline-variant/60"
+        class="{session.viewMode === 'rbac' || session.viewMode === 'security'
+          ? ''
+          : 'ms-auto'} h-5 w-px shrink-0 bg-outline-variant/60"
         aria-hidden="true"
       ></div>
 
@@ -594,7 +643,7 @@ import TimelineView from './TimelineView.svelte'
     {:else if session.viewMode === 'multi-kind'}
       <MultiKindView {session} />
     {:else if session.viewMode === 'security'}
-      <SecurityView {session} />
+      <SecurityView {session} bind:tab={securityTab} />
     {:else if session.viewMode === 'pods'}
       <PodsView {session} />
     {:else if session.viewMode === 'nodes'}

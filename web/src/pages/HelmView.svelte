@@ -52,7 +52,7 @@
 -->
 <script lang="ts">
   import Button from '$lib/components/Button.svelte'
-  import Card from '$lib/components/Card.svelte'
+  import DataTable, { type Column } from '$lib/components/DataTable.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
   import KubectlHint from '$lib/components/KubectlHint.svelte'
@@ -73,6 +73,12 @@
   import { modal } from '$lib/modal'
   import { helmPayloadKey, helmPayloads } from '$stores/helmPayloads.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
+  import type { CSVExport } from '$stores/activeTable.svelte'
+  import { preferences } from '$stores/preferences.svelte'
+  import { isControlColumn } from '$lib/fixedColumns'
+  import { matches } from '$lib/query'
+  import { sortRows, type SortAccessors } from '$lib/sort'
+  import { untrack } from 'svelte'
   import { Eye, EyeOff, Package, X } from '@lucide/svelte'
 
   interface Props {
@@ -131,6 +137,18 @@
     const key = `${session.cluster.id} ${session.namespace}`
     if (key === listedFor) return
     void load(session.cluster.id, session.namespace, false)
+  })
+
+  /**
+   * The application's Refresh re-lists, bypassing the Go cache — and only a
+   * person pressing it; the tick fetches nothing here. See RBACView.
+   */
+  let seenRefreshes = untrack(() => session.manualRefreshes)
+  $effect(() => {
+    const presses = session.manualRefreshes
+    if (presses === seenRefreshes) return
+    seenRefreshes = presses
+    void load(session.cluster.id, session.namespace, true)
   })
 
   const view = $derived(helmState(listing?.status ?? 'listed', listing?.refusal ?? ''))
@@ -307,6 +325,79 @@
     opened ? helmUpgrade(session.cluster.id, opened.name, commandNamespace, chartName) : '',
   )
 
+  // --- The table -----------------------------------------------------------
+
+  const COLUMNS: Column[] = [
+    { id: 'status', label: 'Status', width: 140 },
+    { id: 'name', label: 'Release', width: 280, pinned: true },
+    { id: 'namespace', label: 'Namespace', width: 180 },
+    { id: 'revision', label: 'Revision', width: 110, numeric: true },
+    { id: 'history', label: 'History', width: 140 },
+    { id: 'updated', label: 'Updated', width: 120, numeric: true },
+  ]
+
+  const SORT: SortAccessors<HelmRelease> = {
+    status: (release) => release.current.status,
+    name: (release) => release.name,
+    namespace: (release) => release.namespace,
+    revision: (release) => release.current.revision,
+    history: (release) => release.revisionCount,
+    // Newest first reads as ascending age, so sort on the negated timestamp.
+    updated: (release) => -(release.current.modifiedAt || release.current.createdAt || 0),
+  }
+
+  const visibleReleases = $derived(
+    session.query.terms.length === 0
+      ? releases
+      : releases.filter((release) =>
+          matches(session.query, {
+            text: [release.name, release.namespace, release.current.status].join(' '),
+            labels: {},
+            cluster: session.cluster.id,
+          }),
+        ),
+  )
+  const sortedReleases = $derived(sortRows(visibleReleases, session.sort, SORT))
+  const pagedReleases = $derived(
+    sortedReleases.slice(session.pageStart, session.pageStart + preferences.pageSize),
+  )
+
+  $effect(() => {
+    session.standaloneCount = visibleReleases.length
+  })
+
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[session.selectedKindId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /** The CSV export, built from the listing's labels only — never a payload. */
+  function exportCSV(): CSVExport {
+    const visible = COLUMNS.filter((column) => !isControlColumn(column) && isColumnVisible(column))
+    const cell = (release: HelmRelease, id: string): string => {
+      switch (id) {
+        case 'status':
+          return release.current.status || 'unknown'
+        case 'name':
+          return release.name
+        case 'namespace':
+          return release.namespace
+        case 'revision':
+          return String(release.current.revision)
+        case 'history':
+          return countedRevisions(release.revisionCount)
+        case 'updated':
+          return ageOf(release.current.modifiedAt || release.current.createdAt)
+        default:
+          return ''
+      }
+    }
+    return {
+      columns: visible.map((column) => column.label),
+      rows: sortedReleases.map((release) => visible.map((column) => cell(release, column.id))),
+    }
+  }
+
   /** Now, for ages — read once per render rather than per row. */
   const now = $derived.by(() => Date.now() / 1000)
 
@@ -334,157 +425,103 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-<div class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-  <div class="mx-auto flex max-w-5xl flex-col gap-4">
-    <Card variant="outlined" class="p-4">
-      <div class="mb-3 flex flex-wrap items-start justify-between gap-2">
-        <div class="min-w-0">
-          <h2 class="text-title-medium font-semibold text-on-surface">
-            Helm releases
-            {#if scope}
-              in <span class="font-mono">{scope}</span>
-            {:else}
-              across every namespace
-            {/if}
-          </h2>
-          <p class="mt-0.5 text-body-small text-on-surface-variant/70">
-            Read from the labels Helm puts on each release Secret, through the metadata API — no
-            Secret's contents are transferred. Only Helm's <span class="font-mono">secret</span>
-            storage driver is read; a cluster running
-            <span class="font-mono">HELM_DRIVER=configmap</span> or the SQL driver keeps its
-            releases somewhere this does not look.
-          </p>
-        </div>
-
-        <div class="flex shrink-0 items-center gap-3">
-          <!-- The age of the answer, beside the control that replaces it. The
-               listing is held for minutes rather than polled, so a page that
-               did not say how old its answer was would be a cache that lies. -->
-          {#if listedAt}
-            <span class="text-body-small text-on-surface-variant/60">
-              as of {formatClockTime(listedAt)}
-            </span>
-          {/if}
-          <Button
-            variant="outlined"
-            {loading}
-            onclick={() => void load(session.cluster.id, session.namespace, true)}
-          >
-            Refresh
-          </Button>
-        </div>
-      </div>
-
-      <ErrorBanner error={error} ondismiss={() => (error = null)} class="mb-3" />
-
-      {#if view.kind === 'unavailable'}
-        <!-- A refusal is not a fault — an account configured exactly as its
-             owner intended cannot list Secrets — so it is drawn the way an
-             unreadable count is, and only a transient failure is drawn as an
-             error worth retrying. It must NEVER render the zero-row copy:
-             "Helm has installed nothing here" is a claim about the cluster,
-             and a refused listing established nothing about the cluster. -->
-        <p
-          class="rounded-sm px-3 py-2 text-body-small
-                 {view.tone === 'error'
-                   ? 'bg-error-container/40 text-on-error-container'
-                   : 'bg-surface-container text-gauge-warn-ink'}"
-        >
-          {view.message}
-        </p>
-        {#if view.retryable}
-          <div class="mt-3">
-            <Button
-              variant="outlined"
-              {loading}
-              onclick={() => void load(session.cluster.id, session.namespace, true)}
-            >
-              Try again
-            </Button>
-          </div>
-        {/if}
-      {:else if isEmpty}
-        <EmptyState
-          title="No Helm releases here"
-          description={scope
-            ? `Nothing in ${scope} was installed by Helm, or its releases are stored elsewhere.`
-            : 'Nothing in this cluster was installed by Helm, or its releases are stored elsewhere.'}
-        />
-        {#if argoInstalled}
-          <!-- A fact about the CLUSTER, from the kinds discovery already
-               returned — never a claim about who manages which workload. -->
-          <p class="rounded-sm bg-surface-container px-3 py-2 text-body-small text-on-surface-variant">
-            {ARGO_NOTE}
-          </p>
-        {/if}
-      {:else if releases.length > 0}
-        {#if listing?.truncated}
-          <p class="mb-3 rounded-sm bg-warning-container/40 px-3 py-2 text-body-small text-on-surface">
-            More release Secrets exist than were read, so this list is short. Every revision is its
-            own Secret, so a cluster keeping a long history accumulates them quickly.
-          </p>
-        {/if}
-
-        <div class="overflow-x-auto">
-          <table class="w-full min-w-[40rem] border-collapse text-body-medium">
-            <thead>
-              <tr class="border-b border-outline-variant text-left text-on-surface-variant/70">
-                <th class="py-1.5 pr-4 font-medium">Release</th>
-                <th class="py-1.5 pr-4 font-medium">Namespace</th>
-                <th class="py-1.5 pr-4 font-medium">Revision</th>
-                <th class="py-1.5 pr-4 font-medium">Status</th>
-                <th class="py-1.5 pr-4 font-medium">Updated</th>
-                <th class="py-1.5 font-medium">History</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each releases as release (`${release.namespace}/${release.name}`)}
-                <tr class="border-b border-outline-variant/40">
-                  <td class="py-1.5 pr-4">
-                    <button
-                      type="button"
-                      class="state-layer cursor-pointer rounded-sm px-1 font-mono text-primary hover:underline"
-                      onclick={() => open(release)}
-                    >
-                      {release.name}
-                    </button>
-                  </td>
-                  <td class="py-1.5 pr-4 font-mono text-on-surface-variant">{release.namespace}</td>
-                  <td class="py-1.5 pr-4 tabular-nums text-on-surface">{release.current.revision}</td>
-                  <td class="py-1.5 pr-4">
-                    <!-- Helm's own word, verbatim. A status this build has
-                         never seen renders as itself in the neutral tone. -->
-                    <span class="rounded-full px-1.5 py-0.5 font-mono text-label-small {statusTone(release.current.status)}">
-                      {release.current.status || 'unknown'}
-                    </span>
-                  </td>
-                  <td class="py-1.5 pr-4 tabular-nums text-on-surface-variant">
-                    {ageOf(release.current.modifiedAt || release.current.createdAt)}
-                  </td>
-                  <td class="py-1.5 text-on-surface-variant">
-                    {countedRevisions(release.revisionCount)}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-
-        <!-- The stated cost of not reading a payload, said where the columns
-             would have been rather than left as an absence somebody has to
-             notice. -->
-        <p class="mt-3 text-body-small text-on-surface-variant/70">
-          There is no chart or app version in this table. Both live only inside a release's payload
-          — about a megabyte per release — and reading every release's payload to fill two columns
-          is exactly the bulk Secret read this page exists to avoid. Open a release and read one
-          revision to see them.
-        </p>
-      {:else if !loading}
-        <EmptyState title="Nothing read yet" description="Press Refresh to ask the cluster." />
+<!-- THE SAME TABLE EVERY LIST USES, so a release list reads like a Pods list:
+     the toolbar's search, pager, column chooser, sorting and CSV export. It
+     is a table and not a list (`session.hasTable`): this page filters, sorts
+     and pages its own rows, and nothing here is fetched on the tick. -->
+<DataTable
+  kindId={session.selectedKindId}
+  columns={COLUMNS}
+  isEmpty={pagedReleases.length === 0}
+  sort={session.sort}
+  onsort={session.toggleSort}
+  exportRows={exportCSV}
+>
+  {#snippet notice()}
+    <div class="border-b border-outline-variant/60 px-6 py-2 text-body-medium text-on-surface-variant">
+      Read from the labels Helm puts on each release Secret — no Secret's contents are transferred.
+      Chart and app version live only inside a release's payload; open a release and read one
+      revision to see them.
+      {#if listedAt}
+        <!-- The age of the answer: the listing is held for minutes rather
+             than polled, and a cache that cannot say its age is one that lies. -->
+        <span class="text-on-surface-variant/70">As of {formatClockTime(listedAt)}.</span>
       {/if}
-    </Card>
-  </div>
-</div>
+      {#if listing?.truncated}
+        <span class="text-gauge-warn-ink">
+          More release Secrets exist than were read, so this list is short.
+        </span>
+      {/if}
+    </div>
+    <ErrorBanner error={error} ondismiss={() => (error = null)} class="mx-6 my-3" />
+  {/snippet}
+
+  {#snippet empty()}
+    {#if view.kind === 'unavailable'}
+      <!-- A refusal is not a fault, and it must NEVER render the zero-row
+           copy: a refused listing established nothing about the cluster. -->
+      <EmptyState title="Helm releases could not be listed" description={view.message} />
+    {:else if loading && !listing}
+      <EmptyState title="Reading Helm's labels…" description="One metadata list of release Secrets." />
+    {:else if session.search && releases.length > 0}
+      <EmptyState title="No releases match" description={`Nothing matches "${session.search}".`} />
+    {:else if isEmpty}
+      <EmptyState
+        title="No Helm releases here"
+        description={(scope
+          ? `Nothing in ${scope} was installed by Helm, or its releases are stored elsewhere.`
+          : 'Nothing in this cluster was installed by Helm, or its releases are stored elsewhere.') +
+          (argoInstalled ? ' ' + ARGO_NOTE : '')}
+      />
+    {:else}
+      <EmptyState title="Nothing read yet" description="Press Refresh to ask the cluster." />
+    {/if}
+  {/snippet}
+
+  {#snippet rows(isVisible)}
+    {#each pagedReleases as release (`${release.namespace}/${release.name}`)}
+      {@const selected = opened?.name === release.name && opened?.namespace === release.namespace}
+      <tr
+        class="group/row cursor-pointer border-t border-outline-variant/40 transition-colors duration-100
+               {selected ? 'bg-row-open-secondary' : 'bg-surface hover:bg-surface-container-low'}"
+        onclick={() => open(release)}
+      >
+        {#if isVisible('status')}
+          <td class="py-1.5 pr-3 pl-6">
+            <!-- Helm's own word, verbatim; an unseen status renders as itself. -->
+            <span class="rounded-full px-2 py-0.5 font-mono text-label-small {statusTone(release.current.status)}">
+              {release.current.status || 'unknown'}
+            </span>
+          </td>
+        {/if}
+        <td class="px-3 py-1.5" title={release.name}>
+          <span class="flex items-center gap-2">
+            <Package class="size-4 shrink-0 text-on-surface-variant" strokeWidth={1.8} />
+            <span class="truncate font-medium text-on-surface">{release.name}</span>
+          </span>
+        </td>
+        {#if isVisible('namespace')}
+          <td class="truncate px-3 py-1.5 text-on-surface-variant">{release.namespace}</td>
+        {/if}
+        {#if isVisible('revision')}
+          <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+            {release.current.revision}
+          </td>
+        {/if}
+        {#if isVisible('history')}
+          <td class="truncate px-3 py-1.5 text-on-surface-variant">
+            {countedRevisions(release.revisionCount)}
+          </td>
+        {/if}
+        {#if isVisible('updated')}
+          <td class="truncate px-3 py-1.5 text-right tabular-nums text-on-surface-variant">
+            {ageOf(release.current.modifiedAt || release.current.createdAt)}
+          </td>
+        {/if}
+      </tr>
+    {/each}
+  {/snippet}
+</DataTable>
 
 {#if opened}
   <!-- The history drawer. Every row in it arrived on the listing already, so

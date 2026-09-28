@@ -1440,6 +1440,17 @@ expects to fetch what it names. Roles and ClusterRoles themselves are ordinary
 catalogue entries under Access Control and stay exactly where they were; this
 entry is the interrogation, not the list.
 
+**Permissions, Helm and Security draw the same DataTable every list does**,
+so an operator moves through them as through Pods — search, pager, column
+chooser, sorting, CSV export. They are TABLES but not LISTS:
+`session.hasTable` turns the toolbar's table controls on without `isList`'s
+selection, saved views or tick fetch, and each page filters, sorts and pages
+its own rows through the session's `query`, `sort` and `pageStart`, reporting
+the filtered count as `standaloneCount`. Their "refresh" is
+`session.manualRefreshes` — a person pressing the app's Refresh — never the
+tick. Security shows Posture or Vulnerabilities, switched in the toolbar, with
+per-table column preferences (`<kindId>#posture`).
+
 **One page, two dialogs.** The page is the rules review — what this
 kubeconfig may do in the tab's namespace — at full width, the way a list is.
 The other two questions are TOOLS and live where every view keeps its tools,

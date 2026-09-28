@@ -872,6 +872,30 @@ export const HELP_TOPICS = {
       },
     ],
   },
+  security: {
+    title: 'Security',
+    lede: 'Two tables with different warranties: the privileges workloads take, and the vulnerabilities a scanner already recorded.',
+    sections: [
+      {
+        heading: 'Posture',
+        body: [
+          "Read from the pod specs somebody wrote: privileged containers, shared host namespaces, privilege escalation, dangerous capabilities and UID 0. PodSteer owns these rules and they do not go stale. They are reported as notes rather than failures, because every real cluster runs a privileged network or storage agent. A snooze set on the overview is shown here.",
+        ],
+      },
+      {
+        heading: 'Vulnerabilities',
+        body: [
+          'Quoted from the scanner running in the cluster — PodSteer scans nothing and sends nothing anywhere. Counts are grouped by image, since one tag bump closes every workload running it, and Unknown is its own column: some scanners file genuine highs there.',
+        ],
+      },
+      {
+        heading: 'What this page does not cover',
+        body: [
+          'Who can do what — that is the Permissions page. Volumes such as a mounted docker.sock or a hostPath, because the rule would be right on some clusters and silently blank on others. Anything through time: scanner reports expire, so the cluster does not hold the history. And a compliance score, which a few rules over one optional scanner cannot honestly produce.',
+        ],
+      },
+    ],
+  },
 } satisfies Record<string, HelpTopic>
 
 /** The ids that exist. A dialog naming anything else does not compile. */

@@ -918,7 +918,9 @@ export class ClusterSession {
    * `pageStart`, and reports how many survived the filter in
    * `standaloneCount` so the pager can count them.
    */
-  readonly hasTable = $derived(this.isList || this.viewMode === 'rbac')
+  readonly hasTable = $derived(
+    this.isList || this.viewMode === 'rbac' || this.viewMode === 'helm' || this.viewMode === 'security',
+  )
 
   /**
    * How many rows a table-bearing view that is not a list is showing, after
@@ -1239,11 +1241,11 @@ export class ClusterSession {
   readonly visibleCount = $derived.by(() => {
     switch (this.viewMode) {
       case 'rbac':
+      case 'helm':
+      case 'security':
         return this.standaloneCount
       case 'overview':
       case 'timeline':
-      case 'helm':
-      case 'security':
         return 0
       case 'pods':
         return this.visiblePods.length
