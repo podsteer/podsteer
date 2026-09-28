@@ -896,6 +896,45 @@ export const HELP_TOPICS = {
       },
     ],
   },
+  'helm-release': {
+    title: 'Helm release',
+    lede: 'One release: its history from the labels Helm writes, and one revision\'s payload when you open a tab that shows it.',
+    sections: [
+      {
+        heading: 'What each tab costs',
+        body: [
+          'Overview and Commands read nothing: every revision arrived with the list, built from labels on the release Secrets.',
+          "Values, Manifest and Notes live inside one revision's release Secret — base64'd and gzip'd. Opening one of those tabs reads that single revision, and leaves a line in the cluster's audit log exactly as revealing a Secret's key does. Choose another revision from the tab's toolbar to read that one instead; only one is held at a time.",
+        ],
+      },
+      {
+        heading: 'Values and notes hide themselves',
+        body: [
+          "Values are where a chart puts a database password, and notes are rendered from the same values. Both are put away after thirty seconds and whenever the window loses focus — dropped, not covered — so showing them again reads the revision once more. The eye control hides them sooner.",
+          'An empty values pane means the revision was installed with no overrides: everything came from the chart\'s own defaults, which are not read.',
+        ],
+      },
+      {
+        heading: 'The manifest is masked',
+        body: [
+          "A chart that renders a Secret puts base64 into the manifest, and base64 is an encoding rather than a cipher, so every Secret's values are replaced with their size before the manifest leaves the backend. Every other document is exactly as Helm rendered it.",
+        ],
+      },
+      {
+        heading: 'Chart and app version',
+        body: [
+          'They are not labels — they exist only inside the payload — which is why the list cannot show them without reading every release\'s Secret. They appear on the Overview once a payload tab has been opened.',
+        ],
+      },
+      {
+        heading: 'Commands are shown, never run',
+        body: [
+          "PodSteer does not upgrade, roll back or uninstall. Each re-renders a chart, diffs it against what is live, applies the difference and prunes what the new manifest drops — Helm's own work, and doing it approximately deletes production objects. Copy the command and run it in your own shell.",
+          'Run helm get values first: Helm does not carry values forward, and an upgrade without them reverts every value you have set. REPO and VERSION are yours to fill in — a release records the chart\'s name, never where it came from — and the chart name stays a placeholder until a payload tab has been opened.',
+        ],
+      },
+    ],
+  },
 } satisfies Record<string, HelpTopic>
 
 /** The ids that exist. A dialog naming anything else does not compile. */

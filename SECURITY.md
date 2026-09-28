@@ -171,7 +171,7 @@ looking. If that ever changes it will be off by default, per image, initiated by
 you, and described here before it ships.
 
 **The Helm page LISTS Secrets without reading any of them, and reads exactly
-one when you press a button.** Those are two different acts and the difference
+one when you open a tab that shows it.** Those are two different acts and the difference
 is the whole design, so they are described separately.
 
 **The list reads no payload at all.** Helm stores every release as a Secret and
@@ -193,8 +193,10 @@ pattern Kubernetes' own guidance tells cluster operators to alert on.
 **Reading one release's payload is a separate, deliberate act, and this is new.**
 A release's values, its notes, its rendered manifest and the chart it came from
 exist only inside that revision's Secret, so seeing them means reading a
-Secret's contents. PodSteer does that **only when you press the button on one
-revision** — never when the page opens, never when the release drawer opens,
+Secret's contents. PodSteer does that **only when you open the release
+drawer's Values, Manifest or Notes tab** (or pick another revision there) —
+never when the page opens, never when the release drawer opens (it opens on an
+overview built from labels),
 never on the refresh timer, and never for more than the one revision you named.
 It is the same act as revealing a Secret's key and carries the same treatment:
 

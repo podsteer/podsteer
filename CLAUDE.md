@@ -1632,8 +1632,13 @@ been, and points at the release pane, which is where they do appear.
 ### Reading one revision is the second act, and it is `RevealSecretKey`'s
 
 `HelmPort.ReadHelmRelease` / `HelmAPI.ReadRelease` decodes ONE revision of ONE
-release, from a click handler and from nowhere else — never on render, never
-when the drawer opens, never on the tick. It reads a Secret's contents, so it
+release, from an event handler and from nowhere else — never on render, never
+when the drawer opens, never on the tick. The drawer (DetailDrawer's shell,
+header and tablist, rebuilt in `HelmView.svelte`) opens on an **Overview built
+from labels**; choosing the Values, Manifest or Notes tab, a revision in that
+tab's toolbar, or the eye control IS the read — there is no Read button, and
+`selectTab`/`inspect`/`toggleRevealed` are the only callers of `readPayload`.
+The explanations live in the `helm-release` help topic, not on the panel. It reads a Secret's contents, so it
 inherits ADR 3's controls verbatim rather than a summary of them, and one
 audit line in `HelmService.ReadRelease` names cluster, namespace, release and
 revision and never a value. **All the Helm-format knowledge stays in the
