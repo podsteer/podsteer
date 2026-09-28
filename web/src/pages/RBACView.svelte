@@ -1,12 +1,21 @@
 <!--
   The Permissions page: what this kubeconfig may do in the tab's namespace.
 
-  A PAGE, NOT A STACK OF CARDS. The rules review is the one question this
-  page answers on arrival, so it takes the whole width the way a list does;
-  the other two questions are tools, and they live where every view keeps its
-  tools — the header toolbar (`ClusterWorkspace`), each opening a dialog:
-  Can I… (`CanIDialog`) and Who holds a role (`RoleHoldersDialog`). Their
-  explanations are help topics under each dialog's (?), not paragraphs here.
+  THE SAME TABLE EVERY LIST USES. The rules review is the one question this
+  page answers on arrival, and its answer is rows — so it is drawn by
+  DataTable, with the toolbar's search, pager, column chooser and CSV export,
+  and an operator moves through it exactly as through Pods. Namespaced rules
+  and the cluster-scoped URL paths are ONE table with a Type column rather
+  than two, because two tables on one page cannot share one search box.
+
+  It is a table and not a list (`session.hasTable`, not `isList`): there is
+  no selection, no saved view, and nothing fetched on the tick. The page
+  filters, sorts and pages its own rows through the session's `query`,
+  `sort` and `pageStart`, and reports the filtered count back as
+  `standaloneCount` for the pager.
+
+  The other two questions are tools, in the header toolbar, each a dialog:
+  Can I… (`CanIDialog`) and Who holds a role (`RoleHoldersDialog`).
 
   THE API SERVER DECIDES AND PODSTEER ONLY FLAGS. The rules review and the
   access review are quotations, rendered as they arrived; the blast-radius
@@ -21,15 +30,18 @@
 -->
 <script lang="ts">
   import CanIDialog from '$lib/components/CanIDialog.svelte'
+  import DataTable, { type Column } from '$lib/components/DataTable.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
-  import RbacPathTable from '$lib/components/RbacPathTable.svelte'
-  import RbacVerbTable from '$lib/components/RbacVerbTable.svelte'
-  import ReviewNotice from '$lib/components/ReviewNotice.svelte'
   import RoleHoldersDialog from '$lib/components/RoleHoldersDialog.svelte'
   import { toApiError, type ApiError } from '$lib/api/errors'
   import { subjectRules as askSubjectRules, type SubjectRules } from '$lib/api/client'
+  import { isControlColumn } from '$lib/fixedColumns'
+  import { matches } from '$lib/query'
   import { pathRows, reviewState, verbRows } from '$lib/rbac'
+  import { sortRows, type SortAccessors } from '$lib/sort'
+  import type { CSVExport } from '$stores/activeTable.svelte'
+  import { preferences } from '$stores/preferences.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
   import { untrack } from 'svelte'
 
@@ -41,26 +53,19 @@
     rolesOpen?: boolean
   }
 
-  let {
-    session,
-    canIOpen = $bindable(false),
-    rolesOpen = $bindable(false),
-  }: Props = $props()
-
-  let loading = $state(false)
+  let { session, canIOpen = $bindable(false), rolesOpen = $bindable(false) }: Props = $props()
 
   let rules = $state<SubjectRules | null>(null)
   let rulesError = $state<ApiError | null>(null)
+  let loading = $state(false)
 
   /** Which cluster and namespace the answer on screen is about. */
   let rulesFor = $state('')
 
   /**
-   * Counts the reads issued, so a slow one cannot overwrite a later answer.
-   *
-   * Switching namespace twice quickly would otherwise let the first
-   * namespace's permissions land under the second one's heading — a list of
-   * what somebody may do, attributed to the wrong place.
+   * Counts the reads issued, so a slow one cannot overwrite a later answer —
+   * switching namespace twice quickly would otherwise land the first
+   * namespace's permissions under the second one's name.
    */
   let rulesGeneration = 0
 
@@ -83,6 +88,17 @@
   }
 
   /**
+   * One request when the page opens and one whenever the tab's namespace
+   * changes — never on the refresh tick. Keyed on the pair, because "what may
+   * I do here" is a different question in every namespace.
+   */
+  $effect(() => {
+    const key = `${session.cluster.id} ${session.namespace}`
+    if (key === rulesFor) return
+    void loadRules(session.cluster.id, session.namespace)
+  })
+
+  /**
    * The application's own Refresh re-asks — and ONLY a person pressing it.
    * The tick fetches nothing here by design; `manualRefreshes` counts the
    * presses, so this effect runs once per press and never on the timer.
@@ -95,84 +111,188 @@
     void loadRules(session.cluster.id, session.namespace)
   })
 
-  /**
-   * One request when the page opens, and one more whenever the tab's
-   * namespace changes — never on the refresh tick. Keyed on the pair, because
-   * "what may I do here" is a different question in every namespace.
-   */
-  $effect(() => {
-    const key = `${session.cluster.id} ${session.namespace}`
-    if (key === rulesFor) return
-    void loadRules(session.cluster.id, session.namespace)
-  })
-
   const rulesState = $derived(reviewState(rules?.status ?? 'answered', rules?.refusal ?? ''))
-  const namespacedRows = $derived(verbRows(rules?.namespaced ?? []))
-  const clusterScopedRows = $derived(pathRows(rules?.clusterScoped ?? []))
 
   /** The namespace the review actually named. */
   const reviewedNamespace = $derived(rules?.namespace || session.namespace || 'default')
+
+  /** One row of the table: a resource rule or a non-resource URL path. */
+  interface PermissionRow {
+    key: string
+    type: 'Resource' | 'URL path'
+    group: string
+    target: string
+    only: string
+    verbs: string[]
+  }
+
+  const allRows = $derived<PermissionRow[]>([
+    ...verbRows(rules?.namespaced ?? []).map((row) => ({
+      key: `r ${row.group}/${row.resource}/${row.resourceNames.join(',')}`,
+      type: 'Resource' as const,
+      group: row.group || '(core)',
+      target: row.resource,
+      only: row.resourceNames.join(', '),
+      verbs: row.verbs,
+    })),
+    ...pathRows(rules?.clusterScoped ?? []).map((row) => ({
+      key: `p ${row.path}`,
+      type: 'URL path' as const,
+      group: '',
+      target: row.path,
+      only: '',
+      verbs: row.verbs,
+    })),
+  ])
+
+  const COLUMNS: Column[] = [
+    { id: 'type', label: 'Type', width: 120 },
+    { id: 'target', label: 'Resource or path', width: 300, pinned: true },
+    { id: 'group', label: 'API group', width: 240 },
+    { id: 'only', label: 'Only named', width: 200 },
+    { id: 'verbs', label: 'Verbs', width: 360 },
+  ]
+
+  const SORT: SortAccessors<PermissionRow> = {
+    type: (row) => row.type,
+    target: (row) => row.target,
+    group: (row) => row.group,
+    only: (row) => row.only,
+    verbs: (row) => row.verbs.join(' '),
+  }
+
+  function textOf(row: PermissionRow): string {
+    return [row.type, row.target, row.group, row.only, ...row.verbs].join(' ')
+  }
+
+  const visibleRows = $derived(
+    session.query.terms.length === 0
+      ? allRows
+      : allRows.filter((row) =>
+          matches(session.query, { text: textOf(row), labels: {}, cluster: session.cluster.id }),
+        ),
+  )
+  const sortedRows = $derived(sortRows(visibleRows, session.sort, SORT))
+  const pagedRows = $derived(
+    sortedRows.slice(session.pageStart, session.pageStart + preferences.pageSize),
+  )
+
+  // The pager counts what this page's own filter kept.
+  $effect(() => {
+    session.standaloneCount = visibleRows.length
+  })
+
+  function isColumnVisible(column: Column): boolean {
+    const stored = preferences.columns[session.selectedKindId]?.[column.id]?.hidden
+    return column.pinned || (stored === undefined ? !column.defaultHidden : !stored)
+  }
+
+  /** The CSV export, mirroring what each cell shows. */
+  function exportCSV(): CSVExport {
+    const visible = COLUMNS.filter((column) => !isControlColumn(column) && isColumnVisible(column))
+    const cell = (row: PermissionRow, id: string): string => {
+      switch (id) {
+        case 'type':
+          return row.type
+        case 'target':
+          return row.target
+        case 'group':
+          return row.group || '—'
+        case 'only':
+          return row.only || '—'
+        case 'verbs':
+          return row.verbs.join(', ')
+        default:
+          return ''
+      }
+    }
+    return {
+      columns: visible.map((column) => column.label),
+      rows: sortedRows.map((row) => visible.map((column) => cell(row, column.id))),
+    }
+  }
 </script>
 
-<div class="min-h-0 flex-1 overflow-y-auto">
-  <div class="flex flex-col gap-8 px-6 py-5">
-    <section>
-      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 class="text-title-large text-on-surface">
-          What this kubeconfig can do in
-          <span class="font-mono" data-selectable>{reviewedNamespace}</span>
-        </h2>
-      </div>
-      <p class="mt-1 text-body-medium text-on-surface-variant">
-        The API server's own enumeration of your permissions, in one request.
-      </p>
+<DataTable
+  kindId={session.selectedKindId}
+  columns={COLUMNS}
+  isEmpty={pagedRows.length === 0}
+  sort={session.sort}
+  onsort={session.toggleSort}
+  exportRows={exportCSV}
+>
+  {#snippet notice()}
+    <!-- What the rows ARE, outside the scrolling region so it stays with
+         them: one namespace's rules, as the API server enumerated them. -->
+    <div class="border-b border-outline-variant/60 px-6 py-2 text-body-medium text-on-surface-variant">
+      What this kubeconfig can do in
+      <span class="font-mono text-on-surface" data-selectable>{reviewedNamespace}</span>
+      — the API server's own enumeration, in one request.
+      {#if rules?.incomplete}
+        <!-- A partial list that does not say so reads as a complete one. -->
+        <span class="text-gauge-warn-ink">
+          The API server could not enumerate everything, so this list may be short.
+          {rules.incompleteReason}
+        </span>
+      {/if}
+    </div>
+    <ErrorBanner error={rulesError} ondismiss={() => (rulesError = null)} class="mx-6 my-3" />
+  {/snippet}
 
-      <ErrorBanner error={rulesError} ondismiss={() => (rulesError = null)} class="mt-4" />
-
-      <div class="mt-4">
-        {#if rulesState.kind === 'unavailable'}
-          <ReviewNotice state={rulesState} />
-        {:else if rules}
-          {#if rules.incomplete}
-            <!-- The API server said its own answer is partial. A partial list
-                 that does not say so reads as a complete one. -->
-            <p class="mb-4 rounded-sm bg-warning-container/40 px-3 py-2 text-body-medium text-on-surface">
-              The API server could not enumerate everything, so this list may be short.
-              {rules.incompleteReason}
-            </p>
-          {/if}
-
-          {#if namespacedRows.length === 0}
-            <p class="text-body-medium text-on-surface-variant">
-              Nothing. This account holds no permissions on objects in this namespace.
-            </p>
-          {:else}
-            <RbacVerbTable rows={namespacedRows} />
-          {/if}
-        {:else if !loading}
-          <EmptyState title="Nothing read yet" description="Press Refresh to ask the cluster." />
-        {/if}
-      </div>
-    </section>
-
-    {#if rules && rulesState.kind !== 'unavailable'}
-      <section>
-        <h2 class="text-title-medium text-on-surface">Cluster-scoped paths</h2>
-        <p class="mt-1 text-body-medium text-on-surface-variant">
-          URL paths belong to the API server rather than to a namespace, so the review reports
-          them apart from the rules above.
-        </p>
-        <div class="mt-4">
-          {#if clusterScopedRows.length === 0}
-            <p class="text-body-medium text-on-surface-variant">None.</p>
-          {:else}
-            <RbacPathTable rows={clusterScopedRows} />
-          {/if}
-        </div>
-      </section>
+  {#snippet empty()}
+    {#if rulesState.kind === 'unavailable'}
+      <EmptyState title="The rules could not be read" description={rulesState.message} />
+    {:else if loading && !rules}
+      <EmptyState title="Asking the cluster…" description="One rules review for this namespace." />
+    {:else if session.search}
+      <EmptyState title="No permissions match" description={`Nothing matches "${session.search}".`} />
+    {:else}
+      <EmptyState
+        title="No permissions here"
+        description="This account holds no permissions on objects in this namespace."
+      />
     {/if}
-  </div>
-</div>
+  {/snippet}
+
+  {#snippet rows(isVisible)}
+    {#each pagedRows as row (row.key)}
+      <tr class="border-t border-outline-variant/40 bg-surface transition-colors duration-100 hover:bg-surface-container-low">
+        {#if isVisible('type')}
+          <td class="truncate py-1.5 pr-3 pl-6 text-on-surface-variant">{row.type}</td>
+        {/if}
+        <td class="truncate px-3 py-1.5 font-mono text-body-small text-on-surface" title={row.target} data-selectable>
+          {row.target}
+        </td>
+        {#if isVisible('group')}
+          <td class="truncate px-3 py-1.5 font-mono text-body-small text-on-surface-variant" title={row.group}>
+            {row.group || '—'}
+          </td>
+        {/if}
+        {#if isVisible('only')}
+          <td class="truncate px-3 py-1.5 font-mono text-body-small text-on-surface-variant" title={row.only}>
+            {row.only || '—'}
+          </td>
+        {/if}
+        {#if isVisible('verbs')}
+          <td class="px-3 py-1.5">
+            <span class="flex flex-wrap items-center gap-1">
+              {#each row.verbs as verb (verb)}
+                <span
+                  class="rounded-full px-2 py-0.5 font-mono text-label-small
+                         {verb === '*'
+                    ? 'bg-warning-container text-on-warning-container'
+                    : 'bg-surface-container-highest text-on-surface-variant'}"
+                >
+                  {verb}
+                </span>
+              {/each}
+            </span>
+          </td>
+        {/if}
+      </tr>
+    {/each}
+  {/snippet}
+</DataTable>
 
 <CanIDialog
   open={canIOpen}

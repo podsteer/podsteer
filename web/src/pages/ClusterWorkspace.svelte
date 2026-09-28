@@ -382,11 +382,13 @@ import TimelineView from './TimelineView.svelte'
                     ? 'Multi-kind'
                     : session.viewMode === 'security'
                       ? 'Security'
-                      : session.isList
+                      : session.viewMode === 'rbac'
+                        ? 'Permissions'
+                        : session.isList
                         ? (session.selectedKind?.title ?? 'Resources')
                         : session.cluster.id}
           </h2>
-          {#if session.isList}
+          {#if session.hasTable}
             <span class="rounded-full bg-surface-container-high px-2 py-0.5 text-label-small
                          tabular-nums text-on-surface-variant">
               {session.visibleCount}
@@ -402,7 +404,7 @@ import TimelineView from './TimelineView.svelte'
         </div>
       </div>
 
-      {#if session.isList}
+      {#if session.hasTable}
         <!-- Search. Bound to the TYPED text rather than the debounced term:
              the field has to keep up with the keyboard even though the table
              follows a beat behind it. -->
@@ -411,7 +413,9 @@ import TimelineView from './TimelineView.svelte'
           value={session.typedSearch}
           placeholder="Search {session.viewMode === 'fleet'
             ? 'all clusters'
-            : (session.selectedKind?.title.toLowerCase() ?? 'resources')}…"
+            : session.viewMode === 'rbac'
+              ? 'permissions'
+              : (session.selectedKind?.title.toLowerCase() ?? 'resources')}…"
           onchange={session.setSearch}
           onnext={focusFirstRow}
           invalid={Boolean(session.searchError)}
@@ -430,18 +434,21 @@ import TimelineView from './TimelineView.svelte'
             '"quoted phrases" keep spaces in one term.'}
         />
 
-        <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
-
         <!-- Saved views, immediately after the controls one captures: the
              kind is in the navigator, but the namespace, the search and the
              chips are all in this row, so the thing that keeps them belongs
-             beside them rather than in Settings. -->
-        <SavedViewsMenu
-          current={session.viewState}
-          kindTitle={(kindId) => session.kinds.find((entry) => entry.id === kindId)?.title ?? ''}
-          allNamespaces={ALL_NAMESPACES}
-          onapply={(view) => void session.applyView(view)}
-        />
+             beside them rather than in Settings. Lists only: a table page
+             that is not a list has no kind for a view to restore. -->
+        {#if session.isList}
+          <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+
+          <SavedViewsMenu
+            current={session.viewState}
+            kindTitle={(kindId) => session.kinds.find((entry) => entry.id === kindId)?.title ?? ''}
+            allNamespaces={ALL_NAMESPACES}
+            onapply={(view) => void session.applyView(view)}
+          />
+        {/if}
 
         <div class="h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
 

@@ -906,6 +906,27 @@ export class ClusterSession {
   )
 
   /**
+   * Whether the current view draws a TABLE — the search box, the pager and
+   * the column chooser belong in the toolbar — without being a LIST.
+   *
+   * Narrower than `isList` on purpose. The Permissions page lays its rules
+   * out in the same table every list uses, so an operator navigates it the
+   * same way, but everything else `isList` switches on stays off: there is no
+   * selection for the bulk bar to act on, nothing a saved view could restore,
+   * and — the load-bearing part — nothing here is fetched on the tick. The
+   * page filters, sorts and pages its OWN rows through `query`, `sort` and
+   * `pageStart`, and reports how many survived the filter in
+   * `standaloneCount` so the pager can count them.
+   */
+  readonly hasTable = $derived(this.isList || this.viewMode === 'rbac')
+
+  /**
+   * How many rows a table-bearing view that is not a list is showing, after
+   * its own filter — reported by the view, because the rows are its own.
+   */
+  standaloneCount = $state(0)
+
+  /**
    * The search term parsed into a filter language query — regex, negation and
    * label selectors alongside the plain substring `search` always supported.
    * See `$lib/query`.
@@ -1217,8 +1238,9 @@ export class ClusterSession {
   /** Total rows after filtering, before pagination. */
   readonly visibleCount = $derived.by(() => {
     switch (this.viewMode) {
-      case 'overview':
       case 'rbac':
+        return this.standaloneCount
+      case 'overview':
       case 'timeline':
       case 'helm':
       case 'security':
