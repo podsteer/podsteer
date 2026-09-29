@@ -328,7 +328,7 @@
   },
   {
    "name": "golang.org/x/net",
-   "version": "v0.58.0",
+   "version": "v0.59.0",
    "ecosystem": "go",
    "licence": "BSD-3-Clause",
    "copyright": "Copyright 2009 The Go Authors.",
@@ -344,7 +344,7 @@
   },
   {
    "name": "golang.org/x/sync",
-   "version": "v0.22.0",
+   "version": "v0.23.0",
    "ecosystem": "go",
    "licence": "BSD-3-Clause",
    "copyright": "Copyright 2009 The Go Authors.",
@@ -352,7 +352,7 @@
   },
   {
    "name": "golang.org/x/sys",
-   "version": "v0.47.0",
+   "version": "v0.48.0",
    "ecosystem": "go",
    "licence": "BSD-3-Clause",
    "copyright": "Copyright 2009 The Go Authors.",
@@ -360,7 +360,7 @@
   },
   {
    "name": "golang.org/x/term",
-   "version": "v0.45.0",
+   "version": "v0.46.0",
    "ecosystem": "go",
    "licence": "BSD-3-Clause",
    "copyright": "Copyright 2009 The Go Authors.",
@@ -368,7 +368,7 @@
   },
   {
    "name": "golang.org/x/text",
-   "version": "v0.41.0",
+   "version": "v0.42.0",
    "ecosystem": "go",
    "licence": "BSD-3-Clause",
    "copyright": "Copyright 2009 The Go Authors.",
@@ -408,7 +408,7 @@
   },
   {
    "name": "k8s.io/api",
-   "version": "v0.37.0",
+   "version": "v0.37.1",
    "ecosystem": "go",
    "licence": "Apache-2.0",
    "copyright": "",
@@ -416,7 +416,7 @@
   },
   {
    "name": "k8s.io/apimachinery",
-   "version": "v0.37.0",
+   "version": "v0.37.1",
    "ecosystem": "go",
    "licence": "Apache-2.0",
    "copyright": "",
@@ -424,7 +424,7 @@
   },
   {
    "name": "k8s.io/client-go",
-   "version": "v0.37.0",
+   "version": "v0.37.1",
    "ecosystem": "go",
    "licence": "Apache-2.0",
    "copyright": "",
@@ -448,7 +448,7 @@
   },
   {
    "name": "k8s.io/metrics",
-   "version": "v0.37.0",
+   "version": "v0.37.1",
    "ecosystem": "go",
    "licence": "Apache-2.0",
    "copyright": "",
@@ -456,7 +456,7 @@
   },
   {
    "name": "k8s.io/streaming",
-   "version": "v0.37.0",
+   "version": "v0.37.1",
    "ecosystem": "go",
    "licence": "Apache-2.0",
    "copyright": "",
@@ -641,7 +641,7 @@
   },
   {
    "name": "@lucide/svelte",
-   "version": "1.41.0",
+   "version": "1.48.0",
    "ecosystem": "npm",
    "licence": "ISC",
    "copyright": "Copyright (c) 2026 Lucide Icons and Contributors · Copyright (c) 2013-present Cole Bemis",
