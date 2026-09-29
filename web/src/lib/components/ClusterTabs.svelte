@@ -50,7 +50,6 @@
   import { settingsDialog } from '$stores/settingsDialog.svelte'
   import { palette } from '$stores/palette.svelte'
   import SettingsDialog from './SettingsDialog.svelte'
-  import UpdateBadge from './UpdateBadge.svelte'
   import {
     Home,
     Server,
@@ -384,11 +383,6 @@
   >
     <Search class="size-4" strokeWidth={1.8} />
   </button>
-
-  <!-- Between the palette button and Refresh, and ABSENT unless there is
-       genuinely a newer release. See UpdateBadge.svelte for why the quiet
-       states show nothing at all. -->
-  <UpdateBadge />
 
   <!-- Refresh: acts on whichever tab is in front. Nothing to refresh on the
        picker, so it is disabled rather than hidden — its position stays put. -->

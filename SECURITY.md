@@ -154,8 +154,8 @@ What the check does and does not do:
   policies. Off means no request is made — not a request that is discarded —
   and there are tests in `app/application/updates_test.go` and
   `web/src/stores/updates.test.ts` asserting exactly that.
-- **PodSteer never installs anything.** The badge opens the release page in
-  your browser. It does not download, replace its own binary, or run an
+- **PodSteer never installs anything.** The download icon beside the version
+  in the status bar opens the release page in your browser. It does not download, replace its own binary, or run an
   installer.
 
 **No container registry is contacted, and that is worth saying explicitly**

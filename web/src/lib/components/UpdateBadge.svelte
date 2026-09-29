@@ -1,62 +1,81 @@
 <!--
-  Tells the operator a newer PodSteer exists, and nothing else.
+  Tells the operator a newer PodSteer exists: a download icon after the
+  version in the status bar, and nothing else.
 
   IT IS ABSENT WHEN THERE IS NOTHING TO SAY. No icon for "you are up to date",
   none for "we could not reach GitHub", none while checking. Three of the four
   states are silent, because a control that is permanently present and almost
-  always means "everything is fine" is one people stop seeing — and the one
-  time it matters it will be invisible for the same reason.
+  always means "everything is fine" is one people stop seeing.
 
-  It does not update anything. PodSteer installs however the operator installed
-  it — Homebrew, a zip, a package — and a client that replaced its own binary
-  would be a far larger promise than this feature is making. The button opens
-  the release page in the system browser and stops there.
+  IN THE STATUS BAR, BESIDE THE VERSION, rather than in the tab strip where it
+  used to be a filled pill: the version is where somebody looks to learn what
+  they are running, so that is where "and a newer one exists" belongs. It sits
+  in the version's own grey and GLOWS to the primary colour for a moment once
+  a minute — often enough to be noticed, rarely enough never to nag. On a
+  fixed timer rather than the refresh interval, which can be manual (never)
+  or five seconds (far too often). Reduced motion keeps it still, through the
+  global rule in app.css.
+
+  It does not update anything. PodSteer installs however the operator
+  installed it, and the button opens the release page in the browser. Turning
+  the notice off for good is the Settings switch.
 -->
 <script lang="ts">
-  import { Download, X } from '@lucide/svelte'
+  import { Download } from '@lucide/svelte'
   import { updates } from '$stores/updates.svelte'
-  import { preferences } from '$stores/preferences.svelte'
   import { openURL } from '$lib/api/client'
 
+  /** How often the icon glows. */
+  const PULSE_EVERY_MS = 60_000
+
   const version = $derived(updates.status?.latest ?? '')
+
+  /** Bumped once a minute; re-keying the icon restarts its animation. */
+  let pulse = $state(0)
+
+  $effect(() => {
+    if (!updates.available) return
+    const timer = window.setInterval(() => (pulse += 1), PULSE_EVERY_MS)
+    return () => window.clearInterval(timer)
+  })
 </script>
 
 {#if updates.available}
-  <div class="flex shrink-0 items-center self-center">
-    <button
-      type="button"
-      onclick={() => {
-        const url = updates.status?.url
-        if (url) void openURL(url)
-      }}
-      aria-label="PodSteer {version} is available"
-      title="PodSteer {version} is available — opens the release notes"
-      class="state-layer no-drag flex h-7 shrink-0 items-center gap-1.5 rounded-full
-             bg-primary-container px-2.5 text-label-small text-on-primary-container
-             transition-colors duration-100 hover:brightness-105"
-    >
-      <Download class="size-3.5" strokeWidth={2} />
-      <span class="font-medium">{version}</span>
-    </button>
-
-    <!--
-      Dismissal is per VERSION, not a blanket silence: somebody who is not
-      upgrading today still wants to hear about the release after this one.
-      Turning it off for good is what the switch in Settings is for, and the
-      title says so rather than leaving them to guess.
-    -->
-    <button
-      type="button"
-      onclick={() => preferences.dismissUpdate(version)}
-      aria-label="Dismiss the notice about {version}"
-      title="Dismiss until the next release — turn these off in Settings → Notifications"
-      class="state-layer no-drag ml-0.5 grid size-6 shrink-0 place-items-center rounded-full
-             text-on-surface-variant/70 transition-colors duration-100
-             hover:bg-surface-container-high hover:text-on-surface"
-    >
-      <X class="size-3" strokeWidth={2.5} />
-    </button>
-
-    <div class="mx-1 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
-  </div>
+  <button
+    type="button"
+    onclick={() => {
+      const url = updates.status?.url
+      if (url) void openURL(url)
+    }}
+    aria-label="PodSteer {version} is available"
+    title="PodSteer {version} is available — opens the release notes"
+    class="state-layer grid size-5 shrink-0 place-items-center rounded-full
+           transition-colors duration-100 hover:text-primary"
+  >
+    {#key pulse}
+      <Download class="update-glow size-3.5" strokeWidth={2} />
+    {/key}
+  </button>
 {/if}
+
+<style>
+  /* Grey, blue, grey: the version's own colour at both ends, so between
+     glows the icon is as quiet as the text beside it. */
+  :global(.update-glow) {
+    opacity: 0.6;
+    animation: update-glow 1.6s ease-in-out;
+  }
+
+  @keyframes update-glow {
+    0%,
+    100% {
+      opacity: 0.6;
+    }
+    45%,
+    55% {
+      opacity: 1;
+      color: var(--color-primary);
+      filter: drop-shadow(0 0 3px color-mix(in srgb, var(--color-primary) 60%, transparent));
+    }
+  }
+</style>
