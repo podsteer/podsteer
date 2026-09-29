@@ -159,6 +159,23 @@ export const SHORTCUT_DEFAULTS: ShortcutDefault[] = [
     binding: accelKey('['),
   },
   {
+    id: 'move-tab-left',
+    description: 'Move the current tab left',
+    scope: 'global',
+    binding: { accel: true, shift: true, alt: false, key: 'arrowleft' },
+    // Arrows are reserved for bindings somebody records — see RESERVED_KEYS —
+    // so this default could not be recorded back if changed. Fixed, like
+    // switch-tab.
+    rebindable: false,
+  },
+  {
+    id: 'move-tab-right',
+    description: 'Move the current tab right',
+    scope: 'global',
+    binding: { accel: true, shift: true, alt: false, key: 'arrowright' },
+    rebindable: false,
+  },
+  {
     id: 'switch-tab',
     description: 'Switch to the Nth open cluster tab',
     scope: 'global',

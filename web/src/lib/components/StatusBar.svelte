@@ -9,7 +9,7 @@
 <script lang="ts">
   import { appInfo, openWebsite } from '$stores/system.svelte'
   import { workspace } from '$stores/workspace.svelte'
-  import { organisation } from '$stores/organisation.svelte'
+  import { environmentName, organisation } from '$stores/organisation.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import { shortcutSheet } from '$stores/shortcutSheet.svelte'
   import { forwards } from '$stores/forwards.svelte'
@@ -21,6 +21,7 @@
   import { openURL } from '$lib/api/client'
   import { ExternalLink, Clock, Server, RefreshCw, Keyboard, Lock } from '@lucide/svelte'
   import ShareMenu from './ShareMenu.svelte'
+  import UpdateBadge from './UpdateBadge.svelte'
   import PortForwardsPanel from './PortForwardsPanel.svelte'
   import NodeShellsPanel from './NodeShellsPanel.svelte'
   import ClusterShellsPanel from './ClusterShellsPanel.svelte'
@@ -134,7 +135,7 @@
             ? 'text-error'
             : 'opacity-70'}"
         >
-          {groupSettings.environment}
+          {environmentName(groupSettings)}
         </span>
       {/if}
 
@@ -283,5 +284,8 @@
          "podsteer v0.1.1" spends a word saying where you are to somebody who
          is looking at it. -->
     <span class="tabular-nums opacity-60">{appInfo.version}</span>
+    <!-- A newer release, when there is one: a download icon after the version,
+         in its grey. See UpdateBadge.svelte. -->
+    <UpdateBadge />
   </div>
 </footer>

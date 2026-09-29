@@ -43,14 +43,13 @@
   import { shortcut } from '$stores/shortcuts.svelte'
   import { workspace } from '$stores/workspace.svelte'
   import type { ClusterSession } from '$stores/session.svelte'
-  import { organisation } from '$stores/organisation.svelte'
+  import { environmentBadge, environmentName, organisation } from '$stores/organisation.svelte'
   import { groupBgClass } from '$lib/groupColour'
   import { preferences, THEME_LABELS } from '$stores/preferences.svelte'
   import { windowState } from '$stores/windowState.svelte'
   import { settingsDialog } from '$stores/settingsDialog.svelte'
   import { palette } from '$stores/palette.svelte'
   import SettingsDialog from './SettingsDialog.svelte'
-  import UpdateBadge from './UpdateBadge.svelte'
   import {
     Home,
     Server,
@@ -117,6 +116,55 @@
    * which point `pl-3` takes over — the same inset the navigator's own
    * content uses, so "PodSteer" lines up with the sidebar text under it.
    */
+  // --- Reordering tabs by dragging ------------------------------------------
+  //
+  // HTML drag and drop, like an editor's tabs: pick one up, and a line shows
+  // which side of which tab it will land on. The keyboard's equivalent is
+  // ⌘⇧← / ⌘⇧→ (App.svelte), which moves the tab in front.
+
+  /** The tab being dragged, or null. */
+  let dragging = $state<string | null>(null)
+  /** Where it would land: beside which tab, and on which side. */
+  let dropAt = $state<{ id: string; after: boolean } | null>(null)
+
+  const DRAG_TYPE = 'application/x-podsteer-tab'
+
+  function onDragStart(event: DragEvent, id: string): void {
+    dragging = id
+    event.dataTransfer?.setData(DRAG_TYPE, id)
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+  }
+
+  function onDragOver(event: DragEvent, id: string): void {
+    if (!dragging) return
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    const after = event.clientX > box.left + box.width / 2
+    // Beside itself is nowhere, so it draws nothing.
+    dropAt = id === dragging ? null : { id, after }
+  }
+
+  function onDrop(event: DragEvent): void {
+    event.preventDefault()
+    const id = dragging
+    const target = dropAt
+    endDrag()
+    if (!id || !target) return
+    const from = workspace.sessions.findIndex((session) => session.cluster.id === id)
+    const at = workspace.sessions.findIndex((session) => session.cluster.id === target.id)
+    if (from < 0 || at < 0) return
+    // An insertion point, then corrected for the tab leaving its old place.
+    let to = target.after ? at + 1 : at
+    if (from < to) to -= 1
+    workspace.moveTab(id, to)
+  }
+
+  function endDrag(): void {
+    dragging = null
+    dropAt = null
+  }
+
   const leadingPadding = $derived(isMac && !windowState.isFullscreen ? 'pl-[100px]' : 'pl-3')
 </script>
 
@@ -164,7 +212,24 @@
       {@const settings = organisation.settingsFor(placement.project, placement.group)}
       {@const group = organisation.groupNameOf(session.cluster.id)}
 
-      <div class="group relative flex items-center" role="presentation">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="group relative flex items-center {dragging === session.cluster.id ? 'opacity-50' : ''}"
+        role="presentation"
+        draggable="true"
+        ondragstart={(event) => onDragStart(event, session.cluster.id)}
+        ondragover={(event) => onDragOver(event, session.cluster.id)}
+        ondrop={onDrop}
+        ondragend={endDrag}
+      >
+        {#if dropAt?.id === session.cluster.id}
+          <!-- Where the dragged tab will land. -->
+          <span
+            class="pointer-events-none absolute inset-y-1.5 z-10 w-0.5 rounded-full bg-primary
+                   {dropAt.after ? '-right-px' : '-left-px'}"
+            aria-hidden="true"
+          ></span>
+        {/if}
         <!-- THE GROUP IS IN THE ACCESSIBLE NAME BECAUSE ITS DOT IS NOT
              READABLE. The coloured dot below stands for the group, is
              aria-hidden, and had no textual equivalent anywhere on the tab
@@ -177,14 +242,14 @@
           onclick={() => workspace.focus(session.cluster.id)}
           title="{session.cluster.id} — {session.cluster.host} — {healthWord(
             session,
-          )}{settings.environment ? ` — ${settings.environment}` : ''}{settings.readOnly
+          )}{settings.environment ? ` — ${environmentName(settings)}` : ''}{settings.readOnly
             ? workspace.readOnlyEnforced(session.cluster.id)
               ? ' — read-only'
               : ' — read-only, but PodSteer could not tell the backend: write controls are still disabled here, the second guard is not in force'
             : ''}"
           aria-label="{session.cluster.id}, {healthWord(session)}{group
             ? `, ${group}`
-            : ''}{settings.environment ? `, ${settings.environment}` : ''}{settings.readOnly
+            : ''}{settings.environment ? `, ${environmentName(settings)}` : ''}{settings.readOnly
             ? workspace.readOnlyEnforced(session.cluster.id)
               ? ', read-only'
               : ', read-only but not enforced by the backend'
@@ -224,17 +289,20 @@
             ></span>
           {/if}
           <span class="truncate">{session.cluster.id}</span>
-          <!-- Only production gets a chip here — every other environment is
-               colour alone, which is what keeps a tab that has to fit eight
-               of them on a laptop screen from growing a label per cluster.
-               Production earns the exception: it is the one guardrail an
-               operator must be able to read without opening the picker. -->
-          {#if settings.environment === 'production'}
+          <!-- The environment's mark: PRD, STG, QA, DEV or a custom one of up
+               to three letters, so eight tabs still fit a laptop screen.
+               Production keeps the alarm colour — it is the one guardrail an
+               operator must be able to read without opening the picker — and
+               the rest are quiet. "Other" has no mark. -->
+          {#if environmentBadge(settings)}
             <span
-              class="shrink-0 rounded-full bg-error/15 px-1 py-px text-label-small font-semibold
-                     tracking-wide text-error uppercase"
+              class="shrink-0 rounded-full px-1 py-px text-label-small font-semibold tracking-wide
+                     {settings.environment === 'production'
+                ? 'bg-error/15 text-error'
+                : 'bg-surface-container-highest text-on-surface-variant'}"
+              aria-hidden="true"
             >
-              prod
+              {environmentBadge(settings)}
             </span>
           {/if}
           <!--
@@ -315,11 +383,6 @@
   >
     <Search class="size-4" strokeWidth={1.8} />
   </button>
-
-  <!-- Between the palette button and Refresh, and ABSENT unless there is
-       genuinely a newer release. See UpdateBadge.svelte for why the quiet
-       states show nothing at all. -->
-  <UpdateBadge />
 
   <!-- Refresh: acts on whichever tab is in front. Nothing to refresh on the
        picker, so it is disabled rather than hidden — its position stays put. -->

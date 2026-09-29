@@ -31,6 +31,7 @@ import TimelineView from './TimelineView.svelte'
   import { focusFirstRow } from '$lib/components/DataTable.svelte'
   import SearchField from '$lib/components/SearchField.svelte'
   import { preferences } from '$stores/preferences.svelte'
+  import { workspace } from '$stores/workspace.svelte'
   import { organisation } from '$stores/organisation.svelte'
   import { shortcut } from '$stores/shortcuts.svelte'
   import { toCSV } from '$lib/csv'
@@ -281,7 +282,7 @@ import TimelineView from './TimelineView.svelte'
     const filename = buildExportFilename(
       session.viewMode === 'fleet' ? 'all-clusters' : session.cluster.id,
       kind,
-      session.namespace,
+      session.scopeNamespace,
     )
 
     try {
@@ -595,6 +596,8 @@ import TimelineView from './TimelineView.svelte'
         <ErrorBanner
           error={session.error}
           onretry={session.refresh}
+          onreconnect={() => void workspace.reconnect(session.cluster.id)}
+          reconnecting={workspace.isConnecting(session.cluster.id)}
           ondismiss={() => (session.error = null)}
         />
       </div>

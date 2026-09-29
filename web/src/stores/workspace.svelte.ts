@@ -230,6 +230,32 @@ class Workspace {
   }
 
   /**
+   * Reconnects an open tab whose connection the backend no longer holds.
+   *
+   * The tab and everything on it stay; only the backend's side is made again,
+   * the same way `open` makes it — including re-asserting the read-only
+   * guard, which starts empty on every connect. Offered by the tab's banner
+   * when a read answers "no longer connected", so the way back is a button,
+   * never a restart.
+   */
+  reconnect = async (clusterId: string): Promise<void> => {
+    const session = this.sessions.find((entry) => entry.cluster.id === clusterId)
+    if (!session || this.isConnecting(clusterId)) return
+
+    this.connecting = [...this.connecting, clusterId]
+    try {
+      await connect(clusterId)
+      void this.syncReadOnly(clusterId)
+      session.error = null
+      await session.refresh()
+    } catch (cause) {
+      session.error = toApiError(cause)
+    } finally {
+      this.connecting = this.connecting.filter((id) => id !== clusterId)
+    }
+  }
+
+  /**
    * Stops a connect attempt that has not answered yet.
    *
    * The rejection lands in `open`'s catch a moment later; the flag set here is
@@ -417,6 +443,33 @@ class Workspace {
 
     if (target === null) this.showPicker()
     else void this.focus(target)
+  }
+
+  /**
+   * Moves a tab to a new position, as dragging it does.
+   *
+   * `toIndex` is where it ends up among the tabs, clamped to the strip. The
+   * order is this window's arrangement and nothing else: sessions are keyed
+   * by cluster id everywhere, so moving one changes what ⌘1–9 and the
+   * next/previous shortcuts reach, and nothing about the tab itself.
+   */
+  moveTab = (clusterId: string, toIndex: number): void => {
+    const from = this.sessions.findIndex((session) => session.cluster.id === clusterId)
+    if (from < 0) return
+    const to = Math.max(0, Math.min(toIndex, this.sessions.length - 1))
+    if (to === from) return
+    const next = [...this.sessions]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    this.sessions = next
+  }
+
+  /** Moves the tab in front one place left or right — the keyboard's drag. */
+  moveActiveTab = (delta: -1 | 1): void => {
+    if (!this.activeClusterId) return
+    const at = this.sessions.findIndex((session) => session.cluster.id === this.activeClusterId)
+    if (at < 0) return
+    this.moveTab(this.activeClusterId, at + delta)
   }
 
   /** Releases every tab's timer and the event subscription. */

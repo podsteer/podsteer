@@ -59,6 +59,8 @@ describe('group guardrail settings — defaults', () => {
 
     expect(organisation.settingsFor(DEFAULT_PROJECT_ID, DEFAULT_GROUP_ID)).toEqual({
       environment: '',
+      customName: '',
+      customShort: '',
       colour: '',
       readOnly: false,
     })
@@ -71,6 +73,8 @@ describe('group guardrail settings — defaults', () => {
 
     expect(organisation.settingsFor(DEFAULT_PROJECT_ID, 'group-does-not-exist')).toEqual({
       environment: '',
+      customName: '',
+      customShort: '',
       colour: '',
       readOnly: false,
     })
@@ -92,6 +96,8 @@ describe('group guardrail settings — a custom group', () => {
     // The patch applied...
     expect(organisation.settingsFor(DEFAULT_PROJECT_ID, groupId)).toEqual({
       environment: 'production',
+      customName: '',
+      customShort: '',
       colour: 'red',
       readOnly: false,
     })
@@ -100,6 +106,8 @@ describe('group guardrail settings — a custom group', () => {
     organisation.setGroupSettings(DEFAULT_PROJECT_ID, groupId, { readOnly: true })
     expect(organisation.settingsFor(DEFAULT_PROJECT_ID, groupId)).toEqual({
       environment: 'production',
+      customName: '',
+      customShort: '',
       colour: 'red',
       readOnly: true,
     })
@@ -120,6 +128,8 @@ describe('group guardrail settings — a custom group', () => {
     // carries its name — both live on the one Group record.
     expect(organisation.settingsFor(target, groupId)).toEqual({
       environment: 'staging',
+      customName: '',
+      customShort: '',
       colour: '',
       readOnly: false,
     })
@@ -156,6 +166,8 @@ describe('group guardrail settings — a project Default group', () => {
     // something leaked from before the deletion.
     expect(organisation.settingsFor(temp, DEFAULT_GROUP_ID)).toEqual({
       environment: '',
+      customName: '',
+      customShort: '',
       colour: '',
       readOnly: false,
     })
@@ -184,12 +196,14 @@ describe('group guardrail settings — persistence and migration', () => {
 
     expect(second.organisation.settingsFor(second.DEFAULT_PROJECT_ID, groupId)).toEqual({
       environment: 'production',
+      customName: '',
+      customShort: '',
       colour: 'red',
       readOnly: true,
     })
     expect(
       second.organisation.settingsFor(second.DEFAULT_PROJECT_ID, second.DEFAULT_GROUP_ID),
-    ).toEqual({ environment: 'development', colour: '', readOnly: false })
+    ).toEqual({ environment: 'development', customName: '', customShort: '', colour: '', readOnly: false })
   })
 
   it('defaults a group persisted before guardrail settings existed, rather than dropping it', async () => {
@@ -210,7 +224,7 @@ describe('group guardrail settings — persistence and migration', () => {
     const group = organisation.groupsIn(DEFAULT_PROJECT_ID).find((g) => g.id === 'group-legacy')
     expect(group).toBeDefined()
     expect(group!.name).toBe('Legacy')
-    expect(group!.settings).toEqual({ environment: '', colour: '', readOnly: false })
+    expect(group!.settings).toEqual({ environment: '', customName: '', customShort: '', colour: '', readOnly: false })
   })
 
   it('discards a malformed environment or colour rather than trusting hand-edited storage', async () => {
@@ -237,6 +251,8 @@ describe('group guardrail settings — persistence and migration', () => {
 
     expect(organisation.settingsFor(DEFAULT_PROJECT_ID, 'group-bad')).toEqual({
       environment: '',
+      customName: '',
+      customShort: '',
       colour: '',
       readOnly: false,
     })

@@ -885,6 +885,12 @@ export class ClusterSession {
     return 'table'
   })
 
+  /**
+   * The namespace the view on screen is scoped to: the window-wide one on
+   * All clusters (see fleet.namespace), this tab's own everywhere else.
+   */
+  readonly scopeNamespace = $derived(this.viewMode === 'fleet' ? fleet.namespace : this.namespace)
+
   /** Whether the selected kind carries namespaces. */
   readonly isNamespaced = $derived(
     this.viewMode === 'overview' ||
@@ -1819,6 +1825,15 @@ export class ClusterSession {
 
   /** Changes the namespace filter, remembers it for this cluster, and reloads. */
   selectNamespace = async (namespace: string): Promise<void> => {
+    if (this.viewMode === 'fleet') {
+      // All clusters has one namespace for the window, and choosing it must
+      // not rewrite this cluster's remembered filter.
+      if (namespace === fleet.namespace) return
+      fleet.chooseNamespace(namespace)
+      this.page = 1
+      await this.refresh()
+      return
+    }
     if (namespace === this.namespace) return
     this.namespace = namespace
     preferences.setClusterNamespace(this.cluster.id, namespace)
@@ -1835,7 +1850,7 @@ export class ClusterSession {
    */
   readonly viewState = $derived<ViewState>({
     kindId: this.selectedKindId,
-    namespace: this.namespace,
+    namespace: this.scopeNamespace,
     search: this.typedSearch,
     statusFilters: this.podStatusFilters,
   })
@@ -1854,11 +1869,18 @@ export class ClusterSession {
    * amendment to whatever was already pressed.
    */
   applyView = async (view: SavedView): Promise<void> => {
-    const changed = view.kindId !== this.selectedKindId || view.namespace !== this.namespace
+    const fleetView = view.kindId === FLEET_KIND_ID
+    const changed =
+      view.kindId !== this.selectedKindId ||
+      view.namespace !== (fleetView ? fleet.namespace : this.namespace)
 
     this.selectedKindId = view.kindId
-    this.namespace = view.namespace
-    preferences.setClusterNamespace(this.cluster.id, view.namespace)
+    if (fleetView) {
+      fleet.chooseNamespace(view.namespace)
+    } else {
+      this.namespace = view.namespace
+      preferences.setClusterNamespace(this.cluster.id, view.namespace)
+    }
     this.podStatusFilters = [...view.statusFilters]
     this.setSearch(view.search)
     this.page = 1
@@ -2369,7 +2391,8 @@ export class ClusterSession {
         // Every open cluster, one call, at this tab's cadence — and only
         // while this view is the one on screen, because this switch is the
         // only thing that ever calls it. See $stores/fleet.
-        return fleet.refresh(namespace)
+        // The WINDOW'S namespace, never this tab's — see fleet.namespace.
+        return fleet.refresh(fleet.namespace)
       case 'rbac':
         // NOTHING, DELIBERATELY. The RBAC explorer's reads are made by the
         // panel when somebody presses something, never by this tick: a

@@ -31,8 +31,10 @@
   import Checkbox from './Checkbox.svelte'
   import Select from './Select.svelte'
   import {
+    CUSTOM_SHORT_MAX,
     DEFAULT_PROJECT_ID,
     ENVIRONMENTS,
+    sanitiseEnvironmentShort,
     GROUP_COLOURS,
     organisation,
     type Environment,
@@ -176,7 +178,12 @@
   function changeGroupSettings(
     projectId: string,
     groupId: string,
-    patch: { environment?: Environment; colour?: (typeof GROUP_COLOURS)[number] | '' },
+    patch: {
+      environment?: Environment
+      customName?: string
+      customShort?: string
+      colour?: (typeof GROUP_COLOURS)[number] | ''
+    },
   ): void {
     organisation.setGroupSettings(projectId, groupId, patch)
   }
@@ -726,6 +733,44 @@
                       changeGroupSettings(project.id, group.id, { environment: value as Environment })}
                   />
                 </div>
+
+                <!-- A custom environment names itself, and chooses the mark its
+                     tabs carry: up to three letters or digits, shown in upper
+                     case. Left empty, the mark is the name's first letters. -->
+                {#if group.settings.environment === 'custom'}
+                  <div class="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={group.settings.customName}
+                      maxlength={40}
+                      placeholder="Sandbox"
+                      aria-label="Custom environment name for {group.name}"
+                      autocomplete="off"
+                      spellcheck="false"
+                      onchange={(event) =>
+                        changeGroupSettings(project.id, group.id, {
+                          customName: event.currentTarget.value.trim(),
+                        })}
+                      class="field w-28 px-2 py-1 text-body-medium"
+                    />
+                    <input
+                      type="text"
+                      value={group.settings.customShort}
+                      maxlength={CUSTOM_SHORT_MAX}
+                      placeholder={sanitiseEnvironmentShort(group.settings.customName) || 'SBX'}
+                      aria-label="Tab mark for {group.name}, up to {CUSTOM_SHORT_MAX} letters"
+                      title="Shown on the cluster's tab, up to {CUSTOM_SHORT_MAX} letters"
+                      autocomplete="off"
+                      spellcheck="false"
+                      oninput={(event) => {
+                        const clean = sanitiseEnvironmentShort(event.currentTarget.value)
+                        event.currentTarget.value = clean
+                        changeGroupSettings(project.id, group.id, { customShort: clean })
+                      }}
+                      class="field w-14 px-2 py-1 text-center text-body-medium uppercase tracking-wide"
+                    />
+                  </div>
+                {/if}
 
                 <div
                   role="radiogroup"

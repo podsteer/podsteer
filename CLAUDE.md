@@ -1429,6 +1429,14 @@ and the fan-out simply stops. The command palette reads the merged rows the
 way it reads any view's own: only while that view is on screen, never by
 fetching across clusters for a keystroke.
 
+**So is its namespace.** `fleet.namespace` (default All namespaces) scopes the
+fan-out for the whole window; `session.scopeNamespace` is what the navigator
+picker, saved views and the CSV filename read, and `selectNamespace` routes to
+`fleet.chooseNamespace` on this view without touching the tab's remembered
+filter. It used to be each tab's own namespace over one shared set of rows,
+so two tabs on different namespaces (a new tab starts on `default`) wiped each
+other's answer — the "works on the first tab only, or shows then vanishes" bug.
+
 ## The RBAC explorer quotes the API server, and flags only what it can argue
 
 `podsteer/rbac` is the fourth pinned pseudo-entry, beside the overview,

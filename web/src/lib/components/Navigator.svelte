@@ -99,7 +99,7 @@
     // The same case covers RBAC that permits listing objects in one namespace
     // but not listing namespaces at all, where this is the only entry there
     // will ever be.
-    const selected = session.namespace
+    const selected = session.scopeNamespace
     if (selected !== ALL_NAMESPACES && !options.some((option) => option.value === selected)) {
       options.push({ value: selected, label: selected, hint: 'not found' })
     }
@@ -427,7 +427,7 @@
   >
     <Select
       label="Namespace"
-      value={session.namespace}
+      value={session.scopeNamespace}
       options={namespaceOptions}
       onchange={(value) => session.selectNamespace(value)}
       onopen={() => void session.refreshNamespaces()}

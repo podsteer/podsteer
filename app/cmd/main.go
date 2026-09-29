@@ -782,6 +782,14 @@ func run() error {
 		desktop.StartNotifications()
 	})
 
+	// Server mode raises no ApplicationStarted (see serverBuild), so the
+	// sampler is started here instead. Its lifetime is the process's, which in
+	// server mode is the page's; historyService.Close, deferred above, stops
+	// and waits for it exactly as it does on the desktop.
+	if serverBuild {
+		historyService.Start(context.Background())
+	}
+
 	if err := desktopApp.Run(); err != nil {
 		return fmt.Errorf("running application: %w", err)
 	}

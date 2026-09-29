@@ -87,8 +87,35 @@ export const API_ERROR_CODES = [
   'internal',
 ] as const
 
-/** A classification of a backend failure, or `unknown` when unparseable. */
-export type ApiErrorCode = (typeof API_ERROR_CODES)[number] | 'unknown'
+/**
+ * A classification of a backend failure, or `unknown` when unparseable.
+ *
+ * `disconnected` is the one code the backend never sends, because it is the
+ * backend not answering at all — see NETWORK_FAILURES.
+ */
+export type ApiErrorCode = (typeof API_ERROR_CODES)[number] | 'unknown' | 'disconnected'
+
+/**
+ * What each engine says when a request never reached anything that answered.
+ *
+ * The bindings travel over fetch, so a backend that is not answering surfaces
+ * as the ENGINE'S sentence: "Load failed" in WebKit (the macOS and Linux
+ * window), "Failed to fetch" in Chromium (the Windows window, and a browser on
+ * the server build), Firefox's longer one. Shown raw, it read as "Failed to
+ * fetch" over the code "unknown" — two words that say nothing about what
+ * happened or what to do. Matched whole, so a Go message that merely
+ * contains one of these phrases is never mistaken for a lost connection.
+ */
+const NETWORK_FAILURES = new Set([
+  'Failed to fetch',
+  'Load failed',
+  'NetworkError when attempting to fetch resource.',
+  'fetch failed',
+])
+
+/** What a lost connection says instead. Never "restart": Retry is the way back. */
+export const DISCONNECTED_MESSAGE =
+  'Lost the connection to PodSteer’s backend. It is retried on the next refresh, or press Retry.'
 
 /** Matches the `[code] message` envelope the backend produces. */
 const CODE_ENVELOPE = /^\[([a-z_]+)]\s*([\s\S]*)$/
@@ -101,6 +128,7 @@ const CODE_ENVELOPE = /^\[([a-z_]+)]\s*([\s\S]*)$/
  * and offering a retry button there just wastes their time.
  */
 const RETRYABLE: ReadonlySet<ApiErrorCode> = new Set<ApiErrorCode>([
+  'disconnected',
   'unreachable',
   'unauthenticated',
   'cancelled',
@@ -175,6 +203,9 @@ export function toApiError(cause: unknown): ApiError {
   }
 
   const raw = extractMessage(cause)
+  if (NETWORK_FAILURES.has(raw)) {
+    return new ApiError('disconnected', DISCONNECTED_MESSAGE, { cause })
+  }
   const match = CODE_ENVELOPE.exec(raw)
 
   if (!match) {

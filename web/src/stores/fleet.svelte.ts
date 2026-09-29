@@ -25,6 +25,7 @@
  */
 
 import {
+  ALL_NAMESPACES,
   listFleetEvents,
   listFleetPods,
   listFleetTable,
@@ -148,6 +149,20 @@ class Fleet {
    */
   tableKind = $state<FleetKind | null>(null)
 
+  /**
+   * The namespace every open cluster is read in — ONE, for the window.
+   *
+   * It used to be whichever tab was in front's own namespace filter, and the
+   * rows below are one set for the window. So two tabs on different
+   * namespaces (a new tab starts on `default`) each overwrote the other's
+   * answer: the second tab showed the first tab's rows and then its own poll
+   * wiped them, and switching back did the same in reverse. A tab's
+   * namespace is a filter on THAT cluster; this view is about all of them.
+   * All namespaces by default, because a namespace name means something
+   * different — or nothing — on each cluster.
+   */
+  namespace = $state<string>(ALL_NAMESPACES)
+
   status = $state<LoadStatus>('idle')
   /** When the last read landed, in ms since the epoch. */
   lastReadAt = $state<number | null>(null)
@@ -200,6 +215,22 @@ class Fleet {
    * yet, and one tick of the previous kind's rows under the new kind's name
    * is a table that is wrong rather than merely old.
    */
+  /**
+   * Changes the window-wide namespace and drops what was read in the old
+   * one, so a table is never another scope's rows for a tick. Bumping the
+   * generation discards a read still in flight for the old namespace.
+   */
+  chooseNamespace = (namespace: string): void => {
+    if (namespace === this.namespace) return
+    this.namespace = namespace
+    this.#generation++
+    this.pods = []
+    this.workloads = []
+    this.events = []
+    this.tableRows = []
+    this.tableTruncated = {}
+  }
+
   chooseKind = (kind: FleetKind | null): void => {
     this.tableKind = kind
     this.tableRows = []

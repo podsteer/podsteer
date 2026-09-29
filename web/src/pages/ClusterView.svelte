@@ -43,7 +43,7 @@
   import { formatConnection, formatConnectionTitle } from '$lib/format'
   import { clusterActivity } from '$stores/activity.svelte'
   import { organiseDialog } from '$stores/organiseDialog.svelte'
-  import { groupKey, organisation } from '$stores/organisation.svelte'
+  import { environmentName, groupKey, organisation } from '$stores/organisation.svelte'
   import { groupBgClass } from '$lib/groupColour'
   import { visibleClusters } from '$lib/clusterPins'
   import { preferences } from '$stores/preferences.svelte'
@@ -699,7 +699,7 @@
                                       ? 'bg-error/15 text-error'
                                       : 'bg-surface-container-high text-on-surface-variant'}"
                                   >
-                                    {group.settings.environment}
+                                    {environmentName(group.settings)}
                                   </span>
                                 {/if}
                               </div>
