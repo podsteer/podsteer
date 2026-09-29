@@ -36,6 +36,23 @@ const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
  */
 const FIRST_CHECK_DELAY_MS = 60_000
 
+/**
+ * How long after a check that could not complete the next one is worth
+ * making: the same four hours the Go service caches a failure for.
+ *
+ * A FAILURE IS NOT THE DAY'S CHECK. It used to be recorded as one, so a
+ * single bad moment — GitHub's anonymous budget spent behind a corporate NAT,
+ * a proxy hiccup — pushed the next attempt a whole day out.
+ */
+const FAILURE_RETRY_MS = 4 * 60 * 60 * 1000
+
+/**
+ * How often the timer wakes to ask whether a check is due. Hourly, so a
+ * four-hour retry lands within the hour; nearly every wake returns before
+ * touching the bridge, because the day's check has already been made.
+ */
+const TICK_MS = 60 * 60 * 1000
+
 class Updates {
   /** The last result, or null if nothing has been checked this session. */
   status = $state.raw<UpdateStatus | null>(null)
@@ -47,6 +64,10 @@ class Updates {
   checking = $state<boolean>(false)
 
   #timer: number | null = null
+
+  /** When the last check failed to complete, or 0. Per session: a restart
+      checks a minute in anyway when the day's check is due. */
+  #failedAt = 0
 
   /** A newer release exists and the operator has not dismissed it. */
   readonly available = $derived(
@@ -70,12 +91,13 @@ class Updates {
       void this.refresh(false)
       // Re-armed rather than an interval, so a long-running window keeps
       // checking daily without stacking timers if one is slow.
-      this.#timer = window.setInterval(() => void this.refresh(false), CHECK_INTERVAL_MS)
+      this.#timer = window.setInterval(() => void this.refresh(false), TICK_MS)
     }, FIRST_CHECK_DELAY_MS)
   }
 
   /** Stops the cycle. */
   stop(): void {
+    this.#failedAt = 0
     if (this.#timer === null) return
     window.clearTimeout(this.#timer)
     window.clearInterval(this.#timer)
@@ -121,22 +143,46 @@ class Updates {
   async refresh(force: boolean): Promise<void> {
     if (!preferences.updateChecksEnabled) return
 
-    const since = Date.now() - preferences.lastUpdateCheck
-    if (!force && preferences.lastUpdateCheck > 0 && since < CHECK_INTERVAL_MS) return
+    const now = Date.now()
+    if (!force) {
+      if (this.#failedAt > 0 && now - this.#failedAt < FAILURE_RETRY_MS) return
+      const since = now - preferences.lastUpdateCheck
+      if (preferences.lastUpdateCheck > 0 && since < CHECK_INTERVAL_MS) return
+    }
 
     if (force) this.checking = true
     try {
       const status = await CheckForUpdate(force)
+      if (status.state === 'unknown') {
+        this.#failed(status, force)
+        return
+      }
+      this.#failedAt = 0
       this.status = status
       const found = status.state === 'available' || status.state === 'current'
       preferences.markUpdateChecked(Date.now(), found ? status.latest : '', found ? status.url : '')
     } catch {
       // Never surfaced. Being unable to reach GitHub says nothing about the
       // cluster the operator is working on.
-      this.status = null
+      this.#failed(null, force)
     } finally {
       this.checking = false
     }
+  }
+
+  /**
+   * A check that could not complete: retried after FAILURE_RETRY_MS, and NOT
+   * recorded as the day's check.
+   *
+   * An automatic failure also leaves a known answer on screen. "v0.5.0 is
+   * available" does not stop being true because GitHub did not answer this
+   * time, and replacing it with "unknown" took the notice away. A forced
+   * check does report it — somebody pressed Check now and is owed the answer.
+   */
+  #failed(status: UpdateStatus | null, force: boolean): void {
+    this.#failedAt = Date.now()
+    const known = this.status?.state === 'available' || this.status?.state === 'current'
+    if (force || !known) this.status = status
   }
 }
 

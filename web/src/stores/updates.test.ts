@@ -149,4 +149,40 @@ describe('the update check', () => {
     expect(updates.available).toBe(false)
     expect(preferences.lastUpdateLatest).toBe('')
   })
+
+  it('does not count a failed check as the day’s check, and retries after four hours', async () => {
+    // THE BUG THIS GUARDS: a check GitHub did not answer was recorded as the
+    // day's check, so one bad moment delayed the notice by a whole day.
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-09-29T09:00:00Z'))
+      check.mockResolvedValue({ state: 'unknown', installed: 'v0.4.0', latest: '', url: '' })
+      await updates.refresh(false)
+      expect(preferences.lastUpdateCheck).toBe(0)
+
+      vi.setSystemTime(new Date('2026-09-29T11:00:00Z'))
+      await updates.refresh(false)
+      expect(check).toHaveBeenCalledTimes(1)
+
+      vi.setSystemTime(new Date('2026-09-29T13:01:00Z'))
+      check.mockResolvedValue({ state: 'available', installed: 'v0.4.0', latest: 'v0.5.0', url: 'u' })
+      await updates.refresh(false)
+      expect(check).toHaveBeenCalledTimes(2)
+      expect(updates.available).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a known update on screen when an automatic check cannot complete', async () => {
+    check.mockResolvedValue({ state: 'available', installed: 'v0.4.0', latest: 'v0.5.0', url: 'u' })
+    await updates.refresh(true)
+    preferences.lastUpdateCheck = 0
+
+    check.mockResolvedValue({ state: 'unknown', installed: 'v0.4.0', latest: '', url: '' })
+    await updates.refresh(false)
+
+    expect(updates.available).toBe(true)
+  })
 })
+
