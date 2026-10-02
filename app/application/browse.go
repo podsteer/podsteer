@@ -125,13 +125,20 @@ func (s *BrowseService) Kinds(_ context.Context, id domain.ClusterID) ([]domain.
 // event list exists to answer "what is going wrong" and a burst of routine
 // Scheduled events would otherwise bury the one BackOff that matters.
 func (s *BrowseService) ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Event, error) {
+	return s.ListEventsIn(ctx, id, domain.ScopeOf(namespace), projection)
+}
+
+// ListEventsIn is ListEvents over a scope of namespaces.
+func (s *BrowseService) ListEventsIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope, projection domain.Projection) ([]domain.Event, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("listing events: %w", err)
 	}
 
-	events, err := s.events.ListEvents(ctx, id, namespace, projection)
+	events, err := readScoped(ctx, scope, domain.Event.Namespace, func(ctx context.Context, namespace domain.NamespaceName) ([]domain.Event, error) {
+		return s.events.ListEvents(ctx, id, namespace, projection)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("listing events in %q of %q: %w", namespace, id, err)
+		return nil, fmt.Errorf("listing events in %q of %q: %w", scope.Key(), id, err)
 	}
 
 	slices.SortStableFunc(events, func(a, b domain.Event) int {
@@ -178,6 +185,17 @@ func (s *BrowseService) ListEventsForResource(ctx context.Context, id domain.Clu
 
 // ListTable returns objects of the given kind as a generic table.
 func (s *BrowseService) ListTable(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, projection domain.Projection) (domain.ResourceTable, error) {
+	return s.ListTableIn(ctx, id, kindID, domain.ScopeOf(namespace), projection)
+}
+
+// ListTableIn is ListTable over a scope of namespaces.
+//
+// THE TABLES ARE MERGED: columns come from the first namespace that answered
+// (they are the kind's, not the namespace's), rows are appended in scope
+// order, and the result is truncated if ANY read was — a prefix of one
+// namespace makes the whole list a prefix, and the cap named is the one that
+// stopped it.
+func (s *BrowseService) ListTableIn(ctx context.Context, id domain.ClusterID, kindID string, scope domain.NamespaceScope, projection domain.Projection) (domain.ResourceTable, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return domain.ResourceTable{}, fmt.Errorf("listing resources: %w", err)
 	}
@@ -192,12 +210,12 @@ func (s *BrowseService) ListTable(ctx context.Context, id domain.ClusterID, kind
 	// here means the frontend can leave its namespace filter set while the
 	// operator clicks through to Nodes or StorageClasses.
 	if !kind.Namespaced {
-		namespace = domain.NamespaceAll
+		scope = domain.NamespaceScope{All: true}
 	}
 
-	table, err := s.resources.ListTable(ctx, id, kind, namespace, projection)
+	table, err := s.readTableIn(ctx, id, kind, scope, projection)
 	if err != nil {
-		return domain.ResourceTable{}, fmt.Errorf("listing %s in %q of %q: %w", kind.Title, namespace, id, err)
+		return domain.ResourceTable{}, fmt.Errorf("listing %s in %q of %q: %w", kind.Title, scope.Key(), id, err)
 	}
 
 	s.logger.DebugContext(ctx, "listed resources",
@@ -206,6 +224,85 @@ func (s *BrowseService) ListTable(ctx context.Context, id domain.ClusterID, kind
 		slog.Int("count", table.Len()))
 
 	return table, nil
+}
+
+// readTableIn reads a kind's table over a scope the way readScoped reads a
+// list, merging the tables it takes.
+func (s *BrowseService) readTableIn(ctx context.Context, id domain.ClusterID, kind domain.ResourceKind, scope domain.NamespaceScope, projection domain.Projection) (domain.ResourceTable, error) {
+	return readTableScoped(ctx, kind, scope, func(ctx context.Context, namespace domain.NamespaceName) (domain.ResourceTable, error) {
+		return s.resources.ListTable(ctx, id, kind, namespace, projection)
+	})
+}
+
+// readTableScoped is readTableIn over any one-namespace table read, which
+// the fleet's per-cluster table read shares.
+func readTableScoped(
+	ctx context.Context,
+	kind domain.ResourceKind,
+	scope domain.NamespaceScope,
+	read func(ctx context.Context, namespace domain.NamespaceName) (domain.ResourceTable, error),
+) (domain.ResourceTable, error) {
+	if scope.All {
+		return read(ctx, domain.NamespaceAll)
+	}
+
+	if scope.ListsClusterWide() {
+		table, err := read(ctx, domain.NamespaceAll)
+		if err == nil {
+			return filterTable(table, scope), nil
+		}
+		if !errors.Is(err, ports.ErrForbidden) {
+			return domain.ResourceTable{}, err
+		}
+	}
+
+	tables, err := perNamespace(ctx, scope, read)
+	if err != nil {
+		return domain.ResourceTable{}, err
+	}
+	return mergeTables(kind, tables), nil
+}
+
+// filterTable keeps the rows of a cluster-wide table that are in the scope.
+func filterTable(table domain.ResourceTable, scope domain.NamespaceScope) domain.ResourceTable {
+	rows := table.Rows()
+	kept := rows[:0:0]
+	for _, row := range rows {
+		if scope.Includes(row.Namespace) {
+			kept = append(kept, row)
+		}
+	}
+	out := domain.NewResourceTable(table.Kind(), table.Columns(), kept)
+	if table.Truncated() {
+		out = out.WithTruncation(table.Cap())
+	}
+	return out
+}
+
+// mergeTables concatenates per-namespace tables of one kind.
+func mergeTables(kind domain.ResourceKind, tables []domain.ResourceTable) domain.ResourceTable {
+	if len(tables) == 0 {
+		return domain.NewResourceTable(kind, nil, nil)
+	}
+
+	var (
+		rows      []domain.TableRow
+		truncated bool
+		limit     int
+	)
+	for _, table := range tables {
+		rows = append(rows, table.Rows()...)
+		if table.Truncated() {
+			truncated = true
+			limit = max(limit, table.Cap())
+		}
+	}
+
+	merged := domain.NewResourceTable(tables[0].Kind(), tables[0].Columns(), rows)
+	if truncated {
+		merged = merged.WithTruncation(limit)
+	}
+	return merged
 }
 
 // inventoryConcurrency bounds the fan-out of a namespace inventory.
@@ -434,14 +531,91 @@ func (s *BrowseService) InspectTLSSecret(ctx context.Context, id domain.ClusterI
 // must never be readable as a clean bill of health, so the listing carries
 // which of the four it is and the interface says so.
 func (s *BrowseService) VulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.VulnerabilityListing, error) {
+	return s.VulnerabilitySummariesIn(ctx, id, domain.ScopeOf(namespace))
+}
+
+// VulnerabilitySummariesIn is VulnerabilitySummaries over a scope of
+// namespaces. Merged conservatively: the status is the least complete one
+// seen, so a missing mark is never read as clean because ONE namespace's
+// read was whole.
+func (s *BrowseService) VulnerabilitySummariesIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope) (domain.VulnerabilityListing, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return domain.VulnerabilityListing{}, fmt.Errorf("reading vulnerability reports: %w", err)
 	}
 
-	listing, err := s.resources.ListVulnerabilitySummaries(ctx, id, namespace)
-	if err != nil {
-		return domain.VulnerabilityListing{}, fmt.Errorf("reading vulnerability reports in %q: %w", namespace, err)
+	if scope.All || scope.ListsClusterWide() {
+		listing, err := s.resources.ListVulnerabilitySummaries(ctx, id, domain.NamespaceAll)
+		if err == nil {
+			return filterListing(listing, scope), nil
+		}
+		if scope.All || !errors.Is(err, ports.ErrForbidden) {
+			return domain.VulnerabilityListing{}, fmt.Errorf("reading vulnerability reports in %q: %w", scope.Key(), err)
+		}
 	}
 
-	return listing, nil
+	listings, err := perNamespace(ctx, scope, func(ctx context.Context, namespace domain.NamespaceName) (domain.VulnerabilityListing, error) {
+		return s.resources.ListVulnerabilitySummaries(ctx, id, namespace)
+	})
+	if err != nil {
+		return domain.VulnerabilityListing{}, fmt.Errorf("reading vulnerability reports in %q: %w", scope.Key(), err)
+	}
+	return mergeListings(listings), nil
+}
+
+// filterListing is the identity: a summary is filed under "Kind/name" with no
+// namespace, so a cluster-wide listing cannot be narrowed to a scope. It is
+// returned whole, as the listing for All already is — over-inclusive, never
+// short.
+func filterListing(listing domain.VulnerabilityListing, _ domain.NamespaceScope) domain.VulnerabilityListing {
+	return listing
+}
+
+// listingRank orders statuses by how little they let an absent mark be read
+// as clean, so a merged listing reports the least trustworthy of its parts.
+func listingRank(status domain.VulnerabilityRead) int {
+	switch status {
+	case domain.VulnerabilityReadForbidden:
+		return 3
+	case domain.VulnerabilityReadTruncated:
+		return 2
+	case domain.VulnerabilityReadNotInstalled:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// mergeListings sums per-namespace listings by subject, the way the adapter
+// sums a cluster-wide read.
+func mergeListings(listings []domain.VulnerabilityListing) domain.VulnerabilityListing {
+	merged := domain.VulnerabilityListing{Status: domain.VulnerabilityReadComplete}
+	bySubject := make(map[string]domain.VulnerabilitySummary)
+
+	for _, listing := range listings {
+		if listingRank(listing.Status) > listingRank(merged.Status) {
+			merged.Status = listing.Status
+		}
+		merged.Read += listing.Read
+		merged.Remaining += listing.Remaining
+		merged.Cap = max(merged.Cap, listing.Cap)
+
+		for _, summary := range listing.Summaries {
+			held := bySubject[summary.Subject]
+			held.Subject = summary.Subject
+			held.Counts = held.Counts.Add(summary.Counts)
+			held.Reports += summary.Reports
+			held.Images = append(held.Images, summary.Images...)
+			bySubject[summary.Subject] = held
+		}
+	}
+
+	for _, summary := range bySubject {
+		slices.Sort(summary.Images)
+		summary.Images = slices.Compact(summary.Images)
+		merged.Summaries = append(merged.Summaries, summary)
+	}
+	slices.SortFunc(merged.Summaries, func(a, b domain.VulnerabilitySummary) int {
+		return cmp.Compare(a.Subject, b.Subject)
+	})
+	return merged
 }
