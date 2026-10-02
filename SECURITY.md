@@ -367,6 +367,44 @@ read in this file, so it is set out in full.
   backend is recorded anywhere. The only thing this feature can put in
   `settings.json` is the choice of Service already disclosed above.
 
+**The topology's traffic layer sends more of these queries, of a different
+shape, to the same backend.** Everything above applies to it unchanged — the
+same per-cluster switch, the same chosen backend, the same service proxy, GET
+only, the same response cap — and these are the differences:
+
+- **The expressions name a service mesh's or network tool's metrics**, not
+  only kubelet ones: Istio's `istio_requests_total`, `istio_tcp_*` and
+  request-duration histogram; Linkerd's `request_total`, `response_total` and
+  `response_latency_ms`; Beyla's or OBI's `*_network_flow_bytes_total`;
+  Caretta's `caretta_links_observed`; and Hubble's `hubble_flows_processed_total`
+  and `hubble_http_*` metrics. They are a fixed table in
+  `app/domain/traffic.go`, and a test parses every one to assert it is
+  aggregated. **When you narrow the topology to five namespaces or fewer, those
+  namespace names are written into the expression** as a label matcher, so
+  they reach the backend's query log and the cluster's audit log (as part of
+  the proxied URL) — the chart queries never carried an object's name.
+- **They group by pairs of workloads, not by node.** The answer grows with the
+  number of workload pairs that talk to each other — never with the number of
+  pods — and more than 5,000 pairs is refused rather than drawn. Each answer
+  therefore carries workload and namespace names from your monitoring stack
+  into the application's memory for as long as the layer is on screen.
+  Nothing from it is written to disk.
+- **A switch-on is a handful of requests, not one.** Opening the layer asks
+  one `count()` per source — five in all — to learn which sources exist (the
+  answer is remembered for half an hour per cluster and forgotten on
+  disconnect), then one query per measure of the chosen source: up to seven.
+  Each lands in the audit log as a `get` on `services/proxy`. None is sent on
+  a tick; switching the layer on, choosing a source or a window, or pressing
+  refresh is what sends them.
+- **A backend that holds other clusters is refused for traffic**, whatever the
+  fleet setting says. Charts can be narrowed to your nodes; traffic is grouped
+  by workload, so there is no way to narrow it and a workload of the same name
+  in another cluster would be counted as yours.
+- **Nothing is installed and no other API is used.** When a source is absent,
+  the layer says what it would need. PodSteer does not deploy a mesh, an agent
+  or an exporter, and it does not talk to Hubble Relay's gRPC API — Hubble
+  traffic is read only from Hubble's Prometheus metrics.
+
 **The second: a port-forward you chose to keep.** Each forward has a "Keep"
 switch, off by default. While it is on, the forward's definition is written to
 `clusters.<context>.keptForwards` so PodSteer can reopen it after a restart:
@@ -755,7 +793,9 @@ else it can reach with your credentials, is not something PodSteer mediates.
   object's name arriving beside it — is itself in scope.
 - A query reaching a monitoring backend for a cluster you did not switch this
   on for, or arriving on PodSteer's refresh tick rather than because you
-  opened a chart, changed its range or pressed the control. Also an expression
+  opened a chart, changed its range or pressed the control (or switched the
+  topology's traffic layer on, chose its source or window, or refreshed it).
+  Also an expression
   reaching one that is not in the fixed table — anything an operator, a
   cluster's own data, or a URL could put there.
 - A desktop notification carrying the name of any object in any cluster, or
