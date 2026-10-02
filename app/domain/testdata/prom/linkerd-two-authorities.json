@@ -1,0 +1,74 @@
+{
+ "rate": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "namespace": "storefront",
+      "deployment": "web",
+      "dst_namespace": "storefront",
+      "dst_deployment": "api",
+      "dst_service": "api",
+      "authority": "api.storefront.svc.cluster.local:8080"
+     },
+     "value": [
+      1759400000.123,
+      "6.0"
+     ]
+    },
+    {
+     "metric": {
+      "namespace": "storefront",
+      "deployment": "web",
+      "dst_namespace": "storefront",
+      "dst_deployment": "api",
+      "dst_service": "api",
+      "authority": "api:8080"
+     },
+     "value": [
+      1759400000.123,
+      "4.0"
+     ]
+    }
+   ]
+  }
+ },
+ "p95": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "namespace": "storefront",
+      "deployment": "web",
+      "dst_namespace": "storefront",
+      "dst_deployment": "api",
+      "dst_service": "api",
+      "authority": "api.storefront.svc.cluster.local:8080"
+     },
+     "value": [
+      1759400000.123,
+      "25.0"
+     ]
+    },
+    {
+     "metric": {
+      "namespace": "storefront",
+      "deployment": "web",
+      "dst_namespace": "storefront",
+      "dst_deployment": "api",
+      "dst_service": "api",
+      "authority": "api:8080"
+     },
+     "value": [
+      1759400000.123,
+      "80.0"
+     ]
+    }
+   ]
+  }
+ }
+}

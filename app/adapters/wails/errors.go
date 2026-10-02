@@ -680,6 +680,8 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, domain.ErrEmptyResourceName),
 		errors.Is(err, errNoLocalPath),
 		errors.Is(err, errProbeNoContainer),
+		errors.Is(err, domain.ErrUnknownTrafficSource),
+		errors.Is(err, domain.ErrUnknownTrafficWindow),
 		errors.Is(err, ports.ErrInvalidPort):
 		return CodeInvalidInput, err.Error()
 

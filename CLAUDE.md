@@ -1028,6 +1028,40 @@ about before adding a fourth:
   Per-object usage is still not written to disk — the recorded cluster history
   deliberately carries no object names, and a file of per-pod series would
   reverse that — and no value a backend returned is recorded anywhere.
+- **Observed traffic is a layer, not an edge** — `app/domain/traffic.go`,
+  `app/application/traffic.go`, `TrafficAPI`. It reads Istio, Linkerd,
+  Beyla/OBI, Caretta or Hubble METRICS from the backend the metrics-query
+  feature chose, through `MetricsQueryService`'s own gate (setting, chosen
+  backend, node-set check), with `QueryInstant` on the same service proxy. A
+  fleet backend is refused outright: traffic groups by workload, not node, so
+  it cannot be narrowed. Five `count()` probes are cached 30 min per cluster
+  and dropped on Invalidate; more than 5000 edges is `too-large`; nothing is
+  installed and Hubble Relay's gRPC is never used.
+
+  **Every row of a source groups by exactly the edge's key labels** (plus
+  `le`, plus a branch's own identity label such as Linkerd's `authority` or
+  Istio's `destination_service` for destinations outside the mesh). A
+  percentile grouped by a label the edge does not carry is several
+  percentiles for one edge; `TestQuantilesGroupByExactlyTheEdgeKey` holds it.
+  A percentile in the `+Inf` bucket stays -1 with `latencyBeyondBuckets` set.
+
+  **Known double counts, deliberately not "fixed":** Istio counts a request
+  twice when the source proxy lacks the destination's peer metadata — it
+  reports `destination_workload="unknown"` (external branch) while the
+  destination proxy reports the meshed pair, and `or` cannot dedupe different
+  label sets (the same limitation Kiali has). Hubble's `connections` is flow
+  EVENTS per second, seen by both nodes' agents for a cross-node flow; no
+  documented subtype filter counts each flow once.
+
+  **Unverified until the Linkerd e2e run** (linkerd + linkerd-viz on the kind
+  demo) — check against a live linkerd-viz Prometheus:
+  1. that the scrape config renames the pod's Job label to `k8s_job` (not
+     `job`, which would collide with Prometheus' own) on `request_total`;
+  2. that outbound `request_total`/`response_total` carry `dst_service` and
+     `authority`, and `dst_namespace=""` for a destination outside the mesh;
+  3. that the installed version still emits `request_total{direction="outbound"}`
+     with `dst_*` labels rather than only the newer `outbound_http_route_*` /
+     backend metrics — if not, the Linkerd row needs those metrics instead.
 - **kube-state-metrics is discovered the same way, and is a SEPARATE
   question** — `app/adapters/k8s/kubestate.go`, beside `prometheus.go` and
   following it in every particular: two label selectors

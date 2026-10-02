@@ -330,6 +330,21 @@ func run() error {
 		return fmt.Errorf("wiring metrics query service: %w", err)
 	}
 
+	// The topology's traffic layer. Built ON the metrics-query service rather
+	// than beside it: the setting, the chosen backend and the node-set check
+	// are that service's, so traffic is off exactly where charts are off and
+	// answers from exactly the backend they answer from. Nodes is left unset
+	// until the topology service can supply them; edges then carry names and
+	// the interface attaches them.
+	trafficService, err := application.NewTrafficService(application.TrafficServiceDeps{
+		Metrics: metricsQueryService,
+		Query:   kubernetes,
+		Logger:  logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring traffic service: %w", err)
+	}
+
 	workloadService, err := application.NewWorkloadService(application.WorkloadServiceDeps{
 		Workloads: kubernetes,
 		Metrics:   kubernetes,
@@ -423,10 +438,10 @@ func run() error {
 		// nodes this connection has never seen; and the fleet service
 		// releases the late answers it is holding, which would otherwise be
 		// rendered as the new connection's rows in the merged table.
-		Invalidator: application.Invalidators{kubernetes, overviewService, metricsQueryService, fleetService, workloadService},
+		Invalidator: application.Invalidators{kubernetes, overviewService, metricsQueryService, trafficService, fleetService, workloadService},
 	})
 
-	credentials.others = application.Invalidators{overviewService, metricsQueryService, fleetService}
+	credentials.others = application.Invalidators{overviewService, metricsQueryService, trafficService, fleetService}
 
 	// Every open cluster's client, released. This is the same set of holders
 	// the disconnect path releases, for the same reason: a client outlives
@@ -435,7 +450,7 @@ func run() error {
 	// closing their tabs, which is why every holder of per-connection state
 	// has to be in it and not only in Disconnect's.
 	reconnectClusters = func() {
-		invalidators := application.Invalidators{kubernetes, overviewService, metricsQueryService, fleetService, workloadService}
+		invalidators := application.Invalidators{kubernetes, overviewService, metricsQueryService, trafficService, fleetService, workloadService}
 		for _, cluster := range registry.All() {
 			invalidators.Invalidate(cluster.ID())
 		}
@@ -641,6 +656,11 @@ func run() error {
 		return fmt.Errorf("wiring topology API: %w", err)
 	}
 
+	trafficAPI, err := wailsadapter.NewTrafficAPI(trafficService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring traffic API: %w", err)
+	}
+
 	// The update check. Its adapter is the ONLY thing in PodSteer that talks
 	// to anything but a cluster, and it acts only when the interface asks —
 	// there is no timer here and nothing on the startup path. It sends no
@@ -714,6 +734,7 @@ func run() error {
 			wailsapp.NewService(helmAPI),
 			wailsapp.NewService(historyAPI),
 			wailsapp.NewService(metricsQueryAPI),
+			wailsapp.NewService(trafficAPI),
 			wailsapp.NewService(settingsAPI),
 			wailsapp.NewService(managementAPI),
 			wailsapp.NewService(terminalAPI),
