@@ -91,6 +91,15 @@
    * found" itself, so the trigger never describes a filter the list cannot
    * show while the whole tree below is still scoped to it.
    */
+  // Entering All clusters reads every open cluster's namespace list once, so
+  // the window-wide picker (and the palette) offer a background tab's names
+  // too — a tab never activated has not listed its namespaces. Opening the
+  // picker reads them again.
+  const fleetOnScreen = $derived(session.viewMode === 'fleet')
+  $effect(() => {
+    if (fleetOnScreen) untrack(() => fleet.refreshNamespaces())
+  })
+
   const picker = $derived(
     navigatorNamespacePicker({
       fleet: session.viewMode === 'fleet',

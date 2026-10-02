@@ -17,6 +17,8 @@
   import type { Component } from 'svelte'
   import Button from './Button.svelte'
   import DialogFooter from './DialogFooter.svelte'
+  import Select from './Select.svelte'
+  import { withNamespace } from '$lib/manifestTemplates'
   import YamlPane from './YamlPane.svelte'
   import type { EditorApi } from './YamlEditor.svelte'
   import HelpButton from './HelpButton.svelte'
@@ -44,6 +46,15 @@
     /** The namespace to show in the kubectl hint's `-n` flag — cosmetic only,
         the manifest's own `metadata.namespace` is what is actually sent. */
     namespace?: string
+    /**
+     * Namespaces to ASK the operator to choose from, when the filter does not
+     * name exactly one — the selected set, or every namespace on All. Absent
+     * when the kind is cluster-scoped or one namespace is selected (its
+     * skeleton already carries it). Nothing is chosen at first, and Apply
+     * waits until the manifest names a namespace; choosing writes it into
+     * the manifest, which is what is actually sent.
+     */
+    namespaceChoices?: string[]
     productionGroup?: string | null
     isReadOnly: boolean
     readOnlyReason: string
@@ -64,6 +75,7 @@
     seed,
     clusterId,
     namespace,
+    namespaceChoices,
     productionGroup,
     isReadOnly,
     readOnlyReason,
@@ -141,6 +153,18 @@
   )
   let submitting = $state(false)
 
+  /** Whether the namespace is asked for here rather than seeded. */
+  const asksNamespace = $derived(namespaceChoices !== undefined)
+  /** The `-n` the hint shows: the seeded one, or whatever the manifest names
+      once somebody chose. */
+  const hintNamespace = $derived(asksNamespace ? objectIdentity.namespace || undefined : namespace)
+  /** Apply waits for a namespace when one is being asked for. */
+  const missingNamespace = $derived(asksNamespace && objectIdentity.namespace === '')
+
+  function chooseNamespace(value: string): void {
+    draft = withNamespace(draft, value)
+  }
+
   $effect(() => {
     if (open) {
       draft = seed
@@ -157,10 +181,10 @@
   // chosen anything — so the hint beside Apply described a command Apply does
   // not send. The forced one belongs beside the button that forces, and is
   // rendered there.
-  const applyCommand = $derived(applyServerSide(clusterId, namespace, false))
+  const applyCommand = $derived(applyServerSide(clusterId, hintNamespace, false))
 
   /** What Override sends, shown beside Override. */
-  const overrideCommand = $derived(applyServerSide(clusterId, namespace, true))
+  const overrideCommand = $derived(applyServerSide(clusterId, hintNamespace, true))
 
   /**
    * Where the empty `name: ""` sits in a freshly seeded document, as a
@@ -339,6 +363,26 @@
         </p>
       {/if}
 
+      {#if asksNamespace}
+        <!-- The filter names several namespaces, or all of them, and an
+             object lives in exactly one: ask, never guess. -->
+        <div class="flex flex-wrap items-center gap-3">
+          <Select
+            label="Namespace"
+            value={objectIdentity.namespace}
+            options={(namespaceChoices ?? []).map((name) => ({ value: name, label: name }))}
+            placeholder="Choose a namespace"
+            onchange={chooseNamespace}
+            compact
+          />
+          {#if missingNamespace}
+            <span class="text-body-medium text-on-surface-variant">
+              More than one namespace is selected — choose the one to create this in.
+            </span>
+          {/if}
+        </div>
+      {/if}
+
       {#if error}
         <p class="text-body-medium text-error" role="alert">{error}</p>
       {/if}
@@ -427,7 +471,12 @@
 
       <DialogFooter class="" command={applyCommand}>
         <Button variant="outlined" onclick={onclose}>Cancel</Button>
-        <Button variant="filled" disabled={isReadOnly || submitting} loading={submitting} onclick={handleApply}>
+        <Button
+          variant="filled"
+          disabled={isReadOnly || submitting || missingNamespace}
+          loading={submitting}
+          onclick={handleApply}
+        >
           Apply
         </Button>
       </DialogFooter>

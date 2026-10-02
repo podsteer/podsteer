@@ -250,3 +250,31 @@ spec: {} # PodSteer does not know this kind's schema — the server will validat
 
   return `${header(kind, namespace)}\n${body}\n`
 }
+
+/**
+ * The manifest with its top-level `metadata.namespace` set to `namespace`:
+ * an existing line replaced, else one added after `metadata.name` (or right
+ * under `metadata:`). Line-based on purpose — re-serialising the YAML would
+ * throw away the skeleton's comments. Only the FIRST top-level `metadata:`
+ * block is touched; a template's own nested metadata is indented and never
+ * matches. A manifest with no top-level `metadata:` is returned unchanged.
+ */
+export function withNamespace(manifest: string, namespace: string): string {
+  const lines = manifest.split('\n')
+  const start = lines.findIndex((line) => /^metadata:\s*$/.test(line))
+  if (start === -1) return manifest
+
+  let end = start + 1
+  while (end < lines.length && (lines[end] === '' || /^\s/.test(lines[end]))) end++
+
+  const entry = `  namespace: ${namespace}`
+  for (let index = start + 1; index < end; index++) {
+    if (/^ {2}namespace:/.test(lines[index])) {
+      lines[index] = entry
+      return lines.join('\n')
+    }
+  }
+  const name = lines.slice(start + 1, end).findIndex((line) => /^ {2}name:/.test(line))
+  lines.splice(name === -1 ? start + 1 : start + 2 + name, 0, entry)
+  return lines.join('\n')
+}

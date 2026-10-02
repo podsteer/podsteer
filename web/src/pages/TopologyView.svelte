@@ -50,7 +50,7 @@
     type ViewNode,
   } from '$lib/graphGroup'
   import { buildCullIndex, visible, viewportOf } from '$lib/graphCull'
-  import { preserve, shapeKey, type Drawn } from '$lib/graphPositions'
+  import { preserve, refitsOnLayout, shapeKey, type Drawn } from '$lib/graphPositions'
   import { createLayoutClient, liveDelayMs, Superseded } from '$lib/layoutClient'
   import { centreOn, locate, searchNodes } from '$lib/topologySearch'
   import { badgeFor, indexFindings, type FindingBadge } from '$lib/findingsOverlay'
@@ -298,13 +298,14 @@
         layoutMs = ms
         layoutFailure = ''
         const viewNow = { panX, panY, zoom, width: paneWidth, height: paneHeight }
-        const kept = preserve(fitNext ? null : drawn, { layout, shape }, viewNow, across)
+        const refit = refitsOnLayout({ fitNext, fitHeld, drawnShape: drawn?.shape ?? null, shape })
+        const kept = preserve(refit ? null : drawn, { layout, shape }, viewNow, across)
         drawn = { layout: kept.layout, shape }
         drawnGraph = { grouped: target, folded: foldedNow }
         panX = kept.panX
         panY = kept.panY
         layingOut = false
-        if (fitNext) {
+        if (refit) {
           fitNext = false
           fit()
         }
@@ -349,7 +350,9 @@
    * zoomed since. While it is, a change in the PANE's size (the kind-toggle
    * row re-wrapping after the first draw, a resized window) fits again,
    * because the fit was measured against a pane that no longer exists. A
-   * redraw of the MAP never refits: that would move what somebody is reading.
+   * redraw of the same map never refits; a map of a different SHAPE (another
+   * grouping, a kind toggled) refits only while this holds — see
+   * refitsOnLayout. Once somebody moved the view, nothing they read moves.
    */
   let fitHeld = false
 

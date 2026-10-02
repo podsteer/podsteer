@@ -145,3 +145,24 @@ export function anchorShift(
   }
   return best
 }
+
+/**
+ * Whether a new layout is FITTED to the pane rather than kept in place.
+ *
+ * Always for the first drawing of a scope (`fitNext`). Otherwise only while
+ * the view is still the fit it was last given (`fitHeld` — nobody has panned
+ * or zoomed since) AND the drawing is a different shape: a grouping change,
+ * a kind toggled, a node set that moved. A fitted view that keeps the old
+ * anchor after the map changed shape is simply off-centre — the top empty
+ * and the bottom cut — because there is no reading position to protect. Once
+ * somebody has moved the view, the anchor rule holds and nothing jumps.
+ */
+export function refitsOnLayout(input: {
+  fitNext: boolean
+  fitHeld: boolean
+  drawnShape: string | null
+  shape: string
+}): boolean {
+  if (input.fitNext) return true
+  return input.fitHeld && input.drawnShape !== null && input.drawnShape !== input.shape
+}

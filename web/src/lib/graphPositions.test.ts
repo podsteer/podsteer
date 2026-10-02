@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { anchorShift, preserve, shapeKey, type Drawn } from './graphPositions'
+import { anchorShift, preserve, shapeKey, type Drawn, refitsOnLayout } from './graphPositions'
 import { layoutCompound, type CompoundLayout } from './graphLayout'
 
 function drawn(layout: CompoundLayout, ids: string[], parents = new Map<string, string>()): Drawn {
@@ -76,5 +76,24 @@ describe('position preservation', () => {
   it('treats a box moving between frames as a different shape', () => {
     expect(shapeKey(['a'], new Map([['a', 'g1']]))).not.toBe(shapeKey(['a'], new Map([['a', 'g2']])))
     expect(shapeKey(['b', 'a'], new Map())).toBe(shapeKey(['a', 'b'], new Map()))
+  })
+})
+
+describe('refitsOnLayout', () => {
+  const shape = 'v|a,b'
+  it('fits the first drawing of a scope', () => {
+    expect(refitsOnLayout({ fitNext: true, fitHeld: false, drawnShape: null, shape })).toBe(true)
+  })
+
+  it('refits a view nobody has moved when the map changes shape — another grouping', () => {
+    expect(refitsOnLayout({ fitNext: false, fitHeld: true, drawnShape: 'v|a,b,group/app', shape })).toBe(true)
+  })
+
+  it('keeps the view of a redraw of the same shape', () => {
+    expect(refitsOnLayout({ fitNext: false, fitHeld: true, drawnShape: shape, shape })).toBe(false)
+  })
+
+  it('keeps the anchor once somebody has panned or zoomed', () => {
+    expect(refitsOnLayout({ fitNext: false, fitHeld: false, drawnShape: 'v|other', shape })).toBe(false)
   })
 })

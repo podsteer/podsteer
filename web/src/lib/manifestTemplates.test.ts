@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 
 import type { ResourceKind } from './api/client'
-import { skeletonFor } from './manifestTemplates'
+import { skeletonFor, withNamespace } from './manifestTemplates'
 
 /** A `ResourceKind` fixture, defaulting to a namespaced core kind — override
     whatever the test is actually about. Matches the shape `BrowseAPI.ListKinds`
@@ -173,5 +173,26 @@ describe('skeletonFor', () => {
     const manifest = parse(skeletonFor(kind({ group: '', version: 'v1', kind: 'Secret', namespaced: true }), null))
     expect(manifest.type).toBe('Opaque')
     expect(manifest.stringData).toEqual({ key: 'value' })
+  })
+})
+
+describe('withNamespace', () => {
+  it('adds metadata.namespace after the name, keeping comments', () => {
+    const skeleton = 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: "" # name required\ndata: {}\n'
+    expect(withNamespace(skeleton, 'shop')).toBe(
+      'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: "" # name required\n  namespace: shop\ndata: {}\n',
+    )
+  })
+
+  it('replaces one already there, and never touches a nested template’s metadata', () => {
+    const manifest =
+      'kind: Deployment\nmetadata:\n  name: web\n  namespace: old\nspec:\n  template:\n    metadata:\n      labels: {}\n'
+    expect(withNamespace(manifest, 'shop')).toBe(
+      'kind: Deployment\nmetadata:\n  name: web\n  namespace: shop\nspec:\n  template:\n    metadata:\n      labels: {}\n',
+    )
+  })
+
+  it('leaves a manifest with no top-level metadata alone', () => {
+    expect(withNamespace('kind: X\n', 'shop')).toBe('kind: X\n')
   })
 })

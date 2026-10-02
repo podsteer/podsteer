@@ -237,6 +237,17 @@ import TimelineView from './TimelineView.svelte'
     session.selectedKind?.namespaced && session.singleNamespace ? session.singleNamespace : undefined,
   )
 
+  /** When the kind is namespaced and the filter does not name exactly one
+      namespace, the dialog asks — over the selected set, or every namespace
+      on All. Undefined otherwise: the skeleton already names the one. */
+  const newNamespaceChoices = $derived(
+    session.selectedKind?.namespaced && !session.singleNamespace
+      ? session.isAllNamespaces
+        ? session.namespaces.map((namespace) => namespace.name)
+        : session.scope.namespaces
+      : undefined,
+  )
+
   /**
    * Opens the object just created, the same way clicking a fresh row would.
    *
@@ -700,6 +711,7 @@ import TimelineView from './TimelineView.svelte'
     seed={newSkeleton}
     clusterId={session.cluster.id}
     namespace={newNamespaceHint}
+    namespaceChoices={newNamespaceChoices}
     {productionGroup}
     {isReadOnly}
     {readOnlyReason}
