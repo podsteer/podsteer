@@ -128,7 +128,10 @@ class ClusterSettingsStore {
    */
   load = async (clusterIds: string[]): Promise<void> => {
     const request = ++this.#request
-    this.#asked = clusterIds
+    // EVERY ID EVER ASKED ABOUT stays asked about. A caller that wants one
+    // cluster's row (the overview reads its own) must not shrink the set a
+    // save reloads, or the next save would drop every other row.
+    this.#asked = [...new Set([...this.#asked, ...clusterIds])]
     if (this.status === 'idle') this.status = 'loading'
 
     try {
@@ -138,7 +141,20 @@ class ClusterSettingsStore {
       ])
       if (request !== this.#request) return
 
-      this.entries = entries
+      // MERGED, NEVER REPLACED. Loading one cluster used to replace every
+      // row, so Settings → Clusters showed the others as Off — and a save
+      // made from such a stale row wrote "off, no pinned backend" back over
+      // what the file held. Rows for the ids asked are replaced (or dropped
+      // when the file has nothing for them); every other row is kept.
+      const asked = new Set(clusterIds)
+      const fresh = new Map(entries.map((entry) => [entry.clusterId, entry]))
+      const merged = this.entries
+        .filter((entry) => !asked.has(entry.clusterId) || fresh.has(entry.clusterId))
+        .map((entry) => fresh.get(entry.clusterId) ?? entry)
+      for (const entry of entries) {
+        if (!merged.some((held) => held.clusterId === entry.clusterId)) merged.push(entry)
+      }
+      this.entries = merged
       this.settingsState = settingsState
       this.status = 'ready'
       this.error = null
