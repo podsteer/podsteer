@@ -46,8 +46,10 @@ import {
   NamespaceInventory as bindNamespaceInventory,
   ClassifyConditions as bindClassifyConditions,
   AssessCertificateRenewal as bindAssessCertificateRenewal,
-  VulnerabilitySummaries as bindVulnerabilitySummaries,
   ObjectGraph as bindObjectGraph,
+  ListEventsIn as bindListEventsIn,
+  ListTableIn as bindListTableIn,
+  VulnerabilitySummariesIn as bindVulnerabilitySummariesIn,
 } from '$bindings/browseapi'
 import {
   ListPods as bindListPods,
@@ -56,24 +58,27 @@ import {
   ListApplicationPods as bindListApplicationPods,
   ListPodsForWorkload as bindListPodsForWorkload,
   WorkloadUsage as bindWorkloadUsage,
-  WorkloadConsumption as bindWorkloadConsumption,
-  ListApplications as bindListApplications,
   ListPodsOnNode as bindListPodsOnNode,
   PodGraph as bindPodGraph,
   WorkloadGraph as bindWorkloadGraph,
   RolloutHistory as bindRolloutHistory,
   QueryPods as bindQueryPods,
-  ListPodKeys as bindListPodKeys,
-  ExportPodsCSV as bindExportPodsCSV,
   PodUsageHistory as bindPodUsageHistory,
+  ListPodsIn as bindListPodsIn,
+  QueryPodsIn as bindQueryPodsIn,
+  ListPodKeysIn as bindListPodKeysIn,
+  ExportPodsCSVIn as bindExportPodsCSVIn,
+  ListApplicationsIn as bindListApplicationsIn,
+  WorkloadConsumptionIn as bindWorkloadConsumptionIn,
+  ListWorkloadsIn as bindListWorkloadsIn,
 } from '$bindings/workloadapi'
 import {
-  ListEvents as bindListFleetEvents,
-  ListTable as bindListFleetTable,
-  ListPods as bindListFleetPods,
-  ListWorkloads as bindListFleetWorkloads,
-  QueryPods as bindQueryFleetPods,
-  ExportPodsCSV as bindExportFleetPodsCSV,
+  ListEventsIn as bindListFleetEventsIn,
+  ListTableIn as bindListFleetTableIn,
+  ListPodsIn as bindListFleetPodsIn,
+  ListWorkloadsIn as bindListFleetWorkloadsIn,
+  QueryPodsIn as bindQueryFleetPodsIn,
+  ExportPodsCSVIn as bindExportFleetPodsCSVIn,
 } from '$bindings/fleetapi'
 import {
   CanI as bindCanI,
@@ -81,7 +86,7 @@ import {
   SubjectRules as bindSubjectRules,
 } from '$bindings/rbacapi'
 import {
-  ListReleases as bindListHelmReleases,
+  ListReleasesIn as bindListHelmReleasesIn,
   ReadRelease as bindReadHelmRelease,
 } from '$bindings/helmapi'
 import {
@@ -773,33 +778,6 @@ export function assessCertificateRenewal(
 }
 
 /**
- * What a vulnerability scanner already running in the cluster has recorded
- * about one namespace's workloads, keyed by the `Kind/name` a pod row's
- * `controlledBy` already carries.
- *
- * ON ITS OWN, NEVER FROM A LIST, and never on a refresh tick. The pod list is
- * drawn without it and the counts fill in when this answers; a cluster with
- * no scanner still gets its list exactly as it was before this existed. The
- * read is bounded and cached in Go — see `app/adapters/k8s/trivy.go`.
- *
- * IT RETURNS A LISTING, NOT AN ARRAY. Four ordinary outcomes leave rows
- * undecorated — no scanner, no permission, nothing found, and a read that
- * stopped at its ceiling — and only one of them means the workloads are
- * clean. `status` is which.
- */
-export async function vulnerabilitySummaries(
-  clusterId: string,
-  namespace: string,
-): Promise<VulnerabilityListing> {
-  const listing = await call(() => bindVulnerabilitySummaries(clusterId, namespace))
-  // The fallback's status is deliberately NOT "complete". Every reader's rule
-  // is that only "complete" licenses treating an absent summary as a clean
-  // workload, so a listing that arrived as nothing says nothing — which is
-  // the truthful answer and the safe one.
-  return listing ?? { summaries: [], status: '', read: 0, remaining: 0, cap: 0 }
-}
-
-/**
  * Says which status conditions report a problem, in order.
  *
  * A pure call that reaches no cluster: the polarity of a condition is a
@@ -1067,36 +1045,6 @@ export function podUsageHistory(clusterId: string, namespace: string, name: stri
   return callList(() => bindPodUsageHistory(clusterId, namespace, name))
 }
 
-/** Every pod a query matches, across every page — for "select all matching". */
-export function listPodKeys(
-  clusterId: string,
-  namespace: string,
-  annotationKeys: string[],
-  expressions: CustomExpression[],
-  query: PodQuery,
-): Promise<PodKey[]> {
-  return callList(() => bindListPodKeys(clusterId, namespace, annotationKeys, expressions, query))
-}
-
-/**
- * Writes every pod a query matches as CSV, through the save dialog — rendered
- * in Go, because the rows are there. Resolves to the path written, or '' when
- * the dialog was cancelled.
- */
-export function exportPodsCSV(
-  clusterId: string,
-  namespace: string,
-  annotationKeys: string[],
-  expressions: CustomExpression[],
-  query: PodQuery,
-  columns: CSVColumn[],
-  suggestedName: string,
-): Promise<string> {
-  return call(() =>
-    bindExportPodsCSV(clusterId, namespace, annotationKeys, expressions, query, columns, suggestedName),
-  )
-}
-
 /** Lists controllers of one kind, named as "Deployment", "StatefulSet", etc.
     `annotationKeys` is the projection listNamespaceSummaries describes. */
 export function listWorkloads(
@@ -1178,47 +1126,6 @@ export function workloadUsage(
 }
 
 /**
- * Sums what every controller in a list is using, keyed by "namespace/name".
- *
- * Fetched beside the list rather than as part of it: the controllers are one
- * cheap read and this is the namespace's pods and their metrics, so a cluster
- * without a metrics API still gets its list.
- */
-export function workloadConsumption(
-  clusterId: string,
-  kind: string,
-  namespace: string,
-): Promise<Record<string, Consumption>> {
-  // A MAP DTO, not a list — callList's array normalisation (`?? []`) does not
-  // fit its shape, so a nil Go map is normalised to `{}` here instead. The
-  // generator also marks every value optional, which a Go map never actually
-  // leaves unset (a key is either present with a value or absent entirely),
-  // so an entry is only dropped if that ever stops being true.
-  return call(async () => {
-    const raw = (await bindWorkloadConsumption(clusterId, kind, namespace)) ?? {}
-    const consumption: Record<string, Consumption> = {}
-    for (const [key, value] of Object.entries(raw)) {
-      if (value !== undefined) consumption[key] = value
-    }
-    return consumption
-  })
-}
-
-/**
- * Groups a cluster's workloads by the application they belong to.
- *
- * From Kubernetes' own recommended labels, which is the only thing that
- * standardises this — and a convention rather than a guarantee, so the answer
- * carries a count of what did not say which application it belongs to.
- */
-export function listApplications(
-  clusterId: string,
-  namespace: string,
-): Promise<ApplicationInventory> {
-  return call(() => bindListApplications(clusterId, namespace))
-}
-
-/**
  * Returns the recorded revisions of a Deployment, StatefulSet or DaemonSet's
  * pod template, newest first — the drawer's History tab, and what
  * RollbackDialog picks a target revision from.
@@ -1249,79 +1156,6 @@ export function listApplicationPods(
   instance: string,
 ): Promise<Pod[]> {
   return callList(() => bindListApplicationPods(clusterId, namespace, instance))
-}
-
-// --- Fleet ------------------------------------------------------------------
-//
-// One call per tick however many clusters are open. The fan-out is in Go —
-// application.FleetService — and every cluster comes back with its own
-// verdict, so a refused or unreachable cluster is a row in the answer, never
-// a rejection of it. The rejection cases are the caller's own: naming a
-// cluster that is not open, or an unusable namespace.
-
-/** Lists pods across the named open clusters, grouped per cluster in tab order. */
-export function listFleetPods(clusterIds: string[], namespace: string): Promise<ClusterPods[]> {
-  return callList(() => bindListFleetPods(clusterIds, namespace))
-}
-
-/** One page of the merged pod table across the named open clusters, with
-    every cluster's verdict for the strip. */
-export async function queryFleetPods(
-  clusterIds: string[],
-  namespace: string,
-  query: PodQuery,
-): Promise<FleetPodPage> {
-  const answer = await call(() => bindQueryFleetPods(clusterIds, namespace, query))
-  return {
-    clusters: (answer.clusters ?? []).map((share) => ({ ...share, missing: share.missing ?? [] })),
-    page: {
-      ...answer.page,
-      rows: answer.page.rows ?? [],
-      chipCounts: answer.page.chipCounts ?? {},
-    },
-  }
-}
-
-/** Writes every pod of the merged table a query matches as CSV — see
-    exportPodsCSV. */
-export function exportFleetPodsCSV(
-  clusterIds: string[],
-  namespace: string,
-  query: PodQuery,
-  columns: CSVColumn[],
-  suggestedName: string,
-): Promise<string> {
-  return call(() => bindExportFleetPodsCSV(clusterIds, namespace, query, columns, suggestedName))
-}
-
-/** Lists every controller kind but ReplicaSet across the named open clusters. */
-export function listFleetWorkloads(
-  clusterIds: string[],
-  namespace: string,
-): Promise<ClusterWorkloads[]> {
-  return callList(() => bindListFleetWorkloads(clusterIds, namespace))
-}
-
-/** Lists events across the named open clusters. */
-export function listFleetEvents(clusterIds: string[], namespace: string): Promise<ClusterEvents[]> {
-  return callList(() => bindListFleetEvents(clusterIds, namespace))
-}
-
-/**
- * Lists one arbitrary kind across the named open clusters.
- *
- * The kind is a GROUP and a RESOURCE, never a kind id: an id carries a
- * version, and one cluster serving a CRD at v1alpha1 while another serves v1
- * is the ordinary case rather than the exception. `group` is empty for the
- * core group, exactly as it is inside a kind id.
- */
-export function listFleetTable(
-  clusterIds: string[],
-  group: string,
-  resource: string,
-  namespace: string,
-): Promise<ClusterTable[]> {
-  return callList(() => bindListFleetTable(clusterIds, group, resource, namespace))
 }
 
 // --- RBAC explorer ----------------------------------------------------------
@@ -1381,31 +1215,6 @@ export function inspectRole(
 // NO RELEASE PAYLOAD CROSSES THIS BOUNDARY. Everything here is built from the
 // labels Helm puts on each release Secret, read through the metadata client,
 // so no Secret contents are transferred at all.
-
-/**
- * Lists what Helm has installed, in one namespace or cluster-wide.
- *
- * Being refused is an ORDINARY answer and arrives as `status: 'forbidden'`
- * with a sentence naming the permission, never as a rejection — and a cluster
- * with no Helm releases is `status: 'listed'` with zero rows, which is a
- * different answer and must read as one.
- *
- * `refresh` bypasses the Go side's five-minute cache for one call, and the
- * page's own Refresh control is the ONLY thing that passes true. Opening the
- * page passes false, so switching between Pods and Helm every twenty seconds
- * cannot become the poll tick in disguise — which is the exact `list secrets`
- * audit signature this feature's decision record refuses.
- *
- * The releases list is nested on the result rather than being the result, so
- * it does not pass through `callList`; the Go side builds it non-nil instead.
- */
-export function listHelmReleases(
-  clusterId: string,
-  namespace: string,
-  refresh = false,
-): Promise<HelmListing> {
-  return call(() => bindListHelmReleases(clusterId, namespace, refresh))
-}
 
 /**
  * Reads ONE revision of ONE release: its values, its notes, its rendered
@@ -2663,63 +2472,6 @@ export function onNotificationActivated(
 // cluster-wide LIST filtered in Go, and a named namespace that fails fails
 // the list, naming it.
 
-// ===== BEGIN NAMESPACE-SET SEAM ============================================
-// TEMPORARY, until the backend's …In methods are in the generated bindings.
-// Each wrapper below asks `generatedIn` for its binding and, when it is not
-// generated yet, falls back to the single-namespace binding: one call for
-// All or one namespace; for several, one call per namespace merged here —
-// except where merging cannot be right (a PAGE of pods, its CSV, Helm's
-// listing status, the fleet's per-cluster answers), which throws
-// NamespaceSetUnsupportedError instead. Once the bindings are regenerated,
-// delete everything between BEGIN and END SEAM, the three `* as` imports,
-// and each wrapper's `if (!bound)` fallback branch, and import the …In
-// functions by name like every other binding.
-import * as workloadBindings from '$bindings/workloadapi'
-import * as browseBindings from '$bindings/browseapi'
-import * as helmBindings from '$bindings/helmapi'
-import * as fleetBindings from '$bindings/fleetapi'
-import { ApiError } from './errors'
-
-/** A namespace set this build of the backend cannot answer correctly. */
-export class NamespaceSetUnsupportedError extends ApiError {
-  constructor(what: string) {
-    super(
-      'invalid_input',
-      `${what} across several namespaces needs a newer PodSteer backend. Choose one namespace, or All.`,
-    )
-    this.name = 'NamespaceSetUnsupportedError'
-  }
-}
-
-/** The generated `…In` binding, when this build has one. Looked up by a
-    name passed in rather than written as a member, so a missing export is
-    an `undefined` at run time and never a bundler error. */
-function generatedIn<F>(module: object, name: string): F | undefined {
-  const candidate = (module as Record<string, unknown>)[name]
-  return typeof candidate === 'function' ? (candidate as F) : undefined
-}
-
-/** One call for All or one namespace; otherwise one per namespace, merged. */
-async function eachNamespace<T>(
-  namespaces: readonly string[],
-  one: (namespace: string) => Promise<T>,
-  merge: (parts: T[]) => T,
-): Promise<T> {
-  if (namespaces.length <= 1) return one(namespaces[0] ?? ALL_NAMESPACES)
-  return merge(await Promise.all(namespaces.map(one)))
-}
-
-/** The single-namespace binding for All or one; a typed refusal for several. */
-function singleOnly<T>(namespaces: readonly string[], what: string, one: (namespace: string) => Promise<T>): Promise<T> {
-  if (namespaces.length > 1) return Promise.reject(new NamespaceSetUnsupportedError(what))
-  return one(namespaces[0] ?? ALL_NAMESPACES)
-}
-
-const concat = <T>(parts: T[][]): T[] => parts.flat()
-// ===== END NAMESPACE-SET SEAM ==============================================
-
-type Bound<A extends unknown[], R> = (...args: A) => Promise<R>
-
 /** listPods over a namespace set. */
 export function listPodsIn(
   clusterId: string,
@@ -2727,12 +2479,7 @@ export function listPodsIn(
   annotationKeys: string[] = [],
   expressions: CustomExpression[] = [],
 ): Promise<Pod[]> {
-  const bound = generatedIn<Bound<[string, string[], string[], CustomExpression[]], Pod[] | null>>(
-    workloadBindings,
-    'ListPodsIn',
-  )
-  if (!bound) return eachNamespace(namespaces, (ns) => listPods(clusterId, ns, annotationKeys, expressions), concat)
-  return callList(() => bound(clusterId, namespaces, annotationKeys, expressions))
+  return callList(() => bindListPodsIn(clusterId, namespaces, annotationKeys, expressions))
 }
 
 /** queryPods over a namespace set: one page of the whole set's pods. */
@@ -2743,16 +2490,7 @@ export async function queryPodsIn(
   expressions: CustomExpression[],
   query: PodQuery,
 ): Promise<PodPage> {
-  const bound = generatedIn<Bound<[string, string[], string[], CustomExpression[], PodQuery], PodPage>>(
-    workloadBindings,
-    'QueryPodsIn',
-  )
-  if (!bound) {
-    return singleOnly(namespaces, 'Paging pods', (ns) =>
-      queryPods(clusterId, ns, annotationKeys, expressions, query),
-    )
-  }
-  const page = await call(() => bound(clusterId, namespaces, annotationKeys, expressions, query))
+  const page = await call(() => bindQueryPodsIn(clusterId, namespaces, annotationKeys, expressions, query))
   return { ...page, rows: page.rows ?? [], chipCounts: page.chipCounts ?? {} }
 }
 
@@ -2764,18 +2502,7 @@ export function listPodKeysIn(
   expressions: CustomExpression[],
   query: PodQuery,
 ): Promise<PodKey[]> {
-  const bound = generatedIn<Bound<[string, string[], string[], CustomExpression[], PodQuery], PodKey[] | null>>(
-    workloadBindings,
-    'ListPodKeysIn',
-  )
-  if (!bound) {
-    return eachNamespace(
-      namespaces,
-      (ns) => listPodKeys(clusterId, ns, annotationKeys, expressions, query),
-      concat,
-    )
-  }
-  return callList(() => bound(clusterId, namespaces, annotationKeys, expressions, query))
+  return callList(() => bindListPodKeysIn(clusterId, namespaces, annotationKeys, expressions, query))
 }
 
 /** exportPodsCSV over a namespace set, in the table's order. */
@@ -2788,15 +2515,9 @@ export function exportPodsCSVIn(
   columns: CSVColumn[],
   suggestedName: string,
 ): Promise<string> {
-  const bound = generatedIn<
-    Bound<[string, string[], string[], CustomExpression[], PodQuery, CSVColumn[], string], string>
-  >(workloadBindings, 'ExportPodsCSVIn')
-  if (!bound) {
-    return singleOnly(namespaces, 'Exporting pods', (ns) =>
-      exportPodsCSV(clusterId, ns, annotationKeys, expressions, query, columns, suggestedName),
-    )
-  }
-  return call(() => bound(clusterId, namespaces, annotationKeys, expressions, query, columns, suggestedName))
+  return call(() =>
+    bindExportPodsCSVIn(clusterId, namespaces, annotationKeys, expressions, query, columns, suggestedName),
+  )
 }
 
 /** listWorkloads over a namespace set. */
@@ -2807,38 +2528,18 @@ export function listWorkloadsIn(
   annotationKeys: string[] = [],
   expressions: CustomExpression[] = [],
 ): Promise<Workload[]> {
-  const bound = generatedIn<Bound<[string, string, string[], string[], CustomExpression[]], Workload[] | null>>(
-    workloadBindings,
-    'ListWorkloadsIn',
-  )
-  if (!bound) {
-    return eachNamespace(
-      namespaces,
-      (ns) => listWorkloads(clusterId, kind, ns, annotationKeys, expressions),
-      concat,
-    )
-  }
-  return callList(() => bound(clusterId, kind, namespaces, annotationKeys, expressions))
+  return callList(() => bindListWorkloadsIn(clusterId, kind, namespaces, annotationKeys, expressions))
 }
 
-/** workloadConsumption over a namespace set, keyed "namespace/name". */
+/** workloadConsumption over a namespace set, keyed "namespace/name". A map
+    DTO, normalised as workloadConsumption's is. */
 export function workloadConsumptionIn(
   clusterId: string,
   kind: string,
   namespaces: string[],
 ): Promise<Record<string, Consumption>> {
-  const bound = generatedIn<
-    Bound<[string, string, string[]], Record<string, Consumption | undefined> | null>
-  >(workloadBindings, 'WorkloadConsumptionIn')
-  if (!bound) {
-    return eachNamespace(
-      namespaces,
-      (ns) => workloadConsumption(clusterId, kind, ns),
-      (parts) => Object.assign({}, ...parts),
-    )
-  }
   return call(async () => {
-    const raw = (await bound(clusterId, kind, namespaces)) ?? {}
+    const raw = (await bindWorkloadConsumptionIn(clusterId, kind, namespaces)) ?? {}
     const consumption: Record<string, Consumption> = {}
     for (const [key, value] of Object.entries(raw)) {
       if (value !== undefined) consumption[key] = value
@@ -2849,18 +2550,7 @@ export function workloadConsumptionIn(
 
 /** listApplications over a namespace set. */
 export function listApplicationsIn(clusterId: string, namespaces: string[]): Promise<ApplicationInventory> {
-  const bound = generatedIn<Bound<[string, string[]], ApplicationInventory>>(workloadBindings, 'ListApplicationsIn')
-  if (!bound) {
-    return eachNamespace(
-      namespaces,
-      (ns) => listApplications(clusterId, ns),
-      (parts) => ({
-        applications: parts.flatMap((part) => part.applications ?? []),
-        unlabelled: parts.reduce((sum, part) => sum + part.unlabelled, 0),
-      }),
-    )
-  }
-  return call(() => bound(clusterId, namespaces))
+  return call(() => bindListApplicationsIn(clusterId, namespaces))
 }
 
 /** listEvents over a namespace set. */
@@ -2870,14 +2560,7 @@ export function listEventsIn(
   annotationKeys: string[] = [],
   expressions: CustomExpression[] = [],
 ): Promise<K8sEvent[]> {
-  const bound = generatedIn<Bound<[string, string[], string[], CustomExpression[]], K8sEvent[] | null>>(
-    browseBindings,
-    'ListEventsIn',
-  )
-  if (!bound) {
-    return eachNamespace(namespaces, (ns) => listEvents(clusterId, ns, annotationKeys, expressions), concat)
-  }
-  return callList(() => bound(clusterId, namespaces, annotationKeys, expressions))
+  return callList(() => bindListEventsIn(clusterId, namespaces, annotationKeys, expressions))
 }
 
 /** listTable over a namespace set: the first answer's columns, every
@@ -2889,67 +2572,43 @@ export function listTableIn(
   annotationKeys: string[] = [],
   expressions: CustomExpression[] = [],
 ): Promise<ResourceTable> {
-  const bound = generatedIn<Bound<[string, string, string[], string[], CustomExpression[]], ResourceTable>>(
-    browseBindings,
-    'ListTableIn',
-  )
-  if (!bound) {
-    return eachNamespace(
-      namespaces,
-      (ns) => listTable(clusterId, kindId, ns, annotationKeys, expressions),
-      (parts) => ({
-        ...parts[0],
-        columns: parts.find((part) => part.columns?.length)?.columns ?? parts[0].columns,
-        rows: parts.flatMap((part) => part.rows ?? []),
-        truncated: parts.some((part) => part.truncated),
-      }),
-    )
-  }
-  return call(() => bound(clusterId, kindId, namespaces, annotationKeys, expressions))
+  return call(() => bindListTableIn(clusterId, kindId, namespaces, annotationKeys, expressions))
 }
 
-/** vulnerabilitySummaries over a namespace set. */
+/**
+ * The severity counts a scanner already running in the cluster recorded, for
+ * the workloads in a namespace set — read ON ITS OWN, never from a list and
+ * never on a refresh tick; bounded and cached in Go (app/adapters/k8s/trivy.go).
+ *
+ * A LISTING, NOT AN ARRAY: four ordinary outcomes leave rows undecorated — no
+ * scanner, no permission, nothing found, a read stopped at its ceiling — and
+ * only `status` "complete" licenses reading an absent summary as clean. Each
+ * summary names its namespace; match a row on it as well as on Kind/name.
+ */
 export async function vulnerabilitySummariesIn(
   clusterId: string,
   namespaces: string[],
 ): Promise<VulnerabilityListing> {
-  const bound = generatedIn<Bound<[string, string[]], VulnerabilityListing | null>>(
-    browseBindings,
-    'VulnerabilitySummariesIn',
-  )
-  if (!bound) {
-    // Complete only when every namespace's read was; otherwise the first
-    // part that was not says why.
-    return eachNamespace(
-      namespaces,
-      (ns) => vulnerabilitySummaries(clusterId, ns),
-      (parts) => ({
-        summaries: parts.flatMap((part) => part.summaries ?? []),
-        status: parts.find((part) => part.status !== 'complete')?.status ?? 'complete',
-        read: parts.reduce((sum, part) => sum + part.read, 0),
-        remaining: parts.reduce((sum, part) => sum + part.remaining, 0),
-        cap: parts[0].cap,
-      }),
-    )
-  }
-  const listing = await call(() => bound(clusterId, namespaces))
+  const listing = await call(() => bindVulnerabilitySummariesIn(clusterId, namespaces))
   return listing ?? { summaries: [], status: '', read: 0, remaining: 0, cap: 0 }
 }
 
 /** listHelmReleases over a namespace set. */
 export function listHelmReleasesIn(clusterId: string, namespaces: string[], refresh = false): Promise<HelmListing> {
-  const bound = generatedIn<Bound<[string, string[], boolean], HelmListing>>(helmBindings, 'ListReleasesIn')
-  if (!bound) {
-    return singleOnly(namespaces, 'Listing Helm releases', (ns) => listHelmReleases(clusterId, ns, refresh))
-  }
-  return call(() => bound(clusterId, namespaces, refresh))
+  return call(() => bindListHelmReleasesIn(clusterId, namespaces, refresh))
 }
+
+// --- Fleet, over a namespace set --------------------------------------------
+//
+// One call per tick however many clusters are open. The fan-out is in Go —
+// application.FleetService — and every cluster comes back with its own
+// verdict, so a refused or unreachable cluster is a row in the answer, never
+// a rejection of it. The rejection cases are the caller's own: naming a
+// cluster that is not open, or an unusable namespace.
 
 /** listFleetPods over a namespace set. */
 export function listFleetPodsIn(clusterIds: string[], namespaces: string[]): Promise<ClusterPods[]> {
-  const bound = generatedIn<Bound<[string[], string[]], ClusterPods[] | null>>(fleetBindings, 'ListPodsIn')
-  if (!bound) return singleOnly(namespaces, 'Listing pods on every cluster', (ns) => listFleetPods(clusterIds, ns))
-  return callList(() => bound(clusterIds, namespaces))
+  return callList(() => bindListFleetPodsIn(clusterIds, namespaces))
 }
 
 /** queryFleetPods over a namespace set. */
@@ -2958,11 +2617,7 @@ export async function queryFleetPodsIn(
   namespaces: string[],
   query: PodQuery,
 ): Promise<FleetPodPage> {
-  const bound = generatedIn<Bound<[string[], string[], PodQuery], FleetPodPage>>(fleetBindings, 'QueryPodsIn')
-  if (!bound) {
-    return singleOnly(namespaces, 'Paging pods on every cluster', (ns) => queryFleetPods(clusterIds, ns, query))
-  }
-  const answer = await call(() => bound(clusterIds, namespaces, query))
+  const answer = await call(() => bindQueryFleetPodsIn(clusterIds, namespaces, query))
   return {
     clusters: (answer.clusters ?? []).map((share) => ({ ...share, missing: share.missing ?? [] })),
     page: {
@@ -2981,34 +2636,17 @@ export function exportFleetPodsCSVIn(
   columns: CSVColumn[],
   suggestedName: string,
 ): Promise<string> {
-  const bound = generatedIn<Bound<[string[], string[], PodQuery, CSVColumn[], string], string>>(
-    fleetBindings,
-    'ExportPodsCSVIn',
-  )
-  if (!bound) {
-    return singleOnly(namespaces, 'Exporting pods on every cluster', (ns) =>
-      exportFleetPodsCSV(clusterIds, ns, query, columns, suggestedName),
-    )
-  }
-  return call(() => bound(clusterIds, namespaces, query, columns, suggestedName))
+  return call(() => bindExportFleetPodsCSVIn(clusterIds, namespaces, query, columns, suggestedName))
 }
 
 /** listFleetWorkloads over a namespace set. */
 export function listFleetWorkloadsIn(clusterIds: string[], namespaces: string[]): Promise<ClusterWorkloads[]> {
-  const bound = generatedIn<Bound<[string[], string[]], ClusterWorkloads[] | null>>(fleetBindings, 'ListWorkloadsIn')
-  if (!bound) {
-    return singleOnly(namespaces, 'Listing workloads on every cluster', (ns) => listFleetWorkloads(clusterIds, ns))
-  }
-  return callList(() => bound(clusterIds, namespaces))
+  return callList(() => bindListFleetWorkloadsIn(clusterIds, namespaces))
 }
 
 /** listFleetEvents over a namespace set. */
 export function listFleetEventsIn(clusterIds: string[], namespaces: string[]): Promise<ClusterEvents[]> {
-  const bound = generatedIn<Bound<[string[], string[]], ClusterEvents[] | null>>(fleetBindings, 'ListEventsIn')
-  if (!bound) {
-    return singleOnly(namespaces, 'Listing events on every cluster', (ns) => listFleetEvents(clusterIds, ns))
-  }
-  return callList(() => bound(clusterIds, namespaces))
+  return callList(() => bindListFleetEventsIn(clusterIds, namespaces))
 }
 
 /** listFleetTable over a namespace set. */
@@ -3018,12 +2656,5 @@ export function listFleetTableIn(
   resource: string,
   namespaces: string[],
 ): Promise<ClusterTable[]> {
-  const bound = generatedIn<Bound<[string[], string, string, string[]], ClusterTable[] | null>>(
-    fleetBindings,
-    'ListTableIn',
-  )
-  if (!bound) {
-    return singleOnly(namespaces, 'Listing on every cluster', (ns) => listFleetTable(clusterIds, group, resource, ns))
-  }
-  return callList(() => bound(clusterIds, group, resource, namespaces))
+  return callList(() => bindListFleetTableIn(clusterIds, group, resource, namespaces))
 }

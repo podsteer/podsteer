@@ -23,7 +23,6 @@ vi.mock('$lib/api/client', async () => {
     refreshCredentials: (...args: unknown[]) => refreshCredentials(...args),
     queryPods: (...args: unknown[]) => queryPods(...args),
     queryPodsIn: (...args: unknown[]) => queryPods(...args),
-    listPodKeys: (...args: unknown[]) => listPodKeys(...args),
     listPodKeysIn: (...args: unknown[]) => listPodKeys(...args),
     podUsageHistory: (...args: unknown[]) => podUsageHistory(...args),
   }
