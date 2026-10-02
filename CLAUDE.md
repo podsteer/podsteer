@@ -337,7 +337,7 @@ Three rules it holds to, each with a test:
   every case; before, a panic left the entry "in flight" and every later
   caller waited out its whole timeout.
 - **Every write drops the cluster's cached reads** (`forgetReads`, deferred on
-  entry in each `ManagementPort` method). Deleting a pod and then being handed
+  entry in each `ManagementPort` method) and tells the topology's change sink. Deleting a pod and then being handed
   the list that still contains it reads as the application ignoring what it
   was told.
 
@@ -1096,16 +1096,17 @@ Three rules there have subtleties worth not re-deriving:
 - **A correctly configured pod produces no findings**, and a test asserts it. A
   panel that always has something to say is one people stop reading.
 
-## The dependency map is four shapes, not one
+## The dependency map is five shapes, not one
 
 `app/domain/graph.go` builds two of them, `app/domain/object_graph.go` the
-third and `app/domain/application_graph.go` the fourth, and they are separate
-functions because the SUBJECT decides the structure: a pod's map is a chain
-with the pod in the middle, a workload's is a fan — one controller over however
-many pods it currently has — any other object's is a neighbourhood, and an
-application's is a set. Pretending they are one shape would mean a pod
-field that is sometimes a list, and edges that mean different things depending
-on which it was.
+third, `app/domain/application_graph.go` the fourth and
+`app/domain/topology.go` the fifth, and they are separate functions because
+the SUBJECT decides the structure: a pod's map is a chain with the pod in the
+middle, a workload's is a fan — one controller over however many pods it
+currently has — any other object's is a neighbourhood, an application's is a
+set, and a namespace's topology has no subject at all. Pretending they are one
+shape would mean a pod field that is sometimes a list, and edges that mean
+different things depending on which it was.
 
 **EVERY EDGE IS A RELATIONSHIP KUBERNETES ACTUALLY HAS.** That rule is worth
 stating on its own, because breaking it is always the convenient thing to do
@@ -1311,6 +1312,90 @@ object.
   each old ReplicaSet a TOP-LEVEL member, so "an old ReplicaSet declares
   nothing" stops holding and they do not fold under a Deployment that is not
   on the map.
+
+### The fifth shape is a namespace, and above a cap the backend folds
+
+`NewTopologyGraph` (`app/domain/topology.go`) draws a SCOPE — one or more
+namespaces, or all of them — with every object in it and every relationship
+Kubernetes has between them. Its own types (`TopologyGraph`, `TopologyNode`,
+`TopologyEdge`), not a widened `PodGraph`: there is no subject and no tier,
+edges carry a `Kind` (`owns`, `selects`, `routes`, `scales`, `protects`,
+`policy-selects`, `attaches`, `runs-as`) so the page can toggle a relationship
+off, and nodes carry a tri-state `State` where **`neutral` means nothing was
+checked**, not that it is fine (Ingresses, ServiceAccounts, NetworkPolicies,
+template names, unresolved names). Labels ride on TOP-LEVEL objects only, for
+group-by; a pod's labels times its replica count is payload nobody groups on.
+
+Every rule above still holds, and four more are specific to it:
+
+- **A NetworkPolicy SELECTS; it never allows or blocks.** Its podSelector is
+  drawn as `policy-selects` with the label "selects". Whether traffic is
+  allowed depends on every policy in the namespace and the CNI enforcing them,
+  and a line would answer that wrongly. Its empty podSelector selects EVERY
+  pod in the namespace — the opposite of a Service's, which selects none. A
+  PodDisruptionBudget's nil selector selects nothing; its empty one, everything.
+- **Owners come from `ownerReferences`, never a GET.** A CRD owner (a Rollout
+  over a ReplicaSet) is a neutral `object` box by kind and name; a mirror pod's
+  Node owner is cluster-scoped. Unread names are drawn and never counted.
+- **ConfigMaps, Secrets and claims are NAMES from templates**, and `Bounded`
+  says so. A StatefulSet's claim is drawn per pod as `<template>-<pod>`, which
+  is the PVC's real name.
+- **Above `TopologyPodCap` (3000) pods fold IN GO** into `fold/<group>/pod`
+  nodes carrying `PodSummary{Total, Ready, Unhealthy}`, the same id and
+  semantics `graphFold.ts` uses; Service, budget and policy edges re-point to
+  the fold and dedupe; `Summarised` is set; `Counts["Pod"]` stays complete. The
+  one place "the backend emits every pod" bends, and the graph says it did.
+
+**Reads** (`Adapter.TopologySources`, about a dozen in parallel): FULL
+Deployments, StatefulSets, DaemonSets, CronJobs, ReplicaSets and Jobs (the
+watch store strips RS/Job templates to images, and a pod's names come from
+its own controller's template), pods from the cached `ListPods`, Services,
+Ingresses, HPAs (autoscaling/v2), PDBs (policy/v1), NetworkPolicies,
+ServiceAccount names, and Gateway/HTTPRoute/GRPCRoute/TCPRoute/TLSRoute via
+the dynamic client ONLY when discovery serves `gateway.networking.k8s.io`.
+One cluster-wide list per kind when the scope is All or more than three
+namespaces, else one per namespace; a cluster-wide 403 for a named scope falls
+back to per-namespace lists. Every refusal is `Unreadable` ("services in
+shop"), never an error. **Secrets are never listed**
+(`TestTopologySourcesNeverListsSecrets`). Nothing runs on a tick. Budgets:
+`BenchmarkNewTopologyGraph10kPods` (~20 ms here, thanks to a label index —
+selector-by-pod matching was 140 ms) and `TestTopologyPayloadBudget` (5000
+nodes, 10000 edges under 2.5 MB; edge labels that repeat the kind are empty
+for that reason).
+
+**The wire shape is `web/src/lib/topology/contract.ts`**, hand-written so the
+frontend could be built beside the backend. The generated bindings are NOT
+re-exported from it: in interface mode the generator types every slice and map
+`| null` and a string type with Go constants as a TypeScript enum, neither of
+which a union-typed contract accepts. So the DTOs (`dto_topology.go`) keep the
+JSON names exactly, `NodeState`/`TopologyEdgeKind` have no Go constants (they
+generate as `string`), the generated pod summary is `TopologyPodSummary`
+(`PodSummary` is taken by the overview), and the API wrapper casts.
+`TestTopologyDTOMatchesTheContract` pins the names.
+
+### The map says "Changed" instead of redrawing
+
+A topology is drawn when the page opens and when the operator asks — never on
+a tick. What keeps it honest is an announcement, not a redraw: the watch
+stores (every add, update and delete after the initial list) and every write
+(`forgetReads`) call a `ports.ChangeSink` the composition root sets on the
+adapter (`SetChangeSink`, an atomic pointer; nil is a no-op).
+`application.TopologyService` is that sink, and its `ChangeFeed`:
+
+- **never blocks** — it runs on a reflector's delivery goroutine and the write
+  path, so it takes one short lock and returns;
+- **drops what nobody asked about**: no subscriber, a cluster nobody drew, a
+  namespace outside the drawn scope, a scope drawn more than an hour ago
+  (`DefaultTopologyInterest`), a cluster since closed, or one the page
+  `Release`d;
+- **coalesces** into one announcement per cluster per second, on a timer it
+  owns; `Close` (in `OnShutdown`, after `StopAllWatches`) stops the timers and
+  waits for any already firing.
+
+`TopologyAPI.ServiceStartup` subscribes and emits `topology:changed`
+`{clusterId, namespaces}` — namespaces empty only for an All scope told
+"somewhere" (a write names no namespace; a named scope gets its own list).
+The page shows "Changed — Refresh", or redraws when Live is on.
 
 ## Secrets are read on request, never on render
 
@@ -2141,7 +2226,7 @@ cancels anything.** The framework's runtime context is never cancelled —
 `ctx.Done()` at exit would park forever. Teardown is therefore explicit and
 enumerated in `OnShutdown`: `StopAllPortForwards`, `StopAllNodeShells`,
 `StopAllClusterShells`, `StopAllLocalShells`, `StopAllWatches`,
-`historyService.Close()`. There is no
+`topologyService.Close()`, `historyService.Close()`. There is no
 ambient cancellation to fall back on; a new owner that needs stopping needs a
 line there.
 
