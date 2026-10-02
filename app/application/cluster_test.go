@@ -3,6 +3,8 @@ package application_test
 import (
 	"context"
 	"errors"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -318,5 +320,57 @@ func TestAConnectThatRanOutOfTimeIsStillUnreachable(t *testing.T) {
 	}
 	if _, ok := recorded[0].(domain.ClusterUnreachable); !ok {
 		t.Fatalf("published %T, want domain.ClusterUnreachable", recorded[0])
+	}
+}
+
+type recordingConnectedHook struct {
+	mu  sync.Mutex
+	ids []domain.ClusterID
+}
+
+func (h *recordingConnectedHook) ClusterConnected(id domain.ClusterID) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.ids = append(h.ids, id)
+}
+
+// The hook is how kept forwards are restored, and the rule is that only a
+// successful Connect — an operator opening a cluster — may start it.
+func TestOnConnectedFiresOnlyAfterASuccessfulConnect(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		versionErr error
+		want       []domain.ClusterID
+	}{
+		{"a successful connect is announced", nil, []domain.ClusterID{"dev"}},
+		{"an unreachable cluster is not", ports.ErrUnreachable, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			hook := &recordingConnectedHook{}
+			service, err := application.NewClusterService(application.ClusterServiceDeps{
+				Kubeconfig:  &fakeKubeconfig{clusters: []domain.Cluster{mustCluster(t, "dev", true)}},
+				Cluster:     &fakeKubernetes{versionErr: tt.versionErr},
+				Workloads:   &fakeKubernetes{},
+				Metrics:     &fakeKubernetes{},
+				Events:      &recordingPublisher{},
+				Registry:    application.NewRegistry(),
+				Catalog:     domain.NewCatalog(),
+				OnConnected: hook,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, _ = service.Connect(context.Background(), "dev")
+
+			if !slices.Equal(hook.ids, tt.want) {
+				t.Fatalf("OnConnected saw %v, want %v", hook.ids, tt.want)
+			}
+		})
 	}
 }

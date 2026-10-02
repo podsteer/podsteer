@@ -586,6 +586,18 @@ type PortForwardPort interface {
 	// makes the Service's selector carry through to the supervisor and the
 	// forward outlive the pod it landed on.
 	ServiceForwardTarget(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, service, wantedPort string) (domain.ServiceForwardTarget, error)
+	// PodForwardTarget reads one pod and returns what a forward to it needs —
+	// its UID, its own labels as the selector, and the name of the port — so a
+	// kept pod forward can be rebuilt from a definition after a restart.
+	// Refuses a pod that does not exist or is not ready, with the cluster's own
+	// reason, because forwarding to either produces a forward that never works.
+	PodForwardTarget(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, pod string, remotePort int) (domain.ServiceForwardTarget, error)
+	// SetForwardTarget records what the operator asked a live forward to point
+	// at, which only they know for a Service.
+	SetForwardTarget(id string, target domain.ForwardTarget) error
+	// ReconnectPortForward asks a LOST forward to start looking again at once.
+	// A no-op for anything else.
+	ReconnectPortForward(id string) error
 	// StopPortForward closes a forward and WAITS for its port to be released,
 	// so a caller may immediately rebind it.
 	StopPortForward(id string) error

@@ -41,6 +41,13 @@ type ClusterServiceDeps struct {
 	// service wired without one simply keeps whatever the adapter cached,
 	// which is what every test wants.
 	Invalidator ClusterInvalidator
+	// OnConnected is told after a successful Connect, and only then — the
+	// operator opening a cluster is the one event allowed to start work on
+	// its behalf, which is how kept port-forwards are restored without any
+	// cluster being connected that nobody opened.
+	//
+	// Optional. Must return promptly: do the work on a goroutine it owns.
+	OnConnected ClusterConnectedHook
 	// Logger receives diagnostics. Optional; defaults to slog.Default.
 	Logger *slog.Logger
 	// Now supplies the current time. Optional; defaults to time.Now.
@@ -82,7 +89,13 @@ func (is Invalidators) Invalidate(id domain.ClusterID) {
 	}
 }
 
+// ClusterConnectedHook is told a cluster has just been connected.
+type ClusterConnectedHook interface {
+	ClusterConnected(id domain.ClusterID)
+}
+
 type ClusterService struct {
+	onConnected ClusterConnectedHook
 	kubeconfig  ports.KubeconfigPort
 	cluster     ports.ClusterPort
 	workloads   ports.WorkloadPort
@@ -132,6 +145,7 @@ func NewClusterService(deps ClusterServiceDeps) (*ClusterService, error) {
 		workloads:   deps.Workloads,
 		metrics:     deps.Metrics,
 		invalidator: deps.Invalidator,
+		onConnected: deps.OnConnected,
 		events:      deps.Events,
 		registry:    deps.Registry,
 		catalog:     deps.Catalog,
@@ -249,6 +263,10 @@ func (s *ClusterService) Connect(ctx context.Context, id domain.ClusterID) (doma
 	s.logger.InfoContext(ctx, "connected to cluster",
 		slog.String("cluster", id.String()),
 		slog.String("version", version.GitVersion))
+
+	if s.onConnected != nil {
+		s.onConnected.ClusterConnected(id)
+	}
 
 	return connected, nil
 }

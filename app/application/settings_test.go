@@ -12,6 +12,7 @@ package application_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/podsteer/podsteer/app/application"
@@ -320,7 +321,7 @@ func TestClusterReportsTheDefaultsRatherThanAnAbsence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Cluster() error = %v", err)
 	}
-	if got != domain.DefaultClusterSettings() {
+	if !reflect.DeepEqual(got, domain.DefaultClusterSettings()) {
 		t.Fatalf("Cluster() = %+v, want the defaults", got)
 	}
 }

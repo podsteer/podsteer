@@ -12,11 +12,13 @@ import (
 	"sync"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/safego"
 )
 
 // forwardReadyTimeout bounds how long a forward may take to come up.
@@ -45,6 +47,10 @@ type forwarder struct {
 	// ending the forward.
 	stop chan struct{}
 	done chan struct{}
+	// retry nudges a lost forward to start looking again at once, rather than
+	// on its slow cadence. Buffered so the nudge never blocks the caller and a
+	// second one while the first is pending is simply dropped.
+	retry chan struct{}
 }
 
 func (f *forwarder) snapshot() domain.Forward {
@@ -64,6 +70,33 @@ type portForwards struct {
 	mu     sync.Mutex
 	byID   map[string]*forwarder
 	nextID int
+
+	// The three timings and the dial are zero in production and set by a test,
+	// so the supervisor's give-up and recovery paths can be driven in
+	// milliseconds and without a real SPDY connection.
+	window, backoff, lostEvery time.Duration
+	dial                       func(domain.ClusterID, domain.NamespaceName, string, int, int) (bool, int, attempt, error)
+}
+
+func (p *portForwards) reconnectWindow() time.Duration { return orDefault(p.window, reconnectWindow) }
+func (p *portForwards) reconnectBackoff() time.Duration {
+	return orDefault(p.backoff, reconnectBackoff)
+}
+func (p *portForwards) lostRetryEvery() time.Duration { return orDefault(p.lostEvery, lostRetryEvery) }
+
+func orDefault(value, fallback time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
+// dialFor opens one connection, through the test seam when there is one.
+func (a *Adapter) dialFor(id domain.ClusterID, namespace domain.NamespaceName, pod string, localPort, remotePort int) (bool, int, attempt, error) {
+	if a.forwards.dial != nil {
+		return a.forwards.dial(id, namespace, pod, localPort, remotePort)
+	}
+	return a.dialForward(id, namespace, pod, localPort, remotePort)
 }
 
 // StartPortForward opens a local port onto a container port.
@@ -82,7 +115,7 @@ func (a *Adapter) StartPortForward(ctx context.Context, id domain.ClusterID, nam
 		return domain.Forward{}, fmt.Errorf("%s: %w", op, errNotTCP)
 	}
 
-	established, local, first, err := a.dialForward(id, namespace, pod, localPort, remotePort)
+	established, local, first, err := a.dialFor(id, namespace, pod, localPort, remotePort)
 	if err != nil {
 		return domain.Forward{}, err
 	}
@@ -102,6 +135,11 @@ func (a *Adapter) StartPortForward(ctx context.Context, id domain.ClusterID, nam
 		RemotePort: remotePort,
 		Scheme:     domain.SchemeForPort(portName),
 		Selector:   selector,
+		Target: domain.ForwardTarget{
+			Kind:     domain.ForwardToPod,
+			Name:     pod,
+			PortName: portName,
+		},
 	}
 
 	// The SUPERVISOR owns the forward from here, and its stop channel is what
@@ -110,7 +148,7 @@ func (a *Adapter) StartPortForward(ctx context.Context, id domain.ClusterID, nam
 	supervisorStop := make(chan struct{})
 	supervisorDone := make(chan struct{})
 
-	entry := &forwarder{forward: forward, stop: supervisorStop, done: supervisorDone}
+	entry := &forwarder{forward: forward, stop: supervisorStop, done: supervisorDone, retry: make(chan struct{}, 1)}
 	a.forwards.byID[forward.ID] = entry
 	a.forwards.mu.Unlock()
 
@@ -142,6 +180,15 @@ const reconnectBackoff = 3 * time.Second
 // return is the leak this whole design exists to avoid.
 const reconnectWindow = 2 * time.Minute
 
+// lostRetryEvery is how often a forward whose window ran out looks again.
+//
+// Slow, because by now the cheap explanations are spent: this is one LIST per
+// attempt against a cluster that has not answered for two minutes, and the
+// local port is NOT held in this state, so nothing is lost by waiting. It is
+// what makes a forward come back by itself after a laptop sleeps or a VPN
+// drops for longer than the window.
+const lostRetryEvery = 30 * time.Second
+
 // findReplacementTimeout bounds one search for a replacement pod. It is the
 // ceiling on the read, not on the wait for a stop: a deliberate stop cancels
 // it early — see findReplacementPod.
@@ -162,6 +209,19 @@ const findReplacementTimeout = 10 * time.Second
 // new port somebody has to go and read.
 func (a *Adapter) superviseForward(entry *forwarder, current attempt, portName string) {
 	defer close(entry.done)
+
+	// A PANIC HERE MUST NOT LEAVE A FORWARD NOTHING OWNS. The recovery ends the
+	// running attempt, releasing its local port, and removes the record, so
+	// the row disappears with the goroutine rather than outliving it.
+	defer func() {
+		if r := recover(); r != nil {
+			_ = safego.Error("port-forward supervisor", r)
+			endAttempt(current)
+			a.forwards.mu.Lock()
+			delete(a.forwards.byID, entry.snapshot().ID)
+			a.forwards.mu.Unlock()
+		}
+	}()
 
 	for {
 		select {
@@ -199,52 +259,169 @@ func (a *Adapter) superviseForward(entry *forwarder, current attempt, portName s
 
 		next, ok := a.reconnect(entry, forward, portName)
 		if !ok {
-			// Nothing came back within the window. The registry entry is
-			// removed so the UI stops showing a forward that is not one, and
-			// the local port is long since released with the failed attempt.
-			a.forwards.mu.Lock()
-			delete(a.forwards.byID, forward.ID)
-			a.forwards.mu.Unlock()
-			return
+			if stopped(entry) {
+				return
+			}
+			// THE WINDOW RAN OUT, AND THE ROW STAYS. Deleting it here made a
+			// forward vanish silently after two minutes of outage, which is
+			// the failure every other client has and the one this file's
+			// header claims to avoid: nothing on screen said it had gone, and
+			// nothing told the operator the thing pointed at it was now
+			// refusing connections. It is listed as lost instead, the local
+			// port is long since released, and it keeps looking slowly until
+			// the cluster is back or somebody dismisses it.
+			next, ok = a.awaitRecovery(entry, forward, portName)
+			if !ok {
+				return
+			}
 		}
 
 		current = next
-		entry.update(func(f *domain.Forward) { f.Reconnecting = false })
+		entry.update(func(f *domain.Forward) { f.Reconnecting, f.Lost = false, false })
 	}
+}
+
+// stopped reports whether the forward has been deliberately stopped.
+func stopped(entry *forwarder) bool {
+	select {
+	case <-entry.stop:
+		return true
+	default:
+		return false
+	}
+}
+
+// endAttempt stops one attempt and waits for it, unless it has already ended.
+func endAttempt(a attempt) {
+	if a.stop == nil {
+		return
+	}
+	select {
+	case <-a.done:
+	default:
+		close(a.stop)
+		<-a.done
+	}
+}
+
+// awaitRecovery holds a lost forward until the cluster answers again.
+//
+// One attempt per lostRetryEvery, or a full window when the operator presses
+// Reconnect — "restart the window when connectivity returns" is this: the
+// first attempt that gets through starts the forward again on its old local
+// port. Returns false only on a deliberate stop.
+func (a *Adapter) awaitRecovery(entry *forwarder, forward domain.Forward, portName string) (attempt, bool) {
+	entry.update(func(f *domain.Forward) { f.Reconnecting, f.Lost = false, true })
+	a.logger.Warn("port-forward lost; still looking for its target",
+		slog.String("cluster", string(forward.ClusterID)),
+		slog.String("forward", forward.ID),
+		slog.String("namespace", string(forward.Namespace)),
+		slog.String("pod", forward.Pod))
+
+	ticker := time.NewTicker(a.forwards.lostRetryEvery())
+	defer ticker.Stop()
+
+	for {
+		var next attempt
+		var ok bool
+
+		select {
+		case <-entry.stop:
+			return attempt{}, false
+		case <-ticker.C:
+			next, ok = a.tryReconnect(entry, entry.snapshot())
+		case <-entry.retry:
+			entry.update(func(f *domain.Forward) { f.Reconnecting = true })
+			next, ok = a.reconnect(entry, entry.snapshot(), portName)
+			if !ok && stopped(entry) {
+				return attempt{}, false
+			}
+			entry.update(func(f *domain.Forward) { f.Reconnecting = false })
+		}
+
+		if ok {
+			a.logger.Info("port-forward recovered",
+				slog.String("cluster", string(forward.ClusterID)),
+				slog.String("forward", forward.ID))
+			return next, true
+		}
+	}
+}
+
+// ReconnectPortForward asks a lost forward to start looking again now.
+//
+// A no-op for a forward that is not lost and for one that no longer exists,
+// so a stale button cannot do harm.
+func (a *Adapter) ReconnectPortForward(id string) error {
+	a.forwards.mu.Lock()
+	entry, ok := a.forwards.byID[id]
+	a.forwards.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	select {
+	case entry.retry <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+// SetForwardTarget records what the operator asked a forward to point at.
+//
+// Only a Service forward needs it: the adapter already knows a pod forward's
+// own pod. It is how a kept forward is rebuilt from a Service after a restart
+// rather than from whichever pod happened to answer today.
+func (a *Adapter) SetForwardTarget(id string, target domain.ForwardTarget) error {
+	a.forwards.mu.Lock()
+	entry, ok := a.forwards.byID[id]
+	a.forwards.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("setting the target of forward %q: not found", id)
+	}
+	entry.update(func(f *domain.Forward) { f.Target = target })
+	return nil
 }
 
 // reconnect looks for a replacement pod and rebinds the SAME local port.
 func (a *Adapter) reconnect(entry *forwarder, forward domain.Forward, portName string) (attempt, bool) {
-	deadline := time.Now().Add(reconnectWindow)
+	deadline := time.Now().Add(a.forwards.reconnectWindow())
 
 	for time.Now().Before(deadline) {
 		select {
 		case <-entry.stop:
 			return attempt{}, false
-		case <-time.After(reconnectBackoff):
+		case <-time.After(a.forwards.reconnectBackoff()):
 		}
 
-		replacement, err := a.findReplacementPod(entry, forward)
-		if err != nil || replacement == "" {
-			continue
+		if next, ok := a.tryReconnect(entry, forward); ok {
+			return next, true
 		}
-
-		established, local, next, err := a.dialForward(
-			forward.ClusterID, forward.Namespace, replacement,
-			forward.LocalPort, forward.RemotePort,
-		)
-		if err != nil || !established {
-			continue
-		}
-
-		entry.update(func(f *domain.Forward) {
-			f.Pod = replacement
-			f.LocalPort = local
-		})
-		return next, true
 	}
 
 	return attempt{}, false
+}
+
+// tryReconnect is one attempt: find a pod, dial it, and on success record the
+// pod and port the forward now holds.
+func (a *Adapter) tryReconnect(entry *forwarder, forward domain.Forward) (attempt, bool) {
+	replacement, err := a.findReplacementPod(entry, forward)
+	if err != nil || replacement == "" {
+		return attempt{}, false
+	}
+
+	established, local, next, err := a.dialFor(
+		forward.ClusterID, forward.Namespace, replacement,
+		forward.LocalPort, forward.RemotePort,
+	)
+	if err != nil || !established {
+		return attempt{}, false
+	}
+
+	entry.update(func(f *domain.Forward) {
+		f.Pod = replacement
+		f.LocalPort = local
+	})
+	return next, true
 }
 
 // findReplacementPod returns a pod this forward may rebind to.
@@ -337,6 +514,44 @@ func matchesSelector(labels, selector map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// PodForwardTarget reads the pod a kept forward points at and returns what
+// StartPortForward needs. The labels are the pod's own, exactly as the pod
+// list hands them to the UI, so a rebuilt forward has the same supervisor
+// behaviour as one started by hand.
+func (a *Adapter) PodForwardTarget(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, pod string, remotePort int) (domain.ServiceForwardTarget, error) {
+	op := fmt.Sprintf("resolving pod %s/%s in %q", namespace, pod, id)
+
+	client, err := a.factory.clientFor(id)
+	if err != nil {
+		return domain.ServiceForwardTarget{}, err
+	}
+	found, err := client.CoreV1().Pods(namespace.String()).Get(ctx, pod, metav1.GetOptions{})
+	if err != nil {
+		return domain.ServiceForwardTarget{}, classify(op, err)
+	}
+	if found.DeletionTimestamp != nil || !podIsReady(found) {
+		return domain.ServiceForwardTarget{}, fmt.Errorf("%s: %w", op, domain.ErrNoReadyEndpoint)
+	}
+
+	portName := ""
+	for _, container := range found.Spec.Containers {
+		for _, port := range container.Ports {
+			if int(port.ContainerPort) == remotePort {
+				portName = port.Name
+			}
+		}
+	}
+
+	return domain.ServiceForwardTarget{
+		Pod:           found.Name,
+		PodUID:        string(found.UID),
+		ContainerPort: remotePort,
+		PortName:      portName,
+		Protocol:      "TCP",
+		Selector:      found.Labels,
+	}, nil
 }
 
 // StopPortForward closes one forward and waits for its port to be released.
@@ -554,6 +769,14 @@ func (a *Adapter) dialForward(id domain.ClusterID, namespace domain.NamespaceNam
 
 	go func() {
 		defer close(done)
+		// A panic inside client-go's forwarder ends this attempt as a
+		// failure — which the supervisor already knows how to answer —
+		// instead of ending the process.
+		defer func() {
+			if r := recover(); r != nil {
+				failed <- safego.Error("port-forward", r)
+			}
+		}()
 		if err := forwarderImpl.ForwardPorts(); err != nil {
 			failed <- err
 		}

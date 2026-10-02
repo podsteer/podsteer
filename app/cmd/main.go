@@ -351,19 +351,33 @@ func run() error {
 		return fmt.Errorf("wiring fleet service: %w", err)
 	}
 
+	// Kept port-forwards. Built from the adapter that owns the forwards and
+	// the store that holds their definitions; it is told by the cluster
+	// service when a cluster is connected and never connects one itself.
+	forwardKeeper, err := application.NewForwardKeeper(application.ForwardKeeperDeps{
+		Settings: settingsStore,
+		Forwards: kubernetes,
+		Registry: registry,
+		Logger:   logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring forward keeper: %w", err)
+	}
+
 	// WIRED AFTER THE SERVICES IT RELEASES, for the reason given at
 	// metricsQueryService above: everything in the Invalidators list has to
 	// exist before the list is composed, and the fleet service is the last of
 	// them because it reads through workloadService and browseService.
 	clusterService, err := application.NewClusterService(application.ClusterServiceDeps{
-		Kubeconfig: kubernetes,
-		Cluster:    kubernetes,
-		Workloads:  kubernetes,
-		Metrics:    kubernetes,
-		Events:     desktop,
-		Registry:   registry,
-		Catalog:    catalog,
-		Logger:     logger,
+		Kubeconfig:  kubernetes,
+		Cluster:     kubernetes,
+		Workloads:   kubernetes,
+		Metrics:     kubernetes,
+		Events:      desktop,
+		Registry:    registry,
+		Catalog:     catalog,
+		Logger:      logger,
+		OnConnected: forwardKeeper,
 		// What a disconnect releases, in one list, composed here for the
 		// reason Invalidate is not a port: it exists to serve caching and
 		// goroutine ownership, not the domain. The adapter releases its
@@ -549,7 +563,7 @@ func run() error {
 	// both track a resource PodSteer created (a bound socket, a privileged
 	// pod) and both must tear it down where the record lives, so they share
 	// the adapter rather than a service layer that would only forward calls.
-	managementAPI, err := wailsadapter.NewManagementAPI(managementService, kubernetes, kubernetes, workloadService, desktop, logger)
+	managementAPI, err := wailsadapter.NewManagementAPI(managementService, kubernetes, kubernetes, workloadService, forwardKeeper, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring management API: %w", err)
 	}
@@ -700,6 +714,11 @@ func run() error {
 			// to stop and the only one that would otherwise keep stat'ing
 			// files while everything below it is being torn down.
 			kubeconfigWatcher.Stop()
+			// The keeper before the forwards: a restore finishing after the
+			// sweep would start a forward nothing will ever stop. Its
+			// definitions stay in the settings file — quitting is not
+			// stopping, which is what "keep across restarts" means.
+			forwardKeeper.Close()
 			kubernetes.StopAllPortForwards()
 			// Node shells next, and for a sharper reason than a leaked socket:
 			// each is a PRIVILEGED pod on a node, and a process that exits

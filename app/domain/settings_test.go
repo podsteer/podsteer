@@ -12,6 +12,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -387,7 +388,7 @@ func TestClusterReportsTheDefaultsForAClusterWithNoEntry(t *testing.T) {
 
 	got := settings.Cluster("never-opened")
 
-	if got != domain.DefaultClusterSettings() {
+	if !reflect.DeepEqual(got, domain.DefaultClusterSettings()) {
 		t.Fatalf("Cluster() = %+v, want the defaults", got)
 	}
 	if got.MetricsQuery.Mode != domain.MetricsQueryOff {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -31,6 +32,8 @@ type ManagementAPI struct {
 	// this port" and the adapter's, and inserting a layer that only forwards
 	// arguments would be a place for the record and the goroutine to drift.
 	forwards ports.PortForwardPort
+	// keeper persists the forwards the operator asked to keep across restarts.
+	keeper *application.ForwardKeeper
 	// workloads reads the pods a drain plan is built from. Borrowed here
 	// rather than duplicated: PlanDrain needs DrainCandidates, which is a
 	// WorkloadService read (see ports.WorkloadService.DrainCandidates), and
@@ -52,7 +55,7 @@ type ManagementAPI struct {
 }
 
 // NewManagementAPI returns a new management API.
-func NewManagementAPI(management *application.ManagementService, forwards ports.PortForwardPort, nodeShells ports.NodeShellPort, workloads ports.WorkloadService, app *App, logger *slog.Logger) (*ManagementAPI, error) {
+func NewManagementAPI(management *application.ManagementService, forwards ports.PortForwardPort, nodeShells ports.NodeShellPort, workloads ports.WorkloadService, keeper *application.ForwardKeeper, app *App, logger *slog.Logger) (*ManagementAPI, error) {
 	switch {
 	case management == nil:
 		return nil, errors.New("wails: ManagementAPI requires a ManagementService")
@@ -62,6 +65,8 @@ func NewManagementAPI(management *application.ManagementService, forwards ports.
 		return nil, errors.New("wails: ManagementAPI requires a NodeShellPort")
 	case workloads == nil:
 		return nil, errors.New("wails: ManagementAPI requires a WorkloadService")
+	case keeper == nil:
+		return nil, errors.New("wails: ManagementAPI requires a ForwardKeeper")
 	case app == nil:
 		return nil, errors.New("wails: ManagementAPI requires an App")
 	}
@@ -71,6 +76,7 @@ func NewManagementAPI(management *application.ManagementService, forwards ports.
 	}
 
 	return &ManagementAPI{
+		keeper:     keeper,
 		management: management,
 		forwards:   forwards,
 		nodeShells: nodeShells,
@@ -757,10 +763,24 @@ type PortForward struct {
 	// replacement is being sought. The local port stays bound throughout, so
 	// whatever is pointed at it keeps its address and simply stalls.
 	Reconnecting bool `json:"reconnecting"`
+	// Lost reports that the reconnect window ran out. The row stays, nothing
+	// is bound, and the forward keeps looking slowly; ReconnectPortForward
+	// asks it to try again at once and StopPortForward dismisses it.
+	Lost bool `json:"lost"`
+	// Kept reports that this forward is saved and will be restored when its
+	// cluster is next connected after a restart.
+	Kept bool `json:"kept"`
+	// TargetKind and TargetName say what was asked for — "pod" or "service" —
+	// as against Pod, which is wherever it landed.
+	TargetKind string `json:"targetKind"`
+	TargetName string `json:"targetName"`
 }
 
 func toPortForward(forward domain.Forward) PortForward {
 	return PortForward{
+		Lost:         forward.Lost,
+		TargetKind:   string(forward.Target.Kind),
+		TargetName:   forward.Target.Name,
 		ID:           forward.ID,
 		ClusterID:    forward.ClusterID.String(),
 		Namespace:    forward.Namespace.String(),
@@ -812,6 +832,17 @@ func (m *ManagementAPI) StartServicePortForward(clusterID, namespace, service, s
 		return PortForward{}, apiError(m.logger, "StartServicePortForward", err)
 	}
 
+	// The Service is what a kept forward is rebuilt from; the pod it landed on
+	// today is not.
+	if err := m.forwards.SetForwardTarget(forward.ID, domain.ForwardTarget{
+		Kind:        domain.ForwardToService,
+		Name:        service,
+		ServicePort: servicePort,
+		PortName:    target.PortName,
+	}); err == nil {
+		forward.Target = domain.ForwardTarget{Kind: domain.ForwardToService, Name: service}
+	}
+
 	m.logger.Info("service port forward started",
 		slog.String("cluster", clusterID),
 		slog.String("service", service),
@@ -859,6 +890,13 @@ func (m *ManagementAPI) StartPortForward(clusterID, namespace, pod, podUID strin
 
 // StopPortForward closes one forward.
 func (m *ManagementAPI) StopPortForward(forwardID string) error {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	// Stopping is a decision, and a stopped forward must not come back at the
+	// next launch. Quitting is not stopping and does not pass through here.
+	m.keeper.ForgetLive(ctx, forwardID)
+
 	if err := m.forwards.StopPortForward(forwardID); err != nil {
 		return apiError(m.logger, "StopPortForward", err)
 	}
@@ -873,13 +911,125 @@ func (m *ManagementAPI) StopPortForward(forwardID string) error {
 // connection died, and the stop button does nothing because there is nothing
 // left to stop.
 func (m *ManagementAPI) ListPortForwards() ([]PortForward, error) {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
 	forwards := m.forwards.ListPortForwards()
+
+	// A failure to read the settings must not hide live forwards: they are
+	// listed as not kept, which is the safe misreport.
+	kept, err := m.keeper.KeptPorts(ctx)
+	if err != nil {
+		m.logger.Warn("could not read which forwards are kept", slog.String("error", err.Error()))
+	}
 
 	out := make([]PortForward, 0, len(forwards))
 	for _, forward := range forwards {
-		out = append(out, toPortForward(forward))
+		dto := toPortForward(forward)
+		dto.Kept = kept[forward.ClusterID][forward.LocalPort]
+		out = append(out, dto)
 	}
 	return out, nil
+}
+
+// PausedPortForward is a forward saved across restarts that is not running.
+type PausedPortForward struct {
+	ClusterID  string `json:"clusterId"`
+	Namespace  string `json:"namespace"`
+	TargetKind string `json:"targetKind"`
+	TargetName string `json:"targetName"`
+	// Port is what was forwarded: the container port for a pod, the Service
+	// port (a number or a name) for a Service.
+	Port      string `json:"port"`
+	LocalPort int    `json:"localPort"`
+	// State is "paused" (its cluster is not connected), "restoring" or
+	// "failed". Reason is set only for "failed".
+	State  string `json:"state"`
+	Reason string `json:"reason"`
+}
+
+// ListPausedPortForwards reports the kept forwards that are not running.
+//
+// Nothing here connects a cluster. A forward whose cluster is not open is
+// "paused" until the operator opens it; opening it restores the forward.
+func (m *ManagementAPI) ListPausedPortForwards() ([]PausedPortForward, error) {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	paused, err := m.keeper.Paused(ctx)
+	if err != nil {
+		return nil, apiError(m.logger, "ListPausedPortForwards", err)
+	}
+
+	out := make([]PausedPortForward, 0, len(paused))
+	for _, p := range paused {
+		port := p.Kept.Target.ServicePort
+		if p.Kept.Target.Kind == domain.ForwardToPod {
+			port = strconv.Itoa(p.Kept.RemotePort)
+		}
+		out = append(out, PausedPortForward{
+			ClusterID:  p.ClusterID.String(),
+			Namespace:  p.Kept.Namespace.String(),
+			TargetKind: string(p.Kept.Target.Kind),
+			TargetName: p.Kept.Target.Name,
+			Port:       port,
+			LocalPort:  p.Kept.LocalPort,
+			State:      string(p.State),
+			Reason:     p.Reason,
+		})
+	}
+	return out, nil
+}
+
+// SetPortForwardKept turns "keep across restarts" on or off for a running
+// forward. Opt-in per forward: nothing is saved unless this is called with
+// true, and what is saved is the definition only — see domain.KeptForward.
+func (m *ManagementAPI) SetPortForwardKept(forwardID string, keep bool) error {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	if err := m.keeper.Keep(ctx, forwardID, keep); err != nil {
+		return apiError(m.logger, "SetPortForwardKept", err)
+	}
+	return nil
+}
+
+// ResumePausedPortForward retries a kept forward whose restore failed.
+func (m *ManagementAPI) ResumePausedPortForward(clusterID string, localPort int) error {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(m.logger, "ResumePausedPortForward", err)
+	}
+	if err := m.keeper.Resume(ctx, id, localPort); err != nil {
+		return apiError(m.logger, "ResumePausedPortForward", err)
+	}
+	return nil
+}
+
+// ForgetPausedPortForward removes a kept definition that is not running.
+func (m *ManagementAPI) ForgetPausedPortForward(clusterID string, localPort int) error {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(m.logger, "ForgetPausedPortForward", err)
+	}
+	if err := m.keeper.Forget(ctx, id, localPort); err != nil {
+		return apiError(m.logger, "ForgetPausedPortForward", err)
+	}
+	return nil
+}
+
+// ReconnectPortForward asks a lost forward to start looking again now.
+func (m *ManagementAPI) ReconnectPortForward(forwardID string) error {
+	if err := m.forwards.ReconnectPortForward(forwardID); err != nil {
+		return apiError(m.logger, "ReconnectPortForward", err)
+	}
+	return nil
 }
 
 // CordonNode marks a node schedulable or unschedulable.
@@ -991,6 +1141,10 @@ func (m *ManagementAPI) DrainNode(clusterID, name string, force, deleteEmptyDirD
 // free before the call returns — which the underlying registry teardown
 // already provides; this only exposes it.
 func (m *ManagementAPI) StopAllPortForwards() error {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	m.keeper.ForgetAllLive(ctx)
 	m.forwards.StopAllPortForwards()
 	return nil
 }

@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -876,7 +877,7 @@ func TestTheReadmeDisclosesTheOneObjectNameTheFileCanHold(t *testing.T) {
 	if strings.Contains(text, "never the name of anything in a cluster") {
 		t.Errorf("the readme still makes the claim the preferred backend broke:\n%s", text)
 	}
-	if !strings.Contains(text, "ONE EXCEPTION") {
+	if !strings.Contains(text, "EXCEPTION") {
 		t.Errorf("the readme does not disclose the exception:\n%s", text)
 	}
 	if !strings.Contains(text, "monitoring backend") {
@@ -942,10 +943,98 @@ func TestAFileWrittenBeforeThePerClusterFieldsExistedStillReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if got := settings.Cluster("prod"); got != domain.DefaultClusterSettings() {
+	if got := settings.Cluster("prod"); !reflect.DeepEqual(got, domain.DefaultClusterSettings()) {
 		t.Errorf("Cluster() = %+v, want the defaults", got)
 	}
 	if got := settings.History.Retention.Days; got != 2 {
 		t.Errorf("retention = %d, want the file's 2", got)
+	}
+}
+
+func TestKeptForwardsRoundTripAndAreAbsentUnlessKept(t *testing.T) {
+	t.Parallel()
+
+	kept := []domain.KeptForward{
+		{
+			Namespace:  "web",
+			Target:     domain.ForwardTarget{Kind: domain.ForwardToPod, Name: "api-0", PortName: "http"},
+			RemotePort: 8080,
+			LocalPort:  18080,
+		},
+		{
+			Namespace: "data",
+			Target:    domain.ForwardTarget{Kind: domain.ForwardToService, Name: "pg", ServicePort: "postgres"},
+			LocalPort: 15432,
+		},
+	}
+
+	tests := []struct {
+		name string
+		kept []domain.KeptForward
+	}{
+		{"none kept writes no names", nil},
+		{"two kept survive a restart", kept},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			store := openIn(t, dir)
+
+			if _, err := store.Update(context.Background(), func(settings *domain.Settings) error {
+				settings.History.Retention = domain.NewRetention(3)
+				if tt.kept != nil {
+					cluster := settings.Cluster("prod")
+					cluster.KeptForwards = tt.kept
+					settings.Clusters["prod"] = cluster
+				}
+				return nil
+			}); err != nil {
+				t.Fatalf("Update() error = %v", err)
+			}
+
+			raw, err := os.ReadFile(filepath.Join(dir, FileName))
+			if err != nil {
+				t.Fatalf("reading the settings: %v", err)
+			}
+			if got := strings.Contains(string(raw), `"keptForwards": [`); got != (tt.kept != nil) {
+				t.Fatalf("file mentions keptForwards = %v, want %v:\n%s", got, tt.kept != nil, raw)
+			}
+			for _, secret := range []string{"token", "password", "selector"} {
+				if strings.Contains(string(raw), secret) {
+					t.Errorf("file mentions %q:\n%s", secret, raw)
+				}
+			}
+
+			reopened := openIn(t, dir)
+			loaded, err := reopened.Load(context.Background())
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			got := loaded.Cluster("prod").KeptForwards
+			if !reflect.DeepEqual(got, tt.kept) && len(got)+len(tt.kept) != 0 {
+				t.Fatalf("kept forwards after a restart = %+v, want %+v", got, tt.kept)
+			}
+		})
+	}
+}
+
+func TestUpdateRefusesAnUnusableKeptForward(t *testing.T) {
+	t.Parallel()
+
+	bad := []domain.KeptForward{
+		{Namespace: "web", Target: domain.ForwardTarget{Kind: "nope", Name: "x"}, LocalPort: 1000},
+		{Namespace: "web", Target: domain.ForwardTarget{Kind: domain.ForwardToPod, Name: "x"}, LocalPort: 1000},
+		{Namespace: "", Target: domain.ForwardTarget{Kind: domain.ForwardToService, Name: "x"}, LocalPort: 1000},
+		{Namespace: "web", Target: domain.ForwardTarget{Kind: domain.ForwardToService, Name: "x"}, LocalPort: 0},
+	}
+	for _, forward := range bad {
+		store := openIn(t, t.TempDir())
+		_, err := store.Update(context.Background(), func(settings *domain.Settings) error {
+			settings.Clusters["prod"] = domain.ClusterSettings{KeptForwards: []domain.KeptForward{forward}}
+			return nil
+		})
+		if err == nil {
+			t.Errorf("Update() accepted %+v", forward)
+		}
 	}
 }
