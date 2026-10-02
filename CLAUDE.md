@@ -344,6 +344,57 @@ Three rules it holds to, each with a test:
 Narrowed reads — one object, one node's pods, one workload's pods — go
 straight through. Nothing on-demand is cached.
 
+## The pod table is paged in Go
+
+Every pod row carries live usage, so the whole list changes on every tick, and
+it used to cross the bridge whole every tick to be filtered and cut to fifty
+rows in the webview: **11.4 MB at 5,000 pods, 22.9 MB at 10,000**
+(`TestPodListPayloadSize`). Now `WorkloadAPI.QueryPods` answers one page and
+the counts around it (~118 KB for 50 rows, held to 160 KB by
+`TestPodPayloadBudget`). Hashes and resourceVersion deltas were rejected:
+usage moves every tick, and the watch store is not always serving.
+
+- **The rules are the frontend's, ported, and held together by one fixture.**
+  `domain.QueryPods` (`app/domain/podquery.go`) runs `$lib/query`'s language
+  (`textquery.go`), `$lib/podStatusFilters`' chips, `$lib/customColumns`' search
+  text and `$lib/sort`'s collation. `web/src/lib/filter.fixtures.json` is run
+  by BOTH `filter.node.test.ts` (the TypeScript pipeline as the session ran
+  it) and `app/domain/podquery_test.go`. Change a rule in both and regenerate
+  the fixture from TypeScript (`UPDATE_POD_FIXTURE=1`), never the reverse.
+- **Collation is `Intl.Collator({numeric, sensitivity: 'base'})`, rebuilt.**
+  The domain may import only the standard library, so `textorder.go` does the
+  digit-run splitting and comparing and `app/adapters/collation` supplies each
+  character's Unicode root weight from `golang.org/x/text`. Not x/text's own
+  `Numeric` option: it mis-orders lone-zero digit runs, i.e. IP addresses.
+  Memory sorts by the DISPLAYED figure (`domain.DisplayedBytes`, cross-checked
+  against `formatBytes`), so two rows reading `256.0MiB` stay a stable tie.
+- **One known divergence: the regex dialect.** RE2 has no lookaround or
+  backreferences; such a pattern is invalid in Go, matches nothing, and
+  `PodPage.queryError` is what the search field shows.
+- **Inputs:** search (settled, 150 ms debounce), chips, sort, page, page size,
+  custom columns form `session.podQuery`; a change of `pageQueryKey` re-asks
+  from `PodsView`/`FleetView` via `requeryPods`, on the same `#request`
+  counter `refresh()` uses, so the last one ASKED lands.
+- **Whole-match reads happen on a gesture, never a tick.** "Select all N
+  matching" fetches keys only (`ListPodKeys`: namespace, name, UID,
+  controller); the CSV export is rendered (`podCSVCell`, csv.ts's format and
+  formula guard) and written by Go (`ExportPodsCSV`, the shared save dialog);
+  `CSVExport` may be a writer instead of rows. Bulk plans read each ticked
+  pod's facts as last shown (`#podFacts`), so ticks survive paging.
+- **All clusters too.** `FleetService.QueryPods` fans out exactly as `ListPods`
+  does, then applies the frontend's old `mergeFleet` rules per cluster in Go
+  (`podMemo`: slow/unreachable keep their last rows marked stale, a refusal
+  drops them), then pages the merged list; the strip's cluster selection
+  narrows rows, not reads. Workloads/events/any-kind are still merged in the
+  webview.
+
+**What only sees the page now, and is a known loss:** the command palette's pod
+search; per-pod usage history (ADR 0004 records from list rows — the planned
+fix is a Go-side in-memory ring); pod findings filed on the session timeline;
+the open drawer's live refresh when its pod is not on the current page; the
+column picker's key suggestions. `ListPods` itself is unchanged for every
+other caller (node/workload pods, MCP).
+
 ## Custom columns quote metadata, and annotations travel by projection
 
 An operator can put any label or annotation key on any list as a column
@@ -701,7 +752,15 @@ about before adding a fourth:
   server's node proxy. It needs the `nodes/proxy` permission, which plenty of
   clusters do not grant, so it degrades into `Unavailable` under its own name
   rather than under "metrics". It is one request per node, hence bounded
-  concurrency and a one-minute cache; a partial answer is a success.
+  concurrency and a one-minute cache; a partial answer is a success. **The
+  cache is fronted by a singleflight** (`filesystemCache.do`): the cache is
+  written when a sweep FINISHES, so without it every assessment arriving while
+  a sweep was still running (overview, background assessment, a second tab,
+  the sampler) started its own sweep of every kubelet. The first caller leads
+  on a context detached from its cancellation (`detach`, as `readcache.go`
+  does), the rest wait on their own; a sweep overtaken by a disconnect is not
+  stored. Not routed through `cachedRead`: that cache never reuses a failure,
+  this one holds a refusal for the minute.
 - **Kubernetes support windows are a hand-compiled table** in
   `app/domain/release.go`. It goes stale by construction, so a release it does
   not cover is reported as `SupportUnknown` and produces nothing. Never make an
@@ -1501,7 +1560,9 @@ when the session's own poll fires with the fleet view selected, and a session
 polls only while its tab is in front; select another kind, or another tab,
 and the fan-out simply stops. The command palette reads the merged rows the
 way it reads any view's own: only while that view is on screen, never by
-fetching across clusters for a keystroke.
+fetching across clusters for a keystroke — and for pods that is the current
+page, because the merged pod table is paged in Go (see "The pod table is
+paged in Go"; Go also keeps a slow cluster's stale pod rows now).
 
 **So is its namespace.** `fleet.namespace` (default All namespaces) scopes the
 fan-out for the whole window; `session.scopeNamespace` is what the navigator
@@ -2239,9 +2300,12 @@ Three things about that crossing are load-bearing:
   reads it, and it is worth dropping because `Event` crosses only while
   somebody is on the Events page whereas this crosses on EVERY tick on EVERY
   view. Order of 280–400 KB per tick at the adapter's 1000-event cap, roughly
-  40% less than the full row would be, against the 6–13 MB a tick already
-  costs on a 5,000-pod cluster. That is the price of the fix, and it is paid
-  on every view rather than on one.
+  40% less than the full row would be. (It was measured against the 6–13 MB
+  the pod table's tick cost on a 5,000-pod cluster when it shipped the whole
+  list; since the table is paged in Go that tick is ~120 KB, which makes this
+  the largest thing crossing on every tick rather than a rounding error —
+  see "The pod table is paged in Go".) That is the price of the fix, and it
+  is paid on every view rather than on one.
 - **Nothing is capped on the bridge, deliberately.** The only bound is
   `eventListLimit` in `app/adapters/k8s/workload.go`, which the Events page and
   the event findings are already subject to. A tighter cap here would be an
