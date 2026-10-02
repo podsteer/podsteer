@@ -157,6 +157,7 @@ function page(names: string[], counts: Partial<PodPage> = {}): PodPage {
     unhealthy: 0,
     chipCounts: {},
     queryError: '',
+    pinned: null,
     ...counts,
   }
 }
@@ -278,6 +279,32 @@ describe('the pod table, paged in Go', () => {
     // Planned from what the keys said, not from rows the webview never held.
     const planned = open.bulkItems.map((item) => `${item.namespace}/${item.name}:${item.controllerName}`)
     expect(planned.sort()).toEqual(['prod/web-1:web-rs', 'prod/web-2:web-rs', 'staging/web-9:'])
+  })
+
+  it('keeps the open drawer’s pod live when it is not on the page', async () => {
+    // THE FREEZE THIS GUARDS. The drawer re-found its pod in the list each
+    // tick; with only a page held, a pod opened from page 1 froze once the
+    // operator paged on. Go now returns it beside the page.
+    queryPods.mockResolvedValueOnce(page(['web-1']))
+    await open.refresh()
+    await open.openDetail('web-1', 'prod')
+    expect(open.podQuery.pinned).toEqual({ namespace: 'prod', name: 'web-1' })
+
+    const moved = { name: 'web-1', namespace: 'prod', cpu: '0.500', restarts: 7 } as Pod
+    queryPods.mockResolvedValueOnce(page(['web-2'], { pinned: moved }))
+    await open.refresh()
+
+    expect(open.pagedPods.map((pod) => pod.name)).toEqual(['web-2'])
+    expect(open.selectedPod?.restarts).toBe(7)
+  })
+
+  it('does not count opening a drawer as a new page', async () => {
+    queryPods.mockResolvedValueOnce(page(['web-1']))
+    await open.refresh()
+    const before = open.pageQueryKey
+    await open.openDetail('web-1', 'prod')
+
+    expect(open.pageQueryKey).toBe(before)
   })
 
   it('plans a pod ticked on another page from when it was shown', async () => {

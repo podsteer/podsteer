@@ -29,6 +29,15 @@ type PodQuery struct {
 	// Offset and Limit select the page.
 	Offset int `json:"offset"`
 	Limit  int `json:"limit"`
+	// Pinned names the pod open in the drawer, returned beside the page
+	// whatever the page. Empty name pins nothing.
+	Pinned PodRef `json:"pinned"`
+}
+
+// PodRef names one pod within a list.
+type PodRef struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
 }
 
 // CustomColumnSpec is one custom column, as $lib/customColumns persists it.
@@ -47,6 +56,7 @@ func (q PodQuery) toDomain() domain.PodQuery {
 		Clusters:   q.Clusters,
 		Offset:     q.Offset,
 		Limit:      q.Limit,
+		Pinned:     domain.PodRef{Namespace: q.Pinned.Namespace, Name: q.Pinned.Name},
 	}
 	for _, chip := range q.Chips {
 		query.Chips = append(query.Chips, domain.PodStatusChip(chip))
@@ -76,6 +86,9 @@ type PodPage struct {
 	// QueryError explains a search that did not parse, and so matched
 	// nothing — a regex the webview accepts and Go's dialect does not.
 	QueryError string `json:"queryError"`
+	// Pinned is the pinned pod, from the whole list, or null when it is no
+	// longer there.
+	Pinned *Pod `json:"pinned"`
 }
 
 func toPodPage(page domain.PodPage, now time.Time) PodPage {
@@ -83,7 +96,13 @@ func toPodPage(page domain.PodPage, now time.Time) PodPage {
 	for chip, count := range page.ChipCounts {
 		counts[string(chip)] = count
 	}
+	var pinned *Pod
+	if page.Pinned != nil {
+		row := toPod(*page.Pinned, now)
+		pinned = &row
+	}
 	return PodPage{
+		Pinned:     pinned,
 		Rows:       toPods(page.Rows, now),
 		Offset:     page.Offset,
 		Matched:    page.Matched,

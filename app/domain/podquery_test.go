@@ -245,6 +245,30 @@ func TestQueryPodsPagesAndCounts(t *testing.T) {
 	})
 }
 
+func TestQueryPodsReturnsThePinnedPodWhereverItIs(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	pods := synthPods(t, 120)
+
+	// Off the page, and filtered out by the search: still returned, because
+	// the drawer is open on it.
+	page := domain.QueryPods(pods, domain.PodQuery{Limit: 10, Text: "pod-00", Pinned: domain.PodRef{Namespace: "team-17", Name: "pod-117"}}, now, collation.Key)
+	if page.Pinned == nil || page.Pinned.Name() != "pod-117" {
+		t.Fatalf("pinned = %v, want pod-117", page.Pinned)
+	}
+	for _, row := range page.Rows {
+		if row.Name() == "pod-117" {
+			t.Fatal("pinning put the pod on the page")
+		}
+	}
+
+	page = domain.QueryPods(pods, domain.PodQuery{Limit: 10, Pinned: domain.PodRef{Namespace: "team-00", Name: "gone"}}, now, collation.Key)
+	if page.Pinned != nil {
+		t.Fatalf("pinned = %v for a pod not in the list, want nil", page.Pinned.Name())
+	}
+}
+
 func TestMatchingPodsIgnoresThePage(t *testing.T) {
 	t.Parallel()
 

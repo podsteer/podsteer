@@ -128,6 +128,7 @@ export type {
     PodKey,
     PodPage,
     PodQuery,
+    PodRef,
     PodSummary,
     PolicyRule,
     PortForward,

@@ -39,6 +39,7 @@ function answer(cluster: string, names: string[]) {
 }
 
 const query = {
+  pinned: { namespace: '', name: '' },
   text: '',
   chips: [],
   sortColumn: '',

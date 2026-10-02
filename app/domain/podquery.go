@@ -182,7 +182,21 @@ type PodQuery struct {
 	// last page, as the table's own pager clamps it.
 	Offset int
 	Limit  int
+	// Pinned names one pod to return beside the page whatever the page —
+	// the one open in the detail drawer, which must keep refreshing (and
+	// keep recording its usage) when it is not among the rows on screen.
+	// The zero value pins nothing.
+	Pinned PodRef
 }
+
+// PodRef names one pod within a list.
+type PodRef struct {
+	Namespace string
+	Name      string
+}
+
+// IsZero reports whether the reference names nothing.
+func (r PodRef) IsZero() bool { return r.Name == "" }
 
 // NewPodQuery validates a page query.
 func NewPodQuery(q PodQuery) (PodQuery, error) {
@@ -343,6 +357,10 @@ type PodPage struct {
 	// QueryError explains a search that could not be parsed, and so matched
 	// nothing. Empty otherwise.
 	QueryError string
+	// Pinned is the pod the query pinned, read from the whole list — filters
+	// and page aside — or nil when it is not in the list (deleted, or never
+	// there).
+	Pinned *Pod
 }
 
 // podQueryResult is a query's verdict over a set of rows, as indices into
@@ -608,6 +626,16 @@ func QueryPods(pods []Pod, q PodQuery, now time.Time, collation CollationKey) Po
 		page.Total++
 		if !rows[i].IsHealthy {
 			page.Unhealthy++
+		}
+	}
+
+	if !q.Pinned.IsZero() {
+		for i := range pods {
+			if pods[i].name == q.Pinned.Name && pods[i].namespace.String() == q.Pinned.Namespace {
+				pinned := pods[i]
+				page.Pinned = &pinned
+				break
+			}
 		}
 	}
 

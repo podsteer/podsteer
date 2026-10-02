@@ -421,7 +421,7 @@ export const RICH_KIND_IDS = {
 const SEARCH_DEBOUNCE_MS = 150
 
 /** What the pod table's last page said about the whole list. */
-export type PodPageCounts = Omit<PodPage, 'rows'>
+export type PodPageCounts = Omit<PodPage, 'rows' | 'pinned'>
 
 /** The counts before any page has landed. */
 export const EMPTY_POD_PAGE: PodPageCounts = {
@@ -698,6 +698,18 @@ export class ClusterSession {
    * planned while page 3 is on screen. See bulkItems.
    */
   #podFacts = new Map<string, PodFacts>()
+
+  /**
+   * The pod open in the drawer, as the last page query read it from the
+   * WHOLE list — null when none is open or it has gone.
+   *
+   * THE DRAWER'S POD IS OFTEN NOT ON THE PAGE: opened from page 1 and the
+   * operator paged on, or opened from a search that has since changed. It
+   * used to be re-found in the list on every tick, and with only a page held
+   * it froze — stale figures, and no usage recorded. Go returns it beside the
+   * page instead (PodQuery.pinned), so it refreshes like any row.
+   */
+  #pinnedPod: Pod | null = null
 
   nodes = $state.raw<Node[]>([])
   workloads = $state.raw<Workload[]>([])
@@ -1325,6 +1337,13 @@ export class ClusterSession {
    * cost the debounce exists to avoid.
    */
   readonly podQuery = $derived<PodQuery>({
+    // The pod open in the drawer, returned beside the page whatever the
+    // page — see pinnedPod. Not part of pageQueryKey: opening a drawer is
+    // not a new page, and the next tick carries it.
+    pinned:
+      this.selectedPod && this.selectedName
+        ? { namespace: this.selectedNamespace, name: this.selectedName }
+        : { namespace: '', name: '' },
     text: this.search,
     chips: this.podStatusFilters,
     sortColumn: this.sort?.columnId ?? '',
@@ -1341,6 +1360,7 @@ export class ClusterSession {
    * those are per kind, and the merged table is not one.
    */
   readonly fleetPodQuery = $derived<PodQuery>({
+    pinned: { namespace: '', name: '' },
     text: this.search,
     chips: this.fleetChips.pods,
     sortColumn: this.sort?.columnId ?? '',
@@ -1361,7 +1381,7 @@ export class ClusterSession {
    */
   readonly pageQueryKey = $derived(
     this.viewMode === 'pods'
-      ? `pods:${JSON.stringify(this.podQuery)}`
+      ? `pods:${JSON.stringify({ ...this.podQuery, pinned: undefined })}`
       : this.viewMode === 'fleet' && fleet.tab === 'pods'
         ? `fleet:${JSON.stringify(this.fleetPodQuery)}`
         : '',
@@ -1765,7 +1785,11 @@ export class ClusterSession {
    */
   #findPod(name: string, namespace: string): Pod | null {
     if (this.viewMode !== 'pods') return null
-    return this.pods.find((pod) => pod.name === name && pod.namespace === namespace) ?? null
+    const pinned = this.#pinnedPod
+    return (
+      this.pods.find((pod) => pod.name === name && pod.namespace === namespace) ??
+      (pinned && pinned.name === name && pinned.namespace === namespace ? pinned : null)
+    )
   }
 
   #findNamespace(name: string): NamespaceSummary | null {
@@ -2747,6 +2771,7 @@ export class ClusterSession {
       case 'pods': {
         const page = rows as PodPage
         this.pods = page.rows ?? []
+        this.#pinnedPod = page.pinned ?? null
         this.podPage = {
           offset: page.offset,
           matched: page.matched,
@@ -2962,9 +2987,12 @@ export class ClusterSession {
     }
 
     if (this.selectedPod) {
-      const fresh = this.pods.find(
-        (pod) => pod.name === this.selectedName && pod.namespace === this.selectedNamespace,
-      )
+      // The page first, then the pinned copy Go read from the whole list —
+      // see #pinnedPod.
+      const fresh =
+        this.pods.find(
+          (pod) => pod.name === this.selectedName && pod.namespace === this.selectedNamespace,
+        ) ?? this.#findPod(this.selectedName, this.selectedNamespace) ?? undefined
       if (fresh) {
         this.selectedPod = fresh
         this.#recordUsage(fresh)

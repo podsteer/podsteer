@@ -3214,6 +3214,12 @@ export interface PodPage {
      * nothing — a regex the webview accepts and Go's dialect does not.
      */
     "queryError": string;
+
+    /**
+     * Pinned is the pinned pod, from the whole list, or null when it is no
+     * longer there.
+     */
+    "pinned": Pod | null;
 }
 
 /**
@@ -3258,6 +3264,20 @@ export interface PodQuery {
      */
     "offset": number;
     "limit": number;
+
+    /**
+     * Pinned names the pod open in the drawer, returned beside the page
+     * whatever the page. Empty name pins nothing.
+     */
+    "pinned": PodRef;
+}
+
+/**
+ * PodRef names one pod within a list.
+ */
+export interface PodRef {
+    "namespace": string;
+    "name": string;
 }
 
 /**
