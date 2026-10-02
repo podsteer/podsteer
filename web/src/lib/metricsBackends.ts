@@ -39,6 +39,14 @@ export function setBackendLister(next: Lister | null | undefined): void {
   lister = next
 }
 
+/** The node check's remembered verdict, in words. */
+const VERIFIED: Record<string, string> = {
+  verified: 'holds this cluster',
+  fleet: 'holds other clusters too',
+  mismatch: 'appears to hold a different cluster',
+  unverifiable: 'could not be checked',
+}
+
 function text(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
@@ -61,7 +69,7 @@ export async function listMetricsBackends(clusterId: string): Promise<BackendCan
         namespace: text(o.namespace),
         service: text(o.service),
         product: text(o.product) || text(o.kind),
-        detail: text(o.detail) || text(o.message) || text(o.verification),
+        detail: [text(o.detail), VERIFIED[text(o.verified)] ?? ''].filter(Boolean).join(' · '),
       }
     })
     .filter((candidate) => candidate.namespace && candidate.service)

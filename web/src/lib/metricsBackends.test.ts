@@ -12,13 +12,13 @@ describe('metrics backend picker', () => {
   it('reads the candidates defensively', async () => {
     setBackendLister(
       vi.fn().mockResolvedValue([
-        { kind: 'prometheus', product: 'Prometheus', namespace: 'monitoring', service: 'prometheus-operated', detail: 'Verified for this cluster' },
+        { product: 'Prometheus', namespace: 'monitoring', service: 'prometheus-operated', detail: 'kube-prometheus-stack', verified: 'verified', rank: 0 },
         { kind: 'prometheus', namespace: 'linkerd-viz', service: 'prometheus' },
         { namespace: '', service: 'broken' },
       ]),
     )
     expect(await listMetricsBackends('dev')).toEqual([
-      { namespace: 'monitoring', service: 'prometheus-operated', product: 'Prometheus', detail: 'Verified for this cluster' },
+      { namespace: 'monitoring', service: 'prometheus-operated', product: 'Prometheus', detail: 'kube-prometheus-stack · holds this cluster' },
       { namespace: 'linkerd-viz', service: 'prometheus', product: 'prometheus', detail: '' },
     ])
   })
