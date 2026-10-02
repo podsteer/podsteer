@@ -228,7 +228,10 @@ func TestResizePodPatchesInitContainersForASidecar(t *testing.T) {
 	var captured clientgotesting.PatchAction
 	client.PrependReactor("patch", "pods", func(action clientgotesting.Action) (bool, runtime.Object, error) {
 		captured = action.(clientgotesting.PatchAction)
-		return true, sidecarPod(), nil
+		// The resized pod, as a server with sidecar resize returns it.
+		resized := sidecarPod()
+		resized.Spec.InitContainers[0].Resources.Requests[corev1.ResourceCPU] = resource.MustParse("200m")
+		return true, resized, nil
 	})
 
 	adapter := newTestAdapter("dev", client)
@@ -255,5 +258,22 @@ func TestResizePodPatchesInitContainersForASidecar(t *testing.T) {
 	list := spec["initContainers"].([]any)
 	if len(list) != 1 || list[0].(map[string]any)["name"] != "proxy" {
 		t.Errorf("initContainers = %v, want exactly the proxy", list)
+	}
+}
+
+// A server without sidecar resize answers 200 with the pod unchanged; the
+// write must not report that as done.
+func TestResizePodReportsASidecarTheServerSilentlyIgnored(t *testing.T) {
+	client := fake.NewClientset(sidecarPod())
+	client.PrependReactor("patch", "pods", func(clientgotesting.Action) (bool, runtime.Object, error) {
+		return true, sidecarPod(), nil
+	})
+
+	adapter := newTestAdapter("dev", client)
+	err := adapter.ResizePod(context.Background(), "dev", "web", "api-0", domain.ResizePlan{
+		Container: "proxy", Sidecar: true, CPURequest: "200m",
+	})
+	if !errors.Is(err, ports.ErrSidecarResizeUnsupported) {
+		t.Fatalf("err = %v, want ErrSidecarResizeUnsupported", err)
 	}
 }

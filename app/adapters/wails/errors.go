@@ -513,6 +513,10 @@ func classifyError(err error) (ErrorCode, string) {
 			"Kubernetes 1.33, or in-place vertical scaling is turned off. Changing the workload's own " +
 			"resources and letting it roll is the way to do it here."
 
+	case errors.Is(err, ports.ErrSidecarResizeUnsupported):
+		return CodeResizeUnsupported, "This cluster accepted the request but did not resize the sidecar — " +
+			"sidecar resize needs Kubernetes 1.37 or the InPlacePodVerticalScalingInitContainers feature."
+
 	case errors.Is(err, ports.ErrEphemeralContainersUnsupported):
 		return CodeEphemeralUnsupported, "This cluster does not support ephemeral debug containers — its API server is too old, or the feature is turned off."
 

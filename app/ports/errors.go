@@ -221,6 +221,12 @@ var (
 	// pod after the failure to tell the two apart.
 	ErrResizeUnsupported = errors.New("this cluster does not support resizing a running pod")
 
+	// ErrSidecarResizeUnsupported means the API server answered 200 to a
+	// sidecar resize and returned the pod UNCHANGED. Where sidecar resize is
+	// not enabled the resize strategy silently drops initContainers resources
+	// before validation, so success is only visible by reading the response.
+	ErrSidecarResizeUnsupported = errors.New("this cluster accepted the sidecar resize but did not apply it")
+
 	// ErrManifestRejected means the API server accepted the REQUEST but
 	// declined the OBJECT (HTTP 422/Invalid) — a schema validation failure,
 	// or an admission webhook's rejection. Distinct from

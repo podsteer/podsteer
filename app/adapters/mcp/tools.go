@@ -882,6 +882,18 @@ type findingEvidenceOut struct {
 	SubjectsTruncated bool `json:"subjectsTruncated,omitempty"`
 }
 
+// hasNamespacedSubject reports whether any subject lives in a namespace.
+// A capped finding listing only cluster-scoped objects (nodes) cannot be
+// hiding objects in a namespace.
+func hasNamespacedSubject(subjects []domain.Subject) bool {
+	for _, subject := range subjects {
+		if !subject.Namespace.IsAll() {
+			return true
+		}
+	}
+	return false
+}
+
 func (t *toolset) clusterFindings(ctx context.Context, args Arguments) (any, error) {
 	id, err := t.cluster(ctx, args)
 	if err != nil {
@@ -928,7 +940,7 @@ func (t *toolset) clusterFindings(ctx context.Context, args Arguments) (any, err
 			if len(kept.Subjects) == 0 {
 				// A capped finding may name objects here that the cap hid;
 				// it cannot be shown, but it must be counted.
-				if finding.Truncated() {
+				if finding.Truncated() && hasNamespacedSubject(finding.Subjects) {
 					unverifiable++
 				}
 				continue

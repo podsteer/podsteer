@@ -677,3 +677,21 @@ func TestClusterFindingsRefusesAnUnknownSeverity(t *testing.T) {
 		t.Fatalf("an unknown severity was accepted: %+v", result.Error)
 	}
 }
+
+func TestClusterFindingsNoteIgnoresCappedFindingsAboutClusterScopedObjects(t *testing.T) {
+	stub := findingsStub(t)
+	nodes := make([]domain.Subject, 0, 25)
+	for index := range 25 {
+		nodes = append(nodes, domain.Subject{Kind: "Node", Name: "node-" + string(rune('a'+index))})
+	}
+	stub.overview.Findings = append(stub.overview.Findings, domain.Finding{
+		ID: "nodes", Severity: domain.SeverityWarning, Title: "NotReady", Count: 40, Subjects: nodes,
+	})
+
+	out := findingsOf(t, newServer(t, stub), map[string]any{"cluster": "staging", "namespace": "billing"})
+	// Only the capped OOM finding (namespaced pods) is unverifiable; the node
+	// finding cannot be hiding anything in a namespace.
+	if !strings.Contains(out.Note, "1 capped finding") {
+		t.Errorf("note = %q, want exactly one unverifiable finding", out.Note)
+	}
+}
