@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/ports"
 )
 
@@ -293,5 +294,12 @@ func TestClassifyErrorSaysThrottledForARateLimit(t *testing.T) {
 	}
 	if strings.Contains(message, "PodDisruptionBudget") {
 		t.Fatalf("a rate limit reads as a budget refusal: %q", message)
+	}
+}
+
+func TestClassifyErrorMapsAForwardThatIsNotRunning(t *testing.T) {
+	code, message := classifyError(fmt.Errorf("keeping forward: %w", application.ErrForwardNotRunning))
+	if code != CodeNotFound || !strings.Contains(message, "no longer running") {
+		t.Fatalf("got %q, %q", code, message)
 	}
 }

@@ -94,6 +94,13 @@ type ForwardKeeperDeps struct {
 	Logger *slog.Logger
 }
 
+// restoreRun is one cluster's restore in flight: cancelled when the cluster is
+// disconnected, and waited for so nothing of it outlives the disconnect.
+type restoreRun struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
 type keptKey struct {
 	cluster   domain.ClusterID
 	localPort int
@@ -113,7 +120,7 @@ type ForwardKeeper struct {
 	mu        sync.Mutex
 	closed    bool
 	failures  map[keptKey]string
-	restoring map[domain.ClusterID]bool
+	restoring map[domain.ClusterID]*restoreRun
 }
 
 // NewForwardKeeper validates deps and returns the keeper.
@@ -139,7 +146,7 @@ func NewForwardKeeper(deps ForwardKeeperDeps) (*ForwardKeeper, error) {
 		ctx:       ctx,
 		cancel:    cancel,
 		failures:  make(map[keptKey]string),
-		restoring: make(map[domain.ClusterID]bool),
+		restoring: make(map[domain.ClusterID]*restoreRun),
 	}, nil
 }
 
@@ -306,7 +313,7 @@ func (k *ForwardKeeper) Paused(ctx context.Context) ([]PausedForward, error) {
 			if k.registry.IsOpen(id) {
 				if reason, failed := k.failures[key]; failed {
 					paused.State, paused.Reason = KeptFailed, reason
-				} else if k.restoring[id] {
+				} else if k.restoring[id] != nil {
 					paused.State = KeptRestoring
 				}
 			}
@@ -331,24 +338,50 @@ func sortedKeys(m map[string]domain.ClusterSettings) []string {
 // ever follows the operator opening the cluster.
 func (k *ForwardKeeper) ClusterConnected(id domain.ClusterID) {
 	k.mu.Lock()
-	if k.closed || k.restoring[id] {
+	if k.closed || k.restoring[id] != nil {
 		k.mu.Unlock()
 		return
 	}
-	k.restoring[id] = true
+	ctx, cancel := context.WithCancel(k.ctx)
+	run := &restoreRun{cancel: cancel, done: make(chan struct{})}
+	k.restoring[id] = run
 	k.wait.Add(1)
 	k.mu.Unlock()
 
 	go func() {
 		defer k.wait.Done()
+		defer close(run.done)
 		defer safego.Recover("forward restore " + id.String())
 		defer func() {
+			cancel()
 			k.mu.Lock()
-			delete(k.restoring, id)
+			// Only our own entry: a disconnect may already have replaced it.
+			if k.restoring[id] == run {
+				delete(k.restoring, id)
+			}
 			k.mu.Unlock()
 		}()
-		k.Restore(k.ctx, id)
+		k.Restore(ctx, id)
 	}()
+}
+
+// ClusterDisconnected cancels the cluster's restore and WAITS for it.
+//
+// Called by the cluster service BEFORE it invalidates the cluster. A restore
+// still running across a disconnect would otherwise start a forward after the
+// sweep, and resolving its target would rebuild the client Invalidate just
+// dropped — re-running the credential plugin for a tab that is closed. The
+// entry is cleared here, so a reconnect straight after restores again.
+func (k *ForwardKeeper) ClusterDisconnected(id domain.ClusterID) {
+	k.mu.Lock()
+	run := k.restoring[id]
+	delete(k.restoring, id)
+	k.mu.Unlock()
+	if run == nil {
+		return
+	}
+	run.cancel()
+	<-run.done
 }
 
 // Restore starts every kept forward of one cluster that is not already
@@ -410,6 +443,12 @@ func (k *ForwardKeeper) start(ctx context.Context, id domain.ClusterID, kept dom
 	ctx, cancel := context.WithTimeout(ctx, restoreTimeout)
 	defer cancel()
 
+	// Re-checked at every step that reaches the cluster: the tab may have been
+	// closed since this was asked for. See ClusterDisconnected.
+	if !k.registry.IsOpen(id) || ctx.Err() != nil {
+		return fmt.Errorf("restoring %s/%s: %w", kept.Namespace, kept.Target.Name, domain.ErrClusterNotConnected)
+	}
+
 	var target domain.ServiceForwardTarget
 	switch kept.Target.Kind {
 	case domain.ForwardToService:
@@ -421,6 +460,9 @@ func (k *ForwardKeeper) start(ctx context.Context, id domain.ClusterID, kept dom
 		return fmt.Errorf("restoring %s/%s: %w", kept.Namespace, kept.Target.Name, err)
 	}
 
+	if !k.registry.IsOpen(id) || ctx.Err() != nil {
+		return fmt.Errorf("restoring %s/%s: %w", kept.Namespace, kept.Target.Name, domain.ErrClusterNotConnected)
+	}
 	forward, err := k.forwards.StartPortForward(ctx, id, kept.Namespace, target.Pod, target.PodUID,
 		kept.LocalPort, target.ContainerPort, target.PortName, target.Protocol, target.Selector)
 	if err != nil {

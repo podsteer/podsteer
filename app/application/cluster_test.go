@@ -328,6 +328,8 @@ type recordingConnectedHook struct {
 	ids []domain.ClusterID
 }
 
+func (h *recordingConnectedHook) ClusterDisconnected(domain.ClusterID) {}
+
 func (h *recordingConnectedHook) ClusterConnected(id domain.ClusterID) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

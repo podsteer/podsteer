@@ -51,6 +51,9 @@ type forwarder struct {
 	// on its slow cadence. Buffered so the nudge never blocks the caller and a
 	// second one while the first is pending is simply dropped.
 	retry chan struct{}
+	// pending is an attempt dialled but not yet adopted by the supervisor,
+	// guarded by mu, so a panic in between can still end it and free its port.
+	pending attempt
 }
 
 func (f *forwarder) snapshot() domain.Forward {
@@ -217,6 +220,11 @@ func (a *Adapter) superviseForward(entry *forwarder, current attempt, portName s
 		if r := recover(); r != nil {
 			_ = safego.Error("port-forward supervisor", r)
 			endAttempt(current)
+			entry.mu.Lock()
+			pending := entry.pending
+			entry.pending = attempt{}
+			entry.mu.Unlock()
+			endAttempt(pending)
 			a.forwards.mu.Lock()
 			delete(a.forwards.byID, entry.snapshot().ID)
 			a.forwards.mu.Unlock()
@@ -277,6 +285,9 @@ func (a *Adapter) superviseForward(entry *forwarder, current attempt, portName s
 		}
 
 		current = next
+		entry.mu.Lock()
+		entry.pending = attempt{}
+		entry.mu.Unlock()
 		entry.update(func(f *domain.Forward) { f.Reconnecting, f.Lost = false, false })
 	}
 }
@@ -417,6 +428,9 @@ func (a *Adapter) tryReconnect(entry *forwarder, forward domain.Forward) (attemp
 		return attempt{}, false
 	}
 
+	entry.mu.Lock()
+	entry.pending = next
+	entry.mu.Unlock()
 	entry.update(func(f *domain.Forward) {
 		f.Pod = replacement
 		f.LocalPort = local

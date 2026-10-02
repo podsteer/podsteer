@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
 )
@@ -533,6 +534,9 @@ func classifyError(err error) (ErrorCode, string) {
 	// have.
 	case errors.Is(err, ports.ErrThrottled):
 		return CodeThrottled, "The cluster is rate limiting PodSteer's requests (HTTP 429). It is not a permissions problem; give it a moment and retry."
+
+	case errors.Is(err, application.ErrForwardNotRunning):
+		return CodeNotFound, "That port-forward is no longer running. It may have been stopped, or its cluster disconnected."
 
 	case errors.Is(err, ports.ErrDisruptionBudget):
 		return CodeDisruptionBudget, "A PodDisruptionBudget refused the eviction: it would leave the workload below its minimum."

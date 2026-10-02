@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
@@ -47,6 +48,9 @@ type keeperForwardsFake struct {
 	live     []domain.Forward
 	started  []domain.Forward
 	failWith error
+	// entered and block make PodForwardTarget slow on demand.
+	entered chan struct{}
+	block   chan struct{}
 }
 
 func (f *keeperForwardsFake) StartPortForward(_ context.Context, id domain.ClusterID, ns domain.NamespaceName, pod, podUID string, localPort, remotePort int, portName, protocol string, selector map[string]string) (domain.Forward, error) {
@@ -70,6 +74,13 @@ func (f *keeperForwardsFake) ServiceForwardTarget(_ context.Context, _ domain.Cl
 }
 
 func (f *keeperForwardsFake) PodForwardTarget(_ context.Context, _ domain.ClusterID, _ domain.NamespaceName, pod string, port int) (domain.ServiceForwardTarget, error) {
+	f.mu.Lock()
+	entered, block := f.entered, f.block
+	f.mu.Unlock()
+	if entered != nil {
+		entered <- struct{}{}
+		<-block
+	}
 	return domain.ServiceForwardTarget{Pod: pod, ContainerPort: port}, nil
 }
 
@@ -275,5 +286,49 @@ func TestClusterConnectedAfterCloseRestoresNothing(t *testing.T) {
 
 	if n := len(forwards.ListPortForwards()); n != 0 {
 		t.Fatalf("a restore started %d forwards after Close", n)
+	}
+}
+
+// A restore in flight across a Disconnect must start nothing: it would put a
+// forward behind the sweep and rebuild a client for a closed tab. A reconnect
+// straight after must restore again.
+func TestDisconnectDuringARestoreStartsNothingAndAReconnectRestores(t *testing.T) {
+	ctx := t.Context()
+	keeper, settings, forwards, registry := newTestKeeper(t)
+	_, _ = settings.Update(ctx, func(s *domain.Settings) error {
+		c := s.Cluster("prod")
+		c.KeptForwards = []domain.KeptForward{{Namespace: "web", RemotePort: 80, LocalPort: 18080,
+			Target: domain.ForwardTarget{Kind: domain.ForwardToPod, Name: "x"}}}
+		s.Clusters["prod"] = c
+		return nil
+	})
+	registry.Open(mustCluster(t, "prod", false))
+
+	forwards.entered, forwards.block = make(chan struct{}, 1), make(chan struct{})
+	keeper.ClusterConnected("prod")
+	<-forwards.entered // the restore is now inside its slow target lookup
+
+	registry.Close("prod") // what Disconnect does first
+	done := make(chan struct{})
+	go func() { keeper.ClusterDisconnected("prod"); close(done) }()
+	close(forwards.block)
+	<-done
+
+	if n := len(forwards.ListPortForwards()); n != 0 {
+		t.Fatalf("%d forwards started across a disconnect, want 0", n)
+	}
+
+	forwards.mu.Lock()
+	forwards.entered, forwards.block = nil, nil
+	forwards.mu.Unlock()
+	registry.Open(mustCluster(t, "prod", false))
+	keeper.ClusterConnected("prod")
+
+	deadline := time.Now().Add(5 * time.Second)
+	for len(forwards.ListPortForwards()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := len(forwards.ListPortForwards()); n != 1 {
+		t.Fatalf("%d forwards after reconnecting, want 1", n)
 	}
 }

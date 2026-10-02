@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/discovery"
@@ -234,6 +235,10 @@ type clients struct {
 type clientFactory struct {
 	cfg    Config
 	logger *slog.Logger
+	// proxyWarned is the last unusable-proxy complaint logged, so the same
+	// one is not repeated on every config build (the credential check builds
+	// one per kubeconfig change).
+	proxyWarned atomic.Value
 
 	mu      sync.RWMutex
 	clients map[domain.ClusterID]*clients
@@ -601,9 +606,12 @@ func (f *clientFactory) restConfig(id domain.ClusterID) (*rest.Config, error) {
 		dialer, err := settings.Dialer()
 		switch {
 		case err != nil:
-			f.logger.Warn("ignoring an unusable proxy setting; using the environment",
-				slog.String("mode", string(settings.Mode)),
-				slog.String("error", err.Error()))
+			if warned, _ := f.proxyWarned.Load().(string); warned != err.Error() {
+				f.proxyWarned.Store(err.Error())
+				f.logger.Warn("ignoring an unusable proxy setting; using the environment",
+					slog.String("mode", string(settings.Mode)),
+					slog.String("error", err.Error()))
+			}
 		case dialer != nil:
 			cfg.Proxy = dialer
 		}

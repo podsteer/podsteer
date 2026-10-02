@@ -95,6 +95,9 @@ func (is Invalidators) Invalidate(id domain.ClusterID) {
 // ClusterConnectedHook is told a cluster has just been connected.
 type ClusterConnectedHook interface {
 	ClusterConnected(id domain.ClusterID)
+	// ClusterDisconnected is called BEFORE the cluster's state is invalidated,
+	// and must not return until work started for it has stopped.
+	ClusterDisconnected(id domain.ClusterID)
 }
 
 type ClusterService struct {
@@ -304,6 +307,12 @@ func (s *ClusterService) Disconnect(ctx context.Context, id domain.ClusterID) er
 	// The catalog must be cleared too, or a cluster's CRDs would linger and
 	// reappear in the navigator when a different cluster is opened.
 	s.catalog.Forget(id)
+
+	// Before the invalidation, so nothing started for this cluster can rebuild
+	// what is about to be released.
+	if s.onConnected != nil {
+		s.onConnected.ClusterDisconnected(id)
+	}
 
 	// And the adapter's caches, or disconnecting releases nothing: the pooled
 	// TLS connections stay open, the disk sweep is served to the next
