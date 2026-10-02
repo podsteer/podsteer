@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"slices"
 	"sort"
 	"strings"
@@ -925,9 +926,18 @@ func istioEndpoints(labels map[string]string) (TrafficEndpoint, TrafficEndpoint,
 	case dst.Workload != "":
 		dst.Service = service
 	case meshKnown(labels["destination_service"]) != "":
-		// No workload behind it: a destination outside the mesh, named by
-		// the host the caller asked for.
-		dst.External = meshKnown(labels["destination_service"])
+		// No workload behind it. AN IN-CLUSTER SERVICE NAME IS STILL A
+		// SERVICE: seen live, a Service with no ready endpoints answers 503
+		// and the source proxy reports destination_workload="unknown" with
+		// destination_service="recommendations.storefront.svc.cluster.local".
+		// That is drawn to the Service's box; only a host that is not a
+		// cluster Service name is outside.
+		host := meshKnown(labels["destination_service"])
+		if namespace, name, ok := inClusterService(host); ok {
+			dst.Namespace, dst.Service = namespace, name
+		} else {
+			dst.External = host
+		}
 	case service != "":
 		dst.External = service
 	default:
@@ -959,7 +969,11 @@ func linkerdEndpoints(labels map[string]string) (TrafficEndpoint, TrafficEndpoin
 		// Not a meshed destination: the authority the caller asked for.
 		dst.Service = ""
 		if authority := labels["authority"]; authority != "" {
-			dst.External = authority
+			if namespace, name, ok := inClusterService(authority); ok {
+				dst.Namespace, dst.Service = namespace, name
+			} else {
+				dst.External = authority
+			}
 		} else {
 			dst.Unknown = true
 		}
@@ -1037,6 +1051,20 @@ func isMonitor(endpoint TrafficEndpoint, monitors []TrafficEndpoint) bool {
 		}
 	}
 	return false
+}
+
+// inClusterService reads a cluster Service's DNS name — `<service>.<namespace>.svc`
+// followed by any cluster domain, with or without a port — into its
+// namespace and name. The cluster domain is not assumed to be cluster.local.
+func inClusterService(host string) (namespace, name string, ok bool) {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	parts := strings.Split(strings.TrimSuffix(host, "."), ".")
+	if len(parts) < 3 || parts[2] != "svc" || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[1], parts[0], true
 }
 
 func firstNonEmptyLabel(labels map[string]string, names ...string) string {

@@ -588,9 +588,16 @@ func TestMapTrafficIstioLive(t *testing.T) {
 	if cart.P50 <= 0 || cart.P95 <= cart.P50 || cart.P99 <= 0 {
 		t.Errorf("shopper->cart percentiles: %+v", cart)
 	}
-	recommendations := findEdge(t, layer, "storefront/shopper", "external:recommendations.storefront.svc.cluster.local")
-	if recommendations.ErrorsPerSec <= 0 {
+	// destination_workload="unknown" (no ready endpoints, 503s) with an
+	// in-cluster Service name: drawn to the Service, not outside the cluster.
+	recommendations := findEdge(t, layer, "storefront/shopper", "storefront/svc/recommendations")
+	if recommendations.ErrorsPerSec <= 0 || recommendations.Dest.External != "" {
 		t.Errorf("shopper->recommendations: %+v", recommendations)
+	}
+	mapped := domain.MapTraffic(domain.TrafficIstio, domain.TrafficWindow5m, loadTrafficFixture(t, "istio-live"),
+		[]domain.TrafficNodeRef{{ID: "service/storefront/recommendations", APIKind: "Service", Name: "recommendations", Namespace: "storefront"}}, nil)
+	if got := findEdge(t, mapped, "storefront/shopper", "storefront/svc/recommendations"); got.Dest.NodeID != "service/storefront/recommendations" {
+		t.Errorf("the in-cluster Service did not map to its box: %+v", got.Dest)
 	}
 	findEdge(t, layer, "storefront/shopper", "storefront/orders-db")
 }
@@ -658,5 +665,36 @@ func TestMaxTrafficQueriesIsTheLargestSourcesExpressionCount(t *testing.T) {
 	}
 	if got := domain.MaxTrafficQueries(); got != most {
 		t.Errorf("MaxTrafficQueries() = %d, the largest source sends %d", got, most)
+	}
+}
+
+func TestAnInClusterServiceNameIsNeverExternal(t *testing.T) {
+	for _, c := range []struct {
+		labels map[string]string
+		want   domain.TrafficEndpoint
+	}{
+		{map[string]string{"destination_workload": "unknown", "destination_service": "cart.shop.svc.cluster.local"}, domain.TrafficEndpoint{Namespace: "shop", Service: "cart"}},
+		{map[string]string{"destination_workload": "unknown", "destination_service": "cart.shop.svc.corp.example"}, domain.TrafficEndpoint{Namespace: "shop", Service: "cart"}},
+		{map[string]string{"destination_workload": "unknown", "destination_service": "cart.shop.svc"}, domain.TrafficEndpoint{Namespace: "shop", Service: "cart"}},
+		{map[string]string{"destination_workload": "unknown", "destination_service": "api.github.com"}, domain.TrafficEndpoint{External: "api.github.com"}},
+	} {
+		labels := map[string]string{"source_workload": "web", "source_workload_namespace": "shop", "request_protocol": "http"}
+		for k, v := range c.labels {
+			labels[k] = v
+		}
+		layer := domain.MapTraffic(domain.TrafficIstio, domain.TrafficWindow5m, map[domain.TrafficRole][]domain.PromSeries{
+			domain.TrafficRoleRate: {{Labels: labels, Points: []domain.SeriesPoint{{Value: 1}}}},
+		}, nil, nil)
+		if len(layer.Edges) != 1 || layer.Edges[0].Dest != c.want {
+			t.Errorf("%v: %+v", c.labels, layer.Edges)
+		}
+	}
+
+	// Linkerd's authority, with a port.
+	layer := domain.MapTraffic(domain.TrafficLinkerd, domain.TrafficWindow5m, map[domain.TrafficRole][]domain.PromSeries{
+		domain.TrafficRoleRate: {{Labels: map[string]string{"namespace": "shop", "deployment": "web", "authority": "cart.shop.svc.cluster.local:8080"}, Points: []domain.SeriesPoint{{Value: 1}}}},
+	}, nil, nil)
+	if len(layer.Edges) != 1 || layer.Edges[0].Dest.Service != "cart" || layer.Edges[0].Dest.Namespace != "shop" {
+		t.Errorf("linkerd authority: %+v", layer.Edges)
 	}
 }
