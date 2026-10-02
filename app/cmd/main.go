@@ -330,15 +330,30 @@ func run() error {
 		return fmt.Errorf("wiring metrics query service: %w", err)
 	}
 
+	// The namespace topology. It is also the adapter's change sink: the watch
+	// stores and every write tell it a cluster changed, and it coalesces that
+	// into one `topology:changed` per cluster per second for scopes somebody
+	// drew. Set before App.Run, so before anything is read.
+	topologyService, err := application.NewTopologyService(application.TopologyServiceDeps{
+		Topology: kubernetes,
+		Registry: registry,
+		Logger:   logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring topology service: %w", err)
+	}
+	kubernetes.SetChangeSink(topologyService)
+
 	// The topology's traffic layer. Built ON the metrics-query service rather
 	// than beside it: the setting, the chosen backend and the node-set check
 	// are that service's, so traffic is off exactly where charts are off and
-	// answers from exactly the backend they answer from. Nodes is left unset
-	// until the topology service can supply them; edges then carry names and
-	// the interface attaches them.
+	// answers from exactly the backend they answer from. Nodes is the
+	// topology service, so every endpoint carries the id of the box it
+	// belongs to — the graph last drawn for the scope, or a fresh read.
 	trafficService, err := application.NewTrafficService(application.TrafficServiceDeps{
 		Metrics: metricsQueryService,
 		Query:   kubernetes,
+		Nodes:   topologyService,
 		Logger:  logger,
 	})
 	if err != nil {
@@ -366,20 +381,6 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("wiring browse service: %w", err)
 	}
-
-	// The namespace topology. It is also the adapter's change sink: the watch
-	// stores and every write tell it a cluster changed, and it coalesces that
-	// into one `topology:changed` per cluster per second for scopes somebody
-	// drew. Set before App.Run, so before anything is read.
-	topologyService, err := application.NewTopologyService(application.TopologyServiceDeps{
-		Topology: kubernetes,
-		Registry: registry,
-		Logger:   logger,
-	})
-	if err != nil {
-		return fmt.Errorf("wiring topology service: %w", err)
-	}
-	kubernetes.SetChangeSink(topologyService)
 
 	// The fleet reads through the two services above rather than the
 	// adapter, so a cross-cluster row is exactly the row that cluster's own

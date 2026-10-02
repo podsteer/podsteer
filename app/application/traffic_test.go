@@ -84,6 +84,14 @@ type trafficFixture struct {
 
 func newTrafficFixture(t *testing.T, mode domain.MetricsQueryMode, backendNodes []string) trafficFixture {
 	t.Helper()
+	return newTrafficFixtureWith(t, mode, backendNodes, stubTrafficNodes{nodes: []domain.TrafficNodeRef{
+		{ID: "deploy/web", APIKind: "Deployment", Name: "web", Namespace: "shop"},
+		{ID: "deploy/api", APIKind: "Deployment", Name: "api", Namespace: "shop"},
+	}})
+}
+
+func newTrafficFixtureWith(t *testing.T, mode domain.MetricsQueryMode, backendNodes []string, reader application.TrafficNodeReader) trafficFixture {
+	t.Helper()
 
 	query := &countingQuery{nodes: backendNodes}
 	discovery := &stubDiscovery{backends: []domain.MetricsBackend{testBackend()}}
@@ -107,10 +115,7 @@ func newTrafficFixture(t *testing.T, mode domain.MetricsQueryMode, backendNodes 
 	service, err := application.NewTrafficService(application.TrafficServiceDeps{
 		Metrics: metrics,
 		Query:   traffic,
-		Nodes: stubTrafficNodes{nodes: []domain.TrafficNodeRef{
-			{ID: "deploy/web", APIKind: "Deployment", Name: "web", Namespace: "shop"},
-			{ID: "deploy/api", APIKind: "Deployment", Name: "api", Namespace: "shop"},
-		}},
+		Nodes:   reader,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -313,5 +318,47 @@ func TestACancelledProbeLeaderDoesNotPoisonItsFollowers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("a probe ran on a cancelled context: %v", err)
 		}
+	}
+}
+
+// THE TOPOLOGY SERVICE IS THE NODE READER in the running application, so an
+// observed endpoint carries the id of the very box the page drew for it.
+func TestTrafficEndpointsCarryTheTopologysNodeIDs(t *testing.T) {
+	port := &fakeTopologyPort{input: domain.TopologyInput{
+		Controllers: []domain.TopologyController{
+			{Kind: "Deployment", Name: "web", Namespace: "shop", Desired: 1, Ready: 1},
+			{Kind: "Deployment", Name: "api", Namespace: "shop", Desired: 1, Ready: 1},
+		},
+	}}
+	topology, _ := topologyService(t, port)
+	graph, err := topology.Topology(context.Background(), "dev", mustScope(t, "shop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	drawn := map[string]bool{}
+	for _, node := range graph.Nodes {
+		drawn[node.ID] = true
+	}
+
+	f := newTrafficFixtureWith(t, domain.MetricsQueryManual, []string{"node-a", "node-b"}, topology)
+	f.traffic.answers["istio_requests_total{reporter="] = []domain.PromSeries{one(3, map[string]string{
+		"source_workload": "web", "source_workload_namespace": "shop",
+		"destination_workload": "api", "destination_workload_namespace": "shop",
+		"request_protocol": "http",
+	})}
+
+	layer, err := f.service.Traffic(context.Background(), "dev", []domain.NamespaceName{"shop"}, false, domain.TrafficIstio, domain.TrafficWindow5m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(layer.Edges) != 1 {
+		t.Fatalf("%s %q: %+v", layer.Status, layer.Message, layer.Edges)
+	}
+	edge := layer.Edges[0]
+	if edge.Source.NodeID == "" || edge.Dest.NodeID == "" || !drawn[edge.Source.NodeID] || !drawn[edge.Dest.NodeID] {
+		t.Errorf("endpoints %q -> %q, want ids of drawn nodes %v", edge.Source.NodeID, edge.Dest.NodeID, drawn)
+	}
+	if len(layer.Unmapped) != 0 {
+		t.Errorf("unmapped %+v", layer.Unmapped)
 	}
 }

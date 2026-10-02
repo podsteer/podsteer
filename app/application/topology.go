@@ -373,3 +373,26 @@ func (f *ChangeFeed) Close() {
 	f.mu.Unlock()
 	f.inFlight.Wait()
 }
+
+// TrafficNodes is TopologyNodes in the shape the traffic layer reads: what
+// lets an observed endpoint carry the id of the box it belongs to. It makes
+// the topology service the traffic service's TrafficNodeReader.
+func (s *TopologyService) TrafficNodes(ctx context.Context, id domain.ClusterID, namespaces []domain.NamespaceName, all bool) ([]domain.TrafficNodeRef, error) {
+	nodes, err := s.TopologyNodes(ctx, id, namespaces, all)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]domain.TrafficNodeRef, 0, len(nodes))
+	for _, node := range nodes {
+		// A backend-folded pod set has no name of its own to match.
+		if node.Name == "" {
+			continue
+		}
+		refs = append(refs, domain.TrafficNodeRef{
+			ID: node.ID, APIKind: node.APIKind, Name: node.Name, Namespace: node.Namespace,
+		})
+	}
+	return refs, nil
+}
+
+var _ TrafficNodeReader = (*TopologyService)(nil)
