@@ -179,7 +179,7 @@ itself and talks to it over stdin and stdout. No port is opened, nothing is
 served over HTTP, and nothing PodSteer operates is contacted.
 
 Every tool is **read-only**: lists, manifests, bounded log reads, events, the
-cluster and pod assessments, the dependency map and the RBAC reviews. There is
+cluster and pod assessments, the ranked cluster findings with their evidence (filterable by severity and namespace), the dependency map and the RBAC reviews. There is
 no delete, scale, apply, exec or port-forward, and no tool that reveals a
 Secret's values. It reads your own kubeconfig with your own credentials, so it
 can see exactly what your account can see and nothing more — a refusal comes

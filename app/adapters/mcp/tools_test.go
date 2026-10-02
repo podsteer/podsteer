@@ -553,3 +553,127 @@ func TestNewRefusesAServerMissingAnyReader(t *testing.T) {
 		t.Error("a server with no LogReader was built")
 	}
 }
+
+// findingsStub gives the stub an overview already ranked the way the domain
+// ranks it: a critical finding, a warning, and an info one.
+func findingsStub(t *testing.T) *stubReaders {
+	t.Helper()
+
+	stub := newStub(t)
+	subject := func(namespace, name string) domain.Subject {
+		ns, err := domain.NewNamespaceName(namespace)
+		if err != nil {
+			t.Fatalf("namespace %q: %v", namespace, err)
+		}
+		return domain.Subject{Kind: "Pod", Namespace: ns, Name: name, Detail: "exit 137"}
+	}
+
+	// A capped finding: 25 listed subjects, all in "shop", of 40 affected.
+	capped := make([]domain.Subject, 0, 25)
+	for index := range 25 {
+		capped = append(capped, subject("shop", "worker-"+string(rune('a'+index))))
+	}
+
+	stub.overview = domain.Overview{
+		ClusterID: "staging",
+		Health:    "critical",
+		Findings: []domain.Finding{
+			{ID: "crash", Severity: domain.SeverityCritical, Title: "CrashLoopBackOff", Summary: "3 pods", Advice: "read the previous log", Count: 3,
+				Subjects: []domain.Subject{subject("shop", "web-1"), subject("billing", "api-1"), subject("shop", "web-2")}},
+			{ID: "oom", Severity: domain.SeverityWarning, Title: "OOMKilled", Summary: "40 pods", Advice: "raise the limit", Count: 40, Subjects: capped},
+			{ID: "tag", Severity: domain.SeverityInfo, Title: "Moving tag", Summary: "1 pod", Advice: "pin it", Count: 1,
+				Subjects: []domain.Subject{subject("billing", "api-1")}},
+		},
+	}
+	return stub
+}
+
+func findingsOf(t *testing.T, server *Server, args map[string]any) clusterFindingsOut {
+	t.Helper()
+
+	result := call(t, server, "cluster_findings", args)
+	if result.IsError {
+		t.Fatalf("cluster_findings failed: %s", resultText(t, result))
+	}
+	var out clusterFindingsOut
+	if err := json.Unmarshal([]byte(resultText(t, result)), &out); err != nil {
+		t.Fatalf("decoding findings: %v", err)
+	}
+	return out
+}
+
+func TestClusterFindingsKeepTheDomainsRankingAndTheirEvidence(t *testing.T) {
+	out := findingsOf(t, newServer(t, findingsStub(t)), map[string]any{"cluster": "staging"})
+
+	if out.Total != 3 || out.Matched != 3 || len(out.Findings) != 3 {
+		t.Fatalf("total/matched/returned = %d/%d/%d, want 3/3/3", out.Total, out.Matched, len(out.Findings))
+	}
+	if out.Findings[0].ID != "crash" || out.Findings[2].ID != "tag" {
+		t.Errorf("order was %s, %s, %s; the domain's ranking must be kept",
+			out.Findings[0].ID, out.Findings[1].ID, out.Findings[2].ID)
+	}
+	first := out.Findings[0]
+	if first.Advice == "" || first.Summary == "" || len(first.Subjects) != 3 || first.Subjects[0].Detail == "" {
+		t.Errorf("a finding lost its advice or its evidence: %+v", first)
+	}
+	// The cap is stated, not silent.
+	if !out.Findings[1].SubjectsTruncated || out.Findings[1].Count != 40 {
+		t.Errorf("a capped finding must say so and keep its true count: %+v", out.Findings[1])
+	}
+	if first.SubjectsTruncated {
+		t.Error("a finding that lists everything it affects claimed to be truncated")
+	}
+}
+
+func TestClusterFindingsSeverityIsAFloor(t *testing.T) {
+	server := newServer(t, findingsStub(t))
+
+	warning := findingsOf(t, server, map[string]any{"cluster": "staging", "severity": "warning"})
+	if warning.Matched != 2 || warning.Total != 3 {
+		t.Errorf("warning floor matched %d of %d, want 2 of 3", warning.Matched, warning.Total)
+	}
+
+	critical := findingsOf(t, server, map[string]any{"cluster": "staging", "severity": "critical"})
+	if critical.Matched != 1 || critical.Findings[0].ID != "crash" {
+		t.Errorf("critical floor = %+v", critical.Findings)
+	}
+}
+
+func TestClusterFindingsNamespaceNarrowsEvidenceButNotCounts(t *testing.T) {
+	out := findingsOf(t, newServer(t, findingsStub(t)), map[string]any{"cluster": "staging", "namespace": "billing"})
+
+	if out.Matched != 2 {
+		t.Fatalf("matched %d, want the two findings naming billing", out.Matched)
+	}
+	crash := out.Findings[0]
+	if len(crash.Subjects) != 1 || crash.Subjects[0].Namespace != "billing" {
+		t.Errorf("evidence was not narrowed to the namespace: %+v", crash.Subjects)
+	}
+	// Narrowing the subjects must not shrink the finding.
+	if crash.Count != 3 {
+		t.Errorf("count = %d, want the cluster-wide 3", crash.Count)
+	}
+	// The capped OOM finding lists nothing in billing but may hide some:
+	// it is not shown, and the answer says why.
+	if !strings.Contains(out.Note, "1 capped finding") {
+		t.Errorf("a capped finding that could not be checked was dropped silently: %q", out.Note)
+	}
+}
+
+func TestClusterFindingsLimitReportsTheTrueTotal(t *testing.T) {
+	out := findingsOf(t, newServer(t, findingsStub(t)), map[string]any{"cluster": "staging", "limit": 1})
+
+	if len(out.Findings) != 1 || out.Matched != 3 || !out.Truncated {
+		t.Errorf("returned %d of %d, truncated=%v", len(out.Findings), out.Matched, out.Truncated)
+	}
+}
+
+func TestClusterFindingsRefusesAnUnknownSeverity(t *testing.T) {
+	result := answer(t, newServer(t, findingsStub(t)), 1, "tools/call", map[string]any{
+		"name":      "cluster_findings",
+		"arguments": map[string]any{"cluster": "staging", "severity": "apocalyptic"},
+	})
+	if result.Error == nil || result.Error.Code != rpcInvalidParams {
+		t.Fatalf("an unknown severity was accepted: %+v", result.Error)
+	}
+}

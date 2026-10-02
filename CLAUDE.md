@@ -3436,6 +3436,19 @@ makes a malformed message survivable: a decoder left mid-value cannot
 resynchronise, whereas a bad line is answered with a parse error and the next
 one is read normally. One request is handled at a time, deliberately.
 
+**`cluster_findings` is the Overview's finding list on its own**, ranked as the
+domain ranks it (the tool never re-sorts), each with severity, title, summary,
+advice, the true `count` and its subjects as evidence. `assess_cluster` returns
+the same findings buried among node and pod summaries; this exists for "what is
+wrong" without the rest. Filters: `severity` is a FLOOR (warning returns warning
+and critical), `namespace` keeps findings naming an object there and narrows the
+listed subjects to it — but never the `count`, so a narrowed finding does not
+look smaller than it is. The domain caps a finding at 25 subjects, so a capped
+finding that lists nothing in the namespace may still affect it: it is not
+shown, and `note` counts how many were withheld for that reason.
+`subjectsTruncated` marks a capped finding. Same reader as `assess_cluster`
+(`OverviewReader`), so no new port.
+
 Two smaller decisions worth not re-deriving: the process runs with
 `LiveWatch: false`, because a mirror pays for itself under a UI re-reading the
 same lists every few seconds and not under an agent asking a handful of
