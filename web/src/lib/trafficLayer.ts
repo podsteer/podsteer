@@ -627,3 +627,135 @@ export function provenanceNote(
   }
   return { source: o.source, text };
 }
+
+/**
+ * What the traffic layer has to say, for the Help panel and the one-line
+ * status in its popover. The popover is a few controls; everything that
+ * explains — why nothing is drawn, what each source needs, where the numbers
+ * came from — is read on request in Help rather than standing on the page.
+ */
+export interface TrafficHelp {
+  /** One line for the popover. */
+  headline: string;
+  /** True when something stops the layer drawing — worth a mark on (?). */
+  problem: boolean;
+  sections: { heading: string; body: string[] }[];
+}
+
+export function trafficHelp(
+  view: TrafficState,
+  context: {
+    on: boolean;
+    busy: boolean;
+    error: string | null;
+    backend: string;
+    window: string;
+    layer: TrafficLayer | null;
+  },
+): TrafficHelp {
+  const heading = "Observed traffic now";
+  if (!context.on) {
+    return { headline: "Off", problem: false, sections: [] };
+  }
+  if (context.error) {
+    return {
+      headline: "Could not ask the monitoring backend.",
+      problem: true,
+      sections: [{ heading, body: [context.error] }],
+    };
+  }
+  const backend = context.backend || "The monitoring backend";
+  switch (view.kind) {
+    case "idle":
+      return {
+        headline: context.busy ? "Asking the monitoring backend…" : "Nothing asked yet.",
+        problem: false,
+        sections: [],
+      };
+    case "not-enabled":
+      return {
+        headline: "Reading a monitoring backend is off for this cluster.",
+        problem: true,
+        sections: [
+          {
+            heading,
+            body: [
+              "Reading a monitoring backend is off for this cluster, so nothing was asked. Turn it on in Settings → Clusters; until then no query leaves PodSteer.",
+            ],
+          },
+        ],
+      };
+    case "no-prometheus":
+      return {
+        headline: "No Prometheus was found for this cluster.",
+        problem: true,
+        sections: [
+          {
+            heading,
+            body: [
+              ["No Prometheus was found for this cluster.", view.message].filter(Boolean).join(" "),
+              "Traffic is read from the monitoring backend the cluster already runs. " + NOTHING_INSTALLED,
+            ],
+          },
+        ],
+      };
+    case "backend-problem":
+      return {
+        headline: statusSentence(view.status),
+        problem: true,
+        sections: [
+          { heading, body: [[statusSentence(view.status), view.message].filter(Boolean).join(" ")] },
+        ],
+      };
+    case "no-source":
+      return {
+        headline: `No traffic source was found in ${backend}.`,
+        problem: true,
+        sections: [
+          {
+            heading,
+            body: [
+              `No traffic source was found in ${backend}. Each of these would make one appear:`,
+              ...view.needs.map((n) => `${n.label} — ${n.needs}`),
+              NOTHING_INSTALLED,
+            ],
+          },
+        ],
+      };
+    case "too-large":
+      return {
+        headline: "There is more traffic than PodSteer will draw.",
+        problem: true,
+        sections: [
+          { heading, body: [`There is more traffic than PodSteer will draw. ${view.message} Narrow the scope to fewer namespaces.`] },
+        ],
+      };
+    case "no-traffic":
+      return {
+        headline: `No traffic in the last ${context.window}.`,
+        problem: false,
+        sections: [
+          { heading, body: [[`${backend} answered with no traffic in the last ${context.window}.`, view.message].filter(Boolean).join(" ")] },
+        ],
+      };
+    case "ready": {
+      const layer = context.layer!;
+      const note = provenanceNote(layer.provenance);
+      const body = [
+        `${view.edges} traffic ${view.edges === 1 ? "line" : "lines"} from ${sourceLabel(layer.source)}, last ${layer.window}. Drawn over the map as a layer; they are not relationships Kubernetes holds.`,
+      ];
+      if (view.unmapped > 0) {
+        body.push(
+          `${view.unmapped} ${view.unmapped === 1 ? "endpoint" : "endpoints"} could not be matched to a box on this map.`,
+        );
+      }
+      if (note) body.push(`Read from ${note.source}. ${note.text} This is the backend's measurement over a window, not a live count.`.replace(/\s+/g, " ").trim());
+      return {
+        headline: `${view.edges} ${view.edges === 1 ? "line" : "lines"} from ${sourceLabel(layer.source)}, last ${layer.window}`,
+        problem: false,
+        sections: [{ heading, body }],
+      };
+    }
+  }
+}
+

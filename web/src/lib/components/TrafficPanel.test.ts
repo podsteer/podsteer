@@ -36,13 +36,18 @@ const layer: TrafficLayer = {
   expressions: ["sum by (a) (rate(x[5m]))"],
 };
 
-function mount(onlayer = vi.fn()) {
-  return {
-    onlayer,
-    ...render(TrafficPanel, {
-      props: { clusterId: "c1", namespaces: ["shop"], all: false, onlayer },
-    }),
-  };
+function mount(onlayer = vi.fn(), onhelp = vi.fn()) {
+  const view = render(TrafficPanel, {
+    props: { clusterId: "c1", namespaces: ["shop"], all: false, onlayer, onhelp, on: false },
+  });
+  /** The page's toolbar toggle, as the panel sees it: its `on` prop. */
+  const turn = (on: boolean) => view.rerender({ on });
+  /** What the panel last handed to Help, as one string. */
+  const helped = () =>
+    (onhelp.mock.calls.at(-1)?.[0]?.sections ?? [])
+      .flatMap((s: { body: string[] }) => s.body)
+      .join(" ");
+  return { onlayer, onhelp, turn, helped, ...view };
 }
 
 describe("TrafficPanel", () => {
@@ -50,8 +55,7 @@ describe("TrafficPanel", () => {
     const Sources = vi.fn();
     const Traffic = vi.fn();
     setTrafficBindings({ Sources, Traffic });
-    const { getByText } = mount();
-    expect(getByText(/Nothing is asked until you do/)).toBeTruthy();
+    mount();
     expect(Sources).not.toHaveBeenCalled();
     expect(Traffic).not.toHaveBeenCalled();
   });
@@ -60,24 +64,25 @@ describe("TrafficPanel", () => {
     const Sources = vi.fn().mockResolvedValue(sources());
     const Traffic = vi.fn().mockResolvedValue(layer);
     setTrafficBindings({ Sources, Traffic });
-    const { getByRole, onlayer, findByText } = mount();
-    await fireEvent.click(getByRole("checkbox"));
-    await findByText(/No traffic edges|answered with no traffic/i);
+    const { turn, onlayer, findByText } = mount();
+    await turn(true);
+    await findByText(/No traffic in the last 5m/);
     expect(Sources).toHaveBeenCalledTimes(1);
     expect(Traffic).toHaveBeenCalledWith("c1", ["shop"], false, "istio", "5m");
     expect(onlayer).toHaveBeenLastCalledWith(layer);
   });
 
-  it("says what each source needs when none is found, and that nothing is installed", async () => {
+  it("puts what each source needs in Help, and that nothing is installed", async () => {
     setTrafficBindings({
       Sources: vi.fn().mockResolvedValue(sources({ sources: [] })),
       Traffic: vi.fn(),
     });
-    const { getByRole, findByText, getAllByText } = mount();
-    await fireEvent.click(getByRole("checkbox"));
+    const { turn, findByText, helped, onhelp } = mount();
+    await turn(true);
     await findByText(/No traffic source was found/);
-    expect(getAllByText(/PodSteer installs nothing/).length).toBeGreaterThan(0);
-    expect(await findByText(/labelsContext/)).toBeTruthy();
+    await waitFor(() => expect(helped()).toContain("labelsContext"));
+    expect(helped()).toContain("PodSteer installs nothing");
+    expect(onhelp.mock.calls.at(-1)?.[0]?.problem).toBe(true);
   });
 
   it("links to the setting when the metrics query is not enabled", async () => {
@@ -87,20 +92,19 @@ describe("TrafficPanel", () => {
         .mockResolvedValue(sources({ status: "not-enabled", message: "Off." })),
       Traffic: vi.fn(),
     });
-    const { getByRole, findByText } = mount();
-    await fireEvent.click(getByRole("checkbox"));
+    const { turn, findByText, getByRole } = mount();
+    await turn(true);
     await findByText(/Reading a monitoring backend is off for this cluster/);
     await waitFor(() =>
-      expect(
-        getByRole("button", { name: /Turn it on in Settings/ }),
-      ).toBeTruthy(),
+      expect(getByRole("button", { name: /Turn it on in Settings/ })).toBeTruthy(),
     );
   });
 
   it("says so when the traffic backend is not in this build", async () => {
-    const { getByRole, findByRole } = mount();
-    await fireEvent.click(getByRole("checkbox"));
-    expect((await findByRole("alert")).textContent).toMatch(/not available/);
+    const { turn, findByText, helped } = mount();
+    await turn(true);
+    await findByText(/Could not ask the monitoring backend/);
+    await waitFor(() => expect(helped()).toMatch(/not available/));
   });
 
   it("asks again on every switch-on, so an answer of 'not enabled' is not kept", async () => {
@@ -110,13 +114,12 @@ describe("TrafficPanel", () => {
       .mockResolvedValue(sources());
     const Traffic = vi.fn().mockResolvedValue(layer);
     setTrafficBindings({ Sources, Traffic });
-    const { getByRole, findByText } = mount();
-    const box = getByRole("checkbox");
-    await fireEvent.click(box);
+    const { turn, findByText } = mount();
+    await turn(true);
     await findByText(/is off for this cluster/);
-    // Enabled elsewhere; untick and tick again.
-    await fireEvent.click(box);
-    await fireEvent.click(box);
+    // Enabled elsewhere; off and on again.
+    await turn(false);
+    await turn(true);
     await waitFor(() => expect(Sources).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(Traffic).toHaveBeenCalledTimes(1));
   });
@@ -126,9 +129,10 @@ describe("TrafficPanel", () => {
       Sources: vi.fn().mockResolvedValue(sources({ status: "needs-credential", message: "401" })),
       Traffic: vi.fn(),
     });
-    const { getByRole, findByText, container } = mount();
-    await fireEvent.click(getByRole("checkbox"));
+    const { turn, findByText, container, helped } = mount();
+    await turn(true);
     await findByText(/asks for a login of its own/);
     expect(container.textContent).not.toContain("needs-credential");
+    expect(helped()).not.toContain("needs-credential");
   });
 });

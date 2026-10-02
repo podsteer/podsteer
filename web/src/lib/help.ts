@@ -941,6 +941,52 @@ export const HELP_TOPICS = {
       },
     ],
   },
+  topology: {
+    title: 'Topology',
+    lede: 'Every object in the namespaces you chose, and every relationship Kubernetes itself has between them, drawn as one map.',
+    sections: [
+      {
+        heading: 'What a line means',
+        body: [
+          'Every line is a relationship the cluster holds: an owner and what it owns, a Service and the pods its selector matches, an Ingress or Route and its backends, an autoscaler and its target, a disruption budget or network policy and the pods it selects, a pod and the configuration it names. A line labelled "via Pod" or "via ReplicaSet" stands in for a hidden kind in between, and says so.',
+          'The counts beside the kinds are complete. Switching a kind off, folding a set of pods or collapsing a group changes what is drawn, never what the page says it found.',
+        ],
+      },
+      {
+        heading: 'Bounded',
+        body: [
+          'ConfigMaps, Secrets and volume claims are drawn by the names the pod templates give them. PodSteer does not read them to draw the map — a Secret is never read at all — so a box can name something that does not exist.',
+        ],
+      },
+      {
+        heading: 'Unreadable',
+        body: [
+          'When your account may not list a kind in this scope, its objects are missing from the map, and so is anything reached only through them. "This drawing", above, names the kinds when it happens, and the (?) on the toolbar carries a dot.',
+        ],
+      },
+      {
+        heading: 'Summarised',
+        body: [
+          'Above three thousand pods the backend folds each owner’s pods into one box with complete counts, rather than sending every pod. Narrow the scope to see them one by one.',
+        ],
+      },
+      {
+        heading: 'Changed, and Live',
+        body: [
+          'The map never redraws on its own timer. When something in the scope changes, the toolbar says "Changed — Refresh". Live redraws by itself after a change, waiting longer the bigger the map, and never moves what you are looking at.',
+        ],
+      },
+      {
+        heading: 'Observed traffic',
+        body: [
+          'A layer drawn over the map, not relationships: what the cluster’s own monitoring backend measured between workloads over a window. Off until you switch it on; nothing is asked before that, and nothing on a timer after.',
+          'PodSteer reads it from the Prometheus it discovered in the cluster, through the API server’s proxy on your credentials — only where reading a monitoring backend is turned on, in Settings → Clusters. The backend logs the queries, and "What PodSteer asked" shows them.',
+          'Sources: Istio (sidecars or ambient with istio_requests_total), Linkerd (linkerd-viz’s Prometheus), Beyla or OBI network metrics, Caretta, and Hubble metrics with workload labels. PodSteer installs nothing in your cluster; it only reads metrics that are already there.',
+          'A backend PodSteer could not verify as holding this cluster is named as such; one holding several clusters is narrowed to this one’s namespaces where it can be.',
+        ],
+      },
+    ],
+  },
 } satisfies Record<string, HelpTopic>
 
 /** The ids that exist. A dialog naming anything else does not compile. */
