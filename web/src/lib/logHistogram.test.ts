@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { buildHistogram, countLevels, formatBucketWidth, pickBucketMs, type HistogramSample } from './logHistogram'
+import {
+  buildHistogram,
+  countLevels,
+  formatBucketWidth,
+  nextBucketIndex,
+  pickBucketMs,
+  type HistogramSample,
+} from './logHistogram'
 
 const s = (seq: number, ts: number | null, level: HistogramSample['level'] = 'info'): HistogramSample => ({
   seq,
@@ -73,5 +80,22 @@ describe('formatBucketWidth', () => {
     expect(formatBucketWidth(5000)).toBe('5s')
     expect(formatBucketWidth(120_000)).toBe('2m')
     expect(formatBucketWidth(3_600_000)).toBe('1h')
+  })
+})
+
+describe('nextBucketIndex', () => {
+  const b = [0, 2, 0, 0, 1, 0].map((count) => ({ count }))
+  it('skips empty buckets in either direction', () => {
+    expect(nextBucketIndex(b, 1, 1)).toBe(4)
+    expect(nextBucketIndex(b, 4, -1)).toBe(1)
+  })
+  it('does not wrap and reports none', () => {
+    expect(nextBucketIndex(b, 4, 1)).toBe(-1)
+    expect(nextBucketIndex(b, 1, -1)).toBe(-1)
+  })
+  it('jumps to first and last non-empty', () => {
+    expect(nextBucketIndex(b, 0, 'first')).toBe(1)
+    expect(nextBucketIndex(b, 0, 'last')).toBe(4)
+    expect(nextBucketIndex([{ count: 0 }], 0, 'last')).toBe(-1)
   })
 })

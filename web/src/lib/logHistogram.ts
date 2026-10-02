@@ -108,3 +108,21 @@ export function formatBucketWidth(ms: number): string {
   if (ms < 86_400_000) return `${ms / 3_600_000}h`
   return `${ms / 86_400_000}d`
 }
+
+/**
+ * Roving-focus target: the nearest non-empty bucket from `from` in `dir`
+ * (no wrap), 'first'/'last' for Home/End. Returns -1 when none exists.
+ */
+export function nextBucketIndex(
+  buckets: readonly { count: number }[],
+  from: number,
+  dir: 1 | -1 | 'first' | 'last',
+): number {
+  if (dir === 'first') return buckets.findIndex((b) => b.count > 0)
+  if (dir === 'last') {
+    for (let i = buckets.length - 1; i >= 0; i--) if (buckets[i].count > 0) return i
+    return -1
+  }
+  for (let i = from + dir; i >= 0 && i < buckets.length; i += dir) if (buckets[i].count > 0) return i
+  return -1
+}

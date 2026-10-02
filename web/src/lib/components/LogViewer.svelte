@@ -52,6 +52,7 @@
     buildHistogram,
     countLevels,
     formatBucketWidth,
+    nextBucketIndex,
     type HistogramSample,
     type LevelKey,
   } from '$lib/logHistogram'
@@ -487,6 +488,27 @@ import { prefixColourClass } from '$lib/logPrefixColour'
 
   function barTitle(bucket: { start: number; count: number }, width: number): string {
     return `${bucket.count} line${bucket.count === 1 ? '' : 's'} from ${new Date(bucket.start).toLocaleTimeString()} (${formatBucketWidth(width)} bucket)`
+  }
+
+  /** Roving focus: the bucket start last focused; else the last non-empty one. */
+  let focusedBucket = $state<number | null>(null)
+  let histogramEl = $state<HTMLElement | undefined>()
+  const tabStop = $derived.by(() => {
+    if (!histogram) return -1
+    const kept = histogram.buckets.findIndex((b) => b.start === focusedBucket && b.count > 0)
+    return kept >= 0 ? kept : nextBucketIndex(histogram.buckets, 0, 'last')
+  })
+
+  function onHistogramKey(event: KeyboardEvent, index: number): void {
+    if (!histogram) return
+    const dir =
+      event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : event.key === 'Home' ? 'first' : event.key === 'End' ? 'last' : null
+    if (dir === null) return
+    event.preventDefault()
+    const next = nextBucketIndex(histogram.buckets, index, dir)
+    if (next < 0) return
+    focusedBucket = histogram.buckets[next].start
+    histogramEl?.querySelectorAll<HTMLButtonElement>('button')[next]?.focus()
   }
 
   /** Scrolls to the first VISIBLE line at or after the bucket's first line. */
@@ -1362,13 +1384,17 @@ import { prefixColourClass } from '$lib/logPrefixColour'
   {#if histogram}
     <div
       class="flex h-10 items-end gap-px border-b border-outline-variant bg-surface-container-low px-3 pt-1"
-      role="group"
+      bind:this={histogramEl}
+      role="toolbar"
       aria-label="Log volume over time, {formatBucketWidth(histogram.bucketMs)} buckets. Activate a bar to jump to its first line."
     >
-      {#each histogram.buckets as bucket (bucket.start)}
+      {#each histogram.buckets as bucket, index (bucket.start)}
         <button
           type="button"
           disabled={bucket.count === 0}
+          tabindex={index === tabStop ? 0 : -1}
+          onfocus={() => (focusedBucket = bucket.start)}
+          onkeydown={(event) => onHistogramKey(event, index)}
           onclick={() => jumpToBucket(bucket.firstSeq)}
           title={barTitle(bucket, histogram.bucketMs)}
           aria-label={barTitle(bucket, histogram.bucketMs)}
