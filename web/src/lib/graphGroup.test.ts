@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { foldView, group, groupId, kindCounts, toView, worstState, type ViewGraph } from './graphGroup'
+import { foldView, group, groupId, hideGroups, kindCounts, toView, worstState, type ViewGraph } from './graphGroup'
 import type { TopologyEdge, TopologyGraph, TopologyNode } from './topology/contract'
 
 function node(id: string, extra: Partial<TopologyNode> = {}): TopologyNode {
@@ -214,5 +214,34 @@ describe('grouping', () => {
     const grouped = group(view, 'none', new Set())
     expect(grouped.groups).toEqual([])
     expect(grouped.nodes).toHaveLength(view.nodes.length)
+  })
+})
+
+describe('hiding applications', () => {
+  it('takes whole groups off the drawing and says how much was hidden', () => {
+    const one = app('a', 'web', 2)
+    const two = app('a', 'api', 1)
+    const view = toView(
+      graph([...one.nodes, ...two.nodes], [...one.edges, ...two.edges, edge('a/Pod/web-0', 'a/Service/api', 'routes')]),
+      new Set(),
+    )
+    const grouped = group(view, 'app', new Set())
+    const web = groupId('app:a/web')
+    const hidden = hideGroups(grouped, new Set([web]))
+
+    expect(hidden.hidden.map((g) => g.id)).toEqual([web])
+    expect(hidden.hiddenObjects).toBe(6)
+    expect(hidden.nodes.some((n) => n.id.includes('/web'))).toBe(false)
+    expect(hidden.nodes.some((n) => n.id === 'a/Deployment/api')).toBe(true)
+    expect(hidden.edges.some((e) => e.from === 'a/Pod/web-0')).toBe(false)
+    expect(hidden.groups.map((g) => g.id)).toEqual([groupId('app:a/api')])
+  })
+
+  it('hides a collapsed application too', () => {
+    const one = app('a', 'web', 1)
+    const view = toView(graph(one.nodes, one.edges), new Set())
+    const web = groupId('app:a/web')
+    const hidden = hideGroups(group(view, 'app', new Set([web])), new Set([web]))
+    expect(hidden.nodes.some((n) => n.id === web)).toBe(false)
   })
 })

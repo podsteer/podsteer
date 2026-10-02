@@ -540,3 +540,41 @@ function inherit(view: ViewGraph, keyOf: Map<string, string>): void {
 }
 
 export { FOLD_THRESHOLD }
+
+/** What `hideGroups` leaves drawn, and how much it took away. */
+export interface FilteredGroups extends GroupedGraph {
+  /** Groups hidden, as listed in `groups` before hiding. */
+  hidden: GroupInfo[]
+  /** How many objects those groups stand for, counted completely. */
+  hiddenObjects: number
+}
+
+/**
+ * Takes whole groups off the drawing — the applications somebody unticked.
+ *
+ * A VIEW DECISION, like folding: the kind counts stay the backend's complete
+ * ones, and the caller says how many objects were hidden. A group's members
+ * go, its collapsed box goes, and so does every line touching them; what is
+ * ungrouped stays. Searching for a hidden object finds it and says it is not
+ * drawn, because nothing stands in for it.
+ */
+export function hideGroups(grouped: GroupedGraph, hidden: ReadonlySet<string>): FilteredGroups {
+  const gone = grouped.groups.filter((g) => hidden.has(g.id))
+  if (gone.length === 0) return { ...grouped, hidden: [], hiddenObjects: 0 }
+  const goneIds = new Set(gone.map((g) => g.id))
+  const nodes = grouped.nodes.filter(
+    (node) => !goneIds.has(node.id) && !goneIds.has(grouped.parents.get(node.id) ?? ''),
+  )
+  const drawn = new Set(nodes.map((node) => node.id))
+  const parents = new Map([...grouped.parents].filter(([id]) => drawn.has(id)))
+  const standIn = new Map([...grouped.standIn].filter(([, group]) => !goneIds.has(group)))
+  return {
+    nodes,
+    edges: grouped.edges.filter((edge) => drawn.has(edge.from) && drawn.has(edge.to)),
+    parents,
+    standIn,
+    groups: grouped.groups.filter((g) => !goneIds.has(g.id)),
+    hidden: gone,
+    hiddenObjects: gone.reduce((sum, g) => sum + totalOf(g.counts), 0),
+  }
+}

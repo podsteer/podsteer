@@ -637,6 +637,13 @@ export class ClusterSession {
    * settings file that describes a cluster's contents.
    */
   topologyScope = $state.raw<TopologyScope | null>(null)
+
+  /**
+   * Applications left off the topology when it is grouped by application —
+   * group ids (`group/app:<namespace>/<name>`), so an app is one namespace's.
+   * Per tab and in memory, like the scope: it names objects of one cluster.
+   */
+  topologyHiddenApps = $state.raw<ReadonlySet<string>>(new Set())
   /** The namespace filter. ALL_NAMESPACES means every namespace. */
   namespace = $state<string>(ALL_NAMESPACES)
   /** The client-side search term. */
