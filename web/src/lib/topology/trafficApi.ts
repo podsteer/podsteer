@@ -16,18 +16,23 @@
  * Nothing here queries on its own: the panel calls these on a gesture only.
  */
 
-import { ApiError, toApiError } from '$lib/api/errors'
-import type { TrafficLayer, TrafficSourceName, TrafficSources, TrafficWindow } from './contract'
+import { ApiError, toApiError } from "$lib/api/errors";
+import type {
+  TrafficLayer,
+  TrafficSourceName,
+  TrafficSources,
+  TrafficWindow,
+} from "./contract";
 
 export interface TrafficBindings {
-  Sources(clusterID: string): Promise<TrafficSources>
+  Sources(clusterID: string): Promise<TrafficSources>;
   Traffic(
     clusterID: string,
     namespaces: string[],
     all: boolean,
     source: string,
     window: string,
-  ): Promise<TrafficLayer>
+  ): Promise<TrafficLayer>;
 }
 
 /**
@@ -36,37 +41,44 @@ export interface TrafficBindings {
  * `notAvailable` flag is what callers branch on.
  */
 export class TrafficNotAvailableError extends ApiError {
-  readonly notAvailable = true
+  readonly notAvailable = true;
 
   constructor() {
-    super('internal', 'Observed traffic is not available in this build of PodSteer yet.')
-    this.name = 'TrafficNotAvailableError'
+    super(
+      "internal",
+      "Observed traffic is not available in this build of PodSteer yet.",
+    );
+    this.name = "TrafficNotAvailableError";
   }
 }
 
-export function isTrafficNotAvailable(e: unknown): e is TrafficNotAvailableError {
-  return e instanceof TrafficNotAvailableError
+export function isTrafficNotAvailable(
+  e: unknown,
+): e is TrafficNotAvailableError {
+  return e instanceof TrafficNotAvailableError;
 }
 
-let bound: TrafficBindings | null = null
+let bound: TrafficBindings | null = null;
 
 /** Installs bindings (or a fixture in tests); null restores the not-available state. */
 export function setTrafficBindings(b: TrafficBindings | null): void {
-  bound = b
+  bound = b;
 }
 
 function need(): TrafficBindings {
-  if (!bound) throw new TrafficNotAvailableError()
-  return bound
+  if (!bound) throw new TrafficNotAvailableError();
+  return bound;
 }
 
 /** Which traffic sources this cluster's metrics backend can answer for. */
-export async function trafficSources(clusterId: string): Promise<TrafficSources> {
-  const b = need()
+export async function trafficSources(
+  clusterId: string,
+): Promise<TrafficSources> {
+  const b = need();
   try {
-    return await b.Sources(clusterId)
+    return await b.Sources(clusterId);
   } catch (e) {
-    throw toApiError(e)
+    throw toApiError(e);
   }
 }
 
@@ -78,10 +90,10 @@ export async function traffic(
   source: TrafficSourceName,
   window: TrafficWindow,
 ): Promise<TrafficLayer> {
-  const b = need()
+  const b = need();
   try {
-    return await b.Traffic(clusterId, namespaces, all, source, window)
+    return await b.Traffic(clusterId, namespaces, all, source, window);
   } catch (e) {
-    throw toApiError(e)
+    throw toApiError(e);
   }
 }
