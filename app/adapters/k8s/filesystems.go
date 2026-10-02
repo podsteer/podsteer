@@ -20,6 +20,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,6 +43,23 @@ const (
 	// cluster finishes inside one refresh, low enough not to arrive at the
 	// API server as a burst.
 	filesystemConcurrency = 8
+
+	// filesystemSweepCap is the most nodes one sweep asks. At or below it a
+	// sweep asks every node, once a minute, as it always did; above it the
+	// sweep ROLLS — see filesystemBatch.
+	filesystemSweepCap = 128
+
+	// filesystemBatch is how many nodes a rolling sweep asks: the ones whose
+	// answer is oldest, never-asked first. A thousand-node cluster was a
+	// thousand kubelet requests in one burst every minute, through the API
+	// server's node proxy; now it is this many every filesystemBatchSpacing,
+	// and the overview says how much of the cluster its figure covers and
+	// how old the oldest part is (domain.DiskCoverage).
+	filesystemBatch = 64
+
+	// filesystemBatchSpacing is how long a rolling sweep's answer is reused
+	// before the next batch is asked — the rolling cluster's TTL.
+	filesystemBatchSpacing = 15 * time.Second
 
 	// kubeletTimeout bounds one node's answer. The summary endpoint is
 	// served from memory, so a kubelet that has not replied in this long is
@@ -161,6 +180,9 @@ type sweepOutcome struct {
 	result   map[string]domain.NodeFilesystems
 	err      error
 	remember bool
+	// entry is what to store when remember is set: the answer, per node, and
+	// how long it stands.
+	entry filesystemEntry
 }
 
 // sweepCall is one sweep in flight, and what it came back with once done is
@@ -182,7 +204,7 @@ type sweepCall struct {
 func (c *filesystemCache) do(
 	ctx context.Context,
 	id domain.ClusterID,
-	sweep func(context.Context) sweepOutcome,
+	sweep func(context.Context, filesystemEntry) sweepOutcome,
 ) (map[string]domain.NodeFilesystems, error) {
 	entry, cached, call, leader := c.claim(id)
 	if cached {
@@ -195,7 +217,9 @@ func (c *filesystemCache) do(
 		sweepCtx, release := detach(ctx)
 		go func() {
 			defer release()
-			c.finish(id, call, sweep(sweepCtx))
+			// The previous entry, stale or not: a rolling sweep picks its
+			// batch by how old each node's answer in it is.
+			c.finish(id, call, sweep(sweepCtx, entry))
 		}()
 	}
 
@@ -216,7 +240,8 @@ func (c *filesystemCache) claim(id domain.ClusterID) (entry filesystemEntry, cac
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if entry, ok := c.entries[id]; ok && time.Since(entry.at) <= filesystemTTL {
+	entry, ok := c.entries[id]
+	if ok && time.Since(entry.at) <= entry.lifetime() {
 		return entry, true, nil, false
 	}
 	if call, ok := c.inflight[id]; ok {
@@ -227,7 +252,7 @@ func (c *filesystemCache) claim(id domain.ClusterID) (entry filesystemEntry, cac
 	}
 	call = &sweepCall{done: make(chan struct{})}
 	c.inflight[id] = call
-	return filesystemEntry{}, false, call, true
+	return entry, false, call, true
 }
 
 // finish stores a sweep's answer when it is worth keeping, and publishes it
@@ -243,7 +268,7 @@ func (c *filesystemCache) finish(id domain.ClusterID, call *sweepCall, outcome s
 	if c.inflight[id] == call {
 		delete(c.inflight, id)
 		if outcome.remember {
-			c.storeLocked(id, filesystemEntry{at: time.Now(), result: outcome.result, refused: outcome.err})
+			c.storeLocked(id, outcome.entry)
 		}
 	}
 	c.mu.Unlock()
@@ -258,6 +283,113 @@ type filesystemEntry struct {
 	// refused is set when the whole sweep was turned away, and is the reason
 	// to serve back. See the note on caching refusals in NodeFilesystems.
 	refused error
+
+	// answeredAt is when each node in result last answered — what a rolling
+	// sweep picks its next batch by, and what the coverage's age reads.
+	answeredAt map[string]time.Time
+	// nodes is how many nodes the cluster had at the sweep.
+	nodes int
+	// ttl is how long this entry stands: filesystemTTL, or
+	// filesystemBatchSpacing for a rolling cluster.
+	ttl time.Duration
+}
+
+// lifetime is how long the entry is reused; a zero ttl is the minute every
+// entry had before sweeps could roll.
+func (e filesystemEntry) lifetime() time.Duration {
+	if e.ttl > 0 {
+		return e.ttl
+	}
+	return filesystemTTL
+}
+
+// rolling reports whether the cluster is too large to sweep whole.
+func (e filesystemEntry) rolling() bool { return e.nodes > filesystemSweepCap }
+
+// coverage says how much of the cluster an entry's answer covers.
+func (e filesystemEntry) coverage(now time.Time) domain.DiskCoverage {
+	coverage := domain.DiskCoverage{Asked: e.nodes, Answered: len(e.result), Rolling: e.rolling()}
+	for _, at := range e.answeredAt {
+		if age := int64(now.Sub(at).Seconds()); age > coverage.OldestSeconds {
+			coverage.OldestSeconds = age
+		}
+	}
+	return coverage
+}
+
+// batchFor picks the nodes a sweep asks: every node up to filesystemSweepCap,
+// and above it the filesystemBatch whose answers are oldest — never-answered
+// first, then by age, then by name so the order is stable.
+func batchFor(nodes []string, previous filesystemEntry) []string {
+	if len(nodes) <= filesystemSweepCap {
+		return nodes
+	}
+	batch := slices.Clone(nodes)
+	slices.SortStableFunc(batch, func(a, b string) int {
+		atA, okA := previous.answeredAt[a]
+		atB, okB := previous.answeredAt[b]
+		switch {
+		case !okA && !okB:
+			return strings.Compare(a, b)
+		case !okA:
+			return -1
+		case !okB:
+			return 1
+		}
+		if order := atA.Compare(atB); order != 0 {
+			return order
+		}
+		return strings.Compare(a, b)
+	})
+	return batch[:filesystemBatch]
+}
+
+// mergeSweep folds one sweep's answers into what the previous one knew.
+//
+// A cluster swept whole is answered by THIS sweep alone, as it always was: a
+// node that stopped answering drops out. A rolling cluster keeps every node's
+// last answer until that node is asked again — the batch asked now is only a
+// slice of it — and drops nodes the cluster no longer has.
+func mergeSweep(previous filesystemEntry, nodes []string, answers map[string]domain.NodeFilesystems, now time.Time) filesystemEntry {
+	entry := filesystemEntry{
+		at:         now,
+		nodes:      len(nodes),
+		result:     make(map[string]domain.NodeFilesystems, len(nodes)),
+		answeredAt: make(map[string]time.Time, len(nodes)),
+		ttl:        filesystemTTL,
+	}
+	if len(nodes) > filesystemSweepCap {
+		entry.ttl = filesystemBatchSpacing
+		present := make(map[string]bool, len(nodes))
+		for _, name := range nodes {
+			present[name] = true
+		}
+		for name, filesystems := range previous.result {
+			if present[name] {
+				entry.result[name] = filesystems
+				entry.answeredAt[name] = previous.answeredAt[name]
+			}
+		}
+	}
+	for name, filesystems := range answers {
+		entry.result[name] = filesystems
+		entry.answeredAt[name] = now
+	}
+	return entry
+}
+
+// FilesystemCoverage says how much of a cluster the last disk figures cover:
+// how many nodes it has, how many answered, how old the oldest answer is,
+// and whether the sweep is rolling. False before any sweep has answered.
+func (a *Adapter) FilesystemCoverage(id domain.ClusterID) (domain.DiskCoverage, bool) {
+	a.filesystems.mu.Lock()
+	defer a.filesystems.mu.Unlock()
+
+	entry, ok := a.filesystems.entries[id]
+	if !ok || entry.refused != nil {
+		return domain.DiskCoverage{}, false
+	}
+	return entry.coverage(time.Now()), true
 }
 
 // NodeFilesystems returns disk occupancy keyed by node name.
@@ -267,8 +399,8 @@ type filesystemEntry struct {
 // is an error, and it is reported as ErrMetricsUnavailable because by far the
 // most common cause is a role without nodes/proxy.
 func (a *Adapter) NodeFilesystems(ctx context.Context, id domain.ClusterID) (map[string]domain.NodeFilesystems, error) {
-	return a.filesystems.do(ctx, id, func(ctx context.Context) sweepOutcome {
-		return a.sweepFilesystems(ctx, id)
+	return a.filesystems.do(ctx, id, func(ctx context.Context, previous filesystemEntry) sweepOutcome {
+		return a.sweepFilesystems(ctx, id, previous)
 	})
 }
 
@@ -278,7 +410,7 @@ func (a *Adapter) NodeFilesystems(ctx context.Context, id domain.ClusterID) (map
 // whole fan-out happens once per cluster however many callers wanted it. It
 // says whether its answer is worth keeping rather than storing it itself, so
 // a sweep overtaken by a disconnect can be told not to.
-func (a *Adapter) sweepFilesystems(ctx context.Context, id domain.ClusterID) sweepOutcome {
+func (a *Adapter) sweepFilesystems(ctx context.Context, id domain.ClusterID, previous filesystemEntry) sweepOutcome {
 	op := fmt.Sprintf("reading node filesystems of %q", id)
 
 	set, err := a.factory.clientsFor(id)
@@ -290,17 +422,18 @@ func (a *Adapter) sweepFilesystems(ctx context.Context, id domain.ClusterID) swe
 	if err != nil {
 		return sweepOutcome{err: classify(op, err)}
 	}
+	batch := batchFor(nodes, previous)
 
 	var (
 		mu      sync.Mutex
 		wg      sync.WaitGroup
-		result  = make(map[string]domain.NodeFilesystems, len(nodes))
+		result  = make(map[string]domain.NodeFilesystems, len(batch))
 		refused error
 		gate    = make(chan struct{}, filesystemConcurrency)
 	)
 
-	for i := range nodes {
-		name := nodes[i]
+	for i := range batch {
+		name := batch[i]
 
 		wg.Go(func() {
 			gate <- struct{}{}
@@ -322,20 +455,18 @@ func (a *Adapter) sweepFilesystems(ctx context.Context, id domain.ClusterID) swe
 	}
 	wg.Wait()
 
-	if len(result) == 0 {
-		if refused == nil {
-			// No nodes to ask. An empty cluster is not a failure, and caching
-			// it keeps an idle cluster from sweeping every minute.
-			return sweepOutcome{result: result, remember: true}
-		}
+	entry := mergeSweep(previous, nodes, result, time.Now())
+	if len(entry.result) == 0 && refused != nil {
 		// Remembered for the same minute a success would be, so a cluster
 		// that will not answer is asked once a minute rather than on every
 		// assessment. See sweepOutcome.
 		err := fmt.Errorf("%s: %w: %w", op, ports.ErrMetricsUnavailable, refused)
-		return sweepOutcome{err: err, remember: true}
+		return sweepOutcome{err: err, remember: true, entry: filesystemEntry{at: entry.at, refused: err, nodes: len(nodes)}}
 	}
 
-	return sweepOutcome{result: result, remember: true}
+	// An empty cluster lands here too, which is not a failure: caching it
+	// keeps an idle cluster from sweeping every minute.
+	return sweepOutcome{result: entry.result, remember: true, entry: entry}
 }
 
 // nodeNames lists the nodes to sweep, reusing the overview's list when it is

@@ -749,6 +749,16 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID, targe
 		Now:             time.Now().UTC(),
 	})
 
+	// What the disk figures cover, from the adapter that knows: on a cluster
+	// swept in batches the fullest disk is the fullest of what has answered.
+	if reporter, ok := s.metrics.(interface {
+		FilesystemCoverage(domain.ClusterID) (domain.DiskCoverage, bool)
+	}); ok {
+		if coverage, known := reporter.FilesystemCoverage(id); known {
+			overview.Nodes.Disks.Coverage = coverage
+		}
+	}
+
 	s.logger.Info("assessed cluster",
 		slog.String("cluster", string(id)),
 		slog.String("health", string(overview.Health)),

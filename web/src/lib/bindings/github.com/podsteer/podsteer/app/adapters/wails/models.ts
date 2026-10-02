@@ -1353,6 +1353,17 @@ export interface DirectoryListing {
 }
 
 /**
+ * DiskCoverage is domain.DiskCoverage: on a cluster too large to ask every
+ * kubelet at once, how many answered and how old the oldest answer is.
+ */
+export interface DiskCoverage {
+    "asked": number;
+    "answered": number;
+    "oldestSeconds": number;
+    "rolling": boolean;
+}
+
+/**
  * DiskSummary is what the kubelets said about node filesystems.
  */
 export interface DiskSummary {
@@ -1377,6 +1388,11 @@ export interface DiskSummary {
      * Filling counts nodes past the warning threshold.
      */
     "filling": number;
+
+    /**
+     * Coverage says how much of the cluster the figures stand for.
+     */
+    "coverage": DiskCoverage;
 }
 
 /**

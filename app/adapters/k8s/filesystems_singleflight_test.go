@@ -25,10 +25,10 @@ func TestFilesystemSweepIsSharedByConcurrentCallers(t *testing.T) {
 		release = make(chan struct{})
 		want    = map[string]domain.NodeFilesystems{"worker-1": {Measured: true}}
 	)
-	sweep := func(context.Context) sweepOutcome {
+	sweep := func(context.Context, filesystemEntry) sweepOutcome {
 		sweeps.Add(1)
 		<-release
-		return sweepOutcome{result: want, remember: true}
+		return stored(want)
 	}
 
 	const callers = 50
@@ -79,11 +79,11 @@ func TestFilesystemSweepSurvivesItsLeaderGivingUp(t *testing.T) {
 		release = make(chan struct{})
 		sweepOK atomic.Bool
 	)
-	sweep := func(ctx context.Context) sweepOutcome {
+	sweep := func(ctx context.Context, _ filesystemEntry) sweepOutcome {
 		<-release
 		// The leader's cancellation must not have reached the sweep.
 		sweepOK.Store(ctx.Err() == nil)
-		return sweepOutcome{result: map[string]domain.NodeFilesystems{}, remember: true}
+		return stored(map[string]domain.NodeFilesystems{})
 	}
 
 	leaderCtx, cancelLeader := context.WithCancel(t.Context())
@@ -121,7 +121,7 @@ func TestFilesystemSweepTransientFailureIsNotHeld(t *testing.T) {
 		cache  filesystemCache
 		sweeps atomic.Int32
 	)
-	sweep := func(context.Context) sweepOutcome {
+	sweep := func(context.Context, filesystemEntry) sweepOutcome {
 		sweeps.Add(1)
 		return sweepOutcome{err: errors.New("node list failed")}
 	}
@@ -143,9 +143,9 @@ func TestFilesystemSweepOvertakenByDisconnectIsNotStored(t *testing.T) {
 		cache   filesystemCache
 		release = make(chan struct{})
 	)
-	stale := func(context.Context) sweepOutcome {
+	stale := func(context.Context, filesystemEntry) sweepOutcome {
 		<-release
-		return sweepOutcome{result: map[string]domain.NodeFilesystems{"old": {Measured: true}}, remember: true}
+		return stored(map[string]domain.NodeFilesystems{"old": {Measured: true}})
 	}
 
 	done := make(chan struct{})
@@ -184,7 +184,7 @@ func TestFilesystemClaimSeesASweepThatJustFinished(t *testing.T) {
 	if cached || !leader {
 		t.Fatal("the first caller must lead")
 	}
-	cache.finish("prod", first, sweepOutcome{result: map[string]domain.NodeFilesystems{"worker-1": {Measured: true}}, remember: true})
+	cache.finish("prod", first, stored(map[string]domain.NodeFilesystems{"worker-1": {Measured: true}}))
 
 	entry, cached, call, leader := cache.claim("prod")
 	if !cached || leader || call != nil {
@@ -193,4 +193,9 @@ func TestFilesystemClaimSeesASweepThatJustFinished(t *testing.T) {
 	if len(entry.result) != 1 {
 		t.Fatalf("entry = %+v, want the sweep's result", entry)
 	}
+}
+
+// stored is a sweep's answer as the cache keeps it.
+func stored(result map[string]domain.NodeFilesystems) sweepOutcome {
+	return sweepOutcome{result: result, remember: true, entry: filesystemEntry{at: time.Now(), result: result}}
 }

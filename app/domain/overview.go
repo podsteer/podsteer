@@ -474,6 +474,9 @@ type DiskSummary struct {
 	FullestNode    string
 	// Filling counts nodes past the warning threshold.
 	Filling int
+	// Coverage says how much of the cluster these figures stand for, when
+	// the adapter can say; the zero value is "every node, just now".
+	Coverage DiskCoverage
 }
 
 // StorageSummary is the cluster's persistent storage at a glance.
@@ -2943,4 +2946,23 @@ func pressureFindings(nodes []Node) []Finding {
 		Count:    count,
 		KindID:   nodeKindID,
 	}}
+}
+
+// DiskCoverage says how much of a cluster a disk figure stands for.
+//
+// Above a node count the kubelets are asked a batch at a time rather than
+// all at once (see app/adapters/k8s/filesystems.go), so the "fullest disk"
+// is the fullest of what has answered, some of it minutes old. That is a
+// weaker claim than "the fullest node", and the overview has to make the
+// weaker claim when it is the true one.
+type DiskCoverage struct {
+	// Asked is how many nodes the cluster has.
+	Asked int
+	// Answered is how many of them the figure includes.
+	Answered int
+	// OldestSeconds is how old the oldest answer in it is.
+	OldestSeconds int64
+	// Rolling says the nodes are asked in batches, so the figure is
+	// assembled over several sweeps.
+	Rolling bool
 }

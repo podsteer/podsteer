@@ -234,6 +234,21 @@
    * chart exists: 13% used across eighteen nodes is equally consistent with
    * every disk at 13% and with one at 90% about to start evicting.
    */
+  /**
+   * What the disk figures stand for, when that is less than "every node,
+   * just now": on a cluster too large to ask every kubelet at once they are
+   * asked a batch at a time (app/adapters/k8s/filesystems.go), so the fullest
+   * disk is the fullest of what has answered and some of it is minutes old.
+   * Said beside the figure, because the stronger claim would be false.
+   */
+  const diskCoverage = $derived.by((): string => {
+    const coverage = overview?.nodes.disks.coverage
+    if (!coverage || (!coverage.rolling && coverage.answered >= coverage.asked)) return ''
+    const age = coverage.oldestSeconds > 0 ? `, the oldest answer ${formatAge(coverage.oldestSeconds)} old` : ''
+    const why = coverage.rolling ? ' — on a cluster this size the kubelets are asked a batch at a time' : ''
+    return `${coverage.answered} of ${coverage.asked} nodes answered${age}${why}`
+  })
+
   const fullestDisk = $derived.by((): Figure => {
     const disks = overview?.nodes.disks
     if (!disks || disks.measured === 0) {
@@ -244,7 +259,7 @@
       label: 'Fullest node',
       percent: `${percent}%`,
       tone: percent >= 90 ? 'text-error' : percent >= 80 ? 'text-warning' : undefined,
-      title: `${disks.fullestNode} — the fullest of ${disks.measured} node filesystems`,
+      title: `${disks.fullestNode} — the fullest of ${disks.measured} node filesystems${diskCoverage ? `. ${diskCoverage}.` : ''}`,
     }
   })
 
@@ -286,8 +301,13 @@
       nodes.disks.measured > 0
         ? {
             label: 'Fullest disk',
-            value: `${Math.round(nodes.disks.fullestPercent)}%`,
-            title: `${nodes.disks.fullestNode} — across ${nodes.disks.measured} of ${nodes.total} nodes`,
+            // The share of nodes it covers, ON the row when that is not all
+            // of them — a tooltip alone would let the figure claim more.
+            value:
+              nodes.disks.coverage && nodes.disks.coverage.answered < nodes.disks.coverage.asked
+                ? `${Math.round(nodes.disks.fullestPercent)}% (${nodes.disks.coverage.answered}/${nodes.disks.coverage.asked})`
+                : `${Math.round(nodes.disks.fullestPercent)}%`,
+            title: `${nodes.disks.fullestNode} — across ${nodes.disks.measured} of ${nodes.total} nodes${diskCoverage ? `. ${diskCoverage}.` : ''}`,
             tone:
               nodes.disks.fullestPercent >= 90
                 ? 'text-error'

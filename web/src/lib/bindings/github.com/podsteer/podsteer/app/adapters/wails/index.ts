@@ -82,6 +82,7 @@ export type {
     DebugInfo,
     DirectoryEntry,
     DirectoryListing,
+    DiskCoverage,
     DiskSummary,
     Distribution,
     DrainFailure,

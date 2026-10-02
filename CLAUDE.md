@@ -399,6 +399,11 @@ cluster, dropped on disconnect, **never written anywhere** — object names stay
 off disk, see SECURITY.md), which `PodUsageHistory` serves to seed the drawer's
 chart for a pod no page ever held.
 
+**Not done yet:** generalising this to every list (`TableQuery` — nodes,
+workloads, events, generic tables are still filtered in the webview), and a
+CI job running a kwokctl cluster of 100 fake nodes / 10k pods against budgets.
+Both are steps 7–8 of the scale plan.
+
 **What only sees the page now, and is a known loss:** the command palette's pod
 search; pod findings filed on the session timeline; the column picker's key
 suggestions; the webview's own usageHistory for pods (superseded for the drawer
@@ -770,7 +775,16 @@ about before adding a fourth:
   on a context detached from its cancellation (`detach`, as `readcache.go`
   does), the rest wait on their own; a sweep overtaken by a disconnect is not
   stored. Not routed through `cachedRead`: that cache never reuses a failure,
-  this one holds a refusal for the minute.
+  this one holds a refusal for the minute. Cached / follower / leader is ONE
+  decision under one lock (`claim`), or a sweep finishing between a cache
+  read and a claim lets a redundant one start. **Above `filesystemSweepCap`
+  (128) nodes the sweep rolls**: each asks the `filesystemBatch` (64) nodes
+  whose answers are oldest, never-asked first, every `filesystemBatchSpacing`
+  (15 s), keeping every node's last answer until it is asked again
+  (`batchFor`/`mergeSweep`). The figure is then the fullest of what has
+  answered, possibly minutes old, so `domain.DiskCoverage` (asked, answered,
+  oldest age, rolling) rides `DiskSummary` and the Overview says it on the
+  Fullest disk row — never the stronger claim when the weaker is the true one.
 - **Kubernetes support windows are a hand-compiled table** in
   `app/domain/release.go`. It goes stale by construction, so a release it does
   not cover is reported as `SupportUnknown` and produces nothing. Never make an
