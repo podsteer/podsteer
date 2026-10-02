@@ -38,21 +38,36 @@
   import { workspace } from '$stores/workspace.svelte'
   import type { ClusterSettings } from '$lib/api/client'
   import Select from './Select.svelte'
+  import { backendOptions, backendValue, listMetricsBackends, parseBackendValue, type BackendCandidate } from '$lib/metricsBackends'
+  import { toApiError } from '$lib/api/errors'
   import { Database, TriangleAlert } from '@lucide/svelte'
 
   const store = clusterSettings
 
-  const MODE_OPTIONS = METRICS_QUERY_MODES.map((option) => ({
-    value: option.value,
-    label: option.label,
-    hint: option.hint,
-  }))
+  // The hints are said ONCE, under the control, for the value chosen; the
+  // options carry labels only, or the trigger and the line under it repeat
+  // the same sentence.
+  const MODE_OPTIONS = METRICS_QUERY_MODES.map((option) => ({ value: option.value, label: option.label }))
+  const FLEET_OPTIONS = FLEET_POLICIES.map((option) => ({ value: option.value, label: option.label }))
 
-  const FLEET_OPTIONS = FLEET_POLICIES.map((option) => ({
-    value: option.value,
-    label: option.label,
-    hint: option.hint,
-  }))
+  /**
+   * Discovered backends per cluster, read when the picker opens — discovery
+   * is a few LISTs on that cluster, worth doing when somebody is choosing and
+   * not on every render. Null
+   * means this build cannot list them; an open tab is needed to list at all.
+   */
+  let candidates = $state<Record<string, BackendCandidate[] | null>>({})
+  let candidateError = $state<Record<string, string>>({})
+
+  async function loadCandidates(clusterId: string): Promise<void> {
+    if (!workspace.sessions.some((session) => session.cluster.id === clusterId)) return
+    try {
+      candidates[clusterId] = await listMetricsBackends(clusterId)
+      delete candidateError[clusterId]
+    } catch (error) {
+      candidateError[clusterId] = toApiError(error).message
+    }
+  }
 
   /**
    * The contexts worth asking the Go process about.
@@ -92,7 +107,7 @@
       .filter((entry) => open.has(entry.clusterId) || !isDefault(entry))
   })
 
-  function hintFor(options: { value: string; hint: string }[], value: string): string {
+  function hintFor(options: readonly { value: string; hint: string }[], value: string): string {
     return options.find((option) => option.value === value)?.hint ?? ''
   }
 
@@ -153,42 +168,41 @@
                       void store.save(entry.clusterId, { metricsQueryMode: value })}
                   />
                   <span class="text-body-medium text-on-surface-variant/80">
-                    {hintFor(MODE_OPTIONS, entry.metricsQueryMode)}
+                    {hintFor(METRICS_QUERY_MODES, entry.metricsQueryMode)}
                   </span>
                 </div>
 
                 {#if entry.metricsQueryMode !== 'off'}
+                  <!--
+                    THE PICKER. "Whichever PodSteer finds" is the state in which
+                    no object name is written anywhere; choosing a backend is
+                    the one thing on this pane that records a name in the
+                    settings file, and the paragraph at the foot says so.
+                  -->
                   <div class="flex flex-col gap-1">
-                    <span class="text-label-medium text-on-surface-variant">
-                      Which backend answers
+                    <Select
+                      label="Which backend answers"
+                      accessibleName="Which monitoring backend answers for {entry.clusterId}"
+                      value={backendValue(entry.preferredNamespace, entry.preferredService)}
+                      options={backendOptions(candidates[entry.clusterId] ?? null, entry)}
+                      disabled={store.busy || !store.writable}
+                      class="w-full"
+                      onopen={() => void loadCandidates(entry.clusterId)}
+                      onchange={(value) => void store.save(entry.clusterId, parseBackendValue(value))}
+                    />
+                    <span class="text-body-medium text-on-surface-variant/80">
+                      {#if candidateError[entry.clusterId]}
+                        Could not list this cluster's backends: {candidateError[entry.clusterId]}
+                      {:else if chosen}
+                        Pinned: {chosen}. Its namespace and name are in your settings file.
+                      {:else if candidates[entry.clusterId] === null}
+                        Whichever PodSteer finds. A chart names the backend that answered and lets
+                        you pin a different one.
+                      {:else}
+                        Whichever PodSteer finds — the highest ranked of those listed. Nothing is
+                        written to your settings file until you pick one.
+                      {/if}
                     </span>
-                    {#if chosen}
-                      <p class="text-body-medium text-on-surface">{chosen}</p>
-                      <!--
-                        The one control that clears a name out of
-                        settings.json. Offered beside the choice rather than
-                        buried, because the choice is the only thing on this
-                        pane that writes the name of a cluster object to disk.
-                      -->
-                      <button
-                        type="button"
-                        class="self-start text-body-medium text-primary underline disabled:opacity-50"
-                        disabled={store.busy || !store.writable}
-                        onclick={() =>
-                          void store.save(entry.clusterId, {
-                            preferredNamespace: '',
-                            preferredService: '',
-                          })}
-                      >
-                        Use whichever PodSteer finds
-                      </button>
-                    {:else}
-                      <p class="text-body-medium text-on-surface-variant/80">
-                        Whichever PodSteer finds. Where a cluster runs more than one, the chart
-                        names the service that answered and lets you pin a different one — and only
-                        then is that service’s name written to your settings file.
-                      </p>
-                    {/if}
                   </div>
 
                   <div class="flex flex-col gap-1">
@@ -202,7 +216,7 @@
                       onchange={(value) => void store.save(entry.clusterId, { fleetPolicy: value })}
                     />
                     <span class="text-body-medium text-on-surface-variant/80">
-                      {hintFor(FLEET_OPTIONS, entry.fleetPolicy)}
+                      {hintFor(FLEET_POLICIES, entry.fleetPolicy)}
                     </span>
                   </div>
                 {/if}
