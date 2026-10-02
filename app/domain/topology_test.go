@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sort"
 	"testing"
 	"time"
 
@@ -476,6 +477,11 @@ func TestTopologySummaryTierKeepsCountsComplete(t *testing.T) {
 	got := nodes[fold]
 	if got.PodSummary == nil || got.PodSummary.Total != 10 || got.PodSummary.Ready != 9 || got.PodSummary.Unhealthy != 1 {
 		t.Fatalf("fold = %+v", got)
+	}
+	// Every member named, sorted, exactly once — what findings match against.
+	if len(got.PodSummary.Members) != 10 || !sort.StringsAreSorted(got.PodSummary.Members) ||
+		!slices.Contains(got.PodSummary.Members, "app-0-1-3") {
+		t.Errorf("members = %v", got.PodSummary.Members)
 	}
 	// Edges re-pointed to the fold and deduplicated: one each.
 	for _, from := range []string{"service/ns-0/app-0", "poddisruptionbudget/ns-0/app-0", "networkpolicy/ns-0/app-0", "replicaset/ns-0/app-0-1"} {

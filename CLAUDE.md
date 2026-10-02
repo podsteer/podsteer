@@ -1473,7 +1473,9 @@ wins by terminating the busy worker) → `graphPositions` → `graphCull` → dr
   `TrafficNodeReader`) and are re-pointed to the fold or collapsed group
   drawing them before the overlay is built, so only a kind switched off
   leaves traffic off the map. Findings on backend-summarised pods reach the
-  summary box by pod name prefix (`<owner>-`), the controllers' own naming.
+  summary box by MEMBERSHIP: the summary node carries its pods' names
+  (`podSummary.members`, sorted; ~0.6 MB for 20k pods, inside the 2.5 MB
+  budget), never a guess from how pods are named.
 
 ## Secrets are read on request, never on render
 

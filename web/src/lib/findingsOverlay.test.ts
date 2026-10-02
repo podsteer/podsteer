@@ -58,22 +58,33 @@ describe('findings on a backend summary', () => {
       title: 'Pods crash-looping',
       subjects: [
         { kind: 'Pod', namespace: 'shop', name: 'web-api-5f9-x1' },
-        { kind: 'Pod', namespace: 'shop', name: 'web-7d4-a2' },
+        // A pod NOT named after its owner — created by an operator with a
+        // name of its own. Membership finds it; a name prefix would not.
+        { kind: 'Pod', namespace: 'shop', name: 'standalone-worker' },
       ],
     },
   ]
   const summaries = [
-    { id: 'fold/rs-web/Pod', namespace: 'shop', ownerName: 'web-7d4' },
-    { id: 'fold/rs-web-api/Pod', namespace: 'shop', ownerName: 'web-api-5f9' },
-    { id: 'fold/rs-other/Pod', namespace: 'other', ownerName: 'web-7d4' },
+    { id: 'fold/rs-web/Pod', namespace: 'shop', members: ['web-7d4-a2', 'standalone-worker'] },
+    { id: 'fold/rs-web-api/Pod', namespace: 'shop', members: ['web-api-5f9-x1'] },
+    // Same pod name, another namespace: not the same pod.
+    { id: 'fold/rs-other/Pod', namespace: 'other', members: ['web-api-5f9-x1'] },
   ]
+  const member = (id: string, namespace = 'shop') => [{ id, apiKind: '', namespace, name: '' }]
 
-  it('lands a finding about a summarised pod on the box standing for it', () => {
+  it('lands a finding about a summarised pod on the box that folded it, by membership', () => {
     const index = indexFindings(crash, summaries)
-    const member = (id: string) => [{ id, apiKind: '', namespace: 'shop', name: '' }]
     expect(badgeFor(index, member('fold/rs-web/Pod'))?.count).toBe(1)
     expect(badgeFor(index, member('fold/rs-web-api/Pod'))?.count).toBe(1)
-    // Same owner name, other namespace: not the same pods.
-    expect(badgeFor(index, [{ id: 'fold/rs-other/Pod', apiKind: '', namespace: 'other', name: '' }])).toBeNull()
+    expect(badgeFor(index, member('fold/rs-other/Pod', 'other'))).toBeNull()
+  })
+
+  it('does not guess from names: a pod that is not a member does not land', () => {
+    // web-7d4-zz looks like one of fold/rs-web's pods, and is not listed as one.
+    const index = indexFindings(
+      [{ id: 'x', severity: 'warning', title: 't', subjects: [{ kind: 'Pod', namespace: 'shop', name: 'web-7d4-zz' }] }],
+      summaries,
+    )
+    expect(badgeFor(index, member('fold/rs-web/Pod'))).toBeNull()
   })
 })

@@ -147,6 +147,10 @@ type TopologyPodSummary struct {
 	Total     int
 	Ready     int
 	Unhealthy int
+	// Members are the names of the pods folded here, sorted. Sent so that
+	// anything naming a pod — a finding, a search — finds the box standing
+	// for it by membership, not by guessing from how pods are named.
+	Members []string
 }
 
 // TopologyNode is one box.
@@ -586,6 +590,7 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 				}, false)
 			}
 			summary.Total++
+			summary.Members = append(summary.Members, pod.Name())
 			if pod.IsReady() {
 				summary.Ready++
 			}
@@ -635,6 +640,7 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 	b.counts["Pod"] = len(pods)
 
 	for id, summary := range summaries {
+		sort.Strings(summary.Members)
 		node := b.nodes[id]
 		node.Name = fmt.Sprintf("%d Pod", summary.Total)
 		if summary.Total != 1 {

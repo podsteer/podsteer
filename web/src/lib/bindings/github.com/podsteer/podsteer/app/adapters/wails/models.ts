@@ -4555,6 +4555,12 @@ export interface TopologyPodSummary {
     "total": number;
     "ready": number;
     "unhealthy": number;
+
+    /**
+     * Members are the folded pods' names, sorted — what a finding about one
+     * of them is matched against.
+     */
+    "members"?: string[] | null;
 }
 
 /**

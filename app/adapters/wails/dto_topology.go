@@ -30,6 +30,9 @@ type TopologyPodSummary struct {
 	Total     int `json:"total"`
 	Ready     int `json:"ready"`
 	Unhealthy int `json:"unhealthy"`
+	// Members are the folded pods' names, sorted — what a finding about one
+	// of them is matched against.
+	Members []string `json:"members,omitempty"`
 }
 
 // TopologyNode is one box on the topology.
@@ -103,7 +106,7 @@ func toTopologyGraph(graph domain.TopologyGraph) TopologyGraph {
 			Group: node.Group, Labels: node.Labels,
 		}
 		if s := node.PodSummary; s != nil {
-			dto.PodSummary = &TopologyPodSummary{Total: s.Total, Ready: s.Ready, Unhealthy: s.Unhealthy}
+			dto.PodSummary = &TopologyPodSummary{Total: s.Total, Ready: s.Ready, Unhealthy: s.Unhealthy, Members: s.Members}
 		}
 		out.Nodes = append(out.Nodes, dto)
 	}

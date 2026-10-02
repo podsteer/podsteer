@@ -194,6 +194,45 @@ func TestTopologyPayloadBudget(t *testing.T) {
 	}
 }
 
+// TestTopologySummaryPayloadBudget holds the summary tier, member names
+// included, under the same 2.5 MB: 20,000 pods folded into 400 summary nodes
+// beside 4,000 other objects — a cluster well past the pod cap.
+func TestTopologySummaryPayloadBudget(t *testing.T) {
+	const budget = 2_500_000
+	var graph domain.TopologyGraph
+	graph.Summarised = true
+	for f := range 400 {
+		rs := fmt.Sprintf("replicaset/payments/checkout-api-%03d-7d9f8c6b5", f)
+		summary := &domain.TopologyPodSummary{Total: 50, Ready: 50}
+		for p := range 50 {
+			summary.Members = append(summary.Members, fmt.Sprintf("checkout-api-%03d-7d9f8c6b5-%05d", f, p))
+		}
+		fold := "fold/" + rs + "/pod"
+		graph.Nodes = append(graph.Nodes, domain.TopologyNode{
+			ID: fold, Kind: domain.GraphPod, APIKind: "Pod", Name: "50 Pods",
+			Namespace: "payments", State: domain.StateOK, Detail: "50/50 ready", PodSummary: summary,
+		})
+		graph.Edges = append(graph.Edges, domain.TopologyEdge{From: rs, To: fold, Kind: domain.EdgeOwns})
+	}
+	for i := range 4000 {
+		node := domain.TopologyNode{
+			ID:   fmt.Sprintf("replicaset/payments/checkout-api-%05d-7d9f8c6b5", i),
+			Kind: domain.GraphReplicaSet, APIKind: "ReplicaSet", Name: fmt.Sprintf("checkout-api-%05d-7d9f8c6b5", i),
+			Namespace: "payments", State: domain.StateOK, Group: "deployment/payments/checkout-api",
+		}
+		graph.Nodes = append(graph.Nodes, node)
+		graph.Edges = append(graph.Edges, domain.TopologyEdge{From: node.Group, To: node.ID, Kind: domain.EdgeOwns})
+	}
+	raw, err := json.Marshal(toTopologyGraph(graph))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("400 summaries of 20000 pods + 4000 objects: %d bytes", len(raw))
+	if len(raw) > budget {
+		t.Errorf("payload %d bytes exceeds the %d budget", len(raw), budget)
+	}
+}
+
 func TestTopologyChangesBecomeEvents(t *testing.T) {
 	service := &fakeTopologyService{}
 	api := newTestTopologyAPI(t, service)

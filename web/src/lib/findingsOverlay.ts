@@ -34,15 +34,15 @@ export interface FindingsIndex {
 }
 
 /**
- * A pod set the BACKEND summarised: one node, no pod names. Its pods are
- * found by the name their controller gave them — `<owner>-<suffix>`, which is
- * how every built-in controller's generateName (and a StatefulSet's ordinal)
- * names a pod — so a finding about one of them still lands on the box.
+ * A pod set the BACKEND summarised: one node standing for pods the graph does
+ * not carry one by one. The backend sends their names (`podSummary.members`),
+ * and a finding about one of them lands on the box by that membership — never
+ * by guessing from how pods are usually named.
  */
-export interface SummaryOwner {
+export interface SummaryMembers {
   id: string
   namespace: string
-  ownerName: string
+  members: readonly string[]
 }
 
 /** What a box shows: how many distinct findings, and the worst of them. */
@@ -61,28 +61,23 @@ const SEVERITY_RANK: Record<string, number> = { critical: 3, warning: 2, info: 1
 
 export function indexFindings(
   findings: readonly FindingLike[] | null | undefined,
-  summaries: readonly SummaryOwner[] = [],
+  summaries: readonly SummaryMembers[] = [],
 ): FindingsIndex {
   const bySubject = new Map<string, FindingRef[]>()
   const bySummary = new Map<string, FindingRef[]>()
-  const ownersIn = new Map<string, SummaryOwner[]>()
-  for (const owner of summaries) {
-    if (!owner.ownerName) continue
-    const list = ownersIn.get(owner.namespace) ?? []
-    list.push(owner)
-    ownersIn.set(owner.namespace, list)
+  /** Pod key (namespace and name) → the summary node folding it. */
+  const foldedInto = new Map<string, string>()
+  for (const summary of summaries) {
+    for (const name of summary.members) foldedInto.set(subjectKey('Pod', summary.namespace, name), summary.id)
   }
-  // Longest owner name first, so web-api's pods are never claimed by web.
-  for (const list of ownersIn.values()) list.sort((a, b) => b.ownerName.length - a.ownerName.length)
 
   for (const finding of findings ?? []) {
     const ref = { id: finding.id, severity: finding.severity, title: finding.title }
     for (const subject of finding.subjects ?? []) {
       const key = subjectKey(subject.kind, subject.namespace, subject.name)
       add(bySubject, key, ref)
-      if (subject.kind !== 'Pod') continue
-      const owner = ownersIn.get(subject.namespace)?.find((o) => subject.name.startsWith(`${o.ownerName}-`))
-      if (owner) add(bySummary, owner.id, ref)
+      const summary = foldedInto.get(key)
+      if (summary) add(bySummary, summary, ref)
     }
   }
   return { bySubject, bySummary }

@@ -440,20 +440,13 @@
   // --- Findings ------------------------------------------------------------
 
   const realNodes = $derived(new Map((graph?.nodes ?? []).map((node) => [node.id, node])))
-  /** Backend-summarised pod sets and the controller that owns each. */
-  const summaryOwners = $derived.by(() => {
-    if (!graph?.summarised) return []
-    const owners = new Map<string, string>()
-    for (const edge of graph.edges) if (edge.kind === 'owns') owners.set(edge.to, edge.from)
-    return graph.nodes
+  /** Backend-summarised pod sets and the pods each stands for, by name. */
+  const summaryMembers = $derived(
+    (graph?.nodes ?? [])
       .filter((node) => node.podSummary)
-      .map((node) => ({
-        id: node.id,
-        namespace: node.namespace,
-        ownerName: realNodes.get(owners.get(node.id) ?? '')?.name ?? '',
-      }))
-  })
-  const findings = $derived(indexFindings(session.activeIssues, summaryOwners))
+      .map((node) => ({ id: node.id, namespace: node.namespace, members: node.podSummary!.members })),
+  )
+  const findings = $derived(indexFindings(session.activeIssues, summaryMembers))
 
   function membersOf(ids: string[]): TopologyNode[] {
     const out: TopologyNode[] = []

@@ -99,7 +99,7 @@ describe('folding', () => {
   })
 
   it('never folds a set the backend already summarised', () => {
-    const summary = node('a/Pod/fold', { podSummary: { total: 4000, ready: 3990, unhealthy: 10 }, group: 'a/Deployment/web' })
+    const summary = node('a/Pod/fold', { podSummary: { total: 4000, ready: 3990, unhealthy: 10, members: [] }, group: 'a/Deployment/web' })
     const view = toView(graph([summary], []), new Set())
     expect(view.nodes[0].set).toBe('summary')
     expect(view.nodes[0].counts).toEqual({ Pod: 4000 })
@@ -144,7 +144,7 @@ describe('grouping', () => {
 
   it('counts a backend summary by its total inside a collapsed group', () => {
     const deploy = node('a/Deployment/web', { kind: 'workload' })
-    const summary = node('a/Pod/fold', { podSummary: { total: 3000, ready: 3000, unhealthy: 0 } })
+    const summary = node('a/Pod/fold', { podSummary: { total: 3000, ready: 3000, unhealthy: 0, members: [] } })
     const view = toView(graph([deploy, summary], [edge(deploy.id, summary.id)]), new Set())
     const grouped = group(view, 'namespace', new Set([groupId('ns:a')]))
     expect(grouped.nodes[0].counts).toEqual({ Deployment: 1, Pod: 3000 })

@@ -82,7 +82,14 @@ export function normaliseGraph(graph: WideGraph): TopologyGraph {
     detail: node.detail ?? '',
     group: node.group ?? '',
     labels: (node.labels as Record<string, string> | null | undefined) ?? undefined,
-    podSummary: node.podSummary ?? undefined,
+    podSummary: node.podSummary
+      ? {
+          total: node.podSummary.total,
+          ready: node.podSummary.ready,
+          unhealthy: node.podSummary.unhealthy,
+          members: node.podSummary.members ?? [],
+        }
+      : undefined,
   }))
   const edges: TopologyEdge[] = []
   for (const edge of graph?.edges ?? []) {

@@ -384,8 +384,8 @@ func (s *TopologyService) TrafficNodes(ctx context.Context, id domain.ClusterID,
 	}
 	refs := make([]domain.TrafficNodeRef, 0, len(nodes))
 	for _, node := range nodes {
-		// A backend-folded pod set has no name of its own to match.
-		if node.Name == "" {
+		// A backend-folded pod set's name is a count, not a workload's.
+		if node.PodSummary != nil {
 			continue
 		}
 		refs = append(refs, domain.TrafficNodeRef{
