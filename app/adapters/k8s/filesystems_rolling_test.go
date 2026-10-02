@@ -34,9 +34,9 @@ func TestASmallClusterIsSweptWholeEveryMinute(t *testing.T) {
 	}
 
 	now := time.Now()
-	previous := mergeSweep(filesystemEntry{}, nodes, answersFor(nodes), now)
+	previous := mergeSweep(filesystemEntry{}, nodes, nodes, answersFor(nodes), now)
 	// A node that stops answering drops out, as it always did.
-	entry := mergeSweep(previous, nodes, answersFor(nodes[1:]), now.Add(time.Minute))
+	entry := mergeSweep(previous, nodes, nodes, answersFor(nodes[1:]), now.Add(time.Minute))
 	if len(entry.result) != len(nodes)-1 || entry.lifetime() != filesystemTTL || entry.rolling() {
 		t.Fatalf("whole sweep: %d answers, ttl %v, rolling %v", len(entry.result), entry.lifetime(), entry.rolling())
 	}
@@ -62,7 +62,7 @@ func TestALargeClusterRollsThroughEveryNode(t *testing.T) {
 		for _, name := range batch {
 			asked[name]++
 		}
-		entry = mergeSweep(entry, nodes, answersFor(batch), start.Add(time.Duration(i)*filesystemBatchSpacing))
+		entry = mergeSweep(entry, nodes, batch, answersFor(batch), start.Add(time.Duration(i)*filesystemBatchSpacing))
 	}
 
 	if len(asked) != len(nodes) {
@@ -93,14 +93,87 @@ func TestARollingSweepForgetsNodesTheClusterNoLongerHas(t *testing.T) {
 
 	nodes := nodeNamesN(200)
 	now := time.Now()
-	entry := mergeSweep(filesystemEntry{}, nodes, answersFor(nodes), now)
+	entry := mergeSweep(filesystemEntry{}, nodes, nodes, answersFor(nodes), now)
 
 	shrunk := nodes[:150]
-	entry = mergeSweep(entry, shrunk, answersFor(shrunk[:10]), now.Add(time.Minute))
+	entry = mergeSweep(entry, shrunk, shrunk[:10], answersFor(shrunk[:10]), now.Add(time.Minute))
 	if len(entry.result) != 150 {
 		t.Fatalf("%d answers kept, want the 150 nodes still in the cluster", len(entry.result))
 	}
 	if coverage := entry.coverage(now.Add(time.Minute)); coverage.Asked != 150 || coverage.Answered != 150 {
 		t.Fatalf("coverage = %+v", coverage)
+	}
+}
+
+// TestDeadKubeletsDoNotStarveTheRotation pins the fix for a batch's worth of
+// silent nodes: they are stamped asked like any other, so the rotation moves
+// on to the healthy nodes instead of asking the dead ones on every batch.
+func TestDeadKubeletsDoNotStarveTheRotation(t *testing.T) {
+	t.Parallel()
+
+	nodes := nodeNamesN(400)
+	dead := map[string]bool{}
+	for _, name := range nodes[:2*filesystemBatch] {
+		dead[name] = true
+	}
+	start := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+
+	var entry filesystemEntry
+	asked := map[string]bool{}
+	sweeps := (len(nodes) + filesystemBatch - 1) / filesystemBatch
+	for i := range sweeps {
+		batch := batchFor(nodes, entry)
+		answers := map[string]domain.NodeFilesystems{}
+		for _, name := range batch {
+			asked[name] = true
+			if !dead[name] {
+				answers[name] = domain.NodeFilesystems{Measured: true}
+			}
+		}
+		entry = mergeSweep(entry, nodes, batch, answers, start.Add(time.Duration(i)*filesystemBatchSpacing))
+	}
+
+	if len(asked) != len(nodes) {
+		t.Fatalf("%d of %d nodes asked: dead kubelets held the rotation", len(asked), len(nodes))
+	}
+	if got, want := len(entry.result), len(nodes)-len(dead); got != want {
+		t.Fatalf("%d answers, want every healthy node's %d", got, want)
+	}
+}
+
+// TestCarriedAnswersDecay pins that a node silent for several rotations
+// stops being presented as current.
+func TestCarriedAnswersDecay(t *testing.T) {
+	t.Parallel()
+
+	nodes := nodeNamesN(200)
+	start := time.Now()
+	entry := mergeSweep(filesystemEntry{}, nodes, nodes[:filesystemBatch], answersFor(nodes[:filesystemBatch]), start)
+
+	later := start.Add(carriedAnswerMaxAge(len(nodes)) + time.Second)
+	entry = mergeSweep(entry, nodes, nodes[filesystemBatch:2*filesystemBatch], nil, later)
+	if len(entry.result) != 0 {
+		t.Fatalf("%d answers older than the bound still carried", len(entry.result))
+	}
+}
+
+func TestARollingClusterCanStillBeRefused(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                          string
+		answered, kept, asked, denied int
+		failed, want                  bool
+	}{
+		{"an answer is never a refusal", 1, 300, 64, 63, true, false},
+		{"nothing asked failed", 0, 300, 64, 0, false, false},
+		{"silent kubelets, answers carried", 0, 300, 64, 0, true, false},
+		{"every node denied, answers carried", 0, 300, 64, 64, true, true},
+		{"nothing to show at all", 0, 0, 64, 0, true, true},
+	}
+	for _, tt := range tests {
+		if got := sweepRefused(tt.answered, tt.kept, tt.asked, tt.denied, tt.failed); got != tt.want {
+			t.Errorf("%s: refused = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/podsteer/podsteer/app/domain"
@@ -284,9 +285,15 @@ type filesystemEntry struct {
 	// to serve back. See the note on caching refusals in NodeFilesystems.
 	refused error
 
-	// answeredAt is when each node in result last answered — what a rolling
-	// sweep picks its next batch by, and what the coverage's age reads.
+	// answeredAt is when each node in result last answered — what the
+	// coverage's age reads, and what decays a carried answer.
 	answeredAt map[string]time.Time
+	// askedAt is when each node was last ASKED, answer or not — what a
+	// rolling sweep picks its next batch by. Separate from answeredAt, or a
+	// node that never answers is never "asked" and is picked again on every
+	// batch: with a batch's worth of dead kubelets, every batch was the dead
+	// ones and no healthy node was ever refreshed again.
+	askedAt map[string]time.Time
 	// nodes is how many nodes the cluster had at the sweep.
 	nodes int
 	// ttl is how long this entry stands: filesystemTTL, or
@@ -318,16 +325,17 @@ func (e filesystemEntry) coverage(now time.Time) domain.DiskCoverage {
 }
 
 // batchFor picks the nodes a sweep asks: every node up to filesystemSweepCap,
-// and above it the filesystemBatch whose answers are oldest — never-answered
-// first, then by age, then by name so the order is stable.
+// and above it the filesystemBatch asked longest ago — never-asked first,
+// then by when, then by name so the order is stable. By when they were
+// ASKED, not answered: see askedAt.
 func batchFor(nodes []string, previous filesystemEntry) []string {
 	if len(nodes) <= filesystemSweepCap {
 		return nodes
 	}
 	batch := slices.Clone(nodes)
 	slices.SortStableFunc(batch, func(a, b string) int {
-		atA, okA := previous.answeredAt[a]
-		atB, okB := previous.answeredAt[b]
+		atA, okA := previous.askedAt[a]
+		atB, okB := previous.askedAt[b]
 		switch {
 		case !okA && !okB:
 			return strings.Compare(a, b)
@@ -344,38 +352,71 @@ func batchFor(nodes []string, previous filesystemEntry) []string {
 	return batch[:filesystemBatch]
 }
 
+// carriedAnswerMaxAge is how old a rolling cluster's carried answer may be:
+// four full rotations through its nodes, and never under five minutes. A
+// node asked on every rotation and never answering since is not "the disk
+// was fine a while ago" any more — past this its last answer is dropped and
+// the figure decays towards unknown rather than presenting it as current.
+func carriedAnswerMaxAge(nodes int) time.Duration {
+	rotations := (nodes + filesystemBatch - 1) / filesystemBatch
+	return max(4*time.Duration(rotations)*filesystemBatchSpacing, 5*time.Minute)
+}
+
 // mergeSweep folds one sweep's answers into what the previous one knew.
 //
 // A cluster swept whole is answered by THIS sweep alone, as it always was: a
 // node that stopped answering drops out. A rolling cluster keeps every node's
 // last answer until that node is asked again — the batch asked now is only a
-// slice of it — and drops nodes the cluster no longer has.
-func mergeSweep(previous filesystemEntry, nodes []string, answers map[string]domain.NodeFilesystems, now time.Time) filesystemEntry {
+// slice of it — drops nodes the cluster no longer has, and drops answers
+// older than carriedAnswerMaxAge. Every node in batch is stamped asked,
+// whether or not it answered.
+func mergeSweep(previous filesystemEntry, nodes, batch []string, answers map[string]domain.NodeFilesystems, now time.Time) filesystemEntry {
 	entry := filesystemEntry{
 		at:         now,
 		nodes:      len(nodes),
 		result:     make(map[string]domain.NodeFilesystems, len(nodes)),
 		answeredAt: make(map[string]time.Time, len(nodes)),
+		askedAt:    make(map[string]time.Time, len(nodes)),
 		ttl:        filesystemTTL,
 	}
 	if len(nodes) > filesystemSweepCap {
 		entry.ttl = filesystemBatchSpacing
+		maxAge := carriedAnswerMaxAge(len(nodes))
 		present := make(map[string]bool, len(nodes))
 		for _, name := range nodes {
 			present[name] = true
 		}
-		for name, filesystems := range previous.result {
+		for name, at := range previous.askedAt {
 			if present[name] {
-				entry.result[name] = filesystems
-				entry.answeredAt[name] = previous.answeredAt[name]
+				entry.askedAt[name] = at
 			}
 		}
+		for name, filesystems := range previous.result {
+			answered := previous.answeredAt[name]
+			if present[name] && now.Sub(answered) <= maxAge {
+				entry.result[name] = filesystems
+				entry.answeredAt[name] = answered
+			}
+		}
+	}
+	for _, name := range batch {
+		entry.askedAt[name] = now
 	}
 	for name, filesystems := range answers {
 		entry.result[name] = filesystems
 		entry.answeredAt[name] = now
 	}
 	return entry
+}
+
+// sweepRefused decides whether a sweep is a refusal: nothing answered, and
+// either nothing is left to show or every node asked was DENIED. See
+// sweepFilesystems.
+func sweepRefused(answered, kept, asked, denied int, failed bool) bool {
+	if answered > 0 || !failed {
+		return false
+	}
+	return kept == 0 || (asked > 0 && denied == asked)
 }
 
 // FilesystemCoverage says how much of a cluster the last disk figures cover:
@@ -429,7 +470,10 @@ func (a *Adapter) sweepFilesystems(ctx context.Context, id domain.ClusterID, pre
 		wg      sync.WaitGroup
 		result  = make(map[string]domain.NodeFilesystems, len(batch))
 		refused error
-		gate    = make(chan struct{}, filesystemConcurrency)
+		// denied counts the nodes the API server REFUSED (403/401), as
+		// opposed to a kubelet that did not answer.
+		denied int
+		gate   = make(chan struct{}, filesystemConcurrency)
 	)
 
 	for i := range batch {
@@ -448,6 +492,9 @@ func (a *Adapter) sweepFilesystems(ctx context.Context, id domain.ClusterID, pre
 				if refused == nil {
 					refused = err
 				}
+				if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+					denied++
+				}
 				return
 			}
 			result[name] = filesystems
@@ -455,13 +502,24 @@ func (a *Adapter) sweepFilesystems(ctx context.Context, id domain.ClusterID, pre
 	}
 	wg.Wait()
 
-	entry := mergeSweep(previous, nodes, result, time.Now())
-	if len(entry.result) == 0 && refused != nil {
+	entry := mergeSweep(previous, nodes, batch, result, time.Now())
+
+	// A REFUSAL, whatever was carried. Nothing answered and either there is
+	// nothing to show, or every node asked was DENIED rather than merely
+	// silent — nodes/proxy revoked. A rolling cluster used to re-store its
+	// carried answers stamped as new on every refused batch, so it could
+	// never become refused once one node had answered. Silent kubelets are
+	// not a refusal: the other batches still answer, and their carried
+	// answers decay (carriedAnswerMaxAge).
+	if sweepRefused(len(result), len(entry.result), len(batch), denied, refused != nil) {
 		// Remembered for the same minute a success would be, so a cluster
 		// that will not answer is asked once a minute rather than on every
-		// assessment. See sweepOutcome.
+		// assessment. See sweepOutcome. Where it was asked is kept, so the
+		// rotation resumes rather than restarting at the same batch.
 		err := fmt.Errorf("%s: %w: %w", op, ports.ErrMetricsUnavailable, refused)
-		return sweepOutcome{err: err, remember: true, entry: filesystemEntry{at: entry.at, refused: err, nodes: len(nodes)}}
+		return sweepOutcome{err: err, remember: true, entry: filesystemEntry{
+			at: entry.at, refused: err, nodes: len(nodes), askedAt: entry.askedAt, ttl: filesystemTTL,
+		}}
 	}
 
 	// An empty cluster lands here too, which is not a failure: caching it
@@ -593,18 +651,6 @@ func (a *Adapter) nodeSummary(
 		Imagefs:  imagefs,
 		Measured: true,
 	}, nil
-}
-
-// get returns a cached sweep, or a cached refusal, while it is still fresh.
-func (c *filesystemCache) get(id domain.ClusterID) (map[string]domain.NodeFilesystems, error, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	entry, ok := c.entries[id]
-	if !ok || time.Since(entry.at) > filesystemTTL {
-		return nil, nil, false
-	}
-	return entry.result, entry.refused, true
 }
 
 // storeLocked records a sweep's answer. The caller holds mu.

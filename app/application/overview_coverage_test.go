@@ -24,7 +24,7 @@ func (c coveringMetrics) FilesystemCoverage(domain.ClusterID) (domain.DiskCovera
 func TestOverviewSaysHowMuchOfTheClusterTheDiskFigureCovers(t *testing.T) {
 	t.Parallel()
 
-	kubernetes := &fakeKubernetes{}
+	kubernetes := &fakeKubernetes{nodeFilesystems: map[string]domain.NodeFilesystems{"node-1": {Measured: true}}}
 	want := domain.DiskCoverage{Asked: 300, Answered: 192, OldestSeconds: 45, Rolling: true}
 
 	registry := application.NewRegistry()
@@ -47,5 +47,31 @@ func TestOverviewSaysHowMuchOfTheClusterTheDiskFigureCovers(t *testing.T) {
 	}
 	if got := overview.Nodes.Disks.Coverage; got != want {
 		t.Fatalf("coverage = %+v, want %+v", got, want)
+	}
+}
+
+func TestOverviewReportsNoCoverageForASweepThatFailed(t *testing.T) {
+	t.Parallel()
+
+	kubernetes := &fakeKubernetes{} // NodeFilesystems fails
+	registry := application.NewRegistry()
+	registry.Open(mustCluster(t, "dev", true))
+	service, err := application.NewOverviewService(application.OverviewServiceDeps{
+		Cluster:   kubernetes,
+		Workloads: kubernetes,
+		Events:    &fakeEvents{},
+		Metrics:   coveringMetrics{fakeKubernetes: kubernetes, coverage: domain.DiskCoverage{Asked: 300, Answered: 192}},
+		APIs:      kubernetes,
+		Registry:  registry,
+	})
+	if err != nil {
+		t.Fatalf("NewOverviewService() error = %v", err)
+	}
+	overview, err := service.Overview(context.Background(), "dev")
+	if err != nil {
+		t.Fatalf("Overview() error = %v", err)
+	}
+	if got := overview.Nodes.Disks.Coverage; got != (domain.DiskCoverage{}) {
+		t.Fatalf("coverage = %+v beside a failed sweep, want none", got)
 	}
 }

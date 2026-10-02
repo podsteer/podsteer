@@ -751,9 +751,12 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID, targe
 
 	// What the disk figures cover, from the adapter that knows: on a cluster
 	// swept in batches the fullest disk is the fullest of what has answered.
+	// Only beside figures THIS assessment got: a sweep that failed this time
+	// leaves the disks empty, and the last good sweep's coverage beside them
+	// would claim nodes answered that are not in the figure.
 	if reporter, ok := s.metrics.(interface {
 		FilesystemCoverage(domain.ClusterID) (domain.DiskCoverage, bool)
-	}); ok {
+	}); ok && nodeDisks != nil {
 		if coverage, known := reporter.FilesystemCoverage(id); known {
 			overview.Nodes.Disks.Coverage = coverage
 		}

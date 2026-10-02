@@ -159,7 +159,7 @@ func TestFilesystemSweepOvertakenByDisconnectIsNotStored(t *testing.T) {
 	close(release)
 	<-done
 
-	if _, _, ok := cache.get("prod"); ok {
+	if _, ok := cache.entries["prod"]; ok {
 		t.Fatal("a sweep that finished after forget() was cached for the reconnected cluster")
 	}
 }
