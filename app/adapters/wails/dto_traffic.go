@@ -53,6 +53,10 @@ type TrafficEdge struct {
 	P50 float64 `json:"p50"`
 	P95 float64 `json:"p95"`
 	P99 float64 `json:"p99"`
+	// LatencyBeyondBuckets is true when a percentile fell in the histogram's
+	// +Inf bucket — slower than its largest bound. That percentile is -1, and
+	// this is what tells it apart from "not exposed".
+	LatencyBeyondBuckets bool `json:"latencyBeyondBuckets"`
 }
 
 // TrafficLayer is one source's traffic over one window.
@@ -128,6 +132,8 @@ func toTrafficLayer(layer domain.TrafficLayer) TrafficLayer {
 			P50:            edge.P50,
 			P95:            edge.P95,
 			P99:            edge.P99,
+
+			LatencyBeyondBuckets: edge.LatencyBeyondBuckets,
 		})
 	}
 	for _, endpoint := range layer.Unmapped {

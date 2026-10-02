@@ -99,6 +99,10 @@ export interface TrafficSources {
  * traffic types stay hand-written: the generated ones widen the source and
  * window unions to `string`, type `provenance` as SeriesProvenance and mark
  * slices `| null` (the backend never sends null for them).
+ *
+ * TrafficEdge carries `latencyBeyondBuckets`: true when a percentile fell in
+ * the histogram's +Inf bucket. That percentile is still -1, and the flag is
+ * what tells "slower than every bucket" from "not exposed".
  */
 export type { TrafficEdge, TrafficEndpoint }
 

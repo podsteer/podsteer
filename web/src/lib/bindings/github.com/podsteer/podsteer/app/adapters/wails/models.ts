@@ -4474,6 +4474,13 @@ export interface TrafficEdge {
     "p50": number;
     "p95": number;
     "p99": number;
+
+    /**
+     * LatencyBeyondBuckets is true when a percentile fell in the histogram's
+     * +Inf bucket — slower than its largest bound. That percentile is -1, and
+     * this is what tells it apart from "not exposed".
+     */
+    "latencyBeyondBuckets": boolean;
 }
 
 /**

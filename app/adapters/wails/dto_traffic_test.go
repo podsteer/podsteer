@@ -3,6 +3,7 @@ package wails
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -167,5 +168,29 @@ func TestTheTrafficSurfaceIsTwoMethods(t *testing.T) {
 	}
 	if !reflect.DeepEqual(names, []string{"Sources", "Traffic"}) {
 		t.Fatalf("TrafficAPI exposes %v; every exported method of a bound service is callable from the page", names)
+	}
+}
+
+// A source or window outside the fixed sets is the frontend sending an
+// unusable argument, not a backend fault.
+func TestAnUnknownTrafficSourceOrWindowIsInvalidInput(t *testing.T) {
+	for _, err := range []error{
+		fmt.Errorf("x: %w", domain.ErrUnknownTrafficSource),
+		fmt.Errorf("x: %w", domain.ErrUnknownTrafficWindow),
+	} {
+		if code, _ := classifyError(err); code != CodeInvalidInput {
+			t.Errorf("%v: code %s, want %s", err, code, CodeInvalidInput)
+		}
+	}
+
+	api, err := NewTrafficAPI(&stubTraffic{}, &App{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.Traffic("dev", nil, true, "zipkin", "5m"); err == nil || !strings.Contains(err.Error(), "["+string(CodeInvalidInput)+"]") {
+		t.Errorf("unknown source: %v", err)
+	}
+	if _, err := api.Traffic("dev", nil, true, "istio", "7m"); err == nil || !strings.Contains(err.Error(), "["+string(CodeInvalidInput)+"]") {
+		t.Errorf("unknown window: %v", err)
 	}
 }
