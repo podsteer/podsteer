@@ -89,10 +89,10 @@ describe("TrafficPanel", () => {
     });
     const { getByRole, findByText } = mount();
     await fireEvent.click(getByRole("checkbox"));
-    await findByText(/Metrics query is not enabled/);
+    await findByText(/Reading a monitoring backend is off for this cluster/);
     await waitFor(() =>
       expect(
-        getByRole("button", { name: /metrics query setting/ }),
+        getByRole("button", { name: /Turn it on in Settings/ }),
       ).toBeTruthy(),
     );
   });
@@ -101,5 +101,34 @@ describe("TrafficPanel", () => {
     const { getByRole, findByRole } = mount();
     await fireEvent.click(getByRole("checkbox"));
     expect((await findByRole("alert")).textContent).toMatch(/not available/);
+  });
+
+  it("asks again on every switch-on, so an answer of 'not enabled' is not kept", async () => {
+    const Sources = vi
+      .fn()
+      .mockResolvedValueOnce(sources({ status: "not-enabled", message: "", sources: [] }))
+      .mockResolvedValue(sources());
+    const Traffic = vi.fn().mockResolvedValue(layer);
+    setTrafficBindings({ Sources, Traffic });
+    const { getByRole, findByText } = mount();
+    const box = getByRole("checkbox");
+    await fireEvent.click(box);
+    await findByText(/is off for this cluster/);
+    // Enabled elsewhere; untick and tick again.
+    await fireEvent.click(box);
+    await fireEvent.click(box);
+    await waitFor(() => expect(Sources).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(Traffic).toHaveBeenCalledTimes(1));
+  });
+
+  it("names a backend status in words, never by its code", async () => {
+    setTrafficBindings({
+      Sources: vi.fn().mockResolvedValue(sources({ status: "needs-credential", message: "401" })),
+      Traffic: vi.fn(),
+    });
+    const { getByRole, findByText, container } = mount();
+    await fireEvent.click(getByRole("checkbox"));
+    await findByText(/asks for a login of its own/);
+    expect(container.textContent).not.toContain("needs-credential");
   });
 });

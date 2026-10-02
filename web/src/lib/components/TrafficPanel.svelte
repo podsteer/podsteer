@@ -14,7 +14,8 @@
   the PromQL it sent, never takes one typed, and installs nothing.
 -->
 <script lang="ts">
-  import { onDestroy } from 'svelte'
+  import { onDestroy, untrack } from 'svelte'
+  import { clusterSettings } from '$stores/clusterSettings.svelte'
   import { Activity, Check, Copy, RefreshCw, ShieldAlert, ShieldCheck, ShieldQuestion } from '@lucide/svelte'
   import { toApiError } from '$lib/api/errors'
   import { copyText } from '$lib/clipboard'
@@ -31,6 +32,7 @@
     NOTHING_INSTALLED,
     provenanceNote,
     sourceLabel,
+    statusSentence,
     trafficState,
     type TrafficFilters,
   } from '$lib/trafficLayer'
@@ -129,6 +131,18 @@
     }
   }
 
+  /**
+   * Forgets the sources answer, so the next ask is a real one. Done on every
+   * switch-on: the answer depends on the cluster's metrics-query setting,
+   * which can change in between — "not enabled", then enabled through the
+   * very link this panel offers, must not be answered from memory.
+   */
+  function forgetSources() {
+    sources = null
+    sourcesFor = ''
+    source = null
+  }
+
   async function toggle(next: boolean) {
     on = next
     if (!next) {
@@ -138,8 +152,25 @@
       publish(null)
       return
     }
+    forgetSources()
     if (await loadSources()) await load()
   }
+
+  // The cluster's metrics-query setting changed while the layer is on (the
+  // Settings pane saved it): ask again rather than show a stale verdict.
+  const settingsKey = $derived.by(() => {
+    const s = clusterSettings.for(clusterId)
+    return `${s.metricsQueryMode}|${s.preferredNamespace}/${s.preferredService}|${s.fleetPolicy}`
+  })
+  let seenSettings = untrack(() => settingsKey)
+  $effect(() => {
+    const key = settingsKey
+    if (key === seenSettings) return
+    seenSettings = key
+    if (!untrack(() => on)) return
+    forgetSources()
+    void loadSources().then((ok) => (ok ? load() : undefined))
+  })
 
   function pickSource(s: TrafficSourceName) {
     if (s === source) return
@@ -259,15 +290,15 @@
     {/if}
 
     {#if view.kind === 'not-enabled'}
+      <!-- Said once: what is off, and where to turn it on. -->
       <p>
-        <strong class="font-medium text-on-surface">Metrics query is not enabled for this cluster.</strong>
-        {view.message}
+        <strong class="font-medium text-on-surface">Reading a monitoring backend is off for this cluster.</strong>
         <button
           type="button"
           class="underline hover:text-on-surface"
           onclick={() => settingsDialog.show('clusters')}
         >
-          Open the cluster's metrics query setting
+          Turn it on in Settings → Clusters
         </button>
       </p>
     {:else if view.kind === 'no-prometheus'}
@@ -279,7 +310,7 @@
     {:else if view.kind === 'backend-problem'}
       <p class="rounded bg-error-container/25 px-2 py-1">
         <strong class="font-medium text-on-surface">
-          The monitoring backend did not answer the query ({view.status}).
+          {statusSentence(view.status)}
         </strong>
         {view.message}
       </p>

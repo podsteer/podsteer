@@ -536,6 +536,30 @@ export type TrafficState =
 
 const BACKEND_OK = new Set(["", "answered", "answered-empty", "enabled", "ok"]);
 
+/**
+ * A backend status, as a sentence. The status values are the backend's own
+ * codes ("needs-credential", "unverified"); they are for code, and never
+ * shown as they are.
+ */
+export function statusSentence(status: string): string {
+  switch (status) {
+    case "forbidden":
+      return "Your account may not reach the monitoring backend through the API server.";
+    case "unreachable":
+      return "The monitoring backend could not be reached.";
+    case "rejected":
+      return "The monitoring backend refused the query.";
+    case "needs-credential":
+      return "The monitoring backend asks for a login of its own, which the API server's proxy cannot give it.";
+    case "unverified":
+      return "PodSteer could not confirm that this monitoring backend holds this cluster.";
+    case "too-large":
+      return "The monitoring backend's answer was too large to read.";
+    default:
+      return "The monitoring backend did not answer.";
+  }
+}
+
 /** Collapses what the backend said into the one state the panel shows. */
 export function trafficState(
   sources: TrafficSources | null,
