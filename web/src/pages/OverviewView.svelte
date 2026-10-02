@@ -605,7 +605,12 @@
           then read across — so the labels are the thing being scanned, and a
           bold number beside a faint word makes the word the harder half.
         -->
-        <dl class="flex shrink-0 flex-wrap gap-x-6 gap-y-1 text-body-medium">
+        <!-- `[&>div]:gap-2` puts 8px between every label and its value, not
+             only Check against's: that dropdown's trigger reaches 6px above
+             its text (see below), so without the gap its hover border ran
+             into the label, and giving the gap to one column alone would
+             drop its value below the other four. -->
+        <dl class="flex shrink-0 flex-wrap gap-x-6 gap-y-1 text-body-medium [&>div]:gap-2">
           <div class="flex flex-col">
             <dt class="font-semibold">Version</dt>
             <dd class="flex items-center gap-1.5 tabular-nums">
