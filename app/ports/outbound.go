@@ -120,6 +120,22 @@ type WorkloadPort interface {
 	// from — the same sources as a pod's, with its pods in place of the one.
 	WorkloadGraphSources(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.WorkloadGraphInput, error)
 
+	// ApplicationGraphSources reads what one application's map is drawn from:
+	// the objects labelled app.kubernetes.io/instance=<instance> in the
+	// namespace, every ReplicaSet and Job there (an owned one may be
+	// unlabelled), the namespace's pods, Services and Ingresses.
+	//
+	// NEVER FAILS ONCE THE CLUSTER'S CLIENT IS OBTAINED. Each source degrades
+	// into ApplicationGraphInput.Unreadable under its own name, so an account
+	// that may not list CronJobs still gets the rest. An empty or all-
+	// namespaces scope, and an empty instance, are refused up front.
+	ApplicationGraphSources(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, instance string) (domain.ApplicationGraphInput, error)
+
+	// ApplicationPodSources is ApplicationGraphSources without what only the
+	// map draws: no Services, no Ingresses, no pod templates. Membership
+	// needs the candidates and the pods, and the Logs tab needs nothing else.
+	ApplicationPodSources(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, instance string) (domain.ApplicationGraphInput, error)
+
 	// ListPodsOnNode returns the pods the scheduler has placed on one node,
 	// across every namespace.
 	//

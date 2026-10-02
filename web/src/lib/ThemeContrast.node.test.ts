@@ -69,6 +69,17 @@ describe('the light theme, measured', () => {
     },
   )
 
+  it.each(['red', 'orange', 'yellow', 'green', 'blue', 'purple'])(
+    '--group-%s reads as text, because a merged log colours pod names with it',
+    (name) => {
+      // The log pane's own ground, and the plain surface — not the tinted
+      // containers, which the pane does not sit on.
+      for (const ground of ['--surface', '--surface-container-lowest']) {
+        expect(contrast(light[`--group-${name}`], light[ground]), `${name} on ${ground}`).toBeGreaterThanOrEqual(4.5)
+      }
+    },
+  )
+
   it('keeps faded secondary text readable at the opacity it is most faded to', () => {
     // /70 is the commonest fade in the interface; it has to pass as body text.
     for (const ground of grounds) {

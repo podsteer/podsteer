@@ -984,13 +984,14 @@ Three rules there have subtleties worth not re-deriving:
 - **A correctly configured pod produces no findings**, and a test asserts it. A
   panel that always has something to say is one people stop reading.
 
-## The dependency map is three shapes, not one
+## The dependency map is four shapes, not one
 
-`app/domain/graph.go` builds two of them and `app/domain/object_graph.go` the
-third, and they are separate functions because the SUBJECT decides the
-structure: a pod's map is a chain with the pod in the middle, a workload's is a
-fan — one controller over however many pods it currently has — and any other
-object's is a neighbourhood. Pretending they are one shape would mean a pod
+`app/domain/graph.go` builds two of them, `app/domain/object_graph.go` the
+third and `app/domain/application_graph.go` the fourth, and they are separate
+functions because the SUBJECT decides the structure: a pod's map is a chain
+with the pod in the middle, a workload's is a fan — one controller over however
+many pods it currently has — any other object's is a neighbourhood, and an
+application's is a set. Pretending they are one shape would mean a pod
 field that is sometimes a list, and edges that mean different things depending
 on which it was.
 
@@ -1147,6 +1148,57 @@ Nothing on this path runs on a refresh tick — `BrowseAPI.ObjectGraph` is calle
 when the pane opens and not again — because a neighbourhood changes when
 somebody changes it, and redrawing a map under a reader is worse than it being
 a few seconds stale.
+
+### The fourth shape is an application: membership is a label, edges are not
+
+An application is `app.kubernetes.io/instance=<value>` in one namespace, and
+`NewApplicationGraph` draws it from `DependencyMap`'s `instance` prop (not a
+kind — Argo's "Application" kind already goes through `ObjectGraph`).
+
+**Membership: the label seeds, controller ownership extends.** A labelled
+top-level object is a member, and so is anything controller-owned by a member,
+one hop, decided in the domain. A CronJob's Jobs are usually unlabelled (the
+label sits on the CronJob, not the `jobTemplate`), yet under the ownership rule
+above their pods ARE the application's. `ApplicationPods` applies the same
+rule, so Map and Logs cannot disagree.
+
+**There is no root node, deliberately.** An edge from "the application" would
+assert a label as a relationship, which is exactly what the GitOps bullet
+rejects. Every line drawn is a real one — ownerReference, Service selector,
+Ingress backend, template attachment — and the honesty is a caption in the
+pane. `graphLayout.ts` does not need a subject. A pod-only application is
+floating boxes with no edges, and the caption says why. Owned ReplicaSets and
+Jobs carry `Group` = their owner, pods `Group` = their parent, so old
+generations fold. No container nodes: the pod's own map has them.
+
+**Nine reads, in parallel, and it never fails**
+(`Adapter.ApplicationGraphSources`): four label-selected typed LISTs
+(Deployments, StatefulSets, DaemonSets, CronJobs), namespace-wide
+ReplicaSets and Jobs (the owned-but-unlabelled members cannot be found by
+label), Services, Ingresses, and pods from the CACHED list the inventory
+already counts from. Each refusal lands in `Unreadable`, never an error. Logs
+use `ApplicationPodSources`, the same membership reads without Services,
+Ingresses or template parsing — seven reads, because membership needs nothing
+else. `instance` is validated as a label value before anything is read.
+
+**Logs load lazily.** `DetailDrawer` calls `listApplicationPods` the first time
+the Logs tab is active for an application, not on open, with its own request
+counter. Terminal, Events, Timeline and YAML stay off: an application is not an
+object.
+
+**Known gaps**, accepted rather than fixed:
+
+- The Overview's member and pod counts (`NewApplicationInventory`) are
+  label-only, so a CronJob application can show more pods on Map and Logs than
+  on Overview.
+- Owners are matched by kind and name, not UID (`domain.OwnerReference` has
+  none). A Deployment deleted with orphan cascade and recreated under the same
+  name adopts the orphaned ReplicaSet and its pods on this map.
+- The Deployment controller copies pod-template labels onto every ReplicaSet.
+  A chart that labels the template but not the Deployment's own metadata makes
+  each old ReplicaSet a TOP-LEVEL member, so "an old ReplicaSet declares
+  nothing" stops holding and they do not fold under a Deployment that is not
+  on the map.
 
 ## Secrets are read on request, never on render
 
@@ -2771,7 +2823,10 @@ the paste, refuses a collision and backs the file up first.
   it acts on, costs the one GET the drawer already makes, and reads no
   Secret. The panel is selected by group AND kind ("Application" exists in
   three API groups), and it complements the bottom-up `gitops.ts` badge
-  rather than replacing it. A Flux inventory id is
+  rather than replacing it. (The Applications page IS label-defined and says
+  so in its pane; that is a declared definition, not a claim about what a
+  controller manages, which is why it can coexist with this rule.) A Flux
+  inventory id is
   `<namespace>_<name>_<group>_<kind>` as `sigs.k8s.io/cli-utils`'s
   `ObjMetadata` writes it: a core kind has an EMPTY group segment
   (`shop_web__Service`), a cluster-scoped object an empty namespace

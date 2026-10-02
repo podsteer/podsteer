@@ -48,6 +48,7 @@
   import { formatLogTimestamp, parseLogTimestamp, type TimestampMode } from '$lib/logTimestamps'
   import { detectSeverity, parseStructuredLine, type Severity, type StructuredLine } from '$lib/logFormat'
   import { ansiToSpans, type AnsiSpan } from '$lib/ansi'
+import { prefixColourClass } from '$lib/logPrefixColour'
   import { ANSI_DARK, ANSI_LIGHT, isLightTheme, onThemeChange } from '$lib/terminalTheme'
   import { groupLogLines } from '$lib/logGroups'
   import { buildLogFilename } from '$lib/exportFilename'
@@ -1419,7 +1420,17 @@
               : ''}"
           >
             {#if prefix}
-              <span class="text-primary">{prefix}:</span>
+              <!-- In a merged view the pod part carries a hue so one pod's
+                   lines can be followed by eye; the text stays, because
+                   colour is never the only identity. -->
+              {#if isMultiPod && log.podName}
+                <span class={prefixColourClass(log.podName)}>{log.podName}</span><span
+                  class="text-primary"
+                  >{prefix.slice(log.podName.length)}:</span
+                >
+              {:else}
+                <span class="text-primary">{prefix}:</span>
+              {/if}
             {/if}
 
             {#if timestampMode !== 'off'}
@@ -1593,8 +1604,10 @@
         >
       {/if}
       {#if planNotes.truncated > 0}
-        <span class="shrink-0 text-gauge-warn-ink"
-          >· {planNotes.truncated} more not opened (limit {MAX_LOG_STREAMS})</span
+        <span
+          class="shrink-0 text-gauge-warn-ink"
+          title="Choose a container to read fewer streams per pod"
+          >· {planNotes.truncated} more not opened (limit {MAX_LOG_STREAMS}) — pick a container to narrow</span
         >
       {/if}
       {#if planNotes.missing.length > 0}

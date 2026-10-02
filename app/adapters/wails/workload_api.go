@@ -232,6 +232,54 @@ func (w *WorkloadAPI) WorkloadGraph(clusterID, namespace, kind, name string) (Po
 	return toPodGraph(graph), nil
 }
 
+// ApplicationGraph returns the map of one application: the objects labelled
+// app.kubernetes.io/instance=<instance> in a namespace, and what they own.
+func (w *WorkloadAPI) ApplicationGraph(clusterID, namespace, instance string) (PodGraph, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return PodGraph{}, apiError(w.logger, "ApplicationGraph", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return PodGraph{}, apiError(w.logger, "ApplicationGraph", err)
+	}
+
+	graph, err := w.workloads.ApplicationGraph(ctx, id, ns, instance)
+	if err != nil {
+		return PodGraph{}, apiError(w.logger, "ApplicationGraph", err)
+	}
+
+	return toPodGraph(graph), nil
+}
+
+// ListApplicationPods returns the pods of one application, by the same rule
+// its map draws them with.
+func (w *WorkloadAPI) ListApplicationPods(clusterID, namespace, instance string) ([]Pod, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(w.logger, "ListApplicationPods", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return nil, apiError(w.logger, "ListApplicationPods", err)
+	}
+
+	pods, err := w.workloads.ListApplicationPods(ctx, id, ns, instance)
+	if err != nil {
+		return nil, apiError(w.logger, "ListApplicationPods", err)
+	}
+
+	return toPods(pods, time.Now()), nil
+}
+
 // ListPodsOnNode returns the pods running on one node, across every namespace.
 func (w *WorkloadAPI) ListPodsOnNode(clusterID, nodeName string) ([]Pod, error) {
 	ctx, cancel := w.app.requestContext()

@@ -15,6 +15,22 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * ApplicationGraph returns the map of one application: the objects labelled
+ * app.kubernetes.io/instance=<instance> in a namespace, and what they own.
+ */
+export function ApplicationGraph(clusterID: string, $namespace: string, instance: string): $CancellablePromise<$models.PodGraph> {
+    return $Call.ByID(2451967040, clusterID, $namespace, instance);
+}
+
+/**
+ * ListApplicationPods returns the pods of one application, by the same rule
+ * its map draws them with.
+ */
+export function ListApplicationPods(clusterID: string, $namespace: string, instance: string): $CancellablePromise<$models.Pod[] | null> {
+    return $Call.ByID(2296016952, clusterID, $namespace, instance);
+}
+
+/**
  * ListApplications groups a cluster's workloads by the application they
  * belong to.
  * 

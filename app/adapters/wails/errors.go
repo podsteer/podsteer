@@ -608,6 +608,8 @@ func classifyError(err error) (ErrorCode, string) {
 
 	case errors.Is(err, domain.ErrEmptyClusterID),
 		errors.Is(err, domain.ErrInvalidNamespaceName),
+		errors.Is(err, domain.ErrEmptyApplicationInstance),
+		errors.Is(err, domain.ErrInvalidApplicationInstance),
 		errors.Is(err, domain.ErrInvalidResourceKind),
 		errors.Is(err, domain.ErrUnsupportedWorkloadKind),
 		errors.Is(err, domain.ErrInvalidKey),

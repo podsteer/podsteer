@@ -75,6 +75,10 @@ type fakeKubernetes struct {
 	pods    []domain.Pod
 	podsErr error
 
+	// appCandidates and appInputErr feed ApplicationGraphSources.
+	appCandidates []domain.ApplicationCandidate
+	appInputErr   error
+
 	nodes       []domain.Node
 	customKinds []domain.ResourceKind
 
@@ -219,6 +223,19 @@ func (f *fakeKubernetes) WorkloadGraphSources(_ context.Context, _ domain.Cluste
 	return domain.WorkloadGraphInput{
 		Kind: string(kind), Name: name, Namespace: ns, Pods: f.pods,
 	}, nil
+}
+
+func (f *fakeKubernetes) ApplicationGraphSources(_ context.Context, _ domain.ClusterID, ns domain.NamespaceName, instance string) (domain.ApplicationGraphInput, error) {
+	if f.appInputErr != nil {
+		return domain.ApplicationGraphInput{}, f.appInputErr
+	}
+	return domain.ApplicationGraphInput{
+		Instance: instance, Namespace: ns, Candidates: f.appCandidates, Pods: f.pods,
+	}, nil
+}
+
+func (f *fakeKubernetes) ApplicationPodSources(ctx context.Context, id domain.ClusterID, ns domain.NamespaceName, instance string) (domain.ApplicationGraphInput, error) {
+	return f.ApplicationGraphSources(ctx, id, ns, instance)
 }
 
 func (f *fakeKubernetes) PodGraphSources(_ context.Context, _ domain.ClusterID, _ domain.NamespaceName, name string) (domain.GraphInput, error) {

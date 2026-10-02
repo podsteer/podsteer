@@ -100,6 +100,15 @@ type WorkloadService interface {
 	// routes to it, the pods it currently has, and what they consume.
 	WorkloadGraph(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.PodGraph, error)
 
+	// ApplicationGraph returns the map of one application: the objects
+	// labelled app.kubernetes.io/instance=<instance> in a namespace, what they
+	// own, and what routes to and is consumed by their pods.
+	ApplicationGraph(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, instance string) (domain.PodGraph, error)
+
+	// ListApplicationPods returns the pods of one application by the same
+	// membership rule its map uses, for the Logs tab.
+	ListApplicationPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, instance string) ([]domain.Pod, error)
+
 	// ListPodsOnNode returns the pods the scheduler has placed on one node,
 	// across every namespace — "what is running on this machine" is a question
 	// about the machine, not about a namespace.

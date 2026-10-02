@@ -340,6 +340,35 @@ func (s *WorkloadService) WorkloadGraph(ctx context.Context, id domain.ClusterID
 	return domain.NewWorkloadGraph(input), nil
 }
 
+// ApplicationGraph returns the map of one application.
+func (s *WorkloadService) ApplicationGraph(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, instance string) (domain.PodGraph, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return domain.PodGraph{}, fmt.Errorf("mapping application dependencies: %w", err)
+	}
+
+	input, err := s.workloads.ApplicationGraphSources(ctx, id, namespace, instance)
+	if err != nil {
+		return domain.PodGraph{}, fmt.Errorf("reading dependencies for application %q in %q: %w",
+			instance, namespace, err)
+	}
+	return domain.NewApplicationGraph(input), nil
+}
+
+// ListApplicationPods returns the pods of one application, by the rule its map
+// draws them with. Not enriched with metrics: the Logs tab reads names.
+func (s *WorkloadService) ListApplicationPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, instance string) ([]domain.Pod, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return nil, fmt.Errorf("listing application pods: %w", err)
+	}
+
+	input, err := s.workloads.ApplicationPodSources(ctx, id, namespace, instance)
+	if err != nil {
+		return nil, fmt.Errorf("listing pods for application %q in %q of %q: %w",
+			instance, namespace, id, err)
+	}
+	return domain.ApplicationPods(input), nil
+}
+
 // ListPodsOnNode returns the pods the scheduler has placed on one node.
 //
 // NOT ENRICHED WITH METRICS, unlike the workload listing. Usage for these pods

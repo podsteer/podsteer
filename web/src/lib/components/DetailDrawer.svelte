@@ -68,7 +68,8 @@
   import DependencyMap from './DependencyMap.svelte'
   import { DeleteResource, RestartRollout } from '$bindings/managementapi'
   import { ListPodsForWorkload } from '$bindings/workloadapi'
-  import { triggerCronJob, suspendWorkload, cordonNode, evictPod, getManifest, type Pod, type Revision } from '$lib/api/client'
+  import { toApiError } from '$lib/api/errors'
+  import { triggerCronJob, suspendWorkload, listApplicationPods, cordonNode, evictPod, getManifest, type Pod, type Revision } from '$lib/api/client'
   import { podTemplateOf, type PodTemplate } from '$lib/podTemplate'
   import {
     X,
@@ -558,11 +559,12 @@
    * A real object of any kind has one. The pinned pseudo-entries do not: the
    * overview is an assessment, and Applications and the fleet view are
    * aggregations across clusters — none of them is something a cluster can be
-   * asked to GET, which is what a map is drawn from. `selectedApplication` is
-   * the third case, an inventory row rather than a catalogue kind.
+   * asked to GET, which is what a map is drawn from. An application is the
+   * exception among the aggregations: it is not an object, but it is a SET of
+   * them, and the backend draws that set from a label rather than from a GET.
    */
   const hasMap = $derived(
-    Boolean(session.selectedKindId && session.selectedName) && !isApplication,
+    Boolean(session.selectedKindId && session.selectedName) || isApplication,
   )
 
   const isWorkloadWithLogs = $derived(
@@ -629,6 +631,38 @@
   }
 
   /**
+   * The pods of the open application, read lazily.
+   *
+   * NOT ON OPEN: an application's pods cost a read of every workload kind in
+   * the namespace, and most openings never look at Logs. Loaded the first
+   * time the Logs tab is active for that application, with its own request
+   * counter so the workload effect above — which bumps `podRequest` for any
+   * non-workload — cannot cancel it.
+   */
+  let applicationPods = $state<Pod[]>([])
+  let applicationPodsState = $state<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  let applicationPodsError = $state('')
+  let applicationPodsFor = ''
+  let applicationPodRequest = 0
+
+  async function loadApplicationPods(key: string, namespace: string, instance: string) {
+    const request = ++applicationPodRequest
+    applicationPodsFor = key
+    applicationPodsState = 'loading'
+    try {
+      const pods = await listApplicationPods(session.cluster.id, namespace, instance)
+      if (request !== applicationPodRequest) return
+      applicationPods = pods ?? []
+      applicationPodsState = 'ready'
+    } catch (error) {
+      if (request !== applicationPodRequest) return
+      applicationPods = []
+      applicationPodsError = toApiError(error).message
+      applicationPodsState = 'error'
+    }
+  }
+
+  /**
    * Identifies the object the drawer is showing, WHOLE.
    *
    * The reset below used to watch the name alone, and a name is not an
@@ -660,6 +694,27 @@
     rolledBack.cancel()
     rollbackDialogOpen = false
     rollbackTarget = null
+  })
+
+  // DECLARED AFTER THE RESET ABOVE, for the same reason as the intent effect
+  // below: it reads `activeTab`, which the reset has to have set first.
+  $effect(() => {
+    const key = shownObject
+    const wanted = isApplication && activeTab === 'logs'
+    const namespace = session.selectedNamespace
+    const instance = session.selectedName
+    untrack(() => {
+      if (key !== applicationPodsFor) {
+        // A different application's pods are not this one's.
+        applicationPodRequest++
+        applicationPodsFor = ''
+        applicationPods = []
+        applicationPodsState = 'idle'
+      }
+      if (wanted && instance && applicationPodsFor !== key) {
+        void loadApplicationPods(key, namespace, instance)
+      }
+    })
   })
 
   /**
@@ -1099,16 +1154,16 @@
 
   const tabs: { id: Tab; label: string; icon: typeof Info; show: () => boolean }[] = [
     { id: 'overview', label: 'Overview', icon: Info, show: () => true },
-    { id: 'logs', label: 'Logs', icon: ScrollText, show: () => isPod || isWorkloadWithLogs },
+    { id: 'logs', label: 'Logs', icon: ScrollText, show: () => isPod || isWorkloadWithLogs || isApplication },
     { id: 'terminal', label: 'Terminal', icon: TerminalSquare, show: () => isPod || isWorkloadWithLogs },
     // EVERY OBJECT, not only pods and the six controllers. A pod's map is a
     // chain with the pod in the middle, a workload's is a fan, and everything
     // else — a Service, a ConfigMap, a PVC, a CRD instance — is the
     // neighbourhood: the object in the middle, what its spec names below it,
-    // what owns it above. Three shapes, because the subject decides the
-    // structure. What is NOT offered is the aggregations, which are not
-    // objects and have nothing to GET: the overview, the applications view and
-    // the fleet view.
+    // what owns it above. The fourth shape is an application, a SET drawn
+    // from a label with no subject box. Four shapes, because the subject
+    // decides the structure. What is NOT offered is the aggregations with
+    // nothing to draw: the overview and the fleet view.
     { id: 'map', label: 'Map', icon: Workflow, show: () => hasMap },
     // Deployments, StatefulSets and DaemonSets only — the three kinds a
     // revision exists for. See hasRolloutHistory's own doc comment.
@@ -1341,6 +1396,17 @@
       onmaximize={maximized === 'logs' ? undefined : () => (maximized = 'logs')}
       minimap={maximized === 'logs'}
     />
+    {:else if isApplication && applicationPods.length > 0}
+    <LogViewer
+      clusterId={session.cluster.id}
+      namespace={session.selectedNamespace}
+      pods={applicationPods.map((p) => ({
+        name: p.name,
+        containers: p.containers?.map((c: any) => c.name) ?? [],
+      }))}
+      onmaximize={maximized === 'logs' ? undefined : () => (maximized = 'logs')}
+      minimap={maximized === 'logs'}
+    />
     {:else if isWorkloadWithLogs && workloadPods.length > 0}
     <LogViewer
       clusterId={session.cluster.id}
@@ -1357,7 +1423,20 @@
 {/snippet}
 
 {#snippet mapSurface()}
-  {#if isPod && selectedPod}
+  {#if isApplication && session.selectedApplication}
+    <!-- The fourth shape: a set drawn from a label. `instance` selects it, so
+         the kind is nominal — an Argo "Application" goes through the generic
+         branch below, keyed by its catalogue id. -->
+    <DependencyMap
+      clusterId={session.cluster.id}
+      namespace={session.selectedNamespace}
+      name={session.selectedApplication.instance}
+      kind="Application"
+      instance={session.selectedApplication.instance}
+      onopen={openObject}
+      onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
+    />
+  {:else if isPod && selectedPod}
     <DependencyMap
       clusterId={session.cluster.id}
       namespace={selectedPod.namespace}
@@ -2071,6 +2150,19 @@
           </div>
         {:else if isPod && selectedPod}
           {@render logsSurface()}
+        {:else if isApplication && applicationPods.length > 0}
+          {@render logsSurface()}
+        {:else if isApplication}
+          <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
+            <ScrollText class="size-8" strokeWidth={1.2} />
+            {#if applicationPodsState === 'error'}
+              <p class="text-body-medium text-error">{applicationPodsError}</p>
+            {:else if applicationPodsState === 'ready'}
+              <p class="text-body-medium">No pods found for this application</p>
+            {:else}
+              <p class="text-body-medium">Reading the application's pods…</p>
+            {/if}
+          </div>
         {:else if isWorkloadWithLogs && workloadPods.length > 0}
           {@render logsSurface()}
         {:else if isWorkloadWithLogs}
@@ -2081,7 +2173,7 @@
         {:else}
           <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-on-surface-variant/60">
             <ScrollText class="size-8" strokeWidth={1.2} />
-            <p class="text-body-medium">Logs are only available for pods and workloads</p>
+            <p class="text-body-medium">Logs are only available for pods, workloads and applications</p>
           </div>
         {/if}
       {:else if activeTab === 'terminal'}

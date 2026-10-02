@@ -142,6 +142,7 @@ func serviceRef(service *corev1.Service) domain.ServiceRef {
 		Name:      service.Name,
 		Namespace: service.Namespace,
 		Selector:  service.Spec.Selector,
+		Labels:    service.Labels,
 		Type:      string(service.Spec.Type),
 	}
 

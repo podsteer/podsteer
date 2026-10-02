@@ -51,6 +51,8 @@ import {
 import {
   ListPods as bindListPods,
   ListWorkloads as bindListWorkloads,
+  ApplicationGraph as bindApplicationGraph,
+  ListApplicationPods as bindListApplicationPods,
   ListPodsForWorkload as bindListPodsForWorkload,
   WorkloadUsage as bindWorkloadUsage,
   WorkloadConsumption as bindWorkloadConsumption,
@@ -1025,6 +1027,20 @@ export function workloadGraph(
 }
 
 /**
+ * The map of one application: everything in the namespace labelled
+ * app.kubernetes.io/instance=`instance`, plus what those objects own.
+ *
+ * The fourth map shape. A set rather than an object, so it has no centre.
+ */
+export function applicationGraph(
+  clusterId: string,
+  namespace: string,
+  instance: string,
+): Promise<PodGraph> {
+  return call(() => bindApplicationGraph(clusterId, namespace, instance))
+}
+
+/**
  * The neighbourhood of one object of any kind: what its spec names below it,
  * what owns it above.
  *
@@ -1126,6 +1142,15 @@ export function listPodsForWorkload(
   name: string,
 ): Promise<Pod[]> {
   return callList(() => bindListPodsForWorkload(clusterId, namespace, kind, name))
+}
+
+/** Lists the pods of one application, by the rule its map draws them with. */
+export function listApplicationPods(
+  clusterId: string,
+  namespace: string,
+  instance: string,
+): Promise<Pod[]> {
+  return callList(() => bindListApplicationPods(clusterId, namespace, instance))
 }
 
 // --- Fleet ------------------------------------------------------------------

@@ -22,7 +22,7 @@
   to start.
 -->
 <script lang="ts">
-  import { podGraph, workloadGraph, objectGraph, type PodGraph } from '$lib/api/client'
+  import { podGraph, workloadGraph, objectGraph, applicationGraph, type PodGraph } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import { iconGeometry } from '$lib/graphIcons'
   import { layout, type Layout, type LaidOutNode } from '$lib/graphLayout'
@@ -58,13 +58,22 @@
      * whose two shapes are keyed by kind.
      */
     kindId?: string
+    /**
+     * An `app.kubernetes.io/instance` value, which draws the fourth shape: an
+     * application, which is a set of objects rather than one of them.
+     *
+     * When set it takes precedence over `kind`. There is deliberately no
+     * subject box — the application is a label, not an object, and an edge
+     * from it would assert a relationship nothing in the cluster declares.
+     */
+    instance?: string
     /** Follows a node into its own panel. */
     onopen?: (kindName: string, name: string, namespace: string) => void
     /** Offered when the pane can still be made bigger. */
     onmaximize?: () => void
   }
 
-  let { clusterId, namespace, name, kind, kindId, onopen, onmaximize }: Props = $props()
+  let { clusterId, namespace, name, kind, kindId, instance, onopen, onmaximize }: Props = $props()
 
   /**
    * The kinds whose map is the FAN — one controller over its pods.
@@ -186,7 +195,11 @@
    * different API groups — "Application" exists in three — and a key that did
    * not separate them would serve one operator's map for the other's object.
    */
-  const loadKey = $derived(`${clusterId}/${namespace}/${kind}/${kindId ?? ''}/${name}`)
+  const loadKey = $derived(
+    instance
+      ? `${clusterId}/${namespace}/application/${instance}`
+      : `${clusterId}/${namespace}/${kind}/${kindId ?? ''}/${name}`,
+  )
 
   async function load(): Promise<void> {
     const key = loadKey
@@ -195,8 +208,9 @@
     loading = true
     failure = ''
     try {
-      graph =
-        kind === 'Pod'
+      graph = instance
+        ? await applicationGraph(clusterId, namespace, instance)
+        : kind === 'Pod'
           ? await podGraph(clusterId, namespace, name)
           : WORKLOAD_MAP_KINDS.has(kind)
             ? await workloadGraph(clusterId, namespace, kind, name)
@@ -408,6 +422,20 @@
   {:else if failure}
     <p class="p-4 text-body-medium text-error">{failure}</p>
   {:else}
+    {#if instance}
+      <!--
+        THE HONESTY LIVES HERE, not in the drawing. Membership is a label, and
+        the map has no box for it — so this says what was collected and that
+        the lines are the objects' own, not the label's.
+      -->
+      <p
+        class="shrink-0 border-b border-outline-variant/40 bg-surface-container-low px-4 py-2
+               text-body-small text-on-surface-variant"
+      >
+        Everything in {namespace} labelled app.kubernetes.io/instance={instance}, plus what
+        those objects own. Lines are relationships those objects have.
+      </p>
+    {/if}
     <div
       bind:this={viewport}
       bind:clientWidth={paneWidth}
@@ -420,7 +448,13 @@
       onpointercancel={onPointerUp}
       role="presentation"
     >
-      {#if plan}
+      {#if graph && (graph.nodes ?? []).length === 0}
+        <p class="p-4 text-body-medium text-on-surface-variant/70">
+          {instance
+            ? 'No objects in this namespace carry that instance label.'
+            : 'Nothing to draw.'}
+        </p>
+      {:else if plan}
         <svg class="size-full select-none" aria-label="Dependency map">
           <!--
             THE NODE SNIPPET IS DECLARED HERE, INSIDE THE <svg>, AND THAT IS

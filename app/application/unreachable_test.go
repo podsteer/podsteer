@@ -113,6 +113,14 @@ func (g *goneCluster) WorkloadGraphSources(context.Context, domain.ClusterID, do
 	return domain.WorkloadGraphInput{}, g.err(false)
 }
 
+func (g *goneCluster) ApplicationGraphSources(context.Context, domain.ClusterID, domain.NamespaceName, string) (domain.ApplicationGraphInput, error) {
+	return domain.ApplicationGraphInput{}, g.err(false)
+}
+
+func (g *goneCluster) ApplicationPodSources(context.Context, domain.ClusterID, domain.NamespaceName, string) (domain.ApplicationGraphInput, error) {
+	return domain.ApplicationGraphInput{}, g.err(false)
+}
+
 func (g *goneCluster) PodGraphSources(context.Context, domain.ClusterID, domain.NamespaceName, string) (domain.GraphInput, error) {
 	return domain.GraphInput{}, g.err(false)
 }
