@@ -165,6 +165,14 @@ var (
 	// credentials — the two look identical as a bare "denied" otherwise.
 	ErrDisruptionBudget = errors.New("disruption budget refused eviction")
 
+	// ErrThrottled means the API server (or the priority-and-fairness layer in
+	// front of it) answered 429 to an ordinary request: the account is being
+	// rate limited. NOT ErrDisruptionBudget — that is the eviction path's own
+	// 429 and the only one that means a budget refused something. A throttled
+	// read is waited out, not worked around, and the server's Retry-After is
+	// carried in the wrapped message.
+	ErrThrottled = errors.New("request throttled by the API server")
+
 	// ErrDrainRefused means PlanDrain found at least one pod DrainNode may
 	// not evict as the caller asked. Mirrors kubectl's own behaviour:
 	// draining stops before anything is evicted rather than doing part of a

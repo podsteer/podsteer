@@ -283,3 +283,15 @@ func TestAClassifiedTransportFailureKeepsItsOwnMessage(t *testing.T) {
 		t.Errorf("message = %q, want the refused-connection diagnosis rather than the deadline's", message)
 	}
 }
+
+func TestClassifyErrorSaysThrottledForARateLimit(t *testing.T) {
+	err := fmt.Errorf("listing pods: %w: too many requests", ports.ErrThrottled)
+
+	code, message := classifyError(err)
+	if code != CodeThrottled {
+		t.Fatalf("code %q, want %q", code, CodeThrottled)
+	}
+	if strings.Contains(message, "PodDisruptionBudget") {
+		t.Fatalf("a rate limit reads as a budget refusal: %q", message)
+	}
+}

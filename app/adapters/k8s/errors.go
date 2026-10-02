@@ -90,14 +90,16 @@ func classify(op string, err error) error {
 		// the way most other cases here are.
 		return fmt.Errorf("%s: %w: %w", op, ports.ErrManifestRejected, err)
 	case apierrors.IsTooManyRequests(err):
-		// The one 429 PodSteer ever expects to see: the eviction subresource
-		// returning it because a PodDisruptionBudget would be violated. It is
-		// not a rate limit and not RBAC — the request was well-formed and
-		// permitted, and the OBJECT'S OWN POLICY declined it — so it gets a
-		// sentinel of its own rather than falling into ErrForbidden, which
-		// would tell an operator to ask for different credentials for
-		// something more credentials cannot fix.
-		return fmt.Errorf("%s: %w: %w", op, ports.ErrDisruptionBudget, err)
+		// A RATE LIMIT, unless the caller said otherwise. A 429 on a list or
+		// a get is API Priority and Fairness (or a gateway) throttling this
+		// account, and calling it a PodDisruptionBudget refusal sent operators
+		// off to read budgets for a problem that was load. The one 429 that
+		// IS a budget is the eviction subresource's, and only classifyEviction
+		// maps it so. Retry-After is quoted when the server sent one.
+		if seconds, ok := apierrors.SuggestsClientDelay(err); ok {
+			return fmt.Errorf("%s: %w (retry after %ds): %w", op, ports.ErrThrottled, seconds, err)
+		}
+		return fmt.Errorf("%s: %w: %w", op, ports.ErrThrottled, err)
 	case apierrors.IsTimeout(err),
 		apierrors.IsServerTimeout(err),
 		apierrors.IsServiceUnavailable(err):
@@ -115,6 +117,18 @@ func classify(op string, err error) error {
 		}
 		return fmt.Errorf("%s: %w", op, err)
 	}
+}
+
+// classifyEviction is classify for the eviction subresource, where a 429 is
+// not a rate limit: it is a PodDisruptionBudget declining the request, which
+// the request was permitted to make and the object's own policy refused.
+// It gets a sentinel of its own rather than ErrForbidden, which would tell an
+// operator to ask for credentials more credentials cannot fix.
+func classifyEviction(op string, err error) error {
+	if apierrors.IsTooManyRequests(err) {
+		return fmt.Errorf("%s: %w: %w", op, ports.ErrDisruptionBudget, err)
+	}
+	return classify(op, err)
 }
 
 // missingCredentialPlugin names the executable a kubeconfig wanted and could

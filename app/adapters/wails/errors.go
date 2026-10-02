@@ -89,6 +89,10 @@ const (
 	// OBJECT'S OWN POLICY declined it — which calls for waiting and trying
 	// again, not for different credentials.
 	CodeDisruptionBudget ErrorCode = "disruption_budget"
+	// CodeThrottled means the API server rate limited the request (HTTP 429
+	// outside an eviction). Retryable, and says to wait rather than to look at
+	// budgets or credentials.
+	CodeThrottled ErrorCode = "throttled"
 	// CodeConflict means UpdateResource's PUT carried a resourceVersion the
 	// API server no longer recognises — the object changed since the
 	// manifest was read. Its own code because the recovery is specific and
@@ -527,6 +531,9 @@ func classifyError(err error) (ErrorCode, string) {
 	// subresource is not RBAC, and telling an operator their account is not
 	// allowed to evict a pod sends them to ask for a permission they already
 	// have.
+	case errors.Is(err, ports.ErrThrottled):
+		return CodeThrottled, "The cluster is rate limiting PodSteer's requests (HTTP 429). It is not a permissions problem; give it a moment and retry."
+
 	case errors.Is(err, ports.ErrDisruptionBudget):
 		return CodeDisruptionBudget, "A PodDisruptionBudget refused the eviction: it would leave the workload below its minimum."
 

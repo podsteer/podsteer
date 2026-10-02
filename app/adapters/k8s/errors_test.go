@@ -129,3 +129,42 @@ func TestOrdinaryErrorsAreNotReadAsAnAuthProvider(t *testing.T) {
 		t.Fatalf("classify() = %v, want nothing to do with auth providers", err)
 	}
 }
+
+// A 429 is a budget refusal ONLY on the eviction path. On any other call it is
+// API Priority and Fairness throttling the account, and used to be reported as
+// "a PodDisruptionBudget refused the eviction".
+func TestA429IsClassifiedByTheOperationThatSawIt(t *testing.T) {
+	throttled := apierrors.NewTooManyRequests("the server has received too many requests", 7)
+
+	tests := []struct {
+		name         string
+		classify     func(string, error) error
+		want         error
+		wantNot      error
+		wantContains string
+	}{
+		{"a list is throttled", classify, ports.ErrThrottled, ports.ErrDisruptionBudget, "retry after 7s"},
+		{"an eviction is a budget refusal", classifyEviction, ports.ErrDisruptionBudget, ports.ErrThrottled, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.classify("op", throttled)
+			if !errors.Is(got, tt.want) {
+				t.Fatalf("error = %v, want %v", got, tt.want)
+			}
+			if errors.Is(got, tt.wantNot) {
+				t.Fatalf("error = %v must not be %v", got, tt.wantNot)
+			}
+			if !strings.Contains(got.Error(), tt.wantContains) {
+				t.Fatalf("error = %q, want it to contain %q", got, tt.wantContains)
+			}
+		})
+	}
+}
+
+func TestEvictionKeepsOtherClassificationsUnchanged(t *testing.T) {
+	forbidden := apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "web-1", nil)
+	if got := classifyEviction("op", forbidden); !errors.Is(got, ports.ErrForbidden) {
+		t.Fatalf("classifyEviction(forbidden) = %v, want ErrForbidden", got)
+	}
+}

@@ -125,7 +125,7 @@ func (a *Adapter) EvictPod(ctx context.Context, id domain.ClusterID, namespace d
 	}
 
 	if err := client.PolicyV1().Evictions(namespace.String()).Evict(ctx, eviction); err != nil {
-		return classify(fmt.Sprintf("evicting pod %q in %q of %q", name, namespace, id), err)
+		return classifyEviction(fmt.Sprintf("evicting pod %q in %q of %q", name, namespace, id), err)
 	}
 	return nil
 }
