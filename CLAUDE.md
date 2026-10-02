@@ -451,6 +451,31 @@ zero `NamespaceScope` reads as All. The fleet keys late answers and the pod memo
 `NamespaceScope.Key()`. Single by nature, not scoped: `SubjectRules`,
 `NamespaceInventory`, `FindClusterShells`.
 
+**The frontend holds the set in one place.** `ClusterSession.selectedNamespaces`
+(sorted, distinct, `[]` = All) replaced `session.namespace`, which was deleted
+so the type checker found every reader; derive from `scope`, `scopeKey` ('' for
+All — what in-flight guards and per-scope caches compare), `isAllNamespaces`,
+`singleNamespace` ('' unless exactly one), `inScope(ns)` and `namespaceLabel`.
+Change it only through `selectNamespaces(names)` — one reload however many
+changed, persisted per cluster; `selectNamespace(ns)` and `toggleNamespace(ns)`
+wrap it. `openObject` ADDS an object's namespace to a named set rather than
+replacing it. `$lib/namespaceScope` has the type, normalisation and the label
+rule (All / `shop` / `keda +2` with every name in the title / `N namespaces`);
+`NamespacePicker.svelte` is the one picker (All + filter + checkboxes, a draft
+applied once, Apply disabled for an empty set, a remembered name the cluster
+no longer lists kept as "not found"). Every list goes through the client's
+`…In` wrappers; the topology draws `session.scope` too. Persistence migrates
+and never writes the old shape: `preferences.namespacesByCluster` (from
+`namespaceByCluster`: '' → [], name → [name]) and `SavedView.namespaces` (from
+`namespace`, compared as a set). Single by nature, and the UI says so: the
+RBAC page reviews ONE namespace picked from the set (every namespace on All;
+`default` there, else the first), captioned "Permissions are reviewed per
+namespace"; the create dialog and the cluster shell default to
+`singleNamespace` and ask when it is ''; vulnerability marks match on
+namespace + Kind/name. kubectl strings use `kubectl.scopeFlags`: `-A` for All,
+`-n x` for one, one command per namespace for a set; export filenames say
+`all`, the name, or `N-namespaces`.
+
 ## Custom columns quote metadata, and annotations travel by projection
 
 An operator can put any label or annotation key on any list as a column
@@ -1520,8 +1545,8 @@ The page shows "Changed — Refresh", or redraws when Live is on.
 ### The topology page draws the fifth shape, and holds still
 
 `web/src/pages/TopologyView.svelte` (navigator pseudo-entry `TOPOLOGY_KIND_ID`,
-scope in `session.topologyScope`, seeded from the namespace filter; also
-"Open topology" on a namespace's row and drawer) is its own page, not a wider
+scope is the sidebar's namespace set, `session.scope` — it has no picker of
+its own; "Open topology" on a namespace's row and drawer selects that set) is its own page, not a wider
 `DependencyMap`. Its pipeline is one tested module per step: kind toggles →
 `graphFold` → `graphGroup` (namespace / app / label frames; a collapsed group
 is one box with complete counts, worst state, re-pointed and deduplicated
@@ -1869,10 +1894,10 @@ fetching across clusters for a keystroke — and for pods that is the current
 page, because the merged pod table is paged in Go (see "The pod table is
 paged in Go"; Go also keeps a slow cluster's stale pod rows now).
 
-**So is its namespace.** `fleet.namespace` (default All namespaces) scopes the
-fan-out for the whole window; `session.scopeNamespace` is what the navigator
-picker, saved views and the CSV filename read, and `selectNamespace` routes to
-`fleet.chooseNamespace` on this view without touching the tab's remembered
+**So is its namespace set.** `fleet.namespaces` (default [] = All) scopes the
+fan-out for the whole window; `session.scopeNamespaces` is what the navigator
+picker, saved views and the CSV filename read, and `selectNamespaces` routes to
+`fleet.chooseNamespaces` on this view without touching the tab's remembered
 filter. It used to be each tab's own namespace over one shared set of rows,
 so two tabs on different namespaces (a new tab starts on `default`) wiped each
 other's answer — the "works on the first tab only, or shows then vanishes" bug.
@@ -2527,7 +2552,7 @@ no-object-names commitment SECURITY.md makes.** The export is an ALLOWLIST
 built field by field in each store's `exportable()`, never a spread of the
 persisted shape — a spread would carry whatever the shape grows next, and two
 things it has already grown hold object names: `snoozes`, whose keys are a
-finding id, a NAMESPACE and an OBJECT NAME, and `namespaceByCluster`. Both are
+finding id, a NAMESPACE and an OBJECT NAME, and `namespacesByCluster`. Both are
 held back, along with the update check's machine state. No credential,
 kubeconfig or cluster address is in either store, so none can reach the file.
 
