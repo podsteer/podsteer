@@ -439,10 +439,10 @@ func run() error {
 		// nodes this connection has never seen; and the fleet service
 		// releases the late answers it is holding, which would otherwise be
 		// rendered as the new connection's rows in the merged table.
-		Invalidator: application.Invalidators{kubernetes, overviewService, metricsQueryService, trafficService, fleetService, workloadService},
+		Invalidator: application.Invalidators{kubernetes, overviewService, metricsQueryService, trafficService, topologyService, fleetService, workloadService},
 	})
 
-	credentials.others = application.Invalidators{overviewService, metricsQueryService, trafficService, fleetService}
+	credentials.others = application.Invalidators{overviewService, metricsQueryService, trafficService, topologyService, fleetService}
 
 	// Every open cluster's client, released. This is the same set of holders
 	// the disconnect path releases, for the same reason: a client outlives
@@ -451,7 +451,7 @@ func run() error {
 	// closing their tabs, which is why every holder of per-connection state
 	// has to be in it and not only in Disconnect's.
 	reconnectClusters = func() {
-		invalidators := application.Invalidators{kubernetes, overviewService, metricsQueryService, trafficService, fleetService, workloadService}
+		invalidators := application.Invalidators{kubernetes, overviewService, metricsQueryService, trafficService, topologyService, fleetService, workloadService}
 		for _, cluster := range registry.All() {
 			invalidators.Invalidate(cluster.ID())
 		}

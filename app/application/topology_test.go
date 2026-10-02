@@ -345,3 +345,34 @@ func TestTopologyNodesReuseTheDrawnGraph(t *testing.T) {
 		t.Errorf("a released graph was reused (%d reads)", len(port.scopes))
 	}
 }
+
+// A reconnect keeps the tab and its map open, so Invalidate forgets the nodes
+// the traffic layer would attach to — a previous connection's boxes — and
+// nothing else: the drawn scope still announces changes.
+func TestInvalidateForgetsTheDrawnNodesButKeepsTheScopeWatched(t *testing.T) {
+	port := &fakeTopologyPort{input: domain.TopologyInput{
+		Services: []domain.ServiceRef{{Name: "web", Namespace: "shop", Selector: map[string]string{"app": "web"}}},
+	}}
+	service, _ := topologyService(t, port)
+	ctx := context.Background()
+	heard := &changes{}
+	defer service.Subscribe(heard.add)()
+
+	if _, err := service.Topology(ctx, "dev", mustScope(t, "shop")); err != nil {
+		t.Fatal(err)
+	}
+	service.Invalidate("dev")
+
+	if _, err := service.TopologyNodes(ctx, "dev", []domain.NamespaceName{"shop"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(port.scopes) != 2 {
+		t.Errorf("the previous connection's nodes were reused (%d reads)", len(port.scopes))
+	}
+
+	service.Changed("dev", "shop")
+	settle()
+	if n := len(heard.snapshot()); n != 1 {
+		t.Errorf("Invalidate released the watched scope: %d announcements", n)
+	}
+}

@@ -165,6 +165,16 @@ func (s *TopologyService) Release(id domain.ClusterID) {
 	s.mu.Unlock()
 }
 
+// Invalidate forgets the nodes last drawn for a cluster, so the traffic layer
+// cannot attach a reconnected cluster's endpoints to the previous
+// connection's boxes. ONLY the nodes: the change feed is left subscribed,
+// because a reconnect keeps the tab — and its mounted map — open.
+func (s *TopologyService) Invalidate(id domain.ClusterID) {
+	s.mu.Lock()
+	delete(s.last, id)
+	s.mu.Unlock()
+}
+
 // Changed is the ports.ChangeSink the adapter calls. It never blocks.
 func (s *TopologyService) Changed(id domain.ClusterID, namespace domain.NamespaceName) {
 	s.feed.Changed(id, namespace)
