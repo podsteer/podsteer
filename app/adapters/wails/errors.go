@@ -342,6 +342,8 @@ func quotedName(message string) string {
 // both "cluster unreachable" and the underlying network error.
 func classifyError(err error) (ErrorCode, string) {
 	switch {
+	case errors.Is(err, errNoFileDialog):
+		return CodeInvalidInput, "Saving a file needs the PodSteer desktop app: this window is served to a browser, which has no file dialog PodSteer can open."
 	case errors.Is(err, domain.ErrNoActiveCluster):
 		return CodeNoActiveCluster, "No cluster is connected yet"
 

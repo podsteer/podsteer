@@ -1,6 +1,7 @@
 package wails
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -289,11 +290,26 @@ func showSaveDialog(app *App, suggestedName string) (string, error) {
 
 	title, filters := saveDialogFor(suggestedName)
 
-	return wailsApp.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+	path, err := wailsApp.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
 		Title:    title,
 		Filename: suggestedName,
 		Filters:  filters,
 	}).PromptForSingleSelection()
+	return path, dialogError(err)
+}
+
+// errNoFileDialog is a save asked for where there is no native dialog to ask
+// with: the server build, whose window is a browser tab.
+var errNoFileDialog = errors.New("no native file dialog")
+
+// dialogError names the server build's refusal, which Wails words as a plain
+// error ("file dialogs not available in server mode"), so it reaches the
+// interface as what it is rather than as an unexpected failure.
+func dialogError(err error) error {
+	if err != nil && strings.Contains(err.Error(), "not available in server mode") {
+		return fmt.Errorf("%w: %w", errNoFileDialog, err)
+	}
+	return err
 }
 
 // SaveTextFile opens a native save dialog seeded with suggestedName and

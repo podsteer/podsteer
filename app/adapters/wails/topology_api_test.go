@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -297,5 +298,19 @@ func TestExportTopologyPNG(t *testing.T) {
 	}
 	if title, filters := saveDialogFor("map.png"); title == "Save" || len(filters) != 1 {
 		t.Errorf("png dialog = %q %v", title, filters)
+	}
+}
+
+// The server build has no file dialog; the export says so instead of failing
+// as something unexpected.
+func TestExportTopologyPNGWithoutAFileDialog(t *testing.T) {
+	api := newTestTopologyAPI(t, &fakeTopologyService{})
+	api.chooseSavePath = func(string) (string, error) {
+		return "", dialogError(errors.New("file dialogs not available in server mode"))
+	}
+	png := base64.StdEncoding.EncodeToString(append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 16)...))
+	_, err := api.ExportTopologyPNG("map.png", png)
+	if err == nil || !strings.HasPrefix(err.Error(), "[invalid_input] Saving a file needs the PodSteer desktop app") {
+		t.Fatalf("err = %v", err)
 	}
 }
