@@ -287,7 +287,9 @@ findings, the namespace each cluster was last left on — stays in the webview's
 own storage, and the two settings that hold OBJECT NAMES are deliberately among
 them.
 
-**One object name can reach this file, and only if you put it there.** PodSteer
+**Two kinds of object name can reach this file, and only if you put them
+there.** The second is a port-forward you switch **Keep across restarts** on
+for; it is described after this one. The first: PodSteer
 notices a monitoring stack already installed in a cluster and, under Settings →
 Clusters, lets you say whether its charts may read from it — and, where a
 cluster runs more than one, **which** one answers. If you pick something other
@@ -362,6 +364,20 @@ read in this file, so it is set out in full.
 - **Nothing new is written to disk by any of this**, and no value from a
   backend is recorded anywhere. The only thing this feature can put in
   `settings.json` is the choice of Service already disclosed above.
+
+**The second: a port-forward you chose to keep.** Each forward has a "Keep"
+switch, off by default. While it is on, the forward's definition is written to
+`clusters.<context>.keptForwards` so PodSteer can reopen it after a restart:
+the **namespace**, the **pod or Service name**, the port (a container port for a
+pod, a Service port for a Service) and the **local port** it listened on.
+Nothing else — no credential, no label selector, no address beyond a loopback
+port, and nothing the cluster returned. It is removed when you turn the switch
+off, when you stop the forward, or when you choose Forget on a paused one;
+quitting PodSteer is not stopping, which is what makes it survive. Unlike the
+monitoring Service, these ARE names of workloads, which is why it is opt-in per
+forward and never a setting that applies to forwards in general. **PodSteer
+never connects a cluster to restore one**: at launch a kept forward is listed
+as paused, and it is reopened only when you open its cluster.
 
 How it behaves is as much of the answer as what it holds. It is rewritten
 whole and atomically, into a temporary file in the same directory which is

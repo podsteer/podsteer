@@ -52,6 +52,7 @@ app/
 │   ├── wails/      bound SERVICES and DTOs; the frontend API contract
 │   ├── mcp/        read-only tools for a coding agent, over stdio
 │   └── assets/     embeds the built frontend
+├── safego/         panic containment for goroutines — stdlib only, any layer may import it
 └── config/         environment-driven configuration
 ```
 
@@ -218,6 +219,14 @@ Three things to know before touching it:
   is invalidated FIRST and the watch forgotten second; reversing that opens a
   window in which a racing read ensures a set against the stale client and the
   reconnect keeps it.
+- **Only Forbidden condemns a store; Unauthorized is transient.** A 403 is a
+  decision about the account and ends the store's watching for the life of the
+  connection. A 401 is a credential that lapsed (a token boundary, a laptop
+  waking up): it says nothing about what the account may do and ends when the
+  credential does, so it demotes like any other transient error
+  (`kindWatch.onWatchError`) and `supervise` promotes the store back. Condemning
+  it left a cluster doing full network lists every tick, silently, for as long
+  as the tab stayed open.
 - **A transient error demotes a store, and a supervisor promotes it back.**
   There is no "the watch recovered" callback in client-go, so recovery is
   detected from the reflector's last synced resource version moving past the
@@ -322,6 +331,11 @@ Three rules it holds to, each with a test:
   the cancellation is not: how long an answer is worth waiting for is as true
   for the second caller as the first. Waiters leave on their own context, so
   a wedged fetch cannot pin them.
+- **A panic in the fetch is an error, and is never cached.** The fetch includes
+  mapping, and mapping includes the operator's own custom-column expressions.
+  `guardedFetch` turns a panic into an error and `finish` releases waiters in
+  every case; before, a panic left the entry "in flight" and every later
+  caller waited out its whole timeout.
 - **Every write drops the cluster's cached reads** (`forgetReads`, deferred on
   entry in each `ManagementPort` method). Deleting a pod and then being handed
   the list that still contains it reads as the application ignoring what it
@@ -1987,6 +2001,17 @@ Five things about it are load-bearing:
   byte-identical. That is what keeps SECURITY.md's "nothing is written
   anywhere" literally true rather than a thing everybody has to remember.
 
+**It holds two object-name exceptions, both disclosed (SECURITY.md, the readme
+header the store writes, the domain comments):** the preferred monitoring
+Service, and `clusters.<context>.keptForwards` — forwards the operator switched
+"Keep across restarts" on for. Both are new members of the `clusters` section,
+written only when chosen (`omitzero`), and added WITHOUT a version bump for the
+reason `clusterSection` gives: an unknown field in a known section is not
+rescued by the unknown-section round-trip, but an added one reads as absent
+in an older build, which then drops it on its next write — acceptable for an
+opt-in list that costs one re-tick. Note `ClusterSettings` is no longer
+comparable with `==` (it holds a slice): compare with `reflect.DeepEqual`.
+
 Consumers take narrow interfaces at the consumer: `HistoryService` takes a
 two-method `HistorySettingsStore`, not `ports.SettingsPort`, because the
 sampler has no business being able to name the kubeconfig sources or the proxy.
@@ -2024,6 +2049,17 @@ nothing cancels that wait. So `nodeShells`, `clusterShells`, the local-shell
 start finding it set deletes its pod (or kills its process) and returns an
 error rather than registering into a map nobody will read again.
 
+**A panic in any of them is contained, never re-raised.** Wails recovers a panic
+in a BOUND METHOD and nothing else, so every goroutine started here is outside
+that net and one nil dereference used to end the process — and every
+port-forward and shell with it. `app/safego` (`Recover`, `Run`, `Error`: log
+with the stack, end the goroutine or the iteration) is on the sampler (per
+cluster), the reflector transform and supervisors, the port-forward supervisor
+and dial, the terminal pumps, file copy, the fleet reads and the kubeconfig
+watch. Where somebody is WAITING on the goroutine (a pipe, a channel) the panic
+becomes an error that still answers them. `recover()` works only in the
+deferred function itself, so register `defer safego.Recover(...)` directly.
+
 **A port-forward goes with its connection, not just with the process.**
 `Adapter.Invalidate` stops that cluster's forwards and waits for them, FIRST,
 before it drops the client or forgets the watch — so disconnecting a tab ends
@@ -2042,6 +2078,46 @@ started it: through the exported `ListPods`, a search already in flight when
 the stop landed would outlive its own cancellation and could rebuild the
 client behind `Invalidate`'s back. The coalescing given up is worth nothing
 here — the search runs once every three seconds, longer than `readTTL`.
+
+**A forward whose window runs out is LOST, not deleted.** After
+`reconnectWindow` (two minutes) with no replacement the row stays, marked
+`Lost`, with its local port released; the supervisor keeps looking every
+`lostRetryEvery` (30s) and comes back by itself, `ReconnectPortForward` starts a
+full window at once, and Stop dismisses it. The UI notices the transition on its
+poll and posts a notice. Deleting it silently was the failure every other client
+has.
+
+**Forwards kept across a restart are definitions, restored only by the operator
+opening the cluster.** `application.ForwardKeeper` persists the opted-in
+forwards (namespace, pod or Service name, the port, the local port — nothing
+else) under `clusters.<context>.keptForwards`, a new member of an existing
+section so no version bump (see the settings section). Opt-in per forward; Stop
+and Forget remove the record, quitting does not. **Nothing connects a cluster to
+restore one**: at launch they are listed as paused, and `ClusterService.Connect`
+tells the keeper (`OnConnected`) after a successful connect, which restores that
+cluster's forwards on a goroutine the keeper owns (`Close` waits; it is first in
+`OnShutdown`). A restore that cannot proceed — port taken, pod gone — stays
+listed with the reason. A Service forward is the durable kind; a pod name changes
+with every rollout.
+
+**Credentials rewritten under an open tab are noticed.** The client is cached
+per context and frozen at the first request, so `oc login`, Teleport or
+`az aks get-credentials --overwrite` left an open tab on 401 until it was
+closed. `authFingerprint` (`credentials.go`) digests only what AUTHENTICATES —
+token, basic auth, client cert and key including file CONTENTS, exec command,
+args and env, auth-provider config, impersonation; never the server or CA — when
+the client is built. The kubeconfig watcher, on a change, asks the adapter
+whether any open cluster's differs and drops that cluster's client
+(`RefreshClient`: `Invalidate` WITHOUT the forward sweep, because the cluster
+stays open and a supervisor that rebuilds its client does so with the new
+credentials). Retry after an `unauthenticated` banner does the same
+unconditionally (`ClusterService.RefreshCredentials`, `session.retry`). A touched
+file that changes no credential disturbs nothing.
+
+**The frontend has a net under every `void fn()`.** `$lib/globalErrors` installs
+`unhandledrejection` and `error` handlers (in `main.ts`): they log with the
+stack and post a non-blocking notice (`$stores/notices`, drawn by `NoticeHost`),
+ignoring cancellations, `AbortError` and the ResizeObserver complaint.
 
 **Three things are deliberately NOT swept at shutdown, and die with the
 process**: terminal sessions (exec, attach, debug), log streams, and file
@@ -2776,7 +2852,11 @@ the paste, refuses a collision and backs the file up first.
   subresource specifically because it is the one request a PodDisruptionBudget
   can refuse — `DeleteResource` simply removes the pod, budget or no budget.
   A refusal is HTTP 429, mapped to its own sentinel (`ports.ErrDisruptionBudget`)
-  rather than folded into `ErrForbidden`: RBAC allowed the request and the
+  rather than folded into `ErrForbidden` — **by `classifyEviction` only**. On
+  any other call a 429 is API Priority and Fairness (or a gateway) rate
+  limiting the account and is `ports.ErrThrottled` (code `throttled`, with the
+  server's Retry-After quoted), because calling it a budget refusal sent
+  operators off to read PodDisruptionBudgets for a problem that was load: RBAC allowed the request and the
   object's own policy declined it, which calls for waiting and retrying, not
   for different credentials. It is the only error `DrainNode` ever retries —
   every other failure during a drain is recorded as a `DrainFailure` and the
