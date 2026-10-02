@@ -18,6 +18,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/podsteer/podsteer/app/domain"
+	"github.com/podsteer/podsteer/app/safego"
 )
 
 // Watching a cluster's pods, so a refresh reads memory instead of the network.
@@ -248,6 +249,19 @@ func (w *kindWatch) stall(version string) {
 	w.state.CompareAndSwap(int32(watchServing), int32(watchStarting))
 }
 
+// onWatchError applies the policy for an error the reflector reported and
+// returns whether the store was condemned. Forbidden is a decision about the
+// account and is terminal; everything else — Unauthorized included — demotes
+// the store until the reflector is seen delivering again.
+func (w *kindWatch) onWatchError(err error, version func() string) (condemned bool) {
+	if apierrors.IsForbidden(err) {
+		w.set(watchDegraded)
+		return true
+	}
+	w.stall(version())
+	return false
+}
+
 func (k *kindWatch) get() watchState  { return watchState(k.state.Load()) }
 func (k *kindWatch) set(s watchState) { k.state.Store(int32(s)) }
 
@@ -363,6 +377,7 @@ func (m *watchManager) ensure(id domain.ClusterID, client func() (kubernetes.Int
 // start builds one client and a reflector per kind behind it.
 func (m *watchManager) start(ctx context.Context, id domain.ClusterID, set *watchSet, client func() (kubernetes.Interface, error)) {
 	defer close(set.done)
+	defer safego.Recover("watch start " + id.String())
 
 	api, err := client()
 	if err != nil {
@@ -379,6 +394,7 @@ func (m *watchManager) start(ctx context.Context, id domain.ClusterID, set *watc
 		running.Add(1)
 		go func() {
 			defer running.Done()
+			defer safego.Recover("watch reflector " + string(spec.kind))
 			m.run(ctx, id, set.kinds[spec.kind], spec, api)
 		}()
 	}
@@ -399,7 +415,7 @@ func (m *watchManager) run(ctx context.Context, id domain.ClusterID, store *kind
 	// the last-applied annotation, which between them are usually the
 	// majority of the bytes. What survives is what the mapper reads, and
 	// there is a test per kind asserting exactly that: see watch_test.go.
-	if err := informer.SetTransform(spec.transform); err != nil {
+	if err := informer.SetTransform(guardTransform(spec.transform)); err != nil {
 		store.set(watchDegraded)
 		return
 	}
@@ -407,10 +423,14 @@ func (m *watchManager) run(ctx context.Context, id domain.ClusterID, store *kind
 	// A REFUSAL IS A DECISION, NOT AN INCIDENT. An account that may not list
 	// this kind cluster-wide, or may list but not watch, is ordinary — it is
 	// told once, at debug, and the store is condemned so no read ever waits
-	// on it again. Anything else is left to the reflector's own backoff.
+	// on it again. That is Forbidden ONLY: an Unauthorized is a credential
+	// that lapsed (a token boundary, a laptop waking up), which says nothing
+	// about what the account may do and ends when the credential does, so it
+	// is demoted like any other transient error and `supervise` promotes it
+	// back. Condemning it left the cluster on full network lists every tick
+	// for as long as the tab stayed open.
 	_ = informer.SetWatchErrorHandler(func(_ *cache.Reflector, err error) {
-		if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
-			store.set(watchDegraded)
+		if store.onWatchError(err, informer.LastSyncResourceVersion) {
 			m.logger.DebugContext(ctx, "not watching; not permitted",
 				slog.String("cluster", id.String()), slog.String("kind", string(spec.kind)))
 			return
@@ -435,8 +455,8 @@ func (m *watchManager) run(ctx context.Context, id domain.ClusterID, store *kind
 		// again either: supervise skips a serving store, so it would go on
 		// answering reads from a mirror that is behind until some later stall
 		// happened to fire. Recording first means a reader that sees
-		// `starting` cannot see a version older than this stall.
-		store.stall(informer.LastSyncResourceVersion())
+		// `starting` cannot see a version older than this stall. (That is
+		// onWatchError's stall call, which carries the same ordering.)
 	})
 
 	// PUBLISHED BEFORE ANYTHING CAN FLIP THE STATE. A reader takes the
@@ -448,6 +468,7 @@ func (m *watchManager) run(ctx context.Context, id domain.ClusterID, store *kind
 	supervised := make(chan struct{})
 	go func() {
 		defer close(supervised)
+		defer safego.Recover("watch supervisor " + string(spec.kind))
 
 		// Flipped to serving only after a sync AND only if nothing has
 		// condemned it in the meantime — a store that listed successfully and
@@ -474,6 +495,21 @@ func (m *watchManager) run(ctx context.Context, id domain.ClusterID, store *kind
 
 	informer.Run(ctx.Done())
 	<-supervised
+}
+
+// guardTransform makes a transform's panic an error. The transform runs on a
+// goroutine client-go starts, which nothing here can recover from outside, and
+// client-go re-raises what it catches there; an error is dropped for that one
+// object instead of ending the process.
+func guardTransform(transform cache.TransformFunc) cache.TransformFunc {
+	return func(object any) (result any, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				result, err = nil, safego.Error("watch transform", r)
+			}
+		}()
+		return transform(object)
+	}
 }
 
 // supervise returns a store to serving once its reflector is delivering again.
@@ -531,6 +567,7 @@ func (m *watchManager) supervise(
 // sweep tears down sets nobody has read for a while.
 func (m *watchManager) sweep() {
 	defer m.wait.Done()
+	defer safego.Recover("watch sweeper")
 
 	ticker := time.NewTicker(m.sweepEvery)
 	defer ticker.Stop()
