@@ -27,12 +27,13 @@
 import {
   ALL_NAMESPACES,
   listFleetEvents,
-  listFleetPods,
+  queryFleetPods,
   listFleetTable,
   listFleetWorkloads,
   type ClusterEvents,
-  type ClusterPods,
   type ClusterTable,
+  type FleetPodShare,
+  type PodQuery,
   type ClusterWorkloads,
   type K8sEvent,
   type Pod,
@@ -47,12 +48,13 @@ import {
   replacesRows,
   stripModel,
   type ClusterAnswer,
+  type FleetRow,
   type ClusterRead,
   type ClusterReadStatus,
   type FleetStripEntry,
   type FleetTab,
 } from '$lib/fleet'
-import type { LoadStatus } from './session.svelte'
+import type { LoadStatus, PodPageCounts } from './session.svelte'
 import { timeline } from './timeline.svelte'
 
 /** Lifts a per-kind wire answer into the shape the merge rules read. */
@@ -69,6 +71,24 @@ function asRead<T>(
     // a crash in a status strip.
     missing: answer.missing ?? [],
     items: items ?? [],
+  }
+}
+
+/**
+ * One cluster's chip, from Go's verdict on its share of the merged pod table.
+ * Go kept the rows (see FleetService.QueryPods); the strip needs only how
+ * many, how old, and whether they are kept from before.
+ */
+function shareAnswer(share: FleetPodShare): ClusterAnswer<Pod> {
+  return {
+    cluster: share.cluster,
+    status: share.status as ClusterReadStatus,
+    reason: share.reason,
+    missing: share.missing ?? [],
+    rows: [],
+    count: share.rows,
+    rowsAt: share.rowsAt > 0 ? share.rowsAt : null,
+    stale: share.stale,
   }
 }
 
@@ -108,7 +128,16 @@ class Fleet {
    */
   silentClusters: () => string[] = () => []
 
-  /** Each cluster's last answer, per table, in tab order. */
+  /**
+   * Each cluster's last answer, per table, in tab order.
+   *
+   * FOR PODS, THE VERDICTS WITHOUT THE ROWS. The merged pod table is
+   * filtered, sorted and paged in Go (FleetService.QueryPods), which also
+   * keeps a slow or unreachable cluster's last rows — the job mergeFleet does
+   * here for the other tables. Each entry's `rows` is therefore empty and
+   * `count` says how many rows the cluster contributes; the page itself is
+   * `podRows`.
+   */
   pods = $state.raw<ClusterAnswer<Pod>[]>([])
   workloads = $state.raw<ClusterAnswer<Workload>[]>([])
   events = $state.raw<ClusterAnswer<K8sEvent>[]>([])
@@ -171,8 +200,20 @@ class Fleet {
       newer one — the same guard ClusterSession.refresh uses. */
   #generation = 0
 
+  /** The merged pod table's page, each row stamped with its cluster. */
+  podRows = $state.raw<FleetRow<Pod>[]>([])
+
+  /** What the merged pod table's last page said about the whole match. */
+  podCounts = $state.raw<PodPageCounts>({
+    offset: 0,
+    matched: 0,
+    total: 0,
+    unhealthy: 0,
+    chipCounts: {},
+    queryError: '',
+  })
+
   /** Every cluster's rows in one list, each stamped with its cluster. */
-  readonly podRows = $derived(flattenFleet(this.pods))
   readonly workloadRows = $derived(flattenFleet(this.workloads))
   readonly eventRows = $derived(flattenFleet(this.events))
 
@@ -225,6 +266,8 @@ class Fleet {
     this.namespace = namespace
     this.#generation++
     this.pods = []
+    this.podRows = []
+    this.podCounts = { ...this.podCounts, matched: 0, total: 0, unhealthy: 0, chipCounts: {} }
     this.workloads = []
     this.events = []
     this.tableRows = []
@@ -238,7 +281,12 @@ class Fleet {
     this.tableTruncated = {}
   }
 
-  refresh = async (namespace: string): Promise<void> => {
+  /**
+   * `podQuery` is the asking tab's page of the merged pod table — its search,
+   * chips, cluster selection, sort and page. The rows are the workspace's;
+   * which page of them is the tab's. Unused for the other tables.
+   */
+  refresh = async (namespace: string, podQuery?: PodQuery): Promise<void> => {
     const ids = this.openClusters()
     const tab = this.tab
     const generation = ++this.#generation
@@ -247,13 +295,22 @@ class Fleet {
     try {
       switch (tab) {
         case 'pods': {
-          const answers = await listFleetPods(ids, namespace)
+          if (!podQuery) {
+            this.status = 'ready'
+            return
+          }
+          const answer = await queryFleetPods(ids, namespace, podQuery)
           if (generation !== this.#generation) return
-          this.pods = mergeFleet(
-            this.pods,
-            answers.map((answer: ClusterPods) => asRead(answer, answer.pods)),
-            Date.now(),
-          )
+          this.pods = (answer.clusters ?? []).map(shareAnswer)
+          this.podRows = (answer.page.rows ?? []).map((pod) => ({ ...pod, cluster: pod.clusterId }))
+          this.podCounts = {
+            offset: answer.page.offset,
+            matched: answer.page.matched,
+            total: answer.page.total,
+            unhealthy: answer.page.unhealthy,
+            chipCounts: answer.page.chipCounts ?? {},
+            queryError: answer.page.queryError,
+          }
           break
         }
         case 'workloads': {

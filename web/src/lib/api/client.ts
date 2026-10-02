@@ -62,12 +62,17 @@ import {
   PodGraph as bindPodGraph,
   WorkloadGraph as bindWorkloadGraph,
   RolloutHistory as bindRolloutHistory,
+  QueryPods as bindQueryPods,
+  ListPodKeys as bindListPodKeys,
+  ExportPodsCSV as bindExportPodsCSV,
 } from '$bindings/workloadapi'
 import {
   ListEvents as bindListFleetEvents,
   ListTable as bindListFleetTable,
   ListPods as bindListFleetPods,
   ListWorkloads as bindListFleetWorkloads,
+  QueryPods as bindQueryFleetPods,
+  ExportPodsCSV as bindExportFleetPodsCSV,
 } from '$bindings/fleetapi'
 import {
   CanI as bindCanI,
@@ -240,6 +245,18 @@ export type ClusterWorkloads = wails.ClusterWorkloads
 export type ClusterEvents = wails.ClusterEvents
 /** One operator-written JSONPath column, as a list call takes it. */
 export type CustomExpression = wails.CustomExpression
+/** One page query of the pod table — see app/domain/podquery.go. */
+export type PodQuery = wails.PodQuery
+/** One page of the pod table and the counts around it. */
+export type PodPage = wails.PodPage
+/** One page of the merged pod table, with every cluster's verdict. */
+export type FleetPodPage = wails.FleetPodPage
+/** One cluster's chip in the merged pod table's status strip. */
+export type FleetPodShare = wails.FleetPodShare
+/** A pod's identity and controller, for "select all matching". */
+export type PodKey = wails.PodKey
+/** One column of a CSV export: the column id and its heading. */
+export type CSVColumn = wails.CSVColumn
 /** What a resize asked for, and whether it restarts the container. */
 export type ResizeResult = wails.ResizeResult
 /** One cluster's share of a cross-cluster read of an arbitrary kind. */
@@ -1021,6 +1038,52 @@ export function listPods(
   return callList(() => bindListPods(clusterId, namespace, annotationKeys, expressions))
 }
 
+/**
+ * One page of the pod table — its search, status chips, sort and page —
+ * answered in Go, with the counts the table around it needs. The list itself
+ * never crosses: see app/domain/podquery.go for why.
+ */
+export async function queryPods(
+  clusterId: string,
+  namespace: string,
+  annotationKeys: string[],
+  expressions: CustomExpression[],
+  query: PodQuery,
+): Promise<PodPage> {
+  const page = await call(() => bindQueryPods(clusterId, namespace, annotationKeys, expressions, query))
+  return { ...page, rows: page.rows ?? [], chipCounts: page.chipCounts ?? {} }
+}
+
+/** Every pod a query matches, across every page — for "select all matching". */
+export function listPodKeys(
+  clusterId: string,
+  namespace: string,
+  annotationKeys: string[],
+  expressions: CustomExpression[],
+  query: PodQuery,
+): Promise<PodKey[]> {
+  return callList(() => bindListPodKeys(clusterId, namespace, annotationKeys, expressions, query))
+}
+
+/**
+ * Writes every pod a query matches as CSV, through the save dialog — rendered
+ * in Go, because the rows are there. Resolves to the path written, or '' when
+ * the dialog was cancelled.
+ */
+export function exportPodsCSV(
+  clusterId: string,
+  namespace: string,
+  annotationKeys: string[],
+  expressions: CustomExpression[],
+  query: PodQuery,
+  columns: CSVColumn[],
+  suggestedName: string,
+): Promise<string> {
+  return call(() =>
+    bindExportPodsCSV(clusterId, namespace, annotationKeys, expressions, query, columns, suggestedName),
+  )
+}
+
 /** Lists controllers of one kind, named as "Deployment", "StatefulSet", etc.
     `annotationKeys` is the projection listNamespaceSummaries describes. */
 export function listWorkloads(
@@ -1186,6 +1249,36 @@ export function listApplicationPods(
 /** Lists pods across the named open clusters, grouped per cluster in tab order. */
 export function listFleetPods(clusterIds: string[], namespace: string): Promise<ClusterPods[]> {
   return callList(() => bindListFleetPods(clusterIds, namespace))
+}
+
+/** One page of the merged pod table across the named open clusters, with
+    every cluster's verdict for the strip. */
+export async function queryFleetPods(
+  clusterIds: string[],
+  namespace: string,
+  query: PodQuery,
+): Promise<FleetPodPage> {
+  const answer = await call(() => bindQueryFleetPods(clusterIds, namespace, query))
+  return {
+    clusters: (answer.clusters ?? []).map((share) => ({ ...share, missing: share.missing ?? [] })),
+    page: {
+      ...answer.page,
+      rows: answer.page.rows ?? [],
+      chipCounts: answer.page.chipCounts ?? {},
+    },
+  }
+}
+
+/** Writes every pod of the merged table a query matches as CSV — see
+    exportPodsCSV. */
+export function exportFleetPodsCSV(
+  clusterIds: string[],
+  namespace: string,
+  query: PodQuery,
+  columns: CSVColumn[],
+  suggestedName: string,
+): Promise<string> {
+  return call(() => bindExportFleetPodsCSV(clusterIds, namespace, query, columns, suggestedName))
 }
 
 /** Lists every controller kind but ReplicaSet across the named open clusters. */

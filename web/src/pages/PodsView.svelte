@@ -21,7 +21,7 @@
   import { rowActionsFor, toRowActions } from '$lib/rowActions'
   import { organisation } from '$stores/organisation.svelte'
   import CustomCells from '$lib/components/CustomCells.svelte'
-  import { customCell, parseCustomColumnId, toColumns } from '$lib/customColumns'
+  import { toColumns } from '$lib/customColumns'
   import RowSelect from '$lib/components/RowSelect.svelte'
   import { rowKey } from '$lib/bulk'
   import { isControlColumn } from '$lib/fixedColumns'
@@ -55,25 +55,38 @@
   )
 
   /**
-   * How many of the search-filtered pods each chip would add, in one pass —
-   * six separate `.filter(...).length` calls would be six passes over the
-   * same rows for six numbers that were always going to be read together.
-   *
-   * Counted against `session.searchedPods` (search applied, chips not yet)
-   * rather than `session.visiblePods`, so a chip that is not selected still
-   * shows what selecting it would add instead of counting against a list its
-   * own selection has already shrunk.
+   * How many of the search-filtered pods each chip would add — counted in Go
+   * with the page (see domain.PodPage.ChipCounts), against the SEARCHED rows
+   * rather than the chipped ones, so a chip that is not selected still shows
+   * what selecting it would add instead of counting against a list its own
+   * selection has already shrunk.
    */
-  const chipCounts = $derived.by(() => {
-    const counts: Record<string, number> = {}
-    for (const chip of POD_STATUS_CHIPS) counts[chip.id] = 0
-    for (const pod of session.searchedPods) {
-      for (const chip of POD_STATUS_CHIPS) {
-        if (chip.predicate(pod)) counts[chip.id]++
-      }
-    }
-    return counts
+  const chipCounts = $derived(session.podPage.chipCounts ?? {})
+
+  /**
+   * Asks Go for the page whenever what it names changes — a settled search,
+   * a chip, a sort, a page, the page size, a custom column. Not on the first
+   * run: mounting this view is a kind change, and that already loaded it.
+   */
+  let askedFor: string | null = null
+  $effect(() => {
+    const key = session.pageQueryKey
+    if (askedFor !== null && key !== askedFor) void session.requeryPods()
+    askedFor = key
   })
+
+  /**
+   * Whether to offer ticking every match rather than every row on the page:
+   * the whole page is ticked and there is more than the page to tick.
+   */
+  const offerAllMatching = $derived(
+    session.selection.allVisibleSelected && session.podPage.matched > session.pagedPods.length,
+  )
+
+  /** Whether every match is already ticked — "select all matching" done. */
+  const allMatchingSelected = $derived(
+    session.selection.count >= session.podPage.matched && session.podPage.matched > session.pagedPods.length,
+  )
 
   const COLUMNS: Column[] = [
     { id: 'select', label: 'Select', width: 40, pinned: true, select: true },
@@ -205,42 +218,15 @@
     // them: exported, each would be a heading over a column of empty cells.
     const visible = columns.filter((column) => !isControlColumn(column) && isColumnVisible(column))
 
-    function cell(pod: Pod, id: string): string {
-      const custom = parseCustomColumnId(id)
-      if (custom) return customCell(pod, custom)
-      switch (id) {
-        case 'status':
-          return podStatusLabel(pod)
-        case 'name':
-          return pod.name
-        case 'namespace':
-          return pod.namespace
-        case 'cpu':
-          return pod.cpu
-        case 'memory':
-          return pod.memory
-        case 'ready':
-          return pod.ready
-        case 'restarts':
-          return String(pod.restarts)
-        case 'controlledBy':
-          return pod.controlledBy || '—'
-        case 'node':
-          return pod.nodeName || '—'
-        case 'qos':
-          return pod.qosClass || '—'
-        case 'ip':
-          return pod.podIp || '—'
-        case 'age':
-          return formatAge(pod.ageSeconds)
-        default:
-          return ''
-      }
-    }
-
+    // RENDERED AND WRITTEN IN GO: every matching row, on every page, is what
+    // an export means, and only Go holds them — see podCSVCell in
+    // app/adapters/wails for the cell text, which is this table's own.
     return {
-      columns: visible.map((column) => column.label),
-      rows: session.sortedPods.map((pod) => visible.map((column) => cell(pod, column.id))),
+      save: (filename) =>
+        session.exportPodsCSV(
+          visible.map((column) => ({ id: column.id, label: column.label })),
+          filename,
+        ),
     }
   }
 </script>
@@ -265,7 +251,7 @@
   >
     {#each POD_STATUS_CHIPS as chip (chip.id)}
       {@const pressed = session.podStatusFilters.includes(chip.id)}
-      {@const count = chipCounts[chip.id]}
+      {@const count = chipCounts[chip.id] ?? 0}
       <button
         type="button"
         onclick={() => session.togglePodStatusFilter(chip.id)}
@@ -300,6 +286,38 @@
     }}
   >
     {#snippet notice()}
+      {#if offerAllMatching || allMatchingSelected}
+        <!--
+          THE HEADER CHECKBOX TICKS THE PAGE, and the page is all this view
+          holds — so ticking every match is a separate, explicit step, the way
+          every mail client offers it. One read of keys when pressed, never on
+          a tick; see ClusterSession.selectAllMatchingPods.
+        -->
+        <p
+          class="flex items-center gap-2 border-b border-outline-variant/60 px-3 py-2 text-body-medium text-on-surface-variant"
+          role="status"
+        >
+          {#if allMatchingSelected}
+            All {session.podPage.matched.toLocaleString()} matching pods are selected.
+            <button
+              type="button"
+              class="text-primary hover:underline"
+              onclick={() => session.selection.clear()}
+            >
+              Clear selection
+            </button>
+          {:else}
+            All {session.pagedPods.length.toLocaleString()} pods on this page are selected.
+            <button
+              type="button"
+              class="text-primary hover:underline"
+              onclick={() => void session.selectAllMatchingPods()}
+            >
+              Select all {session.podPage.matched.toLocaleString()} matching
+            </button>
+          {/if}
+        </p>
+      {/if}
       {#if scannerRead?.truncated}
         <!--
           THE ONE CASE WHERE A MISSING MARK IS A CLAIM. Every other row here

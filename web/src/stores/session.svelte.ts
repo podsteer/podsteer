@@ -20,7 +20,10 @@ import {
   listNamespaceSummaries,
   workloadConsumption,
   listNodes,
-  listPods,
+  listPodKeys,
+  exportPodsCSV,
+  exportFleetPodsCSV,
+  queryPods,
   listTable,
   listWorkloads,
   refreshCredentials,
@@ -40,6 +43,9 @@ import {
   type NodeLoad,
   type Overview,
   type Pod,
+  type PodPage,
+  type PodQuery,
+  type CSVColumn,
   type ResourceKind,
   type ResourceTable,
   type TableRow,
@@ -49,8 +55,6 @@ import { ApiError, toApiError } from '$lib/api/errors'
 import { findAutoscalers, foldKedaAutoscalers, type AutoscalerCheck } from '$lib/autoscalers'
 import { RowSelection } from '$lib/selection.svelte'
 import { nodeItem, podItem, rowKey, tableRowItem, workloadItem, type BulkItem } from '$lib/bulk'
-import { podStatusLabel } from '$lib/format'
-import { matchesPodStatusChips } from '$lib/podStatusFilters'
 import type { SavedView, ViewState } from '$lib/savedViews'
 import {
   EVENT_CHIPS,
@@ -410,9 +414,31 @@ export const RICH_KIND_IDS = {
  *
  * Long enough that a burst of typing is one pass rather than one per letter,
  * short enough to read as instant — the threshold where a delay starts being
- * felt is around a fifth of a second.
+ * felt is around a fifth of a second. On the pod table a settled term is a
+ * page query to Go rather than a filter in place, which is the other reason
+ * a word typed at speed must be one request and not one per letter.
  */
-const SEARCH_DEBOUNCE_MS = 120
+const SEARCH_DEBOUNCE_MS = 150
+
+/** What the pod table's last page said about the whole list. */
+export type PodPageCounts = Omit<PodPage, 'rows'>
+
+/** The counts before any page has landed. */
+export const EMPTY_POD_PAGE: PodPageCounts = {
+  offset: 0,
+  matched: 0,
+  total: 0,
+  unhealthy: 0,
+  chipCounts: {},
+  queryError: '',
+}
+
+/** A pod's identity and controller — the facts a bulk plan reads. */
+interface PodFacts {
+  namespace: string
+  name: string
+  controlledBy: string
+}
 
 export const WORKLOAD_KIND_BY_ID: Record<string, string> = {
   'apps/v1/deployments': 'Deployment',
@@ -464,21 +490,6 @@ export type ViewMode =
  * with natural ordering; nulls (an unmeasured CPU, a CronJob that never ran)
  * always sort last.
  */
-const POD_SORT: SortAccessors<Pod> = {
-  status: (pod) => podStatusLabel(pod),
-  name: (pod) => pod.name,
-  namespace: (pod) => pod.namespace,
-  cpu: (pod) => parseQuantity(pod.cpu),
-  memory: (pod) => parseQuantity(pod.memory),
-  ready: (pod) => pod.readyContainers,
-  restarts: (pod) => pod.restarts,
-  controlledBy: (pod) => pod.controlledBy,
-  node: (pod) => pod.nodeName,
-  qos: (pod) => pod.qosClass,
-  ip: (pod) => pod.podIp,
-  age: (pod) => pod.ageSeconds,
-}
-
 const NODE_SORT: SortAccessors<Node> = {
   status: (node) => node.status,
   name: (node) => node.name,
@@ -551,15 +562,11 @@ const EVENT_SORT: SortAccessors<K8sEvent> = {
 
 /*
  * The merged tables sort by the same accessors as their single-cluster twins,
- * plus the columns they add. Spread rather than re-declared, so a column's
+ * plus the columns they add. (Pods are sorted in Go, merged table and all —
+ * see domain.QueryPods.) Spread rather than re-declared, so a column's
  * ordering rule cannot differ between "this cluster's pods" and "every
  * cluster's pods".
  */
-const FLEET_POD_SORT: SortAccessors<FleetRow<Pod>> = {
-  ...POD_SORT,
-  cluster: (pod) => pod.cluster,
-}
-
 const FLEET_WORKLOAD_SORT: SortAccessors<FleetRow<Workload>> = {
   ...WORKLOAD_SORT,
   cluster: (workload) => workload.cluster,
@@ -672,6 +679,26 @@ export class ClusterSession {
    * just returned. Deep proxying was paying for a capability nothing uses.
    */
   pods = $state.raw<Pod[]>([])
+
+  /**
+   * What the pod table's last page query said about the WHOLE list: how many
+   * rows matched (the pager's total), how many there are, how many are
+   * unhealthy, and what each status chip would select.
+   *
+   * THE POD TABLE IS PAGED IN GO. `pods` above holds one page — what the
+   * table draws — and never the list: on a five-thousand-pod cluster the
+   * list was eleven megabytes a tick. These counts are everything the
+   * webview used to derive from holding every row. See domain.QueryPods.
+   */
+  podPage = $state.raw<PodPageCounts>(EMPTY_POD_PAGE)
+
+  /**
+   * The bulk-planning facts of every pod a page or "select all matching" has
+   * shown — keyed like the selection — so a tick made on page 1 can still be
+   * planned while page 3 is on screen. See bulkItems.
+   */
+  #podFacts = new Map<string, PodFacts>()
+
   nodes = $state.raw<Node[]>([])
   workloads = $state.raw<Workload[]>([])
   events = $state.raw<K8sEvent[]>([])
@@ -980,7 +1007,15 @@ export class ClusterSession {
   /** The invalid-regex message for `typedQuery`, or undefined when it parses
       cleanly. Drives the search field's error styling and accessible
       description. */
-  readonly searchError = $derived(this.typedQuery.error)
+  readonly searchError = $derived(
+    this.typedQuery.error ??
+      // A pattern this webview accepts and Go's regex dialect does not
+      // (lookaround, backreferences) — the pod table is filtered in Go, so
+      // that is the parser whose verdict the empty table is.
+      (this.viewMode === 'pods' && this.typedSearch === this.search && this.podPage.queryError
+        ? this.podPage.queryError
+        : undefined),
+  )
 
   /** A one-line summary of the syntax currently in the box, for the field's
       tooltip — see `describeQuery`. */
@@ -1013,35 +1048,6 @@ export class ClusterSession {
    */
   readonly columnExpressions = $derived(expressionsOf(this.customColumns))
 
-  /**
-   * Pods after the search filter alone, BEFORE the status quick-filter chips.
-   *
-   * Kept separate from `visiblePods` so the chip row can count how many of
-   * what a search already narrowed down each chip would ADD — including a
-   * chip that is not currently selected. Counting against the
-   * already-chip-filtered list would make every unselected chip's count
-   * collapse towards zero the moment any chip was active.
-   */
-  readonly searchedPods = $derived(
-    filterRows(
-      this.pods,
-      this.query,
-      (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase, ...this.#customText(pod)],
-      (pod) => pod.labels,
-      () => this.cluster.id,
-    ),
-  )
-
-  /**
-   * Rows after the search filter, for whichever view is active.
-   *
-   * Pods additionally pass through the status quick-filter chips — ANDed
-   * with the text query, since a search term and a chip both narrow the
-   * same list rather than answering different questions.
-   */
-  readonly visiblePods = $derived(
-    this.searchedPods.filter((pod) => matchesPodStatusChips(pod, this.podStatusFilters)),
-  )
   // Every kind's rows carry labels now, so `label:key` and `key=value` in
   // the search box mean the same thing on the node list as on the pod list
   // — and a custom column's value is searchable the way a built-in one's is.
@@ -1185,18 +1191,6 @@ export class ClusterSession {
     return rows.filter((row) => includesCluster(selected, row.cluster))
   }
 
-  readonly searchedFleetPods = $derived(
-    filterRows(
-      this.#onSelectedClusters(fleet.podRows),
-      this.query,
-      (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase],
-      (pod) => pod.labels,
-      (pod) => pod.cluster,
-    ),
-  )
-  readonly visibleFleetPods = $derived(
-    this.searchedFleetPods.filter((pod) => matchesPodStatusChips(pod, this.fleetChips.pods)),
-  )
   readonly searchedFleetWorkloads = $derived(
     filterRows(
       this.#onSelectedClusters(fleet.workloadRows),
@@ -1249,7 +1243,8 @@ export class ClusterSession {
   readonly visibleFleetCount = $derived.by(() => {
     switch (fleet.tab) {
       case 'pods':
-        return this.visibleFleetPods.length
+        // Filtered in Go — see fleet.podCounts.
+        return fleet.podCounts.matched
       case 'workloads':
         return this.visibleFleetWorkloads.length
       case 'events':
@@ -1275,7 +1270,8 @@ export class ClusterSession {
       case 'timeline':
         return 0
       case 'pods':
-        return this.visiblePods.length
+        // Filtered in Go: the page is all the webview holds.
+        return this.podPage.matched
       case 'nodes':
         return this.visibleNodes.length
       case 'workloads':
@@ -1321,8 +1317,58 @@ export class ClusterSession {
   /** The sort applied to the current kind, or null for server order. */
   readonly sort = $derived(this.sorts[this.sortKey] ?? null)
 
-  /** Filtered rows after sorting, per view. */
-  readonly sortedPods = $derived(sortRows(this.visiblePods, this.sort, this.#accessors(POD_SORT)))
+  /**
+   * The pod table's page query: its search, chips, sort, custom columns and
+   * page, as Go takes them. See domain.PodQuery.
+   *
+   * The SETTLED search, not the typed one: a page query per keystroke is the
+   * cost the debounce exists to avoid.
+   */
+  readonly podQuery = $derived<PodQuery>({
+    text: this.search,
+    chips: this.podStatusFilters,
+    sortColumn: this.sort?.columnId ?? '',
+    descending: this.sort?.direction === 'desc',
+    columns: this.customColumns.map(({ source, key }) => ({ source, key })),
+    clusters: [],
+    offset: (Math.max(1, this.page) - 1) * preferences.pageSize,
+    limit: preferences.pageSize,
+  })
+
+  /**
+   * The merged pod table's page query: the same, with the strip's cluster
+   * selection and the merged table's own chips, and no custom columns —
+   * those are per kind, and the merged table is not one.
+   */
+  readonly fleetPodQuery = $derived<PodQuery>({
+    text: this.search,
+    chips: this.fleetChips.pods,
+    sortColumn: this.sort?.columnId ?? '',
+    descending: this.sort?.direction === 'desc',
+    columns: [],
+    clusters: this.selectedFleetClusters,
+    offset: (Math.max(1, this.page) - 1) * preferences.pageSize,
+    limit: preferences.pageSize,
+  })
+
+  /**
+   * The page query the view on screen depends on, as one comparable string,
+   * or '' for a view whose rows are filtered here. A change of it is a new
+   * page to ask Go for — see requeryPods and the effect in PodsView and
+   * FleetView that calls it. The namespace is not in it: changing one
+   * already reloads the view, and a second request for the same page would
+   * only race the first.
+   */
+  readonly pageQueryKey = $derived(
+    this.viewMode === 'pods'
+      ? `pods:${JSON.stringify(this.podQuery)}`
+      : this.viewMode === 'fleet' && fleet.tab === 'pods'
+        ? `fleet:${JSON.stringify(this.fleetPodQuery)}`
+        : '',
+  )
+
+
+  /** Filtered rows after sorting, per view. (Pods are sorted in Go.) */
   readonly sortedNodes = $derived(sortRows(this.visibleNodes, this.sort, this.#accessors(NODE_SORT)))
   readonly sortedWorkloads = $derived(
     sortRows(this.visibleWorkloads, this.sort, this.#accessors(WORKLOAD_SORT)),
@@ -1460,14 +1506,14 @@ export class ClusterSession {
   multiKindTitle = (kindId: string): string => this.#multiKindLabel(kindId)
 
   /** Rows of the current page, per view. */
-  readonly pagedPods = $derived(this.#slice(this.sortedPods))
+  /** The pod table's page — already cut in Go, so nothing to slice. */
+  readonly pagedPods = $derived(this.pods)
   readonly pagedNodes = $derived(this.#slice(this.sortedNodes))
   readonly pagedWorkloads = $derived(this.#slice(this.sortedWorkloads))
   readonly pagedEvents = $derived(this.#slice(this.sortedEvents))
   readonly pagedNamespaces = $derived(this.#slice(this.sortedNamespaces))
 
   /** The merged tables, sorted and paged like any other. */
-  readonly sortedFleetPods = $derived(sortRows(this.visibleFleetPods, this.sort, FLEET_POD_SORT))
   readonly sortedFleetWorkloads = $derived(
     sortRows(this.visibleFleetWorkloads, this.sort, FLEET_WORKLOAD_SORT),
   )
@@ -1507,7 +1553,8 @@ export class ClusterSession {
   })
 
   readonly pagedFleetTableRows = $derived(this.#slice(this.sortedFleetTableRows))
-  readonly pagedFleetPods = $derived(this.#slice(this.sortedFleetPods))
+  /** The merged pod table's page, cut in Go like the single-cluster one. */
+  readonly pagedFleetPods = $derived(fleet.podRows)
   readonly pagedFleetWorkloads = $derived(this.#slice(this.sortedFleetWorkloads))
   readonly pagedFleetEvents = $derived(this.#slice(this.sortedFleetEvents))
   readonly sortedApplications = $derived(
@@ -1594,11 +1641,11 @@ export class ClusterSession {
     return 'healthy'
   })
 
-  /** Counts for the header summary, meaningful only for pod views. */
+  /** Counts for the header summary, meaningful only for pod views — over
+      the whole list, as Go counted it, not over the page. */
   readonly podSummary = $derived({
-    total: this.pods.length,
-    unhealthy: this.pods.filter((pod) => !pod.isHealthy).length,
-    restarts: this.pods.reduce((sum, pod) => sum + pod.restarts, 0),
+    total: this.podPage.total,
+    unhealthy: this.podPage.unhealthy,
   })
 
   /**
@@ -1619,9 +1666,14 @@ export class ClusterSession {
 
     switch (this.viewMode) {
       case 'pods':
-        return this.pods
-          .filter((pod) => keys.has(rowKey(pod.namespace, pod.name)))
-          .map((pod) => podItem(kind, pod))
+        // FROM THE FACTS, NOT THE ROWS: the webview holds one page, and a
+        // pod ticked on another page — or by "select all matching" — is
+        // planned from what was true of it when it was last shown. A pod
+        // deleted since is caught by the plan's own read, not here.
+        return [...keys].flatMap((key) => {
+          const facts = this.#podFacts.get(key)
+          return facts ? [podItem(kind, facts)] : []
+        })
       case 'workloads':
         return this.workloads
           .filter((workload) => keys.has(rowKey(workload.namespace, workload.name)))
@@ -2152,6 +2204,100 @@ export class ClusterSession {
     await this.refresh()
   }
 
+  /**
+   * Asks Go for the page the pod table's query now names — after a settled
+   * search, a chip, a sort, a page or a page size changed.
+   *
+   * THE ROWS ONLY, NOT A WHOLE REFRESH: the assessment and the kind list ride
+   * the tick, and a keystroke is not a tick. It takes a request number from
+   * the same counter refresh() does, so whichever was asked LAST lands — a
+   * tick that left before the chip was pressed cannot overwrite the page the
+   * chip asked for, and a slow page query cannot overwrite a later one.
+   */
+  requeryPods = async (): Promise<void> => {
+    if (this.pageQueryKey === '') return
+
+    const request = ++this.#request
+    this.#requestedAt = Date.now()
+    try {
+      const rows =
+        this.viewMode === 'fleet'
+          ? await fleet.refresh(fleet.namespace, this.fleetPodQuery)
+          : await queryPods(
+              this.cluster.id,
+              this.namespace,
+              this.annotationKeys,
+              this.columnExpressions,
+              this.podQuery,
+            )
+      if (request !== this.#request) return
+      this.#assign(rows)
+      this.status = 'ready'
+      this.error = null
+    } catch (cause) {
+      if (request !== this.#request) return
+      this.status = 'error'
+      this.#fail(cause)
+    }
+  }
+
+  /** Files the bulk-planning facts of pods the table has shown. */
+  #notePodFacts(pods: readonly { namespace: string; name: string; controlledBy: string }[]): void {
+    for (const pod of pods) {
+      this.#podFacts.set(rowKey(pod.namespace, pod.name), {
+        namespace: pod.namespace,
+        name: pod.name,
+        controlledBy: pod.controlledBy,
+      })
+    }
+  }
+
+  /**
+   * Ticks every pod the search and chips match, on every page — "select all
+   * N matching", beside the header checkbox's "this page".
+   *
+   * ONE READ, ON THE GESTURE: the keys (namespace, name, UID and controller)
+   * of every match, never the rows. Ten thousand keys are about a megabyte
+   * once, where ten thousand rows were twenty-three every tick.
+   */
+  selectAllMatchingPods = async (): Promise<void> => {
+    if (this.viewMode !== 'pods') return
+    try {
+      const keys = await listPodKeys(
+        this.cluster.id,
+        this.namespace,
+        this.annotationKeys,
+        this.columnExpressions,
+        this.podQuery,
+      )
+      this.#notePodFacts(keys)
+      this.selection.selectAll(keys.map((key) => rowKey(key.namespace, key.name)))
+    } catch (cause) {
+      this.#fail(cause)
+    }
+  }
+
+  /**
+   * Writes every pod the table's query matches — all pages, in its order —
+   * as CSV, rendered and saved by Go through the save dialog. Resolves to the
+   * path, or '' when the operator cancelled.
+   */
+  exportPodsCSV = (columns: CSVColumn[], filename: string): Promise<string> =>
+    exportPodsCSV(
+      this.cluster.id,
+      this.namespace,
+      this.annotationKeys,
+      this.columnExpressions,
+      this.podQuery,
+      columns,
+      filename,
+    )
+
+  /** The merged pod table's export — exportPodsCSV across every open cluster,
+      with this tab's search, chips and cluster selection. */
+  exportFleetPodsCSV = (columns: CSVColumn[], filename: string): Promise<string> =>
+    exportFleetPodsCSV(fleet.openClusters(), fleet.namespace, this.fleetPodQuery, columns, filename)
+
   /** Reloads whichever view is active. */
   refresh = async (): Promise<void> => {
     const request = ++this.#request
@@ -2418,8 +2564,9 @@ export class ClusterSession {
         // Every open cluster, one call, at this tab's cadence — and only
         // while this view is the one on screen, because this switch is the
         // only thing that ever calls it. See $stores/fleet.
-        // The WINDOW'S namespace, never this tab's — see fleet.namespace.
-        return fleet.refresh(fleet.namespace)
+        // The WINDOW'S namespace, never this tab's — see fleet.namespace —
+        // and THIS tab's page of the merged pods.
+        return fleet.refresh(fleet.namespace, this.fleetPodQuery)
       case 'rbac':
         // NOTHING, DELIBERATELY. The RBAC explorer's reads are made by the
         // panel when somebody presses something, never by this tick: a
@@ -2479,7 +2626,8 @@ export class ClusterSession {
       // its custom columns — and nothing else of the annotation map. See
       // $lib/customColumns and the client's listNamespaceSummaries note.
       case 'pods':
-        return listPods(id, namespace, this.annotationKeys, this.columnExpressions)
+        // ONE PAGE, NOT THE LIST — see podPage.
+        return queryPods(id, namespace, this.annotationKeys, this.columnExpressions, this.podQuery)
       case 'nodes':
         return listNodes(id, this.annotationKeys, this.columnExpressions)
       case 'events':
@@ -2524,7 +2672,9 @@ export class ClusterSession {
   metadataKeysOnScreen = (): MetadataKeys => {
     switch (this.viewMode) {
       case 'pods':
-        return keysOnScreen(this.visiblePods)
+        // The page: the rest of the list is in Go. The picker also takes
+        // free text, for a key no row on this page carries.
+        return keysOnScreen(this.pods)
       case 'nodes':
         return keysOnScreen(this.visibleNodes)
       case 'workloads':
@@ -2545,6 +2695,7 @@ export class ClusterSession {
     // Clearing the others matters: a stale pod list left behind would flash
     // back into view for a frame when the operator returns to Pods.
     this.pods = []
+    this.podPage = EMPTY_POD_PAGE
     this.nodes = []
     this.workloads = []
     this.events = []
@@ -2593,9 +2744,20 @@ export class ClusterSession {
         // overview's own case adopts, and the scanner read lives in
         // $stores/vulnerabilities where the page put it.
         break
-      case 'pods':
-        this.pods = rows as Pod[]
+      case 'pods': {
+        const page = rows as PodPage
+        this.pods = page.rows ?? []
+        this.podPage = {
+          offset: page.offset,
+          matched: page.matched,
+          total: page.total,
+          unhealthy: page.unhealthy,
+          chipCounts: page.chipCounts ?? {},
+          queryError: page.queryError,
+        }
+        this.#notePodFacts(this.pods)
         break
+      }
       case 'nodes':
         this.nodes = rows as Node[]
         break

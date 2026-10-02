@@ -10,6 +10,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // rejects with, per test.
 const listTable = vi.fn()
 const refreshCredentials = vi.fn()
+const queryPods = vi.fn()
+const listPodKeys = vi.fn()
 vi.mock('$lib/api/client', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('$lib/api/client')
   return {
@@ -17,12 +19,15 @@ vi.mock('$lib/api/client', async () => {
     getManifest: vi.fn().mockRejectedValue(new Error('no cluster in a test')),
     listTable: (...args: unknown[]) => listTable(...args),
     refreshCredentials: (...args: unknown[]) => refreshCredentials(...args),
+    queryPods: (...args: unknown[]) => queryPods(...args),
+    listPodKeys: (...args: unknown[]) => listPodKeys(...args),
   }
 })
 
 import { ClusterSession, RICH_KIND_IDS } from './session.svelte'
-import type { Cluster, Node, Pod, ResourceKind, ResourceTable } from '$lib/api/client'
 import { ApiError } from '$lib/api/errors'
+import { preferences } from './preferences.svelte'
+import type { Cluster, Node, Pod, PodPage, ResourceKind, ResourceTable } from '$lib/api/client'
 
 // Only the three fields the constructor reads. Cast through unknown because
 // the DTO is a generated class with a dozen more, none of which this touches.
@@ -142,60 +147,150 @@ describe('opening an object that was not clicked', () => {
   })
 })
 
-describe('filtering the pod list', () => {
+/** A page of the pod table, as Go answers one. */
+function page(names: string[], counts: Partial<PodPage> = {}): PodPage {
+  return {
+    rows: names.map((name) => ({ name, namespace: 'prod', controlledBy: `ReplicaSet/${name}-rs` }) as Pod),
+    offset: 0,
+    matched: names.length,
+    total: names.length,
+    unhealthy: 0,
+    chipCounts: {},
+    queryError: '',
+    ...counts,
+  }
+}
+
+/** A promise and the function that settles it, for ordering two in flight. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve: (value: T) => void = () => {}
+  const promise = new Promise<T>((settle) => (resolve = settle))
+  return { promise, resolve }
+}
+
+describe('the pod table, paged in Go', () => {
   let open: ClusterSession
 
   beforeEach(() => {
+    queryPods.mockReset()
+    listPodKeys.mockReset()
     open = session()
-    open.pods = [
-      { name: 'web-1', namespace: 'prod', nodeName: 'node-a', phase: 'Running', statusReason: '' } as Pod,
-      { name: 'web-2', namespace: 'prod', nodeName: 'node-a', phase: 'Pending', statusReason: '' } as Pod,
-      {
-        name: 'db-1',
-        namespace: 'prod',
-        nodeName: 'node-b',
-        phase: 'Running',
-        statusReason: 'CrashLoopBackOff',
-      } as Pod,
-    ]
+    open.selectedKindId = RICH_KIND_IDS.pods
+    open.kinds = [{ id: RICH_KIND_IDS.pods, group: '', version: 'v1', kind: 'Pod', namespaced: true } as ResourceKind]
   })
 
-  it('combines the search query and a status chip with AND', () => {
-    // THE BEHAVIOUR THIS GUARDS. A chip narrows what a search already
-    // narrowed, not a separate question — selecting "Pending" while
-    // searching "web" must not bring back a pod the search itself excluded.
+  it('asks for the search, the chips, the sort and the page together', () => {
+    // A chip narrows what the search narrowed (AND) and chips OR among
+    // themselves — that is now Go's rule, pinned by the shared fixture. What
+    // is pinned here is that every one of them reaches the query.
     open.search = 'web'
     open.togglePodStatusFilter('pending')
-
-    expect(open.visiblePods.map((pod) => pod.name)).toEqual(['web-2'])
-  })
-
-  it('ORs several selected chips together', () => {
-    open.togglePodStatusFilter('pending')
     open.togglePodStatusFilter('restarting')
+    open.toggleSort('name')
+    open.toggleSort('name')
+    open.page = 3
 
-    expect(open.visiblePods.map((pod) => pod.name).sort()).toEqual(['db-1', 'web-2'])
+    expect(open.podQuery).toMatchObject({
+      text: 'web',
+      chips: ['pending', 'restarting'],
+      sortColumn: 'name',
+      descending: true,
+      offset: 2 * preferences.pageSize,
+      limit: preferences.pageSize,
+      clusters: [],
+    })
   })
 
-  it('toggling a chip off restores what it had removed', () => {
-    open.togglePodStatusFilter('pending')
-    expect(open.visiblePods).toHaveLength(1)
+  it('asks for the SETTLED search, not each keystroke', () => {
+    open.setSearch('w')
+    open.setSearch('we')
 
-    open.togglePodStatusFilter('pending')
-    expect(open.visiblePods).toHaveLength(3)
+    expect(open.typedSearch).toBe('we')
+    expect(open.podQuery.text).toBe('')
   })
 
-  it('counts against the search-filtered list, not the chip-filtered one', () => {
-    // THE BUG THIS GUARDS. Counting against `visiblePods` (search AND chips)
-    // would make every OTHER chip's count collapse the moment one chip was
-    // selected — a "Pending" count of zero while a pod is sitting right
-    // there, merely because "Restarting" happened to be the chip picked.
-    // `searchedPods` is search-only, so a chip's own count is unaffected by
-    // which chips happen to be selected.
-    open.togglePodStatusFilter('restarting')
+  it('carries the custom columns, whose values are searchable', () => {
+    const team = { source: 'label', key: 'team' } as const
+    preferences.addCustomColumn(RICH_KIND_IDS.pods, team)
+    try {
+      expect(open.podQuery.columns).toEqual([team])
+    } finally {
+      preferences.removeCustomColumn(RICH_KIND_IDS.pods, team)
+    }
+  })
 
-    expect(open.searchedPods).toHaveLength(3)
-    expect(open.searchedPods.some((pod) => pod.phase === 'Pending')).toBe(true)
+  it('holds the page and reads every count from Go', async () => {
+    queryPods.mockResolvedValue(
+      page(['web-1', 'web-2'], { matched: 120, total: 300, unhealthy: 9, chipCounts: { pending: 4 } }),
+    )
+
+    await open.refresh()
+
+    expect(open.pagedPods.map((pod) => pod.name)).toEqual(['web-1', 'web-2'])
+    expect(open.visibleCount).toBe(120)
+    expect(open.pageCount).toBe(Math.ceil(120 / preferences.pageSize))
+    expect(open.podSummary).toEqual({ total: 300, unhealthy: 9 })
+    expect(open.podPage.chipCounts).toEqual({ pending: 4 })
+  })
+
+  it('a chip is a new page query, from the first page', () => {
+    open.page = 4
+    const before = open.pageQueryKey
+    open.togglePodStatusFilter('failing')
+
+    expect(open.page).toBe(1)
+    expect(open.pageQueryKey).not.toBe(before)
+  })
+
+  it('lets the LAST query asked land, whichever answers first', async () => {
+    // THE GENERATION GUARD. A chip pressed while a slow page query is in
+    // flight asks again; the first answer arriving second must not replace
+    // the page the chip asked for.
+    const slow = deferred<PodPage>()
+    const fast = deferred<PodPage>()
+    queryPods.mockReturnValueOnce(slow.promise).mockReturnValueOnce(fast.promise)
+
+    const first = open.requeryPods()
+    open.togglePodStatusFilter('pending')
+    const second = open.requeryPods()
+
+    fast.resolve(page(['pending-1']))
+    await second
+    slow.resolve(page(['everything-1', 'everything-2']))
+    await first
+
+    expect(open.pagedPods.map((pod) => pod.name)).toEqual(['pending-1'])
+  })
+
+  it('selects every match across pages, and can plan them all', async () => {
+    queryPods.mockResolvedValue(page(['web-1'], { matched: 3 }))
+    await open.refresh()
+    listPodKeys.mockResolvedValue([
+      { namespace: 'prod', name: 'web-1', uid: '1', controlledBy: 'ReplicaSet/web-rs', cluster: 'dev' },
+      { namespace: 'prod', name: 'web-2', uid: '2', controlledBy: 'ReplicaSet/web-rs', cluster: 'dev' },
+      { namespace: 'staging', name: 'web-9', uid: '9', controlledBy: '', cluster: 'dev' },
+    ])
+
+    await open.selectAllMatchingPods()
+
+    expect(listPodKeys).toHaveBeenCalledWith('dev', open.namespace, [], [], open.podQuery)
+    expect(open.selection.count).toBe(3)
+    // Planned from what the keys said, not from rows the webview never held.
+    const planned = open.bulkItems.map((item) => `${item.namespace}/${item.name}:${item.controllerName}`)
+    expect(planned.sort()).toEqual(['prod/web-1:web-rs', 'prod/web-2:web-rs', 'staging/web-9:'])
+  })
+
+  it('plans a pod ticked on another page from when it was shown', async () => {
+    queryPods.mockResolvedValueOnce(page(['web-1']))
+    await open.refresh()
+    open.selection.toggle('prod/web-1')
+
+    queryPods.mockResolvedValueOnce(page(['web-2']))
+    open.goToPage(2)
+    await open.requeryPods()
+
+    expect(open.pagedPods.map((pod) => pod.name)).toEqual(['web-2'])
+    expect(open.bulkItems.map((item) => item.name)).toEqual(['web-1'])
   })
 })
 

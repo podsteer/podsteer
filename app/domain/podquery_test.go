@@ -14,9 +14,9 @@ import (
 	"github.com/podsteer/podsteer/app/domain"
 )
 
-// The parity test: the fixture the frontend's filter.test.ts runs, run
+// The parity test: the fixture the frontend's filter.node.test.ts runs, run
 // against the Go port. Both must produce the fixture's expected rows and chip
-// counts; see web/src/lib/filter.test.ts for how the fixture is regenerated
+// counts; see web/src/lib/filter.node.test.ts for how the fixture is regenerated
 // and why it is the TypeScript that is the reference.
 
 type fixturePod struct {

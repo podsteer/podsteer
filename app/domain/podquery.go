@@ -25,7 +25,7 @@ import (
 // language is $lib/query (see TextQuery), the chips $lib/podStatusFilters,
 // the collation $lib/sort (see textorder.go), the custom columns'
 // contribution $lib/customColumns. web/src/lib/filter.fixtures.json holds
-// the two implementations together; podquery_test.go and filter.test.ts both
+// the two implementations together; podquery_test.go and filter.node.test.ts both
 // run it.
 
 // PodStatusChip names one of the pod table's status quick-filters.

@@ -286,7 +286,12 @@ import TimelineView from './TimelineView.svelte'
     )
 
     try {
-      const path = await saveTextFile(filename, toCSV(data.columns, data.rows))
+      // The pod tables hand back a writer rather than rows: theirs are in
+      // Go, and so is the file — see CSVExport.
+      const path =
+        'save' in data
+          ? await data.save(filename)
+          : await saveTextFile(filename, toCSV(data.columns, data.rows))
       // An empty path means the operator cancelled the dialog, which is not
       // an error and says nothing — the same convention as readKubeconfigFile.
       if (path) {

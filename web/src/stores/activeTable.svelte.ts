@@ -28,11 +28,15 @@ import type { Column } from '$lib/components/DataTable.svelte'
 
 /** What a mounted table hands back for its Export CSV control: the labels of
     the columns it currently shows, and the filtered, sorted rows rendered as
-    text the way the cells themselves show them. */
-export interface CSVExport {
-  columns: string[]
-  rows: string[][]
-}
+    text the way the cells themselves show them —
+
+    OR, for a table whose rows are not in the webview, a writer that has Go
+    render and save the file (the pod tables: see
+    ClusterSession.exportPodsCSV). It is given the suggested filename and
+    resolves to the path written, or '' when the dialog was cancelled. */
+export type CSVExport =
+  | { columns: string[]; rows: string[][] }
+  | { save: (filename: string) => Promise<string> }
 
 class ActiveTable {
   /** Identifies the kind, for persisting the operator's choices. */

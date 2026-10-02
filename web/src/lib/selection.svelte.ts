@@ -114,6 +114,18 @@ export class RowSelection {
     this.keys = next
   }
 
+  /**
+   * Ticks every key given, keeping whatever is ticked already — "select all
+   * N matching", which reaches rows on pages that are not on screen. The
+   * keys come from the backend (see ClusterSession.selectAllMatchingPods),
+   * because the rows they name are not in the webview to be counted.
+   */
+  selectAll(keys: readonly string[]): void {
+    const next = new Set(this.keys)
+    for (const key of keys) next.add(key)
+    this.keys = next
+  }
+
   /** Drops every tick, and the anchor with it. */
   clear(): void {
     this.keys = new Set()

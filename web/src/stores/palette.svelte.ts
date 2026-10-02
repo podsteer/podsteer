@@ -678,7 +678,8 @@ class CommandPaletteStore {
     const filename = buildExportFilename(session.cluster.id, kind, session.namespace)
 
     try {
-      await saveTextFile(filename, toCSV(data.columns, data.rows))
+      if ('save' in data) await data.save(filename)
+      else await saveTextFile(filename, toCSV(data.columns, data.rows))
     } catch (cause) {
       session.error = toApiError(cause)
     }
