@@ -36,6 +36,7 @@
   import Card from '$lib/components/Card.svelte'
   import EmptyState from '$lib/components/EmptyState.svelte'
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
+  import { settingsDialog } from '$stores/settingsDialog.svelte'
   import AddClusterDialog from '$lib/components/AddClusterDialog.svelte'
   import OrganiseDialog from '$lib/components/OrganiseDialog.svelte'
   import SearchField from '$lib/components/SearchField.svelte'
@@ -78,6 +79,7 @@
   // never do. See that module's own comment.
   const organiseOpen = $derived(organiseDialog.open)
   let addOpen = $state(false)
+  let addSource = $state<'paste' | 'cli'>('paste')
 
   /**
    * A clock, so "Connected for 12s" counts rather than sitting where it
@@ -481,10 +483,29 @@
   {:else if workspace.clusters.length === 0}
     <EmptyState
       title="No clusters configured"
-      description="PodSteer found no usable contexts in your kubeconfig. Add one with `kubectl config set-context`, then reload."
+      description="PodSteer found no usable contexts in your kubeconfig. Add a cluster by pasting a kubeconfig or importing from a cloud CLI, point PodSteer at a folder of kubeconfig files, or add a context with `kubectl config set-context` and reload."
     >
       {#snippet action()}
-        <Button variant="tonal" onclick={workspace.loadClusters}>Reload kubeconfig</Button>
+        <div class="flex flex-wrap items-center justify-center gap-2">
+          <Button
+            variant="filled"
+            onclick={() => {
+              addSource = 'paste'
+              addOpen = true
+            }}>Add cluster</Button
+          >
+          <Button
+            variant="tonal"
+            onclick={() => {
+              addSource = 'cli'
+              addOpen = true
+            }}>Import from a cloud CLI</Button
+          >
+          <Button variant="tonal" onclick={() => settingsDialog.show('kubeconfig')}
+            >Use a kubeconfig folder</Button
+          >
+          <Button variant="text" onclick={workspace.loadClusters}>Reload kubeconfig</Button>
+        </div>
       {/snippet}
     </EmptyState>
   {:else}
@@ -945,4 +966,4 @@
 </div>
 
 <OrganiseDialog open={organiseOpen} onclose={organiseDialog.hide} />
-<AddClusterDialog open={addOpen} onclose={() => (addOpen = false)} />
+<AddClusterDialog open={addOpen} initialSource={addSource} onclose={() => (addOpen = false)} />

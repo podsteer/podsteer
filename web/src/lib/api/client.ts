@@ -147,6 +147,7 @@ import {
   ChooseDirectory as bindChooseDirectory,
   ChooseFile as bindChooseFile,
   Credits as bindCredits,
+  DebugInfo as bindDebugInfo,
   Info as bindInfo,
   LicenceText as bindLicenceText,
   OpenURL as bindOpenURL,
@@ -300,6 +301,8 @@ export type TableColumn = wails.TableColumn
 export type TableRow = wails.TableRow
 /** The running application's identity. */
 export type AppInfo = wails.AppInfo
+/** Versions and platform for a bug report; carries no names or paths. */
+export type DebugInfo = wails.DebugInfo
 /** One shipped dependency and the licence it is distributed under. */
 export type Credit = wails.Credit
 /** One recorded measurement of a cluster. */
@@ -1659,6 +1662,11 @@ export function forwardBrowserURL(forward: PortForward): string {
 /** Returns the running application's name, version and platform. */
 export function appInfo(): Promise<AppInfo> {
   return call(() => bindInfo())
+}
+
+/** Returns the version and platform facts a bug report needs. */
+export function debugInfo(): Promise<DebugInfo> {
+  return call(() => bindDebugInfo())
 }
 
 /**

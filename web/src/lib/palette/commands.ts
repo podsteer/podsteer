@@ -98,6 +98,7 @@ export interface CommandHandlers {
   focusCluster: (clusterId: string) => void | Promise<void>
   setNamespace: (namespace: string) => void | Promise<void>
   openSettings: () => void
+  openAbout: () => void
   openOrganise: () => void
   openShortcutSheet: () => void
   refresh: () => void | Promise<void>
@@ -169,6 +170,22 @@ export function buildCommands(context: CommandContext, handlers: CommandHandlers
       group: 'Commands',
       scope: 'global',
       run: handlers.openSettings,
+    },
+    {
+      id: 'action:copy-debug-info',
+      title: 'Copy debug info',
+      keywords: ['bug', 'diagnostics', 'version', 'about', 'support'],
+      group: 'Commands',
+      scope: 'global',
+      run: handlers.openAbout,
+    },
+    {
+      id: 'action:report-bug',
+      title: 'Report a bug',
+      keywords: ['issue', 'github', 'feedback', 'problem'],
+      group: 'Commands',
+      scope: 'global',
+      run: handlers.openAbout,
     },
     {
       id: 'action:organise',

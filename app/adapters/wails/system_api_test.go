@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -132,5 +133,36 @@ func TestSaveTextFileReportsAnUnwritablePath(t *testing.T) {
 
 	if _, err := api.SaveTextFile("export.csv", "a,b\r\n"); err == nil {
 		t.Fatal("SaveTextFile() error = nil, want the write failure surfaced")
+	}
+}
+
+func TestWebviewVersionPicksTheEngineEntry(t *testing.T) {
+	t.Parallel()
+
+	got := webviewVersion(map[string]any{
+		"Go-WebView2Loader": true,
+		"WebView2":          "126.0.1",
+	})
+	if got != "126.0.1" {
+		t.Fatalf("webviewVersion = %q, want 126.0.1", got)
+	}
+	if got := webviewVersion(nil); got != "" {
+		t.Fatalf("webviewVersion(nil) = %q, want empty", got)
+	}
+}
+
+func TestDebugInfoCarriesNoIdentity(t *testing.T) {
+	t.Parallel()
+
+	info := newTestSystemAPI(t).DebugInfo()
+	if info.Version != "test" || info.Platform != runtime.GOOS+"/"+runtime.GOARCH {
+		t.Fatalf("DebugInfo = %+v, want the version and platform", info)
+	}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		for _, field := range []string{info.OS, info.Webview, info.Commit, info.GoVersion, info.WailsVersion} {
+			if strings.Contains(field, host) {
+				t.Fatalf("DebugInfo field %q contains the hostname", field)
+			}
+		}
 	}
 }

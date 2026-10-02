@@ -21,6 +21,7 @@ function handlers(): CommandHandlers {
     focusCluster: vi.fn(),
     setNamespace: vi.fn(),
     openSettings: vi.fn(),
+    openAbout: vi.fn(),
     openOrganise: vi.fn(),
     openShortcutSheet: vi.fn(),
     refresh: vi.fn(),
@@ -35,7 +36,13 @@ describe('buildCommands', () => {
     const commands = buildCommands(context({ hasActiveCluster: false }), handlers())
     const titles = commands.map((c) => c.title)
     expect(titles).toEqual(
-      expect.arrayContaining(['Open Settings', 'Open Organise', 'Show keyboard shortcuts']),
+      expect.arrayContaining([
+        'Open Settings',
+        'Open Organise',
+        'Show keyboard shortcuts',
+        'Copy debug info',
+        'Report a bug',
+      ]),
     )
     expect(commands.every((c) => c.scope === 'global')).toBe(true)
   })

@@ -429,7 +429,7 @@
   <!-- Settings -->
   <button
     type="button"
-    onclick={settingsDialog.show}
+    onclick={() => settingsDialog.show()}
     aria-label="Settings"
     title="Settings  {shortcut('settings').keys}"
     class="state-layer no-drag grid size-8 shrink-0 self-center place-items-center rounded-full

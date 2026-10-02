@@ -1217,6 +1217,56 @@ export interface CustomExpression {
 }
 
 /**
+ * DebugInfo is what a bug report needs to know about this installation, and
+ * nothing about the operator.
+ * 
+ * EVERY FIELD IS A VERSION OR A PLATFORM. No hostname, no user name, no path,
+ * no cluster or context name: this is pasted into a public issue tracker, and
+ * SECURITY.md's rule about local paths and cluster identity applies to it as
+ * it does to logs. The frontend adds the one thing the backend cannot know
+ * cheaply — how many clusters are open and what Kubernetes versions they run.
+ */
+export interface DebugInfo {
+    /**
+     * Version is the release version, or "dev" for a working-tree build.
+     */
+    "version": string;
+
+    /**
+     * Commit is the VCS revision when the binary carries one. Release builds
+     * pass -buildvcs=false, so this is usually empty; the version is the
+     * identifier there.
+     */
+    "commit": string;
+
+    /**
+     * OS is the operating system's name and version, as the OS reports them.
+     */
+    "os": string;
+
+    /**
+     * Platform is GOOS/GOARCH.
+     */
+    "platform": string;
+
+    /**
+     * GoVersion is the toolchain that built the binary.
+     */
+    "goVersion": string;
+
+    /**
+     * WailsVersion is the application framework version linked in.
+     */
+    "wailsVersion": string;
+
+    /**
+     * Webview is the embedded browser engine's version where the framework
+     * reports one (WebView2 on Windows), else empty.
+     */
+    "webview": string;
+}
+
+/**
  * Cancel stops a running transfer. Whatever had already landed stays; the
  * "done" event that follows says it was cancelled. Unknown ids are a no-op,
  * so cancelling twice is safe.

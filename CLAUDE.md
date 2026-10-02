@@ -12,6 +12,14 @@ beta renames things between releases, and `@latest` in CI would break a build
 nobody changed. Read every release note between the pin and the target before
 moving it; Dependabot proposes a version, not a migration.
 
+**Release packaging** beyond the zips: `build/package-linux.sh` (nfpm + appimagetool;
+config in `build/linux/`) makes the AppImage/.deb/.rpm for amd64 and arm64,
+`build/windows/installer.nsi` makes the per-user Windows installer, both from
+`ci-cd.yaml`'s `package` job and neither testable outside CI. winget/Scoop
+templates live in `packaging/` (never auto-submitted). The About pane
+(`AboutPane.svelte`, `SystemAPI.DebugInfo`) builds the bug-report block from an
+allow-list of versions only; keep cluster, host and path names out of it.
+
 **macOS builds carry `-tags private_mac_apis`, and must.** From beta.19 the
 undocumented WebKit calls compile only under that tag and are no-ops without
 it — including the webview background colour that paints the window in the

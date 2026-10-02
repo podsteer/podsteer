@@ -31,9 +31,12 @@
   interface Props {
     open: boolean
     onclose: () => void
+    /** The source shown when the dialog opens; the empty-kubeconfig state asks
+        for the cloud CLI one directly. */
+    initialSource?: 'paste' | 'cli'
   }
 
-  let { open, onclose }: Props = $props()
+  let { open, onclose, initialSource = 'paste' }: Props = $props()
 
   let raw = $state('')
   let preview = $state<KubeconfigMerge | null>(null)
@@ -53,6 +56,11 @@
    * file exists to prevent.
    */
   let source = $state<'paste' | 'cli'>('paste')
+
+  /** Honour the requested source each time the dialog opens. */
+  $effect(() => {
+    if (open) source = initialSource
+  })
 
   /** Discards everything, so reopening never shows the previous attempt. */
   function reset(): void {

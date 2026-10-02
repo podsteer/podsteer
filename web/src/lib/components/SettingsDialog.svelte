@@ -73,6 +73,8 @@
   import { notifications } from '$stores/notifications.svelte'
   import Button from './Button.svelte'
   import CreditsPane from './CreditsPane.svelte'
+  import AboutPane from './AboutPane.svelte'
+  import { settingsDialog } from '$stores/settingsDialog.svelte'
   import {
     ALERT_SEVERITIES,
     ALERT_SOUNDS,
@@ -99,6 +101,7 @@
     FolderCog,
     Gauge,
     Globe,
+    Info,
     Keyboard,
     Palette,
     Play,
@@ -188,6 +191,9 @@
     // cluster, and before the cluster-shaped ones for the same reason.
     { id: 'keyboard', label: 'Keyboard', icon: Keyboard },
     { id: 'transfer', label: 'Export & import', icon: ArrowLeftRight },
+    // About sits before Credits: it is where the version and the bug-report
+    // actions live, and Credits is the long list nobody browses for.
+    { id: 'about', label: 'About', icon: Info },
     { id: 'credits', label: 'Credits', icon: Scale },
   ] as const
 
@@ -206,6 +212,17 @@
   function matchesPreset(fraction: number): boolean {
     return Math.abs(preferences.detailWidthFraction - fraction) < 0.01
   }
+
+  /** Jumps to the section an opener asked for, such as the palette's
+      "Report a bug" going straight to About. */
+  $effect(() => {
+    if (!open) return
+    const wanted = settingsDialog.requestedSection
+    if (wanted && SECTIONS.some((candidate) => candidate.id === wanted)) {
+      section = wanted as SectionID
+      settingsDialog.requestedSection = null
+    }
+  })
 
   /** Loads the history settings the first time Settings is opened. */
   $effect(() => {
@@ -1028,6 +1045,8 @@
           <ShortcutSettings />
         {:else if section === 'transfer'}
           <SettingsTransfer />
+        {:else if section === 'about'}
+          <AboutPane />
         {:else}
           <CreditsPane />
         {/if}

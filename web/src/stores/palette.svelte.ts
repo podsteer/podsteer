@@ -243,6 +243,7 @@ class CommandPaletteStore {
     focusCluster: (clusterId) => this.#focusCluster?.(clusterId),
     setNamespace: (namespace) => this.#session?.selectNamespace(namespace),
     openSettings: () => settingsDialog.show(),
+    openAbout: () => settingsDialog.show('about'),
     openOrganise: () => organiseDialog.show(),
     openShortcutSheet: () => shortcutSheet.show(),
     refresh: () => this.#session?.refresh(),
