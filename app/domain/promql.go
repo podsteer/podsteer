@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -213,53 +214,77 @@ var Expressions = map[MetricID]map[MetricScope]PromExpression{
 // 1.30.5) scrapes cAdvisor with the kubelet's own node labels mapped in, so
 // the node is `kubernetes_io_hostname` and `instance`, and a probe grouped by
 // `node` alone answered one empty-labelled series — read as "nothing to
-// compare" and refused. NodeIdentity picks the first that is set. Bounded by
+// compare" and refused. ReadNodeProbe reads them. Bounded by
 // the node count all the same: each is one value per node.
 const NodeProbeExpression = `count by (node, kubernetes_io_hostname, instance) (container_memory_working_set_bytes)`
 
 // NodeProbeLabel is the label the per-node charts group by.
 const NodeProbeLabel = "node"
 
-// NodeIdentityLabels are the labels a node probe answer may name a node by,
-// most specific first.
-var NodeIdentityLabels = []string{NodeProbeLabel, "kubernetes_io_hostname", "instance"}
-
-// NodeIdentity reads which node a probe answer is about: the first identity
-// label set, with a port stripped from an `instance` ("10.0.0.4:10250").
-// The caller maps an address to a node name; see MapNodeIdentities.
-func NodeIdentity(labels map[string]string) string {
-	for _, label := range NodeIdentityLabels {
-		value := labels[label]
-		if value == "" {
-			continue
-		}
-		if label == "instance" {
-			if host, _, err := net.SplitHostPort(value); err == nil {
-				return host
-			}
-		}
-		return value
-	}
-	return ""
+// NodeProbeAnswer is what the node probe learned about which nodes a backend
+// holds series for.
+type NodeProbeAnswer struct {
+	// Names are node names, read from `node` or `kubernetes_io_hostname`.
+	Names []string
+	// Addresses are read from `instance` (port stripped), and only from
+	// series that named no node. AN ADDRESS IS NOT AN IDENTITY: two kind
+	// clusters on one machine both run 172.18.0.x, so an address match
+	// cannot say which cluster a backend holds. See VerifyNodeProbe.
+	Addresses []string
+	// NodeLabel says some series carried `node` itself — the label the
+	// fleet narrowing filters on, which is what makes narrowing possible.
+	NodeLabel bool
 }
 
-// MapNodeIdentities turns node identities that are addresses into the names
-// of the nodes that hold them, leaving names as they are.
-func MapNodeIdentities(identities []string, nodes []Node) []string {
-	byAddress := make(map[string]string, len(nodes))
-	for _, node := range nodes {
-		if ip := node.InternalIP(); ip != "" {
-			byAddress[ip] = node.Name()
+// ReadNodeProbe reads the probe's result label sets, as sorted sets.
+func ReadNodeProbe(results []map[string]string) NodeProbeAnswer {
+	names := map[string]struct{}{}
+	addresses := map[string]struct{}{}
+	answer := NodeProbeAnswer{}
+	for _, labels := range results {
+		if labels[NodeProbeLabel] != "" {
+			answer.NodeLabel = true
+			names[labels[NodeProbeLabel]] = struct{}{}
+			continue
+		}
+		if host := labels["kubernetes_io_hostname"]; host != "" {
+			names[host] = struct{}{}
+			continue
+		}
+		if instance := labels["instance"]; instance != "" {
+			if host, _, err := net.SplitHostPort(instance); err == nil {
+				instance = host
+			}
+			addresses[instance] = struct{}{}
 		}
 	}
-	mapped := make([]string, 0, len(identities))
-	for _, identity := range identities {
-		if name, ok := byAddress[identity]; ok {
-			identity = name
-		}
-		mapped = append(mapped, identity)
+	answer.Names = sortedKeys(names)
+	if len(answer.Names) == 0 {
+		answer.Addresses = sortedKeys(addresses)
 	}
-	return mapped
+	return answer
+}
+
+func sortedKeys(set map[string]struct{}) []string {
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// VerifyNodeProbe compares a probe answer with the cluster's own node names.
+//
+// NAMES ONLY. A backend that named its nodes only by address is reported
+// unverifiable, with byAddress set so the sentence can say why: an address
+// match is what a different cluster on the same Docker network produces too,
+// so it can never license "verified" on its own.
+func VerifyNodeProbe(answer NodeProbeAnswer, clusterNodes []string) (verification BackendVerification, byAddress bool) {
+	if len(answer.Names) > 0 {
+		return VerifyBackendNodes(answer.Names, clusterNodes), false
+	}
+	return VerificationUnverifiable, len(answer.Addresses) > 0
 }
 
 // QueryStep chooses the step for a range, aiming at queryTargetPoints.

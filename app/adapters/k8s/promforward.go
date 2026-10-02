@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
@@ -38,7 +40,8 @@ import (
 // which the pod's loopback does not carry either.
 
 // queryThroughForward performs one query over an ephemeral port-forward to a
-// pod behind the backend's Service.
+// pod behind the backend's Service — the batch's forward when the caller
+// opened a batch, otherwise one opened and stopped for this query alone.
 func (a *Adapter) queryThroughForward(
 	ctx context.Context,
 	id domain.ClusterID,
@@ -49,19 +52,16 @@ func (a *Adapter) queryThroughForward(
 ) ([]byte, error) {
 	op := fmt.Sprintf("querying %s in %q through a port-forward", backend.Describe(), id)
 
-	target, err := a.ServiceForwardTarget(ctx, id, backend.Namespace, backend.Service, backend.Port)
+	localPort, release, err := a.forwardFor(ctx, id, backend)
 	if err != nil {
 		return nil, forwardFailure(op, mesh, err)
 	}
+	// TORN DOWN WHATEVER HAPPENS NEXT when this query owns it, and
+	// StopPortForward waits, so the local port is released before this
+	// returns. A batch's forward is stopped by the batch.
+	defer release()
 
-	forward, err := a.StartPortForward(ctx, id, backend.Namespace, target.Pod, target.PodUID,
-		0, target.ContainerPort, target.PortName, "TCP", nil)
-	if err != nil {
-		return nil, forwardFailure(op, mesh, err)
-	}
-	// TORN DOWN WHATEVER HAPPENS NEXT, and StopPortForward waits, so the
-	// local port is released before this returns.
-	defer func() { _ = a.StopPortForward(forward.ID) }()
+	forward := domain.Forward{LocalPort: localPort}
 
 	query := url.Values{}
 	for key, value := range params {
@@ -128,3 +128,116 @@ func proxyRefusalCause(backend domain.MetricsBackend, header http.Header) string
 // loopbackClient queries through a forward. NO PROXY: a request to
 // 127.0.0.1 sent through HTTPS_PROXY would leave this machine.
 var loopbackClient = &http.Client{Transport: &http.Transport{Proxy: nil}}
+
+// forwardFor returns a local port onto one of the backend's pods, and what to
+// call when this query is done with it.
+func (a *Adapter) forwardFor(ctx context.Context, id domain.ClusterID, backend domain.MetricsBackend) (int, func(), error) {
+	batch, _ := ctx.Value(queryBatchKey{}).(*queryBatch)
+	if batch != nil {
+		batch.mu.Lock()
+		defer batch.mu.Unlock()
+		key := string(id) + "\x00" + backendKey(backend)
+		if forward, ok := batch.forwards[key]; ok && !batch.closed {
+			return forward.LocalPort, func() {}, nil
+		}
+		if !batch.closed {
+			forward, err := a.openBackendForward(ctx, id, backend)
+			if err != nil {
+				return 0, nil, err
+			}
+			batch.forwards[key] = forward
+			return forward.LocalPort, func() {}, nil
+		}
+		// A batch already ended — a detached probe finishing after its
+		// caller returned — gets a forward of its own below.
+	}
+
+	forward, err := a.openBackendForward(ctx, id, backend)
+	if err != nil {
+		return 0, nil, err
+	}
+	return forward.LocalPort, func() { _ = a.StopPortForward(forward.ID) }, nil
+}
+
+// openBackendForward resolves a ready pod behind the backend's Service and
+// opens an INTERNAL forward to it.
+func (a *Adapter) openBackendForward(ctx context.Context, id domain.ClusterID, backend domain.MetricsBackend) (domain.Forward, error) {
+	target, err := a.ServiceForwardTarget(ctx, id, backend.Namespace, backend.Service, backend.Port)
+	if err != nil {
+		return domain.Forward{}, err
+	}
+	return a.startInternalForward(id, backend.Namespace, target.Pod, target.PodUID, target.ContainerPort, target.PortName)
+}
+
+// queryBatchKey carries a *queryBatch on a context.
+type queryBatchKey struct{}
+
+// queryBatch is the forwards one batch of queries shares.
+type queryBatch struct {
+	mu       sync.Mutex
+	closed   bool
+	forwards map[string]domain.Forward
+}
+
+// BeginQueryBatch marks a run of queries made for one gesture — a source
+// probe and a traffic layer's expressions — so a backend that has to be
+// reached through a port-forward is reached through ONE, opened on first use
+// and stopped by end. See ports.TrafficQueryPort.
+//
+// end MUST be called, and stops every forward the batch opened; a query
+// arriving after it opens and stops its own.
+func (a *Adapter) BeginQueryBatch(ctx context.Context) (context.Context, func()) {
+	batch := &queryBatch{forwards: make(map[string]domain.Forward, 1)}
+	end := func() {
+		batch.mu.Lock()
+		batch.closed = true
+		forwards := batch.forwards
+		batch.forwards = nil
+		batch.mu.Unlock()
+		for _, forward := range forwards {
+			_ = a.StopPortForward(forward.ID)
+		}
+	}
+	return context.WithValue(ctx, queryBatchKey{}, batch), end
+}
+
+// forwardRoutes remembers which backends refused the proxy, so the next query
+// goes straight to the forward instead of earning another 403 — the
+// queryRefusals discipline, per backend and connection generation.
+type forwardRoutes struct {
+	mu      sync.Mutex
+	entries map[domain.ClusterID]forwardRoute
+}
+
+type forwardRoute struct {
+	at         time.Time
+	generation uint64
+	backend    string
+}
+
+func (f *forwardRoutes) uses(id domain.ClusterID, generation uint64, backend domain.MetricsBackend) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	entry, ok := f.entries[id]
+	return ok && entry.generation == generation && entry.backend == backendKey(backend) &&
+		time.Since(entry.at) <= queryRefusalTTL
+}
+
+func (f *forwardRoutes) remember(id domain.ClusterID, generation uint64, backend domain.MetricsBackend) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.entries == nil {
+		f.entries = make(map[domain.ClusterID]forwardRoute, 2)
+	}
+	f.entries[id] = forwardRoute{at: time.Now(), generation: generation, backend: backendKey(backend)}
+}
+
+func (f *forwardRoutes) forget(id domain.ClusterID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.entries, id)
+}
+
+func backendKey(backend domain.MetricsBackend) string {
+	return string(backend.Namespace) + "/" + backend.Service
+}

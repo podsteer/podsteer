@@ -19,6 +19,8 @@ import (
 type countingTraffic struct {
 	probeCalls atomic.Int32
 	queryCalls atomic.Int32
+	batches    atomic.Int32
+	ended      atomic.Int32
 
 	// hold, when set, parks every probe until it is closed; started is
 	// closed when the first probe arrives.
@@ -31,6 +33,11 @@ type countingTraffic struct {
 	err     error
 	sent    []string
 	ctxErrs []error
+}
+
+func (q *countingTraffic) BeginQueryBatch(ctx context.Context) (context.Context, func()) {
+	q.batches.Add(1)
+	return ctx, func() { q.ended.Add(1) }
 }
 
 func (q *countingTraffic) QueryInstant(
@@ -114,9 +121,10 @@ func newTrafficFixtureWith(t *testing.T, mode domain.MetricsQueryMode, backendNo
 		`count({__name__=~"istio_request`: {one(42, nil)},
 	}}
 	service, err := application.NewTrafficService(application.TrafficServiceDeps{
-		Metrics: metrics,
-		Query:   traffic,
-		Nodes:   reader,
+		Metrics:    metrics,
+		Query:      traffic,
+		Nodes:      reader,
+		Namespaces: stubNamespaces{names: []string{"shop", "warehouse", "linkerd-viz"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -417,14 +425,20 @@ func TestTrafficReadsLinkerdFromAChosenLinkerdVizPrometheus(t *testing.T) {
 		t.Errorf("provenance %+v should say the backend was not node-verified", layer.Provenance)
 	}
 
-	if !strings.Contains(layer.Message, "checked by the workloads it names") {
+	if !strings.Contains(layer.Message, "its answer was checked instead") {
 		t.Errorf("the answer does not say how it was checked: %q", layer.Message)
 	}
 }
 
-type stubNamespaces struct{ names []string }
+type stubNamespaces struct {
+	names []string
+	err   error
+}
 
 func (s stubNamespaces) ListNamespaces(_ context.Context, _ domain.ClusterID, _ domain.Projection) ([]domain.Namespace, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
 	var out []domain.Namespace
 	for _, name := range s.names {
 		namespace, err := domain.NewNamespace(name, domain.NamespacePhaseActive, time.Now())
@@ -558,5 +572,61 @@ func TestBackendsListsDiscoveryWithoutQuerying(t *testing.T) {
 	}
 	if calls := f.query.nodeCalls.Load() + f.traffic.probeCalls.Load() + f.traffic.queryCalls.Load(); calls != 0 {
 		t.Fatalf("%d requests to list candidates", calls)
+	}
+}
+
+type failingTrafficNodes struct{}
+
+func (failingTrafficNodes) TrafficNodes(context.Context, domain.ClusterID, []domain.NamespaceName, bool) ([]domain.TrafficNodeRef, error) {
+	return nil, fmt.Errorf("listing: %w", ports.ErrForbidden)
+}
+
+// BOTH evidence checks must RUN for an unverifiable backend: one that cannot
+// is a refusal naming it, never a pass by default.
+func TestEvidenceThatCannotBeGatheredRefuses(t *testing.T) {
+	edge := []domain.PromSeries{one(4, map[string]string{
+		"namespace": "warehouse", "deployment": "picker",
+		"dst_namespace": "warehouse", "dst_deployment": "inventory-api", "dst_service": "inventory-api",
+	})}
+	cases := map[string]struct {
+		namespaces application.TrafficNamespaceReader
+		nodes      application.TrafficNodeReader
+		want       string
+	}{
+		"namespaces refused":  {stubNamespaces{err: fmt.Errorf("x: %w", ports.ErrForbidden)}, warehouseNodes(), "list this cluster's namespaces"},
+		"no namespace reader": {nil, warehouseNodes(), "list this cluster's namespaces"},
+		"topology failed":     {stubNamespaces{names: []string{"warehouse"}}, failingTrafficNodes{}, "read this cluster's workloads"},
+		"no topology reader":  {stubNamespaces{names: []string{"warehouse"}}, nil, "read this cluster's workloads"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newTrafficFixtureWith(t, domain.MetricsQueryManual, nil, nil)
+			f.discovery.backends = []domain.MetricsBackend{vizBackend()}
+			f.traffic.answers["count(request_total"] = []domain.PromSeries{one(43, nil)}
+			f.traffic.answers[`request_total{direction="outbound",dst_namespace!=""`] = edge
+			service, err := application.NewTrafficService(application.TrafficServiceDeps{
+				Metrics: f.metrics, Query: f.traffic, Nodes: c.nodes, Namespaces: c.namespaces,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			layer, err := service.Traffic(context.Background(), "dev", nil, true, domain.TrafficLinkerd, domain.TrafficWindow5m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if layer.Status != domain.BackendUnverified || !strings.Contains(layer.Message, c.want) || len(layer.Edges) != 0 {
+				t.Errorf("%s %q", layer.Status, layer.Message)
+			}
+		})
+	}
+}
+
+// Every gesture is one batch, ended on return.
+func TestEveryTrafficCallIsOneBatch(t *testing.T) {
+	f := newTrafficFixture(t, domain.MetricsQueryManual, []string{"node-a", "node-b"})
+	_, _ = f.service.Sources(context.Background(), "dev")
+	_, _ = f.service.Traffic(context.Background(), "dev", nil, true, domain.TrafficIstio, domain.TrafficWindow5m)
+	if f.traffic.batches.Load() != 2 || f.traffic.ended.Load() != 2 {
+		t.Fatalf("batches %d, ended %d", f.traffic.batches.Load(), f.traffic.ended.Load())
 	}
 }

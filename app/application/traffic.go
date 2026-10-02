@@ -134,7 +134,8 @@ func (s *TrafficService) gate(ctx context.Context, id domain.ClusterID) (traffic
 	}
 
 	generation := s.metrics.verifications.generation(id)
-	verification, _, err := s.metrics.verify(ctx, id, generation, backend)
+	check, err := s.metrics.verify(ctx, id, generation, backend)
+	verification := check.verification
 	if err != nil {
 		failed := s.metrics.failed(backend, err)
 		return trafficGate{refused: true, status: failed.Status, message: failed.Message, provenance: failed.Provenance}, nil
@@ -176,6 +177,11 @@ func (s *TrafficService) gate(ctx context.Context, id domain.ClusterID) (traffic
 
 // Sources says which traffic sources the chosen backend holds.
 func (s *TrafficService) Sources(ctx context.Context, id domain.ClusterID) (domain.TrafficSources, error) {
+	// ONE BATCH: the node check and the five probes share whatever transport
+	// the backend needs, and it is torn down when this returns.
+	ctx, end := s.query.BeginQueryBatch(ctx)
+	defer end()
+
 	gate, err := s.gate(ctx, id)
 	if err != nil {
 		return domain.TrafficSources{}, err
@@ -230,71 +236,68 @@ func (s *TrafficService) Sources(ctx context.Context, id domain.ClusterID) (doma
 
 // checkWorkloadEvidence decides whether an answer from a backend the node
 // check could not verify is about THIS cluster, and returns the refusal
-// sentence when it is not (or cannot be told).
+// sentence when it is not — or when that cannot be told.
 //
-// TWO TESTS, BOTH ON THE ANSWER ITSELF. Every namespace it names must be one
+// BOTH TESTS, AND BOTH MUST RUN. Every namespace the answer names must be one
 // of this cluster's — a namespace this cluster does not have is positive
-// evidence of another cluster's data — and at least one of its workloads must
-// be a box on this map, because "default" and "kube-system" exist everywhere
-// and namespaces alone prove little. Either test that cannot be run (an
-// account that may not list namespaces, no topology to attach to) leaves the
-// other; with neither, nothing is drawn.
+// evidence of another cluster's data — AND at least one of its workloads must
+// be a box on this cluster's map, because "default" and "kube-system" exist
+// everywhere and namespaces alone prove little. A test that cannot run (an
+// account that may not list namespaces, a topology that could not be read)
+// is not passed by default: nothing is drawn, and the sentence says which.
 func (s *TrafficService) checkWorkloadEvidence(
 	ctx context.Context,
 	id domain.ClusterID,
 	backend domain.MetricsBackend,
 	layer domain.TrafficLayer,
-	nodes []domain.TrafficNodeRef,
+	nodesErr error,
 ) string {
-	checked := false
+	cannot := func(what string) string {
+		return fmt.Sprintf(
+			"%s could not be checked by node, and PodSteer could not %s to check its answer instead, so it cannot tell whether this is this cluster's data. Nothing is drawn.",
+			backend.Describe(), what)
+	}
 
-	if s.namespaces != nil {
-		if listed, err := s.namespaces.ListNamespaces(ctx, id, domain.Projection{}); err == nil && len(listed) > 0 {
-			checked = true
-			ours := make(map[string]struct{}, len(listed))
-			for _, namespace := range listed {
-				ours[namespace.Name().String()] = struct{}{}
+	if s.namespaces == nil {
+		return cannot("list this cluster's namespaces")
+	}
+	listed, err := s.namespaces.ListNamespaces(ctx, id, domain.Projection{})
+	if err != nil || len(listed) == 0 {
+		return cannot("list this cluster's namespaces")
+	}
+	ours := make(map[string]struct{}, len(listed))
+	for _, namespace := range listed {
+		ours[namespace.Name().String()] = struct{}{}
+	}
+	var foreign []string
+	for _, edge := range layer.Edges {
+		for _, endpoint := range []domain.TrafficEndpoint{edge.Source, edge.Dest} {
+			if endpoint.Namespace == "" {
+				continue
 			}
-			var foreign []string
-			for _, edge := range layer.Edges {
-				for _, endpoint := range []domain.TrafficEndpoint{edge.Source, edge.Dest} {
-					if endpoint.Namespace == "" {
-						continue
-					}
-					if _, ok := ours[endpoint.Namespace]; !ok && !slices.Contains(foreign, endpoint.Namespace) {
-						foreign = append(foreign, endpoint.Namespace)
-					}
-				}
-			}
-			if len(foreign) > 0 {
-				slices.Sort(foreign)
-				return fmt.Sprintf(
-					"%s names namespaces this cluster does not have (%s), so it appears to hold another cluster's data. Nothing is drawn.",
-					backend.Describe(), strings.Join(foreign, ", "))
+			if _, ok := ours[endpoint.Namespace]; !ok && !slices.Contains(foreign, endpoint.Namespace) {
+				foreign = append(foreign, endpoint.Namespace)
 			}
 		}
 	}
-
-	if nodes != nil {
-		checked = true
-		attached := false
-		for _, edge := range layer.Edges {
-			if edge.Source.NodeID != "" || edge.Dest.NodeID != "" {
-				attached = true
-				break
-			}
-		}
-		if !attached {
-			return fmt.Sprintf(
-				"%s could not be checked by node, and none of the workloads its answer names is on this map, so PodSteer cannot tell it holds this cluster's data. Nothing is drawn.",
-				backend.Describe())
-		}
+	if len(foreign) > 0 {
+		slices.Sort(foreign)
+		return fmt.Sprintf(
+			"%s names namespaces this cluster does not have (%s), so it appears to hold another cluster's data. Nothing is drawn.",
+			backend.Describe(), strings.Join(foreign, ", "))
 	}
 
-	if !checked {
-		return domain.UnverifiedResult(backend, domain.VerificationUnverifiable).Message
+	if s.nodes == nil || nodesErr != nil {
+		return cannot("read this cluster's workloads")
 	}
-	return ""
+	for _, edge := range layer.Edges {
+		if edge.Source.NodeID != "" || edge.Dest.NodeID != "" {
+			return ""
+		}
+	}
+	return fmt.Sprintf(
+		"%s could not be checked by node, and none of the workloads its answer names is on this cluster's map, so PodSteer cannot tell it holds this cluster's data. Nothing is drawn.",
+		backend.Describe())
 }
 
 // monitors names every discovered monitoring backend as a source workload,
@@ -380,6 +383,10 @@ func (s *TrafficService) Traffic(
 		Expressions: []string{},
 	}
 
+	// ONE BATCH for the node check, the probes and every expression.
+	ctx, end := s.query.BeginQueryBatch(ctx)
+	defer end()
+
 	gate, gateErr := s.gate(ctx, id)
 	if gateErr != nil {
 		return domain.TrafficLayer{}, gateErr
@@ -428,8 +435,10 @@ func (s *TrafficService) Traffic(
 	}
 
 	var nodes []domain.TrafficNodeRef
+	var nodesErr error
 	if s.nodes != nil {
 		read, err := s.nodes.TrafficNodes(ctx, id, namespaces, all)
+		nodesErr = err
 		if err != nil {
 			// Drawn unresolved rather than not drawn: the edges are still
 			// true, only their attachment is missing.
@@ -445,12 +454,12 @@ func (s *TrafficService) Traffic(
 	mapped.Expressions = layer.Expressions
 
 	if gate.verification == domain.VerificationUnverifiable && len(mapped.Edges) > 0 {
-		if refusal := s.checkWorkloadEvidence(ctx, id, gate.backend, mapped, nodes); refusal != "" {
+		if refusal := s.checkWorkloadEvidence(ctx, id, gate.backend, mapped, nodesErr); refusal != "" {
 			layer.Status, layer.Message = domain.BackendUnverified, refusal
 			return layer, nil
 		}
 		mapped.Message = fmt.Sprintf(
-			"%s could not be checked by node, so its answer was checked by the workloads it names: every namespace in it is one of this cluster's, and its workloads are on this map.",
+			"%s could not be checked by node, so its answer was checked instead: every namespace it names is one of this cluster's, and at least one of its workloads is on this cluster's map.",
 			gate.backend.Describe())
 	}
 

@@ -182,3 +182,54 @@ func TestTheRefusalCauseNamesLinkerdOnlyWhenItIsLinkerd(t *testing.T) {
 		t.Errorf("generic: %s", got)
 	}
 }
+
+// ONE forward for a whole batch, the proxy refusal remembered so the batch's
+// later queries do not earn another 403, and the forward gone when the batch
+// ends. While open it is internal: not listed, not reached by "Stop all".
+func TestABatchSharesOneInternalForwardAndEndsIt(t *testing.T) {
+	rig := newMeshRig(t, nil)
+	backend := vizBackendForTest()
+
+	ctx, end := rig.adapter.BeginQueryBatch(context.Background())
+	for range 4 {
+		if _, err := rig.adapter.QueryInstant(ctx, "dev", backend, "count(request_total)", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rig.forwards.Load() != 1 || rig.proxied.Load() != 1 || rig.loopback.Load() != 4 {
+		t.Fatalf("forwards %d, proxied %d, loopback %d", rig.forwards.Load(), rig.proxied.Load(), rig.loopback.Load())
+	}
+
+	if listed := rig.adapter.ListPortForwards(); len(listed) != 0 {
+		t.Errorf("an internal forward is listed: %+v", listed)
+	}
+	rig.adapter.StopAllPortForwards()
+	if _, err := rig.adapter.QueryInstant(ctx, "dev", backend, "count(request_total)", time.Now()); err != nil || rig.forwards.Load() != 1 {
+		t.Errorf("Stop all reached the batch's forward: %v, forwards %d", err, rig.forwards.Load())
+	}
+
+	end()
+	rig.adapter.forwards.mu.Lock()
+	left := len(rig.adapter.forwards.byID)
+	rig.adapter.forwards.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d forwards left after the batch ended", left)
+	}
+
+	// Remembered: the next query, batch or not, goes straight to a forward.
+	if _, err := rig.adapter.QueryInstant(context.Background(), "dev", backend, "count(request_total)", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if rig.proxied.Load() != 1 {
+		t.Errorf("the refused proxy was asked again (%d)", rig.proxied.Load())
+	}
+
+	// Forgotten with the connection.
+	rig.adapter.forwardRoutes.forget("dev")
+	if _, err := rig.adapter.QueryInstant(context.Background(), "dev", backend, "count(request_total)", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if rig.proxied.Load() != 2 {
+		t.Errorf("a forgotten route was still used (%d)", rig.proxied.Load())
+	}
+}

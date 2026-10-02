@@ -96,6 +96,9 @@ type Adapter struct {
 	// else — see promquery.go, where the reason is that each retry is a
 	// denied request in somebody's audit log.
 	queryRefusals forbiddenBackends
+	// forwardRoutes remembers which backends refused the proxy itself and
+	// are reached through an ephemeral port-forward — see promforward.go.
+	forwardRoutes forwardRoutes
 	// generations numbers each cluster's connection. Everything the
 	// monitoring-backend read caches is written under the generation captured
 	// before the request, so an answer computed against a connection that has
@@ -292,6 +295,9 @@ func (a *Adapter) release(id domain.ClusterID) {
 	// client set the factory just dropped, which is what keeps it from
 	// outliving the config it was built from.
 	a.queryRefusals.forget(id)
+	// And which backends are reached through a forward: the next connection
+	// may be another cluster, where the proxy works.
+	a.forwardRoutes.forget(id)
 	// And WHERE monitoring is, not only whether it may be reached. This is
 	// the longest-lived answer the adapter holds — half an hour, because a
 	// monitoring stack is installed once — and it is a Service coordinate, so

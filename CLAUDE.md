@@ -1074,22 +1074,32 @@ about before adding a fourth:
     backend, the empty state names it and says to choose it in Settings
     (`MetricsQueryAPI.Backends` lists the candidates for that picker;
     `SettingsAPI.SetMetricsQuery` pins one).
-  - **Node identity is `node`, `kubernetes_io_hostname` or `instance`.**
-    Istio's sample Prometheus labels cAdvisor series with the kubelet's node
-    labels, not `node`, so the probe groups by all three and
-    `domain.NodeIdentity` takes the first set (an `instance` address is
-    mapped to the node holding it). Fleet narrowing still filters on `node`.
-  - **Traffic accepts "unverifiable" and checks the answer instead**: every
-    namespace it names must be one of this cluster's and at least one of its
-    workloads must be on the map (`checkWorkloadEvidence`); fleet and
-    mismatch are still refused before anything is asked.
+  - **A node is NAMED by `node` or `kubernetes_io_hostname`; an `instance`
+    address never verifies.** Istio's sample Prometheus labels cAdvisor
+    series with the kubelet's node labels, not `node`, so the probe groups by
+    `node, kubernetes_io_hostname, instance` and `domain.ReadNodeProbe` /
+    `VerifyNodeProbe` decide. Addresses are read only when no series named a
+    node, and an address-only answer is UNVERIFIABLE with its own sentence:
+    two kind clusters on one machine share 172.18.0.x. A fleet whose series
+    carry no `node` label is refused rather than narrowed (narrowing filters
+    on `node` and would draw an empty chart).
+  - **Traffic accepts "unverifiable" and checks the answer instead**
+    (`checkWorkloadEvidence`): every namespace it names must be one of this
+    cluster's AND at least one of its workloads must be on the map. Both
+    checks must RUN — namespaces not listable or the topology not readable
+    is a refusal naming the check. Fleet and mismatch are refused before
+    anything is asked.
   - **A backend's own 403 to the API server's proxy falls back to an
     ephemeral port-forward** (`promforward.go`). linkerd-viz's Prometheus sits
     behind Linkerd's `prometheus-admin` policy (only metrics-api may call it);
     the API server passes the proxy's bare 403 on with no body. The forward
     reaches the container over the pod's loopback, which the mesh does not
-    intercept; it goes through the forward registry and is stopped before
-    the query returns. A Kubernetes Status 403 (the ACCOUNT refused) is never
+    intercept. `TrafficQueryPort.BeginQueryBatch` makes ONE internal forward
+    serve a whole gesture (node check, probes, expressions), stopped by the
+    batch's end on every path; `forwardRoutes` remembers the refusal per
+    (cluster, backend, generation) for 5 min so later queries skip the 403.
+    Internal forwards are hidden from `ListPortForwards` and immune to
+    `StopAllPortForwards`; Invalidate still stops them. A Kubernetes Status 403 (the ACCOUNT refused) is never
     routed around; pods/portforward refused is said as that permission.
   - **Monitoring scrapes are not traffic, and are told apart by SOURCE.**
     linkerd-viz's meshed Prometheus scraping every proxy shows up as outbound

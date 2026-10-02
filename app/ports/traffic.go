@@ -30,6 +30,12 @@ type TrafficQueryPort interface {
 		expression string,
 		at time.Time,
 	) ([]domain.PromSeries, error)
+
+	// BeginQueryBatch marks the queries made for one gesture, so whatever
+	// transport they need is set up once for all of them: a backend reached
+	// through an ephemeral port-forward is reached through ONE. end MUST be
+	// called and tears everything the batch opened down.
+	BeginQueryBatch(ctx context.Context) (batch context.Context, end func())
 }
 
 // TrafficUseCase answers the topology's traffic layer.

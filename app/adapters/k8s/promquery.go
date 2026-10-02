@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -203,38 +202,27 @@ func (a *Adapter) QueryNodes(
 	ctx context.Context,
 	id domain.ClusterID,
 	backend domain.MetricsBackend,
-) ([]string, error) {
+) (domain.NodeProbeAnswer, error) {
 	body, err := a.proxyQuery(ctx, id, backend, "/api/v1/query", map[string]string{
 		"query": domain.NodeProbeExpression,
 		"time":  formatQueryInstant(time.Now()),
 	})
 	if err != nil {
-		return nil, err
+		return domain.NodeProbeAnswer{}, err
 	}
 
 	decoded, err := decodeQueryResponse(body)
 	if err != nil {
-		return nil, err
+		return domain.NodeProbeAnswer{}, err
 	}
 
-	// A SET, because a backend fronting several clusters reports the same
-	// node name from many series and the caller compares sets rather than
-	// counting them.
-	seen := make(map[string]struct{}, len(decoded.Data.Result))
+	// SETS, read in the domain: a backend fronting several clusters reports
+	// the same node from many series, and the caller compares sets.
+	labels := make([]map[string]string, 0, len(decoded.Data.Result))
 	for _, result := range decoded.Data.Result {
-		if name := domain.NodeIdentity(result.Metric); name != "" {
-			seen[name] = struct{}{}
-		}
+		labels = append(labels, result.Metric)
 	}
-
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
-	}
-	// Sorted so anything logging or diffing them meets a stable order; map
-	// iteration is not one.
-	sort.Strings(names)
-	return names, nil
+	return domain.ReadNodeProbe(labels), nil
 }
 
 // QueryRange evaluates one expression over a range. See
@@ -317,6 +305,12 @@ func (a *Adapter) proxyQuery(
 		return nil, fmt.Errorf("%s: %w", op, ports.ErrForbidden)
 	}
 
+	// A backend known to refuse the proxy goes straight to its forward,
+	// rather than earning another 403 on every query.
+	if a.forwardRoutes.uses(id, generation, backend) {
+		return a.queryThroughForward(ctx, id, backend, path, params, proxyRefusalCause(backend, nil))
+	}
+
 	set, err := a.factory.clientsFor(id)
 	if err != nil {
 		return nil, err
@@ -363,7 +357,11 @@ func (a *Adapter) proxyQuery(
 	// is not something to route around.
 	if status == http.StatusForbidden {
 		if _, isKube := decodeKubernetesStatus(body); !isKube {
-			return a.queryThroughForward(ctx, id, backend, path, params, proxyRefusalCause(backend, header))
+			answer, err := a.queryThroughForward(ctx, id, backend, path, params, proxyRefusalCause(backend, header))
+			if err == nil {
+				a.forwardRoutes.remember(id, generation, backend)
+			}
+			return answer, err
 		}
 	}
 

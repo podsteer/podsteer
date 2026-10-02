@@ -289,7 +289,7 @@ type MetricsQueryPort interface {
 	// answers for other clusters — see domain.VerifyBackendNodes — and using
 	// the metric and the label the charts themselves depend on is what makes
 	// the check unable to pass while the feature would fail.
-	QueryNodes(ctx context.Context, id domain.ClusterID, backend domain.MetricsBackend) ([]string, error)
+	QueryNodes(ctx context.Context, id domain.ClusterID, backend domain.MetricsBackend) (domain.NodeProbeAnswer, error)
 
 	// QueryRange evaluates one expression over a range at a step.
 	//

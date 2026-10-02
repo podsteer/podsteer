@@ -47,6 +47,9 @@ type forwarder struct {
 	// ending the forward.
 	stop chan struct{}
 	done chan struct{}
+	// internal marks a forward PodSteer opened for its own query: never
+	// listed, never stopped by "Stop all", stopped by its owner.
+	internal bool
 	// retry nudges a lost forward to start looking again at once, rather than
 	// on its slow cadence. Buffered so the nudge never blocks the caller and a
 	// second one while the first is pending is simply dropped.
@@ -108,6 +111,18 @@ func (a *Adapter) dialFor(id domain.ClusterID, namespace domain.NamespaceName, p
 // operating system chose it: a caller that asked for port 0 still has to be
 // able to tell somebody where to point their browser.
 func (a *Adapter) StartPortForward(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, pod, podUID string, localPort, remotePort int, portName, protocol string, selector map[string]string) (domain.Forward, error) {
+	return a.startForward(id, namespace, pod, podUID, localPort, remotePort, portName, protocol, selector, false)
+}
+
+// startInternalForward opens a forward PodSteer uses for its own request —
+// a monitoring query that the backend refused through the proxy. INTERNAL:
+// it is not listed, "Stop all" does not reach it, and whoever opened it stops
+// it; see promforward.go.
+func (a *Adapter) startInternalForward(id domain.ClusterID, namespace domain.NamespaceName, pod, podUID string, remotePort int, portName string) (domain.Forward, error) {
+	return a.startForward(id, namespace, pod, podUID, 0, remotePort, portName, "TCP", nil, true)
+}
+
+func (a *Adapter) startForward(id domain.ClusterID, namespace domain.NamespaceName, pod, podUID string, localPort, remotePort int, portName, protocol string, selector map[string]string, internal bool) (domain.Forward, error) {
 	op := fmt.Sprintf("forwarding %s/%s:%d in %q", namespace, pod, remotePort, id)
 
 	// Refused here rather than filtered in the UI, because it is a fact about
@@ -151,7 +166,7 @@ func (a *Adapter) StartPortForward(ctx context.Context, id domain.ClusterID, nam
 	supervisorStop := make(chan struct{})
 	supervisorDone := make(chan struct{})
 
-	entry := &forwarder{forward: forward, stop: supervisorStop, done: supervisorDone, retry: make(chan struct{}, 1)}
+	entry := &forwarder{forward: forward, stop: supervisorStop, done: supervisorDone, retry: make(chan struct{}, 1), internal: internal}
 	a.forwards.byID[forward.ID] = entry
 	a.forwards.mu.Unlock()
 
@@ -598,6 +613,9 @@ func (a *Adapter) ListPortForwards() []domain.Forward {
 
 	out := make([]domain.Forward, 0, len(a.forwards.byID))
 	for _, entry := range a.forwards.byID {
+		if entry.internal {
+			continue
+		}
 		out = append(out, entry.snapshot())
 	}
 	return out
@@ -608,6 +626,11 @@ func (a *Adapter) StopAllPortForwards() {
 	a.forwards.mu.Lock()
 	entries := make([]*forwarder, 0, len(a.forwards.byID))
 	for id, entry := range a.forwards.byID {
+		// An internal forward belongs to a query in flight, which stops it
+		// itself the moment the query returns.
+		if entry.internal {
+			continue
+		}
 		entries = append(entries, entry)
 		delete(a.forwards.byID, id)
 	}

@@ -493,28 +493,37 @@ func TestNoExpressionGroupsByPod(t *testing.T) {
 
 // Istio's sample Prometheus (1.30.5, live) names a cAdvisor series' node by
 // kubernetes_io_hostname and instance, never by node.
-func TestANodeIsIdentifiedByWhicheverLabelTheScrapeConfigSet(t *testing.T) {
-	cases := []struct {
-		labels map[string]string
-		want   string
-	}{
-		{map[string]string{"node": "a", "kubernetes_io_hostname": "b", "instance": "c"}, "a"},
-		{map[string]string{"instance": "podsteer-demo-worker", "job": "kubernetes-nodes-cadvisor", "kubernetes_io_hostname": "podsteer-demo-worker"}, "podsteer-demo-worker"},
-		{map[string]string{"instance": "172.18.0.2:10250"}, "172.18.0.2"},
-		{map[string]string{"instance": "[fd00::2]:10250"}, "fd00::2"},
-		{map[string]string{}, ""},
+func TestANodeIsNamedByNodeOrHostnameAndNeverByAddressAlone(t *testing.T) {
+	istio := domain.ReadNodeProbe([]map[string]string{
+		{"instance": "podsteer-demo-worker", "job": "kubernetes-nodes-cadvisor", "kubernetes_io_hostname": "podsteer-demo-worker"},
+		{"instance": "podsteer-demo-control-plane", "kubernetes_io_hostname": "podsteer-demo-control-plane"},
+	})
+	if len(istio.Names) != 2 || istio.NodeLabel || len(istio.Addresses) != 0 {
+		t.Fatalf("istio: %+v", istio)
 	}
-	for _, c := range cases {
-		if got := domain.NodeIdentity(c.labels); got != c.want {
-			t.Errorf("NodeIdentity(%v) = %q, want %q", c.labels, got, c.want)
-		}
+	if v, byAddress := domain.VerifyNodeProbe(istio, []string{"podsteer-demo-worker", "podsteer-demo-control-plane"}); v != domain.VerificationVerified || byAddress {
+		t.Errorf("istio: %s %v", v, byAddress)
 	}
 
-	node, err := domain.NewNode(domain.NodeSpec{Name: "worker", ClusterID: "dev", InternalIP: "172.18.0.2"})
-	if err != nil {
-		t.Fatal(err)
+	withNode := domain.ReadNodeProbe([]map[string]string{{"node": "a", "instance": "10.0.0.1:10250"}, {"node": "b"}})
+	if !withNode.NodeLabel || len(withNode.Names) != 2 {
+		t.Errorf("node label: %+v", withNode)
 	}
-	if got := domain.MapNodeIdentities([]string{"172.18.0.2", "other"}, []domain.Node{node}); got[0] != "worker" || got[1] != "other" {
-		t.Errorf("mapped %v", got)
+}
+
+// TWO KIND CLUSTERS ON ONE MACHINE share 172.18.0.x. A backend holding the
+// OTHER cluster, naming its nodes only by address, must not come out
+// verified for this one.
+func TestAnAddressMatchIsNeverVerified(t *testing.T) {
+	foreign := domain.ReadNodeProbe([]map[string]string{
+		{"instance": "172.18.0.2:10250"}, {"instance": "172.18.0.3:10250"}, {"instance": "172.18.0.4:10250"},
+	})
+	if len(foreign.Addresses) != 3 || len(foreign.Names) != 0 {
+		t.Fatalf("%+v", foreign)
+	}
+	// This cluster's nodes are named differently, but hold the same addresses.
+	v, byAddress := domain.VerifyNodeProbe(foreign, []string{"podsteer-demo-worker", "podsteer-demo-worker2", "podsteer-demo-control-plane"})
+	if v == domain.VerificationVerified || v != domain.VerificationUnverifiable || !byAddress {
+		t.Fatalf("an address-only answer came out %s (byAddress %v)", v, byAddress)
 	}
 }
