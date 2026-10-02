@@ -20,17 +20,28 @@ type countingTraffic struct {
 	probeCalls atomic.Int32
 	queryCalls atomic.Int32
 
+	// hold, when set, parks every probe until it is closed; started is
+	// closed when the first probe arrives.
+	hold    chan struct{}
+	started chan struct{}
+	once    sync.Once
+
 	mu      sync.Mutex
 	answers map[string][]domain.PromSeries
 	err     error
 	sent    []string
+	ctxErrs []error
 }
 
 func (q *countingTraffic) QueryInstant(
-	_ context.Context, _ domain.ClusterID, _ domain.MetricsBackend, expression string, _ time.Time,
+	ctx context.Context, _ domain.ClusterID, _ domain.MetricsBackend, expression string, _ time.Time,
 ) ([]domain.PromSeries, error) {
 	if strings.HasPrefix(expression, "count(") {
 		q.probeCalls.Add(1)
+		if q.hold != nil {
+			q.once.Do(func() { close(q.started) })
+			<-q.hold
+		}
 	} else {
 		q.queryCalls.Add(1)
 	}
@@ -38,6 +49,7 @@ func (q *countingTraffic) QueryInstant(
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.sent = append(q.sent, expression)
+	q.ctxErrs = append(q.ctxErrs, ctx.Err())
 	if q.err != nil {
 		return nil, q.err
 	}
@@ -254,5 +266,52 @@ func TestTrafficRefusesAnUnknownSourceBeforeSendingAnything(t *testing.T) {
 	}
 	if calls := f.discovery.calls.Load() + f.traffic.probeCalls.Load(); calls != 0 {
 		t.Fatalf("%d calls for a request that could not be shaped", calls)
+	}
+}
+
+// A CALLER WHO GIVES UP DOES NOT FAIL THE OTHERS. The probe is shared between
+// concurrent callers, and the first one's cancellation must neither cancel
+// the probe nor be inherited by whoever is waiting on it.
+func TestACancelledProbeLeaderDoesNotPoisonItsFollowers(t *testing.T) {
+	f := newTrafficFixture(t, domain.MetricsQueryManual, []string{"node-a", "node-b"})
+	f.traffic.hold, f.traffic.started = make(chan struct{}), make(chan struct{})
+
+	leaderCtx, cancel := context.WithCancel(context.Background())
+	leaderDone := make(chan domain.TrafficSources, 1)
+	go func() {
+		sources, _ := f.service.Sources(leaderCtx, "dev")
+		leaderDone <- sources
+	}()
+	<-f.traffic.started
+
+	followerDone := make(chan domain.TrafficSources, 1)
+	go func() {
+		sources, _ := f.service.Sources(context.Background(), "dev")
+		followerDone <- sources
+	}()
+
+	cancel()
+	// The leader stops waiting at once, while the probe is still parked.
+	select {
+	case leader := <-leaderDone:
+		if leader.Status == domain.BackendAnswered {
+			t.Errorf("a cancelled caller was answered: %+v", leader)
+		}
+	case <-time.After(5 * time.Second):
+		close(f.traffic.hold)
+		t.Fatal("a cancelled caller kept waiting on the shared probe")
+	}
+
+	close(f.traffic.hold)
+	if follower := <-followerDone; follower.Status != domain.BackendAnswered {
+		t.Errorf("the follower got %s: %s", follower.Status, follower.Message)
+	}
+
+	f.traffic.mu.Lock()
+	defer f.traffic.mu.Unlock()
+	for _, err := range f.traffic.ctxErrs {
+		if err != nil {
+			t.Fatalf("a probe ran on a cancelled context: %v", err)
+		}
 	}
 }

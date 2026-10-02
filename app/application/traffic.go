@@ -32,6 +32,10 @@ import (
 // metric, which is not free on a large backend.
 const trafficProbeTTL = 30 * time.Minute
 
+// trafficProbeTimeout bounds the shared probe, which runs detached from any
+// one caller: five instant queries, each already bounded by the adapter.
+const trafficProbeTimeout = 2 * time.Minute
+
 // TrafficNodeReader supplies the topology nodes endpoints are attached to.
 //
 // OPTIONAL. Without one, every edge is still drawn with its namespace and
@@ -333,12 +337,21 @@ func (s *TrafficService) probe(ctx context.Context, id domain.ClusterID, backend
 		found map[domain.TrafficSource]float64
 		err   error
 	}
-	shared, _, _ := s.probing.Do(string(id)+"\x00"+key, func() (any, error) {
+
+	// THE SHARED PROBE RUNS ON ITS OWN CONTEXT. Whoever arrives first starts
+	// it, and a context that is theirs would let their cancellation — a
+	// closed panel, a window switch — fail every caller waiting on the same
+	// probe. So it is detached from the caller's cancellation, bounded by
+	// its own timeout, and each caller stops waiting on its own context.
+	results := s.probing.DoChan(string(id)+"\x00"+key, func() (any, error) {
+		probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), trafficProbeTimeout)
+		defer cancel()
+
 		found := make(map[domain.TrafficSource]float64, len(domain.TrafficSourceNames()))
 		at := time.Now()
 		probes := domain.TrafficProbes()
 		for _, source := range domain.TrafficSourceNames() {
-			series, err := s.query.QueryInstant(ctx, id, backend, probes[source], at)
+			series, err := s.query.QueryInstant(probeCtx, id, backend, probes[source], at)
 			if err != nil {
 				// NOT CACHED: a refusal is already cached by the adapter,
 				// and a timeout should be retried on the next click.
@@ -354,8 +367,13 @@ func (s *TrafficService) probe(ctx context.Context, id domain.ClusterID, backend
 		return answer{found: found}, nil
 	})
 
-	result, _ := shared.(answer)
-	return result.found, result.err
+	select {
+	case shared := <-results:
+		result, _ := shared.Val.(answer)
+		return result.found, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // probeCache holds one probe answer per cluster, with the generation counter
