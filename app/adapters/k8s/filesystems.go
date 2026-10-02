@@ -123,10 +123,126 @@ func (f *summaryFs) toFilesystem() domain.Filesystem {
 	return filesystem
 }
 
-// filesystemCache holds one sweep's result per cluster.
+// filesystemCache holds one sweep's result per cluster, and the sweep in
+// flight for each.
+//
+// THE CACHE ALONE DID NOT STOP A SECOND SWEEP. It is written when a sweep
+// FINISHES, and a sweep is a kubelet request per node — seconds on a large
+// cluster. Every assessment that arrived meanwhile (the overview, the
+// navigator's background assessment, a second tab on the same cluster, the
+// history sampler) found the cache empty and started its own, so a
+// two-hundred-node cluster could be asked for two hundred summaries three or
+// four times over in the same few seconds. `inflight` is the singleflight in
+// front of it: the first caller leads the sweep, everyone after it waits for
+// that one.
+//
+// Deliberately NOT routed through readcache.go's cachedRead: that cache's
+// window is shorter than a tick and it never reuses a failure, where this
+// one holds an answer for a minute and holds a refusal just as firmly.
 type filesystemCache struct {
-	mu      sync.Mutex
-	entries map[domain.ClusterID]filesystemEntry
+	mu       sync.Mutex
+	entries  map[domain.ClusterID]filesystemEntry
+	inflight map[domain.ClusterID]*sweepCall
+}
+
+// sweepOutcome is what one sweep came back with, and whether it is worth
+// holding for filesystemTTL.
+//
+// A REFUSAL IS HELD AS FIRMLY AS A SUCCESS. Overwhelmingly the cause is a
+// role without nodes/proxy, which will still be true a second from now — and
+// without this the next assessment fans out to every node again, all of them
+// doomed. On a hundred-node cluster that is a hundred pointless requests per
+// assessment, and the overview runs more than once a minute.
+//
+// A transient failure is not held — the cluster's client could not be built,
+// the node list failed: it is handed to the callers who waited for it and
+// then forgotten, so the next assessment tries again.
+type sweepOutcome struct {
+	result   map[string]domain.NodeFilesystems
+	err      error
+	remember bool
+}
+
+// sweepCall is one sweep in flight, and what it came back with once done is
+// closed.
+type sweepCall struct {
+	done   chan struct{}
+	result map[string]domain.NodeFilesystems
+	err    error
+}
+
+// do answers from the cache, or joins the sweep already running, or leads a
+// new one.
+//
+// THE LEADER'S SWEEP IS DETACHED FROM ITS CALLER, for the reason readcache.go
+// gives at detach: the first caller is not the only caller, and its
+// cancellation must not become everyone else's. The deadline is kept. Every
+// caller — the leader included — waits on its OWN context, so one that gives
+// up leaves at once and a wedged kubelet cannot pin anybody.
+func (c *filesystemCache) do(
+	ctx context.Context,
+	id domain.ClusterID,
+	sweep func(context.Context) sweepOutcome,
+) (map[string]domain.NodeFilesystems, error) {
+	if cached, refused, ok := c.get(id); ok {
+		if refused != nil {
+			return nil, refused
+		}
+		return cached, nil
+	}
+
+	call, leader := c.claim(id)
+	if leader {
+		sweepCtx, release := detach(ctx)
+		go func() {
+			defer release()
+			c.finish(id, call, sweep(sweepCtx))
+		}()
+	}
+
+	if err := wait(ctx, call.done); err != nil {
+		return nil, err
+	}
+	return call.result, call.err
+}
+
+// claim returns the sweep in flight for id, and whether the caller has just
+// started it and so must run it.
+func (c *filesystemCache) claim(id domain.ClusterID) (*sweepCall, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if call, ok := c.inflight[id]; ok {
+		return call, false
+	}
+	if c.inflight == nil {
+		c.inflight = make(map[domain.ClusterID]*sweepCall, 2)
+	}
+	call := &sweepCall{done: make(chan struct{})}
+	c.inflight[id] = call
+	return call, true
+}
+
+// finish stores a sweep's answer when it is worth keeping, and publishes it
+// to everyone waiting on it.
+//
+// STORED ONLY IF THIS SWEEP IS STILL THE CLUSTER'S. A disconnect (forget)
+// lets go of the sweep in flight; one that finishes afterwards was read over
+// the connection that was dropped, and writing it into the cache would hand
+// the reconnected cluster — possibly a different cluster behind the same
+// context name — the old one's disks for a minute.
+func (c *filesystemCache) finish(id domain.ClusterID, call *sweepCall, outcome sweepOutcome) {
+	c.mu.Lock()
+	if c.inflight[id] == call {
+		delete(c.inflight, id)
+		if outcome.remember {
+			c.storeLocked(id, filesystemEntry{at: time.Now(), result: outcome.result, refused: outcome.err})
+		}
+	}
+	c.mu.Unlock()
+
+	call.result, call.err = outcome.result, outcome.err
+	close(call.done)
 }
 
 type filesystemEntry struct {
@@ -144,23 +260,28 @@ type filesystemEntry struct {
 // is an error, and it is reported as ErrMetricsUnavailable because by far the
 // most common cause is a role without nodes/proxy.
 func (a *Adapter) NodeFilesystems(ctx context.Context, id domain.ClusterID) (map[string]domain.NodeFilesystems, error) {
-	op := fmt.Sprintf("reading node filesystems of %q", id)
+	return a.filesystems.do(ctx, id, func(ctx context.Context) sweepOutcome {
+		return a.sweepFilesystems(ctx, id)
+	})
+}
 
-	if cached, refused, ok := a.filesystems.get(id); ok {
-		if refused != nil {
-			return nil, refused
-		}
-		return cached, nil
-	}
+// sweepFilesystems asks every kubelet once.
+//
+// Only ever run as the leader of a sweep — see filesystemCache.do — so the
+// whole fan-out happens once per cluster however many callers wanted it. It
+// says whether its answer is worth keeping rather than storing it itself, so
+// a sweep overtaken by a disconnect can be told not to.
+func (a *Adapter) sweepFilesystems(ctx context.Context, id domain.ClusterID) sweepOutcome {
+	op := fmt.Sprintf("reading node filesystems of %q", id)
 
 	set, err := a.factory.clientsFor(id)
 	if err != nil {
-		return nil, err
+		return sweepOutcome{err: err}
 	}
 
 	nodes, err := a.nodeNames(ctx, id, set)
 	if err != nil {
-		return nil, classify(op, err)
+		return sweepOutcome{err: classify(op, err)}
 	}
 
 	var (
@@ -198,19 +319,16 @@ func (a *Adapter) NodeFilesystems(ctx context.Context, id domain.ClusterID) (map
 		if refused == nil {
 			// No nodes to ask. An empty cluster is not a failure, and caching
 			// it keeps an idle cluster from sweeping every minute.
-			a.filesystems.put(id, result)
-			return result, nil
+			return sweepOutcome{result: result, remember: true}
 		}
 		// Remembered for the same minute a success would be, so a cluster
 		// that will not answer is asked once a minute rather than on every
-		// assessment. See putRefusal.
+		// assessment. See sweepOutcome.
 		err := fmt.Errorf("%s: %w: %w", op, ports.ErrMetricsUnavailable, refused)
-		a.filesystems.putRefusal(id, err)
-		return nil, err
+		return sweepOutcome{err: err, remember: true}
 	}
 
-	a.filesystems.put(id, result)
-	return result, nil
+	return sweepOutcome{result: result, remember: true}
 }
 
 // nodeNames lists the nodes to sweep, reusing the overview's list when it is
@@ -351,26 +469,8 @@ func (c *filesystemCache) get(id domain.ClusterID) (map[string]domain.NodeFilesy
 	return entry.result, entry.refused, true
 }
 
-// put stores a sweep.
-func (c *filesystemCache) put(id domain.ClusterID, result map[string]domain.NodeFilesystems) {
-	c.store(id, filesystemEntry{at: time.Now(), result: result})
-}
-
-// putRefusal remembers that nothing answered, and why.
-//
-// A refusal has to be cached as firmly as a success. Overwhelmingly the cause
-// is a role without nodes/proxy, which will still be true a second from now —
-// and without this the next assessment fans out to every node again, all of
-// them doomed. On a hundred-node cluster that is a hundred pointless requests
-// per assessment, and the overview runs more than once a minute.
-func (c *filesystemCache) putRefusal(id domain.ClusterID, refused error) {
-	c.store(id, filesystemEntry{at: time.Now(), refused: refused})
-}
-
-func (c *filesystemCache) store(id domain.ClusterID, entry filesystemEntry) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+// storeLocked records a sweep's answer. The caller holds mu.
+func (c *filesystemCache) storeLocked(id domain.ClusterID, entry filesystemEntry) {
 	if c.entries == nil {
 		c.entries = make(map[domain.ClusterID]filesystemEntry, 2)
 	}
@@ -378,9 +478,15 @@ func (c *filesystemCache) store(id domain.ClusterID, entry filesystemEntry) {
 }
 
 // forget drops a cluster's cached sweep, for when it is disconnected.
+//
+// The sweep in flight is let go too, so the first read of a reconnected
+// cluster leads a sweep of its own rather than joining one started against
+// the connection that has just been dropped. Callers already waiting on that
+// one still get its answer; nobody new does.
 func (c *filesystemCache) forget(id domain.ClusterID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	delete(c.entries, id)
+	delete(c.inflight, id)
 }
