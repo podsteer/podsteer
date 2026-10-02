@@ -482,3 +482,165 @@ func TestFleetQueryPodsInPagesTheMergedScope(t *testing.T) {
 		t.Fatalf("page = total %d rows %d clusters %d; want 3 rows total cut to 2, two verdicts", page.Total, len(page.Rows), len(page.Clusters))
 	}
 }
+
+// scopedVulns serves one listing per namespace, and one for the whole cluster.
+type scopedVulns struct {
+	*fakeResources
+	wide        domain.VulnerabilityListing
+	byNamespace map[string]domain.VulnerabilityListing
+	asked       []string
+	mu          sync.Mutex
+}
+
+func (f *scopedVulns) ListVulnerabilitySummaries(_ context.Context, _ domain.ClusterID, ns domain.NamespaceName) (domain.VulnerabilityListing, error) {
+	f.mu.Lock()
+	f.asked = append(f.asked, ns.String())
+	f.mu.Unlock()
+	if ns.IsAll() {
+		return f.wide, nil
+	}
+	return f.byNamespace[ns.String()], nil
+}
+
+func summary(ns, subject string, critical int) domain.VulnerabilitySummary {
+	return domain.VulnerabilitySummary{
+		Namespace: domain.NamespaceName(ns), Subject: subject, Reports: 1,
+		Counts: domain.VulnerabilityCounts{Critical: critical},
+	}
+}
+
+func TestVulnerabilitySummariesInKeepsSameNamedWorkloadsApart(t *testing.T) {
+	t.Parallel()
+
+	complete := domain.VulnerabilityReadComplete
+	vulns := &scopedVulns{
+		fakeResources: &fakeResources{},
+		wide: domain.VulnerabilityListing{Status: complete, Summaries: []domain.VulnerabilitySummary{
+			summary("a", "Deployment/web", 1), summary("b", "Deployment/web", 5), summary("c", "Deployment/web", 9),
+			summary("d", "Deployment/api", 2), summary("e", "Deployment/web", 7),
+		}},
+		byNamespace: map[string]domain.VulnerabilityListing{
+			"a": {Status: complete, Summaries: []domain.VulnerabilitySummary{summary("a", "Deployment/web", 1)}},
+			"b": {Status: complete, Summaries: []domain.VulnerabilitySummary{summary("b", "Deployment/web", 5)}},
+		},
+	}
+	service := newBrowseWith(t, vulns)
+
+	// Short scope: per namespace, merged without summing across namespaces.
+	got, err := service.VulnerabilitySummariesIn(context.Background(), "dev", scopeOf(t, "a", "b"))
+	if err != nil || len(got.Summaries) != 2 {
+		t.Fatalf("summaries = %+v, err = %v; want a/web and b/web apart", got.Summaries, err)
+	}
+	if got.Summaries[0].Counts.Critical != 1 || got.Summaries[1].Counts.Critical != 5 {
+		t.Fatalf("counts = %+v, want 1 and 5, not summed", got.Summaries)
+	}
+
+	// Wide scope: one cluster-wide read, filtered to the scope.
+	got, err = service.VulnerabilitySummariesIn(context.Background(), "dev", scopeOf(t, "a", "b", "c", "d"))
+	if err != nil || len(got.Summaries) != 4 {
+		t.Fatalf("summaries = %+v, err = %v; want e filtered out", got.Summaries, err)
+	}
+	for _, s := range got.Summaries {
+		if s.Namespace == "e" {
+			t.Fatal("a summary outside the scope came through")
+		}
+	}
+}
+
+func TestVulnerabilitySummariesInFallsBackWhenTheWideReadIsRefused(t *testing.T) {
+	t.Parallel()
+
+	complete := domain.VulnerabilityReadComplete
+	vulns := &scopedVulns{
+		fakeResources: &fakeResources{},
+		wide:          domain.VulnerabilityListing{Status: domain.VulnerabilityReadForbidden},
+		byNamespace: map[string]domain.VulnerabilityListing{
+			"a": {Status: complete, Summaries: []domain.VulnerabilitySummary{summary("a", "Deployment/web", 1)}},
+			"b": {Status: complete}, "c": {Status: complete}, "d": {Status: complete},
+		},
+	}
+	service := newBrowseWith(t, vulns)
+
+	got, err := service.VulnerabilitySummariesIn(context.Background(), "dev", scopeOf(t, "a", "b", "c", "d"))
+	if err != nil || got.Status != complete || len(got.Summaries) != 1 {
+		t.Fatalf("listing = %+v, err = %v; want the per-namespace answer, not the refusal", got, err)
+	}
+	if len(vulns.asked) != 5 {
+		t.Fatalf("asked %q, want the refused wide read then four per-namespace", vulns.asked)
+	}
+
+	// For All the refusal stands.
+	got, err = service.VulnerabilitySummariesIn(context.Background(), "dev", domain.NamespaceScope{All: true})
+	if err != nil || got.Status != domain.VulnerabilityReadForbidden {
+		t.Fatalf("All = %+v, %v; want the refusal as the answer", got, err)
+	}
+}
+
+func newBrowseWith(t *testing.T, resources ports.ResourcePort) *application.BrowseService {
+	t.Helper()
+	registry := application.NewRegistry()
+	registry.Open(mustCluster(t, "dev", true))
+	service, err := application.NewBrowseService(application.BrowseServiceDeps{
+		Resources: resources, Events: &fakeEvents{}, Registry: registry, Catalog: domain.NewCatalog(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
+}
+
+func TestASingleNamespaceErrorIsNotPrefixed(t *testing.T) {
+	t.Parallel()
+
+	kube := newScopedKube(t)
+	kube.failIn = "b"
+	service := newScopedWorkloadService(t, kube)
+
+	_, err := service.ListPods(context.Background(), "dev", "b", domain.Projection{})
+	if err == nil || strings.Contains(err.Error(), "listing in") {
+		t.Fatalf("err = %v, want the old text without a namespace prefix", err)
+	}
+}
+
+func TestTheZeroScopeReadsEverythingRatherThanNothing(t *testing.T) {
+	t.Parallel()
+
+	kube := newScopedKube(t)
+	service := newScopedWorkloadService(t, kube)
+
+	pods, err := service.ListPodsIn(context.Background(), "dev", domain.NamespaceScope{}, domain.Projection{})
+	if err != nil || len(pods) != 15 {
+		t.Fatalf("pods = %d, err = %v; want all 15", len(pods), err)
+	}
+	if got := kube.calls(); !slices.Equal(got, []string{""}) {
+		t.Fatalf("asked %q, want one cluster-wide read", got)
+	}
+}
+
+func TestListReleasesInKeepsTheWorstNonListedStatus(t *testing.T) {
+	t.Parallel()
+
+	helm := &scopedHelm{fakeHelm: &fakeHelm{}, byNamespace: map[string]domain.HelmListing{
+		"a": {Status: domain.HelmFailed, Refusal: "down"},
+		"b": {Status: domain.HelmForbidden, Refusal: "no"},
+	}}
+	registry := application.NewRegistry()
+	registry.Open(mustCluster(t, "dev", true))
+	service, err := application.NewHelmService(application.HelmServiceDeps{Helm: helm, Registry: registry})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Failed is first here and forbidden second; reversing must not matter.
+	for _, scope := range []domain.NamespaceScope{scopeOf(t, "a", "b")} {
+		listing, err := service.ListReleasesIn(context.Background(), "dev", scope, false)
+		if err != nil || listing.Status != domain.HelmFailed || listing.Refusal != "down" {
+			t.Fatalf("listing = %+v, err = %v; want failed to outrank forbidden", listing, err)
+		}
+	}
+	helm.byNamespace["a"], helm.byNamespace["b"] = helm.byNamespace["b"], helm.byNamespace["a"]
+	listing, _ := service.ListReleasesIn(context.Background(), "dev", scopeOf(t, "a", "b"), false)
+	if listing.Status != domain.HelmFailed {
+		t.Fatalf("status = %q, want failed regardless of order", listing.Status)
+	}
+}

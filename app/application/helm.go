@@ -208,7 +208,7 @@ func helmFailureReason(err error) string {
 // listing, not an error, so the cluster-wide-then-per-namespace fallback
 // readScoped makes on ErrForbidden is made here on HelmForbidden instead.
 func (s *HelmService) readReleasesIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope, refresh bool) (domain.HelmListing, error) {
-	if scope.All {
+	if scope.Everything() {
 		return s.helm.ListHelmReleases(ctx, id, domain.NamespaceAll, refresh)
 	}
 
@@ -234,7 +234,7 @@ func (s *HelmService) readReleasesIn(ctx context.Context, id domain.ClusterID, s
 		if i == 0 || (merged.Status == domain.HelmListed && listing.Status != domain.HelmListed) {
 			merged.Driver = listing.Driver
 		}
-		if merged.Status == domain.HelmListed && listing.Status != domain.HelmListed {
+		if helmRank(listing.Status) > helmRank(merged.Status) {
 			merged.Status, merged.Refusal = listing.Status, listing.Refusal
 		}
 		merged.Releases = append(merged.Releases, listing.Releases...)
@@ -249,6 +249,20 @@ func (s *HelmService) readReleasesIn(ctx context.Context, id domain.ClusterID, s
 		merged.Releases = []domain.HelmRelease{}
 	}
 	return merged, nil
+}
+
+// helmRank orders statuses by how little their releases can be trusted, so a
+// merged listing reports the worst of its parts: failed over forbidden over
+// listed.
+func helmRank(status domain.HelmListStatus) int {
+	switch status {
+	case domain.HelmFailed:
+		return 2
+	case domain.HelmForbidden:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // filterReleases keeps the releases of a cluster-wide listing that are in

@@ -308,9 +308,14 @@ func ScopeOf(namespace NamespaceName) NamespaceScope {
 	return NamespaceScope{Namespaces: []NamespaceName{namespace}}
 }
 
+// Everything reports whether the scope covers every namespace. The zero
+// value does too: a scope that names nothing and is not All is read as All,
+// never as a silently empty list.
+func (s NamespaceScope) Everything() bool { return s.All || len(s.Namespaces) == 0 }
+
 // Includes reports whether a namespace is inside the scope.
 func (s NamespaceScope) Includes(namespace NamespaceName) bool {
-	if s.All {
+	if s.Everything() {
 		return true
 	}
 	_, found := slices.BinarySearch(s.Namespaces, namespace)
@@ -320,13 +325,13 @@ func (s NamespaceScope) Includes(namespace NamespaceName) bool {
 // ListsClusterWide reports whether the scope is better read with one
 // cluster-wide list than with one list per namespace.
 func (s NamespaceScope) ListsClusterWide() bool {
-	return s.All || len(s.Namespaces) > NamespaceListCap
+	return s.Everything() || len(s.Namespaces) > NamespaceListCap
 }
 
 // Key names the scope for a cache or a late answer: empty for All, else the
 // names joined by a comma, which a DNS label cannot contain.
 func (s NamespaceScope) Key() string {
-	if s.All {
+	if s.Everything() {
 		return ""
 	}
 	names := make([]string, len(s.Namespaces))

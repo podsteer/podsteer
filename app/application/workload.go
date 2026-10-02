@@ -337,7 +337,7 @@ func podsWithUsageIn(
 func readPodUsage(ctx context.Context, metrics ports.MetricsPort, id domain.ClusterID, scope domain.NamespaceScope) (map[string]domain.PodUsage, error) {
 	if scope.ListsClusterWide() {
 		usage, err := metrics.PodMetrics(ctx, id, domain.NamespaceAll)
-		if err == nil || scope.All || !errors.Is(err, ports.ErrForbidden) {
+		if err == nil || scope.Everything() || !errors.Is(err, ports.ErrForbidden) {
 			return usage, err
 		}
 	}

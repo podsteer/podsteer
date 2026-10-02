@@ -242,7 +242,7 @@ func readTableScoped(
 	scope domain.NamespaceScope,
 	read func(ctx context.Context, namespace domain.NamespaceName) (domain.ResourceTable, error),
 ) (domain.ResourceTable, error) {
-	if scope.All {
+	if scope.Everything() {
 		return read(ctx, domain.NamespaceAll)
 	}
 
@@ -543,13 +543,15 @@ func (s *BrowseService) VulnerabilitySummariesIn(ctx context.Context, id domain.
 		return domain.VulnerabilityListing{}, fmt.Errorf("reading vulnerability reports: %w", err)
 	}
 
-	if scope.All || scope.ListsClusterWide() {
+	if scope.Everything() || scope.ListsClusterWide() {
 		listing, err := s.resources.ListVulnerabilitySummaries(ctx, id, domain.NamespaceAll)
-		if err == nil {
-			return filterListing(listing, scope), nil
-		}
-		if scope.All || !errors.Is(err, ports.ErrForbidden) {
+		if err != nil && (scope.Everything() || !errors.Is(err, ports.ErrForbidden)) {
 			return domain.VulnerabilityListing{}, fmt.Errorf("reading vulnerability reports in %q: %w", scope.Key(), err)
+		}
+		// The adapter reports a refusal as a STATUS, not an error, so that
+		// is what sends a named scope to per-namespace reads.
+		if err == nil && (scope.Everything() || listing.Status != domain.VulnerabilityReadForbidden) {
+			return filterListing(listing, scope), nil
 		}
 	}
 
@@ -562,11 +564,19 @@ func (s *BrowseService) VulnerabilitySummariesIn(ctx context.Context, id domain.
 	return mergeListings(listings), nil
 }
 
-// filterListing is the identity: a summary is filed under "Kind/name" with no
-// namespace, so a cluster-wide listing cannot be narrowed to a scope. It is
-// returned whole, as the listing for All already is — over-inclusive, never
-// short.
-func filterListing(listing domain.VulnerabilityListing, _ domain.NamespaceScope) domain.VulnerabilityListing {
+// filterListing keeps the summaries of a cluster-wide listing that are in
+// the scope.
+func filterListing(listing domain.VulnerabilityListing, scope domain.NamespaceScope) domain.VulnerabilityListing {
+	if scope.Everything() {
+		return listing
+	}
+	kept := make([]domain.VulnerabilitySummary, 0, len(listing.Summaries))
+	for _, summary := range listing.Summaries {
+		if scope.Includes(summary.Namespace) {
+			kept = append(kept, summary)
+		}
+	}
+	listing.Summaries = kept
 	return listing
 }
 
@@ -585,8 +595,8 @@ func listingRank(status domain.VulnerabilityRead) int {
 	}
 }
 
-// mergeListings sums per-namespace listings by subject, the way the adapter
-// sums a cluster-wide read.
+// mergeListings sums per-namespace listings by namespace and subject, the way
+// the adapter sums a cluster-wide read.
 func mergeListings(listings []domain.VulnerabilityListing) domain.VulnerabilityListing {
 	merged := domain.VulnerabilityListing{Status: domain.VulnerabilityReadComplete}
 	bySubject := make(map[string]domain.VulnerabilitySummary)
@@ -600,12 +610,14 @@ func mergeListings(listings []domain.VulnerabilityListing) domain.VulnerabilityL
 		merged.Cap = max(merged.Cap, listing.Cap)
 
 		for _, summary := range listing.Summaries {
-			held := bySubject[summary.Subject]
+			key := summary.Namespace.String() + "/" + summary.Subject
+			held := bySubject[key]
+			held.Namespace = summary.Namespace
 			held.Subject = summary.Subject
 			held.Counts = held.Counts.Add(summary.Counts)
 			held.Reports += summary.Reports
 			held.Images = append(held.Images, summary.Images...)
-			bySubject[summary.Subject] = held
+			bySubject[key] = held
 		}
 	}
 
@@ -615,7 +627,10 @@ func mergeListings(listings []domain.VulnerabilityListing) domain.VulnerabilityL
 		merged.Summaries = append(merged.Summaries, summary)
 	}
 	slices.SortFunc(merged.Summaries, func(a, b domain.VulnerabilitySummary) int {
-		return cmp.Compare(a.Subject, b.Subject)
+		if by := cmp.Compare(a.Subject, b.Subject); by != 0 {
+			return by
+		}
+		return cmp.Compare(a.Namespace, b.Namespace)
 	})
 	return merged
 }

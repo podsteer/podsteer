@@ -36,7 +36,9 @@ func readScoped[T any](
 	namespaceOf func(T) domain.NamespaceName,
 	list func(ctx context.Context, namespace domain.NamespaceName) ([]T, error),
 ) ([]T, error) {
-	if scope.All {
+	// The zero scope names nothing and is not All; reading it as All beats
+	// a silently empty list.
+	if scope.Everything() {
 		return list(ctx, domain.NamespaceAll)
 	}
 
@@ -77,6 +79,13 @@ func perNamespace[T any](
 	scope domain.NamespaceScope,
 	read func(ctx context.Context, namespace domain.NamespaceName) (T, error),
 ) ([]T, error) {
+	if len(scope.Namespaces) == 1 {
+		// One namespace is the old single-namespace read: its error text
+		// is the caller's own, unprefixed.
+		one, err := read(ctx, scope.Namespaces[0])
+		return []T{one}, err
+	}
+
 	results := make([]T, len(scope.Namespaces))
 	errs := make([]error, len(scope.Namespaces))
 

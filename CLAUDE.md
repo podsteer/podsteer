@@ -443,9 +443,11 @@ untouched: keys stay per namespace, the mirror stays cluster-wide.
 
 Merges: tables take their columns from the first answered namespace, append
 rows in scope order and are truncated if any read was; Helm listings keep the
-worst status and the oldest `ListedAt`; vulnerability summaries sum by subject
-and keep the least complete status (a summary has no namespace, so a wide read
-is returned whole, never short). The fleet keys late answers and the pod memo by
+worst status and the oldest `ListedAt`; vulnerability summaries carry their namespace
+(grouped by namespace and Kind/name, filtered by scope on a wide read; a
+Forbidden status, which the adapter reports instead of an error, sends a
+named scope to per-namespace reads) and keep the least complete status. The
+zero `NamespaceScope` reads as All. The fleet keys late answers and the pod memo by
 `NamespaceScope.Key()`. Single by nature, not scoped: `SubjectRules`,
 `NamespaceInventory`, `FindClusterShells`.
 
