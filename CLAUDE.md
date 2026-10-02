@@ -1527,6 +1527,28 @@ wins by terminating the busy worker) → `graphPositions` → `graphCull` → dr
   summary box by MEMBERSHIP: the summary node carries its pods' names
   (`podSummary.members`, sorted; ~0.6 MB for 20k pods, inside the 2.5 MB
   budget), never a guess from how pods are named.
+- **The page explains in Help, not under the map.** Notices (Bounded,
+  Unreadable, Summarised, hidden applications) and every traffic status
+  (not enabled, no Prometheus, no source and what each needs, unverified,
+  installs nothing) are Help sections: the standing text is the `topology`
+  topic in `$lib/help.ts`; what is true of THIS drawing the page hands to
+  `help.provide('topology', …)` and HelpPanel shows above it. The (?) on the
+  toolbar carries a dot (`HelpButton`'s `notice`) for an unreadable kind, a
+  summarised scope or a traffic layer that cannot draw — Bounded marks
+  nothing, it is true of every drawing. The footer stats line stays.
+- **Observed traffic is a toolbar toggle** (`ToolbarButton` `pressed`), its
+  source / window / filters / PromQL in a popover beside it; TrafficPanel is
+  driven by a bound `on` and hands its explanations up through `onhelp`.
+- **Group by application can untick applications** (`hideGroups`, ids in
+  `session.topologyHiddenApps`); kind counts stay complete and the footer and
+  Help say how many objects are hidden.
+- **Lines move like the dependency map's** (`.flow`, dashes source → target);
+  traffic lines move faster the busier they are. Never under
+  prefers-reduced-motion (checked in JS, and a CSS guard), never above 200
+  drawn lines (dependency plus traffic) — animating every dash costs more
+  frames than it is worth.
+- **Search is the shared `ToolbarSearch`**: `kind:` and `ns:` are typed
+  text, Enter / Shift+Enter step through matches, and nothing suggests.
 
 ## Secrets are read on request, never on render
 

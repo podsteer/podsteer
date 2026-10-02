@@ -40,11 +40,13 @@
     describeCounts,
     foldView,
     group,
+    hideGroups,
     kindCounts,
     toView,
     totalOf,
     type GroupBy,
     type GroupedGraph,
+    type FilteredGroups,
     type FoldedView,
     type ViewNode,
   } from '$lib/graphGroup'
@@ -62,8 +64,14 @@
   import PaneToolbar from '$lib/components/PaneToolbar.svelte'
   import ToolbarButton from '$lib/components/ToolbarButton.svelte'
   import Select from '$lib/components/Select.svelte'
+  import ToolbarSearch from '$lib/components/ToolbarSearch.svelte'
+  import HelpButton from '$lib/components/HelpButton.svelte'
+  import { help } from '$stores/help.svelte'
+  import type { HelpSection } from '$lib/help'
   import {
+    Activity,
     ChevronDown,
+    SlidersHorizontal,
     Columns3,
     Crosshair,
     ImageDown,
@@ -220,7 +228,48 @@
   const toggles = $derived(graph ? kindCounts(graph).filter((toggle) => toggle.count > 0) : [])
   const view = $derived(graph ? toView(graph, hiddenKinds) : null)
   const folded = $derived<FoldedView | null>(view ? foldView(view, expandedFolds) : null)
-  const grouped = $derived<GroupedGraph | null>(folded ? group(folded, groupBy, collapsedGroups) : null)
+  /** Every group, before any application is unticked — what the app menu lists. */
+  const groupedAll = $derived<GroupedGraph | null>(folded ? group(folded, groupBy, collapsedGroups) : null)
+  /**
+   * Applications left off the drawing. Held here and written through to the
+   * session, which keeps it per cluster for when the page is opened again.
+   */
+  let unticked = $state.raw<ReadonlySet<string>>(untrack(() => session.topologyHiddenApps ?? new Set()))
+  /** Only while grouping by application: under any other grouping all are drawn. */
+  const hiddenApps = $derived<ReadonlySet<string>>(groupChoice === 'app' ? unticked : new Set())
+
+  function setUnticked(next: ReadonlySet<string>): void {
+    unticked = next
+    session.topologyHiddenApps = next
+  }
+  const grouped = $derived<FilteredGroups | null>(groupedAll ? hideGroups(groupedAll, hiddenApps) : null)
+
+  // --- The application menu -------------------------------------------------
+
+  let appsOpen = $state(false)
+  let appFilter = $state('')
+  const appChoices = $derived(
+    groupChoice === 'app'
+      ? (groupedAll?.groups ?? []).filter(
+          (g) => !appFilter || g.label.toLowerCase().includes(appFilter.toLowerCase()),
+        )
+      : [],
+  )
+  const appCount = $derived(groupChoice === 'app' ? (groupedAll?.groups.length ?? 0) : 0)
+  const appsLabel = $derived(
+    hiddenApps.size === 0 ? 'All applications' : `${appCount - (grouped?.hidden.length ?? 0)} of ${appCount} applications`,
+  )
+
+  function toggleApp(id: string): void {
+    const next = new Set(unticked)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setUnticked(next)
+  }
+
+  function showAllApps(all: boolean): void {
+    setUnticked(all ? new Set() : new Set((groupedAll?.groups ?? []).map((g) => g.id)))
+  }
 
   const orientation = $derived(preferences.mapOrientation)
   const horizontal = $derived(orientation === 'horizontal')
@@ -552,7 +601,9 @@
     const at = locate(id, drawnIds, [drawnGraph.folded.standIn, drawnGraph.grouped.standIn])
     if (!at) {
       focused = null
-      searchNote = target ? `${target.apiKind} ${target.name} is hidden: its kind is switched off.` : ''
+      searchNote = target
+        ? `${target.apiKind} ${target.name} is not drawn: its kind or its application is hidden.`
+        : ''
       return
     }
     const box = placedById.get(at)
@@ -567,15 +618,9 @@
       at !== id && target ? `${target.apiKind} ${target.name} is inside ${nodeMeta.get(at)?.name ?? 'a set'}.` : ''
   }
 
-  function onSearchKey(event: KeyboardEvent): void {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      goToMatch(event.shiftKey ? -1 : matchIndex === 0 && focused === null ? 0 : 1)
-    } else if (event.key === 'Escape' && query) {
-      event.preventDefault()
-      query = ''
-      focused = null
-    }
+  /** Enter: the first match, then the next; Shift+Enter: the previous. */
+  function nextMatch(): void {
+    goToMatch(matchIndex === 0 && focused === null ? 0 : 1)
   }
 
   // --- Changed, and Live ---------------------------------------------------
@@ -704,6 +749,17 @@
   /** The layer the panel loaded; null while off, loading or failed. */
   let panelLayer = $state.raw<TrafficLayer | null>(null)
   let trafficFilters = $state<TrafficFilters>({ hideSystem: true, hideExternal: false })
+  /** The toolbar's traffic toggle, and its options popover. */
+  let trafficOn = $state(false)
+  let trafficOptionsOpen = $state(false)
+  /** What the traffic layer has to explain now, for Help. */
+  let trafficSaid = $state.raw<{ problem: boolean; sections: HelpSection[] }>({ problem: false, sections: [] })
+
+  function toggleTraffic(): void {
+    trafficOn = !trafficOn
+    // Its controls open with it: the source and window are the next question.
+    trafficOptionsOpen = trafficOn
+  }
   const trafficShown = $derived(traffic ?? panelLayer)
 
   /**
@@ -741,6 +797,91 @@
     const bottom = Math.max(layout.bounds.y + layout.bounds.height, ...nodes.map((n) => n.y + 40))
     return { x: layout.bounds.x, y: layout.bounds.y, width: right - layout.bounds.x, height: bottom - layout.bounds.y }
   })
+
+  // --- Help: what this drawing says about itself ---------------------------
+
+  /**
+   * What is true of THIS drawing, for the Help panel — the notices that used
+   * to stand under the map. Bounded is a standing fact of every drawing and
+   * marks nothing; an unreadable kind, a summarised scope or a traffic layer
+   * that cannot draw puts a dot on the (?), so none of them goes unseen.
+   */
+  const drawingSections = $derived.by<HelpSection[]>(() => {
+    const out: HelpSection[] = []
+    const body: string[] = []
+    if (graph && graph.unreadable.length > 0) {
+      body.push(
+        `Unreadable: could not read ${graph.unreadable.join(', ')} in this scope, so anything reached through them is missing from this map.`,
+      )
+    }
+    if (graph?.summarised) {
+      body.push(
+        "Summarised: this scope has more pods than can be drawn one by one, so each owner's pods are one box with complete counts. Narrow the scope to see them individually.",
+      )
+    }
+    if (graph?.bounded) body.push(`Bounded: ${graph.bounded}.`)
+    if (grouped && grouped.hidden.length > 0) {
+      body.push(
+        `${grouped.hidden.length} ${grouped.hidden.length === 1 ? 'application is' : 'applications are'} hidden (${grouped.hiddenObjects} objects): ${grouped.hidden.map((g) => g.label).join(', ')}.`,
+      )
+    }
+    if (body.length > 0) out.push({ heading: 'This drawing', body })
+    const traffic = [...trafficSaid.sections]
+    if (trafficOverlay && (trafficOverlay.skipped.filtered > 0 || trafficOverlay.skipped.offMap > 0)) {
+      const notes: string[] = []
+      if (trafficOverlay.skipped.filtered > 0) {
+        notes.push(`${trafficOverlay.skipped.filtered} traffic line${trafficOverlay.skipped.filtered === 1 ? ' is' : 's are'} hidden by the filters.`)
+      }
+      if (trafficOverlay.skipped.offMap > 0) {
+        notes.push(`${trafficOverlay.skipped.offMap} not drawn: their ends are of a kind switched off.`)
+      }
+      if (traffic.length > 0) traffic[0] = { ...traffic[0], body: [...traffic[0].body, ...notes] }
+      else traffic.push({ heading: 'Observed traffic now', body: notes })
+    }
+    return [...out, ...traffic]
+  })
+
+  const helpNotice = $derived.by(() => {
+    if (graph && graph.unreadable.length > 0) return `could not read ${graph.unreadable.join(', ')}`
+    if (graph?.summarised) return 'pods are summarised'
+    if (trafficOn && trafficSaid.problem) return 'traffic cannot be drawn'
+    return undefined
+  })
+
+  $effect(() => {
+    help.provide('topology', drawingSections)
+  })
+  onDestroy(() => help.withdraw('topology'))
+
+  // --- Motion ---------------------------------------------------------------
+
+  /**
+   * Lines move the way the dependency map's do — dashes travelling from source
+   * to target — and the traffic layer's move faster the busier the line. NOT
+   * for anybody who asked for less motion (no animation at all, not a slower
+   * one), and not above ANIMATION_LIMIT drawn lines, where animating every
+   * dash costs more frames than it is worth.
+   */
+  const ANIMATION_LIMIT = 200
+  let reducedMotion = $state(false)
+  $effect(() => {
+    if (typeof matchMedia !== 'function') return
+    const query = matchMedia('(prefers-reduced-motion: reduce)')
+    reducedMotion = query.matches
+    const changed = (event: MediaQueryListEvent) => (reducedMotion = event.matches)
+    query.addEventListener?.('change', changed)
+    return () => query.removeEventListener?.('change', changed)
+  })
+  const animate = $derived(
+    !reducedMotion &&
+      !exporting &&
+      (layout?.edges.length ?? 0) + (trafficOverlay?.edges.length ?? 0) <= ANIMATION_LIMIT,
+  )
+
+  /** A traffic line's dash speed: the widest (busiest) about four times the thinnest. */
+  function trafficSeconds(width: number): number {
+    return Math.max(0.4, 2.2 - (width - 1) * 0.25)
+  }
 
   // --- Export --------------------------------------------------------------
 
@@ -897,20 +1038,87 @@
       />
     {/if}
 
-    <div class="flex min-w-0 items-center gap-1">
-      <input
-        type="search"
-        bind:value={query}
-        onkeydown={onSearchKey}
-        aria-label="Find on the topology"
+    {#if groupChoice === 'app' && appCount > 0}
+      <!-- Which applications are drawn. Unticked ones leave the map; the kind
+           counts stay complete and Help says what is hidden. -->
+      <div class="relative">
+        <button
+          type="button"
+          onclick={() => {
+            appsOpen = !appsOpen
+            appFilter = ''
+          }}
+          aria-expanded={appsOpen}
+          aria-haspopup="dialog"
+          class="state-layer flex h-8 items-center gap-1.5 rounded-sm px-2 text-body-medium text-on-surface
+                 hover:bg-surface-container"
+          title="Which applications are drawn"
+        >
+          <span class="max-w-48 truncate">{appsLabel}</span>
+          <ChevronDown class="size-3.5 text-on-surface-variant" strokeWidth={2} />
+        </button>
+        {#if appsOpen}
+          <div
+            role="dialog"
+            aria-label="Applications drawn"
+            tabindex="-1"
+            onkeydown={(event) => {
+              if (event.key === 'Escape') {
+                event.stopPropagation()
+                appsOpen = false
+              }
+            }}
+            class="absolute left-0 top-9 z-30 flex max-h-96 w-72 flex-col gap-2 rounded-md border
+                   border-outline-variant bg-surface-container p-3 shadow-lg"
+          >
+            <label class="flex items-center gap-2 text-body-medium text-on-surface">
+              <input
+                type="checkbox"
+                checked={hiddenApps.size === 0}
+                onchange={(event) => showAllApps(event.currentTarget.checked)}
+              />
+              All applications
+            </label>
+            <input
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              bind:value={appFilter}
+              placeholder="Filter applications…"
+              aria-label="Filter applications"
+              class="field h-8 px-2 text-body-small"
+            />
+            <ul class="min-h-0 flex-1 overflow-y-auto" aria-label="Applications">
+              {#each appChoices as app (app.id)}
+                <li>
+                  <label class="flex items-center gap-2 py-0.5 text-body-small text-on-surface">
+                    <input type="checkbox" checked={!hiddenApps.has(app.id)} onchange={() => toggleApp(app.id)} />
+                    <span class="min-w-0 flex-1 truncate">{app.label}</span>
+                    <span class="tabular-nums text-on-surface-variant">{totalOf(app.counts)}</span>
+                  </label>
+                </li>
+              {:else}
+                <li class="text-body-small text-on-surface-variant/70">No application matches.</li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- The same field every pane's toolbar searches with. kind: and ns:
+         narrow it as typed text; Enter and Shift+Enter step through matches. -->
+    <div class="flex w-64 min-w-40 shrink">
+      <ToolbarSearch
+        value={query}
+        label="Find on the topology"
         placeholder="Find… (kind:Service ns:web)"
-        class="h-8 w-56 min-w-0 rounded-sm border border-outline-variant bg-surface px-2 text-body-small text-on-surface"
+        count={query.trim() ? (matches.length === 0 ? '0' : `${Math.min(matchIndex + 1, matches.length)}/${matches.length}`) : undefined}
+        empty={query.trim() !== '' && matches.length === 0}
+        onchange={(value) => (query = value)}
+        onnext={nextMatch}
+        onprevious={() => goToMatch(-1)}
       />
-      {#if query.trim()}
-        <span class="shrink-0 text-body-small tabular-nums text-on-surface-variant" aria-live="polite">
-          {matches.length === 0 ? 'No match' : `${Math.min(matchIndex + 1, matches.length)} of ${matches.length}`}
-        </span>
-      {/if}
     </div>
 
     {#snippet trailing()}
@@ -941,6 +1149,64 @@
         Live
       </button>
       <ToolbarButton icon={RefreshCw} label="Refresh" title="Read the topology again" onclick={() => void load(true)} disabled={loading} />
+
+      <div class="mx-0.5 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+
+      <!-- Observed traffic: a toggle, and its controls in a popover beside it.
+           Off until pressed; nothing is asked of the cluster's Prometheus
+           before that. What it found, or why not, is in Help. -->
+      <div class="relative flex items-center" data-layer-controls>
+        {#if trafficControls}
+          {@render trafficControls()}
+        {:else}
+          <ToolbarButton
+            icon={Activity}
+            label="Observed traffic"
+            title={trafficOn ? 'Hide observed traffic' : 'Show observed traffic, from the cluster’s own monitoring backend'}
+            pressed={trafficOn}
+            onclick={toggleTraffic}
+          />
+          {#if trafficOn}
+            <ToolbarButton
+              icon={SlidersHorizontal}
+              label="Traffic options"
+              title="Source, window and filters"
+              pressed={trafficOptionsOpen}
+              onclick={() => (trafficOptionsOpen = !trafficOptionsOpen)}
+            />
+          {/if}
+          <!-- Mounted while the layer is on, shown only while the popover is
+               open: closing the popover must not forget the layer. -->
+          {#if trafficOn}
+            <div
+              role="dialog"
+              aria-label="Observed traffic options"
+              tabindex="-1"
+              hidden={!trafficOptionsOpen}
+              onkeydown={(event) => {
+                if (event.key === 'Escape') {
+                  event.stopPropagation()
+                  trafficOptionsOpen = false
+                }
+              }}
+              class="absolute right-0 top-9 z-30 w-[26rem] max-w-[90vw] rounded-md border border-outline-variant
+                     bg-surface-container p-3 shadow-lg"
+              data-traffic-popover
+            >
+              <TrafficPanel
+                clusterId={session.cluster.id}
+                namespaces={scope.namespaces}
+                all={scope.all}
+                bind:on={trafficOn}
+                bind:filters={trafficFilters}
+                onlayer={(next) => (panelLayer = next)}
+                onhelp={(said) => (trafficSaid = said)}
+              />
+            </div>
+          {/if}
+        {/if}
+      </div>
+      <HelpButton topic="topology" about="the topology" notice={helpNotice} />
 
       <div class="mx-0.5 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
 
@@ -997,30 +1263,6 @@
       {/each}
     </div>
   {/if}
-
-  <!-- Layers drawn over the topology: observed traffic. Off until switched
-       on, and nothing is asked of the cluster's Prometheus before that. -->
-  <div class="shrink-0 border-b border-outline-variant/40 px-3 py-1.5" data-layer-controls>
-    {#if trafficControls}
-      {@render trafficControls()}
-    {:else}
-      <TrafficPanel
-        clusterId={session.cluster.id}
-        namespaces={scope.namespaces}
-        all={scope.all}
-        bind:filters={trafficFilters}
-        onlayer={(next) => (panelLayer = next)}
-      />
-    {/if}
-    {#if trafficOverlay && (trafficOverlay.skipped.offMap > 0 || trafficOverlay.skipped.filtered > 0)}
-      <p class="mt-1 text-body-small text-on-surface-variant" aria-live="polite">
-        {#if trafficOverlay.skipped.filtered > 0}{trafficOverlay.skipped.filtered} traffic line{trafficOverlay.skipped.filtered === 1 ? '' : 's'} hidden by the filters.{/if}
-        {#if trafficOverlay.skipped.offMap > 0}
-          {trafficOverlay.skipped.offMap} not drawn: their ends are of a kind switched off.
-        {/if}
-      </p>
-    {/if}
-  </div>
 
   {#if searchNote || exportNote}
     <p class="shrink-0 border-b border-outline-variant/40 px-4 py-1.5 text-body-small text-on-surface-variant" aria-live="polite">
@@ -1190,7 +1432,7 @@
                 fill="none"
                 stroke-width={decoration?.width ? Math.min(Math.max(decoration.width, 1), 12) : 1.25}
                 marker-end="url(#topo-arrow)"
-                class={decoration?.tone ? TONE[decoration.tone] : 'stroke-outline'}
+                class="{decoration?.tone ? TONE[decoration.tone] : 'stroke-outline'} {animate ? 'flow' : ''}"
                 role="img"
                 aria-label={said}
               >
@@ -1243,9 +1485,10 @@
                   d={line.path}
                   fill="none"
                   stroke-linecap="round"
-                  stroke-dasharray={line.hot ? undefined : '1 5'}
+                  stroke-dasharray={animate ? undefined : line.hot ? undefined : '1 5'}
                   stroke-width={line.width}
-                  style="stroke: {line.colour}"
+                  class={animate ? 'traffic-flow' : ''}
+                  style="stroke: {line.colour}; {animate ? `animation-duration: ${trafficSeconds(line.width)}s` : ''}"
                   opacity={line.hot ? 1 : 0.8}
                 >
                   <title>{line.tooltip}</title>
@@ -1316,35 +1559,53 @@
       </p>
     {/if}
 
-    {#if graph?.summarised}
-      <!-- The one place the backend did not send every pod, said out loud. -->
-      <p class="shrink-0 border-t border-outline-variant/40 bg-surface-container-low px-4 py-2 text-body-small text-on-surface-variant">
-        Summarised: this scope has more pods than can be drawn one by one, so each owner's pods are one box with
-        complete counts. Narrow the scope to see them individually.
-      </p>
-    {/if}
-
-    {#if graph?.bounded}
-      <p class="shrink-0 border-t border-outline-variant/40 bg-surface-container-low px-4 py-2 text-body-small text-on-surface-variant">
-        Bounded: {graph.bounded}.
-      </p>
-    {/if}
-
-    {#if graph && graph.unreadable.length > 0}
-      <!-- An incomplete map has to say so: no Ingress tier because they could
-           not be listed reads, otherwise, as nothing routing to anything. -->
-      <p class="shrink-0 border-t border-outline-variant/40 bg-notice-warn px-4 py-2 text-body-small text-gauge-warn-ink">
-        Unreadable: could not read {graph.unreadable.join(', ')} in this scope, so anything reached through them is
-        missing from this map.
-      </p>
-    {/if}
-
     {#if graph && layout}
       <p class="shrink-0 border-t border-outline-variant/40 px-4 py-1 text-label-small tabular-nums text-on-surface-variant/70">
         {graph.nodes.length} objects, {graph.edges.length} relationships · {nodeMeta.size} boxes drawn
         {#if onScreen}· {nodesToDraw.length} on screen{/if}
         {#if layoutMs > 0}· laid out in {Math.round(layoutMs)} ms{/if}
+        {#if grouped && grouped.hidden.length > 0}· {grouped.hidden.length} {grouped.hidden.length === 1 ? 'application' : 'applications'} hidden ({grouped.hiddenObjects} objects){/if}
       </p>
     {/if}
   {/if}
 </div>
+
+<style>
+  /*
+    The dependency map's flow, reused: dashes travel from source to target, so
+    the movement reads as direction rather than decoration. Applied only while
+    `animate` holds — never under prefers-reduced-motion, never above the
+    drawn-line limit — and the media query below is a second guard.
+  */
+  .flow {
+    stroke-dasharray: 5 9;
+    animation: topology-flow 900ms linear infinite;
+  }
+
+  @keyframes topology-flow {
+    to {
+      stroke-dashoffset: -14;
+    }
+  }
+
+  /* Observed traffic: a shorter dash, its speed set per line by its rate. */
+  .traffic-flow {
+    stroke-dasharray: 4 6;
+    animation-name: traffic-flow;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+  }
+
+  @keyframes traffic-flow {
+    to {
+      stroke-dashoffset: -20;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .flow,
+    .traffic-flow {
+      animation: none;
+    }
+  }
+</style>

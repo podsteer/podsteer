@@ -9,6 +9,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte'
 import TopologyView from './TopologyView.svelte'
+import HelpPanel from '$lib/components/HelpPanel.svelte'
+import { help } from '$stores/help.svelte'
+import { HELP_TOPICS } from '$lib/help'
 import { fixtureBackend, useTopologyBackend, type FixtureBackend } from '$lib/topology/api'
 import type { TopologyGraph, TrafficEdge, TrafficEndpoint, TrafficLayer } from '$lib/topology/contract'
 
@@ -90,8 +93,14 @@ describe('TopologyView', () => {
 
     const pods = screen.getByRole('button', { name: /^Pod\s*12$/ })
     expect(pods.getAttribute('aria-pressed')).toBe('true')
-    expect(words()).toContain('Unreadable: could not read ingresses')
-    expect(words()).toContain('Bounded: Config, Secrets and claims are named from templates, not read')
+    // Said in Help, not under the map — and the (?) carries a mark, since an
+    // unreadable kind must not go unseen.
+    expect(words()).not.toContain('Unreadable:')
+    const said = (help.provided.topology ?? []).flatMap((section) => section.body).join(' ')
+    expect(said).toContain('Unreadable: could not read ingresses')
+    expect(said).toContain('Bounded: Config, Secrets and claims are named from templates, not read')
+    expect(screen.getByRole('button', { name: /^Help with the topology — could not read ingresses/ })).toBeTruthy()
+    expect(document.querySelector('[data-help-notice]')).toBeTruthy()
   })
 
   it('offers no toggle for a kind with nothing of it in the scope', async () => {
@@ -219,3 +228,112 @@ describe('TopologyView traffic overlay', () => {
     await vi.waitFor(() => expect(document.querySelectorAll('[data-traffic-edge]')).toHaveLength(1))
   })
 })
+
+describe('TopologyView, as the toolbar now has it', () => {
+  /** Two applications in one namespace, one with an extra Service. */
+  function twoApps(): TopologyGraph {
+    const app = (name: string) => ({ 'app.kubernetes.io/name': name })
+    return {
+      nodes: [
+        { id: 'shop/Deployment/web', kind: 'workload', apiKind: 'Deployment', name: 'web', namespace: 'shop', state: 'ok', detail: '', group: '', labels: app('web') },
+        { id: 'shop/Service/web', kind: 'service', apiKind: 'Service', name: 'web', namespace: 'shop', state: 'neutral', detail: '', group: '', labels: app('web') },
+        { id: 'shop/Deployment/api', kind: 'workload', apiKind: 'Deployment', name: 'api', namespace: 'shop', state: 'ok', detail: '', group: '', labels: app('api') },
+      ],
+      edges: [],
+      counts: { Deployment: 2, Service: 1 },
+      unreadable: [],
+      bounded: '',
+      summarised: false,
+      generatedAt: '',
+    }
+  }
+
+  async function groupByApplication() {
+    const trigger = document.querySelector('[data-select-trigger]') as HTMLElement
+    await fireEvent.click(trigger)
+    await fireEvent.click(screen.getByRole('option', { name: /Group by application/ }))
+  }
+
+  it('hides unticked applications and keeps the kind counts complete', async () => {
+    useTopologyBackend(fixtureBackend(twoApps()))
+    const s = session()
+    render(TopologyView, { session: s })
+    await drawn()
+    await groupByApplication()
+
+    await fireEvent.click(screen.getByRole('button', { name: /All applications/ }))
+    const menu = screen.getByRole('dialog', { name: 'Applications drawn' })
+    const web = [...menu.querySelectorAll('label')].find((l) => l.textContent?.includes('web'))!
+    await fireEvent.click(web.querySelector('input')!)
+
+    await vi.waitFor(() => expect(screen.queryByRole('button', { name: /^Open Deployment web/ })).toBeNull())
+    expect(screen.getByRole('button', { name: /^Open Deployment api/ })).toBeTruthy()
+    // Counts are the backend's, whatever is hidden.
+    expect(screen.getByRole('button', { name: /^Deployment\s*2$/ })).toBeTruthy()
+    expect(words()).toContain('1 application hidden (2 objects)')
+    expect((s as unknown as { topologyHiddenApps: Set<string> }).topologyHiddenApps.size).toBe(1)
+  })
+
+  it('searches in the toolbar field every pane uses, with no suggestion list', async () => {
+    render(TopologyView, { session: session() })
+    await drawn()
+    const field = screen.getByRole('textbox', { name: 'Find on the topology' }) as HTMLInputElement
+    expect(field.type).toBe('text')
+    expect(field.getAttribute('autocomplete')).toBe('off')
+    expect(field.getAttribute('list')).toBeNull()
+    await fireEvent.input(field, { target: { value: 'kind:Service' } })
+    expect(document.querySelector('[role="listbox"], datalist')).toBeNull()
+    expect(words()).toContain('1/1')
+  })
+
+  it('turns observed traffic on from a toolbar toggle, its controls in a popover', async () => {
+    render(TopologyView, { session: session() })
+    await drawn()
+    const toggle = screen.getByRole('button', { name: 'Observed traffic' })
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(document.querySelector('[data-traffic-popover]')).toBeNull()
+
+    await fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    const popover = document.querySelector('[data-traffic-popover]') as HTMLElement
+    expect(popover.hidden).toBe(false)
+
+    // Closing the popover keeps the layer on.
+    await fireEvent.click(screen.getByRole('button', { name: 'Traffic options' }))
+    expect(popover.hidden).toBe(true)
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+
+    await fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(document.querySelector('[data-traffic-popover]')).toBeNull()
+  })
+
+  it('registers its help: the standing topic, and this drawing in the panel', async () => {
+    expect(HELP_TOPICS.topology.sections.map((s) => s.heading)).toEqual(
+      expect.arrayContaining(['Bounded', 'Unreadable', 'Summarised', 'Observed traffic']),
+    )
+    render(TopologyView, { session: session() })
+    render(HelpPanel)
+    await drawn()
+    await fireEvent.click(screen.getByRole('button', { name: /^Help with the topology/ }))
+    const live = document.querySelector('[data-help-live]')!
+    expect(live.textContent).toContain('This drawing')
+    expect(live.textContent).toContain('Unreadable: could not read ingresses')
+    help.close()
+  })
+
+  it('animates lines, except for anybody who asked for less motion', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
+    const first = render(TopologyView, { session: session() })
+    await drawn()
+    await vi.waitFor(() => expect(document.querySelector('[data-edge].flow')).toBeTruthy())
+    first.unmount()
+
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+    render(TopologyView, { session: session() })
+    await drawn()
+    expect(document.querySelector('[data-edge]')).toBeTruthy()
+    expect(document.querySelector('[data-edge].flow')).toBeNull()
+  })
+})
+
