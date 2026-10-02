@@ -1312,6 +1312,35 @@ object.
   nothing" stops holding and they do not fold under a Deployment that is not
   on the map.
 
+### The topology page draws the fifth shape, and holds still
+
+`web/src/pages/TopologyView.svelte` (navigator pseudo-entry `TOPOLOGY_KIND_ID`,
+scope in `session.topologyScope`, seeded from the namespace filter; also
+"Open topology" on a namespace's row and drawer) is its own page, not a wider
+`DependencyMap`. Its pipeline is one tested module per step: kind toggles →
+`graphFold` → `graphGroup` (namespace / app / label frames; a collapsed group
+is one box with complete counts, worst state, re-pointed and deduplicated
+lines) → `layoutClient` (dagre in `graphLayout.worker.ts`, latest request
+wins by terminating the busy worker) → `graphPositions` → `graphCull` → draw.
+
+- **`layoutCompound` is not one dagre call.** One call on 5k boxes / 8k lines
+  took 10–20 s; the graph is split by group, then into connected pieces (a
+  box with >24 lines is a hub and joins only the piece it has most lines
+  into), each piece is dagre'd alone and shelf-packed. `graphLayoutBudget.test.ts`
+  holds it under 3 s (≈1.1 s measured). Lines between pieces are elbows.
+- **The map never redraws on a tick and never re-fits on a redraw.** The
+  backend's `topology:changed` shows "Changed — Refresh"; opt-in Live redraws
+  after 1/2/5/15 s at <500/<2000/<5000/more boxes, coalesced not reset. Same
+  drawn shape → every box keeps its position; otherwise the box nearest the
+  pane's centre stays where it was on screen.
+- **The bindings are found, not imported.** `$lib/topology/api.ts` reaches
+  `TopologyAPI` through `import.meta.glob`, so a checkout without generated
+  bindings still builds and the page says so (`TopologyUnavailableError`).
+  Dev builds take `?topology-fixture=<boxes>` for a synthetic graph.
+- **Traffic is a layer, not an edge.** Other layers draw through
+  `$lib/topology/decorations.ts` — decorate an existing line, or draw their own
+  overlay lines — and never become graph edges.
+
 ## Secrets are read on request, never on render
 
 The rules here are load-bearing, so read them before touching anything that
