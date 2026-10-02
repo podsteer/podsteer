@@ -94,6 +94,14 @@ describe('TopologyView', () => {
     expect(words()).toContain('Bounded: Config, Secrets and claims are named from templates, not read')
   })
 
+  it('offers no toggle for a kind with nothing of it in the scope', async () => {
+    useTopologyBackend(fixtureBackend({ ...GRAPH, counts: { ...GRAPH.counts, Ingress: 0 } }))
+    render(TopologyView, { session: session() })
+    await drawn()
+    expect(screen.queryByRole('button', { name: /^Ingress\s*0$/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /^Service\s*1$/ })).toBeTruthy()
+  })
+
   it('says Changed instead of redrawing, and reads again only when asked', async () => {
     render(TopologyView, { session: session() })
     await drawn()

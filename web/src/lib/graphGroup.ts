@@ -112,8 +112,18 @@ export function kindCounts(graph: TopologyGraph): { apiKind: string; count: numb
  * strand every pod away from its Deployment, and "this Deployment owns these
  * pods, via a ReplicaSet" is what Kubernetes' own garbage collector acts on.
  * The bridged line says "via ReplicaSet" so it is never read as direct.
- * Nothing else is bridged: a Service selecting pods says nothing about what an
- * Ingress in front of it routes to once the Service is hidden.
+ *
+ * AN OWNED OBJECT'S OTHER LINES GO TO ITS TOP-LEVEL OWNER when it is hidden.
+ * Attachments hang off pods — a ConfigMap is mounted by pods, a Service
+ * selects pods — so hiding Pods used to leave every Deployment with no lines
+ * at all. Each such line is re-pointed to the topmost visible owner of the
+ * hidden object (the Deployment, not its ReplicaSet), deduplicated, and
+ * labelled "via Pod": the Deployment's pods mount it, which is true, and the
+ * label says it is not the Deployment's own reference.
+ *
+ * An object with no visible owner (a bare pod) takes its lines with it, and
+ * nothing else is bridged: a Service selecting pods says nothing about what
+ * an Ingress in front of it routes to once the Service is hidden.
  */
 export function toView(graph: TopologyGraph, hidden: ReadonlySet<string>): ViewGraph {
   const nodes: ViewNode[] = []
@@ -162,6 +172,34 @@ export function toView(graph: TopologyGraph, hidden: ReadonlySet<string>): ViewG
     return found
   }
 
+  /** Every visible ancestor of a node, through owns, hidden or not on the way. */
+  const visibleAncestors = (id: string): Set<string> => {
+    const found = new Set<string>()
+    const queue = [...(owners.get(id) ?? [])]
+    const seen = new Set<string>([id])
+    while (queue.length > 0) {
+      const at = queue.shift()!
+      if (seen.has(at)) continue
+      seen.add(at)
+      if (!removed.has(at)) found.add(at)
+      queue.push(...(owners.get(at) ?? []))
+    }
+    return found
+  }
+
+  /** The topmost visible owners of a hidden node: visible ancestors no visible ancestor owns. */
+  const topCache = new Map<string, string[]>()
+  const topOwners = (id: string): string[] => {
+    const cached = topCache.get(id)
+    if (cached) return cached
+    const ancestors = visibleAncestors(id)
+    const top = [...ancestors].filter(
+      (candidate) => ![...visibleAncestors(candidate)].some((above) => ancestors.has(above)),
+    )
+    topCache.set(id, top)
+    return top
+  }
+
   for (const edge of graph.edges ?? []) {
     const fromHidden = removed.has(edge.from)
     const toHidden = removed.has(edge.to)
@@ -171,9 +209,22 @@ export function toView(graph: TopologyGraph, hidden: ReadonlySet<string>): ViewG
     }
     // The bridge: a visible child of a hidden owner, joined to the visible
     // owner above it.
-    if (edge.kind === 'owns' && fromHidden && !toHidden) {
-      for (const owner of visibleOwners(edge.from, new Set([edge.from]))) {
-        edges.push(viewEdge(owner, edge.to, 'owns', `via ${removed.get(edge.from)}`))
+    if (edge.kind === 'owns') {
+      if (fromHidden && !toHidden) {
+        for (const owner of visibleOwners(edge.from, new Set([edge.from]))) {
+          edges.push(viewEdge(owner, edge.to, 'owns', `via ${removed.get(edge.from)}`))
+        }
+      }
+      continue
+    }
+    // A hidden object's own references and selectors, to its top-level owner.
+    if (fromHidden && !toHidden) {
+      for (const owner of topOwners(edge.from)) {
+        edges.push(viewEdge(owner, edge.to, edge.kind, `via ${removed.get(edge.from)}`))
+      }
+    } else if (toHidden && !fromHidden) {
+      for (const owner of topOwners(edge.to)) {
+        edges.push(viewEdge(edge.from, owner, edge.kind, `via ${removed.get(edge.to)}`))
       }
     }
   }

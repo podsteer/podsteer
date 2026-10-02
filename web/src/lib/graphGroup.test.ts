@@ -71,6 +71,31 @@ describe('kind toggles', () => {
     expect(bridged.every((e) => e.label === 'via ReplicaSet' && e.kind === 'owns')).toBe(true)
   })
 
+  it('re-points a hidden pod’s attachments and selectors to its top-level owner, via Pod', () => {
+    const { nodes, edges } = app('a', 'web', 3)
+    const view = toView(graph(nodes, edges), new Set(['Pod', 'ReplicaSet']))
+
+    const lines = view.edges.map((e) => `${e.from} -> ${e.to} (${e.kind}, ${e.label})`).sort()
+    expect(lines).toEqual([
+      'a/Deployment/web -> a/ConfigMap/web-cfg (attaches, via Pod)',
+      'a/Service/web -> a/Deployment/web (selects, via Pod)',
+    ])
+  })
+
+  it('re-points to the topmost visible owner, not the nearest', () => {
+    const { nodes, edges } = app('a', 'web', 2)
+    const view = toView(graph(nodes, edges), new Set(['Pod']))
+    expect(view.edges.some((e) => e.from === 'a/Deployment/web' && e.to === 'a/ConfigMap/web-cfg')).toBe(true)
+    expect(view.edges.some((e) => e.from === 'a/ReplicaSet/web-1' && e.to === 'a/ConfigMap/web-cfg')).toBe(false)
+  })
+
+  it('drops the lines of a hidden object nothing visible owns', () => {
+    const bare = node('a/Pod/bare')
+    const cm = node('a/ConfigMap/c', { kind: 'config' })
+    const view = toView(graph([bare, cm], [edge(bare.id, cm.id, 'attaches')]), new Set(['Pod']))
+    expect(view.edges).toEqual([])
+  })
+
   it('bridges nothing but ownership: a hidden Service takes its lines with it', () => {
     const ingress = node('a/Ingress/in', { kind: 'ingress' })
     const { nodes, edges } = app('a', 'web', 1)

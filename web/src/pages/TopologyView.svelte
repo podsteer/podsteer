@@ -216,7 +216,8 @@
     groupChoice === 'label' ? (groupLabel.trim() ? { label: groupLabel.trim() } : 'none') : groupChoice,
   )
 
-  const toggles = $derived(graph ? kindCounts(graph) : [])
+  // A kind with nothing of it in this scope is not a choice: no "Pod 0".
+  const toggles = $derived(graph ? kindCounts(graph).filter((toggle) => toggle.count > 0) : [])
   const view = $derived(graph ? toView(graph, hiddenKinds) : null)
   const folded = $derived<FoldedView | null>(view ? foldView(view, expandedFolds) : null)
   const grouped = $derived<GroupedGraph | null>(folded ? group(folded, groupBy, collapsedGroups) : null)
@@ -335,25 +336,41 @@
     return Math.min(Math.max(value, MIN_ZOOM), MAX_ZOOM)
   }
 
+  /**
+   * Whether the view is still the fit it was given — nobody has panned or
+   * zoomed since. While it is, a change in the PANE's size (the kind-toggle
+   * row re-wrapping after the first draw, a resized window) fits again,
+   * because the fit was measured against a pane that no longer exists. A
+   * redraw of the MAP never refits: that would move what somebody is reading.
+   */
+  let fitHeld = false
+
   function fit(): void {
     if (!layout || paneWidth === 0 || paneHeight === 0) return
+    fitHeld = true
     const scale = clamp(Math.min(paneWidth / layout.bounds.width, paneHeight / layout.bounds.height, 1))
     zoom = scale
     panX = (paneWidth - layout.bounds.width * scale) / 2 - layout.bounds.x * scale
     panY = (paneHeight - layout.bounds.height * scale) / 2 - layout.bounds.y * scale
   }
 
-  // The first time the pane has a size, fit whatever is already drawn.
+  // The first time the pane has a size, fit whatever is already drawn; after
+  // that, refit on a pane resize only while the fit is untouched. The map
+  // itself is read untracked, so a redraw is never a reason to fit.
   let sized = false
   $effect(() => {
-    if (sized || paneWidth === 0 || paneHeight === 0 || !layout) return
+    const width = paneWidth
+    const height = paneHeight
+    if (width === 0 || height === 0 || !untrack(() => layout)) return
+    if (sized && !fitHeld) return
     sized = true
-    fit()
+    untrack(fit)
   })
 
   function zoomAbout(factor: number, px: number, py: number): void {
     const next = clamp(zoom * factor)
     if (next === zoom) return
+    fitHeld = false
     panX = px - ((px - panX) / zoom) * next
     panY = py - ((py - panY) / zoom) * next
     zoom = next
@@ -374,6 +391,7 @@
 
   function onPointerMove(event: PointerEvent): void {
     if (!dragging) return
+    fitHeld = false
     panX = dragFrom.panX + (event.clientX - dragFrom.x)
     panY = dragFrom.panY + (event.clientY - dragFrom.y)
   }
@@ -387,6 +405,7 @@
   function onViewportKey(event: KeyboardEvent): void {
     if (event.target !== viewport) return
     const step = 60
+    if (event.key.startsWith('Arrow')) fitHeld = false
     switch (event.key) {
       case 'ArrowLeft':
         panX += step
@@ -508,6 +527,7 @@
     const box = placedById.get(at)
     if (!box) return
     const next = centreOn(box, { width: paneWidth, height: paneHeight }, zoom)
+    fitHeld = false
     zoom = next.zoom
     panX = next.panX
     panY = next.panY
