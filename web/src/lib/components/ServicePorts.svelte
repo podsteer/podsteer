@@ -102,7 +102,7 @@
                 remotePort={row.port}
                 portName={row.name}
                 {busy}
-                onstart={(localPort) =>
+                onstart={(localPort, keep) =>
                   void forwards.startService(
                     clusterId,
                     namespace,
@@ -110,6 +110,7 @@
                     servicePortSelector(row),
                     row.port,
                     localPort,
+                    keep,
                   )}
               />
             {:else}

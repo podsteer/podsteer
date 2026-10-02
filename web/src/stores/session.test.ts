@@ -9,17 +9,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // autoscaler tests below need to control what each call to it resolves or
 // rejects with, per test.
 const listTable = vi.fn()
+const refreshCredentials = vi.fn()
 vi.mock('$lib/api/client', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('$lib/api/client')
   return {
     ...actual,
     getManifest: vi.fn().mockRejectedValue(new Error('no cluster in a test')),
     listTable: (...args: unknown[]) => listTable(...args),
+    refreshCredentials: (...args: unknown[]) => refreshCredentials(...args),
   }
 })
 
 import { ClusterSession, RICH_KIND_IDS } from './session.svelte'
 import type { Cluster, Node, Pod, ResourceKind, ResourceTable } from '$lib/api/client'
+import { ApiError } from '$lib/api/errors'
 
 // Only the three fields the constructor reads. Cast through unknown because
 // the DTO is a generated class with a dozen more, none of which this touches.
@@ -394,5 +397,38 @@ describe('autoscalersFor', () => {
     expect(first.status).toBe('unknown')
     expect(second).toEqual({ status: 'known', autoscalers: [] })
     expect(listTable).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('retrying after an error', () => {
+  const cases: [string, ApiError | null, boolean][] = [
+    ['unauthenticated drops the cached client first', new ApiError('unauthenticated', 'Your credentials were rejected'), true],
+    ['unreachable just retries', new ApiError('unreachable', 'The cluster is unreachable'), false],
+    ['forbidden just retries', new ApiError('forbidden', 'Not allowed'), false],
+    ['no error just retries', null, false],
+  ]
+
+  it.each(cases)('%s', async (_name, error, wantRefresh) => {
+    refreshCredentials.mockReset().mockResolvedValue(undefined)
+    const open = session()
+    const refresh = vi.spyOn(open, 'refresh').mockResolvedValue(undefined)
+    open.error = error
+
+    await open.retry()
+
+    expect(refreshCredentials).toHaveBeenCalledTimes(wantRefresh ? 1 : 0)
+    if (wantRefresh) expect(refreshCredentials).toHaveBeenCalledWith('dev')
+    expect(refresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('still refreshes when the credential refresh itself fails', async () => {
+    refreshCredentials.mockReset().mockRejectedValue(new Error('not connected'))
+    const open = session()
+    const refresh = vi.spyOn(open, 'refresh').mockResolvedValue(undefined)
+    open.error = new ApiError('unauthenticated', 'Your credentials were rejected')
+
+    await open.retry()
+
+    expect(refresh).toHaveBeenCalledTimes(1)
   })
 })

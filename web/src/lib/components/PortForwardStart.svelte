@@ -37,7 +37,7 @@
      * a component with two sets of half-used props and a branch deciding
      * which half was real.
      */
-    onstart: (localPort: number) => void
+    onstart: (localPort: number, keep: boolean) => void
   }
 
   let { remotePort, portName, busy, onstart }: Props = $props()
@@ -50,6 +50,13 @@
    * typed if either prop were ever to change under an existing instance.
    */
   let typed = $state(untrack(() => String(preferences.proposeLocalPort(remotePort, portName) ?? '')))
+
+  /**
+   * Whether this forward should come back after a restart. Off by default and
+   * per forward: nothing is written anywhere unless somebody ticks it, and
+   * what is written is the definition only — see domain.KeptForward.
+   */
+  let keep = $state(false)
 
   type ProbeState = 'idle' | 'checking' | 'free' | 'inUse' | 'invalid'
   let probe = $state<ProbeState>('idle')
@@ -112,7 +119,7 @@
 
   function start(): void {
     const value = typed.trim()
-    onstart(value === '' ? 0 : Number(value))
+    onstart(value === '' ? 0 : Number(value), keep)
   }
 
   const startDisabled = $derived(busy || probe === 'checking' || probe === 'inUse' || probe === 'invalid')
@@ -144,6 +151,14 @@
   >
     <Wand2 class="size-3.5" strokeWidth={1.8} />
   </button>
+
+  <label
+    class="flex shrink-0 cursor-pointer items-center gap-1 text-body-small text-on-surface-variant"
+    title="Reopen this forward after PodSteer restarts, once its cluster is connected. Saves the namespace, the target and the two port numbers — nothing else."
+  >
+    <input type="checkbox" bind:checked={keep} class="size-3.5 accent-primary" />
+    Keep
+  </label>
 
   <button
     type="button"

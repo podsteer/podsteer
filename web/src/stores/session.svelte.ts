@@ -23,6 +23,7 @@ import {
   listPods,
   listTable,
   listWorkloads,
+  refreshCredentials,
   scaleWorkload,
   updateResource,
   validateResource,
@@ -2122,6 +2123,32 @@ export class ClusterSession {
   /** A refresh a person asked for: counted, then the ordinary refresh. */
   requestRefresh = async (): Promise<void> => {
     this.manualRefreshes++
+    await this.refresh()
+  }
+
+  /**
+   * What the banner's Retry does.
+   *
+   * AFTER AN `unauthenticated` FAILURE A PLAIN REFRESH CANNOT SUCCEED. The
+   * backend holds one client per cluster, built from the token or certificate
+   * the kubeconfig had at the first request, so a retry reuses the credential
+   * that was just refused — even when the operator has since logged in again
+   * in a terminal and the kubeconfig now holds a good one. So the client is
+   * dropped first, and the refresh builds a new one from the kubeconfig as it
+   * stands. Anything else retries as it always did.
+   *
+   * A failure of the refresh-credentials call itself is not worth a second
+   * banner over the one already showing: the refresh that follows reports
+   * whatever is still wrong.
+   */
+  retry = async (): Promise<void> => {
+    if (this.error?.code === 'unauthenticated') {
+      try {
+        await refreshCredentials(this.cluster.id)
+      } catch {
+        // Fall through to the refresh, which says what is still wrong.
+      }
+    }
     await this.refresh()
   }
 

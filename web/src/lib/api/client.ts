@@ -18,6 +18,7 @@ import {
   Connect as bindConnect,
   Connections as bindConnections,
   Disconnect as bindDisconnect,
+  RefreshCredentials as bindRefreshCredentials,
   Distributions as bindDistributions,
   Ping as bindPing,
   ListClusters as bindListClusters,
@@ -96,6 +97,11 @@ import {
   StartServicePortForward as bindStartServicePortForward,
   StopPortForward as bindStopPortForward,
   ListPortForwards as bindListPortForwards,
+  ListPausedPortForwards as bindListPausedPortForwards,
+  SetPortForwardKept as bindSetPortForwardKept,
+  ResumePausedPortForward as bindResumePausedPortForward,
+  ForgetPausedPortForward as bindForgetPausedPortForward,
+  ReconnectPortForward as bindReconnectPortForward,
   CordonNode as bindCordonNode,
   EvictPod as bindEvictPod,
   PlanDrain as bindPlanDrain,
@@ -196,6 +202,7 @@ export type Pod = wails.Pod
 export type Container = wails.Container
 /** One live port-forward, as the backend is actually holding it. */
 export type PortForward = wails.PortForward
+export type PausedPortForward = wails.PausedPortForward
 /** One live node shell, as the backend is actually holding it. */
 export type NodeShell = wails.NodeShell
 /** One live in-cluster shell, as the backend is actually holding it. */
@@ -600,6 +607,18 @@ export function connect(clusterId: string): Promise<Cluster> {
  */
 export function cancelConnect(clusterId: string): Promise<void> {
   return call(() => bindCancelConnect(clusterId))
+}
+
+/**
+ * Makes an open cluster re-read its credentials from the kubeconfig.
+ *
+ * What Retry does after an `unauthenticated` failure: the backend caches a
+ * client per cluster, built from whatever the kubeconfig held at the first
+ * request, so after the operator logs in again in a terminal a retry on its
+ * own reuses the old token and fails the same way.
+ */
+export function refreshCredentials(clusterId: string): Promise<void> {
+  return call(() => bindRefreshCredentials(clusterId))
 }
 
 /**
@@ -1561,6 +1580,31 @@ export function startPortForward(
 /** Closes one forward, waiting for its local port to be released. */
 export function stopPortForward(forwardId: string): Promise<void> {
   return call(() => bindStopPortForward(forwardId))
+}
+
+/** Turns "keep across restarts" on or off for a running forward. */
+export function setPortForwardKept(forwardId: string, keep: boolean): Promise<void> {
+  return call(() => bindSetPortForwardKept(forwardId, keep))
+}
+
+/** The forwards kept across restarts that are not running, and why. */
+export function listPausedPortForwards(): Promise<PausedPortForward[]> {
+  return callList(() => bindListPausedPortForwards())
+}
+
+/** Retries a kept forward whose restore failed. */
+export function resumePausedPortForward(clusterId: string, localPort: number): Promise<void> {
+  return call(() => bindResumePausedPortForward(clusterId, localPort))
+}
+
+/** Removes a kept forward that is not running. */
+export function forgetPausedPortForward(clusterId: string, localPort: number): Promise<void> {
+  return call(() => bindForgetPausedPortForward(clusterId, localPort))
+}
+
+/** Asks a lost forward to start looking for its target again now. */
+export function reconnectPortForward(forwardId: string): Promise<void> {
+  return call(() => bindReconnectPortForward(forwardId))
 }
 
 /** Reports what is forwarded right now — the live registry, not intent. */

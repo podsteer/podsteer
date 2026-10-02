@@ -12,6 +12,7 @@
   import HelpPanel from '$lib/components/HelpPanel.svelte'
   import Splash from '$lib/components/Splash.svelte'
   import StatusBar from '$lib/components/StatusBar.svelte'
+  import NoticeHost from '$lib/components/NoticeHost.svelte'
   import ClusterView from '$pages/ClusterView.svelte'
   import ClusterWorkspace from '$pages/ClusterWorkspace.svelte'
   import { HEARTBEAT_INTERVAL_MS, workspace } from '$stores/workspace.svelte'
@@ -229,6 +230,7 @@
   </main>
 
   <StatusBar />
+  <NoticeHost />
 
   <!--
     Rendered last so it covers the chrome while booting; it fades itself out

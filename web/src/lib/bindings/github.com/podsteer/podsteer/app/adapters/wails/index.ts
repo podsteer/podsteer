@@ -115,6 +115,7 @@ export type {
     NotificationCapability,
     NotificationRequest,
     Overview,
+    PausedPortForward,
     PhaseCount,
     Pod,
     PodCapacity,

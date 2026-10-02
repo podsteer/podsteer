@@ -156,6 +156,13 @@ export function FindClusterShells(clusterID: string, $namespace: string): $Cance
 }
 
 /**
+ * ForgetPausedPortForward removes a kept definition that is not running.
+ */
+export function ForgetPausedPortForward(clusterID: string, localPort: number): $CancellablePromise<void> {
+    return $Call.ByID(1063225169, clusterID, localPort);
+}
+
+/**
  * FreeLocalPort asks the operating system for a local TCP port nothing is
  * using, so the "Pick a free port" control can offer one instead of asking
  * the operator to guess.
@@ -179,6 +186,16 @@ export function ListClusterShells(): $CancellablePromise<$models.ClusterShell[] 
  */
 export function ListNodeShells(): $CancellablePromise<$models.NodeShell[] | null> {
     return $Call.ByID(2508393379);
+}
+
+/**
+ * ListPausedPortForwards reports the kept forwards that are not running.
+ * 
+ * Nothing here connects a cluster. A forward whose cluster is not open is
+ * "paused" until the operator opens it; opening it restores the forward.
+ */
+export function ListPausedPortForwards(): $CancellablePromise<$models.PausedPortForward[] | null> {
+    return $Call.ByID(2887133599);
 }
 
 /**
@@ -246,6 +263,13 @@ export function PromoteRollout(clusterID: string, $namespace: string, name: stri
 }
 
 /**
+ * ReconnectPortForward asks a lost forward to start looking again now.
+ */
+export function ReconnectPortForward(forwardID: string): $CancellablePromise<void> {
+    return $Call.ByID(4175153983, forwardID);
+}
+
+/**
  * ResizeContainer changes a running container's CPU and memory in place,
  * through the pods/resize subresource.
  * 
@@ -268,6 +292,13 @@ export function ResizeContainer(clusterID: string, $namespace: string, podName: 
  */
 export function RestartRollout(clusterID: string, kind: string, $namespace: string, name: string): $CancellablePromise<void> {
     return $Call.ByID(472073868, clusterID, kind, $namespace, name);
+}
+
+/**
+ * ResumePausedPortForward retries a kept forward whose restore failed.
+ */
+export function ResumePausedPortForward(clusterID: string, localPort: number): $CancellablePromise<void> {
+    return $Call.ByID(2049565391, clusterID, localPort);
 }
 
 /**
@@ -301,6 +332,15 @@ export function SetConfigMapKey(clusterID: string, $namespace: string, name: str
  */
 export function SetImage(clusterID: string, kind: string, $namespace: string, name: string, container: string, image: string, initContainer: boolean): $CancellablePromise<void> {
     return $Call.ByID(2761830097, clusterID, kind, $namespace, name, container, image, initContainer);
+}
+
+/**
+ * SetPortForwardKept turns "keep across restarts" on or off for a running
+ * forward. Opt-in per forward: nothing is saved unless this is called with
+ * true, and what is saved is the definition only — see domain.KeptForward.
+ */
+export function SetPortForwardKept(forwardID: string, keep: boolean): $CancellablePromise<void> {
+    return $Call.ByID(4283072732, forwardID, keep);
 }
 
 /**

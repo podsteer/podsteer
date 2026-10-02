@@ -2793,6 +2793,30 @@ export interface Overview {
 }
 
 /**
+ * PausedPortForward is a forward saved across restarts that is not running.
+ */
+export interface PausedPortForward {
+    "clusterId": string;
+    "namespace": string;
+    "targetKind": string;
+    "targetName": string;
+
+    /**
+     * Port is what was forwarded: the container port for a pod, the Service
+     * port (a number or a name) for a Service.
+     */
+    "port": string;
+    "localPort": number;
+
+    /**
+     * State is "paused" (its cluster is not connected), "restoring" or
+     * "failed". Reason is set only for "failed".
+     */
+    "state": string;
+    "reason": string;
+}
+
+/**
  * PhaseCount is how many objects are in one phase.
  */
 export interface PhaseCount {
@@ -3147,6 +3171,26 @@ export interface PortForward {
      * whatever is pointed at it keeps its address and simply stalls.
      */
     "reconnecting": boolean;
+
+    /**
+     * Lost reports that the reconnect window ran out. The row stays, nothing
+     * is bound, and the forward keeps looking slowly; ReconnectPortForward
+     * asks it to try again at once and StopPortForward dismisses it.
+     */
+    "lost": boolean;
+
+    /**
+     * Kept reports that this forward is saved and will be restored when its
+     * cluster is next connected after a restart.
+     */
+    "kept": boolean;
+
+    /**
+     * TargetKind and TargetName say what was asked for — "pod" or "service" —
+     * as against Pod, which is wherever it landed.
+     */
+    "targetKind": string;
+    "targetName": string;
 }
 
 /**

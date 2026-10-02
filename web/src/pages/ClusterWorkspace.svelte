@@ -595,7 +595,7 @@ import TimelineView from './TimelineView.svelte'
       <div class="px-4 pt-2">
         <ErrorBanner
           error={session.error}
-          onretry={session.refresh}
+          onretry={session.retry}
           onreconnect={() => void workspace.reconnect(session.cluster.id)}
           reconnecting={workspace.isConnecting(session.cluster.id)}
           ondismiss={() => (session.error = null)}

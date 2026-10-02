@@ -51,7 +51,7 @@ describe('the Ports section of a Service', () => {
 
     await fireEvent.click(getByRole('button', { name: 'Forward' }))
 
-    expect(forwards.startService).toHaveBeenCalledWith('dev', 'web', 'postgres', 'postgres', 5432, 0)
+    expect(forwards.startService).toHaveBeenCalledWith('dev', 'web', 'postgres', 'postgres', 5432, 0, false)
   })
 
   it('asks for an unnamed port by its number', async () => {
@@ -59,7 +59,7 @@ describe('the Ports section of a Service', () => {
 
     await fireEvent.click(getByRole('button', { name: 'Forward' }))
 
-    expect(forwards.startService).toHaveBeenCalledWith('dev', 'web', 'postgres', '5432', 5432, 0)
+    expect(forwards.startService).toHaveBeenCalledWith('dev', 'web', 'postgres', '5432', 5432, 0, false)
   })
 
   it('shows what a port targets, including a targetPort that is not set', () => {
