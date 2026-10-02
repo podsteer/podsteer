@@ -85,10 +85,18 @@
     return [...open, ...rest]
   })
 
-  /** Loads the switches the first time the section is shown. */
+  /**
+   * Loads every context shown that has not been read yet — NOT only "the
+   * first time": the overview loads its own cluster's row before this pane
+   * ever opens, and a load guarded on the store being untouched never read
+   * the others, which then showed as Off. Loads merge, so asking again is
+   * safe. Contexts gone from the kubeconfig are pruned first.
+   */
   $effect(() => {
     const ids = asked
-    if (store.status === 'idle') void store.load(ids)
+    store.prune(workspace.clusters.map((cluster) => cluster.id).concat(workspace.sessions.map((s) => s.cluster.id)))
+    const missing = ids.filter((id) => !store.isLoaded(id))
+    if (missing.length > 0) void store.load(missing)
   })
 
   /**
@@ -162,7 +170,7 @@
                     accessibleName="Read history from the monitoring stack for {entry.clusterId}"
                     value={entry.metricsQueryMode}
                     options={MODE_OPTIONS}
-                    disabled={store.busy || !store.writable}
+                    disabled={store.busy || !store.writable || !store.isLoaded(entry.clusterId)}
                     class="w-full"
                     onchange={(value) =>
                       void store.save(entry.clusterId, { metricsQueryMode: value })}
@@ -185,7 +193,7 @@
                       accessibleName="Which monitoring backend answers for {entry.clusterId}"
                       value={backendValue(entry.preferredNamespace, entry.preferredService)}
                       options={backendOptions(candidates[entry.clusterId] ?? null, entry)}
-                      disabled={store.busy || !store.writable}
+                      disabled={store.busy || !store.writable || !store.isLoaded(entry.clusterId)}
                       class="w-full"
                       onopen={() => void loadCandidates(entry.clusterId)}
                       onchange={(value) => void store.save(entry.clusterId, parseBackendValue(value))}
@@ -211,7 +219,7 @@
                       accessibleName="What to do when the backend for {entry.clusterId} serves several clusters"
                       value={entry.fleetPolicy}
                       options={FLEET_OPTIONS}
-                      disabled={store.busy || !store.writable}
+                      disabled={store.busy || !store.writable || !store.isLoaded(entry.clusterId)}
                       class="w-full"
                       onchange={(value) => void store.save(entry.clusterId, { fleetPolicy: value })}
                     />
