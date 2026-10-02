@@ -1,0 +1,2432 @@
+{
+  "cluster": "kind-prod",
+  "pods": [
+    {
+      "name": "web-2",
+      "namespace": "shop",
+      "nodeName": "worker-1",
+      "phase": "Running",
+      "statusReason": "",
+      "isHealthy": true,
+      "containers": [
+        {
+          "lastTermination": null
+        }
+      ],
+      "cpu": "0.120",
+      "memory": "256.0MiB",
+      "readyContainers": 1,
+      "restarts": 0,
+      "controlledBy": "ReplicaSet/web-7d9f",
+      "qosClass": "Burstable",
+      "podIp": "10.0.0.12",
+      "ageSeconds": 7200,
+      "labels": {
+        "app": "web",
+        "team": "Payments",
+        "tier": "frontend"
+      },
+      "annotations": {
+        "owner": "alice"
+      },
+      "custom": {
+        "jsonpath:.spec.priorityClassName": "high"
+      }
+    },
+    {
+      "name": "web-10",
+      "namespace": "shop",
+      "nodeName": "worker-1",
+      "phase": "Running",
+      "statusReason": "",
+      "isHealthy": true,
+      "containers": [
+        {
+          "lastTermination": null
+        }
+      ],
+      "cpu": "0.120",
+      "memory": "255.9MiB",
+      "readyContainers": 1,
+      "restarts": 2,
+      "controlledBy": "ReplicaSet/web-7d9f",
+      "qosClass": "Burstable",
+      "podIp": "10.0.1.1",
+      "ageSeconds": 7200,
+      "labels": {
+        "app": "web",
+        "team": "payments"
+      },
+      "annotations": {
+        "owner": "bob"
+      },
+      "custom": {}
+    },
+    {
+      "name": "web-1",
+      "namespace": "shop",
+      "nodeName": "worker-10",
+      "phase": "Running",
+      "statusReason": "CrashLoopBackOff",
+      "isHealthy": false,
+      "containers": [
+        {
+          "lastTermination": {
+            "reason": "OOMKilled"
+          }
+        }
+      ],
+      "cpu": "—",
+      "memory": "—",
+      "readyContainers": 0,
+      "restarts": 14,
+      "controlledBy": "ReplicaSet/web-7d9f",
+      "qosClass": "Burstable",
+      "podIp": "10.0.0.2",
+      "ageSeconds": 60,
+      "labels": {
+        "app": "web"
+      },
+      "annotations": {},
+      "custom": {}
+    },
+    {
+      "name": "Api-1",
+      "namespace": "billing",
+      "nodeName": "worker-2",
+      "phase": "Running",
+      "statusReason": "",
+      "isHealthy": true,
+      "containers": [
+        {
+          "lastTermination": null
+        }
+      ],
+      "cpu": "1.500",
+      "memory": "1.2GiB",
+      "readyContainers": 1,
+      "restarts": 0,
+      "controlledBy": "StatefulSet/api",
+      "qosClass": "Guaranteed",
+      "podIp": "",
+      "ageSeconds": 259200,
+      "labels": {
+        "app": "api",
+        "version": "v2"
+      },
+      "annotations": {},
+      "custom": {}
+    },
+    {
+      "name": "api-01",
+      "namespace": "billing",
+      "nodeName": "worker-2",
+      "phase": "Running",
+      "statusReason": "",
+      "isHealthy": true,
+      "containers": [
+        {
+          "lastTermination": null
+        }
+      ],
+      "cpu": "0.900",
+      "memory": "900.0MiB",
+      "readyContainers": 1,
+      "restarts": 0,
+      "controlledBy": "StatefulSet/api",
+      "qosClass": "Guaranteed",
+      "podIp": "10.0.0.9",
+      "ageSeconds": 259200,
+      "labels": {
+        "app": "api",
+        "version": "v1"
+      },
+      "annotations": {},
+      "custom": {}
+    },
+    {
+      "name": "pending-x",
+      "namespace": "billing",
+      "nodeName": "",
+      "phase": "Pending",
+      "statusReason": "",
+      "isHealthy": false,
+      "containers": [
+        {
+          "lastTermination": null
+        }
+      ],
+      "cpu": "—",
+      "memory": "—",
+      "readyContainers": 0,
+      "restarts": 0,
+      "controlledBy": "",
+      "qosClass": "BestEffort",
+      "podIp": "",
+      "ageSeconds": 30,
+      "labels": {},
+      "annotations": {},
+      "custom": {}
+    },
+    {
+      "name": "puller",
+      "namespace": "billing",
+      "nodeName": "worker-1",
+      "phase": "Pending",
+      "statusReason": "ImagePullBackOff",
+      "isHealthy": false,
+      "containers": [
+        {
+          "lastTermination": null
+        }
+      ],
+      "cpu": "—",
+      "memory": "—",
+      "readyContainers": 0,
+      "restarts": 0,
+      "controlledBy": "Job/puller",
+      "qosClass": "BestEffort",
+      "podIp": "",
+      "ageSeconds": 45,
+      "labels": {
+        "app": "batch"
+      },
+      "annotations": {},
+      "custom": {}
+    },
+    {
+      "name": "oom-now",
+      "namespace": "ops",
+      "nodeName": "worker-3",
+      "phase": "Running",
+      "statusReason": "OOMKilled",
+      "isHealthy": false,
+      "containers": [
+        {
+          "lastTermination": null
+        }
+      ],
+      "cpu": "0.001",
+      "memory": "12B",
+      "readyContainers": 0,
+      "restarts": 0,
+      "controlledBy": "DaemonSet/agent",
+      "qosClass": "Burstable",
+      "podIp": "10.0.2.7",
+      "ageSeconds": 500,
+      "labels": {
+        "app": "agent",
+        "app.kubernetes.io/name": "agent"
+      },
+      "annotations": {},
+      "custom": {}
+    },
+    {
+      "name": "going",
+      "namespace": "ops",
+      "nodeName": "worker-3",
+      "phase": "Terminating",
+      "statusReason": "",
+      "isHealthy": false,
+      "containers": [
+        {
+          "lastTermination": null
+        }
+      ],
+      "cpu": "0.050",
+      "memory": "10.0MiB",
+      "readyContainers": 1,
+      "restarts": 0,
+      "controlledBy": "ReplicaSet/going-1",
+      "qosClass": "Burstable",
+      "podIp": "10.0.2.8",
+      "ageSeconds": 99999,
+      "labels": {
+        "app": "going"
+      },
+      "annotations": {},
+      "custom": {}
+    },
+    {
+      "name": "done-job",
+      "namespace": "ops",
+      "nodeName": "worker-3",
+      "phase": "Succeeded",
+      "statusReason": "",
+      "isHealthy": true,
+      "containers": [
+        {
+          "lastTermination": null
+        }
+      ],
+      "cpu": "—",
+      "memory": "—",
+      "readyContainers": 0,
+      "restarts": 0,
+      "controlledBy": "Job/done-job",
+      "qosClass": "BestEffort",
+      "podIp": "",
+      "ageSeconds": 400,
+      "labels": {
+        "app": "batch",
+        "job-name": "done-job"
+      },
+      "annotations": {},
+      "custom": {}
+    },
+    {
+      "name": "failed-job",
+      "namespace": "ops",
+      "nodeName": "worker-3",
+      "phase": "Failed",
+      "statusReason": "Error",
+      "isHealthy": false,
+      "containers": [
+        {
+          "lastTermination": null
+        }
+      ],
+      "cpu": "—",
+      "memory": "—",
+      "readyContainers": 0,
+      "restarts": 0,
+      "controlledBy": "Job/failed-job",
+      "qosClass": "BestEffort",
+      "podIp": "",
+      "ageSeconds": 401,
+      "labels": {
+        "app": "batch"
+      },
+      "annotations": {},
+      "custom": {}
+    },
+    {
+      "name": "éclair",
+      "namespace": "ops",
+      "nodeName": "worker-1",
+      "phase": "Running",
+      "statusReason": "",
+      "isHealthy": true,
+      "containers": [
+        {
+          "lastTermination": null
+        }
+      ],
+      "cpu": "0.010",
+      "memory": "64.0MiB",
+      "readyContainers": 1,
+      "restarts": 0,
+      "controlledBy": "ReplicaSet/web-7d9f",
+      "qosClass": "Burstable",
+      "podIp": "10.0.0.3",
+      "ageSeconds": 3600,
+      "labels": {
+        "app": "cafe",
+        "path": "/var/log"
+      },
+      "annotations": {
+        "note": "has \"quotes\", commas"
+      },
+      "custom": {}
+    },
+    {
+      "name": "eclair-2",
+      "namespace": "ops",
+      "nodeName": "worker-1",
+      "phase": "Running",
+      "statusReason": "",
+      "isHealthy": true,
+      "containers": [
+        {
+          "lastTermination": null
+        }
+      ],
+      "cpu": "0.010",
+      "memory": "64.0MiB",
+      "readyContainers": 1,
+      "restarts": 0,
+      "controlledBy": "ReplicaSet/web-7d9f",
+      "qosClass": "Burstable",
+      "podIp": "10.0.0.3",
+      "ageSeconds": 3600,
+      "labels": {
+        "app": "cafe"
+      },
+      "annotations": {},
+      "custom": {}
+    },
+    {
+      "name": "Eclair-10",
+      "namespace": "ops",
+      "nodeName": "worker-1",
+      "phase": "Running",
+      "statusReason": "",
+      "isHealthy": true,
+      "containers": [
+        {
+          "lastTermination": null
+        }
+      ],
+      "cpu": "0.010",
+      "memory": "64.0MiB",
+      "readyContainers": 1,
+      "restarts": 0,
+      "controlledBy": "ReplicaSet/web-7d9f",
+      "qosClass": "Burstable",
+      "podIp": "10.0.0.3",
+      "ageSeconds": 3600,
+      "labels": {
+        "app": "Cafe"
+      },
+      "annotations": {},
+      "custom": {}
+    }
+  ],
+  "cases": [
+    {
+      "name": "everything, server order",
+      "search": "",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "plain substring is case-insensitive",
+      "search": "WEB",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1"
+      ],
+      "chipCounts": {
+        "failing": 1,
+        "pending": 0,
+        "restarting": 1,
+        "oomkilled": 1,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "substring matches the namespace, node and phase",
+      "search": "worker-3",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job"
+      ],
+      "chipCounts": {
+        "failing": 2,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 1,
+        "imagepullbackoff": 0,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "substring spans a field boundary",
+      "search": "shop worker",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1"
+      ],
+      "chipCounts": {
+        "failing": 1,
+        "pending": 0,
+        "restarting": 1,
+        "oomkilled": 1,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "two terms AND together",
+      "search": "web 10",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-10",
+        "shop/web-1"
+      ],
+      "chipCounts": {
+        "failing": 1,
+        "pending": 0,
+        "restarting": 1,
+        "oomkilled": 1,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "quoted phrase is one literal term",
+      "search": "\"re:web\"",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "negated substring",
+      "search": "-web",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 2,
+        "pending": 2,
+        "restarting": 0,
+        "oomkilled": 1,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "a lone dash is a literal term",
+      "search": "-",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "regex with re:",
+      "search": "re:^web-\\d$",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "regex with slashes",
+      "search": "/^(api|web)-1/",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-10",
+        "shop/web-1",
+        "billing/Api-1"
+      ],
+      "chipCounts": {
+        "failing": 1,
+        "pending": 0,
+        "restarting": 1,
+        "oomkilled": 1,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "regex is case-insensitive and sees the whole row text",
+      "search": "re:WEB-\\d+ shop",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1"
+      ],
+      "chipCounts": {
+        "failing": 1,
+        "pending": 0,
+        "restarting": 1,
+        "oomkilled": 1,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "regex alternation and classes",
+      "search": "/(oom|going)\\b/",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "ops/oom-now",
+        "ops/going"
+      ],
+      "chipCounts": {
+        "failing": 1,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 1,
+        "imagepullbackoff": 0,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "negated regex",
+      "search": "-re:^(web|api)",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 2,
+        "pending": 2,
+        "restarting": 0,
+        "oomkilled": 1,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "unclosed regex on the last term",
+      "search": "/eclair-1",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "unclosed slash before another term is literal",
+      "search": "/var/log app=cafe",
+      "chips": [],
+      "sort": null,
+      "columns": [
+        {
+          "source": "label",
+          "key": "path"
+        }
+      ],
+      "expected": [
+        "ops/éclair"
+      ],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "invalid regex matches nothing",
+      "search": "re:(",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "negated invalid regex matches nothing",
+      "search": "-re:(",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "label equals",
+      "search": "app=web",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1"
+      ],
+      "chipCounts": {
+        "failing": 1,
+        "pending": 0,
+        "restarting": 1,
+        "oomkilled": 1,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "label equals is case-sensitive",
+      "search": "app=Web",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "label not equals",
+      "search": "app!=web",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 2,
+        "pending": 2,
+        "restarting": 0,
+        "oomkilled": 1,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "negated label equals",
+      "search": "-app=batch",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "ops/oom-now",
+        "ops/going",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 2,
+        "pending": 1,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 0,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "label presence",
+      "search": "label:version",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "billing/Api-1",
+        "billing/api-01"
+      ],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "negated label presence",
+      "search": "-label:app",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "billing/pending-x"
+      ],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 1,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "label key with a slash",
+      "search": "app.kubernetes.io/name=agent",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "ops/oom-now"
+      ],
+      "chipCounts": {
+        "failing": 1,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 1,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "cluster term matches the tab's own cluster",
+      "search": "cluster:prod",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "cluster term with another cluster",
+      "search": "cluster:staging",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "negated cluster term",
+      "search": "-cluster:kind",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "quoted cluster term",
+      "search": "cluster:\"kind-prod\"",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "custom label column text is searchable",
+      "search": "Payments",
+      "chips": [],
+      "sort": null,
+      "columns": [
+        {
+          "source": "label",
+          "key": "team"
+        }
+      ],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10"
+      ],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "custom column text not searched without the column",
+      "search": "Payments",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "custom annotation column text",
+      "search": "alice",
+      "chips": [],
+      "sort": null,
+      "columns": [
+        {
+          "source": "annotation",
+          "key": "owner"
+        }
+      ],
+      "expected": [
+        "shop/web-2"
+      ],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "custom jsonpath column text",
+      "search": "high",
+      "chips": [],
+      "sort": null,
+      "columns": [
+        {
+          "source": "jsonpath",
+          "key": ".spec.priorityClassName"
+        }
+      ],
+      "expected": [
+        "shop/web-2"
+      ],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "diacritics are not folded by the substring",
+      "search": "eclair",
+      "chips": [],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 0,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 0,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "chip failing",
+      "search": "",
+      "chips": [
+        "failing"
+      ],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-1",
+        "ops/oom-now",
+        "ops/failed-job"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "chip pending",
+      "search": "",
+      "chips": [
+        "pending"
+      ],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "billing/pending-x",
+        "billing/puller"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "chip restarting",
+      "search": "",
+      "chips": [
+        "restarting"
+      ],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-1"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "chip oomkilled",
+      "search": "",
+      "chips": [
+        "oomkilled"
+      ],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "shop/web-1",
+        "ops/oom-now"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "chip imagepullbackoff",
+      "search": "",
+      "chips": [
+        "imagepullbackoff"
+      ],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "billing/puller"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "chip terminating",
+      "search": "",
+      "chips": [
+        "terminating"
+      ],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "ops/going"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "chips OR together",
+      "search": "",
+      "chips": [
+        "pending",
+        "terminating"
+      ],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "billing/pending-x",
+        "billing/puller",
+        "ops/going"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "chips AND with search",
+      "search": "billing",
+      "chips": [
+        "pending"
+      ],
+      "sort": null,
+      "columns": [],
+      "expected": [
+        "billing/pending-x",
+        "billing/puller"
+      ],
+      "chipCounts": {
+        "failing": 0,
+        "pending": 2,
+        "restarting": 0,
+        "oomkilled": 0,
+        "imagepullbackoff": 1,
+        "terminating": 0
+      }
+    },
+    {
+      "name": "unknown chip id selects nothing",
+      "search": "",
+      "chips": [
+        "bogus"
+      ],
+      "sort": null,
+      "columns": [],
+      "expected": [],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort status ascending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "status",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-1",
+        "ops/failed-job",
+        "billing/puller",
+        "ops/oom-now",
+        "billing/pending-x",
+        "shop/web-2",
+        "shop/web-10",
+        "billing/Api-1",
+        "billing/api-01",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "ops/done-job",
+        "ops/going"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort status descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "status",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "ops/going",
+        "ops/done-job",
+        "shop/web-2",
+        "shop/web-10",
+        "billing/Api-1",
+        "billing/api-01",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "billing/pending-x",
+        "ops/oom-now",
+        "billing/puller",
+        "ops/failed-job",
+        "shop/web-1"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort name ascending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "name",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "billing/Api-1",
+        "billing/api-01",
+        "ops/done-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "ops/failed-job",
+        "ops/going",
+        "ops/oom-now",
+        "billing/pending-x",
+        "billing/puller",
+        "shop/web-1",
+        "shop/web-2",
+        "shop/web-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort name descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "name",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-10",
+        "shop/web-2",
+        "shop/web-1",
+        "billing/puller",
+        "billing/pending-x",
+        "ops/oom-now",
+        "ops/going",
+        "ops/failed-job",
+        "ops/Eclair-10",
+        "ops/eclair-2",
+        "ops/éclair",
+        "ops/done-job",
+        "billing/Api-1",
+        "billing/api-01"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort namespace ascending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "namespace",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort namespace descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "namespace",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort cpu ascending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "cpu",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "ops/oom-now",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "ops/going",
+        "shop/web-2",
+        "shop/web-10",
+        "billing/api-01",
+        "billing/Api-1",
+        "shop/web-1",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/done-job",
+        "ops/failed-job"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort cpu descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "cpu",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "billing/Api-1",
+        "billing/api-01",
+        "shop/web-2",
+        "shop/web-10",
+        "ops/going",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "ops/oom-now",
+        "shop/web-1",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/done-job",
+        "ops/failed-job"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort memory ascending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "memory",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "ops/oom-now",
+        "ops/going",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "shop/web-10",
+        "shop/web-2",
+        "billing/api-01",
+        "billing/Api-1",
+        "shop/web-1",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/done-job",
+        "ops/failed-job"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort memory descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "memory",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "billing/Api-1",
+        "billing/api-01",
+        "shop/web-2",
+        "shop/web-10",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "ops/going",
+        "ops/oom-now",
+        "shop/web-1",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/done-job",
+        "ops/failed-job"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort ready ascending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "ready",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-1",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/done-job",
+        "ops/failed-job",
+        "shop/web-2",
+        "shop/web-10",
+        "billing/Api-1",
+        "billing/api-01",
+        "ops/going",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort ready descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "ready",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "billing/Api-1",
+        "billing/api-01",
+        "ops/going",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "shop/web-1",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/done-job",
+        "ops/failed-job"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort restarts ascending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "restarts",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "shop/web-10",
+        "shop/web-1"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort restarts descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "restarts",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-1",
+        "shop/web-10",
+        "shop/web-2",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort controlledBy ascending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "controlledBy",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "billing/pending-x",
+        "ops/oom-now",
+        "ops/done-job",
+        "ops/failed-job",
+        "billing/puller",
+        "ops/going",
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "billing/Api-1",
+        "billing/api-01"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort controlledBy descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "controlledBy",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "billing/Api-1",
+        "billing/api-01",
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "ops/going",
+        "billing/puller",
+        "ops/failed-job",
+        "ops/done-job",
+        "ops/oom-now",
+        "billing/pending-x"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort node ascending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "node",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "billing/pending-x",
+        "shop/web-2",
+        "shop/web-10",
+        "billing/puller",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "billing/Api-1",
+        "billing/api-01",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "shop/web-1"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort node descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "node",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-1",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "billing/Api-1",
+        "billing/api-01",
+        "shop/web-2",
+        "shop/web-10",
+        "billing/puller",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "billing/pending-x"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort qos ascending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "qos",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "billing/pending-x",
+        "billing/puller",
+        "ops/done-job",
+        "ops/failed-job",
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "ops/oom-now",
+        "ops/going",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "billing/Api-1",
+        "billing/api-01"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort qos descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "qos",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "billing/Api-1",
+        "billing/api-01",
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "ops/oom-now",
+        "ops/going",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/done-job",
+        "ops/failed-job"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort ip ascending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "ip",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "billing/Api-1",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/done-job",
+        "ops/failed-job",
+        "shop/web-1",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "billing/api-01",
+        "shop/web-2",
+        "shop/web-10",
+        "ops/oom-now",
+        "ops/going"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort ip descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "ip",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "ops/going",
+        "ops/oom-now",
+        "shop/web-10",
+        "shop/web-2",
+        "billing/api-01",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "shop/web-1",
+        "billing/Api-1",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/done-job",
+        "ops/failed-job"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort age ascending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "age",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "billing/pending-x",
+        "billing/puller",
+        "shop/web-1",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/oom-now",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "shop/web-2",
+        "shop/web-10",
+        "ops/going",
+        "billing/Api-1",
+        "billing/api-01"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort age descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "age",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "billing/Api-1",
+        "billing/api-01",
+        "ops/going",
+        "shop/web-2",
+        "shop/web-10",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "ops/oom-now",
+        "ops/failed-job",
+        "ops/done-job",
+        "shop/web-1",
+        "billing/puller",
+        "billing/pending-x"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort by an unknown column keeps server order",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "bogus",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort by cluster keeps server order on one cluster",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "cluster",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort by a custom label column",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "label:team",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort by a custom label column descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "label:team",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort by a custom label column with many values",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "label:app",
+        "direction": "asc"
+      },
+      "columns": [
+        {
+          "source": "label",
+          "key": "app"
+        }
+      ],
+      "expected": [
+        "ops/oom-now",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/puller",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "ops/going",
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "billing/pending-x"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort by a custom label column with many values descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "label:app",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "ops/going",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "billing/puller",
+        "ops/done-job",
+        "ops/failed-job",
+        "billing/Api-1",
+        "billing/api-01",
+        "ops/oom-now",
+        "billing/pending-x"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort by a custom annotation column not on screen",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "annotation:owner",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-10",
+        "shop/web-2",
+        "shop/web-1",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort by a custom jsonpath column",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "jsonpath:.spec.priorityClassName",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort by an invalid custom id keeps server order",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "label:bad key",
+        "direction": "asc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-2",
+        "shop/web-10",
+        "shop/web-1",
+        "billing/Api-1",
+        "billing/api-01",
+        "billing/pending-x",
+        "billing/puller",
+        "ops/oom-now",
+        "ops/going",
+        "ops/done-job",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "search, chips and sort together",
+      "search": "app!=api",
+      "chips": [
+        "failing",
+        "oomkilled"
+      ],
+      "sort": {
+        "columnId": "restarts",
+        "direction": "desc"
+      },
+      "columns": [],
+      "expected": [
+        "shop/web-1",
+        "ops/oom-now",
+        "ops/failed-job"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    }
+  ]
+}
