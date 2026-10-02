@@ -143,7 +143,12 @@
   })
 </script>
 
+<!-- data-finding-id: the topology's findings badge brings this card into
+     view by it (ClusterSession.openFinding); tabindex -1 so it can take focus
+     there without joining the tab order. -->
 <article
+  data-finding-id={finding.id}
+  tabindex="-1"
   class="overflow-hidden rounded-sm border border-outline-variant/40 border-l-[3px] bg-surface-container-low
          transition-opacity duration-150 {allSnoozed ? 'border-l-outline-variant opacity-60' : style.accent}"
 >

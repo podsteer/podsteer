@@ -41,6 +41,7 @@
     OVERVIEW_KIND_ID,
     RBAC_KIND_ID,
     TIMELINE_KIND_ID,
+    TOPOLOGY_KIND_ID,
     type ClusterSession,
     type RecentObject,
   } from '$stores/session.svelte'
@@ -68,6 +69,7 @@
     Star,
     History,
     X,
+    Workflow,
   } from '@lucide/svelte'
 
   interface Props {
@@ -109,6 +111,7 @@
 
   const onOverview = $derived(session.selectedKindId === OVERVIEW_KIND_ID)
   const onApplications = $derived(session.selectedKindId === APPLICATIONS_KIND_ID)
+  const onTopology = $derived(session.selectedKindId === TOPOLOGY_KIND_ID)
   const onFleet = $derived(session.selectedKindId === FLEET_KIND_ID)
   const onRBAC = $derived(session.selectedKindId === RBAC_KIND_ID)
   const onTimeline = $derived(session.selectedKindId === TIMELINE_KIND_ID)
@@ -731,6 +734,31 @@
           strokeWidth={1.8}
         />
         <span class="flex-1 truncate text-body-medium">Applications</span>
+      </button>
+    </div>
+
+    <!-- Topology beside Applications: the other reading of "what is here and
+         how does it connect", drawn instead of listed. A pseudo-entry — there
+         is nothing to GET called a topology — that reads nothing on the tick;
+         see TOPOLOGY_KIND_ID. Opened from here it takes the namespace filter
+         as its scope. -->
+    <div class="px-1.5 pb-1">
+      <button
+        type="button"
+        onclick={() => session.openTopology()}
+        aria-current={onTopology ? 'page' : undefined}
+        class="group/item flex w-full items-center gap-2 rounded-sm px-2 py-[7px] text-left
+               transition-all duration-100 ease-standard
+               {onTopology
+                 ? 'bg-primary/12 text-primary'
+                 : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+      >
+        <Workflow
+          class="size-4 shrink-0 transition-colors duration-100
+                 {onTopology ? 'text-primary' : 'text-on-surface-variant/60 group-hover/item:text-on-surface-variant'}"
+          strokeWidth={1.8}
+        />
+        <span class="flex-1 truncate text-body-medium">Topology</span>
       </button>
     </div>
 

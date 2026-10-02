@@ -55,6 +55,7 @@ import TimelineView from './TimelineView.svelte'
   import FleetView from './FleetView.svelte'
   import RBACView from './RBACView.svelte'
   import HelmView from './HelmView.svelte'
+  import TopologyView from './TopologyView.svelte'
   import { fleet } from '$stores/fleet.svelte'
   import { PanelLeft, AlertTriangle, Download, Check, Plus, Laptop, ShieldQuestion, UserSearch } from '@lucide/svelte'
   import { onMount } from 'svelte'
@@ -386,6 +387,8 @@ import TimelineView from './TimelineView.svelte'
                 ? 'Timeline'
                 : session.viewMode === 'helm'
                   ? 'Helm'
+                  : session.viewMode === 'topology'
+                    ? 'Topology'
                   : session.viewMode === 'multi-kind'
                     ? 'Multi-kind'
                     : session.viewMode === 'security'
@@ -619,6 +622,8 @@ import TimelineView from './TimelineView.svelte'
       <TimelineView {session} />
     {:else if session.viewMode === 'helm'}
       <HelmView {session} />
+    {:else if session.viewMode === 'topology'}
+      <TopologyView {session} />
     {:else if session.viewMode === 'multi-kind'}
       <MultiKindView {session} />
     {:else if session.viewMode === 'security'}
