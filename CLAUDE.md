@@ -1457,13 +1457,23 @@ wins by terminating the busy worker) → `graphPositions` → `graphCull` → dr
   after 1/2/5/15 s at <500/<2000/<5000/more boxes, coalesced not reset. Same
   drawn shape → every box keeps its position; otherwise the box nearest the
   pane's centre stays where it was on screen.
-- **The bindings are found, not imported.** `$lib/topology/api.ts` reaches
-  `TopologyAPI` through `import.meta.glob`, so a checkout without generated
-  bindings still builds and the page says so (`TopologyUnavailableError`).
-  Dev builds take `?topology-fixture=<boxes>` for a synthetic graph.
-- **Traffic is a layer, not an edge.** Other layers draw through
-  `$lib/topology/decorations.ts` — decorate an existing line, or draw their own
-  overlay lines — and never become graph edges.
+- **Generated types are narrowed once.** `$lib/topology/api.ts`
+  (`normaliseGraph`) and `trafficApi.ts` turn the generated, wider types
+  (string unions, `| null` slices) into `contract.ts`'s; an unknown state is
+  drawn neutral and an unknown edge kind is dropped. The page calls
+  `TopologyAPI.Release` when it unmounts. Dev builds take
+  `?topology-fixture=<boxes>` for a synthetic graph.
+- **A box opens its drawer OVER the map.** `session.openDetailOver` sets
+  `detailKindId`; the drawer reads `drawerKindId`/`drawerKind`, never
+  `selectedKindId`, so the topology stays on screen with its viewport, and a
+  reference followed from that drawer opens over the map too.
+- **Traffic is a layer, not an edge.** The page mounts TrafficPanel and draws
+  `buildOverlay`'s lines and synthetic boxes over the map. Endpoint `nodeId`s
+  come from the topology service (it is the traffic service's
+  `TrafficNodeReader`) and are re-pointed to the fold or collapsed group
+  drawing them before the overlay is built, so only a kind switched off
+  leaves traffic off the map. Findings on backend-summarised pods reach the
+  summary box by pod name prefix (`<owner>-`), the controllers' own naming.
 
 ## Secrets are read on request, never on render
 
