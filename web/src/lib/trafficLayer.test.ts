@@ -53,6 +53,7 @@ function edge(
     p50: -1,
     p95: -1,
     p99: -1,
+    latencyBeyondBuckets: false,
     ...rest,
   };
 }

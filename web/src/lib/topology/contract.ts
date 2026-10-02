@@ -3,12 +3,15 @@
  *
  * Written by hand ahead of the backend so the two halves could be built at
  * the same time. The Go DTOs (`app/adapters/wails/dto_topology.go`,
- * `dto_traffic.go`) carry exactly these JSON names; once their generated
- * bindings exist this file re-exports those types, and it stays the one place
- * the interface imports them from.
+ * `dto_traffic.go`) carry exactly these JSON names. Where a generated type
+ * matches the contract it is re-exported from the bindings (PodSummary,
+ * TrafficEdge, TrafficEndpoint); where it is WIDER — a union typed `string`,
+ * a slice or map typed `| null` — the narrow type stays here and the api
+ * modules convert (topology/api.ts `normaliseGraph`, trafficApi.ts). This
+ * file stays the one place the interface imports these types from.
  */
 
-import type { TrafficEdge, TrafficEndpoint } from '$bindings/models'
+import type { TopologyPodSummary, TrafficEdge, TrafficEndpoint } from '$bindings/models'
 
 /** How healthy a box is. `neutral` means nothing was checked, not that it is fine. */
 export type NodeState = 'ok' | 'warn' | 'bad' | 'neutral'
@@ -24,12 +27,11 @@ export type TopologyEdgeKind =
   | 'attaches'
   | 'runs-as'
 
-/** Pods folded by the backend above the summary cap. The counts are complete. */
-export interface PodSummary {
-  total: number
-  ready: number
-  unhealthy: number
-}
+/**
+ * Pods folded by the backend above the summary cap. The counts are complete.
+ * Re-exported from the bindings: the generated type matches exactly.
+ */
+export type PodSummary = TopologyPodSummary
 
 export interface TopologyNode {
   id: string

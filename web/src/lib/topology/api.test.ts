@@ -6,18 +6,28 @@ import {
   normaliseGraph,
   onTopologyChanged,
   topology,
-  TopologyUnavailableError,
+  releaseTopology,
   useTopologyBackend,
 } from './api'
 import { fixtureTopology } from './fixtures'
+import { ApiError } from '$lib/api/errors'
 
 afterEach(() => useTopologyBackend(null))
 
 describe('topology api seam', () => {
-  it('refuses with a typed, non-retryable error while the bindings are not generated', async () => {
+  it('goes to the generated bindings unless a backend is installed', async () => {
+    // The unit-test runtime refuses every bound call, so reaching it at all is
+    // what proves the default path is the bindings — as an ApiError, the way
+    // every backend failure reaches the page.
     const failure = await topology('c', ['a'], false).catch((error: unknown) => error)
-    expect(failure).toBeInstanceOf(TopologyUnavailableError)
-    expect((failure as TopologyUnavailableError).isRetryable).toBe(false)
+    expect(failure).toBeInstanceOf(ApiError)
+
+    const backend = fixtureBackend(fixtureTopology({ nodes: 10, namespaces: 1 }))
+    useTopologyBackend(backend)
+    await topology('c', [], true)
+    await releaseTopology('c')
+    expect(backend.calls).toHaveLength(1)
+    expect(backend.released).toEqual(['c'])
   })
 
   it('answers from a fixture, scoped to the namespaces asked for', async () => {
@@ -54,6 +64,29 @@ describe('topology api seam', () => {
     // A cluster-scoped change names no namespace and concerns every scope.
     expect(changeConcerns({ clusterId: 'c', namespaces: [] }, 'c', scope)).toBe(true)
     expect(changeConcerns({ clusterId: 'c', namespaces: ['z'] }, 'c', { namespaces: [], all: true })).toBe(true)
+  })
+
+  it('narrows the generated graph to the contract', () => {
+    const graph = normaliseGraph({
+      nodes: [
+        { id: 'a', kind: 'pod', apiKind: 'Pod', name: 'a', namespace: 'n', state: 'mystery', detail: '', group: '', labels: null, podSummary: null },
+      ],
+      edges: [
+        { from: 'a', to: 'a', kind: 'owns', label: '' },
+        { from: 'a', to: 'a', kind: 'telepathy', label: '' },
+      ],
+      counts: { Pod: 1 },
+      unreadable: null,
+      bounded: '',
+      summarised: false,
+      generatedAt: '',
+    })
+    // An unknown state is "nothing checked", never healthy; an unknown kind of
+    // relationship is not drawn.
+    expect(graph.nodes[0].state).toBe('neutral')
+    expect(graph.nodes[0].labels).toBeUndefined()
+    expect(graph.nodes[0].podSummary).toBeUndefined()
+    expect(graph.edges.map((e) => e.kind)).toEqual(['owns'])
   })
 
   it('turns Go nils into empty collections', () => {
