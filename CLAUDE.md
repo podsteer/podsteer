@@ -393,7 +393,11 @@ usage moves every tick, and the watch store is not always serving.
 
 **The drawer is not limited to the page.** `PodQuery.pinned` names the open
 pod and `PodPage.pinned` returns it from the whole list, so its figures keep
-refreshing off-page; and `WorkloadService` keeps every listed pod's usage in
+refreshing off-page — and when it is in neither place the drawer says "This pod
+no longer exists" (`selectedGone`) instead of freezing it as current. The
+merged All-clusters table pins nothing (`fleetPodQuery.pinned` is empty) and
+needs to: a row there opens in its cluster's own tab via `openObject`, whose
+pod list pins it; and `WorkloadService` keeps every listed pod's usage in
 an in-memory ring (`podUsageRing`, 200 points / one hour per pod, keyed by
 cluster, dropped on disconnect, **never written anywhere** — object names stay
 off disk, see SECURITY.md), which `PodUsageHistory` serves to seed the drawer's

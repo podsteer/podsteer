@@ -1990,6 +1990,18 @@
         </button>
       </div>
     </header>
+    {#if session.selectedGone}
+      <!-- The pod was asked for by name on the last refresh and is not in the
+           cluster any more. What is below is how it was last seen. -->
+      <p
+        class="flex items-center gap-2 border-b border-outline-variant/60 bg-surface-container-low px-4 py-2
+               text-body-small text-gauge-warn-ink"
+        role="status"
+      >
+        <TriangleAlert class="size-4 shrink-0" strokeWidth={2} />
+        This pod no longer exists — showing it as it was last seen.
+      </p>
+    {/if}
 
     <!--
       Tabs, WITH THE SEMANTICS OF TABS. These were six plain buttons in a row,

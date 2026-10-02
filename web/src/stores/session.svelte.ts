@@ -725,6 +725,16 @@ export class ClusterSession {
    */
   #pinnedPod: Pod | null = null
 
+  /**
+   * Whether the pod open in the drawer has gone from the cluster: a page
+   * query that pinned it found it neither on the page nor in the list.
+   *
+   * SAID, NOT FROZEN. The drawer keeps showing the pod as it was last seen —
+   * that is what somebody was reading — but says it no longer exists, rather
+   * than presenting figures that will never move again as current.
+   */
+  selectedGone = $state(false)
+
   nodes = $state.raw<Node[]>([])
   workloads = $state.raw<Workload[]>([])
   events = $state.raw<K8sEvent[]>([])
@@ -2837,6 +2847,12 @@ export class ClusterSession {
         const page = rows as PodPage
         this.pods = page.rows ?? []
         this.#pinnedPod = page.pinned ?? null
+        // Asked for by name and in neither place: deleted, or evicted.
+        this.selectedGone =
+          !!this.selectedName &&
+          this.selectedApplication === null &&
+          !page.pinned &&
+          !this.pods.some((pod) => pod.name === this.selectedName && pod.namespace === this.selectedNamespace)
         this.podPage = {
           offset: page.offset,
           matched: page.matched,
@@ -3197,6 +3213,7 @@ export class ClusterSession {
 
     this.selectedName = name
     this.selectedNamespace = namespace
+    this.selectedGone = false
     this.selectedPod = pod ?? this.#findPod(name, namespace)
     this.selectedNode = node ?? this.#findNode(name)
     this.selectedWorkload = workload ?? this.#findWorkload(name, namespace)
@@ -3371,6 +3388,7 @@ export class ClusterSession {
     this.detailIntent = null
     this.selectedName = null
     this.selectedNamespace = ''
+    this.selectedGone = false
     this.selectedPod = null
     this.selectedNode = null
     this.selectedWorkload = null

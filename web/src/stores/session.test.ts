@@ -362,6 +362,22 @@ describe('the pod table, paged in Go', () => {
     expect(open.selectedPod?.name).toBe('web-9')
   })
 
+  it('says the open pod no longer exists, rather than freezing it as current', async () => {
+    queryPods.mockResolvedValueOnce(page(['web-1']))
+    await open.refresh()
+    await open.openDetail('web-1', 'prod')
+    expect(open.selectedGone).toBe(false)
+
+    queryPods.mockResolvedValueOnce(page(['web-2'], { pinned: null }))
+    await open.refresh()
+    expect(open.selectedGone).toBe(true)
+    // Still showing what it was last seen as.
+    expect(open.selectedPod?.name).toBe('web-1')
+
+    open.closeDetail()
+    expect(open.selectedGone).toBe(false)
+  })
+
   it('does not count opening a drawer as a new page', async () => {
     queryPods.mockResolvedValueOnce(page(['web-1']))
     await open.refresh()
