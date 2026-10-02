@@ -838,7 +838,8 @@ about before adding a fourth:
   silent drop nothing tests.
 - **A monitoring stack already in the cluster is discovered, and is queried
   only when somebody asks** — `app/adapters/k8s/prometheus.go` lists Services by
-  two label selectors and produces a RANKED CANDIDATE LIST rather than one
+  three label selectors (the standard app label, the older `app=prometheus`,
+  and linkerd-viz's `linkerd.io/extension=viz,component=prometheus`) and produces a RANKED CANDIDATE LIST rather than one
   guess, because a kube-prometheus-stack install returns several and only one
   answers PromQL. `DiscoverMetricsBackend` is the head of that list — which is
   what every caller wanted — and `ListMetricsBackends` hands over the whole of
@@ -1053,15 +1054,33 @@ about before adding a fourth:
   EVENTS per second, seen by both nodes' agents for a cross-node flow; no
   documented subtype filter counts each flow once.
 
-  **Unverified until the Linkerd e2e run** (linkerd + linkerd-viz on the kind
-  demo) — check against a live linkerd-viz Prometheus:
-  1. that the scrape config renames the pod's Job label to `k8s_job` (not
-     `job`, which would collide with Prometheus' own) on `request_total`;
-  2. that outbound `request_total`/`response_total` carry `dst_service` and
-     `authority`, and `dst_namespace=""` for a destination outside the mesh;
-  3. that the installed version still emits `request_total{direction="outbound"}`
-     with `dst_*` labels rather than only the newer `outbound_http_route_*` /
-     backend metrics — if not, the Linkerd row needs those metrics instead.
+  **Checked live on 2026-10-02** (kind demo: Istio 1.30.5 with Prometheus
+  3.10, Linkerd edge-26.9.3 with linkerd-viz's Prometheus 2.55; the real
+  answers are `app/domain/testdata/prom/*-live.json`). Linkerd: the scrape
+  config DOES rename the pod's Job label to `k8s_job`; outbound
+  `request_total`/`response_total` carry `dst_namespace`, `dst_deployment`,
+  `dst_service` and `authority`; and `request_total` is still emitted beside
+  the newer `outbound_http_route_*`. A zero-traffic pair's NaN percentiles are
+  dropped and the pair is not an edge. What the live run changed:
+  - **Never rate() a name alternation.** rate() drops `__name__`, so
+    `rate({__name__=~"sent|received"})` collides and Prometheus answers 422
+    "vector cannot contain metrics with the same labelset". Istio's sent and
+    received bytes (and Beyla's/OBI's two names) are separate rows of one
+    role that MapTraffic adds; `TestNoExpressionRatesANameAlternation`.
+  - **linkerd-viz's Prometheus is discovered** by its own labels
+    (`linkerd.io/extension=viz,component=prometheus`, port `admin`), ranked
+    LAST because it holds no kubelet series, and marked `LinkerdViz`. It is
+    never switched to: when Linkerd's metrics are missing from the chosen
+    backend, the empty state names it and says to choose it in Settings. Once
+    chosen it is accepted for traffic although the node check can only say
+    "unverifiable" (it never scrapes cAdvisor, and it is in-cluster by
+    construction); fleet and mismatch are still refused.
+  - **Monitoring scrapes are not traffic.** linkerd-viz's meshed Prometheus
+    scraping every proxy shows up as outbound requests addressed to a pod IP:
+    `dst_*` set but no `dst_service`, and no `authority`. The meshed branch
+    requires `dst_service!=""` and the outside-the-mesh branch
+    `authority!=""` (with `linkerdScrape` as the client-side guard). Any other
+    request sent straight to a pod IP is left out by the same rule.
 - **kube-state-metrics is discovered the same way, and is a SEPARATE
   question** — `app/adapters/k8s/kubestate.go`, beside `prometheus.go` and
   following it in every particular: two label selectors
