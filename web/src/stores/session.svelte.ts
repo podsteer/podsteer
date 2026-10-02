@@ -960,6 +960,19 @@ export class ClusterSession {
   /** The kind currently selected, or undefined before kinds have loaded. */
   readonly selectedKind = $derived(this.kinds.find((kind) => kind.id === this.selectedKindId))
 
+  /**
+   * The kind of the object open in the drawer, when it is not the list's.
+   *
+   * Set only by `openDetailOver` — the topology opening an object's drawer
+   * OVER itself, where the page on screen is not a list of that kind and must
+   * stay where it is. '' everywhere else, which makes the drawer's kind the
+   * selected one, as it always was. Cleared with the drawer.
+   */
+  detailKindId = $state<string>('')
+  /** The kind id the drawer reads: the override, or the selected kind. */
+  readonly drawerKindId = $derived(this.detailKindId || this.selectedKindId)
+  readonly drawerKind = $derived(this.kinds.find((kind) => kind.id === this.drawerKindId))
+
   /** What the content pane should render. */
   readonly viewMode = $derived.by<ViewMode>(() => {
     const id = this.selectedKindId
@@ -1930,6 +1943,9 @@ export class ClusterSession {
     namespace: string,
     namespaced: boolean,
   ): Promise<void> => {
+    // On the topology a followed reference opens over the map, which stays.
+    if (this.viewMode === 'topology') return this.openDetailOver(kindId, name, namespace)
+
     const needsNamespace =
       namespaced &&
       namespace !== '' &&
@@ -3297,7 +3313,7 @@ export class ClusterSession {
     // openObject, which sets selectedKindId and then calls this) and a click
     // from the Recent section itself all count as "opened" the same way —
     // there is exactly one place an object becomes recently opened.
-    this.#recordRecent(this.selectedKindId, name, namespace)
+    this.#recordRecent(this.drawerKindId, name, namespace)
 
     this.selectedName = name
     this.selectedNamespace = namespace
@@ -3334,6 +3350,16 @@ export class ClusterSession {
     this.secretsRevealed = false
 
     await this.#loadManifest(name, namespace)
+  }
+
+  /**
+   * Opens an object's drawer OVER the page on screen, without moving to its
+   * list: what a box on the topology does. The map, its scope and its
+   * viewport stay exactly as they were; closing the drawer returns to them.
+   */
+  openDetailOver = async (kindId: string, name: string, namespace: string): Promise<void> => {
+    this.detailKindId = kindId === this.selectedKindId ? '' : kindId
+    await this.openDetail(name, namespace)
   }
 
   /**
@@ -3454,7 +3480,7 @@ export class ClusterSession {
     try {
       const manifest = await getManifest(
         this.cluster.id,
-        this.selectedKindId,
+        this.drawerKindId,
         namespace,
         name,
         revealed,
@@ -3474,6 +3500,7 @@ export class ClusterSession {
     // Any request that never reached the drawer goes with it, so it cannot
     // surface on whatever is opened next.
     this.detailIntent = null
+    this.detailKindId = ''
     this.selectedName = null
     this.selectedNamespace = ''
     this.selectedGone = false

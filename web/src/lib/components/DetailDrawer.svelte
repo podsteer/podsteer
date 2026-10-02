@@ -219,10 +219,10 @@
 
   /** The selected kind's own icon, so the drawer is marked like its row. */
   const KindIcon = $derived(
-    session.selectedKind ? iconForKind(session.selectedKind) : undefined,
+    session.drawerKind ? iconForKind(session.drawerKind) : undefined,
   )
 
-  const isPod = $derived(session.selectedKindId === 'core/v1/pods')
+  const isPod = $derived(session.drawerKindId === 'core/v1/pods')
 
   /**
    * What the session timeline holds about the object on screen.
@@ -235,15 +235,15 @@
   const objectTimeline = $derived(
     timeline.forObject(
       session.cluster.id,
-      session.selectedKind?.kind ?? '',
-      session.selectedKind?.namespaced ? session.selectedNamespace : '',
+      session.drawerKind?.kind ?? '',
+      session.drawerKind?.namespaced ? session.selectedNamespace : '',
       session.selectedName ?? '',
     ),
   )
 
-  const isEvent = $derived(session.selectedKindId === 'core/v1/events')
+  const isEvent = $derived(session.drawerKindId === 'core/v1/events')
   const isApplication = $derived(!!session.selectedApplication)
-  const isSecret = $derived(session.selectedKindId === 'core/v1/secrets')
+  const isSecret = $derived(session.drawerKindId === 'core/v1/secrets')
 
   /**
    * The guardrails for the group this cluster sits in.
@@ -352,7 +352,7 @@
    * the values are deliberately revealed.
    */
   const secretsHidden = $derived(
-    session.selectedKindId === 'core/v1/secrets' && !session.secretsRevealed && !!session.manifest,
+    session.drawerKindId === 'core/v1/secrets' && !session.secretsRevealed && !!session.manifest,
   )
 
   const canEdit = $derived(!!session.manifest && !isEvent && !secretsHidden && !isReadOnly)
@@ -410,7 +410,7 @@
    * tab's own `show` below: there is no manifest to fetch for something that
    * is not a Kubernetes object.
    */
-  const canCompare = $derived(!!session.selectedKind && !isApplication)
+  const canCompare = $derived(!!session.drawerKind && !isApplication)
 
   // Read-only is not a reason to hide or disable Compare — nothing here
   // writes anything, so the guard that blocks Edit and Duplicate on a
@@ -436,13 +436,13 @@
    * invocation that would read it from stdin — see $lib/kubectl.apply.
    */
   const applyCommand = $derived(
-    kubectlApply(session.cluster.id, session.selectedKind?.namespaced ? session.selectedNamespace : undefined),
+    kubectlApply(session.cluster.id, session.drawerKind?.namespaced ? session.selectedNamespace : undefined),
   )
 
   /** The kubectl equivalent of Validate — apply's own hint, plus the flag
       that makes it a server-side dry run rather than a real write. */
   const applyDryRunCommand = $derived(
-    kubectlApplyDryRun(session.cluster.id, session.selectedKind?.namespaced ? session.selectedNamespace : undefined),
+    kubectlApplyDryRun(session.cluster.id, session.drawerKind?.namespaced ? session.selectedNamespace : undefined),
   )
 
   /**
@@ -490,14 +490,14 @@
   }
 
   const isScalable = $derived(
-    session.selectedKindId === 'apps/v1/deployments' ||
-    session.selectedKindId === 'apps/v1/statefulsets'
+    session.drawerKindId === 'apps/v1/deployments' ||
+    session.drawerKindId === 'apps/v1/statefulsets'
   )
 
   const isRestartable = $derived(
-    session.selectedKindId === 'apps/v1/deployments' ||
-    session.selectedKindId === 'apps/v1/statefulsets' ||
-    session.selectedKindId === 'apps/v1/daemonsets'
+    session.drawerKindId === 'apps/v1/deployments' ||
+    session.drawerKindId === 'apps/v1/statefulsets' ||
+    session.drawerKindId === 'apps/v1/daemonsets'
   )
 
   // The same three kinds as isRestartable — Deployment, StatefulSet and
@@ -507,9 +507,9 @@
   // them together would make a future kind that supports one but not the
   // other an awkward split rather than a one-line change.
   const isSetImageable = $derived(
-    session.selectedKindId === 'apps/v1/deployments' ||
-    session.selectedKindId === 'apps/v1/statefulsets' ||
-    session.selectedKindId === 'apps/v1/daemonsets'
+    session.drawerKindId === 'apps/v1/deployments' ||
+    session.drawerKindId === 'apps/v1/statefulsets' ||
+    session.drawerKindId === 'apps/v1/daemonsets'
   )
 
   // The same three kinds as isSetImageable — a rollout history exists for
@@ -519,9 +519,9 @@
   // tying them together would make a future kind that supports one but not
   // the other an awkward split rather than a one-line change.
   const hasRolloutHistory = $derived(
-    session.selectedKindId === 'apps/v1/deployments' ||
-    session.selectedKindId === 'apps/v1/statefulsets' ||
-    session.selectedKindId === 'apps/v1/daemonsets'
+    session.drawerKindId === 'apps/v1/deployments' ||
+    session.drawerKindId === 'apps/v1/statefulsets' ||
+    session.drawerKindId === 'apps/v1/daemonsets'
   )
 
   /**
@@ -535,19 +535,19 @@
   const workloadPodTemplate = $derived.by((): PodTemplate | null => {
     if (!isSetImageable || !session.manifest) return null
     try {
-      return podTemplateOf(parse(session.manifest), session.selectedKind?.kind)
+      return podTemplateOf(parse(session.manifest), session.drawerKind?.kind)
     } catch {
       return null
     }
   })
 
-  const isCronJob = $derived(session.selectedKindId === 'batch/v1/cronjobs')
-  const isJob = $derived(session.selectedKindId === 'batch/v1/jobs')
-  const isNode = $derived(session.selectedKindId === 'core/v1/nodes')
+  const isCronJob = $derived(session.drawerKindId === 'batch/v1/cronjobs')
+  const isJob = $derived(session.drawerKindId === 'batch/v1/jobs')
+  const isNode = $derived(session.drawerKindId === 'core/v1/nodes')
 
   /** The Kubernetes kind of the open workload, or null when it is not one. */
   const mappedWorkloadKind = $derived(
-    session.selectedKindId ? (WORKLOAD_KIND_BY_ID[session.selectedKindId] ?? null) : null,
+    session.drawerKindId ? (WORKLOAD_KIND_BY_ID[session.drawerKindId] ?? null) : null,
   )
 
   /** Whether the open object is one of the six controllers. */
@@ -564,14 +564,14 @@
    * them, and the backend draws that set from a label rather than from a GET.
    */
   const hasMap = $derived(
-    Boolean(session.selectedKindId && session.selectedName) || isApplication,
+    Boolean(session.drawerKindId && session.selectedName) || isApplication,
   )
 
   const isWorkloadWithLogs = $derived(
-    session.selectedKindId === 'apps/v1/deployments' ||
-    session.selectedKindId === 'apps/v1/statefulsets' ||
-    session.selectedKindId === 'apps/v1/daemonsets' ||
-    session.selectedKindId === 'apps/v1/replicasets'
+    session.drawerKindId === 'apps/v1/deployments' ||
+    session.drawerKindId === 'apps/v1/statefulsets' ||
+    session.drawerKindId === 'apps/v1/daemonsets' ||
+    session.drawerKindId === 'apps/v1/replicasets'
   )
 
   const selectedPod = $derived(
@@ -610,11 +610,11 @@
   })
 
   async function loadWorkloadPods() {
-    if (!session.selectedKind || !session.selectedName) return
+    if (!session.drawerKind || !session.selectedName) return
 
     const request = ++podRequest
     try {
-      const kind = session.selectedKind.kind
+      const kind = session.drawerKind.kind
       const pods = await ListPodsForWorkload(
         session.cluster.id,
         session.selectedNamespace,
@@ -673,7 +673,7 @@
    * Terminal went on talking to staging under a header reading production.
    */
   const shownObject = $derived(
-    `${session.cluster.id}|${session.selectedKindId}|${session.selectedNamespace}|${session.selectedName ?? ''}`,
+    `${session.cluster.id}|${session.drawerKindId}|${session.selectedNamespace}|${session.selectedName ?? ''}`,
   )
 
   $effect(() => {
@@ -870,13 +870,13 @@
   }
 
   async function handleDelete(): Promise<void> {
-    if (!session.selectedKind || !session.selectedName) return
+    if (!session.drawerKind || !session.selectedName) return
     try {
       await DeleteResource(
         session.cluster.id,
-        session.selectedKind.group,
-        session.selectedKind.version,
-        session.selectedKind.kind,
+        session.drawerKind.group,
+        session.drawerKind.version,
+        session.drawerKind.kind,
         session.selectedNamespace,
         session.selectedName
       )
@@ -891,7 +891,7 @@
   async function handleScale(replicas: number): Promise<void> {
     if (!selectedWorkload) return
     try {
-      const kind = session.selectedKindId === 'apps/v1/deployments' ? 'Deployment' : 'StatefulSet'
+      const kind = session.drawerKindId === 'apps/v1/deployments' ? 'Deployment' : 'StatefulSet'
       await session.scaleWorkload(kind, selectedWorkload.name, selectedWorkload.namespace, replicas)
       scaleDialogOpen = false
       await session.refresh()
@@ -901,11 +901,11 @@
   }
 
   async function handleRestart(): Promise<void> {
-    if (!session.selectedKind || !selectedWorkload) return
+    if (!session.drawerKind || !selectedWorkload) return
     try {
       await RestartRollout(
         session.cluster.id,
-        session.selectedKind.kind,
+        session.drawerKind.kind,
         selectedWorkload.namespace,
         selectedWorkload.name
       )
@@ -930,11 +930,11 @@
 
   /** Suspends or resumes the selected CronJob or Job. Resume needs no dialog. */
   async function handleSuspend(suspend: boolean): Promise<void> {
-    if (!session.selectedKind || !selectedWorkload) return
+    if (!session.drawerKind || !selectedWorkload) return
     try {
       await suspendWorkload(
         session.cluster.id,
-        session.selectedKind.kind,
+        session.drawerKind.kind,
         selectedWorkload.namespace,
         selectedWorkload.name,
         suspend,
@@ -1454,7 +1454,7 @@
       onopen={openObject}
       onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
     />
-  {:else if hasMap && session.selectedKind && session.selectedName}
+  {:else if hasMap && session.drawerKind && session.selectedName}
     <!--
       The neighbourhood shape. The catalogue id goes with the kind because the
       backend needs the API group, version and resource to read an arbitrary
@@ -1465,8 +1465,8 @@
       clusterId={session.cluster.id}
       namespace={session.selectedNamespace}
       name={session.selectedName}
-      kind={session.selectedKind.kind}
-      kindId={session.selectedKind.id}
+      kind={session.drawerKind.kind}
+      kindId={session.drawerKind.id}
       onopen={openObject}
       onmaximize={maximized === 'map' ? undefined : () => (maximized = 'map')}
     />
@@ -1720,7 +1720,7 @@
          its name is read, and says it with the mark the row was carrying. -->
     <header class="flex items-center gap-3 border-b border-outline-variant/60 px-4 py-3">
       {#if KindIcon}
-        <span class="inline-flex shrink-0" title={session.selectedKind?.singular}>
+        <span class="inline-flex shrink-0" title={session.drawerKind?.singular}>
           <KindIcon class="size-5 text-on-surface-variant/60" strokeWidth={1.75} />
         </span>
       {/if}
@@ -1768,7 +1768,7 @@
           identically for the text and correctly for the pill.
         -->
         <p class="flex min-w-0 items-center gap-1.5 text-body-small text-on-surface-variant/70">
-          <span class="shrink-0">{session.selectedKind?.singular ?? 'Object'}</span>
+          <span class="shrink-0">{session.drawerKind?.singular ?? 'Object'}</span>
           {#if session.selectedNamespace}
             <span class="shrink-0 text-on-surface-variant/40" aria-hidden="true">/</span>
             <button
@@ -2129,8 +2129,8 @@
           nodeLoad={session.nodeLoadFor(session.selectedNode?.name)}
           selectedNamespaceRow={session.selectedNamespaceRow}
           selectedWorkload={selectedWorkload}
-          kind={session.selectedKind?.kind}
-          group={session.selectedKind?.group}
+          kind={session.drawerKind?.kind}
+          group={session.drawerKind?.group}
           usage={session.usage}
           backend={session.overview?.backend}
           clusterId={session.cluster.id}
@@ -2230,10 +2230,10 @@
           </div>
         {/if}
       {:else if activeTab === 'history'}
-        {#if hasRolloutHistory && session.selectedKind && session.selectedName}
+        {#if hasRolloutHistory && session.drawerKind && session.selectedName}
           <RolloutHistory
             clusterId={session.cluster.id}
-            kind={session.selectedKind.kind}
+            kind={session.drawerKind.kind}
             namespace={session.selectedNamespace}
             name={session.selectedName}
             {isReadOnly}
@@ -2252,7 +2252,7 @@
         <EventsView
           clusterId={session.cluster.id}
           namespace={session.selectedNamespace}
-          kind={session.selectedKind?.kind ?? ''}
+          kind={session.drawerKind?.kind ?? ''}
           name={session.selectedName ?? ''}
         />
       {:else if activeTab === 'timeline'}
@@ -2315,9 +2315,9 @@
     management={managedBy}
     open={deleteDialogOpen}
     resourceName={session.selectedName}
-    resourceKind={session.selectedKind?.singular ?? 'resource'}
+    resourceKind={session.drawerKind?.singular ?? 'resource'}
     ctx={session.cluster.id}
-    resource={session.selectedKind ? resourceArgForKind(session.selectedKind) : ''}
+    resource={session.drawerKind ? resourceArgForKind(session.drawerKind) : ''}
     namespace={session.selectedNamespace}
     {productionGroup}
     onclose={() => (deleteDialogOpen = false)}
@@ -2382,7 +2382,7 @@
   <PaneDialog
     open={maximized === 'yaml'}
     icon={KindIcon}
-    kind={session.selectedKind?.singular}
+    kind={session.drawerKind?.singular}
     name={session.selectedName ?? ''}
     label="Manifest"
     onrestore={() => (maximized = null)}
@@ -2409,7 +2409,7 @@
   <PaneDialog
     open={maximized === 'logs'}
     icon={KindIcon}
-    kind={session.selectedKind?.singular}
+    kind={session.drawerKind?.singular}
     name={session.selectedName ?? ''}
     label="Logs"
     onrestore={() => (maximized = null)}
@@ -2421,7 +2421,7 @@
   <PaneDialog
     open={maximized === 'terminal'}
     icon={KindIcon}
-    kind={session.selectedKind?.singular}
+    kind={session.drawerKind?.singular}
     name={session.selectedName ?? ''}
     label="Terminal"
     onrestore={() => (maximized = null)}
@@ -2433,7 +2433,7 @@
   <PaneDialog
     open={maximized === 'map'}
     icon={KindIcon}
-    kind={session.selectedKind?.singular}
+    kind={session.drawerKind?.singular}
     name={session.selectedName ?? ''}
     label="Map"
     onrestore={() => (maximized = null)}
@@ -2447,7 +2447,7 @@
       management={managedBy}
       open={restartDialogOpen}
       workloadName={selectedWorkload.name}
-      workloadKind={session.selectedKind?.singular ?? 'workload'}
+      workloadKind={session.drawerKind?.singular ?? 'workload'}
       ctx={session.cluster.id}
       namespace={selectedWorkload.namespace}
       {productionGroup}
@@ -2474,7 +2474,7 @@
       ctx={session.cluster.id}
       namespace={selectedWorkload.namespace}
       workloadName={selectedWorkload.name}
-      workloadKind={session.selectedKind?.kind ?? 'CronJob'}
+      workloadKind={session.drawerKind?.kind ?? 'CronJob'}
       onclose={() => (suspendDialogOpen = false)}
       onconfirm={() => handleSuspend(true)}
     />
@@ -2509,15 +2509,15 @@
     />
   {/if}
 
-  {#if session.selectedKind}
+  {#if session.drawerKind}
     <CreateResourceDialog
       open={duplicateDialogOpen}
       icon={KindIcon}
-      kindLabel={session.selectedKind.singular}
+      kindLabel={session.drawerKind.singular}
       verb="Duplicate"
       seed={duplicateSeed}
       clusterId={session.cluster.id}
-      namespace={session.selectedKind.namespaced ? session.selectedNamespace : undefined}
+      namespace={session.drawerKind.namespaced ? session.selectedNamespace : undefined}
       {productionGroup}
       {isReadOnly}
       {readOnlyReason}
@@ -2533,7 +2533,7 @@
         open={compareDialogOpen}
         icon={KindIcon}
         clusterId={session.cluster.id}
-        kind={session.selectedKind}
+        kind={session.drawerKind}
         namespace={session.selectedNamespace}
         name={session.selectedName}
         onclose={() => (compareDialogOpen = false)}
