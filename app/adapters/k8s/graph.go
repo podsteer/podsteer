@@ -111,7 +111,7 @@ func ingressRefs(ctx context.Context, client kubernetes.Interface, namespace str
 	refs := make([]domain.IngressRef, 0, len(list.Items))
 	for i := range list.Items {
 		item := &list.Items[i]
-		ref := domain.IngressRef{Name: item.Name, Namespace: item.Namespace}
+		ref := domain.IngressRef{Name: item.Name, Namespace: item.Namespace, Labels: item.Labels}
 
 		// The default backend counts: an ingress with no rules still routes
 		// everything to it.

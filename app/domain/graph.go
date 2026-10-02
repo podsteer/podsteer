@@ -27,6 +27,16 @@ const (
 	GraphSecret         GraphKind = "secret"
 	GraphClaim          GraphKind = "claim"
 	GraphServiceAccount GraphKind = "serviceaccount"
+	// The kinds the namespace topology adds. Each is its own category because
+	// each draws a different relationship: a Gateway is where Gateway API
+	// traffic enters, a route (HTTPRoute, GRPCRoute, TCPRoute, TLSRoute) is
+	// how it reaches a Service, a scaler resizes a workload, a budget guards
+	// pods against eviction and a policy selects the pods its rules govern.
+	GraphGateway GraphKind = "gateway"
+	GraphRoute   GraphKind = "route"
+	GraphScaler  GraphKind = "scaler"
+	GraphBudget  GraphKind = "budget"
+	GraphPolicy  GraphKind = "policy"
 	// GraphObject is anything the map has no category for — a CRD instance, a
 	// StorageClass, an IngressClass. Drawn as a plain box rather than borrowed
 	// onto a category it does not belong to: a Deployment's icon on something
@@ -148,6 +158,9 @@ type ServiceRef struct {
 type IngressRef struct {
 	Name      string
 	Namespace string
+	// Labels are the Ingress's own labels, which only the namespace topology
+	// reads, to group a top-level object by app or by label.
+	Labels map[string]string
 	// Hosts are the rule hosts, for the label.
 	Hosts []string
 	// Backends names the services it routes to.

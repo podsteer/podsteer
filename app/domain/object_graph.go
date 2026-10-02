@@ -340,6 +340,16 @@ func GraphKindOf(kind string) GraphKind {
 		return GraphReplicaSet
 	case "Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob":
 		return GraphWorkload
+	case "Gateway":
+		return GraphGateway
+	case "HTTPRoute", "GRPCRoute", "TCPRoute", "TLSRoute", "UDPRoute":
+		return GraphRoute
+	case "HorizontalPodAutoscaler":
+		return GraphScaler
+	case "PodDisruptionBudget":
+		return GraphBudget
+	case "NetworkPolicy":
+		return GraphPolicy
 	default:
 		return GraphObject
 	}

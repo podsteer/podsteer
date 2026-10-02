@@ -484,6 +484,12 @@ func TestGraphKindOf(t *testing.T) {
 		{kind: "ReplicaSet", want: domain.GraphReplicaSet},
 		{kind: "Deployment", want: domain.GraphWorkload},
 		{kind: "Node", want: domain.GraphHost},
+		{kind: "Gateway", want: domain.GraphGateway},
+		{kind: "HTTPRoute", want: domain.GraphRoute},
+		{kind: "GRPCRoute", want: domain.GraphRoute},
+		{kind: "HorizontalPodAutoscaler", want: domain.GraphScaler},
+		{kind: "PodDisruptionBudget", want: domain.GraphBudget},
+		{kind: "NetworkPolicy", want: domain.GraphPolicy},
 		// ANYTHING WITH NO CATEGORY IS A PLAIN OBJECT, never borrowed onto one
 		// it does not belong to: a Deployment's icon on a CRD instance is
 		// worse than a neutral box.
