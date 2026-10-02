@@ -28,10 +28,24 @@ export function ExportPodsCSV(clusterIDs: string[] | null, $namespace: string, q
 }
 
 /**
+ * ExportPodsCSVIn is ExportPodsCSV over a set of namespaces.
+ */
+export function ExportPodsCSVIn(clusterIDs: string[] | null, namespaces: string[] | null, query: $models.PodQuery, columns: $models.CSVColumn[] | null, suggestedName: string): $CancellablePromise<string> {
+    return $Call.ByID(3498196378, clusterIDs, namespaces, query, columns, suggestedName);
+}
+
+/**
  * ListEvents lists events in the given namespace of each named cluster.
  */
 export function ListEvents(clusterIDs: string[] | null, $namespace: string): $CancellablePromise<$models.ClusterEvents[] | null> {
     return $Call.ByID(2753285828, clusterIDs, $namespace);
+}
+
+/**
+ * ListEventsIn is ListEvents over a set of namespaces.
+ */
+export function ListEventsIn(clusterIDs: string[] | null, namespaces: string[] | null): $CancellablePromise<$models.ClusterEvents[] | null> {
+    return $Call.ByID(3169867227, clusterIDs, namespaces);
 }
 
 /**
@@ -43,6 +57,13 @@ export function ListEvents(clusterIDs: string[] | null, $namespace: string): $Ca
  */
 export function ListPods(clusterIDs: string[] | null, $namespace: string): $CancellablePromise<$models.ClusterPods[] | null> {
     return $Call.ByID(259102093, clusterIDs, $namespace);
+}
+
+/**
+ * ListPodsIn is ListPods over a set of namespaces.
+ */
+export function ListPodsIn(clusterIDs: string[] | null, namespaces: string[] | null): $CancellablePromise<$models.ClusterPods[] | null> {
+    return $Call.ByID(276716742, clusterIDs, namespaces);
 }
 
 /**
@@ -59,11 +80,25 @@ export function ListTable(clusterIDs: string[] | null, group: string, resource: 
 }
 
 /**
+ * ListTableIn is ListTable over a set of namespaces.
+ */
+export function ListTableIn(clusterIDs: string[] | null, group: string, resource: string, namespaces: string[] | null): $CancellablePromise<$models.ClusterTable[] | null> {
+    return $Call.ByID(2288163044, clusterIDs, group, resource, namespaces);
+}
+
+/**
  * ListWorkloads lists every fleet workload kind in the given namespace of
  * each named cluster.
  */
 export function ListWorkloads(clusterIDs: string[] | null, $namespace: string): $CancellablePromise<$models.ClusterWorkloads[] | null> {
     return $Call.ByID(1060283261, clusterIDs, $namespace);
+}
+
+/**
+ * ListWorkloadsIn is ListWorkloads over a set of namespaces.
+ */
+export function ListWorkloadsIn(clusterIDs: string[] | null, namespaces: string[] | null): $CancellablePromise<$models.ClusterWorkloads[] | null> {
+    return $Call.ByID(3790829110, clusterIDs, namespaces);
 }
 
 /**
@@ -76,4 +111,11 @@ export function ListWorkloads(clusterIDs: string[] | null, $namespace: string): 
  */
 export function QueryPods(clusterIDs: string[] | null, $namespace: string, query: $models.PodQuery): $CancellablePromise<$models.FleetPodPage> {
     return $Call.ByID(126058095, clusterIDs, $namespace, query);
+}
+
+/**
+ * QueryPodsIn is QueryPods over a set of namespaces.
+ */
+export function QueryPodsIn(clusterIDs: string[] | null, namespaces: string[] | null, query: $models.PodQuery): $CancellablePromise<$models.FleetPodPage> {
+    return $Call.ByID(1230550772, clusterIDs, namespaces, query);
 }
