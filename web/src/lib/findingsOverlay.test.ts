@@ -49,3 +49,31 @@ describe('findings overlay', () => {
     expect(badgeFor(indexFindings(null), [{ apiKind: 'Pod', namespace: 'shop', name: 'web-1' }])).toBeNull()
   })
 })
+
+describe('findings on a backend summary', () => {
+  const crash = [
+    {
+      id: 'crash',
+      severity: 'critical',
+      title: 'Pods crash-looping',
+      subjects: [
+        { kind: 'Pod', namespace: 'shop', name: 'web-api-5f9-x1' },
+        { kind: 'Pod', namespace: 'shop', name: 'web-7d4-a2' },
+      ],
+    },
+  ]
+  const summaries = [
+    { id: 'fold/rs-web/Pod', namespace: 'shop', ownerName: 'web-7d4' },
+    { id: 'fold/rs-web-api/Pod', namespace: 'shop', ownerName: 'web-api-5f9' },
+    { id: 'fold/rs-other/Pod', namespace: 'other', ownerName: 'web-7d4' },
+  ]
+
+  it('lands a finding about a summarised pod on the box standing for it', () => {
+    const index = indexFindings(crash, summaries)
+    const member = (id: string) => [{ id, apiKind: '', namespace: 'shop', name: '' }]
+    expect(badgeFor(index, member('fold/rs-web/Pod'))?.count).toBe(1)
+    expect(badgeFor(index, member('fold/rs-web-api/Pod'))?.count).toBe(1)
+    // Same owner name, other namespace: not the same pods.
+    expect(badgeFor(index, [{ id: 'fold/rs-other/Pod', apiKind: '', namespace: 'other', name: '' }])).toBeNull()
+  })
+})

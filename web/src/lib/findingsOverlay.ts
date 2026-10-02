@@ -29,6 +29,20 @@ export interface FindingRef {
 
 export interface FindingsIndex {
   bySubject: Map<string, FindingRef[]>
+  /** Backend summary node id → findings naming pods it stands for. */
+  bySummary: Map<string, FindingRef[]>
+}
+
+/**
+ * A pod set the BACKEND summarised: one node, no pod names. Its pods are
+ * found by the name their controller gave them — `<owner>-<suffix>`, which is
+ * how every built-in controller's generateName (and a StatefulSet's ordinal)
+ * names a pod — so a finding about one of them still lands on the box.
+ */
+export interface SummaryOwner {
+  id: string
+  namespace: string
+  ownerName: string
 }
 
 /** What a box shows: how many distinct findings, and the worst of them. */
@@ -45,18 +59,39 @@ export function subjectKey(kind: string, namespace: string, name: string): strin
 
 const SEVERITY_RANK: Record<string, number> = { critical: 3, warning: 2, info: 1 }
 
-export function indexFindings(findings: readonly FindingLike[] | null | undefined): FindingsIndex {
+export function indexFindings(
+  findings: readonly FindingLike[] | null | undefined,
+  summaries: readonly SummaryOwner[] = [],
+): FindingsIndex {
   const bySubject = new Map<string, FindingRef[]>()
+  const bySummary = new Map<string, FindingRef[]>()
+  const ownersIn = new Map<string, SummaryOwner[]>()
+  for (const owner of summaries) {
+    if (!owner.ownerName) continue
+    const list = ownersIn.get(owner.namespace) ?? []
+    list.push(owner)
+    ownersIn.set(owner.namespace, list)
+  }
+  // Longest owner name first, so web-api's pods are never claimed by web.
+  for (const list of ownersIn.values()) list.sort((a, b) => b.ownerName.length - a.ownerName.length)
+
   for (const finding of findings ?? []) {
     const ref = { id: finding.id, severity: finding.severity, title: finding.title }
     for (const subject of finding.subjects ?? []) {
       const key = subjectKey(subject.kind, subject.namespace, subject.name)
-      const list = bySubject.get(key)
-      if (!list) bySubject.set(key, [ref])
-      else if (!list.some((held) => held.id === ref.id)) list.push(ref)
+      add(bySubject, key, ref)
+      if (subject.kind !== 'Pod') continue
+      const owner = ownersIn.get(subject.namespace)?.find((o) => subject.name.startsWith(`${o.ownerName}-`))
+      if (owner) add(bySummary, owner.id, ref)
     }
   }
-  return { bySubject }
+  return { bySubject, bySummary }
+}
+
+function add(index: Map<string, FindingRef[]>, key: string, ref: FindingRef): void {
+  const list = index.get(key)
+  if (!list) index.set(key, [ref])
+  else if (!list.some((held) => held.id === ref.id)) list.push(ref)
 }
 
 /**
@@ -66,11 +101,12 @@ export function indexFindings(findings: readonly FindingLike[] | null | undefine
  */
 export function badgeFor(
   index: FindingsIndex,
-  members: readonly { apiKind: string; namespace: string; name: string }[],
+  members: readonly { id?: string; apiKind: string; namespace: string; name: string }[],
 ): FindingBadge | null {
   if (index.bySubject.size === 0) return null
   const found = new Map<string, FindingRef>()
   for (const member of members) {
+    if (member.id) for (const ref of index.bySummary.get(member.id) ?? []) found.set(ref.id, ref)
     for (const ref of index.bySubject.get(subjectKey(member.apiKind, member.namespace, member.name)) ?? []) {
       found.set(ref.id, ref)
     }

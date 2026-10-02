@@ -281,6 +281,11 @@ export function edgeTooltip(
   if (e.p50 >= 0) lat.push(`p50 ${fmtMs(e.p50)}`);
   if (e.p95 >= 0) lat.push(`p95 ${fmtMs(e.p95)}`);
   if (e.p99 >= 0) lat.push(`p99 ${fmtMs(e.p99)}`);
+  // A percentile in the +Inf bucket is reported as -1 like an unexposed one;
+  // the flag is what says it was measured and is slower than every bucket.
+  if (e.latencyBeyondBuckets) {
+    lat.push(e.p99 < 0 ? "p99 > largest bucket" : "slowest requests beyond the largest bucket");
+  }
   if (lat.length) parts.push(lat.join(" · "));
   return parts.length ? `${head}\n${parts.join(" · ")}` : head;
 }
@@ -416,6 +421,7 @@ export function buildOverlay(
         acc.p50 = e.p50;
         acc.p95 = e.p95;
         acc.p99 = e.p99;
+        acc.latencyBeyondBuckets = e.latencyBeyondBuckets;
       }
     }
     if (a.kind === "overlay")

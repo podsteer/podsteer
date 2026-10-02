@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte'
 import TopologyView from './TopologyView.svelte'
 import { fixtureBackend, useTopologyBackend, type FixtureBackend } from '$lib/topology/api'
-import type { TopologyGraph } from '$lib/topology/contract'
+import type { TopologyGraph, TrafficEdge, TrafficEndpoint, TrafficLayer } from '$lib/topology/contract'
 
 const words = () => (document.body.textContent ?? '').replace(/\s+/g, ' ')
 
@@ -49,6 +49,7 @@ function session(overrides: Record<string, unknown> = {}) {
       { id: 'crash', severity: 'critical', title: 'Pods crash-looping', subjects: [{ kind: 'Pod', namespace: 'shop', name: 'web-1' }] },
     ],
     openObject: vi.fn(async () => {}),
+    openDetailOver: vi.fn(async () => {}),
     openFinding: vi.fn(async () => {}),
     refreshNamespaces: async () => {},
     ...overrides,
@@ -116,12 +117,11 @@ describe('TopologyView', () => {
 
     const deployment = screen.getByRole('button', { name: /^Open Deployment web in shop/ })
     await fireEvent.click(deployment)
-    expect((s as unknown as { openObject: ReturnType<typeof vi.fn> }).openObject).toHaveBeenCalledWith(
-      'apps/v1/deployments',
-      'web',
-      'shop',
-      true,
-    )
+    // OVER the map: the drawer opens, and the page is not swapped for a list.
+    const calls = s as unknown as { openDetailOver: ReturnType<typeof vi.fn>; openObject: ReturnType<typeof vi.fn> }
+    expect(calls.openDetailOver).toHaveBeenCalledWith('apps/v1/deployments', 'web', 'shop')
+    expect(calls.openObject).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-node]')).toBeTruthy()
 
     const badge = screen.getByRole('button', { name: /Finding: Pods crash-looping/ })
     await fireEvent.click(badge)
@@ -135,5 +135,67 @@ describe('TopologyView', () => {
     await fireEvent.click(screen.getByRole('button', { name: /^Collapse shop/ }))
     const group = await screen.findByRole('button', { name: /^Group shop, .*Press to expand, failing, 1 finding$/ })
     expect(group).toBeTruthy()
+  })
+})
+
+describe('TopologyView traffic overlay', () => {
+  /** A Deployment with six pods (folded by default) and a Service. */
+  function sixPods(): TopologyGraph {
+    const nodes: TopologyGraph['nodes'] = [
+      { id: 'shop/Deployment/web', kind: 'workload', apiKind: 'Deployment', name: 'web', namespace: 'shop', state: 'ok', detail: '', group: '' },
+      { id: 'shop/Deployment/api', kind: 'workload', apiKind: 'Deployment', name: 'api', namespace: 'shop', state: 'ok', detail: '', group: '' },
+    ]
+    const edges: TopologyGraph['edges'] = []
+    for (let i = 0; i < 6; i++) {
+      const id = `shop/Pod/web-${i}`
+      nodes.push({ id, kind: 'pod', apiKind: 'Pod', name: `web-${i}`, namespace: 'shop', state: 'ok', detail: '', group: 'shop/Deployment/web' })
+      edges.push({ from: 'shop/Deployment/web', to: id, kind: 'owns', label: '' })
+    }
+    return { nodes, edges, counts: { Deployment: 2, Pod: 6 }, unreadable: [], bounded: '', summarised: false, generatedAt: '' }
+  }
+
+  const ep = (p: Partial<TrafficEndpoint>): TrafficEndpoint => ({
+    namespace: 'shop', workload: '', service: '', external: '', unknown: false, nodeId: '', ...p,
+  })
+  const edge = (source: TrafficEndpoint, dest: TrafficEndpoint, p: Partial<TrafficEdge> = {}): TrafficEdge => ({
+    source, dest, protocol: 'http', requestsPerSec: 10, errorsPerSec: 0, bytesPerSec: 0, connections: 0,
+    p50: 5, p95: 9, p99: -1, latencyBeyondBuckets: false, ...p,
+  })
+  const layer = (edges: TrafficEdge[]): TrafficLayer => ({
+    source: 'istio', window: '5m', edges, unmapped: [], status: 'enabled', message: '', provenance: null, expressions: [],
+  })
+
+  it('re-points traffic on folded pods to their fold and draws outside hosts as overlay boxes', async () => {
+    useTopologyBackend(fixtureBackend(sixPods()))
+    const traffic = layer([
+      // A pod folded into "6 Pods" calls the api Deployment.
+      edge(ep({ workload: 'web', nodeId: 'shop/Pod/web-3' }), ep({ workload: 'api', nodeId: 'shop/Deployment/api' }), {
+        latencyBeyondBuckets: true,
+      }),
+      // And the internet.
+      edge(ep({ workload: 'web', nodeId: 'shop/Pod/web-1' }), ep({ namespace: '', external: 'example.com' })),
+    ])
+    render(TopologyView, { session: session({ activeIssues: [] }), traffic })
+    await drawn()
+
+    await vi.waitFor(() => expect(document.querySelectorAll('[data-traffic-edge]')).toHaveLength(2))
+    const titles = [...document.querySelectorAll('[data-traffic-edge] title')].map((t) => t.textContent ?? '')
+    expect(titles.some((t) => t.includes('p99 > largest bucket'))).toBe(true)
+    const outside = document.querySelector('[data-traffic-node]')!
+    expect(outside.getAttribute('aria-label')).toBe('Outside the cluster: example.com')
+    expect(words()).not.toContain('not drawn')
+  })
+
+  it('re-points traffic onto a collapsed group', async () => {
+    useTopologyBackend(fixtureBackend(sixPods()))
+    const traffic = layer([
+      edge(ep({ workload: 'web', nodeId: 'shop/Pod/web-3' }), ep({ workload: 'api', nodeId: 'shop/Deployment/api' })),
+    ])
+    render(TopologyView, { session: session({ activeIssues: [] }), traffic })
+    await drawn()
+    await fireEvent.click(screen.getByRole('button', { name: /^Collapse shop/ }))
+    await screen.findByRole('button', { name: /^Group shop/ })
+    // Both ends are inside the one group now: a loop on its box, still drawn.
+    await vi.waitFor(() => expect(document.querySelectorAll('[data-traffic-edge]')).toHaveLength(1))
   })
 })

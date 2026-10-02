@@ -54,14 +54,15 @@
   import { centreOn, locate, searchNodes } from '$lib/topologySearch'
   import { badgeFor, indexFindings, type FindingBadge } from '$lib/findingsOverlay'
   import { renderPng, topologyFilename } from '$lib/pngExport'
-  import { changeConcerns, exportTopologyPNG, onTopologyChanged, topology } from '$lib/topology/api'
+  import { changeConcerns, exportTopologyPNG, onTopologyChanged, releaseTopology, topology } from '$lib/topology/api'
+  import { buildOverlay, type TrafficFilters, type TrafficOverlay } from '$lib/trafficLayer'
+  import TrafficPanel from '$lib/components/TrafficPanel.svelte'
   import type { TopologyGraph, TopologyNode, TrafficLayer } from '$lib/topology/contract'
   import type { DecorationTone, EdgeDecoration, TopologyDecorator } from '$lib/topology/decorations'
   import PaneToolbar from '$lib/components/PaneToolbar.svelte'
   import ToolbarButton from '$lib/components/ToolbarButton.svelte'
   import Select from '$lib/components/Select.svelte'
   import {
-    Activity,
     ChevronDown,
     Columns3,
     Crosshair,
@@ -76,15 +77,15 @@
   interface Props {
     session: ClusterSession
     /**
-     * Observed traffic for the drawn scope, when the traffic layer is on.
-     * Carried for the layer's own controls; what it draws arrives through
-     * `decorator` — see $lib/topology/decorations for why traffic is never an
-     * edge of the graph.
+     * Observed traffic to draw, handed in rather than asked for — what a test
+     * or another host does. Without it the page's own TrafficPanel supplies
+     * the layer when somebody switches it on. Either way it is drawn as an
+     * OVERLAY (buildOverlay), never as edges of the graph.
      */
     traffic?: TrafficLayer
     /** Decorates the dependency lines and draws a layer's own lines. */
     decorator?: TopologyDecorator
-    /** The traffic layer's controls, rendered in the toolbar's layer area. */
+    /** Replaces the built-in TrafficPanel, rendered in the layer strip. */
     trafficControls?: Snippet
   }
 
@@ -191,6 +192,14 @@
 
   $effect(() => {
     if (scopeKey !== loadedFor && !(scope.namespaces.length === 0 && !scope.all)) void load(false)
+  })
+
+  // The backend feeds `topology:changed` for every scope drawn; when this page
+  // goes away — or moves to another cluster — that cluster's feed is released
+  // rather than left to expire.
+  $effect(() => {
+    const cluster = session.cluster.id
+    return () => void releaseTopology(cluster)
   })
 
   // --- What is drawn -------------------------------------------------------
@@ -430,8 +439,21 @@
 
   // --- Findings ------------------------------------------------------------
 
-  const findings = $derived(indexFindings(session.activeIssues))
   const realNodes = $derived(new Map((graph?.nodes ?? []).map((node) => [node.id, node])))
+  /** Backend-summarised pod sets and the controller that owns each. */
+  const summaryOwners = $derived.by(() => {
+    if (!graph?.summarised) return []
+    const owners = new Map<string, string>()
+    for (const edge of graph.edges) if (edge.kind === 'owns') owners.set(edge.to, edge.from)
+    return graph.nodes
+      .filter((node) => node.podSummary)
+      .map((node) => ({
+        id: node.id,
+        namespace: node.namespace,
+        ownerName: realNodes.get(owners.get(node.id) ?? '')?.name ?? '',
+      }))
+  })
+  const findings = $derived(indexFindings(session.activeIssues, summaryOwners))
 
   function membersOf(ids: string[]): TopologyNode[] {
     const out: TopologyNode[] = []
@@ -557,7 +579,9 @@
     if (node.set === 'summary' || !node.apiKind) return
     const kind = session.kinds.find((entry) => entry.kind === node.apiKind)
     if (!kind) return
-    await session.openObject(kind.id, node.name, node.namespace, kind.namespaced)
+    // OVER the map: the drawer opens where every list opens it, and the
+    // topology — scope, groups, viewport — stays exactly as it is behind it.
+    await session.openDetailOver(kind.id, node.name, node.namespace)
   }
 
   function nodeLabel(node: ViewNode, badge: FindingBadge | undefined): string {
@@ -631,6 +655,49 @@
     return out
   })
 
+  // --- Traffic --------------------------------------------------------------
+
+  /** The layer the panel loaded; null while off, loading or failed. */
+  let panelLayer = $state.raw<TrafficLayer | null>(null)
+  let trafficFilters = $state<TrafficFilters>({ hideSystem: true, hideExternal: false })
+  const trafficShown = $derived(traffic ?? panelLayer)
+
+  /**
+   * The traffic overlay on the boxes as drawn.
+   *
+   * An endpoint's node may not be a box of its own right now — folded into a
+   * set, inside a collapsed group — so it is RESOLVED to the box standing for
+   * it first, exactly as search locates a match. Only an endpoint whose kind
+   * is switched off has no box, and buildOverlay counts it as off the map.
+   */
+  const trafficOverlay = $derived.by<TrafficOverlay | null>(() => {
+    if (!trafficShown || !drawnGraph || !layout) return null
+    const drawnIds = new Set(nodeMeta.keys())
+    const standIns = [drawnGraph.folded.standIn, drawnGraph.grouped.standIn]
+    const box = (id: string) => (id ? (locate(id, drawnIds, standIns) ?? id) : id)
+    const layer = {
+      ...trafficShown,
+      edges: trafficShown.edges.map((edge) => ({
+        ...edge,
+        source: { ...edge.source, nodeId: box(edge.source.nodeId) },
+        dest: { ...edge.dest, nodeId: box(edge.dest.nodeId) },
+      })),
+    }
+    const centres = new Map<string, { x: number; y: number }>()
+    for (const node of layout.nodes) centres.set(node.id, { x: node.x, y: node.y })
+    return buildOverlay(layer, centres, trafficFilters)
+  })
+
+  /** What a PNG covers: the layout, and the traffic column beside it. */
+  const exportBounds = $derived.by(() => {
+    if (!layout) return null
+    const nodes = trafficOverlay?.nodes ?? []
+    if (nodes.length === 0) return layout.bounds
+    const right = Math.max(layout.bounds.x + layout.bounds.width, ...nodes.map((n) => n.x + 100))
+    const bottom = Math.max(layout.bounds.y + layout.bounds.height, ...nodes.map((n) => n.y + 40))
+    return { x: layout.bounds.x, y: layout.bounds.y, width: right - layout.bounds.x, height: bottom - layout.bounds.y }
+  })
+
   // --- Export --------------------------------------------------------------
 
   let exportNote = $state('')
@@ -642,7 +709,7 @@
     try {
       await tick()
       const ground = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim() || '#ffffff'
-      const image = await renderPng(svg, content, layout.bounds, ground)
+      const image = await renderPng(svg, content, exportBounds ?? layout.bounds, ground)
       exporting = false
       const path = await exportTopologyPNG(topologyFilename(session.cluster.id, scope), image.base64)
       if (!path) return
@@ -833,23 +900,6 @@
 
       <div class="mx-0.5 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
 
-      <!-- Layers drawn over the topology. Traffic plugs its controls in here. -->
-      <div class="flex items-center gap-1" data-layer-controls>
-        {#if trafficControls}
-          {@render trafficControls()}
-        {:else}
-          <ToolbarButton
-            icon={Activity}
-            label="Traffic"
-            title={traffic ? `Traffic from ${traffic.source}` : 'Observed traffic is not available in this build'}
-            disabled
-            onclick={() => {}}
-          />
-        {/if}
-      </div>
-
-      <div class="mx-0.5 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
-
       {#if grouped && grouped.groups.length > 0}
         <ToolbarButton
           icon={Layers}
@@ -903,6 +953,30 @@
       {/each}
     </div>
   {/if}
+
+  <!-- Layers drawn over the topology: observed traffic. Off until switched
+       on, and nothing is asked of the cluster's Prometheus before that. -->
+  <div class="shrink-0 border-b border-outline-variant/40 px-3 py-1.5" data-layer-controls>
+    {#if trafficControls}
+      {@render trafficControls()}
+    {:else}
+      <TrafficPanel
+        clusterId={session.cluster.id}
+        namespaces={scope.namespaces}
+        all={scope.all}
+        bind:filters={trafficFilters}
+        onlayer={(next) => (panelLayer = next)}
+      />
+    {/if}
+    {#if trafficOverlay && (trafficOverlay.skipped.offMap > 0 || trafficOverlay.skipped.filtered > 0)}
+      <p class="mt-1 text-body-small text-on-surface-variant" aria-live="polite">
+        {#if trafficOverlay.skipped.filtered > 0}{trafficOverlay.skipped.filtered} traffic line{trafficOverlay.skipped.filtered === 1 ? '' : 's'} hidden by the filters.{/if}
+        {#if trafficOverlay.skipped.offMap > 0}
+          {trafficOverlay.skipped.offMap} not drawn: their ends are of a kind switched off.
+        {/if}
+      </p>
+    {/if}
+  </div>
 
   {#if searchNote || exportNote}
     <p class="shrink-0 border-b border-outline-variant/40 px-4 py-1.5 text-body-small text-on-surface-variant" aria-live="polite">
@@ -1094,6 +1168,39 @@
                 </text>
               {/if}
             {/each}
+
+            {#if trafficOverlay}
+              <!-- Observed traffic: measured lines over the map, dotted and
+                   coloured by error rate so they are never read as the
+                   relationships underneath them. -->
+              {#each trafficOverlay.edges as line (line.id)}
+                <path
+                  data-traffic-edge
+                  d={line.path}
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-dasharray={line.hot ? undefined : '1 5'}
+                  stroke-width={line.width}
+                  style="stroke: {line.colour}"
+                  opacity={line.hot ? 1 : 0.8}
+                >
+                  <title>{line.tooltip}</title>
+                </path>
+              {/each}
+              {#each trafficOverlay.nodes as other (other.id)}
+                <!-- Ends of traffic that are not boxes of the topology: a host
+                     outside the cluster, an unknown peer, a workload this
+                     scope does not draw. They exist only on the overlay. -->
+                <g data-traffic-node transform="translate({other.x} {other.y})" role="img"
+                   aria-label="{other.kind === 'external' ? 'Outside the cluster' : other.kind === 'unknown' ? 'Unknown peer' : 'Not drawn here'}: {other.label}">
+                  <rect x="-80" y="-18" width="160" height="36" rx="18" stroke-dasharray="4 3"
+                        class="fill-surface-container-low stroke-outline" stroke-width="1" />
+                  <text y="4" text-anchor="middle" class="fill-on-surface-variant text-[10px]">
+                    {fitText(other.label, 24)}
+                  </text>
+                </g>
+              {/each}
+            {/if}
 
             {#each nodesToDraw as placed (placed.id)}
               {@const node = nodeMeta.get(placed.id)}
