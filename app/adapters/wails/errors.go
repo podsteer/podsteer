@@ -663,6 +663,11 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, errNotFound),
 		errors.Is(err, errEmptySuggestedName),
 		errors.Is(err, errUnreadableTextFile),
+		// The topology's own refusals: a scope naming no namespace, and an
+		// export that is not a PNG or is implausibly large.
+		errors.Is(err, domain.ErrEmptyTopologyScope),
+		errors.Is(err, errNotPNG),
+		errors.Is(err, errPNGTooLarge),
 		// Both notification refusals are the frontend asking for something
 		// it should not have — an empty headline, or a body long enough to
 		// have started listing objects. Invalid input rather than internal,

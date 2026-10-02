@@ -16,6 +16,7 @@ import * as RBACAPI from "./rbacapi.js";
 import * as SettingsAPI from "./settingsapi.js";
 import * as SystemAPI from "./systemapi.js";
 import * as TerminalAPI from "./terminalapi.js";
+import * as TopologyAPI from "./topologyapi.js";
 import * as UpdateAPI from "./updateapi.js";
 import * as VendorCLIAPI from "./vendorcliapi.js";
 import * as WorkloadAPI from "./workloadapi.js";
@@ -35,6 +36,7 @@ export {
     SettingsAPI,
     SystemAPI,
     TerminalAPI,
+    TopologyAPI,
     UpdateAPI,
     VendorCLIAPI,
     WorkloadAPI
@@ -116,6 +118,7 @@ export type {
     Node,
     NodeLoad,
     NodeShell,
+    NodeState,
     NodeSummary,
     NotificationCapability,
     NotificationRequest,
@@ -164,6 +167,11 @@ export type {
     TextFile,
     TimelineEvent,
     TopConsumers,
+    TopologyEdge,
+    TopologyEdgeKind,
+    TopologyGraph,
+    TopologyNode,
+    TopologyPodSummary,
     UpdateStatus,
     UpgradeSummary,
     UsagePoint,

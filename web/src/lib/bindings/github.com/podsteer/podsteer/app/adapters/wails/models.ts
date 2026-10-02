@@ -2678,6 +2678,17 @@ export interface NodeShell {
 }
 
 /**
+ * NodeState is how healthy a box is: ok, warn, bad or neutral (domain.NodeState
+ * names them). `neutral` means nothing was checked, not that it is fine.
+ * 
+ * NO GO CONSTANTS, DELIBERATELY: the binding generator turns a string type
+ * with constants into a TypeScript enum, which a contract written as a string
+ * union cannot accept. Without them it is `string`, which the contract
+ * narrows.
+ */
+export type NodeState = string;
+
+/**
  * NodeSummary counts nodes by condition.
  */
 export interface NodeSummary {
@@ -4453,6 +4464,97 @@ export interface TopConsumers {
     "byCpu": Consumer[] | null;
     "byMemory": Consumer[] | null;
     "measured": boolean;
+}
+
+/**
+ * TopologyEdge is one relationship.
+ */
+export interface TopologyEdge {
+    "from": string;
+    "to": string;
+    "kind": TopologyEdgeKind;
+    "label": string;
+}
+
+/**
+ * TopologyEdgeKind is the relationship an edge draws: owns, selects, routes,
+ * scales, protects, policy-selects, attaches or runs-as (domain.EdgeKind
+ * names them). No constants, for the reason NodeState has none.
+ */
+export type TopologyEdgeKind = string;
+
+/**
+ * TopologyGraph is a scope of namespaces and everything between its objects.
+ */
+export interface TopologyGraph {
+    "nodes": TopologyNode[] | null;
+    "edges": TopologyEdge[] | null;
+
+    /**
+     * Counts is per Kubernetes Kind, COMPLETE even when pods are summarised.
+     */
+    "counts": { [_ in string]?: number } | null;
+    "unreadable": string[] | null;
+    "bounded": string;
+
+    /**
+     * Summarised is true when pods were folded in the backend because there
+     * were too many to draw.
+     */
+    "summarised": boolean;
+
+    /**
+     * GeneratedAt is when the sources were read, RFC 3339.
+     */
+    "generatedAt": string;
+}
+
+/**
+ * TopologyNode is one box on the topology.
+ */
+export interface TopologyNode {
+    "id": string;
+
+    /**
+     * Kind is the graph kind: pod, workload, replicaset, service, ingress,
+     * gateway, route, scaler, budget, policy, config, secret, claim,
+     * serviceaccount, node, object.
+     */
+    "kind": string;
+
+    /**
+     * APIKind is the Kubernetes Kind, verbatim, for navigation.
+     */
+    "apiKind": string;
+    "name": string;
+    "namespace": string;
+    "state": NodeState;
+    "detail": string;
+
+    /**
+     * Group is the sibling set for folding, as in the other map shapes.
+     */
+    "group": string;
+
+    /**
+     * Labels are set on top-level objects only, for grouping by app or label.
+     */
+    "labels"?: { [_ in string]?: string } | null;
+
+    /**
+     * PodSummary is set only on a backend-folded pod set.
+     */
+    "podSummary"?: TopologyPodSummary | null;
+}
+
+/**
+ * TopologyPodSummary is a pod set folded by the backend above the summary cap. The
+ * counts are complete.
+ */
+export interface TopologyPodSummary {
+    "total": number;
+    "ready": number;
+    "unhealthy": number;
 }
 
 /**

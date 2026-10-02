@@ -171,9 +171,13 @@ type TopologyNode struct {
 
 // TopologyEdge is one relationship.
 type TopologyEdge struct {
-	From  string
-	To    string
-	Kind  EdgeKind
+	From string
+	To   string
+	Kind EdgeKind
+	// Label adds what the Kind does not say — a mount path, "parent" or
+	// "backend" on a route, "selects" on a policy so it never reads as
+	// "allows". Empty where the Kind says it all, because on a five-thousand
+	// node map a repeated word per edge is a tenth of the payload.
 	Label string
 }
 
@@ -465,7 +469,7 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 			owner = b.unresolved(c.Owner.Kind, c.Namespace, c.Owner.Name, "owner")
 		}
 		ownerOf[id] = owner
-		b.edge(owner, id, EdgeOwns, "owns")
+		b.edge(owner, id, EdgeOwns, "")
 	}
 	for id, c := range controllers {
 		node := TopologyNode{
@@ -558,7 +562,7 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 		}
 
 		if parent != "" {
-			b.edge(parent, sp.node, EdgeOwns, "owns")
+			b.edge(parent, sp.node, EdgeOwns, "")
 			// ATTACHED BELONGS TO THE PODS, from the template of the
 			// controller that created each — see NewWorkloadGraph.
 			if c, listed := controllers[parent]; listed {
@@ -611,7 +615,7 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 		if len(service.Selector) > 0 {
 			for _, sp := range index.candidates(ns, service.Selector) {
 				if selectorMatches(service.Selector, sp.labels) {
-					b.edge(id, sp.node, EdgeSelects, "selects")
+					b.edge(id, sp.node, EdgeSelects, "")
 					matched++
 				}
 			}
@@ -738,7 +742,7 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 		if _, listed := controllers[target]; !listed {
 			target = b.unresolved(scaler.Target.Kind, scaler.Namespace, scaler.Target.Name, "scale target")
 		}
-		b.edge(id, target, EdgeScales, "scales")
+		b.edge(id, target, EdgeScales, "")
 	}
 
 	for _, budget := range in.Budgets {
@@ -762,7 +766,7 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 		if budget.Selector != nil {
 			for _, sp := range index.candidates(budget.Namespace, budget.Selector.MatchLabels) {
 				if budget.Selector.Matches(sp.labels) {
-					b.edge(id, sp.node, EdgeProtects, "protects")
+					b.edge(id, sp.node, EdgeProtects, "")
 				}
 			}
 		}

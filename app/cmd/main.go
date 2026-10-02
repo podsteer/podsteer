@@ -352,6 +352,20 @@ func run() error {
 		return fmt.Errorf("wiring browse service: %w", err)
 	}
 
+	// The namespace topology. It is also the adapter's change sink: the watch
+	// stores and every write tell it a cluster changed, and it coalesces that
+	// into one `topology:changed` per cluster per second for scopes somebody
+	// drew. Set before App.Run, so before anything is read.
+	topologyService, err := application.NewTopologyService(application.TopologyServiceDeps{
+		Topology: kubernetes,
+		Registry: registry,
+		Logger:   logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring topology service: %w", err)
+	}
+	kubernetes.SetChangeSink(topologyService)
+
 	// The fleet reads through the two services above rather than the
 	// adapter, so a cross-cluster row is exactly the row that cluster's own
 	// tab would show, and the read cache coalesces the two.
@@ -622,6 +636,11 @@ func run() error {
 		return fmt.Errorf("wiring metrics query API: %w", err)
 	}
 
+	topologyAPI, err := wailsadapter.NewTopologyAPI(topologyService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring topology API: %w", err)
+	}
+
 	// The update check. Its adapter is the ONLY thing in PodSteer that talks
 	// to anything but a cluster, and it acts only when the interface asks —
 	// there is no timer here and nothing on the startup path. It sends no
@@ -703,6 +722,7 @@ func run() error {
 			wailsapp.NewService(systemAPI),
 			wailsapp.NewService(updateAPI),
 			wailsapp.NewService(notificationAPI),
+			wailsapp.NewService(topologyAPI),
 		},
 
 		// Only one PodSteer should hold the kubeconfig and its client caches;
@@ -763,6 +783,9 @@ func run() error {
 			// Same reason, same place: reflectors are goroutines holding
 			// connections, and every one of them has an owner that stops it.
 			kubernetes.StopAllWatches()
+			// After the watches, which are what feed it: its pending
+			// announcements are dropped and any already firing waited for.
+			topologyService.Close()
 			historyService.Close()
 			// Before Detach, which drops the handle this needs to release
 			// what the platform held — a D-Bus connection on Linux. Same rule

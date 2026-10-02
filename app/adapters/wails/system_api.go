@@ -257,6 +257,10 @@ func saveDialogFor(suggestedName string) (title string, filters []application.Fi
 		return "Export", []application.FileFilter{
 			{DisplayName: "JSON (*.json)", Pattern: "*.json"},
 		}
+	case ".png":
+		return "Export image", []application.FileFilter{
+			{DisplayName: "PNG (*.png)", Pattern: "*.png"},
+		}
 	case ".log":
 		return "Download logs", []application.FileFilter{
 			{DisplayName: "Log (*.log)", Pattern: "*.log"},
