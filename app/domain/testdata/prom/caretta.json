@@ -1,0 +1,38 @@
+{
+ "bytes": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "client_kind": "Deployment",
+      "client_name": "checkoutservice",
+      "client_namespace": "demo-ng",
+      "server_kind": "Service",
+      "server_name": "productcatalogservice",
+      "server_namespace": "demo-ng"
+     },
+     "value": [
+      1759400000.123,
+      "84.5"
+     ]
+    },
+    {
+     "metric": {
+      "client_kind": "Deployment",
+      "client_name": "checkoutservice",
+      "client_namespace": "demo-ng",
+      "server_kind": "External",
+      "server_name": "stripe.com",
+      "server_namespace": ""
+     },
+     "value": [
+      1759400000.123,
+      "12.0"
+     ]
+    }
+   ]
+  }
+ }
+}

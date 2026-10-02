@@ -1,0 +1,32 @@
+{
+ "connections": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {},
+     "value": [
+      1759400000.123,
+      "55.0"
+     ]
+    }
+   ]
+  }
+ },
+ "rate": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {},
+     "value": [
+      1759400000.123,
+      "12.0"
+     ]
+    }
+   ]
+  }
+ }
+}

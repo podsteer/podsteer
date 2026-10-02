@@ -1,0 +1,142 @@
+{
+ "connections": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "source_namespace": "storefront",
+      "source_workload": "web",
+      "destination_namespace": "storefront",
+      "destination_workload": "api"
+     },
+     "value": [
+      1759400000.123,
+      "40.0"
+     ]
+    },
+    {
+     "metric": {
+      "source": "storefront/api",
+      "destination": "storefront/db"
+     },
+     "value": [
+      1759400000.123,
+      "7.0"
+     ]
+    },
+    {
+     "metric": {
+      "source": "storefront/web",
+      "destination": "reserved:world"
+     },
+     "value": [
+      1759400000.123,
+      "1.5"
+     ]
+    }
+   ]
+  }
+ },
+ "rate": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "source_namespace": "storefront",
+      "source_workload": "web",
+      "destination_namespace": "storefront",
+      "destination_workload": "api"
+     },
+     "value": [
+      1759400000.123,
+      "10.0"
+     ]
+    }
+   ]
+  }
+ },
+ "errors": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "source_namespace": "storefront",
+      "source_workload": "web",
+      "destination_namespace": "storefront",
+      "destination_workload": "api"
+     },
+     "value": [
+      1759400000.123,
+      "0.5"
+     ]
+    }
+   ]
+  }
+ },
+ "p50": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "source_namespace": "storefront",
+      "source_workload": "web",
+      "destination_namespace": "storefront",
+      "destination_workload": "api"
+     },
+     "value": [
+      1759400000.123,
+      "0.005"
+     ]
+    }
+   ]
+  }
+ },
+ "p95": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "source_namespace": "storefront",
+      "source_workload": "web",
+      "destination_namespace": "storefront",
+      "destination_workload": "api"
+     },
+     "value": [
+      1759400000.123,
+      "0.02"
+     ]
+    }
+   ]
+  }
+ },
+ "p99": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "source_namespace": "storefront",
+      "source_workload": "web",
+      "destination_namespace": "storefront",
+      "destination_workload": "api"
+     },
+     "value": [
+      1759400000.123,
+      "0.1"
+     ]
+    }
+   ]
+  }
+ }
+}
