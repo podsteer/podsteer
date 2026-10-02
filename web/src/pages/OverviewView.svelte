@@ -624,8 +624,15 @@
           {#if upgradeTargetOptions.length > 0}
             <div class="flex flex-col">
               <dt class="font-semibold">Check against</dt>
-              <dd class="flex items-center gap-1.5">
+              <!-- The compact trigger is a 32px box with 8px of side
+                   padding, which put its text lower and further right than
+                   every other value on this row. The negative margins cancel
+                   exactly that — 6px top and bottom, 8px left — so the text
+                   sits on the same line and edge as "v1.32.7" while the click
+                   target and hover border keep their full size. -->
+              <dd class="flex h-5 items-center gap-1.5">
                 <Select
+                  class="-my-1.5 -ml-2"
                   label="Check against"
                   accessibleName="Check upgrade impact against Kubernetes version"
                   value={upgradeTargetValue}
