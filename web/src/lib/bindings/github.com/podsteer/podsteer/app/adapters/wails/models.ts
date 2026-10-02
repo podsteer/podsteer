@@ -4456,6 +4456,101 @@ export interface TopConsumers {
 }
 
 /**
+ * TrafficEdge is the traffic observed between two endpoints over a window.
+ */
+export interface TrafficEdge {
+    "source": TrafficEndpoint;
+    "dest": TrafficEndpoint;
+    "protocol": string;
+    "requestsPerSec": number;
+    "errorsPerSec": number;
+    "bytesPerSec": number;
+    "connections": number;
+
+    /**
+     * P50, P95 and P99 are milliseconds; -1 when the source does not expose
+     * latency.
+     */
+    "p50": number;
+    "p95": number;
+    "p99": number;
+}
+
+/**
+ * TrafficEndpoint is one end of an observed edge.
+ */
+export interface TrafficEndpoint {
+    "namespace": string;
+    "workload": string;
+    "service": string;
+    "external": string;
+    "unknown": boolean;
+
+    /**
+     * NodeID is the topology node this endpoint maps to, '' when unmapped.
+     */
+    "nodeId": string;
+}
+
+/**
+ * TrafficLayer is one source's traffic over one window.
+ */
+export interface TrafficLayer {
+    "source": string;
+    "window": string;
+    "edges": TrafficEdge[] | null;
+    "unmapped": TrafficEndpoint[] | null;
+    "status": string;
+    "message": string;
+
+    /**
+     * Provenance is which backend answered, as the metrics query feature
+     * reports it.
+     */
+    "provenance": SeriesProvenance;
+
+    /**
+     * Expressions are the PromQL that was sent, shown to the operator.
+     */
+    "expressions": string[] | null;
+}
+
+/**
+ * TrafficSourceStatus says whether one source's metrics were found.
+ */
+export interface TrafficSourceStatus {
+    /**
+     * Source is istio, linkerd, beyla, caretta or hubble.
+     */
+    "source": string;
+    "available": boolean;
+
+    /**
+     * Detail is what was found, or what would be needed.
+     */
+    "detail": string;
+}
+
+/**
+ * TrafficSources answers which traffic sources the chosen backend holds.
+ */
+export interface TrafficSources {
+    /**
+     * Backend is the Prometheus the queries go to, as the metrics query
+     * feature names it.
+     */
+    "backend": string;
+    "sources": TrafficSourceStatus[] | null;
+
+    /**
+     * Status is the metrics query backend status: answered, not-enabled,
+     * forbidden…
+     */
+    "status": string;
+    "message": string;
+}
+
+/**
  * UpdateStatus is what the interface shows about newer releases.
  */
 export interface UpdateStatus {

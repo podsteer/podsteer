@@ -20,12 +20,13 @@ func contractFields(t *testing.T, source, name string) []string {
 
 	start := strings.Index(source, "export interface "+name+" {")
 	if start < 0 {
-		t.Fatalf("contract.ts has no interface %s", name)
+		t.Fatalf("no interface %s", name)
 	}
 	body := source[start:]
 	body = body[strings.Index(body, "{")+1 : strings.Index(body, "\n}")]
 
-	field := regexp.MustCompile(`(?m)^  (\w+)\??:`)
+	// Hand-written two-space fields, or the generator's quoted ones.
+	field := regexp.MustCompile(`(?m)^\s+"?(\w+)"?\??:`)
 	var names []string
 	for _, match := range field.FindAllStringSubmatch(body, -1) {
 		names = append(names, match[1])
@@ -55,6 +56,20 @@ func TestTrafficDTOsMatchTheContract(t *testing.T) {
 	}
 	source := string(raw)
 
+	// A type contract.ts re-exports from the bindings is checked against the
+	// generated declaration it re-exports.
+	generated, err := os.ReadFile(filepath.Join("..", "..", "..", "web", "src", "lib", "bindings",
+		"github.com", "podsteer", "podsteer", "app", "adapters", "wails", "models.ts"))
+	if err != nil {
+		t.Fatalf("reading the generated models: %v", err)
+	}
+	reexported := map[string]bool{}
+	for _, match := range regexp.MustCompile(`(?m)^export type \{([^}]*)\}`).FindAllStringSubmatch(source, -1) {
+		for _, exported := range strings.Split(match[1], ",") {
+			reexported[strings.TrimSpace(exported)] = true
+		}
+	}
+
 	for name, value := range map[string]any{
 		"TrafficSourceStatus": TrafficSourceStatus{},
 		"TrafficSources":      TrafficSources{},
@@ -62,7 +77,11 @@ func TestTrafficDTOsMatchTheContract(t *testing.T) {
 		"TrafficEdge":         TrafficEdge{},
 		"TrafficLayer":        TrafficLayer{},
 	} {
-		want, got := contractFields(t, source, name), jsonFields(value)
+		from := source
+		if !strings.Contains(source, "export interface "+name+" {") && reexported[name] {
+			from = string(generated)
+		}
+		want, got := contractFields(t, from, name), jsonFields(value)
 		if !reflect.DeepEqual(want, got) {
 			t.Errorf("%s: contract.ts has %v, the DTO has %v", name, want, got)
 		}

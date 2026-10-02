@@ -16,6 +16,7 @@ import * as RBACAPI from "./rbacapi.js";
 import * as SettingsAPI from "./settingsapi.js";
 import * as SystemAPI from "./systemapi.js";
 import * as TerminalAPI from "./terminalapi.js";
+import * as TrafficAPI from "./trafficapi.js";
 import * as UpdateAPI from "./updateapi.js";
 import * as VendorCLIAPI from "./vendorcliapi.js";
 import * as WorkloadAPI from "./workloadapi.js";
@@ -35,6 +36,7 @@ export {
     SettingsAPI,
     SystemAPI,
     TerminalAPI,
+    TrafficAPI,
     UpdateAPI,
     VendorCLIAPI,
     WorkloadAPI
@@ -164,6 +166,11 @@ export type {
     TextFile,
     TimelineEvent,
     TopConsumers,
+    TrafficEdge,
+    TrafficEndpoint,
+    TrafficLayer,
+    TrafficSourceStatus,
+    TrafficSources,
     UpdateStatus,
     UpgradeSummary,
     UsagePoint,

@@ -8,6 +8,8 @@
  * the interface imports them from.
  */
 
+import type { TrafficEdge, TrafficEndpoint } from '$bindings/models'
+
 /** How healthy a box is. `neutral` means nothing was checked, not that it is fine. */
 export type NodeState = 'ok' | 'warn' | 'bad' | 'neutral'
 
@@ -91,29 +93,14 @@ export interface TrafficSources {
   message: string
 }
 
-export interface TrafficEndpoint {
-  namespace: string
-  workload: string
-  service: string
-  external: string
-  unknown: boolean
-  /** The topology node this endpoint maps to, '' when unmapped. */
-  nodeId: string
-}
-
-export interface TrafficEdge {
-  source: TrafficEndpoint
-  dest: TrafficEndpoint
-  protocol: string
-  requestsPerSec: number
-  errorsPerSec: number
-  bytesPerSec: number
-  connections: number
-  /** Milliseconds; -1 when the source does not expose latency. */
-  p50: number
-  p95: number
-  p99: number
-}
+/**
+ * An endpoint and an edge of the traffic layer, re-exported from the
+ * generated bindings because they match this contract exactly. The other
+ * traffic types stay hand-written: the generated ones widen the source and
+ * window unions to `string`, type `provenance` as SeriesProvenance and mark
+ * slices `| null` (the backend never sends null for them).
+ */
+export type { TrafficEdge, TrafficEndpoint }
 
 export interface TrafficLayer {
   source: TrafficSourceName
